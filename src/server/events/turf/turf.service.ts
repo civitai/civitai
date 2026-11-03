@@ -243,7 +243,7 @@ export async function setTurfOptIn(eventName: string, userId: number, optedIn: b
 // #region map
 type StickerRow = TurfStickerRow & { imageId: number };
 
-// The live stickers on images still in a post, oldest first per image. The owner's opt-in only gates
+// The live stickers on images anyone may see (imageVisible), oldest first per image. The owner's opt-in only gates
 // new placements: an opt-out leaves what was placed counting. A placer earns with an account from
 // before the event start, or one that has since reached TURF_MIN_CREATOR_SCORE (the same number as
 // creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
@@ -259,8 +259,8 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
-    WHERE s.event = ${event.name} AND s."removedAt" IS NULL AND ${where}
-      AND i."postId" IS NOT NULL
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE s.event = ${event.name} AND s."removedAt" IS NULL AND ${where} AND ${imageVisible}
     ORDER BY s."imageId", s."createdAt", s.id
   `;
 }

@@ -939,6 +939,40 @@ describe('Hat Turf', () => {
     expect(livePoints('team', 'Yellow')).toBe(2);
   });
 
+  it('a live first on a 25-player turf image costs a bounded number of Redis calls', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => 100 + i);
+    fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry({ ...TURF, players: many }));
+    let calls = 0;
+    const counted = new Proxy(fake.redis, {
+      get: (target, prop, receiver) => {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function'
+          ? (...args: unknown[]) => {
+              calls++;
+              return (value as (...a: unknown[]) => unknown).apply(target, args);
+            }
+          : value;
+      },
+    });
+    build({ redis: counted, loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(30)]);
+    calls = 0;
+    await engine.awardEventPoints([view(31)]);
+    expect(livePoints('team', 'Yellow')).toBe(50);
+    // Per player: the cap increment, its TTL (set on this viewer's first grant to that player today)
+    // and the owner increment; plus the seen mark, its TTL and one team increment.
+    expect(calls).toBeLessThanOrEqual(3 * 25 + 5);
+  });
+
+  it('caps each credited player separately for one viewer', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    await fake.redis.hIncrBy(keys.cap('2026-11-05', 21), '30', 50);
+    await engine.awardEventPoints([view(30)]);
+    expect(livePoints('owner', '21')).toBe(0);
+    expect(livePoints('owner', '22')).toBe(1);
+  });
+
   it('shadow: records the shadow type and moves no live total', async () => {
     build({ loadScoredEvents: async () => [turfEvent('shadow')] });
     await engine.awardEventPoints([view(30)]);
@@ -974,7 +1008,7 @@ describe('Hat Turf', () => {
     };
     await engine.awardEventPoints([action]);
     fake.setTurf(EVENT.name, 'Image:200', '');
-    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.refresh();
     expect(engine.isHattedEntity('Image', 200)).toBe(false);
     expect(await engine.hasTurfMark(action)).toBe(true);
     expect(await engine.hasTurfMark({ ...action, actorId: 31 })).toBe(false);
@@ -986,7 +1020,8 @@ describe('Hat Turf', () => {
   });
 
   it('still finds a turf earning after the mode is switched off', async () => {
-    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    let mode: 'live' | 'off' = 'live';
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: mode }] });
     const action = {
       type: 'reaction' as const,
       actorId: 30,
@@ -995,8 +1030,25 @@ describe('Hat Turf', () => {
       sourceId: 'ImageReaction:200:30',
     };
     await engine.awardEventPoints([action]);
-    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: 'off' as const }] });
+    mode = 'off';
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 200)).toBe(false);
     expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
+  it('never asks Redis about a removal on an image that was never turf', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.refresh();
+    const sIsMember = vi.spyOn(fake.redis, 'sIsMember');
+    const removal = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 999,
+      sourceId: 'ImageReaction:999:30',
+    };
+    expect(await engine.hasTurfMark(removal)).toBe(false);
+    expect(sIsMember).not.toHaveBeenCalled();
   });
 
   it('nets a shadow reaction out under its shadow type', async () => {

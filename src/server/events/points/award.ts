@@ -181,6 +181,9 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   let loading: Promise<void> | undefined;
   // Live bucket keys this server already gave a TTL, so each gets one EXPIRE, not one per award.
   const bucketTtlSet = new Set<string>();
+  // Every image this server has seen in a turf map since it started, so a removal checks Redis for a
+  // turf earning only where one can exist. A restart forgets images that left the map before it.
+  const everTurf = new Set<string>();
 
   // Live weights win over the config, so a weight can change without a deploy.
   async function loadWeights(def: ScoredEventDef) {
@@ -251,6 +254,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     for (const [key, value] of Object.entries(raw ?? {})) {
       const entry = decodeTurfEntry(value);
       if (entry) entries.set(key, entry);
+      everTurf.add(key);
     }
     return { entries, cursor: last?.id ?? '0-0' };
   }
@@ -266,6 +270,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     const values = await deps.redis.hmGet(keys.map, changed);
     changed.forEach((key, i) => {
       const entry = values[i] ? decodeTurfEntry(values[i]!) : undefined;
+      everTurf.add(key);
       if (entry) prev.entries.set(key, entry);
       else prev.entries.delete(key);
     });
@@ -453,18 +458,67 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (!marked) return undefined;
     try {
       await expireSeen(def, seenKey, rule, time);
-      if (live)
-        await Promise.all(
-          players.map((ownerId) =>
-            liveGrant(event, action, { ...teamHat, ownerId }, keys, actor, time).catch((error) =>
-              deps.logError('redis', 'eventPoints.turfLiveGrant', error)
-            )
-          )
-        );
+      if (live) await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.turfLiveGrant', error);
     }
     return first;
+  }
+
+  // A turf first's live totals, batched: one cap increment per credited player, then their owner and
+  // totals and one team increment for the sum. Issued together so the client pipelines them, two round
+  // trips whatever the player count. No per-hat, count or roster update: turf credits are not listed
+  // as hats, and the roster's points sort (display only) catches up at the hourly roster reconcile.
+  async function liveGrantTurf(
+    event: LoadedEvent,
+    action: EventPointAction,
+    teamHat: EventHat,
+    players: number[],
+    keys: ReturnType<typeof eventSeasonKeys>,
+    actor: string,
+    time: Date
+  ) {
+    const { def } = event;
+    const weight = event.weights[action.type] ?? 0;
+    if (weight <= 0) return;
+    const day = utcDay(time);
+    const totals = await Promise.all(
+      players.map((p) => deps.redis.hIncrBy(keys.cap(day, p), actor, weight))
+    );
+    const granted = players
+      .map((ownerId, i) => ({
+        ownerId,
+        firstToday: Number(totals[i]) === weight,
+        grant: cappedGrant(weight, Number(totals[i]), def.scoring.capPerActorPerOwnerPerDay),
+      }))
+      .filter((g) => g.grant > 0 || g.firstToday);
+    const bucket = liveBucket(time);
+    const ownerKey = keys.live(bucket, 'owner');
+    const teamKey = keys.live(bucket, 'team');
+    const sum = granted.reduce((n, g) => n + g.grant, 0);
+    await Promise.all([
+      ...granted
+        .filter((g) => g.firstToday)
+        .map((g) => deps.redis.expireAt(keys.cap(day, g.ownerId), dayExpiry(time))),
+      ...granted
+        .filter((g) => g.grant > 0)
+        .map((g) => deps.redis.hIncrBy(ownerKey, String(g.ownerId), g.grant)),
+      ...(sum > 0 ? [deps.redis.hIncrBy(teamKey, teamHat.team, sum)] : []),
+    ]);
+    if (sum <= 0) return;
+    for (const g of granted)
+      if (g.grant > 0)
+        try {
+          deps.onGrant(def, { ...teamHat, ownerId: g.ownerId }, time);
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrant', error);
+        }
+    for (const key of [ownerKey, teamKey]) {
+      if (bucketTtlSet.has(key)) continue;
+      if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
+      bucketTtlSet.add(key);
+      await deps.redis.expire(key, LIVE_TTL_S);
+    }
   }
 
   async function liveGrant(
@@ -647,6 +701,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   // same mark a hat earning sets, so it also finds a reaction earned under a hat since taken off.
   async function hasTurfMark(removal: EventPointRemoval) {
     await ensureFresh();
+    if (!everTurf.has(entityKey(removal.entityType, removal.entityId))) return false;
     for (const event of loaded) {
       if (!event.def.turfMode) continue;
       const rule = event.def.scoring.types[removal.type];
