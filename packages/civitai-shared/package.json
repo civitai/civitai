@@ -31,6 +31,7 @@
     "./mystery-box": "./src/mystery-box.ts",
     "./json-ld": "./src/json-ld.ts",
     "./resolution-reasons": "./src/resolution-reasons.ts",
+    "./bounty-award": "./src/bounty-award.ts",
     "./site-appeal": "./src/site-appeal.ts",
     "./post-scheduling": "./src/post-scheduling.ts",
     "./platform-feedback-version": "./src/platform-feedback-version.ts",

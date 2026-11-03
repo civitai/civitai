@@ -45,6 +45,7 @@
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
+    editPairCount,
     epochWeightsFileName,
     namedDownloadUrl,
     overallProgressPct,
@@ -54,12 +55,14 @@
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
   import { mediaCount } from '$lib/data/trainingModels';
-  import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
+  import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
   import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
@@ -293,6 +296,9 @@
     return res.blob();
   }
 
+  const pairDataset = $derived(isPairDataset(d.dataset));
+  const pairCount = $derived(editPairCount(d.dataset));
+
   let downloading = $state(false);
   let downloadError = $state('');
   async function downloadDataset() {
@@ -303,8 +309,9 @@
       const pad = Math.max(2, String(d.dataset.length).length);
       const { blob } = await buildDatasetZip(
         d.dataset.map((item, i) => ({
-          base: String(i + 1).padStart(pad, '0'),
-          ext: airExt(item.air),
+          // An edit run keeps its control_1/ + main/ layout, which the edit Data step imports as pairs.
+          base: item.path?.replace(/\.[^./]+$/, '') ?? String(i + 1).padStart(pad, '0'),
+          ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
         }))
@@ -375,7 +382,7 @@
 
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
   async function reuseDataset() {
-    handoffReuse(await toReuseItems(d.dataset, d.workflowId));
+    handoffReuse(toReuseItems(d.dataset, d.workflowId, d.sourceImages));
   }
 
   // Only an explicit host `false` gates — absent means the host has no membership knowledge and
@@ -469,6 +476,7 @@
         return {
           cost: q.cost,
           eta: q.steps ? Math.max(1, Math.round((q.steps / 2000) * 18)) : null,
+          matureCount: q.matureCount ?? 0,
         };
       } catch (err) {
         quoteError = err instanceof Error ? err.message : 'Could not price this';
@@ -478,9 +486,35 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
+  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
+  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
+  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  let refusedFurther = $state<{ run: string; count: number } | null>(null);
+  const furtherMature = $derived(
+    Math.max(
+      quote?.matureCount ?? 0,
+      refusedFurther?.run === workflowIdKey ? refusedFurther.count : 0
+    )
+  );
+  const furtherSpend = $derived(
+    quote?.cost != null
+      ? nonBlueSpend(quote.cost, buzzMode.value, {
+          mature: furtherMature > 0,
+          member: hostConfig().isPaidMember === true,
+        })
+      : null
+  );
+  // The run id is in the key so a tick never carries over to another run with the same price.
+  const furtherAckKey = $derived.by(() => {
+    const key = matureAckKey(furtherSpend?.amount ?? quote?.cost, furtherMature);
+    return key && `${workflowIdKey}:${key}`;
+  });
+  let furtherAckedFor = $state<string | null>(null);
+  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
+
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote == null) return;
+    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
     continuing = true;
     continueError = '';
     try {
@@ -488,12 +522,15 @@
         d.workflowId,
         publishTarget.number,
         Number(furtherEpochs) || 5,
-        buzzMode.currencies
+        buzzMode.currencies,
+        furtherAckKey !== null
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      confirming = false;
+      if (err instanceof MatureAckRequiredError)
+        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      else confirming = false;
     } finally {
       continuing = false;
     }
@@ -561,6 +598,7 @@
     archiveError = '';
     archiveParts = [];
     showLineage = false;
+    furtherAckedFor = null;
   });
 </script>
 
@@ -1166,7 +1204,10 @@
                 class="w-20"
               />
               {#if confirming}
-                <Button onclick={doTrainFurther} disabled={continuing || quote == null}>
+                <Button
+                  onclick={doTrainFurther}
+                  disabled={continuing || quote?.cost == null || furtherAckMissing}
+                >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
                         >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
@@ -1183,7 +1224,7 @@
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
               {:else if quote?.cost != null}
-                {@const spend = nonBlueSpend(quote.cost, buzzMode.value)}
+                {@const spend = furtherSpend}
                 Costs <span class="text-buzz"
                   ><IconBoltFilled size={10} stroke={2} class="mb-px inline" />{quote.cost.toLocaleString()}</span
                 >{#if quote.eta} · ~{quote.eta} min{/if} · spends Buzz on confirm{#if spend}
@@ -1193,10 +1234,39 @@
                       ? 'Green'
                       : 'Yellow'}</span
                   >{/if}
+              {:else if quote}
+                <span class="text-red-400">Could not price this</span>
               {:else}
                 pricing…
               {/if}
             </div>
+            {#if furtherAckKey}
+              <div
+                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+              >
+                <Checkbox
+                  id="ack-further-mature"
+                  bind:checked={
+                    () => furtherAckedFor === furtherAckKey,
+                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
+                  }
+                  class="mt-0.5 shrink-0"
+                />
+                <label for="ack-further-mature" class="cursor-pointer">
+                  {furtherMature}
+                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
+                  <strong>mature</strong>.
+                  {#if furtherSpend}
+                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
+                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
+                    > will be charged.
+                  {:else}
+                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
+                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {/if}
+                </label>
+              </div>
+            {/if}
           </div>
         </div>
         {#if continueError}
@@ -1281,7 +1351,9 @@
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
         <span class="font-mono text-xs font-normal text-dark-2">
-          {mediaCount(d.dataset.length, d.media)}
+          {pairDataset
+            ? `${pairCount} ${pairCount === 1 ? 'pair' : 'pairs'}`
+            : mediaCount(d.dataset.length, d.media)}
         </span>
         <span class="ml-auto flex items-center gap-1.5">
           <button

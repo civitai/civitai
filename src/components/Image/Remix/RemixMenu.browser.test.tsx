@@ -38,6 +38,7 @@ const base: RemixSourceImage = {
 };
 const imageWithPrompt = base;
 const videoWithPrompt = { ...base, type: 'video' as RemixSourceImage['type'] };
+const videoNoPrompt = { ...videoWithPrompt, hasPositivePrompt: false };
 const flaggedImage = { ...base, minor: true };
 
 const renderMenu = (
@@ -64,18 +65,19 @@ beforeEach(() => {
 
 describe('RemixMenu count rule', () => {
   test('one option: a click runs it, tracks it and opens no menu', async () => {
-    const { onAction, onOpen, onButtonClick } = renderMenu(videoWithPrompt);
+    const { onAction, onOpen, onButtonClick } = renderMenu(videoNoPrompt);
 
     await page.getByRole('button', { name: 'Remix' }).click();
 
-    expect(startPromptReuse).toHaveBeenCalledTimes(1);
-    expect(startRemix).not.toHaveBeenCalled();
+    expect(startRemix).toHaveBeenCalledTimes(1);
+    expect(startRemix).toHaveBeenCalledWith({ kind: 'video', image: videoNoPrompt });
+    expect(startPromptReuse).not.toHaveBeenCalled();
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onButtonClick).toHaveBeenCalledTimes(1);
     expect(trackAction).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'Image_Remix_Click',
-        details: expect.objectContaining({ source: 'test', remixKind: 'reuse' }),
+        details: expect.objectContaining({ source: 'test', remixKind: 'video' }),
       })
     );
     // The menu never opens, so a tour is not advanced a second time by `onOpen`.
@@ -89,20 +91,20 @@ describe('RemixMenu count rule', () => {
   });
 
   test('a tour that is not running does not stop the single option running', async () => {
-    renderMenu(videoWithPrompt, { tourTarget: 'gen:remix-menu' });
+    renderMenu(videoNoPrompt, { tourTarget: 'gen:remix-menu' });
 
     await page.getByRole('button', { name: 'Remix' }).click();
 
-    expect(startPromptReuse).toHaveBeenCalledTimes(1);
+    expect(startRemix).toHaveBeenCalledTimes(1);
   });
 
   test('a tour running elsewhere (no tourTarget) does not stop it either', async () => {
     tour.running = true;
-    renderMenu(videoWithPrompt);
+    renderMenu(videoNoPrompt);
 
     await page.getByRole('button', { name: 'Remix' }).click();
 
-    expect(startPromptReuse).toHaveBeenCalledTimes(1);
+    expect(startRemix).toHaveBeenCalledTimes(1);
   });
 
   test('no options (blocked image): the menu opens with the reason and nothing runs', async () => {
@@ -129,6 +131,17 @@ describe('RemixMenu count rule', () => {
     expect(startPromptReuse).not.toHaveBeenCalled();
     expect(startRemix).not.toHaveBeenCalled();
     expect(onAction).not.toHaveBeenCalled();
+  });
+
+  test('a video with a prompt opens a menu offering the first frame and reuse', async () => {
+    renderMenu(videoWithPrompt);
+
+    await page.getByRole('button', { name: 'Remix' }).click();
+
+    await expect.element(page.getByText('Animate first frame')).toBeVisible();
+    await expect.element(page.getByText('Reuse prompt & resources')).toBeVisible();
+    await page.getByText('Animate first frame').click();
+    expect(startRemix).toHaveBeenCalledWith({ kind: 'video', image: videoWithPrompt });
   });
 
   test('a refusal that leaves one option still opens the menu, with the reason', async () => {

@@ -310,6 +310,7 @@ export async function submitPresetImageGen({
     currencies: currencies as any,
     tags,
     track,
+    inputGate: 'checked-by-caller',
   });
 }
 
@@ -361,6 +362,7 @@ export async function whatIfPresetImageGen({
     isModerator: user.isModerator,
     token,
     currencies: currencies as any,
+    inputGate: 'checked-by-caller',
   });
 
   return { cost: result.cost?.total ?? 0, ready: result.ready };

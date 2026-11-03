@@ -370,16 +370,10 @@ describe('updateCollectionCoverImage', () => {
     ["another user's image on a draft post", UNPUBLISHED_POST],
     ["another user's upload", STRANGER_UPLOAD],
     ["another user's image awaiting review", NEEDS_REVIEW],
+    ["another user's image carrying a removal reason", REASON_ONLY],
   ])('refuses %s', async (_, imageId) => {
     await expect(setCover(imageId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
-  });
-
-  it('sets an image image.get would show, but keeps it from strangers when it carries a removal reason', async () => {
-    // The write follows image.get's rule, which doesn't read the removal reason; the read rule does.
-    await setCover(REASON_ONLY);
-    expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
-    expect(await servable(REASON_ONLY)).toBe(false);
   });
 
   it('lets staff set any cover', async () => {

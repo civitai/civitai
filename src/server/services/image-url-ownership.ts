@@ -42,22 +42,32 @@ export function assertNoUnfinishedUploads(urls: (string | null | undefined)[]) {
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
 export const MAX_KEYS = 64;
-// Overlapping matches too: one key's characters can begin another.
-const UUIDS = /(?=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))/gi;
 
 const ESCAPE = /%([0-9a-f]{2})/gi;
 const MAX_DECODE_PASSES = 8;
 
 const compacted = (value: string) => value.replace(/[\t\r\n]/g, '');
 
+/** A key's length; no shorter string holds one, since decoding and compacting only shorten. */
+const KEY_LENGTH = 36;
+
+/**
+ * Characters `decodedForms` may decode across calls (each pass over text holding `%`). Past it, `left`
+ * goes negative and the forms stop, so the caller must refuse rather than trust what was read.
+ */
+export type DecodeBudget = { left: number };
+
 /**
  * `value` and each form it takes as its `%XX` escapes are decoded, one pass at a time, each escape
  * on its own.
  */
-function decodedForms(value: string) {
+function decodedForms(value: string, budget?: DecodeBudget) {
   const forms = [compacted(value)];
   for (let pass = 0; pass < MAX_DECODE_PASSES; pass++) {
     const current = forms[forms.length - 1];
+    if (!current.includes('%')) break;
+    // Charged before the pass, so a refused input never pays for it.
+    if (budget && (budget.left -= current.length) < 0) break;
     const next = compacted(
       current.replace(ESCAPE, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
     );
@@ -77,11 +87,70 @@ function storedUrlsFor(url: string | null | undefined): string[] {
   return keys.length ? [url as string, ...keys] : [];
 }
 
+const isHex = (c: number) => (c >= 48 && c <= 57) || ((c | 32) >= 97 && (c | 32) <= 102);
+
+/**
+ * Every uuid-shaped key in `value` (hex `8-4-4-4-12`, any case), lowercased, in order, overlapping
+ * ones too (one key's characters can begin another). Each candidate is anchored on its first dash,
+ * so the scan is linear: a regex lookahead at every position costs the length of a key per char.
+ */
+export function uuidsIn(value: string): string[] {
+  const keys: string[] = [];
+  const hexRun = (from: number, length: number) => {
+    for (let i = from; i < from + length; i++) if (!isHex(value.charCodeAt(i))) return false;
+    return true;
+  };
+  const dashAt = (i: number) => value.charCodeAt(i) === 45;
+  for (
+    let p = value.indexOf('-', 8);
+    p !== -1 && p + 28 <= value.length;
+    p = value.indexOf('-', p + 1)
+  ) {
+    if (
+      hexRun(p - 8, 8) &&
+      hexRun(p + 1, 4) &&
+      dashAt(p + 5) &&
+      hexRun(p + 6, 4) &&
+      dashAt(p + 10) &&
+      hexRun(p + 11, 4) &&
+      dashAt(p + 15) &&
+      hexRun(p + 16, 12)
+    )
+      keys.push(value.slice(p - 8, p + 28).toLowerCase());
+  }
+  return keys;
+}
+
+/** The keys in each form, lowercased. */
+const keysInForms = (forms: string[]) => forms.flatMap(uuidsIn);
+
 export function keysIn(url: string | null | undefined): string[] {
-  if (!url || isUnfinishedUploadUrl(url)) return [];
-  return decodedForms(url).flatMap((value) =>
-    [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
-  );
+  return keysInWithin(url);
+}
+
+/** `keysIn`, decoding no more than `budget` allows (a separate name: `flatMap(keysIn)` is safe). */
+export function keysInWithin(url: string | null | undefined, budget?: DecodeBudget): string[] {
+  if (!url || url.length < KEY_LENGTH || isUnfinishedUploadUrl(url)) return [];
+  return keysInForms(decodedForms(url, budget));
+}
+
+/** A dash as a JSON or HTML escape writes it. */
+const ESCAPED_DASH = /\\u002d|&#0*45(?![0-9]);?|&#x0*2d(?![0-9a-f]);?/gi;
+
+/**
+ * Every key in free text, which is not a url: no scheme exemption (`Image: https://…` is prose),
+ * and dashes written as JSON or HTML escapes read as dashes.
+ */
+export function keysInText(text: string): string[] {
+  return keysInTextWithin(text);
+}
+
+/** `keysInText`, decoding no more than `budget` allows: none once it is spent. */
+export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] {
+  if (text.length < KEY_LENGTH) return [];
+  const forms = decodedForms(text.replace(ESCAPED_DASH, '-'), budget);
+  if (budget && budget.left < 0) return [];
+  return [...new Set(keysInForms(forms))];
 }
 
 /**
@@ -310,6 +379,8 @@ type KeyIssuerArgs = {
   db?: Db;
   /** Read the request log for every key, not only those the issue record lacks. */
   readLogForAll?: boolean;
+  /** Most keys one call reads (`MAX_KEYS` by default); past it the result is `tooMany`. */
+  maxKeys?: number;
 };
 
 /**
@@ -322,6 +393,7 @@ export async function keyIssuers({
   alsoIssuedTo,
   db = dbWrite,
   readLogForAll = false,
+  maxKeys = MAX_KEYS,
 }: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
@@ -335,7 +407,7 @@ export async function keyIssuers({
     requestLogReadFailed: false,
   };
   if (!keys.length) return result;
-  if (keys.length > MAX_KEYS) return { ...result, tooMany: true };
+  if (keys.length > maxKeys) return { ...result, tooMany: true };
 
   const { owners, readFailed } = await ownersFromRedis(keys);
   result.recordReadFailed = readFailed;

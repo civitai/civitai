@@ -24,7 +24,7 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
   const user = await getOrProduceSessionUser(userId);
   if (!user) error(404, 'no such user');
 
-  const token = await mintUserSession(user);
+  const token = await mintUserSession(user, { parent: locals.session, clearImpersonation: true });
   await touchAccount(deviceId, userId); // slide the 30-day idle clock
   setSessionCookie(cookies, token); // direct browser-client path: hub lands the cookie itself
   rollDeviceCookie(cookies, deviceId); // keep the device cookie alive in lockstep with its redis set

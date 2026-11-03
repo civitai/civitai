@@ -281,6 +281,15 @@ describe('mapWorkflowToTrainingResultsV2', () => {
 });
 
 describe('createDraftModelFromWorkflow', () => {
+  it('cuts a run name over 150 characters to 150 instead of failing the publish', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'x'.repeat(180), trigger: 'mychar' } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].name).toBe('x'.repeat(150));
+  });
+
   it('scopes the idempotency lookup to the caller — the where clause carries userId + workflowId', async () => {
     await createDraftModelFromWorkflow({
       user: USER,
@@ -443,6 +452,51 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.visibility).toBe('Private');
     expect(file.metadata.selectedEpochUrl).toBe('https://blobs/epoch-1');
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
+  });
+
+  it("records the run's hyperparameters in trainingDetails, defaulting or dropping any the schema rejects", async () => {
+    const workflow = studioWorkflow();
+    Object.assign((workflow.steps![0] as { input: Record<string, unknown> }).input, {
+      batchSize: 0,
+      numRepeats: 4,
+      resolution: 1024,
+      lr: 0.0004,
+      textEncoderLr: 0.00005,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'not-an-optimizer',
+      networkDim: 16,
+      networkAlpha: 8,
+      noiseOffset: 0.1,
+      flipAugmentation: true,
+      keepTokens: 1,
+      shuffleTokens: true,
+      continueFrom: 'urn:air:sdxl:lora:civitai:1@2',
+    });
+    await createDraftModelFromWorkflow({ user: USER, workflow, selectedEpochNumber: 1 });
+
+    const { trainingDetails } = mockUpsertModelVersion.mock.calls[0][0];
+    expect(trainingDetails.params).toMatchObject({
+      steps: 2000,
+      epochs: 3,
+      numRepeats: 4,
+      resolution: 1024,
+      lr: 0.0004,
+      textEncoderLr: 0.00005,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'adamw',
+      networkDim: 16,
+      networkAlpha: 8,
+      noiseOffset: 0.1,
+      flipAugmentation: true,
+      keepTokens: 1,
+      shuffleTokens: true,
+      minSnrGamma: null,
+    });
+    expect(trainingDetails.params).not.toHaveProperty('batchSize');
+    expect(trainingDetails.params).not.toHaveProperty('continueFrom');
+    expect(trainingDetailsObj.safeParse(trainingDetails).success).toBe(true);
   });
 
   // The placeholder's url is an orchestrator blob the scanner can't resolve; left exists=null,
@@ -656,7 +710,10 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it('allows an approved run, reading it with the owner token, and backfills the stamp', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
     await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
       path: { workflowId: 'wf-studio-1' },
@@ -667,7 +724,10 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it('mints the owner token with the cache bypass when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
     await assertTrainingSourcePublishable({ ...args, callerId: 999 });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
   });
 
   it.each([...REFUSED_STATUSES, undefined])(
@@ -933,7 +993,10 @@ describe('stampWorkflowPublished', () => {
       workflowId: 'wf-studio-1',
       modelId: 42,
     });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
 
     mockGetToken.mockClear();
     await stampWorkflowPublished({
@@ -942,7 +1005,10 @@ describe('stampWorkflowPublished', () => {
       workflowId: 'wf-studio-1',
       modelId: 42,
     });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
   });
 
   it('never throws — an unreachable orchestrator must not fail the publish', async () => {

@@ -36,8 +36,11 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import {
   GENERATION_TIP_FILTER,
   filterTransactionsByDisplayType,
+  formatSignedAmount,
   getServerTransactionType,
   getTransactionBadgeLabel,
+  getTransactionDescription,
+  mergeWorkflowRefundsByPage,
 } from '~/utils/buzz-transaction-display';
 import { capitalize } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -116,7 +119,8 @@ export default function UserTransactions() {
   const transactions = useMemo(
     () =>
       filterTransactionsByDisplayType(
-        data?.pages.flatMap((page) => page.transactions) ?? [],
+        // Per page, so a charge and refund split across pages stay two rows and nothing refetches.
+        mergeWorkflowRefundsByPage(data?.pages.map((page) => page.transactions) ?? []),
         typeChoice
       ),
     [data, typeChoice]
@@ -271,10 +275,12 @@ export default function UserTransactions() {
         ) : transactions.length ? (
           <Stack gap="md">
             {transactions.map((transaction, index) => {
-              const { amount, date, fromUser, toUser, details, type } = transaction;
-              let description = transaction.description ?? undefined;
+              const { amount, date, fromUser, toUser, details, type, workflowRefund } = transaction;
               const isDebit = amount < 0;
-              const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
+              // A merged workflow row is the charge, so its Buzz type is the debited side even when the
+              // refund nets it to zero or above.
+              const accountType =
+                isDebit || workflowRefund ? transaction.fromAccountType : transaction.toAccountType;
               // The bolt is colored by buzz type, never by direction: green already NAMES a buzz type,
               // so tinting credits green labelled every yellow gain as green buzz (CU 868kk3aw1).
               const spendType = buzzSpendTypes.find((t) => t === accountType);
@@ -282,9 +288,7 @@ export default function UserTransactions() {
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
                 : {};
-              if (label) {
-                description = description?.replace('Content', `A ${label.toLowerCase()}`);
-              }
+              const description = getTransactionDescription(transaction, label);
 
               return (
                 <Card key={`${index}-${date.toISOString()}`} withBorder>
@@ -303,8 +307,7 @@ export default function UserTransactions() {
                         <Group gap={4}>
                           <CurrencyIcon currency="BUZZ" size={16} type={spendType} />
                           <Text style={{ fontVariantNumeric: 'tabular-nums' }} span>
-                            {isDebit ? '' : '+'}
-                            {amount.toLocaleString()}
+                            {formatSignedAmount(amount)}
                           </Text>
                         </Group>
                       </Text>
@@ -330,6 +333,15 @@ export default function UserTransactions() {
                       </Text>
                     )}
                     {description && <Text c="dimmed">{description}</Text>}
+                    {workflowRefund && (
+                      // Both gross legs stay visible so a net row can be reconciled against the
+                      // export, which still lists the charge and the refund separately.
+                      <Text c="dimmed" size="xs" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        Charged {Math.abs(workflowRefund.grossAmount).toLocaleString()}, refunded{' '}
+                        {workflowRefund.refundAmount.toLocaleString()} on{' '}
+                        {formatDate(workflowRefund.refundDate)}
+                      </Text>
+                    )}
                     {isImage && details?.entityId ? (
                       <RoutedDialogLink
                         name="imageDetail"

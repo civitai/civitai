@@ -6,6 +6,25 @@ import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
+ * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
+ * `"Image" i`. Empty for a moderator.
+ */
+export function imageBlockedForConditions({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] {
+  if (isModerator) return [];
+  return [
+    userId
+      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+      : Prisma.sql`(i."blockedFor" IS NULL)`,
+  ];
+}
+
+/**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on
  * `i."postId"`. Moderators see everything. An image with a post needs it published and not
  * Private (or the viewer to own it). A postless image needs the viewer to own it, or to be the
@@ -71,6 +90,7 @@ export function imageVisibilityConditions({
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
     minorMatureImageVisibleSql({ userId }),
+    ...imageBlockedForConditions({ userId }),
   ];
 }
 

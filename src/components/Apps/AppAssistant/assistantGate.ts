@@ -6,16 +6,22 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import {
   CREATE_APP,
+  GENERATE_APP_COVER,
   REPORT_READY,
   SET_FEEDBACK_STATUS,
   SET_CHECKLIST,
   SUBMIT_FOR_REVIEW,
   USE_OPEN_APP,
+  createCoverArt,
   createFeedbackTools,
   createGateCore,
+  makeOfferedCover,
   normalizeChecklist,
   type AppFeedbackSource,
+  type CoverArtDeps,
+  type CoverPressDeps,
 } from '@civitai/app-assistant';
+import { createCoverCards } from '~/components/Apps/AppAssistant/assistantCover';
 import type { SetFeedbackStatus } from '~/components/Apps/AppAssistant/assistantFeedback';
 import { createFeedbackStatusCards } from '~/components/Apps/AppAssistant/assistantFeedback';
 import type { SubmitCardsDeps } from '~/components/Apps/AppAssistant/assistantSubmit';
@@ -70,6 +76,7 @@ export function createAssistantGate({
   submit,
   openApp,
   feedback,
+  cover,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -86,6 +93,8 @@ export function createAssistantGate({
    * a press on a status card does. Without it, no feedback tools.
    */
   feedback?: { source: AppFeedbackSource; setStatus: SetFeedbackStatus };
+  /** The store cover: what its offer reads and what its card's press does. Without it, no tool. */
+  cover?: { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps };
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
   const feedbackCards = feedback ? createFeedbackStatusCards(feedback) : null;
@@ -99,6 +108,17 @@ export function createAssistantGate({
       })
     : null;
   const feedbackTools: Record<string, ChatTool> = feedbackSet?.tools ?? {};
+  // In runner mode the runner's tool offers; this card (told by `onToolResult`) takes the press.
+  let coverOffers = 0;
+  const coverCards = cover
+    ? createCoverCards({ make: (offer, signal) => makeOfferedCover(cover.press, offer, signal) })
+    : null;
+  const coverTool: ChatTool | null = cover
+    ? createCoverArt({
+        ...cover.offer,
+        nextId: () => `${feedbackPrefix}-cover-${++coverOffers}`,
+      })[GENERATE_APP_COVER]!
+    : null;
   const core = createGateCore({
     refuse,
     onReply: () => {
@@ -127,6 +147,7 @@ export function createAssistantGate({
       core.onToolResult(result);
       submitCards?.onToolResult(result, currentApp?.() ?? null);
       feedbackCards?.onToolResult(result);
+      coverCards?.onToolResult(result);
     },
     tools: {
       [SET_CHECKLIST]: set_checklist,
@@ -140,6 +161,9 @@ export function createAssistantGate({
               render: feedbackCards.render,
             },
           }
+        : {}),
+      ...(coverTool && coverCards
+        ? { [GENERATE_APP_COVER]: { ...coverTool, render: coverCards.render } }
         : {}),
     },
     restoringChoices: (tools, chatId) => {

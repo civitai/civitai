@@ -12,11 +12,10 @@
  * - Built-in popover for selecting from all options; a bottom sheet on a phone
  */
 
-import { Popover, ScrollArea, SegmentedControl, Text } from '@mantine/core';
+import { ScrollArea, SegmentedControl, Text } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 
 // =============================================================================
 // Types
@@ -243,7 +242,6 @@ export function OverflowSegmentedControl<T extends string = string>({
   onReselect,
   className,
 }: OverflowSegmentedControlProps<T>) {
-  const mobile = useIsMobile({ type: 'media' });
   // Default maxVisible to the number of options
   const maxVisible = maxVisibleProp ?? options.length;
 
@@ -387,41 +385,22 @@ export function OverflowSegmentedControl<T extends string = string>({
         fullWidth
         classNames={{ label: 'relative', innerLabel: 'static' }}
       />
-      {showMoreButton && mobile && (
-        <MobileMenuDrawer
+      {showMoreButton && (
+        <PopoverOrSheet
           opened={popoverOpened}
           onClose={() => setPopoverOpened(false)}
           title={drawerTitle && <Text fw={600}>{drawerTitle}</Text>}
+          popoverProps={{
+            position: 'bottom-end',
+            withArrow: true,
+            arrowPosition: 'center',
+            arrowSize: 12,
+          }}
+          dropdownProps={{ p: 0 }}
+          target={<span className="absolute bottom-0 right-0 top-0 w-px" />}
         >
-          <OptionGrid
-            options={options}
-            value={value}
-            disabled={disabled}
-            onSelect={handlePopoverSelect}
-            renderOption={renderOption}
-            gridColumns={gridColumns}
-            inSheet
-          />
-        </MobileMenuDrawer>
-      )}
-      {showMoreButton && !mobile && (
-        <Popover
-          opened={popoverOpened}
-          onChange={setPopoverOpened}
-          position="bottom-end"
-          withArrow
-          arrowPosition="center"
-          arrowSize={12}
-          withinPortal
-          shadow="md"
-          closeOnClickOutside
-        >
-          <Popover.Target>
-            <span className="absolute bottom-0 right-0 top-0 w-px" />
-          </Popover.Target>
-          <Popover.Dropdown p={0}>
-            {/* Saved sizes can make the list taller than the screen: it scrolls. */}
-            <ScrollArea.Autosize mah="min(60vh, 480px)" type="auto">
+          {(surface) => {
+            const grid = (
               <OptionGrid
                 options={options}
                 value={value}
@@ -429,10 +408,19 @@ export function OverflowSegmentedControl<T extends string = string>({
                 onSelect={handlePopoverSelect}
                 renderOption={renderOption}
                 gridColumns={gridColumns}
+                inSheet={surface !== 'popover'}
               />
-            </ScrollArea.Autosize>
-          </Popover.Dropdown>
-        </Popover>
+            );
+            return surface === 'popover' ? (
+              // Saved sizes can make the list taller than the screen: it scrolls.
+              <ScrollArea.Autosize mah="min(60vh, 480px)" type="auto">
+                {grid}
+              </ScrollArea.Autosize>
+            ) : (
+              grid
+            );
+          }}
+        </PopoverOrSheet>
       )}
     </div>
   );

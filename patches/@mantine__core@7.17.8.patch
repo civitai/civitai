@@ -1,0 +1,438 @@
+diff --git a/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs b/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
+index f99f78b22530a5589d87873a7d82c910b61bf41e..e12a9edbf90a5f884c48e3aaa9842d6b141ff808 100644
+--- a/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
++++ b/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
+@@ -6,120 +6,45 @@ require('react');
+ require('react/jsx-runtime');
+ require('@mantine/hooks');
+ 
++// Patched (civitai): one pass over the props instead of destructuring every style prop name and
++// rebuilding `rest` with an object rest spread. `rest` matches the rest spread: the own enumerable
++// keys (strings in order, then symbols) that are not style props. `styleProps` holds the defined
++// style props in the order below, which parseStyleProps relies on (`m` before `mt`, and so on).
++// One difference: inherited and non-enumerable style props are read only when at least one style
++// prop is an own enumerable key. Otherwise they end up in neither object, where the original
++// destructuring extracted them. Every Mantine caller passes a fresh rest-spread props object,
++// which has neither kind.
++const STYLE_PROP_KEYS = ["m","mx","my","mt","mb","ml","mr","me","ms","p","px","py","pt","pb","pl","pr","pe","ps","bd","bg","c","opacity","ff","fz","fw","lts","ta","lh","fs","tt","td","w","miw","maw","h","mih","mah","bgsz","bgp","bgr","bga","pos","top","left","bottom","right","inset","display","flex","hiddenFrom","visibleFrom","lightHidden","darkHidden","sx"];
++const STYLE_PROP_KEY_SET = new Set(STYLE_PROP_KEYS);
+ function extractStyleProps(others) {
+-  const {
+-    m,
+-    mx,
+-    my,
+-    mt,
+-    mb,
+-    ml,
+-    mr,
+-    me,
+-    ms,
+-    p,
+-    px,
+-    py,
+-    pt,
+-    pb,
+-    pl,
+-    pr,
+-    pe,
+-    ps,
+-    bd,
+-    bg,
+-    c,
+-    opacity,
+-    ff,
+-    fz,
+-    fw,
+-    lts,
+-    ta,
+-    lh,
+-    fs,
+-    tt,
+-    td,
+-    w,
+-    miw,
+-    maw,
+-    h,
+-    mih,
+-    mah,
+-    bgsz,
+-    bgp,
+-    bgr,
+-    bga,
+-    pos,
+-    top,
+-    left,
+-    bottom,
+-    right,
+-    inset,
+-    display,
+-    flex,
+-    hiddenFrom,
+-    visibleFrom,
+-    lightHidden,
+-    darkHidden,
+-    sx,
+-    ...rest
+-  } = others;
+-  const styleProps = filterProps.filterProps({
+-    m,
+-    mx,
+-    my,
+-    mt,
+-    mb,
+-    ml,
+-    mr,
+-    me,
+-    ms,
+-    p,
+-    px,
+-    py,
+-    pt,
+-    pb,
+-    pl,
+-    pr,
+-    pe,
+-    ps,
+-    bd,
+-    bg,
+-    c,
+-    opacity,
+-    ff,
+-    fz,
+-    fw,
+-    lts,
+-    ta,
+-    lh,
+-    fs,
+-    tt,
+-    td,
+-    w,
+-    miw,
+-    maw,
+-    h,
+-    mih,
+-    mah,
+-    bgsz,
+-    bgp,
+-    bgr,
+-    bga,
+-    pos,
+-    top,
+-    left,
+-    bottom,
+-    right,
+-    inset,
+-    display,
+-    flex,
+-    hiddenFrom,
+-    visibleFrom,
+-    lightHidden,
+-    darkHidden,
+-    sx
+-  });
++  const rest = {};
++  let hasStyleProp = false;
++  const ownKeys = Object.keys(others);
++  for (let i = 0; i < ownKeys.length; i++) {
++    const key = ownKeys[i];
++    if (STYLE_PROP_KEY_SET.has(key)) {
++      hasStyleProp = true;
++    } else if (key === "__proto__") {
++      Object.defineProperty(rest, key, { value: others[key], writable: true, enumerable: true, configurable: true });
++    } else {
++      rest[key] = others[key];
++    }
++  }
++  const symbols = Object.getOwnPropertySymbols(others);
++  for (let i = 0; i < symbols.length; i++) {
++    if (Object.prototype.propertyIsEnumerable.call(others, symbols[i])) {
++      rest[symbols[i]] = others[symbols[i]];
++    }
++  }
++  const styleProps = {};
++  if (hasStyleProp) {
++    for (let i = 0; i < STYLE_PROP_KEYS.length; i++) {
++      const value = others[STYLE_PROP_KEYS[i]];
++      if (value !== void 0) {
++        styleProps[STYLE_PROP_KEYS[i]] = value;
++      }
++    }
++  }
+   return { styleProps, rest };
+ }
+ 
+diff --git a/cjs/core/Box/style-props/parse-style-props/parse-style-props.cjs b/cjs/core/Box/style-props/parse-style-props/parse-style-props.cjs
+index cc6b50a6a7226e538c3987128ee7722c1e91d8c9..140070554668ef7dfd7d42dbdf6a00fe9b6b42b8 100644
+--- a/cjs/core/Box/style-props/parse-style-props/parse-style-props.cjs
++++ b/cjs/core/Box/style-props/parse-style-props/parse-style-props.cjs
+@@ -39,11 +39,26 @@ function getBreakpointValue(value, breakpoint) {
+   }
+   return value;
+ }
++function hasOwnEnumerableKey(object) {
++  for (const key in object) {
++    if (Object.prototype.hasOwnProperty.call(object, key)) {
++      return true;
++    }
++  }
++  return false;
++}
+ function parseStyleProps({
+   styleProps,
+   data,
+   theme
+ }) {
++  // Patched (civitai): no style props -> the exact shape the reduce + sortMediaQueries below
++  // return for an empty object, without running them. One difference: a `styleProps` of
++  // undefined or null also returns this shape, where the original threw. Every Mantine caller
++  // passes the object extractStyleProps returned.
++  if (!hasOwnEnumerableKey(styleProps)) {
++    return { hasResponsiveStyles: false, styles: {}, inlineStyles: {}, media: [] };
++  }
+   return sortMediaQueries.sortMediaQueries(
+     keys.keys(styleProps).reduce(
+       (acc, styleProp) => {
+diff --git a/cjs/core/utils/filter-props/filter-props.cjs b/cjs/core/utils/filter-props/filter-props.cjs
+index d5fa03fe5617f61b979c1e4e7944cd774bf31c7d..2f86eccbadc32a559c3ff24445f667f8e4daab5a 100644
+--- a/cjs/core/utils/filter-props/filter-props.cjs
++++ b/cjs/core/utils/filter-props/filter-props.cjs
+@@ -1,13 +1,17 @@
+ 'use client';
+ 'use strict';
+ 
++// Patched (civitai): a plain loop instead of Object.keys().reduce(); same keys, same order.
+ function filterProps(props) {
+-  return Object.keys(props).reduce((acc, key) => {
++  const result = {};
++  const ownKeys = Object.keys(props);
++  for (let i = 0; i < ownKeys.length; i++) {
++    const key = ownKeys[i];
+     if (props[key] !== void 0) {
+-      acc[key] = props[key];
++      result[key] = props[key];
+     }
+-    return acc;
+-  }, {});
++  }
++  return result;
+ }
+ 
+ exports.filterProps = filterProps;
+diff --git a/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs b/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs
+index aa2d8677d9c4996b26d80163c7e3d51f7bf754f0..5e4e6882508b5a4370448ae3b9078fddc600306f 100644
+--- a/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs
++++ b/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs
+@@ -4,120 +4,45 @@ import 'react';
+ import 'react/jsx-runtime';
+ import '@mantine/hooks';
+ 
++// Patched (civitai): one pass over the props instead of destructuring every style prop name and
++// rebuilding `rest` with an object rest spread. `rest` matches the rest spread: the own enumerable
++// keys (strings in order, then symbols) that are not style props. `styleProps` holds the defined
++// style props in the order below, which parseStyleProps relies on (`m` before `mt`, and so on).
++// One difference: inherited and non-enumerable style props are read only when at least one style
++// prop is an own enumerable key. Otherwise they end up in neither object, where the original
++// destructuring extracted them. Every Mantine caller passes a fresh rest-spread props object,
++// which has neither kind.
++const STYLE_PROP_KEYS = ["m","mx","my","mt","mb","ml","mr","me","ms","p","px","py","pt","pb","pl","pr","pe","ps","bd","bg","c","opacity","ff","fz","fw","lts","ta","lh","fs","tt","td","w","miw","maw","h","mih","mah","bgsz","bgp","bgr","bga","pos","top","left","bottom","right","inset","display","flex","hiddenFrom","visibleFrom","lightHidden","darkHidden","sx"];
++const STYLE_PROP_KEY_SET = new Set(STYLE_PROP_KEYS);
+ function extractStyleProps(others) {
+-  const {
+-    m,
+-    mx,
+-    my,
+-    mt,
+-    mb,
+-    ml,
+-    mr,
+-    me,
+-    ms,
+-    p,
+-    px,
+-    py,
+-    pt,
+-    pb,
+-    pl,
+-    pr,
+-    pe,
+-    ps,
+-    bd,
+-    bg,
+-    c,
+-    opacity,
+-    ff,
+-    fz,
+-    fw,
+-    lts,
+-    ta,
+-    lh,
+-    fs,
+-    tt,
+-    td,
+-    w,
+-    miw,
+-    maw,
+-    h,
+-    mih,
+-    mah,
+-    bgsz,
+-    bgp,
+-    bgr,
+-    bga,
+-    pos,
+-    top,
+-    left,
+-    bottom,
+-    right,
+-    inset,
+-    display,
+-    flex,
+-    hiddenFrom,
+-    visibleFrom,
+-    lightHidden,
+-    darkHidden,
+-    sx,
+-    ...rest
+-  } = others;
+-  const styleProps = filterProps({
+-    m,
+-    mx,
+-    my,
+-    mt,
+-    mb,
+-    ml,
+-    mr,
+-    me,
+-    ms,
+-    p,
+-    px,
+-    py,
+-    pt,
+-    pb,
+-    pl,
+-    pr,
+-    pe,
+-    ps,
+-    bd,
+-    bg,
+-    c,
+-    opacity,
+-    ff,
+-    fz,
+-    fw,
+-    lts,
+-    ta,
+-    lh,
+-    fs,
+-    tt,
+-    td,
+-    w,
+-    miw,
+-    maw,
+-    h,
+-    mih,
+-    mah,
+-    bgsz,
+-    bgp,
+-    bgr,
+-    bga,
+-    pos,
+-    top,
+-    left,
+-    bottom,
+-    right,
+-    inset,
+-    display,
+-    flex,
+-    hiddenFrom,
+-    visibleFrom,
+-    lightHidden,
+-    darkHidden,
+-    sx
+-  });
++  const rest = {};
++  let hasStyleProp = false;
++  const ownKeys = Object.keys(others);
++  for (let i = 0; i < ownKeys.length; i++) {
++    const key = ownKeys[i];
++    if (STYLE_PROP_KEY_SET.has(key)) {
++      hasStyleProp = true;
++    } else if (key === "__proto__") {
++      Object.defineProperty(rest, key, { value: others[key], writable: true, enumerable: true, configurable: true });
++    } else {
++      rest[key] = others[key];
++    }
++  }
++  const symbols = Object.getOwnPropertySymbols(others);
++  for (let i = 0; i < symbols.length; i++) {
++    if (Object.prototype.propertyIsEnumerable.call(others, symbols[i])) {
++      rest[symbols[i]] = others[symbols[i]];
++    }
++  }
++  const styleProps = {};
++  if (hasStyleProp) {
++    for (let i = 0; i < STYLE_PROP_KEYS.length; i++) {
++      const value = others[STYLE_PROP_KEYS[i]];
++      if (value !== void 0) {
++        styleProps[STYLE_PROP_KEYS[i]] = value;
++      }
++    }
++  }
+   return { styleProps, rest };
+ }
+ 
+diff --git a/esm/core/Box/style-props/parse-style-props/parse-style-props.mjs b/esm/core/Box/style-props/parse-style-props/parse-style-props.mjs
+index 15f35825f74075703e71e1cc7d9270eba104bc7b..b13c56d68a4b5094a44b20c8c9db3c3c50f6793b 100644
+--- a/esm/core/Box/style-props/parse-style-props/parse-style-props.mjs
++++ b/esm/core/Box/style-props/parse-style-props/parse-style-props.mjs
+@@ -37,11 +37,26 @@ function getBreakpointValue(value, breakpoint) {
+   }
+   return value;
+ }
++function hasOwnEnumerableKey(object) {
++  for (const key in object) {
++    if (Object.prototype.hasOwnProperty.call(object, key)) {
++      return true;
++    }
++  }
++  return false;
++}
+ function parseStyleProps({
+   styleProps,
+   data,
+   theme
+ }) {
++  // Patched (civitai): no style props -> the exact shape the reduce + sortMediaQueries below
++  // return for an empty object, without running them. One difference: a `styleProps` of
++  // undefined or null also returns this shape, where the original threw. Every Mantine caller
++  // passes the object extractStyleProps returned.
++  if (!hasOwnEnumerableKey(styleProps)) {
++    return { hasResponsiveStyles: false, styles: {}, inlineStyles: {}, media: [] };
++  }
+   return sortMediaQueries(
+     keys(styleProps).reduce(
+       (acc, styleProp) => {
+diff --git a/esm/core/utils/filter-props/filter-props.mjs b/esm/core/utils/filter-props/filter-props.mjs
+index 97772aac871a157e7327e0d394594b4c24ce6aa2..3f1066954439ef280b42a214660a25c4621ca242 100644
+--- a/esm/core/utils/filter-props/filter-props.mjs
++++ b/esm/core/utils/filter-props/filter-props.mjs
+@@ -1,11 +1,15 @@
+ 'use client';
++// Patched (civitai): a plain loop instead of Object.keys().reduce(); same keys, same order.
+ function filterProps(props) {
+-  return Object.keys(props).reduce((acc, key) => {
++  const result = {};
++  const ownKeys = Object.keys(props);
++  for (let i = 0; i < ownKeys.length; i++) {
++    const key = ownKeys[i];
+     if (props[key] !== void 0) {
+-      acc[key] = props[key];
++      result[key] = props[key];
+     }
+-    return acc;
+-  }, {});
++  }
++  return result;
+ }
+ 
+ export { filterProps };

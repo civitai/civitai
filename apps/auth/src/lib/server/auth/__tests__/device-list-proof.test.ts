@@ -51,6 +51,7 @@ import { DELETE as removePost } from '../../../../routes/api/auth/accounts/+serv
 
 const DEVICE = 'device-1';
 const list = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}`;
+const families = (deviceId: string) => `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${deviceId}`;
 const user = (id: number) => ({ id, username: `u${id}` } as unknown as SessionUser);
 
 function makeCookies(initial: Record<string, string>) {
@@ -142,7 +143,7 @@ describe('signing in on a browser with an account list', () => {
   });
 
   it('a sign-in while an account in the list is signed in joins it and keeps the device id', async () => {
-    h.verified.set('prior', { sub: '100', jti: 'j' });
+    h.verified.set('prior', { signedAt: Date.now(), sub: '100', jti: 'j' });
     const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
 
     await establishSession(jar.cookies, user(300));
@@ -153,7 +154,7 @@ describe('signing in on a browser with an account list', () => {
   });
 
   it('a sign-in while a moderator in the list is impersonating someone joins it', async () => {
-    h.verified.set('prior', { sub: '400', jti: 'j', impersonatedBy: 100 });
+    h.verified.set('prior', { signedAt: Date.now(), sub: '400', jti: 'j', impersonatedBy: 100 });
     const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
 
     await establishSession(jar.cookies, user(300));
@@ -173,7 +174,7 @@ describe('signing in on a browser with an account list', () => {
   });
 
   it('a sign-in while some other account is signed in starts a new list on a new device id', async () => {
-    h.verified.set('prior', { sub: '400', jti: 'j' });
+    h.verified.set('prior', { signedAt: Date.now(), sub: '400', jti: 'j' });
     const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
 
     await establishSession(jar.cookies, user(300));
@@ -216,13 +217,81 @@ describe('account last used long ago', () => {
   });
 });
 
+describe('a prior session whose account was last used long ago', () => {
+  it('does not let a new account join the list', async () => {
+    const idle = String(Date.now() - TTL_MS - DAY_MS);
+    h.sys.lua.setHash(list(DEVICE), { '100': idle, '200': now });
+    h.verified.set('prior', { signedAt: Date.now(), sub: '100', jti: 'j' });
+    const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).not.toBe(DEVICE);
+    expect(h.sys.lua.hash(list(DEVICE))).toEqual({ '100': idle, '200': now });
+  });
+});
+
 describe('creating a list', () => {
   it('a second sign-in pair on the same new device id is refused rather than merged', async () => {
     const fresh = 'device-2';
-    expect(await linkAccount(fresh, 200, 100)).toBe('joined');
+    expect(await linkAccount(fresh, 200, 100)).toBe('created');
     expect(await linkAccount(fresh, 400, 300)).toBe('rotate');
     expect(Object.keys(h.sys.lua.hash(list(fresh))!).sort()).toEqual(['100', '200']);
     expect(h.sys.lua.pttl(list(fresh))).toBe(TTL_MS);
+  });
+});
+
+describe("the browser's family record", () => {
+  it('a sign-in that would start a new list is not proof for a family record it is not in', async () => {
+    const victim = 'device-3';
+    h.sys.lua.setSet(families(victim), ['victim-fam']);
+    h.verified.set('prior', { signedAt: Date.now(), sub: '300', sid: 'atk-fam', jti: 'j' });
+    const jar = makeCookies({ 'civ-device': victim, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(301));
+
+    expect(jar.device()).not.toBe(victim);
+    expect(h.sys.lua.set(families(victim))).toEqual(['victim-fam']);
+    expect(h.sys.lua.hash(list(victim))).toBeUndefined();
+    expect(h.sys.lua.errors).toEqual([]);
+  });
+
+  it('a first added account keeps the device id and starts the list', async () => {
+    const device = 'device-5';
+    h.sys.lua.setSet(families(device), ['fam-a']);
+    h.verified.set('prior', { signedAt: Date.now(), sub: '100', sid: 'fam-a', jti: 'j' });
+    const jar = makeCookies({ 'civ-device': device, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(200));
+
+    expect(jar.device()).toBe(device);
+    expect(Object.keys(h.sys.lua.hash(list(device))!).sort()).toEqual(['100', '200']);
+    expect(h.sys.lua.set(families(device))).toEqual(['fam-a']);
+  });
+
+  it('a single-account browser signing in after its session lapsed moves to a new device id', async () => {
+    const device = 'device-6';
+    h.sys.lua.setSet(families(device), ['old-fam']);
+    const jar = makeCookies({ 'civ-device': device });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).not.toBe(device);
+    expect(h.sys.lua.set(families(device))).toEqual(['old-fam']);
+    expect(h.sys.lua.set(families(jar.device()!))).toHaveLength(1);
+  });
+
+  it('an account in the list signing in again joins the family record', async () => {
+    const device = 'device-4';
+    h.sys.lua.setSet(families(device), ['old-fam']);
+    h.sys.lua.setHash(list(device), { '300': now, '301': now });
+    const jar = makeCookies({ 'civ-device': device });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).toBe(device);
+    expect(h.sys.lua.set(families(device))).toHaveLength(2);
+    expect(h.sys.lua.set(families(device))).toContain('old-fam');
   });
 });
 

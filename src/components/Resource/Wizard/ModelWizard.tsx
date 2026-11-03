@@ -505,7 +505,7 @@ export function ModelWizard() {
     data: model,
     isInitialLoading: modelLoading,
     isError: modelError,
-  } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
+  } = trpc.model.getById.useQuery({ id: Number(id), forEditor: true }, { enabled: !!id });
 
   const isTraining = model?.uploadType === ModelUploadType.Trained;
 

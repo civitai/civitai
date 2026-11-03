@@ -3220,6 +3220,7 @@ export interface CommentV3 {
   pinnedAt: Date | null;
   reactionCount: number;
   legacyV1Id: number | null;
+  removedByAuthor: boolean;
   reactions?: CommentV3Reaction[];
   reports?: CommentV3Report[];
   mutes?: CommentMute[];
@@ -3489,6 +3490,26 @@ export interface EventCosmeticScoreDaily {
   modelLikes: number;
   points: number;
   updatedAt: Date;
+}
+
+export interface EventTurfSticker {
+  id: bigint;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: JsonValue;
+  createdAt: Date;
+  removedAt: Date | null;
+  removedById: number | null;
+}
+
+export interface EventTurfStock {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Date;
 }
 
 export interface CreatorMilestone {
@@ -4118,6 +4139,21 @@ export interface BountyBenefactor {
   awartedTo?: BountyEntry | null;
   currency: Currency;
   buzzTransactionId: string[];
+}
+
+export interface BountyUnpaidAward {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: string[];
+  winnerUserId: number | null;
+  ownerId: number | null;
+  recordedById: number | null;
+  recordedAt: Date;
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Date | null;
 }
 
 export interface BountyEngagement {

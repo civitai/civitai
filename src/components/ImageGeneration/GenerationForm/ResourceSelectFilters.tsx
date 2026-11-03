@@ -29,9 +29,10 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
-import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { mobileMenuSheetZIndex, remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -129,21 +130,34 @@ export function ResourceSelectFiltersDropdown() {
       disabled={!filterLength}
       inline
     >
-      <Button
-        // className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={colorScheme === 'dark' ? 'filled' : 'light'}
-        rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-        size="compact-sm"
-      >
-        <Group gap={4} wrap="nowrap">
-          <IconFilter size={16} />
+      {mobile ? (
+        <FilterButton
+          icon={IconFilter}
+          iconOnly
+          variant="default"
+          onClick={() => setOpened((o) => !o)}
+          data-expanded={opened}
+        >
           Filters
-        </Group>
-      </Button>
+        </FilterButton>
+      ) : (
+        <Button
+          color="gray"
+          radius="xl"
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          rightSection={
+            <IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />
+          }
+          onClick={() => setOpened((o) => !o)}
+          data-expanded={opened}
+          size="compact-sm"
+        >
+          <Group gap={4} wrap="nowrap">
+            <IconFilter size={16} />
+            Filters
+          </Group>
+        </Button>
+      )}
     </Indicator>
   );
 
@@ -275,13 +289,15 @@ export function ResourceSelectFiltersDropdown() {
 
   return (
     <Popover
-      zIndex={200}
+      // Portaled: the toolbar sits inside the picker's scrolling results, which would clip this
+      // tall dropdown. Portaled, it has to clear the dialog stack, as the remix menu does.
+      withinPortal
+      zIndex={remixMenuZIndex}
       position="bottom-end"
       shadow="md"
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
-      // withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
@@ -294,6 +310,7 @@ export function ResourceSelectFiltersDropdown() {
 }
 
 export function ResourceSelectSort() {
+  const mobile = useIsMobile();
   const availability = useSortAvailability();
   const { sort, setSort } = useResourceSelectContext();
 
@@ -309,6 +326,8 @@ export function ResourceSelectSort() {
       value={sort}
       onClick={(value) => setSort(value as ResourceSort)}
       options={options}
+      iconOnly={mobile}
+      aria-label={mobile ? `Sort: ${resourceSort[sort]}` : undefined}
     />
   );
 }

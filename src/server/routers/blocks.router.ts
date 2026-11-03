@@ -3,6 +3,15 @@ import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from 
 import * as z from 'zod';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
+  APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_IMPORT_ACCESS,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
+import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
   PAGE_SLOT_ID,
@@ -30,6 +39,7 @@ import type {
 // because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
 // not import this router. See that module's docblock for why a second copy is banned.
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import {
   assertSharedWriteTrust,
   hasLinkedOAuthAccount,
@@ -70,6 +80,8 @@ import {
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
+  checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -195,13 +207,13 @@ import { updateBlockUserSettingsFromClaims } from '~/server/services/blocks/user
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 import {
   computeListingProblems,
+  listingProblemInput,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 // The ONE spelling of "which moderation actions can explain a removal". Value import:
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isRedCapableHost } from '~/server/utils/server-domain';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -386,6 +398,10 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertGenerationInputsUsable,
+  opaqueInputUrlsIn,
+} from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
@@ -1955,6 +1971,7 @@ async function createBlockTextToImageStep(opts: {
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
     isWhatIf: opts.whatIf,
     isGreen: opts.isGreen,
+    inputGate: { entry: 'appBlocks', isApiCaller: false },
   });
   // The block path is plain txt2img with no snippet fan-out, so the graph
   // always yields exactly one step. Fail closed if that invariant breaks rather
@@ -2072,6 +2089,59 @@ async function appBlockDetailVisibleTo(
     resolveViewerAudienceFloor({ user }),
   ]);
   return listingVisibleInStore({ status: listing.status, visibility: level.visibility, floor });
+}
+
+/**
+ * What follows a PROMPTED scope grant (`blocks.grantScopes`) recorded for `appBlockId`: the app
+ * the viewer consented to, which with `from` is the import's SOURCE app rather than the caller.
+ */
+async function afterPromptedGrant(
+  userId: number,
+  appBlockId: string,
+  manifest: unknown,
+  revokedScopesAfterClear: string[] | null
+): Promise<void> {
+  // ── RE-PUBLISH THE IN-FLIGHT SUPPRESSION MARKER, but only if this consent actually
+  // lifted something.
+  //
+  // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
+  // write did not touch revocations — an ordinary consent with nothing suppressed — and
+  // calling `publish` with an empty list there would DELETE a live marker, reopening in
+  // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
+  // suppression really was lifted, and the marker should go so the app stops being refused
+  // before the TTL elapses.
+  //
+  // A pre-migration database has three outcomes:
+  //   * `revoked_at` was never set (the common row) → `unrevokeData` returns early and
+  //     `revocationData` has nothing to subtract, so this is reached with `null`.
+  //   * `revoked_at` set and the re-consent covers everything granted → `[]`: nothing is
+  //     withheld afterwards, so a stale marker must go.
+  //   * `revoked_at` set and it does not → `PRECONDITION_FAILED`, so this is never reached.
+  //
+  // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
+  // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
+  // token lifetime of refusals on a permission they just re-granted — annoying, and it
+  // self-heals when the marker expires. Failing to NARROW it (the revoke path) leaves a
+  // permission the user withdrew in force, which does not self-correct in any sense the
+  // user can see. So a failure here must not 500 a successful consent write.
+  if (revokedScopesAfterClear !== null) {
+    await ConsentRevocation.publish({
+      userId,
+      appBlockId,
+      revokedScopes: revokedScopesAfterClear,
+    }).catch(() => {
+      /* see above — widening access is the direction that may safely fail */
+    });
+  }
+  if (
+    env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
+    (manifest as { auth?: unknown } | null)?.auth === 'oauth'
+  ) {
+    const { syncOauthConsentFromGrant } = await import(
+      '~/server/services/blocks/oauth-consent-sync.service'
+    );
+    await syncOauthConsentFromGrant({ userId, appBlockId });
+  }
 }
 
 export const blocksRouter = router({
@@ -3170,35 +3240,6 @@ export const blocksRouter = router({
     // live/removed listing state. A publish request stays `approved` after an owner
     // unpublish, so the request status alone can't tell live from owner-hidden. One
     // batched findMany (NOT per-row) keyed by appBlockId.
-    // Additive projection (advisory listing-completeness warning on
-    // /apps/my-submissions): the asset ids + key text fields + a screenshot
-    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-    // helper below. Purely additive — the owner-controls fields are unchanged.
-    const listingByBlockId = new Map<
-      string,
-      {
-        id: string;
-        status: string;
-        iconId: number | null;
-        coverId: number | null;
-        description: string | null;
-        tagline: string | null;
-        category: string | null;
-        screenshotCount: number;
-        contentRating: string | null;
-        /**
-         * The listing's kind, threaded into `computeListingProblems` so the three
-         * empty-text problems name the right remedy.
-         *
-         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
-         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
-         * place that has to stay in step with that filter, and it would go wrong
-         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
-         * the column costs nothing and cannot drift.
-         */
-        kind: string;
-      }
-    >();
     // The listing projection both queries below select — the keyed backing listing and the
     // pre-approval draft — so the two feed `computeListingProblems` identically.
     const listingSelect = {
@@ -3226,7 +3267,7 @@ export const blocksRouter = router({
       appBlockId: string | null;
       slug?: string;
       status: string;
-      kind?: string | null;
+      kind: ListingProblemKind;
       iconId: number | null;
       coverId: number | null;
       description: string | null;
@@ -3235,41 +3276,18 @@ export const blocksRouter = router({
       contentRating?: string | null;
       _count: { screenshots: number };
     };
-    const toListingFacts = (l: ProjectedListing) => ({
-      id: l.id,
-      status: l.status,
-      // A narrow test fake that ignores `select` yields `undefined`; both `where`
-      // clauses admit only on-site rows, so that is the honest fallback.
-      kind: l.kind ?? 'onsite',
-      iconId: l.iconId,
-      coverId: l.coverId,
-      description: l.description,
-      tagline: l.tagline,
-      category: l.category,
-      screenshotCount: l._count.screenshots,
-      contentRating: l.contentRating ?? null,
-    });
+    const listingByBlockId = new Map<string, ProjectedListing>();
 
-    // 🔴 THE PRE-APPROVAL DRAFT OF A FIRST-VERSION REQUEST. W13 draft-at-submit mints the
-    // app's on-site listing at SUBMIT (`submitVersion`: status='draft', appBlockId=NULL,
-    // userId=submitter), and that is the row /apps/mine reads and flags. Keyed on
-    // `appBlockId` alone, this read never found it — a pending first version has no
-    // AppBlock until approve — so `problems` came back EMPTY for exactly the listing
-    // /apps/mine was reporting as "cannot be published yet": two surfaces running the
-    // same `computeListingProblems` over the same listing and disagreeing. Resolved with
-    // `approveRequest`'s OWN `draftTransitionWhere` (slug + owner + draft + unkeyed), so
-    // the listing flagged here is the one that approve will transition — never a draft
-    // another user holds on a released slug. Only for unkeyed PENDING / REJECTED rows: a
-    // withdraw deletes the draft (a later draft on the slug is not that row's), and a
-    // reject keeps it for the resubmit.
-    //
-    // Deliberately feeds `problems` ONLY. `appListingId` / `listingStatus` stay the
-    // backing (keyed) listing's — their consumers drive owner unpublish/republish, which
-    // a pre-approval draft is not eligible for.
+    // Pre-approval draft of an unkeyed pending/rejected first version (no AppBlock until
+    // approve). Uses approveRequest's draftTransitionWhere so we flag the listing approve
+    // will transition, never another user's draft on a released slug. Withdraw deletes the
+    // draft, so it is read only for pending/rejected. Feeds `problems` ONLY:
+    // appListingId/listingStatus drive owner unpublish/republish, which a draft is not
+    // eligible for.
     const readsDraft = (r: RawRow) =>
       !r.appBlock?.id && (r.status === 'pending' || r.status === 'rejected');
     const draftSlugs = [...new Set(rows.filter(readsDraft).map((r: RawRow) => r.slug))];
-    const draftBySlug = new Map<string, ReturnType<typeof toListingFacts>>();
+    const draftBySlug = new Map<string, ProjectedListing>();
     if (draftSlugs.length) {
       const { draftTransitionWhere } = await import(
         '~/server/services/blocks/publish-request.service'
@@ -3281,7 +3299,7 @@ export const blocksRouter = router({
         },
         select: listingSelect,
       })) as ProjectedListing[];
-      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, toListingFacts(d));
+      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, d);
     }
 
     if (appBlockIds.length) {
@@ -3290,9 +3308,22 @@ export const blocksRouter = router({
         select: listingSelect,
       })) as ProjectedListing[];
       for (const l of listings) {
-        if (l.appBlockId) listingByBlockId.set(l.appBlockId, toListingFacts(l));
+        if (l.appBlockId) listingByBlockId.set(l.appBlockId, l);
       }
     }
+    // The scan dimension of `problems` (blocked / still-scanning media), batched over every
+    // listing the page reports on, as /apps/mine reads it.
+    const { loadListingAssetScansBatch } = await import(
+      '~/server/services/blocks/app-listing-assets.service'
+    );
+    const problemListings = [
+      ...new Map(
+        [...listingByBlockId.values(), ...draftBySlug.values()].map((l) => [l.id, l])
+      ).values(),
+    ];
+    const scansByListingId = await loadListingAssetScansBatch(
+      problemListings.map((l) => ({ id: l.id, iconId: l.iconId, coverId: l.coverId }))
+    );
 
     // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
     // action — so the UI distinguishes an owner-hidden listing (last event
@@ -3362,22 +3393,13 @@ export const blocksRouter = router({
         // listing. Empty only when there is no listing row at all (a legacy pending
         // request from before draft-at-submit, or a draft create that failed).
         problems: problemsListing
-          ? computeListingProblems({
-              kind: problemsListing.kind as ListingProblemKind,
-              iconId: problemsListing.iconId,
-              coverId: problemsListing.coverId,
-              screenshotCount: problemsListing.screenshotCount,
-              description: problemsListing.description,
-              tagline: problemsListing.tagline,
-              category: problemsListing.category,
-              status: problemsListing.status,
-              contentRating: problemsListing.contentRating,
-              declaredContentRating: declaredListingRating({
+          ? computeListingProblems(
+              listingProblemInput(problemsListing, {
                 kind: problemsListing.kind,
                 appRating: r.appBlock?.contentRating,
-                listingRating: problemsListing.contentRating,
-              }),
-            }).problems
+                assetScans: scansByListingId.get(problemsListing.id) ?? [],
+              })
+            ).problems
           : [],
         // Whether the manifest declares a launchable page (drives the Open-live →
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
@@ -3521,6 +3543,33 @@ export const blocksRouter = router({
           .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY)
           .nullable()
           .optional(),
+        /**
+         * With `apps:storage:import`: the imports the consent modal DISPLAYED (from
+         * `getStorageImports`). The grant records exactly these, and only when they equal the
+         * approved manifest's current imports — a version approved while the prompt was open
+         * is refused, never recorded as consented to.
+         */
+        storageImports: z
+          .array(
+            z.object({
+              from: z.string().regex(APP_STORAGE_IMPORT_FROM_RE),
+              collections: z
+                .array(z.string().regex(APP_STORAGE_COLLECTION_NAME_RE))
+                .min(1)
+                .max(APP_STORAGE_MAX_IMPORT_COLLECTIONS),
+              access: z.enum(APP_STORAGE_IMPORT_ACCESS),
+            })
+          )
+          .max(APP_STORAGE_MAX_IMPORTS)
+          .optional(),
+        /**
+         * The blockId of a SOURCE app `appBlockId` imports from: the viewer grants
+         * `apps:storage:publish` to that source, for this app's writes there (the block asked with
+         * `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }`). `scopes` must then be
+         * exactly that scope, with no budget or imports; see `grantImportSourcePublish` for which
+         * sources qualify.
+         */
+        from: z.string().regex(APP_STORAGE_IMPORT_FROM_RE).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -3530,6 +3579,17 @@ export const blocksRouter = router({
           message: 'Apps are not available to this account',
         });
       }
+      if (
+        input.from !== undefined &&
+        (input.scopes.some((s) => s !== APP_STORAGE_PUBLISH_SCOPE) ||
+          input.buzzBudgetPerDay !== undefined ||
+          input.storageImports !== undefined)
+      ) {
+        const { SOURCE_PUBLISH_ONLY_MESSAGE } = await import(
+          '~/server/services/apps/storage-import-grant.service'
+        );
+        throw new TRPCError({ code: 'BAD_REQUEST', message: SOURCE_PUBLISH_ONLY_MESSAGE });
+      }
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
         select: { status: true, manifest: true, approvedScopes: true, version: true },
@@ -3537,6 +3597,23 @@ export const blocksRouter = router({
       if (!block) throw throwNotFoundError('App block not found');
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      if (input.from !== undefined) {
+        const { grantImportSourcePublish } = await import(
+          '~/server/services/apps/storage-import-grant.service'
+        );
+        const { source, revokedScopesAfterClear } = await grantImportSourcePublish({
+          userId: ctx.user!.id,
+          consumer: {
+            id: input.appBlockId,
+            manifest: block.manifest,
+            approvedScopes: block.approvedScopes,
+          },
+          from: input.from,
+          host: ctx.req?.headers?.host ?? '',
+        });
+        await afterPromptedGrant(ctx.user!.id, source.id, source.manifest, revokedScopesAfterClear);
+        return { ok: true, granted: [APP_STORAGE_PUBLISH_SCOPE], buzzBudgetPerDay: undefined };
       }
       // Ceiling = manifest.scopes ∩ approvedScopes, via the SHARED `effectiveBlockScopes`
       // helper — the same rule, from the same module, as `getInstallConfig`'s install-time
@@ -3604,12 +3681,55 @@ export const blocksRouter = router({
           })
         ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
+      // `apps:storage:import`: the consent covers exactly what the prompt DISPLAYED — each source
+      // app with its collections and access, one row per source. The client sends what it
+      // showed; it must equal the approved manifest's imports now, or nothing is recorded.
+      // Written BEFORE the scope ledger, so a refusal here (or a database without the table)
+      // refuses the whole consent rather than recording a scope no source is granted for.
+      if (toGrant.includes(APP_STORAGE_IMPORT_SCOPE)) {
+        if (input.storageImports === undefined) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `storageImports is required to grant ${APP_STORAGE_IMPORT_SCOPE}`,
+          });
+        }
+        const { canonicalImports, recordStorageImportGrants, resolveDeclaredImports } =
+          await import('~/server/services/apps/storage-import-grant.service');
+        const imports = await resolveDeclaredImports(block.manifest, {
+          host: ctx.req?.headers?.host ?? '',
+        });
+        if (canonicalImports(input.storageImports) !== canonicalImports(imports)) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message:
+              'What this app can reach in other apps changed while the prompt was open. Close it and try again.',
+          });
+        }
+        await recordStorageImportGrants({
+          userId: ctx.user!.id,
+          consumerAppBlockId: input.appBlockId,
+          keepUnshown: imports.flatMap((i) => (i.unshownAppBlockId ? [i.unshownAppBlockId] : [])),
+          grants: imports.flatMap((i) =>
+            i.source
+              ? [
+                  {
+                    sourceAppBlockId: i.source.appBlockId,
+                    collections: i.collections,
+                    access: i.access,
+                  },
+                ]
+              : []
+          ),
+        });
+      }
       const cleared = await recordScopeGrant({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
         version: block.version ?? '',
         scopes: toGrant,
-        // 🔴 THE PROMPTED PATH, AND THE ONLY CALLER THAT MAY PASS THIS. A user who just
+        // 🔴 A PROMPTED PATH: ONE OF THE ONLY TWO CALLERS THAT MAY PASS THIS. This one, and
+        // `grantImportSourcePublish` (reached from this mutation with `from`), which passes it
+        // for exactly `apps:storage:publish` in the SOURCE app the prompt named. A user who just
         // accepted a consent dialog naming these scopes is re-consenting to them, so any
         // prior per-scope revocation of exactly those scopes is lifted — and ONLY those
         // (the service computes `revoked_scopes ∖ scopes`; re-consenting to A must not
@@ -3627,57 +3747,12 @@ export const blocksRouter = router({
           ? { buzzBudgetPerDay: input.buzzBudgetPerDay }
           : {}),
       });
-      // ── RE-PUBLISH THE IN-FLIGHT SUPPRESSION MARKER, but only if this consent actually
-      // lifted something.
-      //
-      // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
-      // write did not touch revocations — an ordinary consent with nothing suppressed — and
-      // calling `publish` with an empty list there would DELETE a live marker, reopening in
-      // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
-      // suppression really was lifted, and the marker should go so the app stops being refused
-      // before the TTL elapses.
-      //
-      // ⚠️ A PRE-MIGRATION DATABASE HAS **THREE** OUTCOMES, AND BOTH EARLIER VERSIONS OF THIS
-      // COMMENT NAMED ONE. It first grouped "a database without the column" with `null`; round-5
-      // review pointed out the round-4 commit had falsified that, and the correction then listed
-      // only the two new cases — which over-corrected, as round 6 measured. All three:
-      //   * `revoked_at` was never set (the DOMINANT row) → `unrevokeData` takes its
-      //     `!wasWholeGrantRevoked` early return and never touches `clearedTo`, and
-      //     `revocationData` has nothing to subtract, so this line IS reached, with `null`.
-      //     The original sentence was right about this one.
-      //   * `revoked_at` set and the re-consent covers everything granted → `[]`, the honest
-      //     value: nothing is withheld afterwards, so a stale marker must go.
-      //   * `revoked_at` set and it does not → throws `PRECONDITION_FAILED`, so this line is
-      //     never reached refusing.
-      // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
-      // database before storage, so no marker can exist to delete — and in the one shape where
-      // one could (migration applied, revoke taken, migration rolled back) deleting it after a
-      // full re-consent is exactly right.
-      //
-      // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
-      // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
-      // token lifetime of refusals on a permission they just re-granted — annoying, and it
-      // self-heals when the marker expires. Failing to NARROW it (the revoke path) leaves a
-      // permission the user withdrew in force, which does not self-correct in any sense the
-      // user can see. So a failure here must not 500 a successful consent write.
-      if (cleared.revokedScopesAfterClear !== null) {
-        await ConsentRevocation.publish({
-          userId: ctx.user!.id,
-          appBlockId: input.appBlockId,
-          revokedScopes: cleared.revokedScopesAfterClear,
-        }).catch(() => {
-          /* see above — widening access is the direction that may safely fail */
-        });
-      }
-      if (
-        env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
-        (block.manifest as { auth?: unknown }).auth === 'oauth'
-      ) {
-        const { syncOauthConsentFromGrant } = await import(
-          '~/server/services/blocks/oauth-consent-sync.service'
-        );
-        await syncOauthConsentFromGrant({ userId: ctx.user!.id, appBlockId: input.appBlockId });
-      }
+      await afterPromptedGrant(
+        ctx.user!.id,
+        input.appBlockId,
+        block.manifest,
+        cleared.revokedScopesAfterClear
+      );
       return {
         ok: true,
         granted: toGrant,
@@ -4022,6 +4097,74 @@ export const blocksRouter = router({
         fullyRevoked: result.fullyRevoked,
         budgetCleared: result.budgetCleared,
       };
+    }),
+
+  /**
+   * CROSS-APP STORAGE IMPORTS — what an app reaches in other apps through `storage.imports`, for
+   * the consent modal (which names each source app and its collections) and the per-source
+   * revoke on the permissions surfaces. The approved manifest is the only input; `granted` is the
+   * VIEWER's own per-source grant.
+   */
+  getStorageImports: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true, manifest: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      const { importGrantCovers, listStorageImportGrants, resolveDeclaredImports } = await import(
+        '~/server/services/apps/storage-import-grant.service'
+      );
+      const [imports, granted] = await Promise.all([
+        block.status === 'approved'
+          ? resolveDeclaredImports(block.manifest, { host: ctx.req?.headers?.host ?? '' })
+          : Promise.resolve([]),
+        listStorageImportGrants({
+          userId: ctx.user!.id,
+          consumerAppBlockId: input.appBlockId,
+        }),
+      ]);
+      return {
+        imports: imports.map((i) => ({
+          from: i.from,
+          sourceAppBlockId: i.source?.appBlockId ?? null,
+          sourceName: i.source?.name ?? null,
+          collections: i.collections,
+          access: i.access,
+          granted: i.source ? importGrantCovers(granted.get(i.source.appBlockId), i) : false,
+          hasGrant: i.source ? granted.has(i.source.appBlockId) : false,
+          // The source exists but this host may not show it (its rating): offered nowhere here.
+          unavailable: i.unavailable ?? null,
+        })),
+      };
+    }),
+
+  /**
+   * Withdraw the viewer's grant for ONE source app. Takes effect on the next storage request (the
+   * route reads the grant on every import call); the next token mint then withholds
+   * `apps:storage:import`, so the host offers the consent again. No status gate: narrowing is
+   * always allowed.
+   */
+  revokeStorageImport: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        sourceAppBlockId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { revokeStorageImportGrant } = await import(
+        '~/server/services/apps/storage-import-grant.service'
+      );
+      const revoked = await revokeStorageImportGrant({
+        userId: ctx.user!.id,
+        consumerAppBlockId: input.appBlockId,
+        sourceAppBlockId: input.sourceAppBlockId,
+      });
+      return { ok: true, revoked };
     }),
 
   /**
@@ -6645,104 +6788,17 @@ export const blocksRouter = router({
    * as block lifecycle errors but expects budget rejections as workflow
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
    *
-   * 🔴 RATE LIMIT: NONE, DELIBERATELY — AND HERE IS WHAT BOUNDS IT INSTEAD
-   * (clawgate #569, criterion 1). This is the one bridge procedure in the
-   * decision ledger that takes no per-request bucket, so the reason is recorded
-   * here rather than left to be re-derived.
+   * RATE LIMIT: two buckets, charged above every `kind` branch: `:submit:` per (install,
+   * token subject) and `:submit-user:` per subject across all installs, so a submit refused before
+   * `reserveAppSpend` still counts. It fails open on a Redis error like every blocks
+   * limiter; `reserveAppSpend` (per-app generation velocity, per-user and per-app daily
+   * Buzz) fails closed and still bounds accepted generations.
    *
-   * WHAT BOUNDS IT SERVER-SIDE, all inside `reserveAppSpend`
-   * (`services/blocks/app-spend-cap.service`) and the per-user reservation above
-   * it, on every `kind` (txt2img here; customComfy, step and pass-through each
-   * call the same belt in their own handler):
-   *   1. A per-app generation VELOCITY ceiling — a fixed-window count of GENS,
-   *      `velocityMaxGens` per `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS`. On the
-   *      `standard` tier every app has today that is 120 per 60 s, i.e. 2/s
-   *      AGGREGATE ACROSS EVERY INSTALL of the app — tighter than any per-instance
-   *      request-rate limit worth shipping here, so a second bound on the same
-   *      quantity would bound nothing while adding a way to break a generation.
-   *      🔴 THAT CONCLUSION IS TIER-SCOPED, AND AN EARLIER REVISION OF THIS
-   *      DOCBLOCK GENERALISED IT WITHOUT SAYING SO. `trusted` is 600/60 s and
-   *      `platform` is 3,000/60 s = 50 gens/s (`app-cap-limits.constants.ts`), and
-   *      a moderator `velocityOverride` is clamped only by the absolute max — so on
-   *      a promoted app this ceiling is LOOSER than the poll bucket this same
-   *      change judged appropriate. The argument below holds on `standard`, which
-   *      is every app today; it weakens as apps are promoted, and that is the
-   *      trigger to revisit rather than a reason to act now.
-   *   2. The per-user daily Buzz cap, and the per-app aggregate daily Buzz
-   *      ceiling (`dailyBuzz`), both reserved before the orchestrator is called.
-   *   3. The per-call budget the token itself carries (`claims.buzzBudget`).
-   *
-   * 🔴 THE TWO HOLES IN THAT, STATED BECAUSE THEY ARE OPEN. Do not read the
-   * paragraph above as a ceiling on REQUESTS; it is a ceiling on ACCEPTED
-   * generations.
-   *   (a) A submit REJECTED BEFORE `reserveAppSpend` never increments the
-   *       velocity counter — a version resolve, a checkpoint resolve, the
-   *       entitlement gate and the cost computation have all run by then. A block
-   *       looping on a body that fails one of those gates is doing real origin
-   *       work that no counter sees.
-   *   (b) G8 is SKIPPED for `claims.dev === true`. A dev token is self-bound (only
-   *       the owner can spend, only their own Buzz, still under the per-user daily
-   *       cap and the dev-session backstop), so the anti-Sybil aggregate does not
-   *       apply — but neither does its velocity half.
-   *   (c) 🔴 THE VELOCITY COUNTER IS NEVER REFUNDED, AND IT IS APP-WIDE. Its key is
-   *       `…:vel:<appBlockId>:<bucket>` — no user, no install — and the throw-path
-   *       rollback in this file refunds the per-user reservation, the per-app DAILY
-   *       key and the dev-session key, but not the velocity key (`refundAppSpend`
-   *       takes an `AppSpendDailyKey` and can only decrement that one). So a submit
-   *       that fails AFTER the reserve permanently consumes one slot of the app's
-   *       shared allowance at zero net Buzz cost. Since that allowance is the whole
-   *       thing standing in for a request limit here, one install can degrade
-   *       generation for every other viewer of the same app. A per-instance bucket
-   *       is precisely the control that would bound one install's share of it —
-   *       which is the sharpest argument AGAINST the decision recorded here, and it
-   *       is written down rather than omitted.
-   *
-   * 🔴 THE OTHER DIRECTION, BECAUSE THE RECORD MUST NOT BE ONE-SIDED EITHER:
-   * `reserveAppSpend` FAILS CLOSED on a Redis error (`denyAppSpend('unavailable')`),
-   * where every limiter in `block-catalog-rate-limit.ts` fails OPEN. So the one
-   * procedure left without a request bucket is the one bounded by the stricter
-   * posture, and a Redis incident stops spend here while it removes the ceiling
-   * everywhere else on this bridge.
-   *
-   * 🔴 THE DECISION WAS RE-OPENED IN THE ROUND-0 AUDIT AND IS STILL `none` — BUT THE
-   * ORIGINAL REASON WAS WRONG AND IS RETRACTED HERE RATHER THAN QUIETLY RESTATED. It
-   * read: "not shipped because the spend path is the highest-blast-radius surface in
-   * this file". That objection does not reach the placement this same docblock names —
-   * the TOP of the resolver, above the `kind` branch, where nothing has been reserved,
-   * nothing needs refunding, and the usual counter (a throw breaks a paid generation) is
-   * at its weakest because no money has moved and this procedure already returns a
-   * failed-shape snapshot for the over-budget case. An objection that does not apply to
-   * the option under discussion is not an argument; it was a reflex dressed as one.
-   *
-   * THE REASON THAT SURVIVES IS NARROWER AND IT IS ABOUT FIT, NOT RISK. Hole (c) is not
-   * "this procedure is called too often" — it is "the counter stands in for a request
-   * limit and cannot tell a burnt reservation from a delivered generation". A
-   * per-instance request bucket is a blunt instrument for that: it would bound one
-   * install's call RATE while leaving the shared velocity counter just as unrefundable,
-   * so an app with two installs still drains it. The precise fix is to make the velocity
-   * key refundable — `AppSpendResult` exposes only `dailyKey`, so the throw-path rollback
-   * has no velocity key to return even in principle — and that is a change to
-   * `app-spend-cap.service.ts`'s contract, not to this resolver.
-   * **Closing condition: a PR that returns the velocity key alongside `dailyKey` and
-   * refunds it on the same paths that refund the daily reservation.** Until then hole (c)
-   * stands, stated, as the open item it is.
-   *
-   * It is also not shipped here because the card that raised the question asks for limits
-   * to be argued rather than added reflexively, and because nothing on this surface can
-   * currently grade one: see the refusal counter noted at hole (a).
-   *
-   * 🔴 AND THE EVIDENCE THAT WOULD SETTLE IT DOES NOT EXIST — an earlier revision of
-   * this docblock named `block_scope_invocations` as the source for "the rejected-
-   * submit rate per instance", and that source is STRUCTURALLY EMPTY for exactly the
-   * population in question: this resolver's single `recordScopeInvocation` write sits
-   * AFTER every `TRPCError` throw in it, so a rejected submit — the thing hole (a) is
-   * about — records nothing, under any load. The companion claim that "nothing is
-   * under load" cited `civitai_app_block_requests_total`, which is incremented only
-   * inside the REST `withBlockScope` wrapper and never counts a bridge call at all.
-   * Both were wrong in the reassuring direction. **What would create the evidence: a
-   * counter on bridge calls and on pre-reserve submit rejections, labelled by
-   * procedure. Closing condition for reopening this decision: that counter exists and
-   * shows a non-trivial pre-reserve rejection rate on any instance.**
+   * Open: the per-app velocity counter is never refunded (`refundAppSpend` takes only the
+   * daily key), so a submit that fails after the reserve still spends one slot of the
+   * app's shared allowance. **Closing condition: a PR that returns the velocity key
+   * alongside `dailyKey` and refunds it on the same paths that refund the daily
+   * reservation.**
    */
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -6771,12 +6827,33 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
+      const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const userRate = await checkBlockSubmitUserRateLimit(claims.sub);
+      if (!userRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit-user');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
       if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
       }
+      // After the limiters, so a flood is turned away by Redis before it reaches the primary.
+      // An anonymous subject is refused later, by each branch.
+      const subjectId = parseSubjectUserId(claims.sub);
+      if (subjectId != null) await assertAccountNotRestricted(subjectId);
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
@@ -6796,6 +6873,13 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
+      if (input.body.kind === 'workflow' || input.body.kind === 'step')
+        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          confirmedSubmit:
+            input.body.kind === 'step' &&
+            isPassThroughStepBody(input.body) &&
+            input.body.quoteId !== undefined,
+        });
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9535,6 +9619,8 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
+  if (input.body.kind === 'workflow' || input.body.kind === 'step')
+    await assertStepOrWorkflowInputsUsable(input.body, claims);
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10681,6 +10767,42 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  */
 function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
+}
+
+/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
+async function assertStepOrWorkflowInputsUsable(
+  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
+  claims: BlockClaims,
+  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+) {
+  // The arm's own token checks first: a caller refused those never pays for the walk below.
+  const userId = confirmedSubmit
+    ? parseSubjectUserId(claims.sub)
+    : await assertStepRequestAllowed(claims);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  const [entry, inputs] =
+    body.kind === 'workflow'
+      ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
+      : isPassThroughStepBody(body)
+      ? (['appBlocksPassThrough', body.input] as const)
+      : (['appBlocksStep', body.params] as const);
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
+  }
+  await assertGenerationInputsUsable({
+    urls,
+    userId,
+    entry,
+    isApiCaller: false,
+    opaqueInput: true,
+  });
 }
 
 /**

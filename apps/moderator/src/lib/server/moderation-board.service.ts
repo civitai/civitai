@@ -8,7 +8,7 @@ import type { task_enum_0648e184 } from './moderator-db/enums';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
-import { REPORT_ENTITIES } from './report-entities';
+import { REPORT_ENTITIES, reportLinkFilter } from './report-entities';
 import { SYSTEM_USER_ID } from './users.service';
 
 // Retool's Moderation Status board — the parts that are NOT counts.
@@ -27,22 +27,25 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
   // unactioning is also working the queue, and Retool counted it. `statusSetAt` is null on rows that
   // predate the column. The system user closes expired Clavata reports daily; it is not a person.
   const rows = await Promise.all(
-    REPORT_ENTITIES.map(async ({ label, reportTable }) => {
+    REPORT_ENTITIES.map(async (e) => {
+      const { type, label, reportTable } = e;
       const { rows: found } = await sql<{ statusSetAt: Date; username: string | null }>`
         SELECT r."statusSetAt", u."username"
         FROM "Report" r
         JOIN ${sql.table(reportTable)} rt ON rt."reportId" = r."id"
         LEFT JOIN "User" u ON u."id" = r."statusSetBy"
-        WHERE r."status" != 'Pending' AND r."statusSetAt" IS NOT NULL
+        WHERE ${reportLinkFilter(e, 'rt.reportId')}
+          AND r."status" != 'Pending' AND r."statusSetAt" IS NOT NULL
           AND r."statusSetBy" IS DISTINCT FROM ${SYSTEM_USER_ID}
         ORDER BY r."statusSetAt" DESC
         LIMIT 1
       `.execute(dbRead);
 
       const row = found[0];
+      // Keyed by type, not label: a label is not guaranteed unique.
       return row
         ? ([
-            label,
+            type,
             { type: `${label} reports`, at: row.statusSetAt, moderator: row.username },
           ] as const)
         : null;

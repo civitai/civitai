@@ -32,8 +32,7 @@ export const linkedAccountReview = createJob(
       },
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
-      log: (type, name, data) =>
-        void logToAxiom({ type, name, ...data }, 'moderation').catch(() => undefined),
+      log: (type, name, data) => void logToAxiom({ type, name, ...data }).catch(() => undefined),
     });
     return failUnlessRan(result);
   },

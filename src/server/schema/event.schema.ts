@@ -50,9 +50,15 @@ export const teamRosterSchema = eventSchema.extend({
 export type PlaceableContentPageInput = z.infer<typeof placeableContentPageSchema>;
 export const placeableContentPageSchema = eventSchema.extend({
   entityType: z.enum(CosmeticEntity),
-  // Images: the id to page below. Models and articles: an offset into the caller's own list.
+  // Images: the last image id shown. Models and articles: an offset into the caller's own list.
   cursor: z.number().int().min(0).optional(),
 });
 
 export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
 export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });
+
+export type ShowcaseHatInput = z.infer<typeof showcaseHatSchema>;
+// null clears the pick, so the avatar shows the default hat again.
+export const showcaseHatSchema = eventSchema.extend({
+  cosmeticId: z.number().int().positive().nullable(),
+});

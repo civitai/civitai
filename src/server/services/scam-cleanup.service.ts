@@ -1,4 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import {
+  hasV3SurfaceTwinSql,
+  prismaRunner,
+  setCommentFlags,
+  v3SurfaceCommentIds,
+} from '~/server/services/commentv3/write.service';
 
 export type ScamCleanup = 'chatMessages' | 'comments' | 'commentsV2' | 'none';
 export const SCAM_CLEANUP_MAX_RECORDED_IDS = 5000;
@@ -13,6 +20,21 @@ export type ScamCleanupRecord = {
 };
 
 type IdRow = { id: number };
+
+// The `commentsV2` kind also covers CommentV3-write surfaces. The tables share one id sequence, so
+// one id list restores both. A comment there is set through `setCommentFlags`, CommentV3 first with
+// its CommentV2 row kept in step, the lock order of every write on those surfaces; the CommentV2
+// update leaves it out.
+async function setV3SurfaceHidden(userId: number, hidden: boolean, among?: number[]) {
+  const ids = await v3SurfaceCommentIds(
+    prismaRunner(dbWrite),
+    userId,
+    hidden ? 'NOT hidden' : 'hidden',
+    among
+  );
+  if (!ids.length) return [];
+  return dbWrite.$transaction((tx) => setCommentFlags(prismaRunner(tx), ids, { hidden }));
+}
 
 function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Date) {
   switch (kind) {
@@ -33,11 +55,15 @@ function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Da
         RETURNING id
       `;
     case 'commentsV2':
-      return dbWrite.$queryRaw<IdRow[]>`
-        UPDATE "CommentV2" SET hidden = true, "updatedAt" = ${at}
-        WHERE "userId" = ${userId} AND hidden IS NOT TRUE
-        RETURNING id
-      `;
+      return (async () => [
+        ...(await dbWrite.$queryRaw<IdRow[]>`
+          UPDATE "CommentV2" c2 SET hidden = true, "updatedAt" = ${at}
+          WHERE c2."userId" = ${userId} AND c2.hidden IS NOT TRUE
+            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}
+          RETURNING id
+        `),
+        ...(await setV3SurfaceHidden(userId, true)).map(({ id }) => ({ id })),
+      ])();
   }
 }
 
@@ -72,10 +98,14 @@ function restore(userId: number, record: ScamCleanupRecord) {
         WHERE id = ANY(${record.ids}::int[]) AND "userId" = ${userId} AND hidden
       `;
     case 'commentsV2':
-      return dbWrite.$executeRaw`
-        UPDATE "CommentV2" SET hidden = false
-        WHERE id = ANY(${record.ids}::int[]) AND "userId" = ${userId} AND hidden
-      `;
+      return (async () => {
+        const v2 = await dbWrite.$executeRaw`
+          UPDATE "CommentV2" c2 SET hidden = false
+          WHERE c2.id = ANY(${record.ids}::int[]) AND c2."userId" = ${userId} AND c2.hidden
+            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}
+        `;
+        return v2 + (await setV3SurfaceHidden(userId, false, record.ids)).length;
+      })();
   }
 }
 

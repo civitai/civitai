@@ -48,6 +48,8 @@ import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
+import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
+import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
@@ -83,6 +85,7 @@ import {
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
 } from '~/server/jobs/event-engine-work';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
@@ -130,6 +133,7 @@ import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-che
 import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
+import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nudge';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
@@ -184,6 +188,7 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
+  birthday2026IdleHatNudge,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
@@ -224,6 +229,7 @@ export const jobs: Job[] = [
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -270,6 +276,8 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
+  reapDeletedAppStorageJob,
+  removeDeletedAccountAppDataJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,

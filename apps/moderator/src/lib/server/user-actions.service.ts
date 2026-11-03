@@ -10,6 +10,7 @@ import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
+import type { MembershipExtensionPreview, MembershipExtensionResult } from '$lib/membership-extend';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
@@ -21,8 +22,9 @@ import {
   MOD_GRANT_SOURCE_PREFIX,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
+import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getBuzz } from './buzz';
-import { bustUserCosmeticCaches } from './cache';
+import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
 import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
@@ -239,6 +241,7 @@ export type ModEndpoint =
   | 'bounty-entry-file/clear-check'
   | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
+  | 'bounty-unpaid-award/resolve'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
@@ -281,6 +284,7 @@ export type ModEndpoint =
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
+  | 'user/membership-extend'
   | 'user/message-as-civitai'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
@@ -310,6 +314,7 @@ export type ModReadEndpoint =
   | 'messages/inbox'
   | 'messages/thread'
   | 'user/legal-hold'
+  | 'user/membership-extend-preview'
   | 'user/reactions';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
@@ -632,8 +637,55 @@ export async function setMuted(input: {
 
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  // Without this the mute does not take effect until the user's session refreshes.
-  await invalidateUserSessions(input.userId);
+  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
+  // last because the orchestrator re-validates against the session's standing.
+  const bustStanding = () =>
+    bustKeyBestEffort(
+      `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
+      {
+        logName: 'account-standing.cache-bust-failed',
+        message: 'Could not drop the cached account standing after a mute',
+        details: { userId: input.userId },
+      }
+    );
+  await bustStanding();
+  try {
+    await invalidateUserSessions(input.userId);
+  } finally {
+    // Imported here: the orchestrator client does not load under the unit suites that import this
+    // file for its other actions.
+    const { revokeOrchestratorUserTokens } = await import('./orchestrator');
+    // Best-effort, like the revoke: the main app also refuses a muted account new generation tokens.
+    // The cookie is read now because the repeat below runs after this request has ended.
+    let cookie: string | undefined;
+    try {
+      cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
+    } catch {
+      cookie = undefined;
+    }
+    const expireGenerationCredentials = async () => {
+      const result = await postJson({
+        path: '/api/mod/user/expire-generation-credentials',
+        body: { userId: input.userId },
+        label: 'Expire generation credentials',
+        auth: 'session',
+        timeoutMs: 5_000,
+        cookie,
+      });
+      if (!result.ok)
+        void logAxiomError(new Error(result.error), {
+          name: 'mute.expire-generation-credentials-failed',
+          userId: input.userId,
+        });
+    };
+    await expireGenerationCredentials();
+    await revokeOrchestratorUserTokens(input.userId);
+    setTimeout(() => {
+      void bustStanding()
+        .then(expireGenerationCredentials)
+        .finally(() => revokeOrchestratorUserTokens(input.userId));
+    }, ACCOUNT_STANDING_REBUST_MS).unref?.();
+  }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);
   await recordUserActivity('Muted', input.userId, input.moderatorId);
   return { ok: true };
@@ -1661,6 +1713,49 @@ export async function revokeMembershipCode(input: {
   );
   if (result.ok) return { ok: true };
   return { ok: false, error: writeFailureError(result, REVOKE_MAY_HAVE_COMPLETED) };
+}
+
+// MEMBERSHIP EXTENSION (free days on a Stripe membership). The endpoint writes its own ModActivity
+// row and Axiom record, and its cooldown counts those rows, so no `logAction` here.
+
+// The endpoint makes several Stripe calls; a short client timeout reports a failure while the
+// extension lands. Past this, or past the proxy's own limit, the answer is EXTEND_OUTCOME_UNKNOWN.
+const EXTEND_TIMEOUT_MS = 120_000;
+
+export const EXTEND_OUTCOME_UNKNOWN =
+  'Outcome unknown: the extension may have gone through. Re-open this account and preview again before retrying; a repeat is refused if it did.';
+
+export async function previewMembershipExtension(input: {
+  userId: number;
+  days: number;
+}): Promise<{ ok: true; preview: MembershipExtensionPreview } | { ok: false; error: string }> {
+  const result = await readModEndpoint(
+    'user/membership-extend-preview',
+    { userId: input.userId, days: input.days },
+    'Preview extension',
+    60_000
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, preview: result.body as unknown as MembershipExtensionPreview };
+}
+
+export async function extendMembership(input: {
+  userId: number;
+  days: number;
+  reason: string;
+  expectedCurrentPeriodEnd: number;
+}): Promise<{ ok: true; result: MembershipExtensionResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-extend',
+    input,
+    'Extend membership',
+    EXTEND_TIMEOUT_MS
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, EXTEND_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as MembershipExtensionResult;
+  if (typeof body.ok !== 'boolean' || !Array.isArray(body.problems))
+    return { ok: false, error: EXTEND_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
 }
 
 const GRANT_MAY_HAVE_COMPLETED =

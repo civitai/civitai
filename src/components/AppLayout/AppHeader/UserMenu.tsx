@@ -185,7 +185,7 @@ function PopoverContent() {
   function handleToggleAccountSwitching() {
     setAccountSwitching((o) => !o);
   }
-  useHotkeys([['Escape', handleClose]]);
+  useHotkeys([['esc', handleClose]]);
 
   return (
     <div

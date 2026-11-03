@@ -35,8 +35,12 @@ const {
   canonRouteWalk,
   getStorylinePath,
   insertStorylineChapter,
+  linkStorylineChapter,
   setCanonChapter,
 } = await import('~/server/services/storyline.service');
+const { tombstoneChaptersForPlacements } = await import(
+  '~/server/services/storyline-chapter-removal.service'
+);
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
 
 const migration = (name: string) =>
@@ -351,7 +355,19 @@ beforeEach(async () => {
     moderatorNsfwLevel: null,
     createdAt: new Date('2026-10-01'),
     user: { id: OWNER, username: 'owner', bannedAt: null, deletedAt: null },
-    chapters: [{ id: 1, postId: null, post: null }],
+    chapters: [
+      {
+        id: 1,
+        postId: null,
+        removedAt: null,
+        post: {
+          nsfwLevel: NsfwLevel.PG,
+          publishedAt: new Date(0),
+          tosViolation: false,
+          user: { bannedAt: null, deletedAt: null },
+        },
+      },
+    ],
   } as never);
 });
 
@@ -639,6 +655,410 @@ describe('a chapter add whose parent changes after its first read', () => {
       });
 
       expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5204, canon: true });
+    });
+
+    // A moderator's takedown of a placement, as `takeDownApproved` runs it: nothing can continue a
+    // tombstone, so the main route must not end at one.
+    describe('after a moderator takes a chapter down', () => {
+      beforeEach(() => {
+        w.storylineChapter.updateMany.mockImplementation((async ({
+          where,
+        }: {
+          where: { placementId: { in: number[] } };
+        }) => {
+          const { affectedRows } = await db.pg.query(
+            `UPDATE "StorylineChapter" SET "removedAt" = now()
+             WHERE "placementId" = ANY($1::int[]) AND "removedAt" IS NULL`,
+            [where.placementId.in]
+          );
+          return { count: affectedRows ?? 0 };
+        }) as never);
+        // Refuses any other filter, so narrowing the read (say to unmarked chapters) fails here.
+        w.storylineChapter.findMany.mockImplementation((async ({
+          where,
+        }: {
+          where: { placementId: { in: number[] } };
+        }) => {
+          if (Object.keys(where).join() !== 'placementId')
+            throw new Error(`unexpected filter: ${JSON.stringify(where)}`);
+          return rows(`SELECT id FROM "StorylineChapter" WHERE "placementId" = ANY($1::int[])`, [
+            where.placementId.in,
+          ]);
+        }) as never);
+      });
+      const takeDown = async (chapterId: number, placementId: number) => {
+        await db.pg.query(`UPDATE "StorylineChapter" SET "placementId" = $2 WHERE id = $1`, [
+          chapterId,
+          placementId,
+        ]);
+        await w.$transaction((tx) =>
+          tombstoneChaptersForPlacements({ placementIds: [placementId] }, tx as never)
+        );
+      };
+      const addAtEnd = async () =>
+        addOwnerChapterAtEnd({ storylineId: STORY, postId: await post(), userId: OWNER });
+
+      it('ends the main path at the parent of a canon tip taken down, and adds there', async () => {
+        await takeDown(60, 900);
+
+        expect(await edgeOf(60)).toEqual({ parentChapterId: 6, canon: false });
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 6, canon: true });
+      });
+
+      it('keeps a chapter taken down mid-route on the main path, with the chapters after it', async () => {
+        await takeDown(5, 901);
+
+        expect(await edgeOf(5)).toEqual({ parentChapterId: C, canon: true });
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 60, canon: true });
+      });
+
+      // A takedown pressed again, or one from before removals cleared the route.
+      it('clears the route when a chapter already marked is taken down again', async () => {
+        await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 60`);
+        await takeDown(60, 900);
+
+        expect(await edgeOf(60)).toEqual({ parentChapterId: 6, canon: false });
+      });
+
+      it('walks up every parent of a rejoined tip, past tombstones on both', async () => {
+        // Storyline 2: root 7000 -> A 7001, and root -> X 7004 -> B 7002. A and B, both taken
+        // down before, rejoin at tip T 7003; T's canon edges kept them on their routes.
+        await db.pg.exec(`
+          INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
+            VALUES (2, 1, 'Rejoined', 1, now());
+          INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "removedAt") VALUES
+            (7000, 2, 1, 0, NULL), (7001, 2, 1, 1, now()), (7004, 2, 1, 1, NULL),
+            (7002, 2, 1, 2, now()), (7003, 2, 2, 3, NULL);
+          INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+            VALUES (2, 7001, 7000, true), (2, 7004, 7000, false), (2, 7002, 7004, true),
+              (2, 7003, 7001, true), (2, 7003, 7002, true);
+        `);
+        await takeDown(7003, 950);
+
+        expect(
+          await rows(
+            `SELECT "chapterId", "parentChapterId", canon FROM "StorylineChapterEdge"
+             WHERE "storylineId" = 2 ORDER BY "chapterId", "parentChapterId"`
+          )
+        ).toEqual([
+          { chapterId: 7001, parentChapterId: 7000, canon: false },
+          { chapterId: 7002, parentChapterId: 7004, canon: false },
+          { chapterId: 7003, parentChapterId: 7001, canon: false },
+          { chapterId: 7003, parentChapterId: 7002, canon: false },
+          { chapterId: 7004, parentChapterId: 7000, canon: false },
+        ]);
+        const { chapterId } = await addOwnerChapterAtEnd({
+          storylineId: 2,
+          postId: await post(),
+          userId: OWNER,
+        });
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 7000, canon: true });
+      });
+
+      it("clears a removed tip's edge though it has live side branches, and keeps them", async () => {
+        await db.pg.exec(`
+          INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth) VALUES (7100, 1, 2, 7);
+          INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+            VALUES (1, 7100, 60, false);
+        `);
+        await takeDown(60, 900);
+
+        expect([await edgeOf(60), await edgeOf(7100)]).toEqual([
+          { parentChapterId: 6, canon: false },
+          { parentChapterId: 60, canon: false },
+        ]);
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 6, canon: true });
+      });
+
+      it('walks up past an earlier tombstone when the leaf under it is taken down', async () => {
+        await takeDown(6, 902);
+        expect(await edgeOf(6)).toEqual({ parentChapterId: 5, canon: true });
+        await takeDown(60, 900);
+
+        expect([await edgeOf(60), await edgeOf(6)]).toEqual([
+          { parentChapterId: 6, canon: false },
+          { parentChapterId: 5, canon: false },
+        ]);
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5, canon: true });
+      });
+    });
+
+    // A route can still end at one: an insert or "Make main path" racing a removal, or a route
+    // from before removals cleared it. Adding at the end moves it back to the last live chapter.
+    it('adds after the last live chapter when the main path ends at tombstones', async () => {
+      await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id IN (6, 60)`);
+
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: STORY,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5, canon: true });
+      expect([await edgeOf(60), await edgeOf(6)]).toEqual([
+        { parentChapterId: 6, canon: false },
+        { parentChapterId: 5, canon: false },
+      ]);
+    });
+
+    // The server half of the end-of-chapter card's main-path "use a post": the card read 60 as the
+    // end, another chapter has landed since, and the add still goes on the main path. The card's
+    // side (sending the storyline, not 60) is pinned in StorylineInsertChapterModal.browser.test.
+    it('lands after a chapter added since the card read the end, where adding after that chapter would branch', async () => {
+      const { chapterId: moved } = await addOwnerChapter({
+        parentChapterId: 60,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: STORY,
+        postId: await post(),
+        userId: OWNER,
+      });
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: moved, canon: true });
+
+      // What the card's own chapter id would have done: a second way on from 60, not the end.
+      const { chapterId: stale } = await addOwnerChapter({
+        parentChapterId: 60,
+        postId: await post(),
+        userId: OWNER,
+      });
+      expect(await edgeOf(stale)).toEqual({ parentChapterId: 60, canon: false });
+    });
+
+    // "Join an existing chapter" from the end-of-chapter card on the main path: the card's end is
+    // checked under the storyline's lock, as the use-a-post add finds it there. The card's side
+    // (sending `atEnd`) is pinned in StorylineEndOfChapter.test.
+    describe('a join offered at the end', () => {
+      let joinable: number;
+      beforeEach(async () => {
+        w.storylineChapter.findMany.mockImplementation((async ({
+          where,
+        }: {
+          where: { id: { in: number[] } };
+        }) =>
+          (
+            await rows<Record<string, unknown> & { postId: number | null }>(
+              `SELECT c.id, c.depth, c."removedAt", c."postId", p."userId", p."nsfwLevel",
+                 p."publishedAt", p."tosViolation"
+               FROM "StorylineChapter" c LEFT JOIN "Post" p ON p.id = c."postId"
+               WHERE c.id = ANY($1::int[]) ORDER BY c.id`,
+              [where.id.in]
+            )
+          ).map(({ id, depth, removedAt, postId, ...post }) => ({
+            id,
+            depth,
+            removedAt,
+            post: postId
+              ? {
+                  ...post,
+                  id: postId,
+                  title: null,
+                  user: { username: 'owner', bannedAt: null, deletedAt: null },
+                }
+              : null,
+          }))) as never);
+        w.storylineChapterEdge.findMany.mockImplementation((async () =>
+          rows(
+            `SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge" WHERE "storylineId" = 1`
+          )) as never);
+        // A chapter 8 on branch 40 -> 41, one deeper than the end (60, chapter 7): joinable from it.
+        const { chapterId: under41 } = await addOwnerChapter({
+          parentChapterId: 41,
+          postId: await post(),
+          userId: OWNER,
+        });
+        ({ chapterId: joinable } = await addOwnerChapter({
+          parentChapterId: under41,
+          postId: await post(),
+          userId: OWNER,
+        }));
+      });
+      const joinEdge = async () =>
+        rows<{ canon: boolean }>(
+          `SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1 AND "parentChapterId" = 60`,
+          [joinable]
+        );
+
+      // The control for the refusal below: an always-refusing or inverted check fails here.
+      it('extends the main path when the end is still the one the card read', async () => {
+        await linkStorylineChapter({
+          parentChapterId: 60,
+          chapterId: joinable,
+          userId: OWNER,
+          atEnd: true,
+        });
+        expect(await joinEdge()).toEqual([{ canon: true }]);
+      });
+
+      it('refuses rather than branch when a chapter landed after the end the card read', async () => {
+        await addOwnerChapter({ parentChapterId: 60, postId: await post(), userId: OWNER });
+
+        await expect(
+          linkStorylineChapter({
+            parentChapterId: 60,
+            chapterId: joinable,
+            userId: OWNER,
+            atEnd: true,
+          })
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message:
+            'The story has a new last chapter since you opened this. Close it and join from there',
+        });
+        expect(await joinEdge()).toEqual([]);
+
+        // What the card's chapter id did before `atEnd`: a side branch off 60, not the main path.
+        await linkStorylineChapter({ parentChapterId: 60, chapterId: joinable, userId: OWNER });
+        expect(await joinEdge()).toEqual([{ canon: false }]);
+      });
+
+      // Every route writer, "Make main path" included, takes the storyline lock, so none can land
+      // here today. This plays one that skips it, giving 60 a canon child just before link reads
+      // it, to pin the canon check at the write as the backstop.
+      it('refuses rather than branch when a writer gives the end a canon child meanwhile', async () => {
+        const { chapterId: side } = await addOwnerChapter({
+          parentChapterId: 60,
+          postId: await post(),
+          userId: OWNER,
+        });
+        await db.pg.query(
+          `UPDATE "StorylineChapterEdge" SET canon = false WHERE "chapterId" = $1`,
+          [side]
+        );
+        const findCanon = w.storylineChapterEdge.findFirst.getMockImplementation()!;
+        let landed = false;
+        w.storylineChapterEdge.findFirst.mockImplementationOnce((async (args: never) => {
+          await db.pg.query(
+            `UPDATE "StorylineChapterEdge" SET canon = true WHERE "chapterId" = $1`,
+            [side]
+          );
+          landed = true;
+          return findCanon(args);
+        }) as never);
+
+        await expect(
+          linkStorylineChapter({
+            parentChapterId: 60,
+            chapterId: joinable,
+            userId: OWNER,
+            atEnd: true,
+          })
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message:
+            'The story has a new last chapter since you opened this. Close it and join from there',
+        });
+        // It landed where takesCanonSlot reads, after the end check (rolled back with the refusal).
+        expect(landed).toBe(true);
+        expect(await joinEdge()).toEqual([]);
+      });
+
+      // The one case the canon check at the write cannot see: the card's end has no canon child but
+      // is no longer on the main path ("Make main path" moved it elsewhere), so the join would be
+      // canon on a branch.
+      it('refuses a join from a chapter that is no longer the main path end, though nothing follows it', async () => {
+        // 51 ends the branch 30 -> 50 -> 51; the main path ends at 60.
+        const [{ chapterId: under41 }] = await rows<{ chapterId: number }>(
+          `SELECT "chapterId" FROM "StorylineChapterEdge" WHERE "parentChapterId" = 41`
+        );
+        await expect(
+          linkStorylineChapter({
+            parentChapterId: 51,
+            chapterId: under41,
+            userId: OWNER,
+            atEnd: true,
+          })
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message:
+            'The story has a new last chapter since you opened this. Close it and join from there',
+        });
+        expect(
+          await rows(`SELECT 1 FROM "StorylineChapterEdge" WHERE "parentChapterId" = 51`)
+        ).toEqual([]);
+      });
+
+      // "Make main path" on a chapter ABOVE the end moves the end without touching it, so only the
+      // storyline lock keeps it out of an at-end join or add. This database has one connection, so
+      // the wait itself cannot be played; pinned as the order the locks are asked for instead.
+      // Removing the storyline lock reopens civitai/civitai#7417's race.
+      it('"Make main path" locks the storyline before the parent, as the at-end join relies on', async () => {
+        // Each lock with its row and whether it is held by the write's transaction: one taken
+        // before it is released at once and holds nothing off.
+        const locks: string[] = [];
+        let inTransaction = false;
+        const transaction = w.$transaction.getMockImplementation()!;
+        w.$transaction.mockImplementation(((fn: (tx: unknown) => Promise<unknown>) =>
+          (transaction as (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown>)(
+            async (tx) => {
+              inTransaction = true;
+              try {
+                return await fn(tx);
+              } finally {
+                inTransaction = false;
+              }
+            }
+          )) as never);
+        const query = w.$queryRaw.getMockImplementation()!;
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+          const sql = strings.join('?').replace(/\s+/g, ' ').trim();
+          if (sql.includes('FOR NO KEY UPDATE'))
+            locks.push(
+              `${inTransaction ? 'in' : 'OUTSIDE'} transaction: ${sql} [${values.join()}]`
+            );
+          return query(strings, ...values);
+        }) as never);
+        w.storylineChapterEdge.findMany.mockResolvedValueOnce([
+          {
+            parentChapterId: 40,
+            storylineId: STORY,
+            chapter: {
+              removedAt: null,
+              post: { tosViolation: false, user: { bannedAt: null, deletedAt: null } },
+            },
+          },
+        ] as never);
+        // Its two writes, clearing the old main way and setting the new one.
+        w.storylineChapterEdge.updateMany
+          .mockResolvedValueOnce({ count: 1 } as never)
+          .mockResolvedValueOnce({ count: 1 } as never);
+
+        await setCanonChapter({ chapterId: 41, parentChapterId: 40, userId: OWNER });
+        expect(locks).toEqual([
+          `in transaction: SELECT id FROM "Storyline" WHERE id = ? FOR NO KEY UPDATE [${STORY}]`,
+          'in transaction: SELECT id FROM "StorylineChapter" WHERE id = ? FOR NO KEY UPDATE [40]',
+        ]);
+      });
+
+      // The card reads past tombstones, so 5 is the end it shows: the check heals the route first,
+      // as the at-end add does, rather than refuse a join from the last live chapter.
+      it('joins at the last live chapter when the main path ends at tombstones', async () => {
+        await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id IN (6, 60)`);
+        const { chapterId: under40 } = await addOwnerChapter({
+          parentChapterId: 40,
+          postId: await post(),
+          userId: OWNER,
+        });
+
+        await linkStorylineChapter({
+          parentChapterId: 5,
+          chapterId: under40,
+          userId: OWNER,
+          atEnd: true,
+        });
+        expect(
+          await rows(
+            `SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1 AND "parentChapterId" = 5`,
+            [under40]
+          )
+        ).toEqual([{ canon: true }]);
+      });
     });
 
     it('refuses rather than branch when the end moves while it adds', async () => {

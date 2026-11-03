@@ -21,6 +21,10 @@ import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
 const createMultiAccountBuzzTransaction = vi.fn();
 const createBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction,
   createBuzzTransaction,
@@ -296,6 +300,38 @@ describe('the storyline continuation loop', () => {
     ]);
   });
 
+  it("leaves a collaborator's continuation in the owner's queue when they are removed while it is being paid for", async () => {
+    charge(100);
+    // Removed after the submission decided on auto-approval, before the approval runs.
+    createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      await dbMock.dbWrite.storylineCollaborator.deleteMany({
+        where: { storylineId: STORYLINE, userId: COLLABORATOR },
+      });
+      return { transactionCount: 1 };
+    });
+    const { id } = await submit(COLLABORATOR, COLLABORATOR_POST, 100);
+
+    expect(db.row('placement', { id })).toMatchObject({ status: 'pending', resolvedAt: null });
+    expect(chapterFor(id)).toBeUndefined();
+    expect(moneyCalls().payouts).toEqual([]);
+
+    // Still the owner's to take, as any other continuation would be.
+    await actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' });
+    expect(db.row('placement', { id })).toMatchObject({ status: 'approved', resolvedById: OWNER });
+  });
+
+  // The owner is told, before accepting, whether it joins the main path or starts a branch.
+  it("tells the owner's queue whether accepting starts a branch", async () => {
+    const queue = async () =>
+      (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS })).items;
+    await submit(STRANGER, STRANGER_POST);
+    expect((await queue()).map((item) => item.startsBranch)).toEqual([false]);
+
+    // A collaborator's chapter takes the main path out of chapter 1 first.
+    await submit(COLLABORATOR, COLLABORATOR_POST);
+    expect((await queue()).map((item) => item.startsBranch)).toEqual([true]);
+  });
+
   it('orders an endorsed chapter before a community one', async () => {
     // The first approved one takes the main path; the order is about the paths after it.
     for (const postId of [STRANGER_POST, ANOTHER_STRANGER_POST]) {
@@ -499,6 +535,48 @@ describe('the storyline continuation loop', () => {
       await expect(
         actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' })
       ).resolves.toEqual({ settled: true, status: 'approved' });
+    });
+  });
+
+  // A storyline its chapter 1 hides is refused to a non-participant's continuation, and declining
+  // one is refused too, so the owner is not paid a fee for one they could not accept. It waits.
+  describe('in a storyline its chapter 1 now hides from the placer', () => {
+    const setRootLevel = (nsfwLevel: number) => db.update('post', { id: ROOT_POST }, { nsfwLevel });
+
+    it('is refused both answers and left unrefunded, and is answerable once chapter 1 is rated', async () => {
+      charge(100);
+      const { id } = await submit(STRANGER, STRANGER_POST, 100);
+
+      setRootLevel(0);
+      for (const action of ['approve', 'decline'] as const)
+        await expect(
+          actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action }),
+          action
+        ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+      expect(moneyCalls().refunds).toEqual([]);
+      expect(moneyCalls().payouts).toEqual([]);
+
+      setRootLevel(PG);
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+      ).resolves.toEqual({ settled: true, status: 'declined' });
+    });
+
+    it('refuses a new one from a stranger as no chapter, before saying it is closed', async () => {
+      setRootLevel(0);
+      db.insert('placementSpace', {
+        surface: 'storyline',
+        entityType: 'storyline',
+        entityId: STORYLINE,
+        mode: 'off',
+        price: 0,
+        freeSlots: null,
+        settings: null,
+      });
+      await expect(submit(STRANGER, STRANGER_POST)).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      setRootLevel(PG);
+      await expect(submit(STRANGER, STRANGER_POST)).rejects.toThrow(STORYLINE_REFUSALS.notOpen);
     });
   });
 

@@ -152,6 +152,7 @@ export const storylineRouter = router({
       limit: input.limit,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      userId: input.userId,
     })
   ),
 

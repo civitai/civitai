@@ -227,7 +227,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-import { resolveActorFor } from '~/utils/resolve-attribution';
+import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
@@ -250,7 +250,7 @@ import {
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({
-  input: { excludeTrainingData, ...input },
+  input: { excludeTrainingData, forEditor, ...input },
   ctx,
 }: {
   input: GetModelByIdSchema;
@@ -272,9 +272,10 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
-    // Owners and moderators get the stored pair instead: this payload seeds the model editor.
+    // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
+    const editorRead = isOwner && !!forEditor;
     const withSfwFace =
-      !isOwner && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
+      !editorRead && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
 
     // Prevent non-owners from viewing scheduled/draft/unpublished models
     if (!isOwner && model.status !== ModelStatus.Published) {
@@ -1336,13 +1337,14 @@ export const getDownloadCommandHandler = async ({
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.
       // Safer for us.
-      ctx.track.modelVersionEvent({
-        type: 'Download',
-        modelId: modelVersion.model.id,
-        modelVersionId: modelVersion.id,
-        nsfw: modelVersion.model.nsfw,
-        time: now,
-      });
+      if (countsAsPublicDownload(ctx.user))
+        ctx.track.modelVersionEvent({
+          type: 'Download',
+          modelId: modelVersion.model.id,
+          modelVersionId: modelVersion.id,
+          nsfw: modelVersion.model.nsfw,
+          time: now,
+        });
 
       // Bust the downloads cache so the user sees their download immediately
       if (ctx.user?.id) {

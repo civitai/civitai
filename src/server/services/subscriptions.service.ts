@@ -345,29 +345,23 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
  * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
  * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
  */
-export const getCapTier = async (
-  userId: number,
-  /**
-   * The placement read path's already-evaluated `kysely-placement-reads`. Only that chain passes
-   * it: every other caller reads through Prisma whatever the flag says.
-   */
-  { useKysely = false }: { useKysely?: boolean } = {}
-): Promise<string | null> => {
-  const subscriptions = (await getCapTierSubscriptions(userId, useKysely)).filter(
-    (s) => !s.isBadState
-  );
-  return pickHighestTier(subscriptions)?.tier ?? null;
-};
+export const getCapTier = async (userId: number): Promise<string | null> =>
+  capTierOf(await getAllUserSubscriptions(userId));
 
-/** `getAllUserSubscriptions`, or its Kysely read. The primary on both paths: a cap decides a charge. */
-const getCapTierSubscriptions = async (userId: number, useKysely: boolean) => {
-  if (!useKysely) return getAllUserSubscriptions(userId);
+/**
+ * `getCapTier` through Kysely, for the placement read path (`placementPriceRange`): the same rows
+ * from the primary (a cap decides a charge), the same mapping and the same bad-state exclusion.
+ */
+export const getCapTierViaKysely = async (userId: number): Promise<string | null> => {
   const rows = (await listUserSubscriptionRows((await loadKyselyDb()).kyselyWrite, {
     userId,
     excludedStatuses: activeSubscriptionStatuses.notIn,
   })) as UserSubscriptionRow[];
-  return rows.map(toUserSubscription).filter((sub) => sub !== null);
+  return capTierOf(rows.map(toUserSubscription).filter((sub) => sub !== null));
 };
+
+const capTierOf = (subscriptions: NonNullable<ReturnType<typeof toUserSubscription>>[]) =>
+  pickHighestTier(subscriptions.filter((s) => !s.isBadState))?.tier ?? null;
 
 /**
  * `getCapTier` for many users in one query, keyed by user id: the same rows, the same mapping and

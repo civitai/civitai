@@ -9,14 +9,9 @@ const querySchema = z.object({ blockId: z.string().min(1).max(64) });
 const NOT_FOUND = { error: 'App not found' };
 
 /**
- * GET ?blockId= → `{ iframeSrc, host }`: a freshly signed dev-tunnel entry URL for the
- * `/apps/dev/<blockId>` page's Retry, which swaps it into the frame without remounting the host.
- *
- * Behind exactly the page's gates (`resolveDevTunnelPageFrame`), plus a full-scope session. Every
- * refusal the page answers with `notFound` — a gated account, a foreign or missing app, a
- * malformed id — is this one bare 404. 409 when the app is the caller's but there is no URL to sign:
- * no live tunnel, or its host is not published yet. The host comes only from the server-side tunnel
- * record, never from the request.
+ * GET ?blockId= → `{ iframeSrc, host }`, behind the `/apps/dev` page's gates and a full-scope
+ * session. 404 wherever the page is notFound; 409 when there is no URL to sign. The host comes only
+ * from the tunnel record.
  */
 export default AuthedEndpoint(async (req, res, user) => {
   if (!requireFullScopeSession(req, res)) return;

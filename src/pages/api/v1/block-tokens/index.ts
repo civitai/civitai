@@ -45,6 +45,7 @@ import {
   getGrantedScopes,
   partitionByConsent,
   consentGatedScopes,
+  CONSENT_SPEND_SCOPE,
 } from '~/server/services/blocks/scope-grant.service';
 import {
   isConsentRequiredError,
@@ -62,6 +63,10 @@ import {
   signPrivateRunPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
+import {
+  importScopeCoverage,
+  withholdUncoveredImportScope,
+} from '~/server/services/apps/storage-import-grant.service';
 import type { Logger } from '@civitai/next-axiom';
 
 /**
@@ -198,6 +203,11 @@ const PER_IP_RATE_LIMIT_MAX = 120;
 /** `scopes` minus the whole `isAppStorageScope` family, legacy scopes included. */
 function withoutDocumentStoreScopes(scopes: readonly string[]): string[] {
   return scopes.filter((s) => !isAppStorageScope(s));
+}
+
+/** A restricted account keeps its read scopes; only spend is withheld. */
+function withoutSpendScope(scopes: readonly string[]): string[] {
+  return scopes.filter((s) => s !== CONSENT_SPEND_SCOPE);
 }
 
 function projectClientCtx(slotContext: Record<string, unknown>): Record<string, unknown> {
@@ -510,7 +520,7 @@ async function tryDevTunnelScopedMint(args: {
   // soft-delete must not mint.
   const userRow = await dbWrite.user.findUnique({
     where: { id: userId },
-    select: { deletedAt: true, bannedAt: true },
+    select: { deletedAt: true, bannedAt: true, muted: true },
   });
   if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
 
@@ -548,7 +558,8 @@ async function tryDevTunnelScopedMint(args: {
   // Re-clamp idempotently as defense-in-depth over the resolver's output (the
   // authority boundary re-enforces the tunnel allowlist even if the stored/returned
   // set were ever tampered). Never re-adds a stripped scope — the source lacks it.
-  const granted = clampTunnelDeclaredScopes(app.scopes);
+  const clamped = clampTunnelDeclaredScopes(app.scopes);
+  const granted = userRow.muted ? withoutSpendScope(clamped) : clamped;
   const buzzBudget = resolveDevBuzzBudget(granted);
 
   const wantsOauth = tunnel?.declaredAuth ? tunnel.declaredAuth === 'oauth' : app.auth === 'oauth';
@@ -715,7 +726,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   // Soft-delete gate (M1 parity with the prod path + the ephemeral branch).
   const userRow = await dbWrite.user.findUnique({
     where: { id: userId },
-    select: { deletedAt: true, bannedAt: true },
+    select: { deletedAt: true, bannedAt: true, muted: true },
   });
   if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
 
@@ -750,7 +761,8 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   // from minting a spend-capable token for an app no moderator ever vetted. Any future
   // code that writes `approvedScopes` OUTSIDE the mod-approval flow (e.g. copying the raw
   // manifest scopes into it) would silently break dev-tunnel spend safety here.
-  const granted = clampTunnelDeclaredScopes(app.approvedScopes);
+  const clamped = clampTunnelDeclaredScopes(app.approvedScopes);
+  const granted = userRow.muted ? withoutSpendScope(clamped) : clamped;
   // BUDGET = the manifest's page.buzzBudgetPerGen (clamped to the dev cap), defaulting
   // as the ephemeral path when absent. Only meaningful if ai:write:budgeted survived.
   const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
@@ -1011,7 +1023,8 @@ async function tryPrivateRunMint(args: {
 
   // SCOPES — the approved snapshot through the private-run clamp. See
   // `clampPrivateRunScopes` for all three steps and why the editor strip is there.
-  const granted = clampPrivateRunScopes(app.approvedScopes, access.audience);
+  const clamped = clampPrivateRunScopes(app.approvedScopes, access.audience);
+  const granted = access.viewerMuted ? withoutSpendScope(clamped) : clamped;
   // BUDGET — the manifest's `page.buzzBudgetPerGen` clamped to the dev cap, defaulting
   // as every other non-public page path does. Only meaningful if `ai:write:budgeted`
   // survived the clamp, which it never does for an editor.
@@ -1373,15 +1386,17 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // M1 (continued): if the session is authenticated, confirm the user row
   // isn't soft-deleted. SessionUser may not carry deletedAt; the row read
   // here is cheap and authoritative.
+  let subjectMuted = false;
   if (userId != null) {
     const userRow = await dbWrite.user.findUnique({
       where: { id: userId },
-      select: { deletedAt: true, bannedAt: true },
+      select: { deletedAt: true, bannedAt: true, muted: true },
     });
     if (!userRow || userRow.deletedAt || userRow.bannedAt) {
       res.status(403).json({ error: 'account unavailable' });
       return;
     }
+    subjectMuted = userRow.muted;
   }
 
   const rawManifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
@@ -1504,10 +1519,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   let missingScopes: string[] = [];
   if (userId != null) {
     const granted = await getGrantedScopes({ userId, appBlockId: block.id, db: 'write' });
-    const { signable, missing } = partitionByConsent(requestedScopes, granted);
+    const { signable, missing } = withholdUncoveredImportScope(
+      partitionByConsent(requestedScopes, granted),
+      await importScopeCoverage(userId, block, requestedScopes, req.headers.host ?? '')
+    );
     manifestScopes = signable;
     missingScopes = missing;
     needsConsent = missing.length > 0;
+  }
+  if (subjectMuted) {
+    manifestScopes = withoutSpendScope(manifestScopes);
+    missingScopes = withoutSpendScope(missingScopes);
+    needsConsent = missingScopes.length > 0;
   }
 
   // Anonymous conversion: a logged-out viewer gets a token carrying ONLY the

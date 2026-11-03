@@ -31,6 +31,7 @@ const {
   getPendingStorylineContinuations,
   retractStorylineContinuation,
 } = await import('~/server/services/storyline-placement.service');
+const { StorylineHiddenRefusal } = await import('~/server/services/storyline.service');
 
 const PLACER = 20;
 const CHAPTER = 77;
@@ -169,6 +170,26 @@ describe('startReadyStorylineContinuations', () => {
     );
     await startReadyStorylineContinuations();
     expect(settlePlacement).toHaveBeenCalledWith({ placementId: ROW, action: 'expire' });
+  });
+
+  // Chapter 1 may yet be published or rated: the row waits out its deadline instead.
+  it.each(['unpublished', 'pendingRating'] as const)(
+    'leaves the row while a chapter 1 that is %s hides the storyline from the placer',
+    async (reason) => {
+      assertCanContinueStoryline.mockRejectedValue(new StorylineHiddenRefusal(reason));
+      await expect(startReadyStorylineContinuations()).resolves.toMatchObject({ refunded: 0 });
+      expect(settlePlacement).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.placement.updateMany).not.toHaveBeenCalled();
+    }
+  );
+
+  // A removed chapter 1 does not come back by waiting: holding the escrow to the deadline
+  // would only keep the placer's Buzz.
+  it('refunds the row at once when a removed chapter 1 hides the storyline from the placer', async () => {
+    assertCanContinueStoryline.mockRejectedValue(new StorylineHiddenRefusal('removed'));
+    await startReadyStorylineContinuations();
+    expect(settlePlacement).toHaveBeenCalledWith({ placementId: ROW, action: 'expire' });
+    expect(dbMock.dbWrite.placement.updateMany).not.toHaveBeenCalled();
   });
 
   // A transient failure is not a verdict: refunding on it would turn a blip

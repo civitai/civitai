@@ -11,6 +11,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/bounty-entry-file/reblock-check': () =>
     import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
+  '/api/mod/bounty-unpaid-award/resolve': () =>
+    import('~/pages/api/mod/bounty-unpaid-award/resolve'),
   '/api/mod/collection/set-item-tag': () => import('~/pages/api/mod/collection/set-item-tag'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
@@ -90,6 +92,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/creator-score-grant-revoke': () =>
     import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
+  '/api/mod/user/expire-generation-credentials': () =>
+    import('~/pages/api/mod/user/expire-generation-credentials'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/legal-hold': () => import('~/pages/api/mod/user/legal-hold'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),

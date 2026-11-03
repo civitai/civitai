@@ -192,6 +192,10 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'storage-doc-delete',
   // Reviewed and kept: the document's open reports were dismissed (later reports re-open it).
   'storage-doc-dismiss',
+  // A moderator edited the listing's details or store media without holding a seat on it
+  // (`app-listing-moderator-edit.ts`). Changes no `status`; owner-visible.
+  // `reason` — the owner-facing sentence.   `detail` — `details` | `media`.
+  'moderator-edit',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

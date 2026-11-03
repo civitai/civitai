@@ -767,6 +767,26 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
     await expectRefusedBeforeAnyWrite('icon');
   });
 
+  /**
+   * 🔴 The up-front read must SELECT iconId and coverId. The other cases here answer with a
+   * row whatever `select` asks for, so they cannot see a dropped column; this one answers only
+   * the selected columns. Without them the floor fails closed and every first approve is refused.
+   */
+  it('🔴 approves a draft that has both, through a lookup that returns only the selected columns', async () => {
+    const draft = { id: 'apl_draft_ok', iconId: 41, coverId: 47 };
+    db.write.appListing.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown>; select?: Record<string, unknown> }) => {
+        const row = await answer('draft', draft)(args);
+        if (!row || !args?.select) return row;
+        return Object.fromEntries(Object.entries(row).filter(([k]) => args.select![k]));
+      }
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+  });
+
   it('🔴 a moderator RESET re-approve of an art-less listing is EXEMPT: it restores the listing AND un-suspends the app', async () => {
     // Operator decision 2026-10-31: the floor gates a listing's FIRST go-live (a draft that was
     // never live). A mod reset (`resetOnsiteListingToPending`) bounces a listing that already
@@ -862,7 +882,7 @@ describe('approveRequest — media removed between the floor check and the trans
     expect(db.write.appBlockPublishRequest.update).not.toHaveBeenCalled();
   });
 
-  it('a 0-row transition whose draft still has both (already approved / cleaned) stays a warning, not a refusal', async () => {
+  it('a 0-row transition whose draft still has both (already approved / cleaned) does not refuse', async () => {
     db.write.appListing.findFirst.mockImplementation(
       async (args: { where?: Record<string, unknown> }) => {
         const w = args?.where ?? {};
@@ -873,18 +893,9 @@ describe('approveRequest — media removed between the floor check and the trans
       }
     );
     db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      await expect(
-        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
-      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
-      expect(
-        warn.mock.calls.some((c) =>
-          String(c[0]).includes('draft→approved transition matched 0 rows')
-        )
-      ).toBe(true);
-    } finally {
-      warn.mockRestore();
-    }
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+    expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledOnce();
   });
 });

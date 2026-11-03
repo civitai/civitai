@@ -189,6 +189,15 @@ describe('storyline router — account state refuses a storyline write', () => {
       expect(writer).toHaveBeenCalledTimes(1);
     });
   }
+
+  // The end-of-chapter card's join check: zod drops a key the schema does not name, which would
+  // turn the server's end check off with every other test still green.
+  it('passes the at-end check of a join through to the service', async () => {
+    await callerFor().linkChapter({ parentChapterId: 3, chapterId: 7, atEnd: true });
+    expect(writers.linkStorylineChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ parentChapterId: 3, chapterId: 7, atEnd: true })
+    );
+  });
 });
 
 describe('storyline router — stepping down and taking down', () => {

@@ -280,6 +280,15 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     expect(res._body.buzzBudget).toBe(1000);
   });
 
+  it('a restricted account mints without the spend scope or a budget', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null, muted: true });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    const arg = mockTokenService.sign.mock.calls[0][0] as any;
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.buzzBudget).toBeUndefined();
+  });
+
   it('sources the BRAND-NEW scope decision from the SESSION + the flag (never the body): passes both to the resolver', async () => {
     mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
       sessionId: 'bki_testsession',

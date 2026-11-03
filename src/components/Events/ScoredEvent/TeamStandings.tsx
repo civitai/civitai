@@ -15,8 +15,9 @@ import { Line } from 'react-chartjs-2';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import {
+  buildStandingsSeries,
   EVENT_CARD_SURFACE,
-  teamPositionsOverTime,
+  hourlySeries,
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -29,6 +30,13 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 ChartJS.register(TimeScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
 type Standings = RouterOutput['event']['getStandings'];
+type ChartMode = 'points' | 'position' | 'hourly';
+
+const CHART_TITLES: Record<ChartMode, string> = {
+  points: 'Points over time',
+  position: 'Positions over time',
+  hourly: 'Points per hour',
+};
 
 export function TeamStandings({
   standings,
@@ -43,44 +51,59 @@ export function TeamStandings({
   preview?: boolean;
 }) {
   const teamColor = useTeamColor();
-  const [mode, setMode] = useState<'points' | 'position'>('points');
+  const [chosenMode, setMode] = useState<ChartMode>('points');
+  // A snapshot taken before the hourly series existed has none to show.
+  const mode = chosenMode === 'hourly' && !standings.hourly ? 'points' : chosenMode;
   const lead = standings.teams[0]?.score ?? 0;
   const teams = standings.teams.length;
   const hatOf = (team: string) => standings.teamHats.find((h) => h.team === team)?.url;
   const charted = standings.history.some((h) => h.scores.length);
 
-  const data = useMemo(() => {
-    if (mode === 'points')
-      return {
-        datasets: standings.history.map(({ team, scores }) => ({
-          label: team,
-          data: scores.map((s) => ({ x: s.date.getTime(), y: s.score })),
-          borderColor: teamColor(team),
-          backgroundColor: teamColor(team),
-          borderWidth: team === myTeam ? 4 : 2,
-        })),
-      };
-    return {
-      datasets: teamPositionsOverTime(standings.history).map(({ team, positions }) => ({
+  // `teams` changes with every live push, so the tip is re-stamped then.
+  const data = useMemo(
+    () => ({
+      datasets: (mode === 'hourly' && standings.hourly
+        ? hourlySeries(standings.hourly)
+        : buildStandingsSeries({
+            mode: mode === 'position' ? 'position' : 'points',
+            history: standings.history,
+            teams: standings.teams,
+            liveTotals: !!standings.liveTotals,
+            now: Date.now(),
+          })
+      ).map(({ team, points }) => ({
         label: team,
-        data: positions.map((p) => ({ x: p.date.getTime(), y: p.position })),
+        data: points,
         borderColor: teamColor(team),
         backgroundColor: teamColor(team),
         borderWidth: team === myTeam ? 4 : 2,
       })),
-    };
-  }, [mode, standings.history, teamColor, myTeam]);
+    }),
+    [
+      mode,
+      standings.history,
+      standings.hourly,
+      standings.teams,
+      standings.liveTotals,
+      teamColor,
+      myTeam,
+    ]
+  );
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      elements: { point: { radius: 3 } },
+      elements: { point: { radius: mode === 'hourly' ? 0 : 3 } },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, grid: { display: false } },
+        x: {
+          type: 'time',
+          time: { unit: 'day', tooltipFormat: mode === 'hourly' ? 'MMM D, h A' : 'MMM D' },
+          grid: { display: false },
+        },
         y:
-          mode === 'points'
+          mode !== 'position'
             ? {
                 grid: { color: 'rgba(128,128,128,0.15)' },
                 ticks: { callback: (v) => abbreviateNumber(Number(v)) },
@@ -106,9 +129,12 @@ export function TeamStandings({
         color={myTeam && teamColor(myTeam)}
         subtitle={
           <>
-            {standings.liveTotals ? 'Points live · graph updated hourly' : 'Updated hourly'} · last
-            update{' '}
-            {standings.updatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            {standings.liveTotals
+              ? 'Points live'
+              : `Updated hourly · last update ${standings.updatedAt.toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}`}
           </>
         }
       />
@@ -168,9 +194,7 @@ export function TeamStandings({
               <Group justify="space-between">
                 <Group gap={6}>
                   <IconChartLine size={18} />
-                  <Text fw={700}>
-                    {mode === 'points' ? 'Points over time' : 'Positions over time'}
-                  </Text>
+                  <Text fw={700}>{CHART_TITLES[mode]}</Text>
                 </Group>
                 <SegmentedControl
                   size="xs"
@@ -180,10 +204,16 @@ export function TeamStandings({
                   data={[
                     { label: 'Points', value: 'points' },
                     { label: 'Position', value: 'position' },
+                    ...(standings.hourly ? [{ label: 'Per hour', value: 'hourly' }] : []),
                   ]}
                 />
               </Group>
-              <div className="relative min-h-[240px] flex-1">
+              {mode === 'hourly' && (
+                <Text size="xs" c="dimmed">
+                  Points each team earned in each hour (UTC), updated hourly.
+                </Text>
+              )}
+              <div className="relative min-h-[240px] flex-1 @md:min-h-[380px]">
                 <Line options={options} data={data} />
               </div>
             </Stack>
@@ -224,7 +254,7 @@ function ChartPending({
   const starts = formatDate(startDate, 'MMM D', true);
   return (
     <div
-      className="relative flex min-h-[240px] flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed border-gray-4 bg-gray-0 p-6 text-center dark:border-dark-3 dark:bg-dark-7"
+      className="relative flex min-h-[240px] flex-col @md:min-h-[380px] items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed border-gray-4 bg-gray-0 p-6 text-center dark:border-dark-3 dark:bg-dark-7"
       data-testid="chart-pending"
     >
       <svg

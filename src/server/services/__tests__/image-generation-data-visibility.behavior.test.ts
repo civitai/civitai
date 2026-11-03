@@ -31,7 +31,10 @@ vi.mock('@civitai/db-queries/image', () => ({ getImageGenerationFields: vi.fn() 
 
 import { getImageGenerationData } from '../image.service';
 import { imageResourcesCache } from '~/server/redis/caches';
-import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
 import type { MediaViewer } from '~/server/utils/image-media-visibility';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { getImageGenerationFields } from '@civitai/db-queries/image';
@@ -54,7 +57,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       minor boolean DEFAULT false,
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
-      "needsReview" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+      "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
       "scanJobs" jsonb
     );
@@ -783,5 +786,52 @@ describe('imageVisibilityConditions for image.get', () => {
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
     expect(await visibleTo(ANON)).toBe(false);
     expect(await visibleTo(SELF)).toBe(true);
+  });
+});
+
+describe('blockedFor on a single-image read', () => {
+  async function visibleTo(viewer: Viewer) {
+    const raw = pgliteRaw(db);
+    const where = Prisma.join(
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
+      ' AND '
+    );
+    const rows =
+      await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
+    return rows.length === 1;
+  }
+
+  async function assertAdmits(viewer: Viewer) {
+    try {
+      return (await assertImageVisibleToViewer({ id: 1, ...viewer })).id === 1;
+    } catch (e) {
+      if ((e as { code?: string }).code === 'NOT_FOUND') return false;
+      throw e;
+    }
+  }
+
+  it.each(['moderated', 'AiNotVerified', 'a prompt audit reason'])(
+    'shows an image blocked for %s only to its owner and moderators',
+    async (reason) => {
+      await seed({ image: { '"blockedFor"': `'${reason}'` } });
+      expect(await visibleTo(ANON)).toBe(false);
+      expect(await visibleTo(OTHER)).toBe(false);
+      expect(await visibleTo(SELF)).toBe(true);
+      expect(await visibleTo(MOD)).toBe(true);
+    }
+  );
+
+  it('applies to assertImageVisibleToViewer, which gates generation data', async () => {
+    await seed({ image: { '"blockedFor"': `'moderated'` } });
+    expect(await assertAdmits(ANON)).toBe(false);
+    expect(await assertAdmits(OTHER)).toBe(false);
+    expect(await assertAdmits(SELF)).toBe(true);
+    expect(await assertAdmits(MOD)).toBe(true);
+  });
+
+  it('leaves an unblocked image visible to everyone', async () => {
+    await seed({});
+    expect(await visibleTo(ANON)).toBe(true);
+    expect(await assertAdmits(OTHER)).toBe(true);
   });
 });

@@ -9,14 +9,13 @@
 > `/api/mod/openapi.json`.
 >
 > **The one difference that matters if you are porting a caller:** the old family authenticated a
-> *shared* moderator API key as a Bearer token. The new one authenticates the **acting moderator** —
+> _shared_ moderator API key as a Bearer token. The new one authenticates the **acting moderator** —
 > a session cookie, or that moderator's own API key — so `privileged` permissions, rate-limit buckets
 > and audit attribution are all per person rather than per key.
 >
 > This file is kept only so links to it explain themselves. Nothing below is live.
 
 ---
-
 
 These endpoints replace direct Retool → Postgres writes for moderator workflows. Every action runs a typed handler, validates input with Zod, applies a per-action rate limit, and emits a ClickHouse audit event before responding.
 
@@ -30,9 +29,9 @@ You're building a Retool workflow (or any external automation) that needs to per
 
 Privileged actions additionally require the matching `granted` permission in `user.permissions`. Each privileged action names the permission key it needs (declared on the action's `privileged` field, which maps to a `granted`-availability flag in `feature-flags.service.ts`). Today:
 
-| Action | Permission key |
-|---|---|
-| `user.updateIdentity` | `retoolUpdateIdentity` |
+| Action                 | Permission key          |
+| ---------------------- | ----------------------- |
+| `user.updateIdentity`  | `retoolUpdateIdentity`  |
 | `user.toggleModerator` | `retoolToggleModerator` |
 
 Grant these through the normal feature-flag grant flow (the same one that backs `paddleAdjustments`, `announcements`, `blocklists`, etc.).
@@ -62,16 +61,16 @@ Params are validated by the action's Zod schema. Validation errors return `400` 
 
 ## Domains
 
-| File | Domain | Actions |
-|------|--------|---------|
-| `src/pages/api/mod/retool/user.ts` | `user` | `clearProfile`, `mute`, `unmute`, `updateIdentity` (privileged), `toggleModerator` (privileged) |
-| `src/pages/api/mod/retool/comment.ts` | `comment` | `bulkDelete`, `removeAsTos` |
-| `src/pages/api/mod/retool/review.ts` | `review` | `setExclude`, `delete` |
-| `src/pages/api/mod/retool/cosmetic.ts` | `cosmetic` | `assignByTarget`, `unassign`, `createCosmetic`, `updateCosmetic`, `deleteCosmetic` |
-| `src/pages/api/mod/retool/image.ts` | `image` | `tagVote`, `setNsfwLevel` |
-| `src/pages/api/mod/retool/model.ts` | `model` | `bump` |
-| `src/pages/api/mod/retool/homeblock.ts` | `homeblock` | `create`, `update`, `delete`, `reorder` |
-| `src/pages/api/mod/retool/strike.ts` | `strike` | `create`, `void`, `getUserStrikes` |
+| File                                    | Domain      | Actions                                                                                         |
+| --------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| `src/pages/api/mod/retool/user.ts`      | `user`      | `clearProfile`, `mute`, `unmute`, `updateIdentity` (privileged), `toggleModerator` (privileged) |
+| `src/pages/api/mod/retool/comment.ts`   | `comment`   | `bulkDelete`, `removeAsTos`                                                                     |
+| `src/pages/api/mod/retool/review.ts`    | `review`    | `setExclude`, `delete`                                                                          |
+| `src/pages/api/mod/retool/cosmetic.ts`  | `cosmetic`  | `assignByTarget`, `unassign`, `createCosmetic`, `updateCosmetic`, `deleteCosmetic`              |
+| `src/pages/api/mod/retool/image.ts`     | `image`     | `tagVote`, `setNsfwLevel`                                                                       |
+| `src/pages/api/mod/retool/model.ts`     | `model`     | `bump`                                                                                          |
+| `src/pages/api/mod/retool/homeblock.ts` | `homeblock` | `create`, `update`, `delete`, `reorder`                                                         |
+| `src/pages/api/mod/retool/strike.ts`    | `strike`    | `create`, `void`, `getUserStrikes`                                                              |
 
 Read the source file for the authoritative schema of each action — every file leads with a doc comment that lists actions + params.
 
@@ -145,7 +144,7 @@ CREATE TABLE IF NOT EXISTS default.retoolAuditLog (
   fingerprint  String,
   action       String,           -- e.g. 'user.toggleModerator'
   privileged   UInt8,
-  outcome      Enum('ok' = 1, 'error' = 2),
+  outcome      LowCardinality(String), -- 'ok', 'error', or 'warning' (committed, a follow-up step failed; safe to repeat)
   errorMsg     Nullable(String),
   payload      String,           -- JSON-encoded input (action key stripped)
   affected     Nullable(String)  -- JSON-encoded { userIds: [...], etc. }
@@ -165,15 +164,19 @@ import { defineRetoolEndpoint, retoolAction } from '~/server/utils/retool-endpoi
 
 export default defineRetoolEndpoint('<domain>', {
   myNewAction: retoolAction({
-    input: z.object({ /* ... */ }),
+    input: z.object({
+      /* ... */
+    }),
     rateLimit: { max: 30, windowSeconds: 60 }, // optional, defaults to 60/60
-    privileged: 'retoolMyAction',              // optional permission key (add to feature-flags.service.ts as ['granted'])
+    privileged: 'retoolMyAction', // optional permission key (add to feature-flags.service.ts as ['granted'])
     async handler(input, ctx) {
       // ctx: { actor, tracker, req, res }
       const result = await someService(input);
       return {
         ...result,
-        affected: { /* IDs the audit row should capture */ },
+        affected: {
+          /* IDs the audit row should capture */
+        },
       };
     },
   }),
@@ -181,6 +184,7 @@ export default defineRetoolEndpoint('<domain>', {
 ```
 
 Conventions:
+
 1. The handler MUST call a service function — never `dbWrite.x.update` directly. If the service doesn't exist, add one.
 2. Bulk-friendly actions cap their list size in the schema (`.max(500)` is the default).
 3. For any action that grants role escalation, bypasses validation, or has a "very high" sensitivity rating in the parent ticket: pick a permission key (e.g. `retoolFooBar`), set `privileged: '<key>'` on the action, and add the matching flag to `feature-flags.service.ts` with `['granted']` availability. Grant the permission to the moderators who should be able to invoke it.

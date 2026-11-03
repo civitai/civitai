@@ -42,7 +42,12 @@ const m = vi.hoisted(() => ({
   chat: null as null | {
     tools: Record<string, ChatTool>;
     instructions: () => string;
-    mcpServers: { id: string; url: string; label?: string }[];
+    mcpServers: {
+      id: string;
+      url: string;
+      label?: string;
+      resultLimit?: { head?: number; tail?: number } | false;
+    }[];
     holdReason?: string;
     beforeToolCall?: (
       name: string,
@@ -62,6 +67,7 @@ const m = vi.hoisted(() => ({
     ) => void;
     onReplyResume?: (trigger: 'retry' | 'visible' | 'online') => boolean;
     onChatChange?: (chatId: string | null) => void;
+    onReady?: () => void;
     subagents?: unknown;
     composerTop?: ReactNode;
     threadEnd?: ReactNode;
@@ -85,6 +91,9 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   remove: vi.fn(),
   newChat: vi.fn(),
+  chatId: null as string | null,
+  /** Each saved chat the page asked the chat to open (`conversationId`), in order. */
+  opened: [] as string[],
   /** The chat's message box. */
   box: '',
   /** The chat is listing a just-added app's tools, so it holds as it does for `holdReason`. */
@@ -301,6 +310,11 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         if (!props.chatRef) return;
         m.element ??= Object.defineProperties(new EventTarget(), {
           newChat: { value: m.newChat },
+          chatId: { get: () => m.chatId },
+          conversationId: {
+            get: () => m.opened.at(-1),
+            set: (id: string) => m.opened.push(id),
+          },
           send: { value: m.send },
           compose: { value: m.compose },
           draft: { get: () => m.box },
@@ -313,6 +327,8 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         });
         props.chatRef.current = m.element;
       });
+      // As the real one, once it has started (`chatRef` set).
+      useLayoutEffect(() => props.onReady?.(), []);
       // A new `holdReason` re-renders the element, which announces a change of `canSend`.
       useLayoutEffect(() => m.announce(), [props.holdReason]);
       // 0.14.0 starts listing a new server's tools in its next update: `canSend` reads true until then.
@@ -352,18 +368,41 @@ const r = vi.hoisted(() => ({
       ) => Promise<boolean | null>
     >(),
   pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
+  /** How many times the pane was told the dev server came back up (`devServerUp`). */
+  devServerUp: undefined as number | undefined,
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
   AppAssistantPreview: ({
     session,
     restart,
+    devServerUp,
   }: {
     session: unknown;
     restart?: { onRestart: () => void; pending: boolean; error: string | null };
+    devServerUp?: number;
   }) => {
     m.previewSession = session;
     r.pane = restart;
+    r.devServerUp = devServerUp;
     return <div data-testid="preview" />;
+  },
+}));
+// The preview's App activity strip reads this instead of the network.
+const act = vi.hoisted(() => ({
+  asked: [] as string[],
+  activity: {
+    app: 'app-aaaa',
+    summary: '6 generations: 6 succeeded (last 3 min ago); 0 failed; 0 in progress; 0 errors',
+    items: [],
+    omitted: 0,
+    unavailable: [],
+  },
+}));
+vi.mock('~/components/Apps/AppAssistant/appActivity', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchAppActivity: async (blockId: string) => {
+    act.asked.push(blockId);
+    return act.activity;
   },
 }));
 vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
@@ -386,6 +425,7 @@ beforeEach(() => {
   // Built unless a test says otherwise: an app opened on a visit has had a preview.
   r.built.mockReset().mockResolvedValue(true);
   r.pane = undefined;
+  r.devServerUp = undefined;
 });
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
   const { useReducer } = await import('react');
@@ -625,6 +665,8 @@ beforeEach(() => {
   m.suspend.mockReset();
   m.remove.mockReset();
   m.newChat.mockReset();
+  m.chatId = null;
+  m.opened = [];
   m.send.mockClear();
   m.askAgain.mockClear();
   m.reasked = [];
@@ -729,7 +771,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     screen.rerender(<Workspace />);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     expect(m.chat!.mcpServers).toEqual([
-      expect.objectContaining({ id: 'sandbox', label: 'your app' }),
+      expect.objectContaining({
+        id: 'sandbox',
+        label: 'your app',
+        // As the runner's: enough of a file or a test run that it is not read again.
+        resultLimit: { head: 6000, tail: 18000 },
+      }),
     ]);
     expect(await made).toMatchObject({
       app: 'tip-calculator',
@@ -785,7 +832,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
     m.list = [];
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toHaveProperty('refuse');
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toMatchObject({ stop: true });
   });
@@ -1825,6 +1872,166 @@ describe('AppAssistantWorkspace on a visit', () => {
   });
 });
 
+describe('AppAssistantWorkspace chats follow the app', () => {
+  /** The chat announces `id` as the chat open now (`chat-change`). */
+  async function chatOpens(id: string) {
+    m.chatId = id;
+    m.chat!.onChatChange!(id);
+    await settle();
+  }
+  /** The assistant, in the open chat, chooses the open app (`use_open_app`), as it does before changing it. */
+  async function chatChooses(app: string) {
+    const input = { app };
+    const output = await m.chat!.tools.use_open_app.execute(input, ctx);
+    m.chat!.onToolResult!({ name: 'use_open_app', input, output, isError: false });
+  }
+  /** Opens app-aaaa in chat-a and app-bbbb in a new chat, chat-b; app-bbbb stays open. */
+  async function workOnBoth() {
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    await openFromSwitcher('app-bbbb');
+    await chatOpens('chat-b');
+    await chatChooses('app-bbbb');
+  }
+
+  test('🔴 switching to another app leaves the open app’s chat: a new chat when the app has none', async () => {
+    await mount();
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    expect(m.newChat).not.toHaveBeenCalled();
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+    expect(m.opened).toEqual([]);
+  });
+
+  test('🔴 switching back to an app opens the chat it was chosen in, each way', async () => {
+    await mount();
+    await workOnBoth();
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+
+    await openFromSwitcher('app-aaaa');
+    expect(m.opened).toEqual(['chat-a']);
+    await chatOpens('chat-a');
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.opened).toEqual(['chat-a', 'chat-b']);
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('🔴 a reload opens the picked app’s own chat, not the chat used last', async () => {
+    const screen = await mount();
+    await workOnBoth();
+    // chat-a was used last, though app-bbbb is the picked app.
+    await chatOpens('chat-a');
+    screen.unmount();
+
+    m.chat = null;
+    m.element = null;
+    m.opened = [];
+    m.newChat.mockReset();
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await vi.waitFor(() => expect(m.opened).toEqual(['chat-b']));
+    expect(m.newChat).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an app’s chat remembered for one user is not opened for another user in the same browser', async () => {
+    const asUser = async (userId: number) => {
+      m.chat = null;
+      m.element = null;
+      m.opened = [];
+      m.newChat.mockReset();
+      await page.viewport(1440, 900);
+      const screen = renderWithProviders(
+        <ModalsProvider>
+          <AppAssistantWorkspace canPreview sandboxUrl={BASE} userId={userId} />
+        </ModalsProvider>
+      );
+      await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+      return screen;
+    };
+    let screen = await asUser(1);
+    await workOnBoth();
+    screen.unmount();
+
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    screen = await asUser(2);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await settle();
+    expect(m.opened).toEqual([]);
+    screen.unmount();
+
+    // POSITIVE CONTROL: user 1 on the same page gets the chat back.
+    await asUser(1);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await vi.waitFor(() => expect(m.opened).toEqual(['chat-b']));
+  });
+
+  test('🔴 a reload with no chat known for the picked app starts one when the chat opened is another app’s', async () => {
+    const screen = await mount();
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    screen.unmount();
+
+    m.chat = null;
+    m.element = null;
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    m.chatId = null;
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    expect(m.newChat).not.toHaveBeenCalled();
+    await chatOpens('chat-a');
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+    expect(m.opened).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: a reload whose chat is no app’s, or the picked app’s, keeps it', async () => {
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' })];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await chatOpens('chat-x');
+    expect(m.newChat).not.toHaveBeenCalled();
+    expect(m.opened).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: opening an app from none keeps a chat that is no app’s, and picking the open app changes nothing', async () => {
+    await mount();
+    await chatOpens('chat-x');
+    await openFromSwitcher('app-aaaa');
+    await openFromSwitcher('app-aaaa');
+    expect(m.newChat).not.toHaveBeenCalled();
+    expect(m.opened).toEqual([]);
+  });
+
+  test('switching back to the first app starts a new chat once its chat chose another app', async () => {
+    await mount();
+    await workOnBoth();
+    // chat-b, open with app-bbbb, is then asked to work on app-aaaa.
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-b');
+    await chatChooses('app-aaaa');
+    m.opened = [];
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.opened).toEqual([]);
+    expect(m.newChat).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('AppAssistantWorkspace builds a new app right away', () => {
   test('create_app carries the reply on with the new app’s tools once it runs and the chat has them', async () => {
     m.list = [];
@@ -2142,10 +2349,51 @@ describe('AppAssistantWorkspace hold while the app starts', () => {
   });
 });
 
+describe('AppAssistantWorkspace app_activity', () => {
+  /** The page's own `app_activity` read (`GET /api/apps/assistant/activity`): the block id asked. */
+  function stubActivityEndpoint() {
+    const asked: string[] = [];
+    const original = window.fetch.bind(window);
+    const spy = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), location.href);
+      if (url.pathname !== '/api/apps/assistant/activity') return original(input, init);
+      const blockId = url.searchParams.get('blockId') ?? '';
+      asked.push(blockId);
+      return Response.json({ ...act.activity, app: blockId });
+    });
+    onTestFinished(() => spy.mockRestore());
+    return asked;
+  }
+
+  // REGRESSION: the app key (`app-aaaa`) previews under another blockId when its own is taken, and
+  // the preview's calls and errors are kept under that block id: the tool read the app key.
+  test('reads the block id the live preview runs under, not the app key', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('slideshow-2');
+    const asked = stubActivityEndpoint();
+    const out = await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['slideshow-2']);
+    expect(String(out).split('\n')[0]).toBe(
+      'App activity of slideshow-2 in the last 2 hours, newest first:'
+    );
+  });
+
+  // The control (an invariant guard: it held before the fix too).
+  test('reads the app key while no preview runs', async () => {
+    await mount();
+    await openFirst();
+    const asked = stubActivityEndpoint();
+    await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['app-aaaa']);
+  });
+});
+
 describe('AppAssistantWorkspace tool gate', () => {
   test('offers create_app, generate_app_cover, report_ready, set_checklist and submit_for_review beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -2242,7 +2490,7 @@ describe('AppAssistantWorkspace tool gate', () => {
 
   test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toMatchObject({ stop: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
@@ -2459,11 +2707,14 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     m.chat!.onToolResult!({ name, input: {}, output, isError });
   const pane = () => page.getByTestId('app-assistant-preview-pane');
 
-  test('does not hand the chat the page-only generate_app_cover tool', async () => {
+  // The runner offers generate_app_cover itself now (the same `createCoverArt`); the page's copy shows its calls.
+  test('hands the chat the tools the runner offers, generate_app_cover included', async () => {
     await mountRunner();
     // The runner's host tools (its `RUNNER_PAGE_TOOLS`), the feedback tools' cards included.
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
+      'generate_app_cover',
       'get_review_feedback',
       'get_user_feedback',
       'report_ready',
@@ -2493,6 +2744,25 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await expect.element(pane()).not.toBeInTheDocument();
     // The page has no id for the runner's tunnel and never stops it: the runner and civitai do.
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  test('the shown preview’s App activity strip puts its activity in the message box, never sends it', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect
+      .element(page.getByTestId('app-activity-summary'))
+      .toHaveTextContent(act.activity.summary);
+    expect(act.asked).toContain('app-aaaa');
+    m.compose.mockClear();
+    m.send.mockClear();
+    await page.getByRole('button', { name: 'Tell the assistant' }).click();
+    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledTimes(1));
+    expect(m.compose.mock.calls[0]![0]).toMatch(
+      /^The preview of my app seems stuck or wrong\. Here is what it did recently;/
+    );
+    expect(m.compose.mock.calls[0]![0]).toContain(act.activity.summary);
+    expect(m.send).not.toHaveBeenCalled();
   });
 
   test('a failed start shows nothing', async () => {
@@ -2527,6 +2797,73 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await openFromSwitcher('app-bbbb');
     await expect.element(pane()).not.toBeInTheDocument();
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  // The page learns of a restart only through `devServerUp` (`devServerUpOf`).
+  test('🔴 the shown preview is told each time the dev server comes back up', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":4242}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 1));
+    reported('sandbox__preview_check', 'render: ok\npage_errors: 0\nconsole_errors: 0');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 2));
+    reported('sandbox__dev_server_start', '{"running":true,"pid":5151}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 3));
+  });
+
+  test('NEGATIVE CONTROL: a failed start or restart, a check that did not render, and other calls tell it nothing', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+
+    reported('sandbox__dev_server_restart', { error: 'port 5173 is in use' }, true);
+    reported('sandbox__dev_server_start', { error: 'npm exited with code 1' }, true);
+    reported('sandbox__preview_check', 'render: start_error\npage_errors: 2');
+    reported('sandbox__preview_check', { error: 'timed out' }, true);
+    reported('sandbox__dev_server_status', '{"running":true,"pid":4242}');
+    await settle();
+    expect(r.devServerUp ?? 0).toBe(before);
+
+    // Control: the same pane hears a restart that worked.
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":6363}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 1));
+  });
+
+  test('NEGATIVE CONTROL: a restart reported while another app is open, its preview gone, is not told to that app’s preview', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+    await openFromSwitcher('app-bbbb');
+    await expect.element(pane()).not.toBeInTheDocument();
+
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":7474}');
+    await settle();
+    reported('start_preview', { shown: true, blockId: 'app-bbbb', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    await settle();
+    const shown = r.devServerUp ?? 0;
+    expect(shown).toBe(before);
+    // Control: b's own restart, once its preview shows, is told.
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":8585}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(shown + 1));
+  });
+
+  test('NEGATIVE CONTROL: replies in the browser tell the preview nothing', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('app-aaaa');
+    await expect.element(pane()).toBeInTheDocument();
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":4242}');
+    await settle();
+    expect(r.devServerUp ?? 0).toBe(0);
   });
 });
 

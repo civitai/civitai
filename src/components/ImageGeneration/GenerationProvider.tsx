@@ -64,7 +64,17 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
   return useStore(store, selector);
 }
 
+/**
+ * The generator's queue state. One per generator: the mobile generator provides it around its
+ * header and form, and the form's own provider then defers to that one.
+ */
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
+  const outer = useContext(GenerationContext);
+  if (outer) return <>{children}</>;
+  return <GenerationStateProvider>{children}</GenerationStateProvider>;
+}
+
+function GenerationStateProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const opened = useGenerationPanelStore((state) => state.opened);
   // Bypass the user's marker / tag filter: the queue snackbar / canGenerate /

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   APP_FEEDBACK_TOOLS,
   CREATE_APP,
@@ -11,11 +13,15 @@ import {
   assistantSystemPrompt,
   buildAssistantInstructions,
   createAppTools,
+  createDocsTool,
   createFeedbackTools,
   createGateCore,
   chosenAppOf,
   createSandboxClient,
   openApp,
+  GENERATE_APP_COVER,
+  READ_DOCS,
+  type CoverEstimator,
   unconfiguredFeedbackSource,
   type AppFeedbackSource,
   type Sandbox,
@@ -40,6 +46,12 @@ import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
+import {
+  RUNNER_ACTIVITY_TOOLS,
+  runnerActivityTools,
+  type CivitaiAppActivity,
+} from './app-activity';
+import { runnerCoverTools, unconfiguredCoverTools, type CoverListings } from './cover';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
@@ -88,6 +100,15 @@ export function reportOf(result: ChatToolResult): ChatToolResult {
   };
 }
 
+/**
+ * A page card's offer id: unique per offer, not per tool set. The runner opens tools again for the
+ * same run mid-reply (`reopenTools`), and a recovered run opens them in another process, so a
+ * counter would name a later offer as an earlier one and the page would show that one's card.
+ */
+function offerId(runId: string, kind: 'cover' | 'feedback'): string {
+  return `${runId}-${kind}-${randomUUID()}`;
+}
+
 /** Enough of a sandbox result for the page's gate: `exit_code:` and `render:` come first. */
 const REPORTED_OUTPUT_CHARS = 200;
 
@@ -107,6 +128,10 @@ const RUNNER_PAGE_TOOLS = [
   // The open app's moderator review and user feedback, read by civitai as the run's user; and the
   // offer to change a feedback item's status, which the page's card, not the runner, carries out.
   ...APP_FEEDBACK_TOOLS,
+  // Offers a store cover; the page's card makes it.
+  GENERATE_APP_COVER,
+  // What the open app did while it ran (`app_activity`), read by civitai as the run's user.
+  ...RUNNER_ACTIVITY_TOOLS,
 ] as const;
 
 export interface AppAssistantToolsOptions {
@@ -120,10 +145,21 @@ export interface AppAssistantToolsOptions {
    */
   devTunnels?(runId: string): DevTunnels;
   /**
+   * `generate_app_cover` for one run: civitai's listing read with its grant (`CivitaiCovers.forRun`)
+   * and the price on its `chat` token (`runnerCoverEstimator`). Unset, the tool says covers are not
+   * set up.
+   */
+  covers?(runId: string): { listings: CoverListings; estimator: CoverEstimator };
+  /**
    * civitai's app-feedback reads with one run's grant (`CivitaiAppFeedback.forRun`). Unset, the
    * feedback tools say they cannot read it here.
    */
   appFeedback?(runId: string, signal: AbortSignal): AppFeedbackSource;
+  /**
+   * civitai's app-activity read with one run's grant (`CivitaiAppActivity.forRun`). Unset,
+   * `app_activity` says it cannot read it here.
+   */
+  appActivity?(runId: string, signal: AbortSignal): ReturnType<CivitaiAppActivity['forRun']>;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
@@ -134,6 +170,10 @@ export interface AppAssistantToolsOptions {
   sdkPinReadTimeoutMs?: number;
   /** The `@civitai/sdk` upgrade's budget before it is rolled back (`SDK_UPGRADE_TIMEOUT_MS`; tests). */
   sdkUpgradeTimeoutMs?: number;
+  /** The fetch `read_docs` reads Civitai's developer docs with (the global one unless set; tests). */
+  docsFetch?: typeof fetch;
+  /** How long one `read_docs` read may take (`DOCS_TIMEOUT_MS` unless set; tests). */
+  docsTimeoutMs?: number;
 }
 
 /** No dev-tunnel endpoints configured: every start is refused as not set up. */
@@ -202,7 +242,6 @@ export class AppAssistantTools implements ToolProvider {
 
     let preview: RunnerPreview | undefined;
     let apps: Sandbox[] | undefined;
-    let feedbackOffers = 0;
     try {
       apps = await client.list();
     } catch (error) {
@@ -249,6 +288,8 @@ export class AppAssistantTools implements ToolProvider {
         openApp: () => sandbox.active?.app ?? null,
         // civitai refuses a submission whose sensitive scopes have no justification.
         unjustifiedScopes: () => unjustifiedManifestScopes(sandbox, signal),
+        // A sandbox with run_checks is told to run it; the others, npm test and tsc.
+        sandboxFeatures: () => sandbox.features,
       });
       core.restore({
         conversationId,
@@ -292,10 +333,20 @@ export class AppAssistantTools implements ToolProvider {
           signal,
         });
       const sdkUpgrade = await upgradeSdk();
+      // The store cover: the page's own tool (`createCoverArt`).
+      const covers = this.#options.covers?.(runId);
+      const coverTools: Record<string, ChatTool> = covers
+        ? runnerCoverTools({
+            currentApp: () => sandbox.active?.app ?? null,
+            ...covers,
+            nextId: () => offerId(runId, 'cover'),
+            signal,
+          })
+        : unconfiguredCoverTools();
       const feedback = createFeedbackTools({
         current: () => sandbox.active?.app ?? null,
         source: this.#options.appFeedback?.(runId, signal) ?? unconfiguredFeedbackSource,
-        nextId: () => `${runId}-feedback-${++feedbackOffers}`,
+        nextId: () => offerId(runId, 'feedback'),
       });
       const pageTools: Record<string, ChatTool> = {
         ...appTools.tools,
@@ -303,6 +354,12 @@ export class AppAssistantTools implements ToolProvider {
         ...core.tools,
         [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),
+        ...coverTools,
+        ...runnerActivityTools({
+          // The preview's block id, not the app's key: the two differ when the key's was taken.
+          currentApp: () => livePreview.previewBlockId(signal),
+          source: this.#options.appActivity?.(runId, signal),
+        }),
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.
@@ -315,7 +372,21 @@ export class AppAssistantTools implements ToolProvider {
           resolveArgs: async (args) => args,
         }
       );
-      const tools: ToolSet = { ...sandboxTools, ...page };
+      // Civitai's developer docs, which the sandbox cannot reach: the runner reads them itself. Not a
+      // page tool (`hostTools`): the page has its own fetch_page. One per reply, so its cache is too.
+      const docs = hostToolSet(
+        {
+          [READ_DOCS]: createDocsTool({
+            ...(this.#options.docsFetch ? { fetch: this.#options.docsFetch } : {}),
+            ...(this.#options.docsTimeoutMs !== undefined
+              ? { timeoutMs: this.#options.docsTimeoutMs }
+              : {}),
+          }),
+        },
+        sandboxTools,
+        { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
+      );
+      const tools: ToolSet = { ...sandboxTools, ...page, ...docs };
       // Aborts when the gate ends the reply on one of its own calls: its subagents stop with it.
       const replyEnded = new AbortController();
       const gate: GateDeps = {
@@ -354,7 +425,8 @@ export class AppAssistantTools implements ToolProvider {
           await sandbox.close();
         },
         // The runner's variant names only tools it has (no web or guide tool, no tunnel).
-        rules: assistantSystemPrompt('remote', subagents),
+        // …and the newer sandbox tools' rules only when the open app's sandbox lists them.
+        rules: assistantSystemPrompt('remote', subagents, sandbox.features),
         instructions: [
           buildAssistantInstructions({
             sandbox: sandbox.active,

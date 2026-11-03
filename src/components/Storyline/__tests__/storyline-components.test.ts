@@ -520,6 +520,19 @@ describe('StorylineContinueForm copy', () => {
     expect(visibleText(el)).not.toContain('Goes to the creator for review.');
   });
 
+  it("calls the owner's branch a branch, not the next chapter", () => {
+    const branch = visibleText(
+      render(continueForm({ viewerId: owner, ownerAdd: true, branch: true, postId: 11 }))
+    );
+    expect(branch).toContain('as a side path after this chapter');
+    expect(branch).not.toContain('as the next chapter');
+    act(() => root?.unmount());
+    const added = visibleText(
+      render(continueForm({ ownerAdd: true, branch: true, postId: 11, outcome: 'added' }))
+    );
+    expect(added).toContain('Added to your storyline as a branch.');
+  });
+
   it('says an approved continuation is in, and a pending one is waiting', () => {
     const approved = visibleText(render(continueForm({ postId: 11, outcome: 'approved' })));
     expect(approved).toContain('Added to the storyline.');
@@ -564,6 +577,19 @@ describe('StorylineQueueList rows', () => {
     ).toBe('Preview not available on this site');
     expect(button(withheld, 'Accept').disabled).toBe(false);
     expect(button(withheld, 'Approve + invite').disabled).toBe(false);
+  });
+
+  // Accepting under a chapter that already has a main-path chapter makes a branch: say which first.
+  it('says whether accepting it joins the main path or starts a branch', () => {
+    const el = list([
+      { ...row(7), startsBranch: false },
+      { ...row(8), startsBranch: true },
+    ]);
+    expect(
+      [7, 8].map(
+        (id) => el.querySelector(`[data-testid="storyline-queue-path-${id}"]`)?.textContent
+      )
+    ).toEqual(['Joins the main path', 'Starts a branch']);
   });
 
   it('marks a row in a taken-down storyline and offers no answer to it', () => {

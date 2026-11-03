@@ -2,7 +2,7 @@ import type { PlacementSurface, PlacementTargetType } from '~/shared/utils/place
 import { FREE_SLOT_HOLDING_STATUSES, freePlacementDayStart } from '~/shared/utils/placement';
 
 // The free-tier count predicates, once each. The claim's in-transaction Prisma counts and their
-// display-only Kysely twins (`countPlacements` under `kysely-placement-reads`) both take these
+// display-only Kysely counts (`countPlacements`) both take these
 // objects, so the two cannot drift. Plain data in their own module: free-placement.service.ts
 // exports nothing that could reach its advisory locks.
 

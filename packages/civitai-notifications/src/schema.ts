@@ -127,11 +127,16 @@ export type CleanupNotificationsInput = z.infer<typeof cleanupNotificationsInput
 
 // --- System notices (POST /notifications/notices) --------------------------------------------------
 
-export const systemNoticeTypes = ['system-message', 'system-announcement'] as const;
+export const systemNoticeTypes = [
+  'system-message',
+  'system-announcement',
+  'event-reminder',
+] as const;
 export type SystemNoticeType = (typeof systemNoticeTypes)[number];
 export const MAX_NOTICE_RECIPIENTS = 50_000;
 export const MAX_NOTICE_PARAM_LENGTH = 100;
 export const MAX_NOTICE_MESSAGE_LENGTH = 500;
+export const MAX_NOTICE_TITLE_LENGTH = 60;
 
 const placeholderPattern = /\{([A-Za-z0-9_]+)\}/g;
 
@@ -157,9 +162,18 @@ function isSitePath(url: string): boolean {
 }
 const hasHtml = (s: string) => /[<>]/.test(s);
 
+const noticeSendId = z.string().regex(/^[a-z0-9-]{3,80}$/, 'sendId must match [a-z0-9-]{3,80}');
+export const MAX_NOTICE_EXCLUDE_SEND_IDS = 5;
+
 export const sendSystemNoticesInput = z
   .object({
-    sendId: z.string().regex(/^[a-z0-9-]{3,80}$/, 'sendId must match [a-z0-9-]{3,80}'),
+    sendId: noticeSendId,
+    /**
+     * Earlier sendIds whose recipients count as alreadySent here. A sendId pins its type, message,
+     * url and title, so changing any of them means a new sendId; this keeps that new send from reaching
+     * the users the old one already did.
+     */
+    excludeSendIds: z.array(noticeSendId).max(MAX_NOTICE_EXCLUDE_SEND_IDS).optional(),
     mode: z.enum(['dry-run', 'send']).default('dry-run'),
     type: z.enum(systemNoticeTypes),
     message: z
@@ -168,6 +182,13 @@ export const sendSystemNoticesInput = z
       .max(MAX_NOTICE_MESSAGE_LENGTH)
       .refine((s) => !hasHtml(s), 'message may not contain HTML'),
     url: z.string().max(1000).refine(isSitePath, 'url must be a path on this site').optional(),
+    /** Push notification title; without one the push is titled with the type's display name. */
+    title: z
+      .string()
+      .min(1)
+      .max(MAX_NOTICE_TITLE_LENGTH)
+      .refine((s) => !hasHtml(s), 'title may not contain HTML')
+      .optional(),
     userIds: z.array(noticeUserId).optional(),
     recipients: z
       .array(

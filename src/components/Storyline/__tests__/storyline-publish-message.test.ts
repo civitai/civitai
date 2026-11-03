@@ -74,4 +74,13 @@ describe('storylinePublishMessage', () => {
       ).message
     ).toBe('Chapter 4 goes live once your images finish checking.');
   });
+
+  it('calls a chapter that starts a branch a branch, not the next chapter number', () => {
+    expect(
+      storylinePublishMessage({ status: 'chapterWritten', ceilingRaisedTo: null } as never, {
+        chapterNumber: 5,
+        startsBranch: true,
+      }).message
+    ).toBe('Your branch is live.');
+  });
 });

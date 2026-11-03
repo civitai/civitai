@@ -666,7 +666,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         onBlur={handleBlur}
         onClear={handleClear}
         onKeyDown={getHotkeyHandler([
-          ['Escape', blurAndDiscardCarriedText],
+          ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
         ])}
         onOptionSubmit={handleItemClick}

@@ -12,6 +12,7 @@
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
+    stampMature,
     defaultRunParams,
     isTrainable,
     labelOptions,
@@ -28,7 +29,7 @@
     type Selection,
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
-  import type { ReuseItem } from '$lib/reuse';
+  import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
 
   let {
@@ -75,11 +76,15 @@
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
   // DataStep materializes these once a model is picked (the label type depends on the selection).
   let reuseItems = $state<ReuseItem[]>([]);
+  // An edit run's hand-off: EditDataStep turns it into pairs once, then empties it.
+  let reusePairItems = $state<ReuseItem[]>([]);
   onMount(() => {
     try {
       const raw = sessionStorage.getItem('ts:reuse-dataset');
       if (raw) {
-        reuseItems = JSON.parse(raw);
+        const items: ReuseItem[] = JSON.parse(raw);
+        if (isPairDataset(items)) reusePairItems = items;
+        else reuseItems = items;
         sessionStorage.removeItem('ts:reuse-dataset');
       }
     } catch {
@@ -178,7 +183,9 @@
     launched: LaunchedRun[],
     prompts: SamplePrompt[],
     name: string,
-    currencies: string[]
+    currencies: string[],
+    matureAck: boolean,
+    reviewedMature: number
   ) {
     if (!selection) return;
     // An edit run's pairs go as blobs placed by path — each image was uploaded and scanned on its own.
@@ -194,7 +201,9 @@
       labelMode,
       edit
     );
-    const { workflowIds: ids, failure } = await backend().submitTraining(runs);
+    const { workflowIds: ids, failure } = await backend().submitTraining(
+      stampMature(runs, matureAck, reviewedMature)
+    );
     if (failure)
       submitNotice.set(
         `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
@@ -251,6 +260,7 @@
       {prices}
       {enabledModelFlags}
       initial={selection}
+      startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
@@ -266,6 +276,7 @@
   {:else if step === 2 && selection && trainsPairs}
     <EditDataStep
       bind:pairs
+      bind:reuseItems={reusePairItems}
       onContinue={enterReview}
       onBack={() => {
         leaveData();

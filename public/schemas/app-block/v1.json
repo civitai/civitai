@@ -55,15 +55,7 @@
     "category": {
       "type": "string",
       "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
-      "enum": [
-        "generation",
-        "games",
-        "utility",
-        "discovery",
-        "moderation",
-        "analytics",
-        "other"
-      ]
+      "enum": ["generation", "games", "utility", "discovery", "moderation", "analytics", "other"]
     },
     "renderMode": {
       "type": "string",
@@ -98,6 +90,7 @@
           "apps:storage:shared:write",
           "apps:storage",
           "apps:storage:publish",
+          "apps:storage:import",
           "collections:read:self",
           "collections:write:self",
           "collections:read:private",
@@ -111,7 +104,7 @@
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `apps:storage:publish`, `posts:write:self`, `apps:store:items:write`, `social:react:self`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `apps:storage:publish`, `apps:storage:import`, `posts:write:self`, `apps:store:items:write`, `social:react:self`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,
@@ -137,7 +130,10 @@
       "maxLength": 256,
       "allOf": [
         { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
-        { "$comment": "no backslash separators (Windows / '\\..' traversal)", "not": { "pattern": "\\\\" } },
+        {
+          "$comment": "no backslash separators (Windows / '\\..' traversal)",
+          "not": { "pattern": "\\\\" }
+        },
         { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
         { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
       ]
@@ -378,10 +374,43 @@
     },
     "storage": {
       "type": "object",
-      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; and requesting either scope with nothing here for it to reach is rejected. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
+      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; declaring any `imports` also requires the sensitive, consent-gated `apps:storage:import` scope with a `scopeJustifications` entry (and `apps:storage`); and requesting any of these scopes with nothing here for it to reach is rejected. At least one of `collections` and `imports` is required. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
       "additionalProperties": false,
-      "required": ["collections"],
+      "anyOf": [{ "required": ["collections"] }, { "required": ["imports"] }],
       "properties": {
+        "imports": {
+          "type": "array",
+          "description": "Collections of OTHER apps this app reaches as the viewer — for example a fork reading and writing its parent's data. Each import names the source app by its `blockId`, 1 to 16 distinct collection names the source declares, and the access wanted: \"read\" or \"readwrite\". At most 8 imports, one per source app, never this app itself. Through an import the app acts AS THE VIEWER IN THE SOURCE APP: a private collection gives that viewer's own documents, a shared one reads as the source shows it to them, writes follow the source collection's write policy, and usage counts against the source app's ceilings. Nothing is reached until the viewer grants it: the `apps:storage:import` consent is recorded per (viewer, this app, source app) and can be withdrawn under Apps → Permissions. A source collection with `exportable: false` refuses every import. The SDK reaches one with `app.storage.collection(name, { from: blockId })`.",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "collections", "access"],
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "The source app's blockId (its slug).",
+                "minLength": 3,
+                "maxLength": 40,
+                "pattern": "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
+              },
+              "collections": {
+                "type": "array",
+                "description": "Names of the source app's collections this import reaches.",
+                "minItems": 1,
+                "maxItems": 16,
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" }
+              },
+              "access": {
+                "type": "string",
+                "description": "\"read\": reads only; every write is refused. \"readwrite\": reads and writes, under the source collection's own write policy. A create, update, counter, mark or unmark in one of the source's SHARED collections also needs the viewer's own `apps:storage:publish` grant in the source app, which the app asks the host to prompt for; a document delete, and any write to a private collection, needs only the import grant.",
+                "enum": ["read", "readwrite"]
+              }
+            }
+          }
+        },
         "collections": {
           "type": "object",
           "description": "Map of collection name → declaration. At least 1 and at most 16 collections. A collection name is lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _. Renaming a collection, or changing its visibility, is a NEW collection: the old one's documents are not carried over.",
@@ -470,6 +499,10 @@
                   "minimum": 1,
                   "maximum": 1000
                 },
+                "exportable": {
+                  "type": "boolean",
+                  "description": "Whether other apps may reach this collection through their `storage.imports` (with the viewer's consent). Default true; false refuses every import of it with 403 `not_exportable`."
+                },
                 "ownedModelVersions": {
                   "type": "array",
                   "description": "Shared collections with `write` \"own\" only. Fields of a document's `data` that, when present, must hold a Civitai model version id owned by the viewer writing the document — for example [\"/workflow/modelVersionId\"] for a collection where viewers publish their own workflows. Each entry is a pointer of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _; 1 to 4 distinct pointers. A pointer names one field of nested objects: it never indexes into an array, and a step through an array or any other non-object finds nothing. On every create and update the server resolves each pointer in the new `data`: a field that is absent is allowed; a field that is present must be a positive integer naming a model version whose model the writer owns, and is otherwise refused with 403 `resource_not_owned` — a version that is someone else's, missing or deleted, and a value that is not a positive integer, are all refused the same way. The check runs before moderation and before any write budget is spent. Ownership is checked when a document is written, not afterwards: if the model later changes hands or is deleted, documents already stored keep the id.",
@@ -480,9 +513,21 @@
                     "type": "string",
                     "pattern": "^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$"
                   }
+                },
+                "schema": {
+                  "description": "Optional. A JSON Schema SUBSET that every document's `data` in this collection must match. The server checks it on every create and update and refuses a document that does not match with 400 `schema_violation`, whose message names the first failing JSON pointer into `data` (for example \"/title\"); counters and marks are not checked. Without a schema, documents are not checked. Supported keywords only: type (object, array, string, number, integer, boolean, null, or an array of them), properties, required, additionalProperties (true, false or a schema), items (one schema for every element), enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems and description; any other keyword is refused at submit with a message naming it. Keywords that do not apply to a value's type are ignored; string lengths count code points; `pattern` is a JavaScript regular expression (the \"u\" flag), unanchored, of at most 256 characters, and a schema with a `pattern` must also declare a `maxLength` of at most 1000; a pattern that can backtrack catastrophically (analysed with the \"u\" flag, as the store runs it) is refused at submit. At most 16 patterns per schema and 32 across all of the manifest's collection schemas together, schemas nested at most 16 deep, and at most 16384 bytes of JSON. Not allowed on a `write` \"none\" collection. Changing a schema does not re-check documents already stored; they are checked when next written.",
+                  "$ref": "#/$defs/storageCollectionSchema"
                 }
               },
               "allOf": [
+                {
+                  "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing.",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "const": "none" } }
+                  },
+                  "then": { "properties": { "schema": false } }
+                },
                 {
                   "$comment": "A shared collection must state its write policy; a private one carries none of the shared-only fields.",
                   "if": {
@@ -558,6 +603,50 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "storageCollectionSchema": {
+      "type": "object",
+      "description": "One schema of the storage collection-schema subset (see `storage.collections.<name>.schema`). Depth, size, pattern-count and min-greater-than-max limits, and whether a pattern compiles, are checked by the server, not by this schema.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "anyOf": [
+            { "$ref": "#/$defs/storageCollectionSchemaType" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/storageCollectionSchemaType" }
+            }
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/storageCollectionSchema" }
+        },
+        "required": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "additionalProperties": {
+          "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/storageCollectionSchema" }]
+        },
+        "items": { "$ref": "#/$defs/storageCollectionSchema" },
+        "enum": { "type": "array", "minItems": 1 },
+        "const": {},
+        "minLength": { "type": "integer", "minimum": 0 },
+        "maxLength": { "type": "integer", "minimum": 0 },
+        "pattern": { "type": "string", "maxLength": 256 },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "minItems": { "type": "integer", "minimum": 0 },
+        "maxItems": { "type": "integer", "minimum": 0 },
+        "description": { "type": "string" }
+      },
+      "if": { "required": ["pattern"] },
+      "then": { "required": ["maxLength"], "properties": { "maxLength": { "maximum": 1000 } } }
+    },
+    "storageCollectionSchemaType": {
+      "enum": ["object", "array", "string", "number", "integer", "boolean", "null"]
     }
   },
   "allOf": [

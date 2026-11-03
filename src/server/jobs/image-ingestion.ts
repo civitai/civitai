@@ -583,6 +583,13 @@ export const accountHeldBlockedImagesSql = Prisma.sql`
     AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
 `;
 
+/** Blocked images a pending review or a CSAM block keeps out of the purge. Read on dbWrite. */
+export const reviewHeldBlockedImagesSql = Prisma.sql`
+  SELECT id, "needsReview", "blockedFor" FROM "Image"
+  WHERE ("needsReview" IN ('appeal', 'csam') OR "blockedFor" = 'CSAM')
+    AND ingestion = 'Blocked'::"ImageIngestionStatus"
+`;
+
 /**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
@@ -594,6 +601,7 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
     -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
@@ -726,13 +734,12 @@ export const removeBlockedImages = createJob(
     // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
     // strands the Appeal as Pending forever.
     // dbWrite for the same replica-lag reason as the CSAM lookup above.
-    const reviewHeldRows = await dbWrite.$queryRaw<{ id: number; needsReview: string }[]>`
-      SELECT id, "needsReview" FROM "Image"
-      WHERE "needsReview" IN ('appeal', 'csam')
-        AND ingestion = 'Blocked'::"ImageIngestionStatus"
-    `;
+    const reviewHeldRows = await dbWrite.$queryRaw<
+      { id: number; needsReview: string | null; blockedFor: string | null }[]
+    >(reviewHeldBlockedImagesSql);
     const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
+    const csamBlockHeld = reviewHeldRows.filter((x) => x.blockedFor === 'CSAM').map((x) => x.id);
 
     // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
     // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
@@ -761,6 +768,7 @@ export const removeBlockedImages = createJob(
         ...heldActive,
         ...appealHeld,
         ...csamReviewHeld,
+        ...csamBlockHeld,
         ...evidenceHeld,
         ...accountHeld,
       ]),
@@ -774,6 +782,7 @@ export const removeBlockedImages = createJob(
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        csamBlockHeld: csamBlockHeld.length,
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
       });
@@ -782,6 +791,7 @@ export const removeBlockedImages = createJob(
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        csamBlockHeld: csamBlockHeld.length,
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
       });
@@ -834,6 +844,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      csamBlockHeld: csamBlockHeld.length,
       evidenceHeld: evidenceHeld.length,
       staleIds: staleIds.length,
     });
@@ -1088,6 +1099,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      csamBlockHeld: csamBlockHeld.length,
       evidenceHeld: evidenceHeld.length,
       accountHeld: accountHeld.length,
     });

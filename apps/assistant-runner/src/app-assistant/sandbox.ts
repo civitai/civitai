@@ -1,9 +1,14 @@
 import {
+  NO_SANDBOX_FEATURES,
+  SANDBOX_RESULT_LIMIT,
   SANDBOX_SERVER_ID,
+  SANDBOX_SERVER_LABEL,
   isSandboxServiceUrl,
   openApp,
+  sandboxFeaturesOf,
   type Sandbox,
   type SandboxClient,
+  type SandboxFeatures,
 } from '@civitai/app-assistant';
 import {
   createMcpConnection,
@@ -29,8 +34,15 @@ export const LIST_TIMEOUT_MS = 15_000;
 /** What the assistant is told about a call it should check before making again (the chat's `LOST_NOTE`). */
 const LOST_NOTE =
   'Check its effect (for example by listing or reading the files it would change) before running it again.';
-/** The sandbox server as the page names it, so its tools read the same: `sandbox__<tool>`, "[your app] …". */
-const SANDBOX_SERVER = { id: SANDBOX_SERVER_ID, label: 'your app' } as const;
+/**
+ * The sandbox server as the page names it, so its tools read the same: `sandbox__<tool>`, "[your app] …";
+ * and as much of each reply as the page gives the assistant (`SANDBOX_RESULT_LIMIT`).
+ */
+const SANDBOX_SERVER = {
+  id: SANDBOX_SERVER_ID,
+  label: SANDBOX_SERVER_LABEL,
+  resultLimit: SANDBOX_RESULT_LIMIT,
+} as const;
 /** What the assistant (and the user) reads when the app is gone. */
 export const SANDBOX_GONE =
   'Your app is gone: it was deleted while the assistant worked. Tell the user to open or create it from the app switcher, then ask again.';
@@ -80,11 +92,17 @@ export class AppSandbox {
   #active: Sandbox | null = null;
   #connection: McpConnection | null = null;
   #closed = false;
+  #features: SandboxFeatures = NO_SANDBOX_FEATURES;
   /** The one look at the user's apps after a refused call, shared by the calls refused together. */
   #checking: Promise<'gone' | 'paused' | 'running' | 'starting'> | null = null;
 
   constructor(deps: AppSandboxDeps) {
     this.#deps = deps;
+  }
+
+  /** The newer tools the sandbox listed at the last `tools()`; none before, or when it listed nothing. */
+  get features(): SandboxFeatures {
+    return this.#features;
   }
 
   /** The sandbox open now (possibly one `create_app` just opened), or `null`. */
@@ -120,8 +138,9 @@ export class AppSandbox {
 
   /**
    * Its tools, each named `sandbox__<tool>` and given the chat's own treatment of an added server's
-   * tools (`extraToolSet`: the reply's first and last characters, 610 s without progress, a lost
-   * reply reported as maybe finished); none when it does not run or would not list them in time.
+   * tools (`extraToolSet`: the reply's first and last characters, as many as `SANDBOX_RESULT_LIMIT`
+   * says, 610 s without progress, a lost reply reported as maybe finished); none when it does not run
+   * or would not list them in time. Notes the newer tools it lists (`features`).
    */
   async tools(): Promise<ToolSet> {
     const connection = this.#connection;
@@ -136,6 +155,7 @@ export class AppSandbox {
       );
       return {};
     }
+    this.#features = sandboxFeaturesOf(listed);
     const server: ChatMcpServer = {
       ...SANDBOX_SERVER,
       url: connection.url,
@@ -317,7 +337,7 @@ export class AppSandbox {
 /** The sandbox's own tools the runner keeps to itself: the tunnel, which only `start_preview` drives. */
 const RUNNER_ONLY_TOOL = /^tunnel_/;
 /** A tunnel call waits up to 20 s for sish (`tunnel_connect`); this bounds one the runner makes. */
-const RUNNER_CALL_TIMEOUT_MS = 60_000;
+export const RUNNER_CALL_TIMEOUT_MS = 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

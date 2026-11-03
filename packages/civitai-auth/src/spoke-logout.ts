@@ -2,6 +2,7 @@ import { DEVICE_COOKIE_BASE, HOST_COOKIE_PREFIX, SESSION_COOKIE_BASE } from './c
 import {
   allCookieNames,
   parseCookieHeader,
+  readDeviceId,
   sessionCookieNameForSlot,
   type CookieSlot,
 } from './cookies';
@@ -61,7 +62,8 @@ export async function spokeLogout(
   );
   if (tokens.size) {
     const client = opts.sessionTokenClient ?? createSessionTokenClient();
-    for (const token of tokens) await client.revoke(token);
+    const deviceId = readDeviceId(cookies)?.value;
+    for (const token of tokens) await client.revoke(token, { deviceId });
   }
 
   const headers = new Headers({

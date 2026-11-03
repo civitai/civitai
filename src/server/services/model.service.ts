@@ -49,6 +49,11 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readPostModelVersionIdsViaKysely,
+  readPostModelVersionIdsViaPrisma,
+} from '~/server/services/hot-reads-7.reads';
 import { readDownedModel } from '~/server/services/model-takedown-lock';
 import {
   planReciprocalAssociations,
@@ -162,6 +167,7 @@ import {
   assertBaseModelAttestations,
   assertNoUnattestedScopeEntry,
 } from '~/server/services/base-model-attestation.service';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
@@ -312,6 +318,11 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  isModelNameTooLong,
+  MODEL_NAME_TOO_LONG_MESSAGE,
+  truncateModelName,
+} from '~/shared/constants/model-name.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
@@ -324,13 +335,10 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  // The model page's read (`getModelHandler`, the only caller passing this select). With
-  // `kysely-hot-reads-2` on it reads through Kysely, in the same shape, on the client the same lag
-  // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
-  if (
-    (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
-    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
-  ) {
+  // The model page's read (`getModelHandler`, the only caller passing this select) goes through
+  // Kysely, in the same shape, on the client the same lag decision picks: `getKyselyWithoutLag` is
+  // `getDbWithoutLag`'s twin. Every other select reads through Prisma below.
+  if ((select as Prisma.ModelSelect) === modelWithDetailsSelect) {
     const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
     return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;
   }
@@ -1479,7 +1487,9 @@ export const getModelsRaw = async ({
               username: userBasicData[model.userId]?.username ?? null,
               deletedAt: userBasicData[model.userId]?.deletedAt ?? null,
               image: userBasicData[model.userId]?.image ?? null,
-              profilePicture: profilePictures?.[model.userId] ?? null,
+              profilePicture:
+                (profilePictures?.[model.userId] as (typeof profilePictures)[number] | undefined) ??
+                null,
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
@@ -3793,6 +3803,9 @@ export const upsertModel = async (
         })
       : null;
 
+  if (data.name !== undefined && isModelNameTooLong(data.name, beforeUpdate?.name))
+    throw throwBadRequestError(MODEL_NAME_TOO_LONG_MESSAGE);
+
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
@@ -4667,7 +4680,10 @@ export const publishModelById = async ({
       })
     : undefined;
   const versionIds = ownVersions ? ownVersions.map((v) => v.id) : requestedVersionIds;
-  if (ownVersions) assertBaseModelAttestations({ versions: ownVersions });
+  if (ownVersions) {
+    assertBaseModelAttestations({ versions: ownVersions });
+    await assertNonCommercialVersionsUnmonetized(ownVersions);
+  }
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -5853,6 +5869,14 @@ function createVersionModelCache() {
 let versionModelCacheInstance: ReturnType<typeof createVersionModelCache> | undefined;
 const versionModelCache = () => (versionModelCacheInstance ??= createVersionModelCache());
 
+/** The post-version cache's lookup: each post's model version id, from the replica. */
+export async function lookupPostModelVersions(ids: number[]) {
+  const posts = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
+    ? await readPostModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, ids)
+    : await readPostModelVersionIdsViaPrisma(dbRead, ids);
+  return Object.fromEntries(posts.map((post) => [post.id, post]));
+}
+
 function createPostVersionCache() {
   return createCachedObject<{ id: number; modelVersionId: number | null }>({
     key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:post-version`,
@@ -5862,13 +5886,7 @@ function createPostVersionCache() {
     // As for versions: a post not yet on the replica must not be remembered as missing.
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    lookupFn: async (ids) => {
-      const posts = await dbRead.post.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, modelVersionId: true },
-      });
-      return Object.fromEntries(posts.map((post) => [post.id, post]));
-    },
+    lookupFn: lookupPostModelVersions,
   });
 }
 let postVersionCacheInstance: ReturnType<typeof createPostVersionCache> | undefined;
@@ -6467,7 +6485,7 @@ export async function migrateResourceToCollection({
         const newModel = await tx.model.create({
           data: {
             ...modelData,
-            name: `${modelData.name} - ${version.name}`,
+            name: truncateModelName(`${modelData.name} - ${version.name}`),
             meta: { ...((modelData.meta as ModelMeta) ?? {}), showcaseCollectionId: collection.id },
             gallerySettings:
               modelData.gallerySettings === null ? Prisma.JsonNull : modelData.gallerySettings,
@@ -6523,7 +6541,7 @@ export async function migrateResourceToCollection({
       // update the original model name to include the version
       await tx.model.update({
         where: { id: model.id },
-        data: { name: `${model.name} - ${filteredVersions[0].name}` },
+        data: { name: truncateModelName(`${model.name} - ${filteredVersions[0].name}`) },
       });
 
       return { collection, modelIds };
@@ -6575,8 +6593,6 @@ export async function getFeaturedModels() {
       // was trying to subtract 2 minutes
       const now = dayjs();
 
-      // TODO we're featuring modelVersions, but showing models due to how collections and meili works
-
       let retries = 0;
       while (retries < 3) {
         const nowDate = now.subtract(retries, 'day').toDate();
@@ -6589,6 +6605,7 @@ export async function getFeaturedModels() {
             position: true,
             modelVersion: {
               select: {
+                id: true,
                 modelId: true,
                 baseModel: true,
                 model: { select: { type: true } },
@@ -6602,6 +6619,7 @@ export async function getFeaturedModels() {
         } else {
           return data.map((row) => ({
             modelId: row.modelVersion.modelId,
+            modelVersionId: row.modelVersion.id,
             position: row.position,
             baseModel: row.modelVersion.baseModel as BaseModel,
             type: row.modelVersion.model.type,
@@ -6610,9 +6628,12 @@ export async function getFeaturedModels() {
       }
 
       // if nothing found, get from the collection
-      const query = await dbWrite.$queryRaw<{ modelId: number; baseModel: string; type: string }[]>`
+      const query = await dbWrite.$queryRaw<
+        { modelId: number; modelVersionId: number; baseModel: string; type: string }[]
+      >`
         SELECT
           ci."modelId",
+          mv.id AS "modelVersionId",
           mv."baseModel",
           m."type"
         FROM "CollectionItem" ci
@@ -6626,6 +6647,7 @@ export async function getFeaturedModels() {
       `;
       return query.map((row) => ({
         modelId: row.modelId,
+        modelVersionId: row.modelVersionId,
         position: 0,
         baseModel: row.baseModel as BaseModel,
         type: row.type as ModelType,
@@ -6837,6 +6859,7 @@ export const privateModelFromTraining = async ({
   const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
+      name: true,
       userId: true,
       lockedProperties: true,
       meta: true,
@@ -6849,6 +6872,9 @@ export const privateModelFromTraining = async ({
 
   const isOwner = model.userId === user.id || user.isModerator;
   if (!isOwner) return null;
+
+  if (data.name !== undefined && isModelNameTooLong(data.name, model.name))
+    throw throwBadRequestError(MODEL_NAME_TOO_LONG_MESSAGE);
 
   assertPrivateFlowPublishable({
     status: model.status,
@@ -7098,11 +7124,13 @@ export const publishPrivateModel = async (
     throw throwBadRequestError('Model has no published versions');
   }
 
-  if (publishVersions)
+  if (publishVersions) {
     assertBaseModelAttestations({
       versions: versions.map((version) => ({ ...version, model })),
       grandfatherPublished: false,
     });
+    await assertNonCommercialVersionsUnmonetized(versions);
+  }
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();

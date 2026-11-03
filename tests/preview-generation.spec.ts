@@ -143,6 +143,14 @@ test.describe('generation cost quote (gold)', () => {
       }
     );
 
+    // 🔴 Unroute before the test ends. /generate fires whatIf MORE than once (form
+    // init, resource resolve), so when the first 200 resolves the wait below, a later
+    // whatIf can still be inside the handler's `route.fetch()`. Teardown then closes
+    // the page under it and Playwright fails the test with "route.fetch: Target page,
+    // context or browser has been closed … while running route callback" — after the
+    // assertion it cares about already had its answer. `ignoreErrors` stops waiting
+    // for in-flight handlers and swallows what they throw once unrouted; it changes
+    // nothing about which body is captured or what is asserted on it below.
     const { body } = await retryFlaky(
       'whatIf on /generate',
       async () => {
@@ -187,7 +195,7 @@ test.describe('generation cost quote (gold)', () => {
         return { body: capturedBody };
       },
       { attempts: 2 }
-    );
+    ).finally(() => page.unrouteAll({ behavior: 'ignoreErrors' }));
 
     const total = extractCostTotal(body);
     expect(total, 'cost.total parsed from whatIfFromGraph response').not.toBeNull();

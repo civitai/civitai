@@ -61,7 +61,7 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
-  addApiKey: vi.fn(async () => 'minted-api-key'),
+  mintApiKey: vi.fn(async () => 'minted-api-key'),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
@@ -76,9 +76,13 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
-const { deleteApiKey, deleteApiKeys, expireUserApiKeys, setApiKeyBuzzLimit } = await import(
-  '~/server/services/api-key.service'
-);
+const {
+  deleteApiKey,
+  deleteApiKeys,
+  expireGenerationCredentials,
+  expireUserApiKeys,
+  setApiKeyBuzzLimit,
+} = await import('~/server/services/api-key.service');
 const orchestratorKeyRoute = (await import('~/pages/api/user/orchestrator-key'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
@@ -104,10 +108,10 @@ const LEDGER: Record<string, { count: number; why: string }> = {
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',
   },
   'src/server/services/api-key.service.ts': {
-    count: 6,
+    count: 7,
     why:
       'create: a new key, and misses are never cached. setApiKeyBuzzLimit update, and the ' +
-      'deleteApiKeys and expireUserApiKeys helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
+      'deleteApiKeys, expireUserApiKeys and expireGenerationCredentials helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
       "caller's own rotated generation keys, not a revocation; the first only removes keys within " +
       '30 s of their own expiry (entries never outlive expiresAt), the second a legacy key name. ' +
       'Accepted: such a key can keep working for at most the cache TTL after the clean-up.',
@@ -306,7 +310,14 @@ beforeEach(() => {
   }) =>
     rows
       .filter((r) => matches(r, where))
-      .map(({ id, key, userId, expiresAt }) => ({ id, key, userId, expiresAt }))) as never);
+      .map(({ id, key, userId, expiresAt, type, tokenScope }) => ({
+        id,
+        key,
+        userId,
+        expiresAt,
+        type,
+        tokenScope,
+      }))) as never);
   dbMock.dbWrite.apiKey.deleteMany.mockImplementation((async ({
     where,
   }: {
@@ -389,6 +400,24 @@ describe('writes that evict the bearer cache', () => {
     expect(revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 501 });
   });
 
+  it('expireGenerationCredentials stops the System key on the next request, not the personal key', async () => {
+    await warm('personal');
+    await warm('orchestrator');
+    await expireGenerationCredentials(501);
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+    expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it('expireGenerationCredentials retries the eviction of a key an earlier pass expired', async () => {
+    await warm('orchestrator');
+    // An earlier pass expired the row but its cache eviction failed.
+    rows[1].expiresAt = new Date(T0.getTime() - 1000);
+    expect((await getSessionFromBearerToken('orchestrator'))?.apiKeyId).toBe(52); // control
+    await expireGenerationCredentials(501);
+    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+  });
+
   it('expireUserApiKeys retries the eviction of a key an earlier pass expired', async () => {
     await warm('personal');
     // An earlier pass expired the row but its cache eviction failed.
@@ -440,6 +469,15 @@ describe('writes that evict the bearer cache', () => {
 
   it('GET /api/user/orchestrator-key (regenerate) stops the old orchestrator key', async () => {
     await warm('orchestrator');
+    // The route checks the caller's stored standing first; answer that read only.
+    dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+      select?: Record<string, boolean>;
+    }) =>
+      Object.keys(args.select ?? {})
+        .sort()
+        .join() === 'bannedAt,muted'
+        ? { muted: false, bannedAt: null }
+        : null) as never);
     hubSession.current = {
       user: {
         id: 501,

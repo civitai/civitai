@@ -186,7 +186,11 @@ describe('POST /api/v1/block-tokens', () => {
     // before consuming its once-value) doesn't bleed into the next test.
     mockBlockRegistry.resolveBlockInstance.mockReset();
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue(RESOLVED_INSTALL);
-    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      deletedAt: null,
+      bannedAt: null,
+      muted: false,
+    });
     // A6: default to "user has granted everything the app declares" so the
     // pre-A6 tests (which assert sign was called for the manifest scopes) keep
     // passing. The consent-specific tests below override this per-case.
@@ -677,6 +681,67 @@ describe('POST /api/v1/block-tokens', () => {
     };
     expect(new Set(signArgs.scopes)).toEqual(new Set(['models:read:self', 'buzz:read:self']));
     expect(signArgs.userId).toBe(42);
+  });
+
+  describe('a restricted account keeps its read scopes but is never issued spend', () => {
+    const SPEND_INSTALL = {
+      ...RESOLVED_INSTALL,
+      settings: { buzz_budget_per_gen: 100 },
+      appBlock: {
+        ...RESOLVED_INSTALL.appBlock,
+        manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
+        approvedScopes: ['models:read:self', 'ai:write:budgeted'],
+        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+      },
+    };
+
+    async function mint({ muted, granted }: { muted: boolean; granted: string[] }) {
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      mockBlockRegistry.resolveBlockInstance.mockResolvedValue(SPEND_INSTALL);
+      mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null, muted });
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: granted,
+        revokedAt: null,
+      });
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+      const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+        scopes: string[];
+        buzzBudget?: number;
+      };
+      return {
+        status: res._status,
+        signArgs,
+        body: res._body as { needsConsent: boolean; missingScopes: string[] },
+      };
+    }
+
+    it('signs the read scope only, with no budget', async () => {
+      const { status, signArgs } = await mint({
+        muted: true,
+        granted: ['models:read:self', 'ai:write:budgeted'],
+      });
+      expect(status).toBe(200);
+      expect(signArgs.scopes).toEqual(['models:read:self']);
+      expect(signArgs.buzzBudget).toBeUndefined();
+    });
+
+    it('does not ask the viewer to consent to a scope it cannot be given', async () => {
+      const { body } = await mint({ muted: true, granted: ['models:read:self'] });
+      expect(body.needsConsent).toBe(false);
+      expect(body.missingScopes).toEqual([]);
+    });
+
+    it('CONTROL: an unrestricted account is issued spend with its budget', async () => {
+      const { status, signArgs } = await mint({
+        muted: false,
+        granted: ['models:read:self', 'ai:write:budgeted'],
+      });
+      expect(status).toBe(200);
+      expect(new Set(signArgs.scopes)).toEqual(new Set(['models:read:self', 'ai:write:budgeted']));
+      expect(signArgs.buzzBudget).toBe(100);
+    });
   });
 
   // ===========================================================================

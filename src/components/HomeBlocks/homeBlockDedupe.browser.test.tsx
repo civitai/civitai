@@ -2,7 +2,11 @@ import { useState } from 'react';
 import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
-import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
+import {
+  dedupeOrder,
+  modelClaimKeys,
+  useDedupedCappedItems,
+} from '~/components/HomeBlocks/homeBlockDedupe';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import '../../../test/component-setup';
@@ -47,5 +51,42 @@ describe('useDedupedCappedItems lifecycle', () => {
     await page.getByRole('button', { name: 'drop first' }).click();
 
     await expect.element(page.getByTestId('second')).toHaveTextContent(firstRow);
+  });
+});
+
+const models = [1, 2, 3].map((id) => ({ id, user: { id }, images: [{ id: id * 100 }] }));
+const images = [100, 200, 300, 400].map((id) => ({ id, user: { id } }));
+const keysForModel = (m: (typeof models)[number]) => modelClaimKeys(m, false);
+
+function CoverPage({ withKeys }: { withKeys: boolean }) {
+  const shownModels = useDedupedCappedItems(models, {
+    order: dedupeOrder(0),
+    entity: 'model',
+    rows: 1,
+    keysFor: withKeys ? keysForModel : undefined,
+  });
+  const shownImages = useDedupedCappedItems(images, {
+    order: dedupeOrder(1),
+    entity: 'image',
+    rows: 1,
+  });
+  return (
+    <>
+      <div data-testid="models">{shownModels.map((x) => x.id).join(',')}</div>
+      <div data-testid="images">{shownImages.map((x) => x.id).join(',')}</div>
+    </>
+  );
+}
+
+describe('model rows claiming their cover image', () => {
+  test('a later image row demotes the covers the model row shows', async () => {
+    render(<CoverPage withKeys />);
+    await expect.element(page.getByTestId('models')).toHaveTextContent('1,2,3');
+    await expect.element(page.getByTestId('images')).toHaveTextContent('400,100,200,300');
+  });
+
+  test('without the cover keys the image row repeats them', async () => {
+    render(<CoverPage withKeys={false} />);
+    await expect.element(page.getByTestId('images')).toHaveTextContent('100,200,300,400');
   });
 });

@@ -27,7 +27,9 @@ export const goodContentReward = createBuzzEvent({
   getKey: async (input: ReactionEvent, { db }) => {
     if (input.ownerId === input.reactorId) return false;
 
-    const table = typeToTable[input.type];
+    // A comment's author is read from CommentV3, which also holds comments on surfaces that no longer
+    // write CommentV2; the transaction keeps the CommentV2 type, as the id is the same.
+    const table = input.type === 'comment' ? 'CommentV3' : typeToTable[input.type];
     if (!table) return false;
     try {
       const [{ userId } = { userId: undefined }] = await db.$queryRawUnsafe<{ userId?: number }[]>(`

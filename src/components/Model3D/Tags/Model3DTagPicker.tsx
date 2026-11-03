@@ -253,7 +253,7 @@ function TagPicker({
               ['Enter', handleSubmit],
               ['ArrowUp', handleUp],
               ['ArrowDown', handleDown],
-              ['Escape', handleClose],
+              ['esc', handleClose],
             ])}
             autoFocus
           />

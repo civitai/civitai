@@ -6,6 +6,7 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
 
 const mocks = vi.hoisted(() => ({
   assertUsable: vi.fn(),
+  assertInputs: vi.fn(),
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
   submit: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (import
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   assertGenerationInputUrlsUsable: mocks.assertUsable,
+  assertGenerationInputsUsable: mocks.assertInputs,
   assertStoredImageUrlsUnblocked: mocks.assertStoredUnblocked,
 }));
 
@@ -64,8 +66,18 @@ const caller = () =>
 const refused = new TRPCError({ code: 'BAD_REQUEST', message: 'unavailable' });
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   mocks.assertUsable.mockRejectedValue(refused);
+  mocks.assertInputs.mockRejectedValue(refused);
   const project = { id: 11, userId: USER_ID, baseModel: null };
   dbMock.dbRead.comicProject.findUnique.mockResolvedValue(project);
   dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({ project });
@@ -88,6 +100,24 @@ const checkedUrls = () =>
   });
 
 describe('comics generation inputs', () => {
+  it('getGenerationCostEstimate checks its source and reference urls before pricing', async () => {
+    const cdnRef = `https://image.civitai.com/x/${REF}/original=true`;
+    await expect(
+      caller().getGenerationCostEstimate({
+        sourceImage: { url: SOURCE, width: 512, height: 512 },
+        userReferenceImages: [{ url: cdnRef, width: 512, height: 512 }],
+      })
+    ).rejects.toBe(refused);
+    expect(mocks.assertInputs).toHaveBeenCalledTimes(1);
+    expect(mocks.assertInputs.mock.calls[0][0]).toEqual({
+      urls: [SOURCE, cdnRef],
+      userId: USER_ID,
+      entry: 'comicsCostEstimate',
+      isApiCaller: false,
+    });
+    expect(mocks.getOrchestratorToken).not.toHaveBeenCalled();
+  });
+
   it('iterateGenerate checks its source and reference urls', async () => {
     await expect(
       caller().iterateGenerate({
@@ -244,6 +274,7 @@ describe('comics generation inputs the server loads', () => {
   });
 
   it("getGenerationCostEstimate reads only the caller's own references", async () => {
+    mocks.assertInputs.mockResolvedValue(undefined);
     dbMock.dbRead.comicReference.findMany.mockResolvedValue([]);
     await caller()
       .getGenerationCostEstimate({ referenceIds: [5] })

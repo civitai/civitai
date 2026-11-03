@@ -16,11 +16,14 @@ import { readListingVisibility } from '~/server/services/blocks/app-listing-visi
 import { readListingForkable } from '~/server/services/blocks/app-fork.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
+import {
+  computeListingProblems,
+  listingProblemInput,
+} from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
   ListingCapability,
+  ListingEditorRole,
   ListingKind,
 } from '~/shared/constants/app-capabilities.constants';
 import {
@@ -31,6 +34,7 @@ import {
   isAuthorableListingStatus,
   isPublishableListingStatus,
   LISTING_AUTHORING_ROUTE_STATUSES,
+  listingEditorRole,
   listingKindSupports,
   PUBLISHABLE_LISTING_STATUSES,
 } from '~/shared/constants/app-capabilities.constants';
@@ -129,7 +133,8 @@ import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility
  * bundle. There is still exactly one definition — see that file's header for why the
  * move was structural rather than cosmetic.
  */
-export type { AppRole, ListingKind, ListingCapability };
+export type { AppRole, ListingEditorRole, ListingKind, ListingCapability };
+export { listingEditorRole };
 export { CAPABILITIES_BY_KIND, capabilitiesForKind, listingKindSupports };
 export { AUTHORABLE_LISTING_STATUSES, isAuthorableListingStatus };
 export {
@@ -1021,8 +1026,9 @@ export type MyAppListing = {
  */
 export type AppListingAuthoringContext = Omit<
   MyAppListing,
-  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems'
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems' | 'role'
 > & {
+  role: ListingEditorRole;
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
    * column the public listing-detail read already exposes (`ListingDetailKindData`).
@@ -1276,27 +1282,14 @@ async function hydrateMyAppListings(
         // `assetScans` comes from the ONE batched read above — see its note. Absent from
         // the map (which cannot happen for a row that was in `subjects`) degrades to `[]`,
         // i.e. the pre-scan-dimension behaviour, never to an invented problem.
-        problems: computeListingProblems({
-          // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
-          // three empty-text problems give different (opposite) advice per kind. This is
-          // the same `kind` the row already reports, so the advisory and the capabilities
-          // can never disagree about what sort of listing this is.
-          kind,
-          iconId: r.iconId ?? null,
-          coverId: r.coverId ?? null,
-          screenshotCount: r._count?.screenshots ?? 0,
-          description: r.description ?? null,
-          tagline: r.tagline ?? null,
-          category: r.category ?? null,
-          assetScans: scansByListingId.get(r.id) ?? [],
-          status: r.status,
-          contentRating: r.contentRating ?? null,
-          declaredContentRating: declaredListingRating({
+        problems: computeListingProblems(
+          listingProblemInput(r, {
+            // The row's own kind: listMine returns both kinds and the empty-text advice differs per kind.
             kind,
             appRating: r.appBlock?.contentRating,
-            listingRating: r.contentRating,
-          }),
-        }).problems,
+            assetScans: scansByListingId.get(r.id) ?? [],
+          })
+        ).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.
         //
@@ -1467,12 +1460,14 @@ export async function listMyAppListings(opts: {
 export async function getAppListingAuthoringContext(opts: {
   appListingId: string;
   userId: number;
+  isModerator?: boolean;
 }): Promise<AppListingAuthoringContext> {
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
   }
-  if (!access.role) {
+  const role = listingEditorRole(access.role, opts.isModerator);
+  if (!role) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this app' });
   }
   const row = await dbRead.appListing.findUnique({
@@ -1598,7 +1593,7 @@ export async function getAppListingAuthoringContext(opts: {
     kind: access.kind,
     appBlockId: access.appBlockId,
     connectClientId: row.connectClientId,
-    role: access.role,
+    role,
     capabilities: capabilitiesForKind(access.kind),
     visibility: visibilityRead.visibility,
     visibilityAvailable: visibilityRead.available,

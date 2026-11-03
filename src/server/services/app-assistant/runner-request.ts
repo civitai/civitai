@@ -1,12 +1,18 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type * as z from 'zod';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import {
   verifyRunGrant,
   type VerifiedRunGrant,
 } from '~/server/services/app-assistant/assistant-runner-tokens';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
+
+/**
+ * The open app's key, as every runner route takes it in its body. It is the page's own state, so
+ * never trusted: each route looks it up as the grant's user.
+ */
+export const runnerAppKey = z.string().min(1).max(200);
 
 /**
  * The front door of every `/api/internal/app-assistant/*` endpoint App Assistant's server runner

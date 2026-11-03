@@ -7,6 +7,8 @@ export type LuaRedis = {
   setHash: (key: string, fields: Record<string, string>) => void;
   set: (key: string) => string[] | undefined;
   setSet: (key: string, members: string[]) => void;
+  string: (key: string) => string | undefined;
+  setString: (key: string, value: string, ttlMs?: number) => void;
   pttl: (key: string) => number;
   hpttl: (key: string, field: string) => number;
   errors: unknown[];

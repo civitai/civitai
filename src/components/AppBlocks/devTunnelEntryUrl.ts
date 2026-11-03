@@ -4,31 +4,57 @@ export interface DevTunnelEntryUrl {
   host: string;
 }
 
+/** A dev-tunnel entry-URL route's JSON answer, as far as this module reads it. */
+export type EntryUrlBody = Partial<DevTunnelEntryUrl> & { error?: string } & Record<
+    string,
+    unknown
+  >;
+
 /**
- * A freshly signed entry URL for the caller's own `blockId` over its live dev tunnel, from
- * `/api/apps/dev/entry-url` (the `/apps/dev/<blockId>` page's gates). Rejects when there is none
- * to give — the app is not the caller's, no tunnel is live, its host is not published yet — or when
- * the URL's origin is not the host the answer names.
+ * GETs an entry-URL route same-origin and returns its JSON body (`{}` when it is not JSON). A
+ * non-2xx answer throws `refuse(status, body)` when that returns an error, else
+ * `Error(body.error ?? fallback)`.
  */
+export async function fetchEntryUrlBody(
+  path: string,
+  fetchImpl: typeof fetch,
+  {
+    fallback,
+    refuse,
+  }: { fallback: string; refuse?: (status: number, body: EntryUrlBody | null) => Error | undefined }
+): Promise<EntryUrlBody> {
+  const res = await fetchImpl(path, { credentials: 'same-origin' });
+  const data = (await res.json().catch(() => null)) as EntryUrlBody | null;
+  if (!res.ok) throw refuse?.(res.status, data) ?? new Error(data?.error ?? fallback);
+  return data ?? {};
+}
+
+/** The body's entry URL, only when it is an https URL on the host the body names. */
+export function checkedEntryUrl(body: EntryUrlBody, fallback: string): DevTunnelEntryUrl {
+  const { iframeSrc, host } = body;
+  if (!iframeSrc || !host) throw new Error(body.error ?? fallback);
+  let url: URL;
+  try {
+    url = new URL(iframeSrc);
+  } catch {
+    throw new Error('The entry URL is malformed');
+  }
+  if (url.protocol !== 'https:' || url.host !== host)
+    throw new Error('The entry URL is not on its tunnel host');
+  return { iframeSrc, host };
+}
+
+const NO_ENTRY_URL = 'No fresh entry URL is available';
+
+/** A freshly signed entry URL for the caller's own `blockId`, from `/api/apps/dev/entry-url`. */
 export async function fetchDevTunnelEntryUrl(
   blockId: string,
   fetchImpl: typeof fetch = (...args) => fetch(...args)
 ): Promise<DevTunnelEntryUrl> {
-  const res = await fetchImpl(`/api/apps/dev/entry-url?blockId=${encodeURIComponent(blockId)}`, {
-    credentials: 'same-origin',
-  });
-  const data = (await res.json().catch(() => null)) as
-    | (Partial<DevTunnelEntryUrl> & { error?: string })
-    | null;
-  if (!res.ok || !data?.iframeSrc || !data.host)
-    throw new Error(data?.error ?? 'No fresh entry URL is available');
-  let url: URL;
-  try {
-    url = new URL(data.iframeSrc);
-  } catch {
-    throw new Error('The fresh entry URL is malformed');
-  }
-  if (url.protocol !== 'https:' || url.host !== data.host)
-    throw new Error('The fresh entry URL is not on its tunnel host');
-  return { iframeSrc: data.iframeSrc, host: data.host };
+  const body = await fetchEntryUrlBody(
+    `/api/apps/dev/entry-url?blockId=${encodeURIComponent(blockId)}`,
+    fetchImpl,
+    { fallback: NO_ENTRY_URL }
+  );
+  return checkedEntryUrl(body, NO_ENTRY_URL);
 }

@@ -2,6 +2,8 @@ import { APP_ASSISTANT_DEFAULT_MODEL, isAppAssistantModel } from '@civitai/app-a
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
+import { CivitaiAppActivity } from './app-assistant/app-activity';
 import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
@@ -98,9 +100,17 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // The store cover's listing read, which civitai makes as a run's user, by its grant.
+  const covers = new CivitaiCovers({ civitaiUrl: civitai.civitaiUrl, secret: civitai.secret, log });
   // The open app's review and user feedback, which civitai reads as a run's user: each call reads
   // the run's grant inside its own fetch, as the dev tunnel's do.
   const appFeedback = new CivitaiAppFeedback({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
+  // What the open app did while it ran, which civitai reads as a run's user, by its grant.
+  const appActivity = new CivitaiAppActivity({
     civitaiUrl: civitai.civitaiUrl,
     secret: civitai.secret,
     log,
@@ -111,7 +121,12 @@ if (civitai) {
         sandboxUrl: civitai.sandboxUrl,
         tokens: (runId) => credentials.forRun(runId),
         devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
+        covers: (runId) => ({
+          listings: covers.forRun(() => grants.forRun(runId)),
+          estimator: runnerCoverEstimator(orchestration, credentials.forRun(runId)),
+        }),
         appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
+        appActivity: (runId, signal) => appActivity.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;
@@ -138,7 +153,6 @@ const runner = new Runner({
   stopGraceMs: config.stopGraceMs,
   // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
   ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
-  // A chat that follows the page's default is not saved as having picked it.
   defaultModel: APP_ASSISTANT_DEFAULT_MODEL,
 });
 

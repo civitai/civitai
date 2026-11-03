@@ -2766,6 +2766,8 @@ describe('a write inside the settlement transaction', () => {
         parentPostId: CHAPTER_POST,
         postId: CONTINUATION_POST,
         placerId: PLACER,
+        // The owner answered, so the placer need not be a collaborator.
+        asCollaborator: false,
       });
       // The settle transaction's client: through `dbWrite` the edge would land
       // on another connection, outside the approval it belongs to.

@@ -187,6 +187,31 @@ export function getStorylineChapterTombstone({
   return null;
 }
 
+/** Why chapter 1 keeps its storyline from the public; its owner, participants and moderators are told. */
+export type StorylineRootHiddenReason = 'removed' | 'unpublished' | 'pendingRating';
+
+/**
+ * Whether chapter 1 keeps the storyline out of public view, and why. `post` is null once the post
+ * is deleted. Mirrored in SQL by `storylineRootVisibleSql` (the feed) and `storylineRootWaitingSql`
+ * (the readiness pass); change all three.
+ */
+export function getStorylineRootHiddenReason(
+  {
+    post,
+    removed,
+  }: {
+    post: Pick<StorylineChapterPost, 'nsfwLevel' | 'publishedAt' | 'tosViolation' | 'user'> | null;
+    removed: boolean;
+  },
+  now = new Date()
+): StorylineRootHiddenReason | null {
+  if (!post || isStorylineChapterRemoved({ post, removed }) || post.nsfwLevel === NsfwLevel.Blocked)
+    return 'removed';
+  if (!post.publishedAt || !(post.publishedAt < now)) return 'unpublished';
+  if (!post.nsfwLevel) return 'pendingRating';
+  return null;
+}
+
 /**
  * Choices at a fork below which its shares are withheld, unless `STORYLINE_SHARE_MIN_CHOICES` sets
  * another.

@@ -2367,6 +2367,14 @@ export const REDIS_SYS_KEYS = {
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
     /**
+     * APP DEV PREVIEW ERRORS — the uncaught errors (and console errors) an app's own code reported
+     * in its LIVE DEV PREVIEW (`BLOCK_ERROR {fatal:false}` from a dev-tunnel host only), keyed
+     * `${DEV_PREVIEW_ERRORS}:<userId>:<blockId>`. A capped LIST (newest first, last 200), hard-TTL
+     * EX 2h, written only while the user has a live dev tunnel of that app; read back by App
+     * Assistant's app-activity read for that same user (preview-errors.service.ts). On `sysRedis`.
+     */
+    DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
+    /**
      * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
      * post-paid customComfy job's terminal poll/cancel can refund the
      * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
@@ -2553,6 +2561,9 @@ export const REDIS_SYS_KEYS = {
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
     // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
     UPLOAD_KEY_OWNER: 'system:upload-key-owner',
+    // `<prefix>:<YYYY-MM-DD>:<caller>:<host bucket>` = a HyperLogLog of the users who sent a
+    // generation input url on that external host bucket that UTC day (TTL 2 days).
+    GENERATION_INPUT_EXTERNAL_HOST_USERS: 'system:generation-input-external-host-users',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
@@ -2618,7 +2629,16 @@ export const REDIS_SYS_KEYS = {
     FAMILY_STATE: 'session:family-state',
     // `session:user-cut:${userId}` → epoch ms; tokens of that user signed before it are revoked.
     USER_CUT: 'session:user-cut',
+    // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
+    FAMILY_LIVE: 'session:family-live',
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    DEVICE_FAMILIES: 'session:device-families',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
+    // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
+    // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
+    HUB_UPGRADE: 'session:hub-upgrade',
+    // `session:hub-upgrade-lock:${sha256(jti)}` → held (SET NX, short TTL) by the one request minting that session.
+    HUB_UPGRADE_LOCK: 'session:hub-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once
     // spent. Carries the just-authenticated user from the login callback to /api/auth/oauth/authorize
@@ -2860,6 +2880,10 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  MEMBERSHIP_EXTEND: {
+    // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
+    LOCK: 'membership-extend:lock',
+  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
     SEND_LOCK: 'message-as-civitai:send-lock',
@@ -3001,6 +3025,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
+    ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -3136,6 +3162,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.
     USER_CREATOR: 'packed:caches:user-creator',
+    // userId -> the event hat their avatar shows during the event (src/server/events/showcase-hat.ts).
+    SHOWCASE_HAT: 'packed:caches:showcase-hat',
     // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
     // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
     // revocation. See src/server/auth/api-key-principal-cache.ts.
@@ -3315,3 +3343,9 @@ export const REDIS_SUB_KEYS = {
     MERGING: 'merging', // sys
   },
 } as const;
+
+/**
+ * How long after a mute or unmute the account-standing cache is busted again: past the 10 s refill
+ * lock, so a refill that read the row before the change cannot leave the old standing behind.
+ */
+export const ACCOUNT_STANDING_REBUST_MS = 11_000;
