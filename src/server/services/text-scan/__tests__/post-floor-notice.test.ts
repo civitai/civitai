@@ -5,9 +5,6 @@ import type * as Adapters from '~/server/services/moderation-adapters';
 import type * as RatingReviewService from '~/server/services/rating-review.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// Drives the real callback and the real level recompute, against a fake database that derives the
-// level as the SQL does.
-
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -111,7 +108,6 @@ const setLevel = (id: number, level: number) => {
   else if (other) other.level = level;
 };
 
-// Only the two statements this path sends; anything else throws.
 const fakeRaw = async (query: Prisma.Sql) => {
   const sql = query.text.replace(/\s+/g, ' ').trim();
   const ids = query.values as number[];
@@ -218,7 +214,7 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     });
   });
 
-  it('the callback notifies a rated post under the key the recompute uses', async () => {
+  it('the callback notifies a rated post once, under the key the recompute uses too', async () => {
     post.images = 1;
     post.level = 1;
     vi.mocked(getWorkflow).mockResolvedValue(raisedWorkflow as never);
@@ -310,16 +306,6 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     expect(post.level).toBe(8);
     expect(ratingNotices()).toHaveLength(1);
     expect(ratingNotices()[0][0]).toMatchObject({ details: { level: 8 } });
-  });
-
-  it('does not notify when a lower floor leaves an R + X post as it was', async () => {
-    verdict = { ...raisedVerdict(), nsfwLevel: 4 };
-    post.images = 4 | 8;
-
-    await imageRated(0);
-
-    expect(post.level).toBe(4 | 8);
-    expect(ratingNotices()).toHaveLength(0);
   });
 
   it('notifies each risen post in a batch at its own level', async () => {

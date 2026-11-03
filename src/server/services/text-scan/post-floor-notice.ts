@@ -13,15 +13,13 @@ type Candidate = {
   images: number | null;
 };
 
-// The text-scan callback sees no rise on a post whose images are unrated, so the floor lands on this
-// recompute. Only that first rating is the callback's to report: a rated post's later changes are
-// the images'. Notify under the callback's workflowId so the two paths dedupe.
+const isFirstRating = (c: { before: number; after: number }) => c.before === 0 && c.after !== 0;
+
+// Notify under the callback's workflowId, or this and the callback path send the owner two notices.
 export async function notifyPostFloorRaises(
   changes: { id: number; before: number; after: number }[]
 ) {
-  const firstRated = new Map(
-    changes.filter((c) => c.before === 0 && c.after !== 0).map((c) => [c.id, c] as const)
-  );
+  const firstRated = new Map(changes.filter(isFirstRating).map((c) => [c.id, c] as const));
   if (!firstRated.size) return;
 
   const candidates = await dbWrite.$queryRaw<Candidate[]>(Prisma.sql`
@@ -37,7 +35,7 @@ export async function notifyPostFloorRaises(
     if (labels.includes('poi') || labels.includes('minor')) continue;
     if (post.moderatorNsfwLevel != null || !post.userId || !post.workflowId) continue;
     const change = firstRated.get(post.id);
-    // Judged as the callback would judge the verdict landing on the rated images.
+    // change.before is 0 here; compare against the images alone, as the callback does.
     if (!change || !ratingRose(post.images ?? 0, change.after)) continue;
     await notifyTextScanRatingRaised({
       entityType: 'Post',
