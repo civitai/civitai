@@ -144,7 +144,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
               setMenu((open) => !open);
             }}
           >
-            <IconSettings size={10} stroke={2.5} />
+            <IconSettings size={16} stroke={2.25} />
           </button>
         </Popover.Target>
         <Popover.Dropdown p={6} onClick={(event) => event.stopPropagation()}>

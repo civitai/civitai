@@ -1,17 +1,16 @@
 .badge {
   position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  pointer-events: none;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
-}
-
-.ringBox {
-  position: relative;
+  display: block;
   flex: none;
   width: 48px;
   height: 48px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
 }
 
 .ring {
@@ -32,15 +31,17 @@
   transition: stroke-dasharray 0.55s ease, stroke-dashoffset 0.55s ease;
 }
 
+/* The dark gap between disc and ring keeps the leader's arc from merging into its own disc. */
 .disc {
   position: absolute;
-  inset: 6px;
+  inset: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 1px;
   border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
   color: var(--mantine-color-white);
   /* White has to read on the lightest team colour (yellow) too. */
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
@@ -66,22 +67,26 @@
   animation: bump 0.55s ease;
 }
 
-.you {
-  margin-top: 24px;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 19px;
-  padding: 0 6px 0 5px;
-  border: 2px solid currentColor;
-  border-radius: 99px;
-  background-color: rgba(0, 0, 0, 0.6);
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
+.mine {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(0, 0, 0, 0.75);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
 }
 
-.youLabel {
+.lock {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--mantine-color-white);
+  border-radius: 50%;
+  background-color: var(--mantine-color-dark-7);
   color: var(--mantine-color-white);
 }
 

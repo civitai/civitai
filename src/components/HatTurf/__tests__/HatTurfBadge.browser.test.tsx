@@ -4,6 +4,7 @@ import type * as Trpc from '~/utils/trpc';
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
+import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
 
 // The component project loads no global stylesheet, so Tailwind — including
 // preflight's `box-sizing: border-box` — is inert unless a test imports it.
@@ -32,6 +33,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy() };
 });
+const trackAction = vi.hoisted(() =>
+  vi.fn<(data: unknown) => Promise<void>>(async () => undefined)
+);
+vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackUtilsModule>()),
+  useTrackEvent: () => ({ trackAction }),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
 }));
@@ -130,13 +138,14 @@ function renderCard(opts: {
   renderWithProviders(
     <TurfSummaryContext.Provider value={feed === undefined ? null : feed}>
       <IntersectionObserverProvider>
-        <div data-testid="card-root" style={{ width }}>
+        <div data-testid="card-root" style={{ width }} onClick={onCardClick}>
           <ImageCard data={image} />
         </div>
       </IntersectionObserverProvider>
     </TurfSummaryContext.Provider>
   );
 }
+const onCardClick = vi.fn();
 
 const badge = () =>
   document.body.querySelector('[data-testid="hat-turf-badge"]') as HTMLElement | null;
@@ -155,6 +164,8 @@ const feedWith = (
 
 afterEach(() => {
   cleanup();
+  trackAction.mockClear();
+  onCardClick.mockClear();
   document.documentElement.removeAttribute('data-mantine-color-scheme');
 });
 
@@ -181,16 +192,73 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(box.right).toBeLessThanOrEqual(card.right);
   });
 
-  test('shows where the viewer stands when their team is behind', async () => {
+  const mineDot = () =>
+    badge()!.querySelector('[data-testid="hat-turf-mine"]') as HTMLElement | null;
+
+  test('marks the viewer’s own arc with a dot in their colour, with no text', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    expect(badge()!.textContent).toContain('you 4');
+    expect(mineDot()).not.toBeNull();
+    const pinkArc = badge()!.querySelector('circle[data-team="pink"]') as SVGElement;
+    expect(getComputedStyle(mineDot()!).backgroundColor).toBe(getComputedStyle(pinkArc).stroke);
+    expect(badge()!.textContent).toBe('6');
   });
 
-  test('says nothing extra when the viewer leads', async () => {
-    renderCard({ feed: feedWith({ 1: standing() }, 'blue') });
+  test('no dot when the viewer’s team has no hats here', async () => {
+    renderCard({ feed: feedWith({ 1: standing({ counted: { blue: 6 } }) }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    expect(badge()!.textContent).not.toContain('you');
+    expect(mineDot()).toBeNull();
+  });
+
+  test('no dot when the viewer is on no team', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, null) });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    expect(mineDot()).toBeNull();
+  });
+
+  test('tapping the badge opens every team’s count without opening the card', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    badge()!.click();
+    const standings = () =>
+      document.body.querySelector('[data-testid="hat-turf-standings"]') as HTMLElement | null;
+    await vi.waitFor(() => expect(standings()).not.toBeNull());
+    const rows = [...standings()!.querySelectorAll('[data-team]')].map(
+      (el) => (el as HTMLElement).dataset.team
+    );
+    expect(rows).toEqual(['blue', 'pink', 'green', 'yellow']);
+    expect(standings()!.textContent).toContain('pink · you');
+    expect(
+      document.body.querySelector('[data-testid="hat-turf-standings-note"]')!.textContent
+    ).toBe('blue holds this image. pink needs 3 more to take it.');
+    expect(onCardClick).not.toHaveBeenCalled();
+    expect(trackAction).toHaveBeenCalledTimes(1);
+    expect(trackAction).toHaveBeenCalledWith({
+      type: 'HatTurf_Action',
+      details: { action: 'hat_count_open', event: 'birthday2026', surface: 'feed-card' },
+    });
+    badge()!.click();
+    await vi.waitFor(() => expect(badge()!.getAttribute('aria-expanded')).toBe('false'));
+    expect(trackAction).toHaveBeenCalledTimes(1);
+  });
+
+  test('a hat-protected image keeps its badge, with a lock, and says why in the popover', async () => {
+    renderCard({ feed: feedWith({ 1: standing({ hatted: true }) }, 'pink') });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).not.toBeNull();
+    expect(badge()!.getAttribute('aria-label')).toContain('A hat protects this image');
+    badge()!.click();
+    await vi.waitFor(() =>
+      expect(
+        document.body.querySelector('[data-testid="hat-turf-standings-note"]')?.textContent
+      ).toMatch(/A hat protects this image/)
+    );
+  });
+
+  test('no lock on an unprotected image', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }) });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).toBeNull();
   });
 
   // The card itself must be on screen first, or "no badge" would also pass for a card that never rendered.
