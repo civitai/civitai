@@ -79,6 +79,27 @@ describe('createTrainingWorkflow disabled base gate', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  // A custom base names an AIR, not a catalog key, so only the type/ecosystem can refuse it.
+  it('refuses a custom base whose type and ecosystem have only disabled entries', async () => {
+    givenAiToolkitVersion('urn:air:ideogram4:checkpoint:civitai:1@2', 'ideogram4', 'ideogram4');
+    await expect(submit()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringMatching(/not available for training/),
+    });
+    expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('still submits a custom base on a type with an enabled entry', async () => {
+    givenAiToolkitVersion('urn:air:wan:checkpoint:civitai:1@2', 'wan', 'wan');
+    const versionRow = await dbMock.dbWrite.$queryRaw();
+    dbMock.dbWrite.$queryRaw
+      .mockResolvedValueOnce(versionRow)
+      .mockResolvedValue([{ fmt: 'SafeTensor' }]);
+    await submit();
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
   it('still submits an enabled base', async () => {
     givenAiToolkitVersion('wan_2_2_t2v_a14b', 'wan', 'wan');
     await submit();

@@ -540,6 +540,11 @@ const featureFlags = createFeatureFlags({
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
   // `event.getAccess` (usePlayableEventDecoration) instead.
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
+  // Read through useHatTurfFeed, which also checks the event is playable.
+  hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
+  // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
+  // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
+  hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -751,6 +756,8 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
+  // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
+  remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to

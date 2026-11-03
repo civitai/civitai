@@ -378,19 +378,20 @@ describe('getResourceData — non-commercial base models', () => {
     return resource;
   }
 
-  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
-    'a %s version takes no tips',
-    async (baseModel) => {
-      expect((await resourceFor({ baseModel })).tipsEnabled).toBe(false);
-    }
-  );
+  it.each([
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+  ])('a %s version takes no tips', async (baseModel) => {
+    expect((await resourceFor({ baseModel })).tipsEnabled).toBe(false);
+  });
 
-  it.each(['Flux.2 Klein 4B', 'Flux.3 Klein'])(
-    'a %s version still takes tips',
-    async (baseModel) => {
-      expect((await resourceFor({ baseModel })).tipsEnabled).toBe(true);
-    }
-  );
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])('a %s version still takes tips', async (baseModel) => {
+    expect((await resourceFor({ baseModel })).tipsEnabled).toBe(true);
+  });
 
   it('a past buyer of a Flux.2 Klein 9B version keeps access', async () => {
     expect(

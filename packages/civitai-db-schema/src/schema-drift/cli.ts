@@ -3,6 +3,8 @@
  *
  *   pnpm --filter @civitai/db-schema drift            # read DATABASE_URL, print a report
  *   pnpm --filter @civitai/db-schema drift --json     # machine-readable
+ *   pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql
+ *                                                     # only the tables that migration touches
  *
  * Read-only. Every database statement is a SELECT against pg_catalog; the tool never
  * writes, and never applies a migration.
@@ -16,7 +18,17 @@ import { Client } from 'pg';
 import { readCatalog, DEFAULT_DB_SCHEMA } from './catalog';
 import { assertCatalogSanity, assessCoverage, compareSchemaToCatalog } from './compare';
 import { parsePrismaSchema } from './parse-prisma-schema';
+import { extractMigrationTables } from './migration-tables';
 import { formatReport } from './report';
+import {
+  buildScope,
+  comparedTables,
+  formatScope,
+  formatUnparsed,
+  unparsedStatements,
+  verifyScope,
+  type DriftScope,
+} from './scope';
 import type { DbCatalog } from './types';
 
 interface Options {
@@ -26,6 +38,11 @@ interface Options {
   json: boolean;
   verbose: boolean;
   strict: boolean;
+  /** `--tables`, in the order given, de-duplicated. */
+  tables: string[];
+  /** `--migration` paths exactly as given, for the report header. */
+  migrations: string[];
+  allowUnparsed: boolean;
 }
 
 const USAGE = `Usage: drift [options]
@@ -38,10 +55,19 @@ const USAGE = `Usage: drift [options]
   --verbose          Include the skipped-model list in the text report
   --strict           Exit 1 when any drift is found, or when any referential action
                      could not be compared (default: always exit 0)
+  --tables <A,B,..>  Compare only these tables (exact, case-sensitive names). Repeatable
+  --migration <sql>  Compare only the tables this migration file touches. Repeatable, or
+                     comma-separated. Combines with --tables
+  --allow-unparsed   Proceed although a --migration has statements that could not be
+                     classified (DO blocks, functions, triggers, views, DROP INDEX, CASCADE,
+                     anything unrecognised). They are still listed, and whatever they touch
+                     is NOT in scope unless --tables names it
   --help             This message
 
 Connection is read from DATABASE_URL. A run whose comparison covered nothing exits 2,
-with or without --strict.`;
+with or without --strict — and so does a scoped run naming a table the schema or the
+catalog does not have, or a --migration with unclassified statements and no
+--allow-unparsed.`;
 
 /**
  * Strip anything that looks like a connection string or a host from a message before it
@@ -96,8 +122,21 @@ function parseArgs(argv: string[]): Options & { dumpCatalog: boolean; help: bool
     json: false,
     verbose: false,
     strict: false,
+    tables: [] as string[],
+    migrations: [] as string[],
+    allowUnparsed: false,
     dumpCatalog: false,
     help: false,
+  };
+  // Comma-separated and repeatable. An empty element (`--tables A,,B`, `--tables ""`) is an
+  // error rather than skipped: it is almost always a shell variable that expanded to nothing,
+  // and dropping it would quietly narrow the scope the caller asked for.
+  const list = (flag: string, value: string): string[] => {
+    const parts = value.split(',').map((p) => p.trim());
+    if (parts.some((p) => p.length === 0)) {
+      throw new Error(`${flag} has an empty entry in "${redact(value)}"`);
+    }
+    return parts;
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -129,6 +168,17 @@ function parseArgs(argv: string[]): Options & { dumpCatalog: boolean; help: bool
         break;
       case '--strict':
         options.strict = true;
+        break;
+      case '--tables':
+        for (const t of list(arg, next())) {
+          if (!options.tables.includes(t)) options.tables.push(t);
+        }
+        break;
+      case '--migration':
+        options.migrations.push(...list(arg, next()));
+        break;
+      case '--allow-unparsed':
+        options.allowUnparsed = true;
         break;
       case '--help':
       case '-h':
@@ -167,6 +217,55 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  const scoped = options.tables.length > 0 || options.migrations.length > 0;
+  if (scoped && options.dumpCatalog) {
+    throw new Error(
+      '--dump-catalog captures the whole catalog; it does not take --tables or --migration.'
+    );
+  }
+  if (options.allowUnparsed && options.migrations.length === 0) {
+    throw new Error('--allow-unparsed only means something with --migration.');
+  }
+
+  // Migrations are read and classified BEFORE any connection is opened: a migration this tool
+  // cannot read should cost the operator nothing but the message.
+  let scope: DriftScope | null = null;
+  // Parsed before the catalog read, so the unparsed-statement message below can say which of
+  // the identifiers a statement mentions are tables. Not on the --dump-catalog path, which
+  // never needed a schema and must not start failing for want of one.
+  const schema = options.dumpCatalog
+    ? null
+    : parsePrismaSchema(readFileSync(options.schemaPath, 'utf8'));
+  const schemaTables = new Set(schema?.models.map((m) => m.table) ?? []);
+  if (scoped) {
+    scope = buildScope({
+      tables: options.tables,
+      migrations: options.migrations.map((path) => {
+        const full = resolve(path);
+        if (!existsSync(full)) throw new Error(`--migration file not found: ${redact(path)}`);
+        return {
+          path,
+          result: extractMigrationTables(readFileSync(full, 'utf8'), {
+            dbSchema: options.dbSchema,
+          }),
+        };
+      }),
+      allowUnparsed: options.allowUnparsed,
+    });
+    const unparsed = unparsedStatements(scope);
+    if (unparsed.length > 0 && !options.allowUnparsed) {
+      process.stderr.write(
+        `${unparsed.length} statement(s) in the migration could not be classified, so the set ` +
+          'of tables it touches is NOT known:\n' +
+          `${formatUnparsed(unparsed, schemaTables).join('\n')}\n\n` +
+          'Refusing to run a scoped check over a guessed subset. Read the statements above, ' +
+          'then re-run with\n--allow-unparsed, adding --tables for every table they touch. ' +
+          'They will still be listed in the report.\n'
+      );
+      return 2;
+    }
+  }
+
   const catalog = await loadCatalog(options);
   // Sanity-check BEFORE dumping, not only before comparing. The STALE message this tool
   // prints tells an operator to recapture with `--dump-catalog`, and without this that
@@ -201,15 +300,48 @@ async function main(): Promise<number> {
     process.stdout.write(`${JSON.stringify(stamped, null, 2)}\n`);
     return 0;
   }
+  // Unreachable — only --dump-catalog leaves it null, and that returned above. Narrows the type.
+  if (!schema) throw new Error('internal: schema was not parsed');
 
-  const schema = parsePrismaSchema(readFileSync(options.schemaPath, 'utf8'));
-  const report = compareSchemaToCatalog(schema, catalog);
+  if (scope) {
+    // Before comparing: a requested table either side cannot vouch for would be filtered to
+    // nothing and print clean. See `verifyScope`.
+    const problems = verifyScope(scope, schema, catalog);
+    if (problems.length > 0) {
+      process.stderr.write(
+        `${formatScope(
+          scope,
+          schemaTables
+        )}\n\nThis scoped run cannot cover what it was asked to:\n${problems
+          .map((p) => `  - ${p}\n`)
+          .join('')}`
+      );
+      return 2;
+    }
+    if (comparedTables(scope).size === 0) {
+      // Only drops/renames-away: each was verified absent above, which is the whole check.
+      process.stdout.write(
+        `${formatScope(
+          scope,
+          schemaTables
+        )}\n\nEvery table in scope is expected absent and is absent. ` + 'Nothing to compare.\n'
+      );
+      return 0;
+    }
+  }
 
-  process.stdout.write(
-    options.json
-      ? `${JSON.stringify(report, null, 2)}\n`
-      : `${formatReport(report, { verbose: options.verbose })}\n`
+  const report = compareSchemaToCatalog(
+    schema,
+    catalog,
+    scope ? { tables: comparedTables(scope) } : {}
   );
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(scope ? { scope, ...report } : report, null, 2)}\n`);
+  } else {
+    if (scope) process.stdout.write(`${formatScope(scope, schemaTables)}\n\n`);
+    process.stdout.write(`${formatReport(report, { verbose: options.verbose })}\n`);
+  }
 
   // A comparison that visited nothing prints exactly the same reassuring page as a clean
   // database. That is the one failure mode this tool must never have, so it is fatal

@@ -87,6 +87,15 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailProvider,
+  HatTurfDetailReset,
+  takesHats,
+} from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
@@ -142,6 +151,15 @@ const sharedIconProps: IconProps = {
 };
 
 export function ImageDetail2() {
+  const { images } = useImageDetailContext();
+  return (
+    <HatTurfDetailProvider images={images}>
+      <ImageDetail2Content />
+    </HatTurfDetailProvider>
+  );
+}
+
+function ImageDetail2Content() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
@@ -342,6 +360,7 @@ export function ImageDetail2() {
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
+      <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
@@ -522,6 +541,11 @@ export function ImageDetail2() {
                               imageNsfwLevel={image.nsfwLevel}
                               className="ml-2"
                             />
+                            {takesHats(image) && (
+                              <div className="ml-2">
+                                <HatTurfDetailControls imageId={image.id} />
+                              </div>
+                            )}
                           </ReactionSettingsProvider>
                         </div>
                         {storyline.active ? (
@@ -580,6 +604,11 @@ export function ImageDetail2() {
                 </div>
                 <ScrollArea className="flex-1 p-3 py-0">
                   <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
+                    {takesHats(image) && (
+                      <div className="flex @md:hidden">
+                        <HatTurfDetailBadge imageId={image.id} />
+                      </div>
+                    )}
                     <SmartCreatorCard
                       user={image.user}
                       subText={

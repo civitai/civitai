@@ -16,6 +16,7 @@ import {
 import { submitSiteAppealSchema } from '~/server/schema/site-appeal.schema';
 import { getAppealDetails, getLatestAppeal } from '~/server/services/report.service';
 import { getSiteAppealState, submitSiteAppeal } from '~/server/services/site-appeal.service';
+import { getLockReviewState } from '~/server/services/lock-review.service';
 import {
   guardedProcedureAllowUnverifiedEmail,
   protectedProcedure,
@@ -46,6 +47,16 @@ export const reportRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getLatestAppealSchema)
     .query(({ input, ctx }) => getLatestAppeal({ ...input, userId: ctx.user.id })),
+  getLockReviewState: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getByIdSchema)
+    .query(({ input, ctx }) =>
+      getLockReviewState({
+        modelId: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   createAppeal: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createEntityAppealSchema)

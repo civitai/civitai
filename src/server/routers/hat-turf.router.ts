@@ -42,11 +42,13 @@ export const hatTurfRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfSummariesSchema)
     .query(({ ctx, input }) => getTurfSummaries(input.event, input.imageIds, ctx.user?.id)),
-  // One image's stickers to draw, capped, plus the viewer's own.
+  // One image's stickers to draw, a page at a time, plus the viewer's own.
   getImageStickers: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfImageSchema)
-    .query(({ ctx, input }) => getTurfStickers(input.event, input.imageId, ctx.user?.id)),
+    .query(({ ctx, input }) =>
+      getTurfStickers(input.event, input.imageId, ctx.user?.id, input.before)
+    ),
   // Stickers to draw on a page of feed cards, a few per image.
   getStickersForImages: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
