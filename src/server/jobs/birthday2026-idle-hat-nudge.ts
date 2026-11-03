@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { SendSystemNoticesInput, SendSystemNoticesResult } from '@civitai/notifications';
 import { dbRead } from '~/server/db/client';
@@ -10,12 +11,19 @@ import {
 } from '~/shared/constants/birthday2026.constants';
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
-// The notices route sends a sendId to each user at most once and pins it to this exact message and
-// url on its first call, dry runs included: changing either needs a new sendId.
-export const IDLE_HAT_NUDGE_SEND_ID = 'birthday2026-idle-hat-nudge';
+export const IDLE_HAT_NUDGE_JOB = 'birthday2026-idle-hat-nudge';
+
+// The notices route sends a sendId to each user at most once and pins it to this exact type, message
+// and url on its first call, dry runs included: changing any of them needs a new sendId.
+// First wave (a system-announcement, so never pushed); kept so later sends exclude its recipients.
+export const IDLE_HAT_NUDGE_LEGACY_SEND_ID = IDLE_HAT_NUDGE_JOB;
+export const IDLE_HAT_REMINDER_SEND_ID = 'birthday2026-idle-hat-reminder';
+export const IDLE_HAT_HOLDOUT_SEND_ID = 'birthday2026-idle-hat-reminder-holdout';
 export const IDLE_HAT_NUDGE_MESSAGE =
   "Your birthday hat isn't on anything yet. Put it on an image, model or article to score for Team {team}.";
 export const IDLE_HAT_NUDGE_URL = `/events/${BIRTHDAY_2026_EVENT}`;
+export const IDLE_HAT_PUSH_TITLE = 'Birthday hats';
+const HOLDOUT_PERCENT = 10;
 
 export type IdleHatOwner = { userId: number; teams: string[] };
 
@@ -52,19 +60,44 @@ export async function getIdleHatOwners(): Promise<IdleHatOwner[]> {
   `;
 }
 
+/** Of these users, those an event-reminder would actually push to: a subscription plus the type on. */
+export async function getPushableUserIds(userIds: number[]): Promise<number[]> {
+  if (!userIds.length) return [];
+  const rows = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT ps."userId"
+    FROM "PushSubscription" ps
+    JOIN "UserPushSetting" ups ON ups."userId" = ps."userId" AND ups.type = 'event-reminder'
+    WHERE ps."userId" = ANY(${userIds}::int[])
+  `;
+  return rows.map((r) => r.userId);
+}
+
+/** Deterministic per user, so a re-run hashes everyone the same way. */
+export function isInHoldout(userId: number) {
+  const digest = createHash('sha256').update(`${IDLE_HAT_HOLDOUT_SEND_ID}:${userId}`).digest();
+  return digest.readUInt32BE(0) % 100 < HOLDOUT_PERCENT;
+}
+
 const querySchema = z.object({ mode: z.enum(['dry-run', 'send']).default('dry-run') });
 
 type Deps = {
   getOwners: () => Promise<IdleHatOwner[]>;
+  getPushable: (userIds: number[]) => Promise<number[]>;
   getUserTeam: (userId: number) => Promise<string>;
   sendSystemNotices: (input: SendSystemNoticesInput) => Promise<SendSystemNoticesResult>;
   now: () => Date;
 };
 
+/**
+ * Holdout (10% of push-reachable owners) gets the same text as a system-announcement, which is never
+ * pushed, so the arms differ by the push alone. Each arm excludes the other and the first wave so
+ * nobody is nudged twice.
+ */
 export async function runIdleHatNudge(
   query: unknown,
   {
     getOwners = getIdleHatOwners,
+    getPushable = getPushableUserIds,
     getUserTeam = (userId) => birthday2026.getUserTeam(userId),
     sendSystemNotices = notifications.sendSystemNotices,
     now = () => new Date(),
@@ -78,15 +111,32 @@ export async function runIdleHatNudge(
   const owners = await getOwners();
   if (!owners.length) return { mode, idleOwners: 0 };
   const { recipients, resolvedByEvent } = await toIdleHatRecipients(owners, getUserTeam);
-  const result = await sendSystemNotices({
-    sendId: IDLE_HAT_NUDGE_SEND_ID,
+  const pushable = new Set(await getPushable(recipients.map((r) => r.userId)));
+  const holdout = recipients.filter((r) => pushable.has(r.userId) && isInHoldout(r.userId));
+  const reminder = recipients.filter((r) => !holdout.includes(r));
+
+  const common = {
     mode,
-    type: 'system-announcement',
     message: IDLE_HAT_NUDGE_MESSAGE,
     url: IDLE_HAT_NUDGE_URL,
-    recipients,
-    sentBy: `run-jobs:${IDLE_HAT_NUDGE_SEND_ID}`,
+    sentBy: `run-jobs:${IDLE_HAT_NUDGE_JOB}`,
     reason: 'Birthday 2026: remind hat owners whose hats are not on anything',
+  };
+  const send = async (
+    arm: typeof recipients,
+    input: Omit<SendSystemNoticesInput, keyof typeof common | 'recipients'>
+  ) => (arm.length ? sendSystemNotices({ ...common, ...input, recipients: arm }) : undefined);
+
+  const reminderResult = await send(reminder, {
+    sendId: IDLE_HAT_REMINDER_SEND_ID,
+    type: 'event-reminder',
+    title: IDLE_HAT_PUSH_TITLE,
+    excludeSendIds: [IDLE_HAT_NUDGE_LEGACY_SEND_ID, IDLE_HAT_HOLDOUT_SEND_ID],
+  });
+  const holdoutResult = await send(holdout, {
+    sendId: IDLE_HAT_HOLDOUT_SEND_ID,
+    type: 'system-announcement',
+    excludeSendIds: [IDLE_HAT_NUDGE_LEGACY_SEND_ID, IDLE_HAT_REMINDER_SEND_ID],
   });
 
   // Counts and copy only: the operator reading this response does not need user ids.
@@ -94,13 +144,13 @@ export async function runIdleHatNudge(
     mode,
     idleOwners: owners.length,
     resolvedByEvent,
-    counts: result.counts,
-    samples: result.samples.map((s) => s.message),
+    pushable: pushable.size,
+    reminder: reminderResult && { counts: reminderResult.counts },
+    holdout: holdoutResult && { counts: holdoutResult.counts },
+    samples: (reminderResult ?? holdoutResult)?.samples.map((s) => s.message) ?? [],
   };
 }
 
-export const birthday2026IdleHatNudge = createJob(
-  IDLE_HAT_NUDGE_SEND_ID,
-  UNRUNNABLE_JOB_CRON,
-  (ctx) => runIdleHatNudge(ctx.req?.query)
+export const birthday2026IdleHatNudge = createJob(IDLE_HAT_NUDGE_JOB, UNRUNNABLE_JOB_CRON, (ctx) =>
+  runIdleHatNudge(ctx.req?.query)
 );
