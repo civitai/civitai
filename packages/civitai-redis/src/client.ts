@@ -2639,6 +2639,13 @@ export const REDIS_SYS_KEYS = {
     PENDING_AUTHZ: 'session:pending-authz',
   },
   JOB: 'job',
+  OPENSEARCH_INDEX_BUILDS: {
+    // Checkpoint of the OpenSearch index build in progress per alias, so a build that dies resumes
+    // instead of starting over, and live writes can reach the index being built. Hash: field =
+    // alias ('models'), value = JSON { index, startedAt, watermark }. Cleared when the build swaps
+    // the alias. See src/server/search/opensearch/index-build.ts.
+    CHECKPOINTS: 'opensearch-index-builds:checkpoints',
+  },
   SEARCH_INDEX_CLEANUP: {
     // Per-index keyset scan cursor for the nightly search-index cleanup, so a pass
     // that could not walk a whole index in one run RESUMES next run instead of

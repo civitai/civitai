@@ -61,6 +61,31 @@ Server-side consumers of the models index (`model-search`, `resource-select`,
 `resource-intent-matcher`, `model.service`) back the generator's resource picker, so they move to
 the new API behind the same flag and are compared before cutover.
 
+## Rebuilding an index
+
+A Meilisearch reset reads every model again and has no checkpoint: if it fails partway, it starts
+over, and the site keeps serving the old index only because the reset writes to a swap index.
+OpenSearch builds work differently (`src/server/search/opensearch/index-build.ts`):
+
+- **Each build is a new concrete index behind an alias** (`models` → `models_20261103153000`). The
+  serving index is never written by a build, the alias moves in one atomic call when the build is
+  complete, and the previous build is kept, so `rollbackAlias` undoes a bad build in seconds without
+  touching the database.
+- **Builds resume.** Ids are scanned in order with a keyset query, batches run concurrently, and a
+  checkpoint records the highest id below which every batch is written. A build that dies continues
+  from there.
+- **Rows that change during the build are caught up** before the swap, including rows that left the
+  index.
+- **Write settings are tuned for loading** (no refresh, no replicas) and restored before the swap.
+  Documents the engine refuses under load are retried; a document it rejects stops the build before
+  the swap.
+
+Documents come from the same pull and transform as the Meilisearch models index
+(`createModelsIndexSource`), so the two indexes cannot drift while both run. Building one batch is
+dominated by a dozen sequential queries rather than by any slow one, so throughput comes from
+running batches concurrently: a test build of 10,000 models went from 54 to 283 documents a second
+between 1 and 16 concurrent batches.
+
 ## Order of work
 
 1. Contract and inventory (this document).

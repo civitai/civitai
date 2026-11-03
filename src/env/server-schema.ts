@@ -512,6 +512,11 @@ export const serverSchema = z
     // use NEXT_PUBLIC_SEARCH_CLIENT_KEY).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
+    // OpenSearch (docs/search-replacement-plan.md). Server-only; unset = every search stays on
+    // Meilisearch whatever `siteSearchOpenSearch` says.
+    OPENSEARCH_URL: z.url().optional(),
+    OPENSEARCH_USERNAME: z.string().optional(),
+    OPENSEARCH_PASSWORD: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
     // Semantic image search (docs/features/semantic-image-search.md). Unset = the search page errors.

@@ -203,7 +203,7 @@ function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
   };
 }
 
-const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
+export const transformModelsData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -639,14 +639,14 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 };
 
 export type ModelSearchIndexRecord = Awaited<
-  ReturnType<typeof transformData>
+  ReturnType<typeof transformModelsData>
 >['indexReadyRecords'][number] &
-  Awaited<ReturnType<typeof transformData>>['indexRecordsWithImages'][number];
+  Awaited<ReturnType<typeof transformModelsData>>['indexRecordsWithImages'][number];
 
 // Build the same card-ready records the Meili index holds, but straight from the
 // DB for a handful of ids — so callers (e.g. the official-models pin in the
 // resource picker) don't depend on those docs being present/fresh in Meili.
-// Reuses transformData so the shape stays identical to a search hit.
+// Reuses transformModelsData so the shape stays identical to a search hit.
 export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSearchIndexRecord[]> {
   if (!ids.length) return [];
 
@@ -665,7 +665,7 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
   const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
-  const { indexReadyRecords, indexRecordsWithImages } = await transformData({
+  const { indexReadyRecords, indexRecordsWithImages } = await transformModelsData({
     models,
     tags,
     cosmetics,
@@ -693,7 +693,7 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
  * So an unauthenticated caller received, for every official-pinned model in the resource
  * picker's default state:
  *   - `sortMetrics` — the REAL download and tipped-amount values, whose own comment in
- *     `transformData` says they are "excluded from `displayedAttributes` ... so they are
+ *     `transformModelsData` says they are "excluded from `displayedAttributes` ... so they are
  *     never returned to clients". For a creator who hid those numbers via Creator Controls
  *     this is exactly the leak `./displayed-attributes.ts` was written to close, reached by
  *     the one path that whitelist cannot see. PRE-EXISTING, not introduced by the insight work.
@@ -872,7 +872,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   maxQueueSize: 25, // Avoids hoggging too much memory.
   prepareBatches: prepareModelsBatches,
   pullData: pullModelsData,
-  transformData,
+  transformData: transformModelsData,
   pushData: async ({ indexName }, data) => {
     const { indexReadyRecords, indexRecordsWithImages } = data as {
       indexReadyRecords: any[];

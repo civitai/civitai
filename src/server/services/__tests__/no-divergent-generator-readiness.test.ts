@@ -28,6 +28,8 @@ const ALLOWLIST = [
   'src/server/selectors/model.selector.ts',
   'src/server/selectors/modelVersion.selector.ts',
   'src/server/search-index/filterable-attributes.ts',
+  // The OpenSearch models mapping: declares the indexed field, as filterable-attributes.ts does.
+  'src/server/search/opensearch/models-index-source.ts',
   // Both index writers, which compose the field through the helper — pinned by the last test.
   'src/server/search-index/models.search-index.ts',
   'src/pages/api/mod/search/models-update.ts',
