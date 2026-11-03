@@ -320,6 +320,23 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
   return { row, sub, customer, recentExtensions, pendingInvoiceItems: pending?.data.length ?? 0 };
 }
 
+/**
+ * One lock per member for extend, cancel and re-sync. Each reads Stripe, then writes from what it
+ * read; another's write in between would be undone (extend re-sends cancel_at_period_end) or
+ * overwritten with an older copy (re-sync).
+ */
+export async function withMemberLock<T>(userId: number, fn: () => Promise<T>): Promise<T> {
+  const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
+  const owner = randomUUID();
+  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: LOCK_SECONDS })) === null)
+    throw throwConflictError('Another membership change for this member is in progress');
+  try {
+    return await fn();
+  } finally {
+    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
+  }
+}
+
 export async function requireStripe() {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
@@ -396,15 +413,9 @@ export async function extendMembership({
     throw throwBadRequestError('Membership extensions run against live Stripe only');
   const stripe = await requireStripe();
 
-  const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
-  const owner = randomUUID();
-  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: LOCK_SECONDS })) === null)
-    throw throwConflictError('Another extension for this member is in progress');
-  try {
-    return await extendLocked({ stripe, userId, days, reason, expectedCurrentPeriodEnd, actorId });
-  } finally {
-    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
-  }
+  return withMemberLock(userId, () =>
+    extendLocked({ stripe, userId, days, reason, expectedCurrentPeriodEnd, actorId })
+  );
 }
 
 async function extendLocked({

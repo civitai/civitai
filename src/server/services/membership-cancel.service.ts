@@ -1,24 +1,22 @@
 import { TRPCError } from '@trpc/server';
-import { randomUUID } from 'crypto';
 import type { Stripe } from 'stripe';
 import { env } from '~/env/server';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   cancelModeOf,
   iso,
   notFoundAsNull,
   ownershipProblems,
   requireStripe,
+  withMemberLock,
   snapshot,
   type ExtensionSnapshot,
 } from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { cancelSubscription, MODERATION_CANCEL_MARK } from '~/server/services/stripe.service';
-import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
@@ -37,7 +35,6 @@ export const MEMBERSHIP_CANCEL_ACTIVITY = {
   set: 'setMembershipCancel',
   undo: 'undoMembershipCancel',
 } as const;
-const LOCK_SECONDS = 600;
 const CHANGEABLE_STATUSES = ['active', 'trialing'];
 
 const log = (data: MixedObject) =>
@@ -249,17 +246,9 @@ export async function setMembershipCancel({
     throw throwBadRequestError('Membership changes run against live Stripe only');
   const stripe = await requireStripe();
 
-  // Extend's lock: extend re-sends cancel_at_period_end as it read it, so a toggle between its read
-  // and write would be undone.
-  const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
-  const owner = randomUUID();
-  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: LOCK_SECONDS })) === null)
-    throw throwConflictError('Another membership change for this member is in progress');
-  try {
-    return await setLocked({ stripe, userId, cancelAtPeriodEnd, reason, actorId });
-  } finally {
-    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
-  }
+  return withMemberLock(userId, () =>
+    setLocked({ stripe, userId, cancelAtPeriodEnd, reason, actorId })
+  );
 }
 
 async function setLocked({

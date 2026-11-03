@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { Stripe } from 'stripe';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -7,16 +8,16 @@ import {
   notFoundAsNull,
   ownershipProblems,
   requireStripe,
+  withMemberLock,
 } from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { env } from '~/env/server';
 import { toDateTime, upsertSubscription } from '~/server/services/stripe.service';
 import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
-import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
-import { BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } from '~/shared/utils/buzz-membership';
-import { randomUUID } from 'crypto';
-import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  liveBuzzMembershipWhere,
+  syncFreshdeskMembership,
+} from '~/server/services/subscriptions.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
@@ -112,14 +113,10 @@ export function diffRow(row: RowView | null, stripe: RowView) {
     .map((field) => ({ field, ours: row?.[field] ?? null, stripe: stripe[field] }));
 }
 
-// Mirrors liveBuzzMembershipWhere in subscriptions.service, which the upsert ends.
+// The rows the upsert's supersede step ends, so the preview, the confirm and the write agree.
 const liveBuzzMembership = (userId: number) =>
   dbWrite.customerSubscription.findFirst({
-    where: {
-      userId,
-      buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-      status: { notIn: ['canceled', 'incomplete_expired'] },
-    },
+    where: liveBuzzMembershipWhere(userId),
     select: { id: true, status: true, currentPeriodEnd: true },
   });
 
@@ -258,17 +255,9 @@ export async function resyncMembership({
 }) {
   refuseOwn(userId, actorId);
   const stripe = await requireStripe();
-  // Shares extend's and cancel's lock: a re-sync that read Stripe before their write would store
-  // that old copy over the webhook's newer row.
-  const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
-  const owner = randomUUID();
-  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: 600 })) === null)
-    throw throwConflictError('Another membership change for this member is in progress');
-  try {
-    return await resyncLocked({ stripe, userId, reason, confirmEndBuzzMembership, actorId });
-  } finally {
-    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
-  }
+  return withMemberLock(userId, () =>
+    resyncLocked({ stripe, userId, reason, confirmEndBuzzMembership, actorId })
+  );
 }
 
 async function resyncLocked({
@@ -348,6 +337,8 @@ async function resyncLocked({
     throw e;
   }
   await audit();
+  // The session carries the tier; the upsert clears only the caches.
+  await refreshSession(userId, { caller: 'subscription' }).catch(() => undefined);
   await syncFreshdeskMembership({ customerId }).catch((e) =>
     log({ type: 'freshdesk-sync-failed', userId, error: (e as Error).message })
   );

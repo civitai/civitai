@@ -3,9 +3,11 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { Stripe } from 'stripe';
 import { dbMock, loggingMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { MODERATION_CANCEL_MARK, toDateTime } from '~/server/services/stripe.service';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 
 /**
  * `/api/mod/user/membership-cancel*` and `/api/mod/user/membership-resync*`. Drives the REAL
@@ -618,6 +620,15 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
     expect(dbMock.dbWrite.customerSubscription.updateMany).not.toHaveBeenCalled();
   });
 
+  it('a re-sync that writes clears the subscription caches and refreshes the session', async () => {
+    vi.mocked(invalidateSubscriptionCaches).mockClear();
+    vi.mocked(refreshSession).mockClear();
+    fakeStripe();
+    expect((await resync({ confirmEndBuzzMembership: BUZZ_CONFIRM })).status).toBe(200);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(MEMBER);
+    expect(refreshSession).toHaveBeenCalledWith(MEMBER, { caller: 'subscription' });
+  });
+
   it('control: with the confirm it syncs and the webhook path ends the Buzz membership', async () => {
     const { writes } = fakeStripe();
     dbMock.dbWrite.customerSubscription.updateMany.mockResolvedValue({ count: 1 });
@@ -647,6 +658,15 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
 });
 
 describe('cancel-at-period-end: after the write', () => {
+  it('clears the subscription caches and refreshes the session, so the member sees it', async () => {
+    vi.mocked(invalidateSubscriptionCaches).mockClear();
+    vi.mocked(refreshSession).mockClear();
+    fakeStripe();
+    expect((await setCancel(true)).status).toBe(200);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(MEMBER);
+    expect(refreshSession).toHaveBeenCalledWith(MEMBER, { caller: 'subscription' });
+  });
+
   it('a set Stripe answered but did not apply comes back ok: false, and is audited', async () => {
     fakeStripe(liveSub(), [], { ignoreUpdate: true });
     const { status, body } = await setCancel(true);

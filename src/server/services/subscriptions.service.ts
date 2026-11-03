@@ -694,7 +694,7 @@ export const purchaseMembershipWithBuzz = async ({
   };
 };
 
-const liveBuzzMembershipWhere = (userId: number) => ({
+export const liveBuzzMembershipWhere = (userId: number) => ({
   userId,
   buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
   status: { notIn: ['canceled', 'incomplete_expired'] },
