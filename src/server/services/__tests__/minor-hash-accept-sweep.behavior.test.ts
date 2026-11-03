@@ -1,11 +1,12 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The sweep's hold is one NOT EXISTS over "Appeal". Which appeals hold a model back is a
-// predicate on status and category together, so it runs here against real Postgres rather than
-// being read off the statement's text.
+// predicate on status, category and context kind together, so it runs here against real Postgres
+// rather than being read off the statement's text.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -31,9 +32,10 @@ dbMock.dbRead.$queryRaw.mockImplementation(
     (await run(strings, values)).rows) as never
 );
 
-const { acceptExpiredMinorAutoFlags, MINOR_HASH_ACCEPTED_KEY } = await import(
-  '~/server/services/minor-hash.service'
-);
+const { acceptExpiredMinorAutoFlags, getMinorFlagAppealsForReview, MINOR_HASH_ACCEPTED_KEY } =
+  await import('~/server/services/minor-hash.service');
+
+const LOCK_REVIEW = { kind: LOCK_REVIEW_KIND, locks: ['nsfw'] };
 
 // Flagged automatically well outside the review window, never accepted.
 const EXPIRED_AUTO_FLAG = JSON.stringify({
@@ -43,10 +45,15 @@ const EXPIRED_AUTO_FLAG = JSON.stringify({
 beforeEach(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "Model" (id INTEGER PRIMARY KEY, minor BOOLEAN NOT NULL, meta JSONB);
+    CREATE TABLE "Model" (
+      id INTEGER PRIMARY KEY, minor BOOLEAN NOT NULL, meta JSONB, name TEXT, "userId" INTEGER,
+      status TEXT, poi BOOLEAN NOT NULL DEFAULT false
+    );
+    CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT);
     CREATE TABLE "Appeal" (
       id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-      status TEXT NOT NULL, category TEXT, context JSONB
+      status TEXT NOT NULL, category TEXT, context JSONB, "appealMessage" TEXT,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
 });
@@ -55,18 +62,20 @@ afterEach(async () => {
   await holder.db.close();
 });
 
-async function acceptedWith(
-  dryRun: boolean,
-  appeal: { status: string; category: string | null } | null
-) {
+type SeedAppeal = { status: string; category: string | null; context?: object };
+
+async function insertAppeal({ status, category, context }: SeedAppeal) {
+  await holder.db.query(
+    `INSERT INTO "Appeal" ("entityType", "entityId", status, category, context) VALUES ('Model', 1, $1, $2, $3)`,
+    [status, category, context ?? null]
+  );
+}
+
+async function acceptedWith(dryRun: boolean, appeal: SeedAppeal | SeedAppeal[] | null) {
   await holder.db.query(`INSERT INTO "Model" (id, minor, meta) VALUES (1, true, $1::jsonb)`, [
     EXPIRED_AUTO_FLAG,
   ]);
-  if (appeal)
-    await holder.db.query(
-      `INSERT INTO "Appeal" ("entityType", "entityId", status, category) VALUES ('Model', 1, $1, $2)`,
-      [appeal.status, appeal.category]
-    );
+  for (const a of [appeal ?? []].flat()) await insertAppeal(a);
   // A dry run counts what a real one would accept, from its own copy of the predicate.
   if (dryRun) return (await acceptExpiredMinorAutoFlags({ dryRun, limit: 10 })).accepted === 1;
   await acceptExpiredMinorAutoFlags({ dryRun, limit: 10 });
@@ -90,6 +99,22 @@ describe.each([false, true])('acceptExpiredMinorAutoFlags, dryRun %s', (dryRun) 
     }
   );
 
+  // A lock review asks about the model's settings, not the flag, so it must not shield the flag.
+  it('accepts while its only appeal is a pending lock review', async () => {
+    expect(
+      await acceptedWith(dryRun, { status: 'Pending', category: null, context: LOCK_REVIEW })
+    ).toBe(true);
+  });
+
+  it('still holds a pending flag appeal filed beside a lock review', async () => {
+    expect(
+      await acceptedWith(dryRun, [
+        { status: 'Pending', category: null, context: LOCK_REVIEW },
+        { status: 'Pending', category: null },
+      ])
+    ).toBe(false);
+  });
+
   it('holds a model while its site-form appeal is Pending', async () => {
     expect(await acceptedWith(dryRun, { status: 'Pending', category: 'Model' })).toBe(false);
   });
@@ -102,4 +127,18 @@ describe.each([false, true])('acceptExpiredMinorAutoFlags, dryRun %s', (dryRun) 
       expect(await acceptedWith(dryRun, { status, category: 'Model' })).toBe(true);
     }
   );
+});
+
+describe('getMinorFlagAppealsForReview', () => {
+  it('lists a pending flag appeal, never a pending lock review on the same model', async () => {
+    await holder.db.query(`INSERT INTO "Model" (id, minor, meta) VALUES (1, true, $1::jsonb)`, [
+      EXPIRED_AUTO_FLAG,
+    ]);
+    await insertAppeal({ status: 'Pending', category: null, context: LOCK_REVIEW });
+    await insertAppeal({ status: 'Pending', category: null });
+
+    const { items } = await getMinorFlagAppealsForReview({ limit: 10 });
+
+    expect(items.map((row) => row.appealId)).toEqual([2]);
+  });
 });
