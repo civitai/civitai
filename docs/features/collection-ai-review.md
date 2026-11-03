@@ -139,7 +139,8 @@ collection. Lifting that restriction means fixing the notification path first.
   whose age the model could not determine, and a rating label the rules do not recognize (or none)
   are all left for a human regardless of `escalationAction` — a provider outage must not reject
   submissions and tell the submitters they broke a rule. An unrecognized label alongside a real
-  violation still rejects; the label alone never does.
+  violation, or alongside any other escalation, is handled as that finding would be; the label
+  alone never rejects.
 - **`minorUncertain` alone does not escalate.** The prompt invites that hedge on exactly the
   stylized art these collections are made of, so on its own it would sweep up a large share of
   ordinary submissions. It escalates alongside a sexualized presentation, or when the image is

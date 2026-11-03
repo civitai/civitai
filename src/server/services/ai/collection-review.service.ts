@@ -109,8 +109,10 @@ export function decideFromObservations(
   const unrecognizedRating = !adultRating && !SAFE_RATINGS.includes(rating);
   if (o.sexualContent || adultRating) violations.push('sexual/adult content');
   else if (o.suggestiveStyling) escalations.push('suggestive styling');
-  if (unrecognizedRating)
-    escalations.push(`unrecognized nsfwEstimate: ${o.nsfwEstimate?.slice(0, 40) || '(none)'}`);
+  const ratingEscalation = unrecognizedRating
+    ? `unrecognized nsfwEstimate: ${o.nsfwEstimate?.slice(0, 40) || '(none)'}`
+    : undefined;
+  if (ratingEscalation) escalations.push(ratingEscalation);
 
   // Escalating on this hedge alone would sweep up much of the stylized art these collections are
   // made of, which is exactly what the prompt invites the model to be unsure about. It matters
@@ -140,10 +142,13 @@ export function decideFromObservations(
     decision,
     violations,
     escalations,
-    // An unreadable label is only our uncertainty while nothing else in the response is a violation.
+    // An unreadable label is only our uncertainty while it is the response's sole finding; it must
+    // not shield a real escalation from a collection that rejects escalations.
     neverReject:
       uncertainAge ||
-      (unrecognizedRating && !violations.length) ||
+      (!!ratingEscalation &&
+        !violations.length &&
+        escalations.every((e) => e === ratingEscalation)) ||
       (isVideo && !o.hasBuzzReference) ||
       undefined,
   };

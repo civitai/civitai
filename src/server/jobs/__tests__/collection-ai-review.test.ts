@@ -577,4 +577,25 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
 
     expect(statusWrites()).toEqual(['REJECTED']);
   });
+
+  it('holds the item for a person when the label is missing and nothing else was found', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: undefined });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual([]);
+  });
+
+  it.each([
+    ['real person likeness', { depictsRealPerson: true }],
+    ['photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
+  ])('still rejects %s escalated alongside a missing label', async (_label, observations) => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: undefined, ...observations });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual(['REJECTED']);
+  });
 });
