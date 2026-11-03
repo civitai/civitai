@@ -25,7 +25,6 @@
     { value: 'fresh', label: `Fresh (${data.counts.fresh})`, href: '?tab=fresh' },
     { value: 'spot-check', label: `Spot-check (${data.counts.spotCheck})`, href: '?tab=spot-check' },
     { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
-    { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
   ]);
   const empty = {
     core: 'The core set is empty. Add an image above, or promote one from the Fresh tab.',
