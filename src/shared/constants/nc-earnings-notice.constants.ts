@@ -65,7 +65,7 @@ The Civitai Team`,
 
 const PLURAL = /\{([^{}|]*)\|([^{}|]*)\}/g;
 
-/** Fills the parts that come from the notice itself; user-supplied values are filled after rendering. */
+/** Leaves {username}, {date} and {versions} for the caller to fill after markdown rendering. */
 export function fillNcEarningsCopy(text: string, baseModels: string[], hadFee: boolean) {
   const joined = new Intl.ListFormat('en', { type: 'conjunction' }).format(baseModels);
   return text

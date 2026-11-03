@@ -1,6 +1,5 @@
 /**
  * Sends the non-commercial earnings notices: a site notification and an email per creator.
- * =============================================================================
  *
  * Hidden ops route, guarded like klein9b-notice: `Authorization: Bearer <WEBHOOK_TOKEN>`.
  *
@@ -10,9 +9,7 @@
  *
  * Actions:
  *   send      - {userIds, date, dryRun?, count?, batchSize?}  Notify up to `count` not-yet-sent
- *               creators from `userIds`, the audience frozen outside the repo. dryRun defaults to
- *               TRUE and returns the counts only; pass `"dryRun": false` to send. Recorded before
- *               sending; see sendLedgeredNotice for retries and `stuckUserIds`.
+ *               creators. dryRun defaults to TRUE (counts only); pass `"dryRun": false` to send.
  *   send-test - {email, date, username?, baseModels?, versions?}  One email to `email`. Not recorded.
  *   preview   - {date, username?, baseModels?, versions?}         The email HTML, as text/html
  *   sent      - {}                  How many creators have been sent this notice

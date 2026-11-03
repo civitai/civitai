@@ -37,8 +37,8 @@ export function getNcEarningsNoticeHtml({
   baseModels,
   versions,
 }: Omit<NcEarningsNoticeData, 'to'>) {
-  // The notice's own text is filled before rendering; names a user chose are escaped into the HTML
-  // after it, so they can't add markdown.
+  // Username and version names are user-chosen: substitute them after markdown rendering, escaped,
+  // so they can't inject markdown.
   const markdown = fillNcEarningsCopy(
     NC_EARNINGS_NOTICE[notice].markdown,
     baseModels,

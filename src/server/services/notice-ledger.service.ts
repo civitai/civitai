@@ -1,6 +1,7 @@
 import { logToAxiom } from '~/server/logging/client';
 import type { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { sysRedis } from '~/server/redis/client';
+import { chunkIds } from '~/utils/array-helpers';
 
 export type NoticeLedgerKey = (typeof REDIS_SYS_KEYS.NOTICES)[keyof typeof REDIS_SYS_KEYS.NOTICES];
 
@@ -9,8 +10,7 @@ const READ_CHUNK = 500;
 /** Which of `ids` the ledger (a hash of userId → sent-at) already records. */
 export async function getNoticeSentIds(ledgerKey: NoticeLedgerKey, ids: number[]) {
   const sent = new Set<number>();
-  for (let i = 0; i < ids.length; i += READ_CHUNK) {
-    const chunk = ids.slice(i, i + READ_CHUNK);
+  for (const chunk of chunkIds(ids, READ_CHUNK)) {
     const values = await sysRedis.hmGet(ledgerKey, chunk.map(String));
     values.forEach((value, j) => {
       if (value) sent.add(chunk[j]);
@@ -21,8 +21,8 @@ export async function getNoticeSentIds(ledgerKey: NoticeLedgerKey, ids: number[]
 
 /**
  * Sends a one-off notice to up to `count` not-yet-sent recipients, `batchSize` at a time. Each
- * recipient is claimed in the ledger before `send` runs, so a repeated or concurrent run never
- * sends twice; a failed send is un-claimed so the next run retries it, except `stuckUserIds`,
+ * recipient is claimed with `hSetNX` before `send` runs (the `pending` read alone doesn't stop a
+ * concurrent run), so no run sends twice; a failed send is un-claimed so the next run retries it, except `stuckUserIds`,
  * whose un-claim also failed.
  */
 export async function sendLedgeredNotice<R extends { id: number }>({
@@ -52,7 +52,6 @@ export async function sendLedgeredNotice<R extends { id: number }>({
   for (let i = 0; i < batch.length; i += batchSize) {
     await Promise.all(
       batch.slice(i, i + batchSize).map(async (recipient) => {
-        // The claim, not the earlier read, is what stops a concurrent or repeated run sending twice.
         const claimed = await sysRedis.hSetNX(key, String(recipient.id), new Date().toISOString());
         if (!claimed) {
           skipped++;
@@ -62,11 +61,12 @@ export async function sendLedgeredNotice<R extends { id: number }>({
           await send(recipient);
           sent++;
         } catch (e) {
+          // A transport rejection's message carries the recipient's address: log only its class.
           logToAxiom({
             type: 'error',
             name: logName,
-            message: (e as Error).message,
-            details: { userId: recipient.id },
+            message: 'send failed',
+            details: { userId: recipient.id, error: (e as Error).name },
           }).catch(() => undefined);
           failedUserIds.push(recipient.id);
           await sysRedis

@@ -4,7 +4,7 @@ const notice = z.enum(['nc-recent', 'nc-older']);
 const date = z.string().min(3).max(40);
 const username = z.string().min(1).max(64).default('there');
 const sample = {
-  // The base models and fee versions the sample copy shows; defaults to one base model, no fee.
+  // Overrides for the send-test and preview samples only.
   baseModels: z.array(z.string().min(1).max(64)).min(1).max(8).optional(),
   versions: z.array(z.string().min(1).max(200)).max(20).default([]),
 };

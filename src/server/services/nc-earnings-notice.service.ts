@@ -41,12 +41,7 @@ export type NcUserRow = {
 
 export type NcRecipient = NcUserRow & { baseModels: string[]; versions: string[] };
 
-/**
- * The audience is the operator's frozen list of user ids; this only fills in each creator's copy.
- * Base models: those the creator has a version on, in the notice's order. Versions: their published
- * versions that store a fee. A listed id with no version on the notice's base models is reported,
- * not sent.
- */
+/** Base models count every version the query returned; fee versions are only Published ones with a fee. */
 export function buildNcRecipients(
   notice: NcEarningsNotice,
   userIds: number[],
