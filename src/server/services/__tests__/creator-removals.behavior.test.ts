@@ -500,7 +500,8 @@ describe('the Removed content score', () => {
     ];
     // ClickHouse leaves out the aged-out and cost-free rows itself; read its filters off the query.
     holder.chQuery.mockImplementation(async ({ query, query_params }) => {
-      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      const excluded: string[] =
+        (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
       // The query trims the reason as `removalWeight` does; an untrimmed match would list ' other '.
       const trims = query.includes("trimBoth(ifNull(reason, ''))");
       const json = own.filter((r) => {
