@@ -90,6 +90,7 @@ import {
   addImageRating,
   getImagesQueue,
   leaveQueuesAfterModeratorRating,
+  RATED_SET_COMPLETE,
 } from '~/server/services/games/new-order.service';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -141,7 +142,9 @@ beforeEach(() => {
     rank: { name: 'Knight' },
     startAt: new Date('2026-01-01T00:00:00Z'),
   });
-  redisMock.redis.exists.mockResolvedValue(1);
+  redisMock.redis.sIsMember.mockImplementation(
+    async (_key: string, id: string) => id === RATED_SET_COMPLETE
+  ); // set is built
   redisMock.redis.smIsMember.mockImplementation(async (_key: string, ids: string[]) =>
     ids.map(() => false)
   );

@@ -52,7 +52,9 @@ const LOCAL_DECLARATION_LEDGER = ['bot-account-detection', 'reaction-withdrawal-
  * shrinks to zero. Pinning the population makes a scan of no files loud instead of reassuring.
  */
 const KNOWN_PRODUCERS = [
+  'blue-buzz-paid-access-detection',
   'bot-account-detection',
+  'creator-program-counterparty-review',
   'new-order-abuse-detection',
   'reaction-withdrawal-detection',
 ].sort();

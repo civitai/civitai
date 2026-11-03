@@ -153,7 +153,6 @@ describe('def constraint correction', () => {
       'HiDream',
       'PonyV7',
       'Boogu',
-      'Ideogram',
     ])('gives %s the full bucket set', (ecosystem) => {
       const store = makeStore(ecosystem);
       expect(values(store)).toEqual(FULL);

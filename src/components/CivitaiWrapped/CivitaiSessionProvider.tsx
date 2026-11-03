@@ -163,6 +163,9 @@ export const useCivitaiSessionContext = () => {
   return context;
 };
 
+/** The session, or `null` outside the provider, for shared UI that renders without one. */
+export const useOptionalCivitaiSessionContext = () => useContext(CivitaiSessionContext);
+
 const publicContentSettings: BrowsingSettings = {
   ...browsingModeDefaults,
   disableHidden: true,

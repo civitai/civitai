@@ -1676,6 +1676,7 @@ export const unusedAuthorImage = (ownerId: number) =>
     crucibleEntries: { none: {} },
     storylineCovers: { none: {} },
     storylineHeroes: { none: {} },
+    storylineSparks: { none: {} },
     storylineCoverUploads: { none: {} },
   } satisfies Prisma.ImageWhereInput);
 
