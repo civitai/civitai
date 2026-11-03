@@ -241,8 +241,10 @@ export const APP_STORAGE_SCHEMA_PATTERN_FLAGS = 'u';
  *     at or under a field the new schema does not require.
  *   - `{ op: "acknowledge", path, keyword }` — the author accepts that stored documents may
  *     violate this ONE narrowing and are refused on their next write until reshaped. Changes
- *     nothing. ITEMISED: it covers exactly the breaking change at `path` (one field, never the
- *     document root or a `*` segment) with `keyword` (required), and never a newly `required`
+ *     nothing. ITEMISED: it covers exactly the ONE breaking change whose pointer equals `path`
+ *     and whose keyword equals `keyword` (required) — never a prefix, never a child. `path` may
+ *     be `""` (a change at the document root) or contain the `*` segment (a change inside
+ *     `items` or an `additionalProperties` schema), matched literally. Never a newly `required`
  *     field — that one needs a `default`.
  *
  * Every op is IDEMPOTENT, and the mutation ops must touch disjoint fields (no path equal to or
@@ -272,8 +274,8 @@ export const APP_STORAGE_MIGRATION_PATH_MAX_LENGTH = 512;
 export const APP_STORAGE_MIGRATION_VALUE_MAX_BYTES = 4096;
 /**
  * In a breaking change's pointer, the segment that stands for EVERY array element (`items`) or
- * every undeclared property (`additionalProperties` as a schema). Every op names one object field,
- * so no op path may contain it.
+ * every undeclared property (`additionalProperties` as a schema). The mutation ops name one object
+ * field, so they refuse it; an `acknowledge` path may contain it, matched literally.
  */
 export const APP_STORAGE_MIGRATION_ANY_SEGMENT = '*';
 /**
@@ -282,7 +284,13 @@ export const APP_STORAGE_MIGRATION_ANY_SEGMENT = '*';
  * `pattern` can equal it byte for byte.
  */
 export const APP_STORAGE_MIGRATION_PATH_PATTERN = `^(/([^/~]|~[01])+){1,${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS}}$`;
+/**
+ * An `acknowledge` path: the same, but also `""` (the document root), and `*` is an ordinary
+ * segment. It is compared for EQUALITY with a breaking change's pointer, never as a prefix.
+ */
+export const APP_STORAGE_MIGRATION_ACK_PATH_PATTERN = `^(/([^/~]|~[01])+){0,${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS}}$`;
 const MIGRATION_PATH_RE = new RegExp(APP_STORAGE_MIGRATION_PATH_PATTERN, 'u');
+const MIGRATION_ACK_PATH_RE = new RegExp(APP_STORAGE_MIGRATION_ACK_PATH_PATTERN, 'u');
 /** The keywords a breaking change can name. */
 export const APP_STORAGE_BREAKING_KEYWORDS = [
   'type',
@@ -835,17 +843,24 @@ function parseCollection(
   return collection;
 }
 
-/** Whether `pointer` is a valid migration path: one object field, never the root or `*`. */
-function isMigrationPath(pointer: unknown): pointer is string {
+/**
+ * Whether `pointer` is a valid migration path. A mutation op's: one object field, never the root
+ * or `*`. An acknowledge's (`ack`): also `""` and `*` segments, since it names a breaking change's
+ * pointer exactly.
+ */
+function isMigrationPath(pointer: unknown, ack = false): pointer is string {
   if (typeof pointer !== 'string' || pointer.length > APP_STORAGE_MIGRATION_PATH_MAX_LENGTH) {
     return false;
   }
+  if (ack) return MIGRATION_ACK_PATH_RE.test(pointer);
   if (!MIGRATION_PATH_RE.test(pointer)) return false;
   return !jsonPointerSegments(pointer).includes(APP_STORAGE_MIGRATION_ANY_SEGMENT);
 }
 
-function migrationPathError(at: string): string {
-  return `${at} must be a JSON pointer to one field of the document's data: 1 to ${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS} non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most ${APP_STORAGE_MIGRATION_PATH_MAX_LENGTH} characters`;
+function migrationPathError(at: string, ack = false): string {
+  return ack
+    ? `${at} must be the JSON pointer of one breaking change: "" for the document root, or up to ${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS} non-empty segments such as "/meta/title" or "/tags/*" (~0 and ~1 escape ~ and /), at most ${APP_STORAGE_MIGRATION_PATH_MAX_LENGTH} characters`
+    : `${at} must be a JSON pointer to one field of the document's data: 1 to ${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS} non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most ${APP_STORAGE_MIGRATION_PATH_MAX_LENGTH} characters`;
 }
 
 /**
@@ -890,10 +905,10 @@ function parseMigrations(at: string, raw: unknown, errors: string[]): StorageMig
         errors.push(`${where}.${boundKey(key)} is not allowed on a "${op}" op`);
       }
     }
-    const pathOf = (field: 'path' | 'from' | 'to'): string | null => {
+    const pathOf = (field: 'path' | 'from' | 'to', ack = false): string | null => {
       const value = entry[field];
-      if (!isMigrationPath(value)) {
-        errors.push(migrationPathError(`${where}.${field}`));
+      if (!isMigrationPath(value, ack)) {
+        errors.push(migrationPathError(`${where}.${field}`, ack));
         return null;
       }
       return value;
@@ -928,7 +943,7 @@ function parseMigrations(at: string, raw: unknown, errors: string[]): StorageMig
         touched.push({ path, index });
       }
     } else {
-      const path = pathOf('path');
+      const path = pathOf('path', true);
       const keyword = entry.keyword;
       if (keyword === 'required') {
         errors.push(

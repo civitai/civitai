@@ -379,6 +379,100 @@ describe('checkStorageMigrations — coverage', () => {
     expect([...covered.plans]).toEqual([['cards', [{ op: 'default', path: '/title', value: '' }]]]);
   });
 
+  it('🔴 an exact "" + additionalProperties acknowledge covers the root newly closed', () => {
+    const check = checkStorageMigrations(
+      manifest({ cards: cards(obj({ a: {} })) }),
+      manifest({
+        cards: cards(obj({ a: {} }, { additionalProperties: false }), [
+          { op: 'acknowledge', path: '', keyword: 'additionalProperties' },
+        ]),
+      })
+    );
+    expect([check.uncovered, check.warnings]).toEqual([[], []]);
+  });
+
+  it('🔴 an exact "/tags/*" + maximum acknowledge covers an items narrowing', () => {
+    const tags = (maximum: number) =>
+      obj({ tags: { type: 'array', items: { type: 'number', maximum } } }, { required: ['tags'] });
+    const check = checkStorageMigrations(
+      manifest({ cards: cards(tags(10)) }),
+      manifest({
+        cards: cards(tags(5), [{ op: 'acknowledge', path: '/tags/*', keyword: 'maximum' }]),
+      })
+    );
+    expect([check.uncovered, check.warnings]).toEqual([[], []]);
+  });
+
+  it('🔴 "" covers no non-root pointer', () => {
+    const check = checkStorageMigrations(
+      manifest({ cards: cards(obj({ n: { maximum: 10 } }, { additionalProperties: false })) }),
+      manifest({
+        cards: cards(obj({ n: { maximum: 5 } }, { additionalProperties: false }), [
+          { op: 'acknowledge', path: '', keyword: 'maximum' },
+        ]),
+      })
+    );
+    expect(check.uncovered.map(at)).toEqual([['/n', 'maximum']]);
+  });
+
+  it('🔴 "/tags/*" covers neither "/tags/*/x" nor "/tags"', () => {
+    const before = obj({
+      tags: {
+        type: 'array',
+        maxItems: 10,
+        items: obj({ x: { maximum: 10 } }),
+      },
+    });
+    const after = obj({
+      tags: {
+        type: 'array',
+        maxItems: 5,
+        items: obj({ x: { maximum: 5 } }),
+      },
+    });
+    const check = checkStorageMigrations(
+      manifest({ cards: cards(before) }),
+      manifest({
+        cards: cards(after, [
+          { op: 'acknowledge', path: '/tags/*', keyword: 'maximum' },
+          { op: 'acknowledge', path: '/tags/*', keyword: 'maxItems' },
+        ]),
+      })
+    );
+    expect(check.uncovered.map(at)).toEqual([
+      ['/tags', 'maxItems'],
+      ['/tags/*/x', 'maximum'],
+    ]);
+  });
+
+  it('🔴 a first schema with a root additionalProperties:false is coverable end to end', () => {
+    const next = obj(
+      { title: { type: 'string', maxLength: 60 } },
+      { required: ['title'], additionalProperties: false }
+    );
+    const prev = manifest({ cards: cards(undefined) });
+    expect(
+      checkStorageMigrations(prev, manifest({ cards: cards(next) })).uncovered.map(at)
+    ).toEqual([
+      ['/title', 'required'],
+      ['', 'additionalProperties'],
+      ['/title', 'type'],
+      ['/title', 'maxLength'],
+    ]);
+    const covered = checkStorageMigrations(
+      prev,
+      manifest({
+        cards: cards(next, [
+          { op: 'default', path: '/title', value: '' },
+          { op: 'acknowledge', path: '', keyword: 'additionalProperties' },
+          { op: 'acknowledge', path: '/title', keyword: 'type' },
+          { op: 'acknowledge', path: '/title', keyword: 'maxLength' },
+        ]),
+      })
+    );
+    expect([covered.uncovered, covered.errors, covered.warnings]).toEqual([[], [], []]);
+  });
+
   it('a first version has nothing to break', () => {
     expect(checkStorageMigrations(null, manifest({ cards: cards(V2) })).uncovered).toEqual([]);
   });
@@ -551,14 +645,9 @@ describe('parseManifestStorage — migrations', () => {
       'storage.collections.cards.migrations[0] acknowledges a newly required field, which cannot be waived — documents already stored without it could never be written again; cover it with { "op": "default", "path": "/status", "value": … } instead',
     ],
     [
-      'acknowledge of the document root',
-      [{ op: 'acknowledge', path: '', keyword: 'additionalProperties' }],
-      'storage.collections.cards.migrations[0].path must be a JSON pointer to one field of the document\'s data: 1 to 15 non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most 512 characters',
-    ],
-    [
-      'acknowledge through a "*" segment',
-      [{ op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' }],
-      'storage.collections.cards.migrations[0].path must be a JSON pointer to one field of the document\'s data: 1 to 15 non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most 512 characters',
+      'an acknowledge path without a leading slash',
+      [{ op: 'acknowledge', path: 'tags/*', keyword: 'maxLength' }],
+      'storage.collections.cards.migrations[0].path must be the JSON pointer of one breaking change: "" for the document root, or up to 15 non-empty segments such as "/meta/title" or "/tags/*" (~0 and ~1 escape ~ and /), at most 512 characters',
     ],
     [
       'two mutation ops on one field',

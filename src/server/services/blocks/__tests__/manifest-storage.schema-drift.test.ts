@@ -22,6 +22,7 @@ import {
   APP_STORAGE_MAX_MARKS,
   APP_STORAGE_MAX_MIGRATION_OPS,
   APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
+  APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
   APP_STORAGE_MIGRATION_OPS,
   APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
   APP_STORAGE_MIGRATION_PATH_PATTERN,
@@ -190,6 +191,8 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
         { op: 'remove', path: '/legacy' },
         { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
         { op: 'acknowledge', path: '/tags', keyword: 'maxItems' },
+        { op: 'acknowledge', path: '', keyword: 'additionalProperties' },
+        { op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' },
       ],
     }),
     true,
@@ -378,13 +381,13 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   [
-    'acknowledge of the document root',
-    priv({ migrations: [{ op: 'acknowledge', path: '', keyword: 'type' }] }),
+    'acknowledge with a 16-segment path',
+    priv({ migrations: [{ op: 'acknowledge', path: '/a'.repeat(16), keyword: 'type' }] }),
     false,
   ],
   [
-    'acknowledge through a "*" segment',
-    priv({ migrations: [{ op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' }] }),
+    'acknowledge path without leading slash',
+    priv({ migrations: [{ op: 'acknowledge', path: 'tags/*', keyword: 'type' }] }),
     false,
   ],
   ['retiredCollections (no such key)', { ...priv(), retiredCollections: ['old_notes'] }, false],
@@ -642,7 +645,10 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     const ackVariant = variants[variants.length - 1];
     expect(ackVariant.required).toEqual(['op', 'path', 'keyword']);
     const ack = ackVariant.properties as Record<string, SchemaObject>;
-    expect(ack.path.$ref).toBe('#/$defs/storageMigrationPath');
+    expect([ack.path.pattern, ack.path.maxLength]).toEqual([
+      APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
+      APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+    ]);
     expect(ack.keyword.enum).toEqual([...APP_STORAGE_ACKNOWLEDGEABLE_KEYWORDS]);
     expect(ack.keyword.enum).not.toContain('required');
   });
