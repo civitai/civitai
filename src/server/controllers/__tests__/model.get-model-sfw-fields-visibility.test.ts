@@ -33,13 +33,6 @@ vi.mock('~/server/services/generation/generation.service', async (importOriginal
 
 const { getModelHandler } = await import('~/server/controllers/model.controller');
 
-/**
- * On civitai.com the model page shows a model's .com title and description to every viewer, its
- * owner and moderators included. Only the editor's read keeps the stored .red pair, and only for
- * someone allowed to edit.
- */
-/** The stored .com pair reaches only the owner and moderators, whichever site they are on. */
-
 const OWNER = 10;
 const owner = { id: OWNER, isModerator: false, showNsfw: true, browsingLevel: 31 };
 const moderator = { id: 20, isModerator: true, showNsfw: true, browsingLevel: 31 };
