@@ -101,6 +101,7 @@ const routers = {
     import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter),
   cosmetic: () => import('~/server/routers/cosmetic.router').then((m) => m.cosmeticRouter),
   event: () => import('~/server/routers/event.router').then((m) => m.eventRouter),
+  hatTurf: () => import('~/server/routers/hat-turf.router').then((m) => m.hatTurfRouter),
   csam: () => import('~/server/routers/csam.router').then((m) => m.csamRouter),
   userPaymentConfiguration: () =>
     import('./user-payment-configuration.router').then((m) => m.userPaymentConfigurationRouter),

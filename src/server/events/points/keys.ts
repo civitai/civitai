@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { SignalTopic } from '~/server/common/enums';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
-import type { EventHat, EventPointEntityType, EventPointType } from './types';
+import type { EventHat, EventPointEntityType, EventPointLedgerType, EventPointType } from './types';
 
 // Every live key for one event, on sysRedis under `event:{event}:points:`.
 export function eventPointKeys(event: string) {
@@ -54,7 +54,7 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
   return {
     // user ids that already earned `type` on this entity (per UTC day for once:'day' types)
     seen: (
-      type: EventPointType,
+      type: EventPointLedgerType,
       entityType: EventPointEntityType,
       entityId: number,
       day?: string

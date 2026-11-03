@@ -141,4 +141,15 @@ export const birthday2026 = createEvent(name, {
     newAccountDays: 7,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
   },
+  turf: {
+    mode: 'shadow',
+    testerFlag: 'birthday2026-turf',
+    // Launch values only. Later steps are set through the live override (turf/config.ts) and are
+    // not announced ahead of time.
+    supply: [{ from: new Date('2026-11-01T00:00:00Z'), perHour: 5, cap: 50 }],
+    creditedPlayers: [{ from: new Date('2026-11-01T00:00:00Z'), players: 25 }],
+    renderLimit: 12,
+    mapMaxEntries: 50_000,
+    minCreatorTier: null,
+  },
 });

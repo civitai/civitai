@@ -46,6 +46,7 @@ const add = (time, type, actorId, entityId, hat, sourceId = '', op = 'add', more
     entityId,
     ...hat,
     sourceId,
+    more.players ?? [],
   ]);
 
 // Actor 1: reaction removed (nets out); a second sourceId removed then re-added (counts once).
@@ -103,15 +104,22 @@ add('2026-11-01 10:40:00', 'reaction', 17, 110, H10, 'R:110:17');
 add('2026-11-01 10:41:00', 'reaction', 17, 110, H10, 'R:110:17', 'remove');
 add('2026-11-03 06:30:00', 'reaction', 17, 110, H10, 'R:110:17');
 
-const q = (v) => (typeof v === 'number' ? String(v) : `'${v}'`);
+// Turf: a row with no owner names the players it credits, each under their own hat key. Player 11 is
+// banned and earns nothing; actor 30 acting on turf they hold credits only the other player.
+const TURF = [0, 60, 'turf', 'Green'];
+add('2026-11-01 14:00:00', 'reaction', 20, 700, TURF, 'R:700:20', 'add', { players: [30, 31, 11] });
+add('2026-11-01 15:00:00', 'reaction', 30, 701, TURF, 'R:701:30', 'add', { players: [30, 31] });
+
+const q = (v) =>
+  Array.isArray(v) ? `[${v.join(', ')}]` : typeof v === 'number' ? String(v) : `'${v}'`;
 const rows = (list) => list.map((r) => `(${r.map(q).join(', ')})`).join(', ');
 const fixtures = `
   event_point_events AS (
     SELECT event, toDateTime64(t, 3, 'UTC') AS time, type, op, actorId, entityType, entityId,
-      ownerId, cosmeticId, claimKey, team, sourceId
+      ownerId, cosmeticId, claimKey, team, sourceId, players
     FROM values('event String, t String, type String, op String, actorId Int32, entityType String,
       entityId Int32, ownerId Int32, cosmeticId Int32, claimKey String, team String,
-      sourceId String', ${rows(ledger)})
+      sourceId String, players Array(Int32)', ${rows(ledger)})
   ),`;
 sql = one(sql, 'WITH\n', `WITH\n${fixtures}\n`);
 
@@ -120,10 +128,25 @@ sql = one(sql, 'WITH\n', `WITH\n${fixtures}\n`);
 // is what made it count (actor 1 at 01:00).
 const full = [
   [
-    ...['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5 + 5, 46, 5, 1, 1, 0, 1],
+    ...[
+      '2026-11-01',
+      10,
+      7,
+      'claimed',
+      'Yellow',
+      5 + 45 + 1 + 5 + 20 + 5 + 5 + 5,
+      46,
+      5,
+      1,
+      1,
+      0,
+      1,
+    ],
     { 1: 5, 4: 45, 6: 1, 9: 5, 10: 20 + 5, 11: 5, 13: 5 },
   ],
   ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0, { 5: 5 }],
+  ['2026-11-01', 30, 60, 'turf', 'Green', 5, 0, 1, 0, 0, 0, 0, { 14: 5 }],
+  ['2026-11-01', 31, 60, 'turf', 'Green', 5 + 5, 0, 2, 0, 0, 0, 0, { 14: 5, 15: 5 }],
   ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5 + 1, 1, 1, 0, 0, 0, 0, { 5: 1, 8: 5 }],
   ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0, { 4: 1, 6: 1 }],
 ];
@@ -176,9 +199,14 @@ const gotFull = await run('2026-11-01 00:00:00.000');
 const gotPartial = await run('2026-11-02 00:00:00.000');
 await client.close();
 
+// Every row's hours add up to its points, whatever the fixture expects.
+const hoursSum = [...gotFull, ...gotPartial].every(
+  (r) => Object.values(r[12]).reduce((a, b) => a + b, 0) === r[5]
+);
 const ok =
+  hoursSum &&
   JSON.stringify(gotFull) === JSON.stringify(full) &&
   JSON.stringify(gotPartial) === JSON.stringify(partial);
 console.log(ok ? 'MATCH' : 'MISMATCH');
-if (!ok) console.log(JSON.stringify({ full, gotFull, partial, gotPartial }, null, 1));
+if (!ok) console.log(JSON.stringify({ hoursSum, full, gotFull, partial, gotPartial }, null, 1));
 process.exit(ok ? 0 : 1);
