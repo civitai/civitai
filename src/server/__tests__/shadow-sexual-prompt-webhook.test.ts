@@ -106,7 +106,6 @@ async function deliver(
 }
 
 const predictionValues = () => dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1) as unknown[];
-// The submitted item, key by key: each bound value paired with the jsonb key written before it.
 const predictionItem = () => {
   const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
   const item: Record<string, unknown> = {};
@@ -142,7 +141,8 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
     expect(calledHybridNodes(['dbRead', 'dbWrite'])).toEqual(['dbWrite.$queryRaw']);
     const [sql] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[]];
     expect(sql.join('?')).toContain('label_store.submit_predictions(');
-    // The keys submit_prediction reads; a misspelt one arrives as NULL and the item is refused.
+    // The keys submit_predictions reads. A misspelt required key refuses the item; a misspelt optional
+    // one is silently NULL.
     expect(predictionKeys()).toEqual([
       'subjectType',
       'subjectId',
@@ -167,7 +167,21 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
       sourceRef: 'ShadowSexualPrompt:wf-shadow',
       confidence: 0.91,
       inputHash: PROMPT_HASH,
+      scores: JSON.stringify({ sexual: 0.91 }),
+      versions: JSON.stringify({ policy: 'p1', threshold: 0.123 }),
+      detail: JSON.stringify({
+        field: 'Positive Prompt',
+        triggered: true,
+        onSite: false,
+        currentNsfwLevel: 1,
+        wouldNsfwLevel: 4,
+      }),
+      predictedAt: new Date('2026-11-03T02:00:00Z'),
     });
+    const text = (sql as string[]).join('?');
+    expect(text).toMatch(/'subjectType', 'image',/);
+    expect(text).toMatch(/'contentHash', label_store\.text_hash\(i\."url"\),/);
+    expect(text).toMatch(/'questionVersion', 1,/);
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
     expect(predictionValues()).toEqual(
       expect.arrayContaining([

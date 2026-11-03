@@ -187,8 +187,8 @@ async function recordPrediction(args: {
     currentNsfwLevel: shadow.currentNsfwLevel,
     wouldNsfwLevel: args.would,
   };
-  // Via submit_predictions, so the row files under family `pipeline` with a `pipeline:`-prefixed
-  // sourceRef, not `xguard_prompt`.
+  // submit_predictions files the row under family 'pipeline', with sourceRef stored as
+  // 'pipeline:ShadowSexualPrompt:<workflowId>'; filter on that, not on the scanner name.
   const rows = await dbWrite.$queryRaw<{ status: string; error: string | null }[]>`
     SELECT s.status, s.error
     FROM "Image" i
