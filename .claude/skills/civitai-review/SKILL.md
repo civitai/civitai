@@ -216,8 +216,26 @@ what the whole section is worth.
 - Deduplicate — the same defect commonly surfaces as reuse *and* perf (a rewritten query that the
   cached-by-id-array helper already answers), or safety *and* test (an unguarded path with a vacuous
   test over it).
+- **Severity comes from each finding's facts, not the lane's word.** Every lane reports `impact`,
+  `reach` and `evidence` per finding (defined in each lane's Report section); its own severity is
+  advisory. A finding missing a fact goes back to its lane like a missing `checks` block. Intent findings carry the facts too, for
+  the hosted gate; section A keeps them unranked and computes no severity for them. Compute:
+  - `money`, `access`, `data-loss` or `privacy`: `normal-use` is **high** when the evidence is
+    `traced` or `reproduced` and **medium** when only `inferred`; `unusual-state` is **medium**;
+    `theoretical` is **low**.
+  - `wrong-for-user`: `normal-use` is **medium**, otherwise **low**.
+  - `internal` and `maintainability`: **low**.
+  - Floor: `money` or `access` in a file whose path names auth, session, permission, Buzz, payment,
+    Stripe, Paddle, billing, purchase, payout, withdraw, subscription, email, PII, NSFW, browsing level
+    or moderation is at least **medium**.
 - Rank by consequence: money moving wrongly and content crossing a gate first, then production cost,
   then false confidence from a bad test, then reuse.
+- **Read each lane's `checks` block.** The test, reuse and correctness lanes end every report with one
+  (`assertions`; `searches`; `writes` and `siblings`; the shape is in each definition's Report section).
+  A missing block, or a missing key, means the lane skipped its method: re-ping it as you would a silent
+  lane. A `"none"` clear or a `passes`/`hangs` assertion with neither a finding nor a `reason` is the
+  same gap. The block lists sibling paths but cannot show which were checked: read that from the lane's
+  prose and each entry's `reason`, and treat a sibling neither one accounts for as the same gap.
 
 **C. Map contribution, not for this PR** — `civitai-reuse-review`'s "Pre-existing service duplication".
 
@@ -239,8 +257,8 @@ The store's own instructions say where and how to write; this step says **when**
    with its start time. On a pre-PR review, do this before the PR is opened or leaves draft: the running
    run is what tells a later reviewer the PR is being reviewed locally.
 2. **When each lane has delivered** (after the step 2 chase), mark its run complete with its prompt
-   version, model, finish time and findings count, and record its findings in the structured form the
-   lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
+   version, model, finish time and findings count, and record its findings and its `checks` block in the
+   structured form the lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
    complete with no findings.
 
 The record is what lets a later reviewer skip a lane you already ran, so it is only worth anything if it

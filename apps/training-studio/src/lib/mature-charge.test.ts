@@ -66,13 +66,20 @@ describe('matureSpend', () => {
 });
 
 describe('mature acknowledgement', () => {
-  const spend = matureSpend({ ...base, mature: true });
-  const key = matureAckKey(spend, 3);
+  const key = matureAckKey(1400, 3);
 
-  it('requires no tick when no Yellow is charged because of mature images', () => {
-    expect(matureAckKey(matureSpend(base), 0)).toBeNull();
+  it('requires no tick for a dataset with no mature images', () => {
+    expect(matureAckKey(1400, 0)).toBeNull();
     expect(matureAckMissing(null, null)).toBe(false);
-    expect(matureAckMissing('1016:3', null)).toBe(false);
+  });
+
+  it('requires the tick for a mature dataset even when Blue covers the price', () => {
+    expect(matureSpend({ ...base, blue: 5000, mature: true })).toBeNull();
+    expect(matureAckMissing(null, matureAckKey(1400, 3))).toBe(true);
+  });
+
+  it('has nothing to tick before there is a price', () => {
+    expect(matureAckKey(null, 3)).toBeNull();
   });
 
   it('blocks start until the current charge is ticked', () => {
@@ -80,10 +87,8 @@ describe('mature acknowledgement', () => {
     expect(matureAckMissing(key, key)).toBe(false);
   });
 
-  it('un-ticks when the amount or the mature count changes', () => {
-    const changedAmount = matureAckKey(matureSpend({ ...base, mature: true, price: 1500 }), 3);
-    const changedCount = matureAckKey(spend, 4);
-    expect(matureAckMissing(key, changedAmount)).toBe(true);
-    expect(matureAckMissing(key, changedCount)).toBe(true);
+  it('un-ticks when the price or the mature count changes', () => {
+    expect(matureAckMissing(key, matureAckKey(1500, 3))).toBe(true);
+    expect(matureAckMissing(key, matureAckKey(1400, 4))).toBe(true);
   });
 });

@@ -45,7 +45,7 @@ import {
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
@@ -63,6 +63,7 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { RequestLockReviewMenuItem } from '~/components/Model/LockReview/RequestLockReview';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
@@ -116,6 +117,16 @@ import {
   TagDivider,
   UpdatedText,
 } from '~/components/Model/ModelPageDs/ModelPageDs';
+import {
+  ComCardPreviewToggle,
+  RedCardLink,
+} from '~/components/Model/ComCardPreview/ComCardPreview';
+import {
+  canLinkToRedCard,
+  canPreviewComCard,
+  getCardViewer,
+  withComCard,
+} from '~/components/Model/ComCardPreview/com-card-preview';
 import {
   modelVersionAccessInput,
   toModelVersionPermissionData,
@@ -453,10 +464,22 @@ export default function ModelDetailsV2({
 
   const { blockedUsers } = useHiddenPreferencesData();
 
-  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({
+  const { data: storedModel, isLoading: loadingModel } = trpc.model.getById.useQuery({
     id,
     excludeTrainingData: true,
   });
+  const cardViewer = getCardViewer(currentUser, storedModel?.user.id, !!features.isGreen);
+  // Keyed on the model id: the page stays mounted across in-app links to another model.
+  const [previewedModelId, setPreviewedModelId] = useState<number>();
+  const previewComCard = previewedModelId === id;
+  const setPreviewComCard = (on: boolean) => setPreviewedModelId(on ? id : undefined);
+  const showComCardToggle = canPreviewComCard(cardViewer, storedModel);
+  const showRedCardLink = canLinkToRedCard(cardViewer, storedModel?.sfwName);
+  const model = useMemo(
+    () =>
+      storedModel && showComCardToggle && previewComCard ? withComCard(storedModel) : storedModel,
+    [storedModel, showComCardToggle, previewComCard]
+  );
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
@@ -787,11 +810,15 @@ export default function ModelDetailsV2({
   useEffect(() => {
     if (loadingModel || !selectedVersion || selectedVersion.id === modelVersionId) return;
     router.replace(
-      getModelUrl({ modelId: id, modelName: model?.name, modelVersionId: selectedVersion.id }),
+      getModelUrl({
+        modelId: id,
+        modelName: storedModel?.name,
+        modelVersionId: selectedVersion.id,
+      }),
       undefined,
       { shallow: true }
     );
-  }, [id, model?.name, selectedVersion, modelVersionId, loadingModel, router]);
+  }, [id, storedModel?.name, selectedVersion, modelVersionId, loadingModel, router]);
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
@@ -934,6 +961,10 @@ export default function ModelDetailsV2({
         <Container size="xl" px={0} className={classes.contentCol} data-tour="model:start">
           <PageStack ds={ds} gap="xl">
             <PageStack ds={ds} gap="xs">
+              {showComCardToggle && (
+                <ComCardPreviewToggle checked={previewComCard} onChange={setPreviewComCard} />
+              )}
+              {showRedCardLink && <RedCardLink path={router.asPath} />}
               <PageStack ds={ds} gap={4}>
                 <PageGroup ds={ds} align="flex-start" justify="space-between" nowrap>
                   <PageGroup ds={ds} className={classes.titleWrapper}>
@@ -1181,7 +1212,7 @@ export default function ModelDetailsV2({
                                 source: {
                                   type: UserHubSourceType.Model,
                                   targetId: model.id,
-                                  alias: model.name,
+                                  alias: storedModel?.name ?? model.name,
                                 },
                               },
                             })
@@ -1218,6 +1249,7 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </LoginRedirect>
                         )}
+                        <RequestLockReviewMenuItem model={model} />
                         {currentUser && (
                           <>
                             <Menu.Label>Moderation</Menu.Label>
@@ -1565,7 +1597,7 @@ export default function ModelDetailsV2({
                     router.replace(
                       getModelUrl({
                         modelId: model.id,
-                        modelName: model.name,
+                        modelName: storedModel?.name ?? model.name,
                         modelVersionId: version.id,
                       }),
                       undefined,

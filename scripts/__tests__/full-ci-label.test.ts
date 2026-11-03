@@ -129,6 +129,18 @@ describe('the full-ci label', () => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
   });
 
+  // typecheck-tests must also run on push to `main`: skipping it lets type errors from draft and
+  // red-merged PRs land unmeasured. The whole conjunct set is pinned, so any event-excluding clause
+  // added back fails here.
+  it('lint.yml runs typecheck-tests on push to main, with only the draft and dispatch gates', () => {
+    const doc = load('lint.yml');
+    expect((doc.on?.push as { branches?: string[] } | null)?.branches).toContain('main');
+    expect(conjuncts(doc.jobs?.['typecheck-tests']?.if ?? '')).toEqual([
+      DRAFT_GATE,
+      "(!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests')",
+    ]);
+  });
+
   describe('full-ci.yml, the dispatcher', () => {
     const doc = load('full-ci.yml');
     const jobs = Object.values(doc.jobs ?? {});

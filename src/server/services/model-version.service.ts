@@ -30,6 +30,7 @@ import {
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -49,10 +50,7 @@ import {
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readDefaultModelVersionsViaKysely,
-  readDefaultModelVersionsViaPrisma,
-} from '~/server/services/hot-reads-3.reads';
+import { readDefaultModelVersionsViaKysely } from '~/server/services/hot-reads-3.reads';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   donationGoalVersionFindArgs,
@@ -127,6 +125,7 @@ import {
   paidGenerationGrant,
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -277,17 +276,9 @@ export const getDefaultModelVersion = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  // `kysely-hot-reads-3` on: the same read in one Kysely statement instead of three Prisma queries,
-  // on the client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
-  const result = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-    ? await readDefaultModelVersionsViaKysely(await getKyselyWithoutLag('model', modelId), {
-        modelId,
-        modelVersionId,
-      })
-    : await readDefaultModelVersionsViaPrisma(await getDbWithoutLag('model', modelId), {
-        modelId,
-        modelVersionId,
-      });
+  // One Kysely statement, on the client the `getKyselyWithoutLag('model', …)` lag decision picks.
+  const db = await getKyselyWithoutLag('model', modelId);
+  const result = await readDefaultModelVersionsViaKysely(db, { modelId, modelVersionId });
 
   if (!result) throw throwNotFoundError();
 
@@ -747,7 +738,7 @@ export const upsertModelVersion = async ({
   // Note the model-level strip below bypasses this: on a POI model the fee columns are cleared even when
   // the caller sent no fee at all, which is how a partial write (a moderator review action) stops
   // carrying one forward.
-  const feeProvided = data.licensingFee !== undefined;
+  let feeProvided = data.licensingFee !== undefined;
   const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
 
   // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
@@ -846,6 +837,14 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
       );
+    }
+    // A write that omits the fee would otherwise carry a stored one forward, including one set while
+    // the version was on a commercial base model.
+    if (!feeProvided) {
+      data.licensingFee = null;
+      data.licensingFeeType = null;
+      data.licensingFeeSettlementCurrency = null;
+      feeProvided = true;
     }
   }
 
@@ -2034,6 +2033,7 @@ export const publishModelVersionById = async ({
   assertBaseModelAttestations({
     versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
   });
+  await assertNonCommercialVersionsUnmonetized([currentVersion]);
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
@@ -2720,6 +2720,10 @@ export const earlyAccessPurchase = async ({
 
   if (!modelVersion) {
     throw throwNotFoundError('Model version not found.');
+  }
+
+  if (isNonCommercialBaseModel(modelVersion.baseModel)) {
+    throw throwBadRequestError(notCommerciallyAvailableMessage(modelVersion.baseModel));
   }
 
   if (userId === modelVersion.model.userId) {

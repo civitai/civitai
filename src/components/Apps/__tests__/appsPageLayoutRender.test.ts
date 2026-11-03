@@ -104,7 +104,7 @@ type Tree = {
   band: Element;
 };
 
-function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
+function renderLayout(measure?: AppsMeasure, withHeader = false, align?: 'start' | 'center'): Tree {
   const html = renderToStaticMarkup(
     createElement(
       MantineProvider,
@@ -113,6 +113,7 @@ function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
         AppsPageLayout,
         {
           measure,
+          ...(align ? { align } : {}),
           ...(withHeader
             ? {
                 title: 'A title',
@@ -390,5 +391,31 @@ describe('the measure box, on the rendered tree', () => {
       const container = node!.parentElement;
       expect(container?.getAttribute('style') ?? '').toContain(remOf(APPS_PAGE_CONTAINER_WIDTH));
     }
+  });
+});
+
+describe('`align="center"` — the one declared opt-out from the shared left edge', () => {
+  // The listing DETAIL page centres its measured body (a product decision; see `align` on
+  // the layout). Everything above pins the DEFAULT, which renders no `align` at all; these
+  // pin that the opt-out does what it says and changes nothing else.
+  it('centres the MEASURED body box with auto inline margins', () => {
+    const t = renderLayout(1068, false, 'center');
+    expect(t.measureBox, 'the measure box must still render').not.toBeNull();
+    expect(t.measureBox!.getAttribute('style') ?? '').toMatch(/margin-inline:\s*auto/);
+    // Still the SAME box — a direct child of the root stack, outside the chrome.
+    expect(t.measureBox!.parentElement).toBe(t.rootStack);
+    expect(t.measureBox!.contains(t.nav)).toBe(false);
+  });
+
+  it('`align="start"` is byte-identical to omitting it (the default stays left-aligned)', () => {
+    const explicit = renderLayout(1068, false, 'start');
+    expect(explicit.measureBox!.getAttribute('style') ?? '').not.toMatch(/margin/i);
+    expect(explicit.measureBox!.outerHTML).toBe(renderLayout(1068).measureBox!.outerHTML);
+  });
+
+  it('without a measure there is nothing to centre: the body stays unbounded', () => {
+    const t = renderLayout(undefined, false, 'center');
+    expect(t.measureBox).toBeNull();
+    expect(t.body.parentElement).toBe(t.rootStack);
   });
 });

@@ -42,7 +42,12 @@ const m = vi.hoisted(() => ({
   chat: null as null | {
     tools: Record<string, ChatTool>;
     instructions: () => string;
-    mcpServers: { id: string; url: string; label?: string }[];
+    mcpServers: {
+      id: string;
+      url: string;
+      label?: string;
+      resultLimit?: { head?: number; tail?: number } | false;
+    }[];
     holdReason?: string;
     beforeToolCall?: (
       name: string,
@@ -380,6 +385,24 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
     r.pane = restart;
     r.devServerUp = devServerUp;
     return <div data-testid="preview" />;
+  },
+}));
+// The preview's App activity strip reads this instead of the network.
+const act = vi.hoisted(() => ({
+  asked: [] as string[],
+  activity: {
+    app: 'app-aaaa',
+    summary: '6 generations: 6 succeeded (last 3 min ago); 0 failed; 0 in progress; 0 errors',
+    items: [],
+    omitted: 0,
+    unavailable: [],
+  },
+}));
+vi.mock('~/components/Apps/AppAssistant/appActivity', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchAppActivity: async (blockId: string) => {
+    act.asked.push(blockId);
+    return act.activity;
   },
 }));
 vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
@@ -748,7 +771,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     screen.rerender(<Workspace />);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     expect(m.chat!.mcpServers).toEqual([
-      expect.objectContaining({ id: 'sandbox', label: 'your app' }),
+      expect.objectContaining({
+        id: 'sandbox',
+        label: 'your app',
+        // As the runner's: enough of a file or a test run that it is not read again.
+        resultLimit: { head: 6000, tail: 18000 },
+      }),
     ]);
     expect(await made).toMatchObject({
       app: 'tip-calculator',
@@ -804,7 +832,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
     m.list = [];
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toHaveProperty('refuse');
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toMatchObject({ stop: true });
   });
@@ -2321,10 +2349,51 @@ describe('AppAssistantWorkspace hold while the app starts', () => {
   });
 });
 
+describe('AppAssistantWorkspace app_activity', () => {
+  /** The page's own `app_activity` read (`GET /api/apps/assistant/activity`): the block id asked. */
+  function stubActivityEndpoint() {
+    const asked: string[] = [];
+    const original = window.fetch.bind(window);
+    const spy = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), location.href);
+      if (url.pathname !== '/api/apps/assistant/activity') return original(input, init);
+      const blockId = url.searchParams.get('blockId') ?? '';
+      asked.push(blockId);
+      return Response.json({ ...act.activity, app: blockId });
+    });
+    onTestFinished(() => spy.mockRestore());
+    return asked;
+  }
+
+  // REGRESSION: the app key (`app-aaaa`) previews under another blockId when its own is taken, and
+  // the preview's calls and errors are kept under that block id: the tool read the app key.
+  test('reads the block id the live preview runs under, not the app key', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('slideshow-2');
+    const asked = stubActivityEndpoint();
+    const out = await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['slideshow-2']);
+    expect(String(out).split('\n')[0]).toBe(
+      'App activity of slideshow-2 in the last 2 hours, newest first:'
+    );
+  });
+
+  // The control (an invariant guard: it held before the fix too).
+  test('reads the app key while no preview runs', async () => {
+    await mount();
+    await openFirst();
+    const asked = stubActivityEndpoint();
+    await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['app-aaaa']);
+  });
+});
+
 describe('AppAssistantWorkspace tool gate', () => {
   test('offers create_app, generate_app_cover, report_ready, set_checklist and submit_for_review beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -2421,7 +2490,7 @@ describe('AppAssistantWorkspace tool gate', () => {
 
   test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toMatchObject({ stop: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
@@ -2643,6 +2712,7 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await mountRunner();
     // The runner's host tools (its `RUNNER_PAGE_TOOLS`), the feedback tools' cards included.
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -2674,6 +2744,25 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await expect.element(pane()).not.toBeInTheDocument();
     // The page has no id for the runner's tunnel and never stops it: the runner and civitai do.
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  test('the shown preview’s App activity strip puts its activity in the message box, never sends it', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect
+      .element(page.getByTestId('app-activity-summary'))
+      .toHaveTextContent(act.activity.summary);
+    expect(act.asked).toContain('app-aaaa');
+    m.compose.mockClear();
+    m.send.mockClear();
+    await page.getByRole('button', { name: 'Tell the assistant' }).click();
+    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledTimes(1));
+    expect(m.compose.mock.calls[0]![0]).toMatch(
+      /^The preview of my app seems stuck or wrong\. Here is what it did recently;/
+    );
+    expect(m.compose.mock.calls[0]![0]).toContain(act.activity.summary);
+    expect(m.send).not.toHaveBeenCalled();
   });
 
   test('a failed start shows nothing', async () => {

@@ -35,11 +35,9 @@ vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMo
 vi.mock('~/server/metrics', () => {
   const metrics = { queueUpdate: vi.fn(async () => undefined) };
   return {
-    answerMetrics: metrics,
     articleMetrics: metrics,
     bountyEntryMetrics: metrics,
     postMetrics: metrics,
-    questionMetrics: metrics,
   };
 });
 vi.mock('~/server/services/block-check.service', () => ({

@@ -24,7 +24,6 @@ const routers = {
     import('~/server/routers/platform-feedback.router').then((m) => m.platformFeedbackRouter),
   account: () => import('./account.router').then((m) => m.accountRouter),
   announcement: () => import('./announcement.router').then((m) => m.announcementRouter),
-  answer: () => import('./answer.router').then((m) => m.answerRouter),
   apiKey: () => import('./apiKey.router').then((m) => m.apiKeyRouter),
   article: () => import('./article.router').then((m) => m.articleRouter),
   auth: () => import('./auth.router').then((m) => m.authRouter),
@@ -63,7 +62,6 @@ const routers = {
   postPreset: () => import('./post-preset.router').then((m) => m.postPresetRouter),
   postIntent: () => import('./post-intent.router').then((m) => m.postIntentRouter),
   promotion: () => import('./promotion.router').then((m) => m.promotionRouter),
-  question: () => import('./question.router').then((m) => m.questionRouter),
   ratingReview: () => import('./rating-review.router').then((m) => m.ratingReviewRouter),
   reaction: () => import('./reaction.router').then((m) => m.reactionRouter),
   report: () => import('./report.router').then((m) => m.reportRouter),
@@ -92,6 +90,7 @@ const routers = {
   wildcardSet: () => import('./wildcard-set.router').then((m) => m.wildcardSetRouter),
   newsletter: () => import('./newsletter.router').then((m) => m.newsletterRouter),
   system: () => import('./system.router').then((m) => m.systemRouter),
+  experiments: () => import('~/server/routers/experiments.router').then((m) => m.experimentsRouter),
   hiddenPreferences: () =>
     import('./hidden-preferences.router').then((m) => m.hiddenPreferencesRouter),
   userReferralCode: () =>
@@ -101,6 +100,7 @@ const routers = {
     import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter),
   cosmetic: () => import('~/server/routers/cosmetic.router').then((m) => m.cosmeticRouter),
   event: () => import('~/server/routers/event.router').then((m) => m.eventRouter),
+  hatTurf: () => import('~/server/routers/hat-turf.router').then((m) => m.hatTurfRouter),
   csam: () => import('~/server/routers/csam.router').then((m) => m.csamRouter),
   userPaymentConfiguration: () =>
     import('./user-payment-configuration.router').then((m) => m.userPaymentConfigurationRouter),

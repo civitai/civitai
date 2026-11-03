@@ -726,17 +726,15 @@ describe('AppListingCard', () => {
     // viewer actions gone from this surface, the owner and a moderator are the ONLY
     // viewers who get a `⋮` (and therefore a wider action cluster) on a card every
     // other viewer sees without one.
-    //
-    // 🔴 THIS IS ALSO THE SUITE'S "a menu WITHOUT Edit" CASE. It used to be a signed-in
-    // shopper's; that viewer now has no menu at all, and a claim about what is inside a
-    // menu has to be made on a viewer who HAS one.
     mocks.currentUser = MODERATOR;
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await openCardMenu();
     await expect.element(page.getByTestId('apps-listing-mod-message-owner')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-listing-mod-manage')).toBeInTheDocument();
-    // …and still no Edit: they are not the owner.
-    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+    // A moderator may edit any listing, on the listing-keyed editor.
+    await expect
+      .element(page.getByTestId('apps-listing-owner-edit'))
+      .toHaveAttribute('href', '/apps/listing/l1/edit');
   });
 
   test('🔴 `preview` suppresses the whole menu, moderator included', async () => {

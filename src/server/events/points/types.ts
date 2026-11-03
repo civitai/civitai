@@ -14,6 +14,11 @@ export const EVENT_POINT_TYPES = [
   'modelLike',
 ] as const;
 export type EventPointType = (typeof EVENT_POINT_TYPES)[number];
+// What a turf action records while turf is in shadow mode. Never a key of a scoring config, so the
+// referee never reads it and no weight can make it count.
+export type ShadowEventPointType = `shadow:${EventPointType}`;
+export const shadowPointType = (type: EventPointType): ShadowEventPointType => `shadow:${type}`;
+export type EventPointLedgerType = EventPointType | ShadowEventPointType;
 
 export type EventPointEntityType = Extract<CosmeticEntity, 'Image' | 'Model' | 'Article'>;
 

@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
 import { RemixGalleryBatchProvider } from '~/components/RemixGallery/RemixGalleryBatchProvider';
+import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StorylineBatchProvider } from '~/components/Storyline/StorylineBatchProvider';
 import { uniquePostIds } from '~/components/Storyline/storyline-mode.utils';
@@ -105,9 +106,11 @@ export function ImagesProvider({
   return (
     <ImagesContext.Provider value={state}>
       <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
-        <RemixGalleryBatchProvider imageIds={imageIds}>
-          <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
-        </RemixGalleryBatchProvider>
+        <TurfSummaryProvider imageIds={imageIds}>
+          <RemixGalleryBatchProvider imageIds={imageIds}>
+            <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
+          </RemixGalleryBatchProvider>
+        </TurfSummaryProvider>
       </StickerPlacementBatchProvider>
     </ImagesContext.Provider>
   );

@@ -12,7 +12,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
@@ -97,11 +97,6 @@ export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
     period: MetricTimeframe.AllTime,
-  },
-  questionFilterDefaults: {
-    sort: QuestionSort.MostLiked,
-    period: MetricTimeframe.AllTime,
-    limit: 50,
   },
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,
@@ -750,6 +745,17 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  'flux nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
     name: 'Illustrious License',
@@ -945,8 +951,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 Klein 9B': baseLicenses['flux nc'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux nc'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
   'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
@@ -1081,6 +1087,18 @@ export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLice
 
 export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
   return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
+}
+
+// Creator compensation and tips stop only under the FLUX non-commercial license so far; the
+// other non-commercial licenses still pay them while their purchases and fees are refused.
+export function stopsCreatorEarnings(baseModel?: string | null): boolean {
+  return !!baseModel && baseModelLicenses[baseModel as BaseModel] === baseLicenses['flux nc'];
+}
+
+export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+
+export function notCommerciallyAvailableMessage(baseModel: string) {
+  return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
 }
 
 // Effective commercial-use permissions for a resource given its base model.

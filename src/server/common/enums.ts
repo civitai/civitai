@@ -39,16 +39,6 @@ export enum ReviewFilter {
   IncludesImages = 'includes-images',
 }
 
-export enum QuestionSort {
-  Newest = 'Newest',
-  MostLiked = 'Most Liked',
-}
-
-export enum QuestionStatus {
-  Answered = 'Answered',
-  Unanswered = 'Unanswered',
-}
-
 export enum ImageSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
@@ -193,6 +183,7 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  EventPointsTurf = 'event-points:turf',
 }
 
 export enum BountySort {

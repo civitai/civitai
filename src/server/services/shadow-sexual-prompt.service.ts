@@ -187,40 +187,47 @@ async function recordPrediction(args: {
     currentNsfwLevel: shadow.currentNsfwLevel,
     wouldNsfwLevel: args.would,
   };
-  // No snapshot: the subject is shared with the scan-label producers, and the first snapshot
-  // written is kept. The exclusion check matches theirs, so a held image is out of training at once.
-  const rows = await dbWrite.$queryRaw<{ id: bigint | number | null }[]>`
-    WITH recorded AS (
-    SELECT label_store.record_prediction(
-      p_subject_type => 'image',
-      p_subject_id => ${String(shadow.imageId)}::text,
-      p_content_hash => label_store.text_hash(i."url"),
-      p_family => 'xguard_prompt',
-      p_question => ${SHADOW_SEXUAL_PROMPT_QUESTION}::text,
-      p_value => ${args.sexualPrompt ? 'sexual' : 'not_sexual'}::text,
-      p_model_ref => ${`${MODEL_REF}@${args.policyHash}`}::text,
-      p_source_ref => ${`ShadowSexualPrompt:${args.workflowId}`}::text,
-      p_predicted_at => ${args.scannedAt}::timestamptz,
-      p_question_version => 1,
-      p_confidence => ${result.score}::real,
-      p_scores => ${JSON.stringify({ sexual: result.score })}::jsonb,
-      p_versions => ${JSON.stringify({
+  // submit_predictions files the row under family 'pipeline', with sourceRef stored as
+  // 'pipeline:ShadowSexualPrompt:<workflowId>'; filter on that, not on the scanner name.
+  const rows = await dbWrite.$queryRaw<{ status: string; error: string | null }[]>`
+    SELECT s.status, s.error
+    FROM "Image" i
+    CROSS JOIN LATERAL label_store.submit_predictions(jsonb_build_array(jsonb_build_object(
+      'subjectType', 'image',
+      'subjectId', ${String(shadow.imageId)}::text,
+      'contentHash', label_store.text_hash(i."url"),
+      'question', ${SHADOW_SEXUAL_PROMPT_QUESTION}::text,
+      'value', ${args.sexualPrompt ? 'sexual' : 'not_sexual'}::text,
+      'modelRef', ${`${MODEL_REF}@${args.policyHash}`}::text,
+      'sourceRef', ${`ShadowSexualPrompt:${args.workflowId}`}::text,
+      'predictedAt', ${args.scannedAt}::timestamptz,
+      'questionVersion', 1,
+      'confidence', ${result.score}::real,
+      'scores', ${JSON.stringify({ sexual: result.score })}::jsonb,
+      'versions', ${JSON.stringify({
         policy: args.policyHash,
         threshold: result.threshold,
       })}::jsonb,
-      p_input_hash => ${shadow.promptHash}::text,
-      p_detail => ${JSON.stringify(detail)}::jsonb,
-      p_phash => i."pHash",
-      p_owner_user_id => i."userId"
-    ) AS id
-    FROM "Image" i
+      'inputHash', ${shadow.promptHash}::text,
+      'detail', ${JSON.stringify(detail)}::jsonb
+    ))) s
     WHERE i.id = ${shadow.imageId}::int
-    )
-    SELECT r.id,
-      CASE WHEN r.id IS NOT NULL AND label_store.image_excluded(${shadow.imageId}::int)
-        THEN label_store.exclude('image', ${String(shadow.imageId)}::text, 'safety') END AS excluded
-    FROM recorded r
   `;
-  if (rows.length === 0)
+  if (rows.length === 0) {
     logShadowSexualPromptError(new Error('image not found for prediction'), shadow.imageId);
+    return;
+  }
+  // The positive witness: zero errors cannot tell an accepted submit from one never made.
+  logToAxiom({
+    type: 'info',
+    name: 'shadow-sexual-prompt',
+    message: 'prediction submitted',
+    status: rows[0].status,
+    workflowId: args.workflowId,
+  }).catch(() => undefined);
+  if (rows[0].status === 'rejected')
+    logShadowSexualPromptError(
+      new Error(`prediction rejected: ${rows[0].error ?? 'unknown'}`),
+      shadow.imageId
+    );
 }

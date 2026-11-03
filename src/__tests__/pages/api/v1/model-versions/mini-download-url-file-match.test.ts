@@ -895,3 +895,100 @@ describe('payoutEnabled and tipsEnabled', () => {
     expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });
 });
+
+describe('non-commercial base models: no fee, no comp, no tips', () => {
+  type Fee = { role: string; amount: number; recipientModelVersionId: number };
+  const charged = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { fees, payoutEnabled, tipsEnabled } = body as Body & {
+      fees: Fee[];
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { fees, payoutEnabled, tipsEnabled };
+  };
+  const OWN_FEE = { licensingFee: 5 as never, licensingFeeType: 'PerImageBuzz' as never };
+  const ROOT_FEE = { ...OWN_FEE, isLicensingRoot: true };
+  const SOURCE_FEE = {
+    licensingSourceVersionId: 900 as never,
+    sourceLicensingFee: 3 as never,
+    sourceLicensingFeeRecipientUserId: 31 as never,
+  };
+
+  const VARIANTS = {
+    'no fee': {},
+    'own fee': OWN_FEE,
+    'licensing-root fee': ROOT_FEE,
+    'lineage fee': { ...SOURCE_FEE, sourceBaseModel: 'SDXL 1.0' as never },
+  };
+  it.each(
+    ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'].flatMap((baseModel) =>
+      Object.entries(VARIANTS).map(([variant, fee]) => [baseModel, variant, fee] as const)
+    )
+  )('a %s version with %s sends no fee and turns comp and tips off', async (baseModel, _, fee) => {
+    expect(await charged({ baseModel, ...fee })).toEqual({
+      fees: [],
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  // Other non-commercial licenses refuse fees but still pay creator comp and tips.
+  it.each(Object.entries(VARIANTS))(
+    'a Flux.3 Klein version with %s sends no fee and keeps tips',
+    async (_, fee) => {
+      expect(await charged({ baseModel: 'Flux.3 Klein', ...fee })).toMatchObject({
+        fees: [],
+        tipsEnabled: true,
+      });
+    }
+  );
+
+  it('a Flux.3 Klein version without a fee keeps creator comp', async () => {
+    expect(await charged({ baseModel: 'Flux.3 Klein' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('drops a lineage fee owed to a non-commercial source version', async () => {
+    const { fees } = await charged({
+      baseModel: 'SDXL 1.0',
+      ...SOURCE_FEE,
+      ...OWN_FEE,
+      sourceBaseModel: 'Flux.2 Klein 9B' as never,
+    });
+    expect(fees.map((f) => f.role)).toEqual(['version']);
+  });
+
+  it('a Flux.2 Klein 4B version keeps its fee, comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B', ...OWN_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'version',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+    expect(
+      (
+        await charged({
+          baseModel: 'SDXL 1.0',
+          ...SOURCE_FEE,
+          sourceBaseModel: 'SDXL 1.0' as never,
+        })
+      ).fees
+    ).toEqual([
+      expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
+    ]);
+  });
+});

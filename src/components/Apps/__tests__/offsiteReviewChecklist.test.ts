@@ -3,6 +3,7 @@ import {
   getOffsiteReviewChecklist,
   getOnsiteReviewChecklist,
   getReviewChecklist,
+  PROHIBITED_APP_MECHANICS,
   unjustifiedSensitiveBlockScopes,
   unjustifiedSensitiveScopeKeys,
   type OffsiteChecklistData,
@@ -125,7 +126,7 @@ describe('getOffsiteReviewChecklist — kind-aware url item (onsite media revisi
     expect(ids).toContain('category');
   });
 
-  it("offsite (kind omitted) with a bad/http URL STILL warns on url-https", () => {
+  it('offsite (kind omitted) with a bad/http URL STILL warns on url-https', () => {
     const item = getOffsiteReviewChecklist({
       ...complete,
       externalUrl: 'http://insecure.example.com',
@@ -282,5 +283,16 @@ describe('unjustifiedSensitiveScopeKeys', () => {
         connectScopeJustifications: { ModelsWrite: '   ' },
       })
     ).toEqual(['ModelsWrite']);
+  });
+});
+
+describe('prohibited mechanics item', () => {
+  it.each([
+    ['onsite', getReviewChecklist('onsite')],
+    ['offsite', getReviewChecklist('offsite', complete)],
+  ])('%s review asks the mod to rule out every prohibited mechanic', (_kind, items) => {
+    const item = items.find((i) => i.id === 'prohibited-mechanics');
+    expect(item?.status).toBe('todo');
+    for (const mechanic of PROHIBITED_APP_MECHANICS) expect(item?.hint).toContain(mechanic);
   });
 });

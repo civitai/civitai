@@ -452,7 +452,8 @@ export type Appeal = {
   entityRemovedAt: Timestamp | null;
   category: AppealCategory | null;
   /**
-   * What the form collected beyond the message (`SiteAppealContext`).
+   * What the form collected beyond the message (`SiteAppealContext`); on an in-app model appeal, the
+   * locked settings an owner asks a moderator to review (`LockReviewContext`), else NULL.
    */
   context: unknown | null;
 };
@@ -3189,6 +3190,24 @@ export type EventCosmeticScoreDaily = {
   modelLikes: Generated<number>;
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
+};
+export type EventTurfSticker = {
+  id: Generated<string>;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  removedAt: Timestamp | null;
+  removedById: number | null;
+};
+export type EventTurfStock = {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Timestamp;
 };
 export type EvidenceHeldUser = {
   userId: number;
@@ -6600,6 +6619,8 @@ export type DB = {
   EntityModeration: EntityModeration;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EventTurfSticker: EventTurfSticker;
+  EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
   EvidenceHoldImage: EvidenceHoldImage;

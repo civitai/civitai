@@ -30,11 +30,8 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   countSuggestedResourcesViaKysely,
-  countSuggestedResourcesViaPrisma,
   readModelPagePostsViaKysely,
-  readModelPagePostsViaPrisma,
   readOwnerSettingsViaKysely,
-  readOwnerSettingsViaPrisma,
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
@@ -165,7 +162,7 @@ import {
   closeAppealsOnDeletedModel,
 } from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getLatestAppeal } from '~/server/services/report.service';
+import { latestModelAppealOfKind } from '~/server/services/lock-review.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -250,7 +247,7 @@ import {
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({
-  input: { excludeTrainingData, ...input },
+  input: { excludeTrainingData, forEditor, ...input },
   ctx,
 }: {
   input: GetModelByIdSchema;
@@ -272,9 +269,10 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
-    // Owners and moderators get the stored pair instead: this payload seeds the model editor.
+    // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
+    const editorRead = isOwner && !!forEditor;
     const withSfwFace =
-      !isOwner && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
+      !editorRead && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
 
     // Prevent non-owners from viewing scheduled/draft/unpublished models
     if (!isOwner && model.status !== ModelStatus.Published) {
@@ -291,11 +289,9 @@ export const getModelHandler = async ({
       })
     );
     const modelVersionIds = filteredVersions.map((version) => version.id);
-    // `kysely-hot-reads-3`, evaluated once for this request: the posts, the suggested-resource count
-    // and the owner's settings below read through Kysely on the replica, as they read `dbRead`.
-    const kyselyRead = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-      ? (await loadKyselyDb()).kyselyRead
-      : null;
+    // The posts, the suggested-resource count and the owner's settings below read through Kysely
+    // on the replica.
+    const { kyselyRead } = await loadKyselyDb();
     const postsInput = { modelVersionIds, userId: model.user.id };
     // `model-getbyid-skip-owner-posts` on: a viewer who is neither the owner nor a moderator gets
     // `posts: []` on every version without the read — every reader of the field is owner/mod-only.
@@ -303,17 +299,13 @@ export const getModelHandler = async ({
       !isOwner && (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_GETBYID_SKIP_OWNER_POSTS));
     const posts: Awaited<ReturnType<typeof readModelPagePostsViaKysely>> = skipOwnerPosts
       ? []
-      : kyselyRead
-      ? await readModelPagePostsViaKysely(kyselyRead, postsInput)
-      : await readModelPagePostsViaPrisma(dbRead, postsInput);
+      : await readModelPagePostsViaKysely(kyselyRead, postsInput);
     const tagsOnModels = await modelTagCache.fetch(model.id);
 
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
       (settings as LinkedComponentSettings)?.isLinkedComponent === true;
 
-    const suggestedResources = kyselyRead
-      ? await countSuggestedResourcesViaKysely(kyselyRead, model.id)
-      : await countSuggestedResourcesViaPrisma(dbRead, model.id);
+    const suggestedResources = await countSuggestedResourcesViaKysely(kyselyRead, model.id);
 
     const modelCategories = await getCategoryTags('model');
 
@@ -415,9 +407,7 @@ export const getModelHandler = async ({
     let ownerSettings: unknown = null;
     let ownerHasMembership = false;
     if (metricPrivacyEnabled && !isOwner) {
-      ownerSettings = kyselyRead
-        ? await readOwnerSettingsViaKysely(kyselyRead, model.user.id)
-        : await readOwnerSettingsViaPrisma(dbRead, model.user.id);
+      ownerSettings = await readOwnerSettingsViaKysely(kyselyRead, model.user.id);
       // Only resolve CP membership when the owner actually hides something (model meta,
       // any version meta, or a user default). When nothing is hidden, resolveModel/Version
       // return NONE regardless of membership, so the cached membership read (and the
@@ -581,11 +571,12 @@ export const getModelHandler = async ({
 
     // Gated here to skip the query for the vast majority of page views (visitors);
     // resolveMinorAppeal below is the actual enforced boundary, independent of this.
+    // The flag appeal only: a lock review on the same model says nothing about the flag.
     const minorAppeal = isOwner
-      ? await getLatestAppeal({
-          entityType: EntityType.Model,
-          entityId: model.id,
+      ? await latestModelAppealOfKind({
+          modelId: model.id,
           userId: model.user.id,
+          lockReview: false,
         })
       : null;
 
@@ -1060,9 +1051,9 @@ export const deleteModelHandler = async ({
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
-    // The owner's own delete closes the appeal with a notice. A permanent delete leaves no row to
-    // read `deletedBy` from. Any other delete, including a moderator's earlier one that this call
-    // repeats, closes it quietly.
+    // The owner's own delete closes the appeal as deleted by its owner. A permanent delete leaves no
+    // row to read `deletedBy` from. Any other delete, including a moderator's earlier one that this
+    // call repeats, closes it quietly.
     const deletedByCaller =
       permanently || ('deletedBy' in model && model.deletedBy === ctx.user.id);
     if (model.userId === ctx.user.id && deletedByCaller)

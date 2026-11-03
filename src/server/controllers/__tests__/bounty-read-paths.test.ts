@@ -38,6 +38,8 @@ const {
   mockUpsertComment: vi.fn(),
 }));
 
+// The showcase hat is a cache read beside these checks; it has its own test.
+vi.mock('~/server/events/showcase-hat', () => ({ getShowcaseHatForUser: async () => null }));
 vi.mock('~/server/services/bounty-visibility', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyVisibility>()),
   assertBountyVisible: mockAssert,
@@ -247,7 +249,10 @@ describe('a Private bounty is not reachable through its satellite reads', () => 
         bountyEntryId: null,
         rootThread: { bountyId: null, bountyEntryId: null },
       });
-      await expect(getCommentHandler({ input: { id: 50 }, ctx: stranger })).resolves.toBe(comment);
+      await expect(getCommentHandler({ input: { id: 50 }, ctx: stranger })).resolves.toEqual({
+        ...comment,
+        user: { ...comment.user, showcaseHat: null },
+      });
       expect(mockAssert).not.toHaveBeenCalled();
     });
   });

@@ -32,6 +32,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isAir } from '~/utils/string-helpers';
 import {
+  aiToolkitLrSchedulerTypes,
+  aiToolkitOptimizerTypes,
   engineTypes,
   loraTypes,
   lrSchedulerTypes,
@@ -193,7 +195,7 @@ export const trainingDetailsParams = z.object({
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
 // AI Toolkit training parameters (alternate format for database storage)
-const aiToolkitTrainingDetailsParams = z.object({
+export const aiToolkitTrainingDetailsParams = z.object({
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
@@ -211,19 +213,8 @@ const aiToolkitTrainingDetailsParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),

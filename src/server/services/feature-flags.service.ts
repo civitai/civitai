@@ -386,7 +386,6 @@ const featureFlags = createFeatureFlags({
   // the Anima ControlNet input (and strip controlNets server-side) without a
   // deploy if the orchestrator side misbehaves.
   animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
-  questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
     toggleable: true,
@@ -455,9 +454,6 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
-  // Moderators who may give a Stripe member free days (subscriptions.extendMembership). `granted`
-  // only: the moderator must carry `membershipExtend` in user.permissions; being a mod is not enough.
-  membershipExtend: ['granted'],
   chat: {
     toggleable: true,
     default: true,
@@ -544,6 +540,8 @@ const featureFlags = createFeatureFlags({
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
   // `event.getAccess` (usePlayableEventDecoration) instead.
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
+  // Read through useHatTurfFeed, which also checks the event is playable.
+  hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -938,8 +936,8 @@ const featureFlags = createFeatureFlags({
   // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
   // and no visible count at all when the first `comment.getAll` page holds every comment (the
   // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
-  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Independent of the server
-  // flag `kysely-hot-reads-4`, which picks how the new procedure reads (Prisma or Kysely).
+  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Either way the counts read
+  // through Kysely.
   commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 

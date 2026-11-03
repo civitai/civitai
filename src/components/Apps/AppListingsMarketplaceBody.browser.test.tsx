@@ -255,7 +255,7 @@ describe('AppListingsMarketplaceBody', () => {
     // (Mantine's `Select` mirrors `aria-label` onto BOTH the input and its
     // listbox, hence `.first()`: the input is the control under test.)
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
-    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Most popular' })).toBeInTheDocument();
     // Kind filter is now inside the dropdown, defaulting to All.
     await openFilters();
     await expect
@@ -268,7 +268,7 @@ describe('AppListingsMarketplaceBody', () => {
     // ⚠️ This said "SIX columns … only four rows" until the card-width floor moved 383 →
     // 460 in this same PR and made six unreachable. Written true, falsified by a later
     // commit on the same branch.
-    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated', limit: 48 });
+    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'popular', limit: 48 });
   });
 
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
@@ -376,7 +376,7 @@ describe('AppListingsMarketplaceBody', () => {
 
   test('sorting writes the sort param', async () => {
     renderWithProviders(<StoreWithControls />);
-    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     expect(replacedQueries().at(-1)).toMatchObject({ sort: 'newest' });
   });
@@ -387,7 +387,7 @@ describe('AppListingsMarketplaceBody', () => {
     await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'All apps' }));
     // `?kind=all` is the default view — a nav that lands on
-    // `/apps?kind=all&sort=top-rated` looks like state you have to clear.
+    // `/apps?kind=all&sort=popular` looks like state you have to clear.
     expect(replacedQueries().at(-1)).not.toHaveProperty('kind');
   });
 

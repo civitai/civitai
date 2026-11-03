@@ -252,6 +252,7 @@ describe('toModelVersionPermissionData — the page shape the hook is fed', () =
       usageControl: 'InternalGeneration',
       canGenerate: true,
       paidAccess: pageVersion.paidAccess,
+      baseModel: 'Flux.2 Klein 9B',
     };
 
     expect(toData(model, version)).toEqual({
@@ -259,6 +260,7 @@ describe('toModelVersionPermissionData — the page shape the hook is fed', () =
       usageControl: 'InternalGeneration',
       canGenerate: true,
       paidAccess: pageVersion.paidAccess,
+      baseModel: 'Flux.2 Klein 9B',
       model: { id: 9001, type: 'LORA', user: { id: OWNER_ID } },
     });
   });

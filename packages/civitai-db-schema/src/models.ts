@@ -3493,6 +3493,26 @@ export interface EventCosmeticScoreDaily {
   updatedAt: Date;
 }
 
+export interface EventTurfSticker {
+  id: bigint;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: JsonValue;
+  createdAt: Date;
+  removedAt: Date | null;
+  removedById: number | null;
+}
+
+export interface EventTurfStock {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;
