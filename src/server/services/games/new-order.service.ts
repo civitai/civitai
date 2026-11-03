@@ -554,6 +554,24 @@ async function processImageRating({
     return { stats: player.stats };
   }
 
+  // The ratings table keeps one row per (userId, imageId): a second vote on a re-queued image
+  // would replace the player's settled row with a Pending one, so refuse it here.
+  try {
+    const ratedKey = await ensureRatedImagesCache({ userId: playerId, startAt: player.startAt });
+    if (await redis?.sIsMember(ratedKey, String(imageId))) {
+      logToAxiom({
+        type: 'info',
+        name: 'new-order-duplicate-vote',
+        details: { playerId, imageId },
+        message: `Player ${playerId} voted again on image ${imageId}`,
+      }).catch(() => null);
+      return { stats: player.stats };
+    }
+  } catch (e) {
+    // Fail open: a Redis/ClickHouse blip must not fail the vote.
+    handleLogError(e as Error, 'new-order-duplicate-vote-check');
+  }
+
   // Atomically increment vote count and check limits
   const newVoteCount = await valueInQueue.pool.increment({ id: imageId });
   // Also increment total ratings for this image+rating
@@ -1501,15 +1519,7 @@ export async function getNewOrderRanks({ name }: { name: string }) {
  * Uses a sentinel member '0' (no real image has ID 0) to distinguish
  * "cache populated but user has no ratings" from "cache not populated".
  */
-async function ensureRatedImagesCache({
-  userId,
-  startAt,
-  rankType,
-}: {
-  userId: number;
-  startAt: Date;
-  rankType?: NewOrderRankType;
-}) {
+async function ensureRatedImagesCache({ userId, startAt }: { userId: number; startAt: Date }) {
   if (!redis || !clickhouse) throw throwInternalServerError('Redis not available');
 
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
@@ -1519,11 +1529,11 @@ async function ensureRatedImagesCache({
   if (exists) return key;
 
   // Cache miss - fetch from ClickHouse
+  // No rank filter: a vote at any rank counts as rated, matching what addRatedImage records live.
   const AND = [
     `userId = ${userId}`,
     `createdAt >= parseDateTimeBestEffort('${startAt.toISOString()}')`,
   ];
-  if (rankType) AND.push(`rank = '${rankType}'`);
 
   const results = await clickhouse.$query<{ imageId: number }>`
     SELECT DISTINCT "imageId"
@@ -1662,7 +1672,6 @@ export async function getImagesQueue({
   const ratedKey = await ensureRatedImagesCache({
     userId: playerId,
     startAt: player.startAt,
-    rankType: player.rankType,
   });
   const seenImageIds = new Set<number>();
   const isKnight = effectiveRankType === NewOrderRankType.Knight;
