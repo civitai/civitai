@@ -123,9 +123,11 @@ describe('getVisibleCommentCount', () => {
 
 // Parity on fixtures: the count must equal what the unpinned list (`getComments`, Prisma) plus the
 // pinned block (`getPinnedCommentsViaKysely`) return to the same viewer. Every read evaluates its
-// filter over the fixture rows: Prisma's `findMany` the where it is given, and the Kysely count and
-// pinned block the where `topLevelCommentsWhere` builds from their filter, so this pins the RESULT,
-// not the shape of the query.
+// filter over the fixture rows: Prisma's `findMany` the where it is given, and the stubbed Kysely
+// count and pinned block the where `topLevelCommentsWhere` builds from their filter. So this pins
+// that the count and the lists agree when they are built from the same filter; it never runs the
+// real Kysely SQL. What that statement returns against a real database is pinned in
+// hot-reads-4.kysely-parity.test.ts.
 type Row = {
   id: number;
   modelId: number;

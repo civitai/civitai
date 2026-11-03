@@ -71,8 +71,8 @@ beforeEach(() => {
   placementReads.listPlacementSpacesFor.mockResolvedValue([]);
   placementReads.countPlacements.mockResolvedValue(0);
   placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
-  // One row answering every raw read on this path: the creator score, the
-  // has-entries probe and the host image.
+  // One row answering every raw read on this path: the has-entries probe and
+  // the host image. The creator score comes from `getUserPlacementScore` above.
   dbMock.dbRead.$queryRaw.mockResolvedValue([
     { score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true },
   ]);
