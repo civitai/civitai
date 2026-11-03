@@ -158,34 +158,6 @@ async function getTrackerEvent(
         };
       }
       break;
-    case 'question':
-      const question = await dbRead.question.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (question) {
-        return {
-          type: `Question_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: question?.userId,
-          ...shared,
-        };
-      }
-      break;
-    case 'answer':
-      const answer = await dbRead.answer.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (answer) {
-        return {
-          type: `Answer_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: answer.userId,
-          ...shared,
-        };
-      }
-      break;
     case 'bountyEntry':
       const bountyEntry = await dbRead.bountyEntry.findFirst({
         where: { id: input.entityId },
@@ -234,10 +206,6 @@ async function holdsReaction({
   // The return annotation makes a missing entity type a compile error rather than a refusal.
   const count = await ((): Promise<number> => {
     switch (entityType) {
-      case 'question':
-        return dbWrite.questionReaction.count({ where: { ...where, questionId: entityId } });
-      case 'answer':
-        return dbWrite.answerReaction.count({ where: { ...where, answerId: entityId } });
       case 'commentOld':
         return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
       case 'comment':

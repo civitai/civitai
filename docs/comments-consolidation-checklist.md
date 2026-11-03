@@ -486,7 +486,7 @@ flip — these MUST land before the first Phase 4 write flip):
 - [x] Metrics jobs (`article/bounty/post/model3d.metrics.ts` and `post.metrics-old.ts`, used while
       `simplified-post-metrics` is off) count top-level live comments, which is what the
       root thread counted; `model.metrics.ts`'s distinct commenters read CommentV3 too. The
-      disabled question and answer jobs have no entity type and are left as they are
+      question and answer jobs had no entity type and were removed with the feature
 - [x] `daily-challenge-processing.ts` judge gate (both reads), `getJudgeCommentForImage`,
       `api/mod/daily-challenge/re-review.ts`
 - [x] `collection.service.ts` judged check; `challenge.service.ts`'s four comment counts and
@@ -817,6 +817,10 @@ With the old tables (before the drops below):
       functions that take old-table row types as parameters (`commentv3_thread_entity`,
       `commentv3_mirror_v1`, `commentv3_mirror_v1_one`, `commentv3_mirror_v2`,
       `commentv3_mirror_v2_one`) — `DROP TABLE` fails while they exist
+- [ ] Before the drops: copy the Q&A comments into a `qa_archive` schema (decision 1, amended
+      2026-11-02): every `Thread` with `questionId` or `answerId` and the reply threads below it,
+      their `CommentV2` rows and those rows' `CommentV2Reaction` and `CommentV2Report` rows.
+      Nothing reads the schema; it is not part of the `archive` drop below
 - [ ] Drop order: `ThreadMute` → `CommentReaction`/`CommentV2Reaction`/`CommentReport`/
       `CommentV2Report` → `Comment`/`CommentV2` → `Thread`
 - [ ] Drop triggers `comment_count_update` (function `update_thread_comment_count`),

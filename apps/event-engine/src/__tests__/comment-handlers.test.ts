@@ -230,8 +230,6 @@ test('the owner query still mentions every commentable surface', async () => {
     'model3dId',
     'model3dReviewId',
     'modelId',
-    'questionId',
-    'answerId',
     'appListingId',
   ]) {
     expect(sql).toContain(`= COALESCE(r."${column}", t."${column}")`);
@@ -264,8 +262,6 @@ test('the owner query still mentions every commentable surface', async () => {
     'm3d."userId"',
     'm3dr."userId"',
     'mdl."userId"',
-    'q."userId"',
-    'ans."userId"',
     'al.user_id',
   ]) {
     expect(sql).toContain(owner);

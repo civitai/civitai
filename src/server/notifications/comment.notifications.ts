@@ -206,8 +206,6 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     appListing: details.appListingSlug
       ? `${getListingDetailHref(details.appListingSlug)}?${queryString}`
       : undefined,
-    // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
-    // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
 };
 

@@ -30,11 +30,8 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   countSuggestedResourcesViaKysely,
-  countSuggestedResourcesViaPrisma,
   readModelPagePostsViaKysely,
-  readModelPagePostsViaPrisma,
   readOwnerSettingsViaKysely,
-  readOwnerSettingsViaPrisma,
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
@@ -292,11 +289,9 @@ export const getModelHandler = async ({
       })
     );
     const modelVersionIds = filteredVersions.map((version) => version.id);
-    // `kysely-hot-reads-3`, evaluated once for this request: the posts, the suggested-resource count
-    // and the owner's settings below read through Kysely on the replica, as they read `dbRead`.
-    const kyselyRead = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-      ? (await loadKyselyDb()).kyselyRead
-      : null;
+    // The posts, the suggested-resource count and the owner's settings below read through Kysely
+    // on the replica.
+    const { kyselyRead } = await loadKyselyDb();
     const postsInput = { modelVersionIds, userId: model.user.id };
     // `model-getbyid-skip-owner-posts` on: a viewer who is neither the owner nor a moderator gets
     // `posts: []` on every version without the read — every reader of the field is owner/mod-only.
@@ -304,17 +299,13 @@ export const getModelHandler = async ({
       !isOwner && (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_GETBYID_SKIP_OWNER_POSTS));
     const posts: Awaited<ReturnType<typeof readModelPagePostsViaKysely>> = skipOwnerPosts
       ? []
-      : kyselyRead
-      ? await readModelPagePostsViaKysely(kyselyRead, postsInput)
-      : await readModelPagePostsViaPrisma(dbRead, postsInput);
+      : await readModelPagePostsViaKysely(kyselyRead, postsInput);
     const tagsOnModels = await modelTagCache.fetch(model.id);
 
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
       (settings as LinkedComponentSettings)?.isLinkedComponent === true;
 
-    const suggestedResources = kyselyRead
-      ? await countSuggestedResourcesViaKysely(kyselyRead, model.id)
-      : await countSuggestedResourcesViaPrisma(dbRead, model.id);
+    const suggestedResources = await countSuggestedResourcesViaKysely(kyselyRead, model.id);
 
     const modelCategories = await getCategoryTags('model');
 
@@ -416,9 +407,7 @@ export const getModelHandler = async ({
     let ownerSettings: unknown = null;
     let ownerHasMembership = false;
     if (metricPrivacyEnabled && !isOwner) {
-      ownerSettings = kyselyRead
-        ? await readOwnerSettingsViaKysely(kyselyRead, model.user.id)
-        : await readOwnerSettingsViaPrisma(dbRead, model.user.id);
+      ownerSettings = await readOwnerSettingsViaKysely(kyselyRead, model.user.id);
       // Only resolve CP membership when the owner actually hides something (model meta,
       // any version meta, or a user default). When nothing is hidden, resolveModel/Version
       // return NONE regardless of membership, so the cached membership read (and the

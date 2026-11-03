@@ -12,8 +12,6 @@ const OWNER_TABLES = [
   'bountyEntry',
   'resourceReview',
   'commentV2',
-  'question',
-  'answer',
   'challenge',
   'crucible',
   'storyline',

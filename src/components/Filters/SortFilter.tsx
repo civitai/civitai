@@ -19,7 +19,6 @@ import {
   ModelSortHidden,
   PostSort,
   PostSortHidden,
-  QuestionSort,
   ThreadSort,
   ToolSort,
 } from '~/server/common/enums';
@@ -40,7 +39,6 @@ const sortOptions = {
   posts: Object.values(PostSort).filter((x) => !Object.values(PostSortHidden).includes(x)),
   images: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   modelImages: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
-  questions: Object.values(QuestionSort),
   articles: Object.values(ArticleSort).filter((x) => !Object.values(ArticleSortHidden).includes(x)),
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
@@ -61,7 +59,6 @@ type SortOption =
   | ModelSort
   | PostSort
   | ImageSort
-  | QuestionSort
   | ArticleSort
   | CollectionSort
   | BountySort

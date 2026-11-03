@@ -2,13 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { onReactionRemoved } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  answerMetrics,
-  articleMetrics,
-  bountyEntryMetrics,
-  postMetrics,
-  questionMetrics,
-} from '~/server/metrics';
+import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metrics';
 
 /**
  * Every table a user's reactions live in, with the follow-up the one-at-a-time un-react path
@@ -46,8 +40,6 @@ const TABLES = [
   { table: 'CommentReaction', fk: 'commentId' },
   { table: 'ResourceReviewReaction', fk: 'reviewId' },
   { table: 'ClubPostReaction', fk: 'clubPostId' },
-  { table: 'QuestionReaction', fk: 'questionId', queue: questionMetrics },
-  { table: 'AnswerReaction', fk: 'answerId', queue: answerMetrics },
 ] as const;
 
 /** Every table name, for a guard that a new reaction table in the schema is listed here. */
