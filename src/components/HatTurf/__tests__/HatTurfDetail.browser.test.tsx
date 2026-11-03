@@ -199,6 +199,19 @@ describe('Hat Turf on image detail', () => {
     expect(input).toMatchObject({ imageId: 9, source: 'image-detail', cosmeticId: 11 });
   });
 
+  test('after a save the placer sees their hat at once, without waiting for any reread', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    click(q('hat-turf-detail-hat'));
+    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
+    click(document.body.querySelector('[aria-label^="Place hat"]'));
+    // The server read (h.stickers) never changes in this test: only the mutation succeeds.
+    h.place.mock.calls[0][1].onSuccess();
+    await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
+    expect(q('hat-turf-draft')).toBeNull();
+    expect(hats().length).toBe(3);
+  });
+
   test('the switcher lists hats most used first and picking one drops it', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
