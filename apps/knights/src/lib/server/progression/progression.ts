@@ -4,6 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { finalItem } from '../queue/item-state';
 import { workOffSmites } from '../smites/smites.service';
+import { grantRankBadges } from './badges';
 import { PROGRESSION } from './config';
 import { accuracyOf, earnedRank, type Ledger } from './rating';
 import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
@@ -162,6 +163,7 @@ export async function payOutVotes(
         .set({ rankType: earned as RankType })
         .where('userId', '=', playerId)
         .execute();
+      await grantRankBadges(trx, playerId, earned);
     }
     if (total.correct > 0) await workOffSmites(trx, playerId, now);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
