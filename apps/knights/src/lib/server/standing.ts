@@ -9,7 +9,7 @@ export const MUTED_MESSAGE =
 
 /**
  * The account's standing, read from the User row at the moment of asking: the session can be stale, so a ban or
- * a mute decision never comes from it. A deleted account counts as banned. One primary-key lookup.
+ * a mute decision never comes from it. A deleted account, or one with no row, counts as banned (fail closed). One primary-key lookup.
  */
 export async function getStanding(db: Kysely<DB>, userId: number): Promise<Standing> {
   const row = await db
@@ -18,7 +18,7 @@ export async function getStanding(db: Kysely<DB>, userId: number): Promise<Stand
     .where('id', '=', userId)
     .executeTakeFirst();
   return {
-    banned: row !== undefined && (row.bannedAt !== null || row.deletedAt !== null),
+    banned: row === undefined || row.bannedAt !== null || row.deletedAt !== null,
     muted: row?.muted === true,
   };
 }

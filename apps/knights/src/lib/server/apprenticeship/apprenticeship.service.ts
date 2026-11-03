@@ -63,11 +63,9 @@ export type CheckpointMiss = {
 };
 
 export type Checkpoint = {
-  /** Both counts and the list come from the same answers. */
   total: number;
   right: number;
   missed: CheckpointMiss[];
-  /** Offer the rating guide as help. */
   coach: boolean;
 };
 
@@ -291,7 +289,6 @@ export async function getApprentice(db: Kysely<DB>, playerId: number): Promise<A
     .select('rankType')
     .where('userId', '=', playerId)
     .executeTakeFirst();
-  // A user with no row yet is an Acolyte-to-be and is served like one.
   if (player && player.rankType !== 'Acolyte') return { kind: 'not-acolyte' };
 
   const progress = await progressOf(db, playerId);

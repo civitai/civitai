@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { seedImage, seedPlayer as seedPlayerRow } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
 import { typeOf, type NotifyKind } from './config';
 import { BatchRejected, sendNotifications, type NotificationBatch } from './notify.service';
@@ -28,9 +28,15 @@ afterEach(() => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","KnightsPlayer","KnightsPlayerDay","KnightsNotificationSend","UserNotificationSettings","NewOrderSmite" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","KnightsPlayer","KnightsPlayerDay","KnightsNotificationSend","UserNotificationSettings","NewOrderSmite","User" RESTART IDENTITY CASCADE`
   );
 });
+
+/** A player in good standing: the notify job reads the account's ban and mute from its User row. */
+async function seedPlayer(...args: Parameters<typeof seedPlayerRow>) {
+  await args[0].query(`INSERT INTO "User" ("id") VALUES ($1) ON CONFLICT DO NOTHING`, [args[1]]);
+  await seedPlayerRow(...args);
+}
 
 /** A settings row means the player turned that type off. */
 const optOut = (userId: number, ...kinds: NotifyKind[]) =>
@@ -112,6 +118,45 @@ function runner({
 }
 
 describe('sendNotifications', () => {
+  it('sends nothing to a banned or deleted account', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedPlayer(pg, 3);
+    await pg.exec(`UPDATE "User" SET "bannedAt"='2026-12-01' WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "deletedAt"='2026-12-01' WHERE "id"=2`);
+    for (const id of [1, 2, 3]) await seedSettledVote(id);
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([3]);
+  });
+
+  it('sends nothing to a player with no User row', async () => {
+    await seedPlayerRow(pg, 1);
+    await seedSettledVote(1);
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect(received().size).toBe(0);
+  });
+
+  it('does not nudge a muted account to play but still tells them their verdicts', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await pg.exec(`UPDATE "User" SET "muted"=true WHERE "id" IN (1,2)`);
+    await seedStreak(1);
+    await seedSettledVote(2);
+    const { run, received } = runner();
+
+    await run(at(21));
+
+    expect([...received().keys()]).toEqual([2]);
+    expect(received().get(2)).toEqual(['verdicts']);
+  });
+
   it('tells a player their votes settled', async () => {
     await seedPlayer(pg, 1);
     await seedSettledVote(1);

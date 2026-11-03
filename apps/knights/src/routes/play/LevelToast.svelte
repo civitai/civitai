@@ -21,7 +21,6 @@
     submit: SubmitFunction;
     /** Over the top of the image stage; otherwise it sits in the page flow. */
     floating?: boolean;
-    /** Words for a milestone level; replaces the plain level-up line. */
     milestone?: string | null;
   } = $props();
 </script>

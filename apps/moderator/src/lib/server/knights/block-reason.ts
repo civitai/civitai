@@ -1,13 +1,9 @@
 import { NsfwLevel } from '@civitai/shared';
+import { KNIGHTS_BLOCK_REASONS } from '@civitai/shared/new-order';
 
-/** The reasons a Knight gives for a Blocked rating: the original game's `NewOrderDamnedReason` names, labelled as the Knights app shows them. */
-export const BLOCK_REASON_LABELS: Record<string, string> = {
-  InappropriateMinors: 'Inappropriate Minors',
-  RealisticMinors: 'Realistic Minors',
-  DepictsRealPerson: 'Depicts Real Person',
-  Bestiality: 'Bestiality',
-  Other: 'Other',
-};
+const BLOCK_REASON_LABELS: Record<string, string> = Object.fromEntries(
+  KNIGHTS_BLOCK_REASONS.map((reason) => [reason.value, reason.label])
+);
 
 export type ConsensusBlockReason = {
   reason: string;
@@ -32,7 +28,9 @@ export type BlockedVote = {
 export function consensusBlockReason(votes: BlockedVote[]): ConsensusBlockReason | null {
   const blocked = votes.filter((vote) => vote.answer === String(NsfwLevel.Blocked));
   const reasoned = blocked
-    .filter((vote) => vote.blockReason !== null && vote.blockReason in BLOCK_REASON_LABELS)
+    .filter(
+      (vote) => vote.blockReason !== null && Object.hasOwn(BLOCK_REASON_LABELS, vote.blockReason)
+    )
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.playerId - b.playerId);
   if (reasoned.length === 0) return null;
 

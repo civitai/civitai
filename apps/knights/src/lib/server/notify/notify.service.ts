@@ -99,11 +99,16 @@ async function resetPending(db: Kysely<DB>): Promise<Set<number>> {
 
 /**
  * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
- * row means off) and have not been sent anything on `day`.
+ * row means off) and have not been sent anything on `day`. Banned, deleted and missing accounts are never
+ * recipients; a muted one still hears its verdicts but is not nudged to play, as it cannot vote.
  */
 const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
   db
     .selectFrom('NewOrderPlayer as pl')
+    .innerJoin('User as u', 'u.id', 'pl.userId')
+    .where('u.bannedAt', 'is', null)
+    .where('u.deletedAt', 'is', null)
+    .$if(kind !== 'verdicts', (qb) => qb.where('u.muted', '=', false))
     .where(
       sql<boolean>`not exists (select 1 from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" = ${typeOf(
         kind

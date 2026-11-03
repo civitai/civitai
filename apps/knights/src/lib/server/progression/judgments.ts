@@ -117,7 +117,7 @@ export async function listJudgments(
     ])
     .where('v.playerId', '=', userId);
 
-  // An apprenticeship answer is graded when it is given and pays XP, so it never waits or forfeits.
+  // Graded when given, so never pending or forfeited.
   const practice = db
     .selectFrom('KnightsApprenticeAnswer as a')
     .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')

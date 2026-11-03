@@ -30,5 +30,5 @@ ordinary vote in every way a player can see.
 - Reset: the Knights app calls the main app's `POST /api/mod/knights/reset-player` (`x-webhook-token`), naming its smite limit.
   The endpoint reuses the single `resetPlayer` under a per-player lock and is safe to repeat. If the call fails the active smites
   are the pending record: `insertVote` refuses (`reset-pending`) and the tick retries (`resetPendingPlayers`) before it expires smites.
-- Notice: a reset moves `NewOrderPlayer.startAt`; `/play` (Trials page included) shows a notice while `startAt` is later than
+- Notice: a reset moves `NewOrderPlayer.startAt`; `/play` (the Acolyte apprenticeship included) shows a notice while `startAt` is later than
   `KnightsPlayer.startAtSeen`, until dismissed. A player's first look only records where they stand.

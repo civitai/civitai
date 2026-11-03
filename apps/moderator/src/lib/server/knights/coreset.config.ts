@@ -1,4 +1,4 @@
-/** Tuning for the Trials core-set manager. */
+/** Tuning for the apprenticeship core-set manager. */
 export const CORESET = {
   flagMinAnswers: 20,
   flagFailureRate: 0.6,

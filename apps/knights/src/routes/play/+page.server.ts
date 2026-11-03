@@ -98,7 +98,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getStanding(db, locals.user.id),
   ]);
   const now = queueDeps.now();
-  // Shown on whichever page the player lands on: a reset player lands back in the apprenticeship.
   const [resetNotice, notices, seen] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
@@ -243,7 +242,6 @@ export const actions: Actions = {
     if (reasonField !== null && typeof reasonField !== 'string') {
       return fail(400, { message: BLOCK_REASON_TEXT });
     }
-    // An empty field is no reason; the service pairs the reason with the answer (Blocked needs one, nothing else takes one).
     const blockReason = reasonField === '' ? null : reasonField;
     if (blockReason !== null && !isBlockReason(blockReason)) {
       return fail(400, { message: BLOCK_REASON_TEXT });

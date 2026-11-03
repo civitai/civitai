@@ -102,7 +102,6 @@ async function fiveKnights(first = 1) {
   for (let i = 0; i < 5; i++) await player(first + i, 'Knight');
 }
 
-// A Blocked vote must name a reason; tests that are not about the reason give the catch-all.
 async function vote(userId: number, itemId: number, answer: string, blockReason?: string) {
   return castVote(
     db,

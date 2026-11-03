@@ -4,7 +4,7 @@ import { REFERENCE_POOL, REFERENCE_STATUS, servableImage } from '@civitai/db/kni
 
 type Pool = (typeof REFERENCE_POOL)[keyof typeof REFERENCE_POOL];
 
-/** Active reference images of one pool whose image the public feeds would show. Trials and hidden checks both read through this. */
+/** Active reference images of one pool whose image the public feeds would show. The apprenticeship and hidden checks both read through this. */
 export function servableReferences(db: Kysely<DB> | Transaction<DB>, pool: Pool) {
   return db
     .selectFrom('KnightsReferenceImage as r')

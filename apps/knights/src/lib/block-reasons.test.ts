@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLOCK_REASONS, blockReasonProblem } from './block-reasons';
+import { BLOCK_REASONS, asksBlockReason, blockReasonProblem } from './block-reasons';
 
 describe('blockReasonProblem', () => {
   it('lists the five reasons of the original game, in order', () => {
@@ -20,5 +20,13 @@ describe('blockReasonProblem', () => {
     expect(blockReasonProblem('8', 'Other')).toBe('unexpected');
     expect(blockReasonProblem('8', null)).toBeNull();
     expect(blockReasonProblem('yes', '')).toBeNull();
+  });
+});
+
+describe('asksBlockReason', () => {
+  it('asks only on the rating question, the one question the server pairs a reason with', () => {
+    expect(asksBlockReason('knights.image.nsfwLevel')).toBe(true);
+    expect(asksBlockReason('knights.image.minor')).toBe(false);
+    expect(asksBlockReason(undefined)).toBe(false);
   });
 });

@@ -5,20 +5,21 @@
     accuracy,
     bar,
     knightLevel,
+    answerWindow,
   }: {
     level: number;
     /** How far through the current level the player is, 0 to 1. */
     levelFraction: number;
-    /** Over the player's last 100 answers (all of them when there are fewer); null before the first answer. */
+    /** Over the player's latest `answerWindow` answers (all of them when there are fewer); null before the first answer. */
     accuracy: number | null;
     bar: number;
     knightLevel: number;
+    answerWindow: number;
   } = $props();
 
   let accuracyPercent = $derived(accuracy === null ? null : Math.floor(accuracy * 100));
   let barPercent = $derived(Math.round(bar * 100));
   let onBar = $derived(accuracy !== null && accuracy >= bar);
-  // The track fills as levels are climbed, and is full at the level that makes a Knight.
   let filled = $derived(Math.min(1, (level - 1 + levelFraction) / Math.max(1, knightLevel - 1)));
 </script>
 
@@ -30,7 +31,7 @@
       class="accuracy"
       class:good={onBar}
       class:low={accuracy !== null && !onBar}
-      title="Your last 100 answers"
+      title={`Your last ${answerWindow} answers`}
     >
       Accuracy {accuracyPercent === null ? '–' : `${accuracyPercent}%`}&nbsp;·&nbsp;bar {barPercent}%
     </span>

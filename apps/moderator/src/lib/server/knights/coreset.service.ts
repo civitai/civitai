@@ -80,7 +80,7 @@ export async function getCoreItems(config: CoreSetConfig = CORESET): Promise<Cor
     .execute();
 }
 
-/** Fresh items in the Trials pool, flagged ones first so the limit never cuts them. */
+/** Fresh items in the apprenticeship pool, flagged ones first so the limit never cuts them. */
 export async function getFreshItems(config: CoreSetConfig = CORESET): Promise<CoreSetItem[]> {
   return listItems(config)
     .where('r.source', '!=', REFERENCE_SOURCE.core)

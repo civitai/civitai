@@ -43,7 +43,7 @@ describe('getStanding', () => {
     expect(await getStanding(db, 2)).toEqual({ banned: false, muted: false });
   });
 
-  it('lets a user with no row through', async () => {
-    expect(await getStanding(db, 99)).toEqual({ banned: false, muted: false });
+  it('shuts out a user with no row', async () => {
+    expect((await getStanding(db, 99)).banned).toBe(true);
   });
 });

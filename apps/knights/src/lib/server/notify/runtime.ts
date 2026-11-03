@@ -16,7 +16,7 @@ export const sendBatch: SendBatch = makeSendBatch((rows) =>
 
 const MODERATOR_LOOKUP_CHUNK = 5000;
 
-/** Moderators are always let in; for everyone else the app's access flag decides, as for a signed-in player. */
+/** Banned and deleted accounts are dropped. Moderators always pass; everyone else is gated by the app's access flag. */
 export async function accessibleToday(
   ids: number[]
 ): Promise<{ ids: number[]; unknown: boolean }> {
@@ -26,6 +26,8 @@ export async function accessibleToday(
       .selectFrom('User')
       .select(['id', 'isModerator'])
       .where('id', 'in', ids.slice(at, at + MODERATOR_LOOKUP_CHUNK))
+      .where('bannedAt', 'is', null)
+      .where('deletedAt', 'is', null)
       .execute();
     users.push(...rows.map((r) => ({ id: r.id, isModerator: r.isModerator === true })));
   }

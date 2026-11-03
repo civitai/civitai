@@ -26,7 +26,6 @@ export type InquisitorItem = {
   blockedFor: string | null;
   createdAt: Date;
   votes: InquisitorVote[];
-  /** What the Knights who voted Blocked said was the reason; null when none gave one. */
   blockReason: ConsensusBlockReason | null;
 };
 
