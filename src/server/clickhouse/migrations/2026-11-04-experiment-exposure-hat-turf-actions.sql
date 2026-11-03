@@ -6,8 +6,10 @@
 -- 200, the app logs nothing, and the experiment readout reads zero exposures, indistinguishable
 -- from "nobody saw it". See ./README.md.
 --
--- 28 ('UserMenu_Click') is the last index in use, read from prod `system.columns` on 2026-11-03,
--- so this appends 29 and 30. Appending at unused indices is a metadata-only ALTER: no data is
+-- ORDER: apply AFTER 2026-11-03-push-prompt-action.sql (civitai/civitai#7584), which takes 29
+-- ('Push_Prompt'). This file restates it and appends 30 and 31; applied first, the push-prompt
+-- ALTER would drop these two. Prod's last index on 2026-11-03 was 28 ('UserMenu_Click'), read from
+-- `system.columns`. Appending at unused indices is a metadata-only ALTER: no data is
 -- rewritten and no mutation is scheduled. Do NOT renumber or rename an existing value; that WOULD
 -- rewrite the whole table.
 --
@@ -23,8 +25,8 @@
 -- Verify, AFTER applying (metadata-only, returns immediately):
 --
 --   SHOW CREATE TABLE default.actions;
---     -- must show 'Experiment_Exposure' = 29 and 'HatTurf_Action' = 30, and every value 1..28
---     -- unchanged.
+--     -- must show 'Push_Prompt' = 29, 'Experiment_Exposure' = 30 and 'HatTurf_Action' = 31, and
+--     -- every value 1..28 unchanged.
 --
 -- Positive control once the tracker is RESTARTED and the app deployed: as a signed-in user, open
 -- a page whose experimental UI is on screen (or a moderator with the `civ-exp` preview cookie),
@@ -69,6 +71,7 @@ ALTER TABLE default.actions
     'App_Open' = 26,
     'AppsBuild_Action' = 27,
     'UserMenu_Click' = 28,
-    'Experiment_Exposure' = 29,
-    'HatTurf_Action' = 30
+    'Push_Prompt' = 29,
+    'Experiment_Exposure' = 30,
+    'HatTurf_Action' = 31
   )

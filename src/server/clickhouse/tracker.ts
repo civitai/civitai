@@ -321,7 +321,7 @@ export const ActionType = [
   // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
   // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
   'Push_Prompt',
-  // Fields ride in `details` (migrations/2026-11-03-experiment-exposure-hat-turf-actions.sql).
+  // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
   'Experiment_Exposure',
   'HatTurf_Action',
 ] as const;
