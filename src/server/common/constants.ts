@@ -709,6 +709,7 @@ const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    nonCommercial: true,
   },
   'SAI CLA': {
     url: '',
@@ -744,6 +745,27 @@ const baseLicenses: Record<string, LicenseDetails> = {
       'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
+  // flux1D, flagged non-commercial for Krea and Kontext; Flux.1 D keeps the unflagged entry.
+  'flux1D nc': {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
+  'flux2 dev nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   'flux nc': {
     // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
@@ -943,14 +965,14 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
-  'Flux.1 Krea': baseLicenses['flux1D'],
-  'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.1 Krea': baseLicenses['flux1D nc'],
+  'Flux.1 Kontext': baseLicenses['flux1D nc'],
   'Flux.3': baseLicenses['bfl tos'],
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
-  'Flux.2 D': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
   'Flux.2 Klein 9B-base': baseLicenses['flux nc'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
