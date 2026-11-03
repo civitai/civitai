@@ -11,21 +11,7 @@ import {
   getUserSubscriptionHandler,
   getAllUserSubscriptionsHandler,
 } from './../controllers/subscriptions.controller';
-import {
-  publicProcedure,
-  protectedProcedure,
-  moderatorProcedure,
-  isFlagProtected,
-  router,
-} from '~/server/trpc';
-import {
-  extendMembershipSchema,
-  previewMembershipExtensionSchema,
-} from '~/server/schema/membership-extend.schema';
-import {
-  extendMembership,
-  previewMembershipExtension,
-} from '~/server/services/membership-extend.service';
+import { publicProcedure, protectedProcedure, moderatorProcedure, router } from '~/server/trpc';
 import {
   claimPrepaidToken,
   claimAllPrepaidTokens,
@@ -35,11 +21,6 @@ import {
 } from '~/server/services/subscriptions.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
-
-// Giving a Stripe member free days: a moderator who also holds the `membershipExtend` permission.
-export const membershipExtendProcedure = moderatorProcedure.use(
-  isFlagProtected('membershipExtend')
-);
 
 const buzzMembershipProcedure = protectedProcedure
   .meta({ requiredScope: TokenScope.UserWrite })
@@ -93,12 +74,6 @@ export const subscriptionsRouter = router({
         accountType: input.accountType,
       });
     }),
-  previewMembershipExtension: membershipExtendProcedure
-    .input(previewMembershipExtensionSchema)
-    .query(({ input, ctx }) => previewMembershipExtension({ ...input, actorId: ctx.user.id })),
-  extendMembership: membershipExtendProcedure
-    .input(extendMembershipSchema)
-    .mutation(({ input, ctx }) => extendMembership({ ...input, actorId: ctx.user.id })),
   unlockTokens: moderatorProcedure
     .input(z.object({ userId: z.number(), force: z.boolean().optional() }))
     .mutation(async ({ input }) => {

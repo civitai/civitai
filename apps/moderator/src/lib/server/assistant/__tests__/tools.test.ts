@@ -112,6 +112,26 @@ vi.mock('../store', () => ({
   })),
 }));
 
+const previewMembershipExtension = vi.fn(async () => ({
+  ok: true as const,
+  preview: {
+    userId: 5,
+    days: 3,
+    subscription: null,
+    problems: [],
+    expectedCurrentPeriodEnd: 1795314120,
+    trialEndIso: '2026-11-25T02:22:00.000Z',
+    mode: 'renewing' as const,
+  },
+}));
+const extendMembership = vi.fn(async () => {
+  throw new Error('the assistant must never extend');
+});
+vi.mock('$lib/server/user-actions.service', () => ({
+  previewMembershipExtension,
+  extendMembership,
+}));
+
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler, turnTokenBudget } = await import('../turn.service');
 const { DAILY_TOKEN_CAP, MAX_TOOL_CHARS, fitJson } = await import('../loop');
@@ -824,5 +844,56 @@ describe('reactors_of', () => {
   it('lets any other failure of the address check fail the call', async () => {
     getSharedIpCoverage.mockRejectedValue(new Error('ClickHouse query failed: connection refused'));
     await expect(reactors()).rejects.toThrow(/connection refused/);
+  });
+});
+
+describe('membership extension: the assistant reads and proposes, a person extends', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const GRANT = ['user.membership.extend'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('offers the two tools only with User Lookup AND the extension grant', () => {
+    const both = ['preview_membership_extension', 'propose_membership_extension'];
+    expect(offered(LOOKUP_PAGE, GRANT)).toEqual(expect.arrayContaining(both));
+    for (const name of both) {
+      expect(offered(LOOKUP_PAGE, [])).not.toContain(name);
+      expect(offered([], GRANT)).not.toContain(name);
+    }
+  });
+
+  it('proposing extends nothing: it returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_extension',
+      { userId: 5, days: 3, reason: 'Ticket 123: three free days' },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: { extended: boolean; confirmAt: string } };
+    expect(out.data.extended).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&extendDays=3&extendReason=Ticket+123%3A+three+free+days#membership-extend'
+    );
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('the preview hands the model the verdict but not the compare-and-swap value a write would need', async () => {
+    const out = (await run(
+      'preview_membership_extension',
+      { userId: 5, days: 3 },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: Record<string, unknown> };
+    expect(out.data).toMatchObject({ problems: [], trialEndIso: '2026-11-25T02:22:00.000Z' });
+    expect(out.data).not.toHaveProperty('expectedCurrentPeriodEnd');
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  // If you are here to add an "extend" tool: the extension is a money write that a moderator previews
+  // and confirms on the panel. A tool the model can call would let text in a member's profile or a
+  // report talk it into one. Propose instead.
+  it('no tool can reach the extend write', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\bextendMembership\b|callModEndpoint|user\/membership-extend\b/);
   });
 });
