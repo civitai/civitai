@@ -220,7 +220,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
           {
             key: 'hat-turf-team-stickers',
             minScore: inputs.turfMinScore,
-            label: 'Hat Turf: your team stickers count (new accounts)',
+            label: 'Hat Turf: your stickers count for your team (accounts made since Nov 1)',
             surface: 'events',
             scoreKind: 'total',
             source: 'compiled',

@@ -73,7 +73,20 @@ export const hatTurfRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setTurfOptInSchema)
     .use(rateLimit({ limit: 20, period: 60 }))
-    .mutation(({ ctx, input }) => setTurfOptIn(input.event, ctx.user.id, input.optedIn)),
+    .mutation(async ({ ctx, input }) => {
+      const result = await setTurfOptIn(input.event, ctx.user.id, input.optedIn);
+      // Server-side only, and only on a real change, so a repeated toggle is counted once and the
+      // browser cannot forge a join (the browser schema refuses opt_in / opt_out).
+      if (result.changed)
+        ctx.track.action(
+          {
+            type: 'HatTurf_Action',
+            details: { action: input.optedIn ? 'opt_in' : 'opt_out', event: result.event },
+          },
+          { skipActorMeta: true }
+        );
+      return result;
+    }),
   remove: moderatorProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(removeTurfStickerSchema)
