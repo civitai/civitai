@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const query = vi.hoisted(() => vi.fn(async () => ({ json: async () => [] })));
+const query = vi.hoisted(() =>
+  vi.fn(async (_arg: { query: string; query_params?: Record<string, unknown> }) => ({
+    json: async () => [],
+  }))
+);
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
 
 const { queryReferee, REFEREE_QUERY_MAX_SECONDS, refereeWindow } = await import(
@@ -15,6 +19,7 @@ const EVENT = {
   name: 'e',
   startDate: new Date('2026-11-01T00:00:00.000Z'),
   endDate: new Date('2026-12-01T00:00:00.000Z'),
+  teams: [],
   scoring: { capPerActorPerOwnerPerDay: 50, types: {}, newAccountDays: 7, finalizeAfterMs: 0 },
 };
 
@@ -75,9 +80,6 @@ describe('referee reads only the scored types', () => {
     await queryReferee(scored, refereeWindow(scored, 'live', new Date('2026-11-05T12:07:00.000Z')));
     expect(query).toHaveBeenCalledTimes(2);
     for (const [arg] of query.mock.calls)
-      expect((arg as { query_params: { types: string[] } }).query_params.types).toEqual([
-        'view',
-        'reaction',
-      ]);
+      expect(arg.query_params?.types).toEqual(['view', 'reaction']);
   });
 });
