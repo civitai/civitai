@@ -11,6 +11,7 @@ import {
 } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
+import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
 import { dismissGuide, dismissProgress, readNotices, type ProgressNotice } from '$lib/server/seen';
@@ -88,7 +89,10 @@ async function acolyteMilestone(
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
-  const status = await requireMember(db, locals.user.id);
+  const [status, { muted }] = await Promise.all([
+    requireMember(db, locals.user.id),
+    getStanding(db, locals.user.id),
+  ]);
   const now = queueDeps.now();
   // Shown on whichever page the player lands on: a reset player lands back in the apprenticeship.
   const [resetNotice, notices, seen] = await Promise.all([
@@ -98,6 +102,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   ]);
   const common = {
     status,
+    muted,
     resetNotice,
     notices,
     showGuide: seen.guide,
@@ -105,7 +110,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     ratingGuide: ratingGuide(),
   };
 
-  if (status.rank === 'Acolyte') {
+  if (status.rank === 'Acolyte' && !muted) {
     const view = await getApprentice(db, locals.user.id);
     if (view.kind !== 'not-acolyte') {
       return {
@@ -118,13 +123,16 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     }
   }
 
+  // A muted player sees their record but is served nothing to judge: no item, no vote-pace lookup.
   const lockedUntil =
-    queueDeps.voteLimits && !locals.user.isModerator
+    !muted && queueDeps.voteLimits && !locals.user.isModerator
       ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
       : null;
-  const skipped = lockedUntil ? null : await skippedFor(skipStore, locals.user.id);
+  const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const [feed, daily, recap] = await Promise.all([
-    lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1, exclude: skipped?.queue }),
+    lockedUntil || muted
+      ? null
+      : getFeed(db, locals.user.id, { limit: 1, exclude: skipped?.queue }),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
@@ -143,7 +151,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     conversionOpen,
     lockoutSeconds,
   };
-  if (resetPending || lockedUntil) return { ...page, question: null, item: null };
+  if (resetPending || lockedUntil || muted) return { ...page, question: null, item: null };
 
   // A hidden check comes first, so its rate holds whatever the yes/no share is; it only ever rides on a rating question.
   if (feed) {
@@ -220,6 +228,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
 export const actions: Actions = {
   vote: async ({ request, locals }) => {
+    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
     const form = await request.formData();
     const token = form.get('item');
     const answer = form.get('answer');
@@ -282,6 +291,7 @@ export const actions: Actions = {
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
   // again. Every kind of item is handled and answered alike, so a skip does not show what the item was.
   skip: async ({ request, locals }) => {
+    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
     const token = (await request.formData()).get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
@@ -342,6 +352,7 @@ export const actions: Actions = {
   },
 
   apprentice: async ({ request, locals }) => {
+    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
     const form = await request.formData();
     const kind = form.get('kind');
     const referenceId = Number(form.get('referenceId'));

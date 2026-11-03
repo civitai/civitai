@@ -51,6 +51,12 @@ vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   getApprentice,
 }));
 
+const getStanding = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
+
 const { load, actions } = await import('./+page.server');
 
 const run = (user: Record<string, unknown> = {}) =>
@@ -59,6 +65,8 @@ const run = (user: Record<string, unknown> = {}) =>
   >;
 
 beforeEach(() => {
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   getPlayerStatus.mockReset();
   getApprentice.mockReset();
   getFeed.mockReset();
@@ -562,5 +570,36 @@ describe('play progress actions', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
     seenStore.set.mockRejectedValue(new Error('down'));
     expect(await call('dismissGuide')).toMatchObject({ status: 500 });
+  });
+});
+
+describe('play load for a muted player', () => {
+  beforeEach(() => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    getFeed.mockResolvedValue({
+      question: { key: 'q', kind: 'rating', prompt: 'P', options: [] },
+      items: [{ id: 1, imageKey: 'k', width: 1, height: 2 }],
+    });
+  });
+
+  it('says so and serves no item, hidden check or yes/no question, to any rank', async () => {
+    for (const rank of ['Knight', 'Acolyte']) {
+      getPlayerStatus.mockResolvedValue({ rank, level: 5, smites: 0, maxSmites: 3 });
+      getApprentice.mockResolvedValue({ kind: 'exhausted', progress: {} });
+      const page = await run();
+      expect(page).toMatchObject({ mode: 'queue', muted: true, item: null, question: null });
+      expect(page.status).toMatchObject({ rank });
+    }
+    expect(getFeed).not.toHaveBeenCalled();
+    expect(getApprentice).not.toHaveBeenCalled();
+    expect(pickHiddenCheck).not.toHaveBeenCalled();
+    expect(pickYesNo).not.toHaveBeenCalled();
+  });
+
+  it('marks an unmuted player as not muted', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: false });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5, smites: 0, maxSmites: 3 });
+    expect(await run()).toMatchObject({ muted: false, item: { src: 'k' } });
+    expect(getFeed).toHaveBeenCalled();
   });
 });

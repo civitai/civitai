@@ -16,9 +16,12 @@ const DOOR =
 export function closedPageHtml({
   username,
   civitaiUrl,
+  reason = 'closed',
 }: {
   username?: string;
   civitaiUrl: string;
+  /** `closed`: the app is not open to this user yet. `banned`: this account cannot enter. */
+  reason?: 'closed' | 'banned';
 }) {
   const name = username ? escapeHtml(username) : '';
   const home = escapeHtml(civitaiUrl);
@@ -75,9 +78,13 @@ export function closedPageHtml({
 <main>
   <span class="seal">${DOOR}</span>
   <p class="kicker">The Gates</p>
-  <h1>The gates are not yet open</h1>
+  <h1>${reason === 'banned' ? 'The gates are closed to you' : 'The gates are not yet open'}</h1>
   <div class="rule" aria-hidden="true"><i></i></div>
-  <p>The Knights of New Order is not open to everyone yet. There is nothing you need to do. Return when the gates open.</p>
+  <p>${
+    reason === 'banned'
+      ? "Your account can't enter the Order."
+      : 'The Knights of New Order is not open to everyone yet. There is nothing you need to do. Return when the gates open.'
+  }</p>
   <div class="actions">
     <a class="btn primary" href="${home}">Back to Civitai</a>
     <a class="btn" href="/logout">Sign out</a>

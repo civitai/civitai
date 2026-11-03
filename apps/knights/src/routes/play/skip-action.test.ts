@@ -5,6 +5,11 @@ const store = vi.hoisted(() => ({ current: undefined as unknown }));
 const castVote = vi.hoisted(() => vi.fn());
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
+const getStanding = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
 vi.mock('$lib/server/skip-runtime', () => ({
   get skipStore() {
     return store.current;
@@ -44,6 +49,8 @@ const skip = (item: string, userId = 7) => {
 };
 
 beforeEach(() => {
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   store.current = memorySkipStore();
   castVote.mockReset();
   answerHiddenCheck.mockReset();
@@ -82,7 +89,11 @@ describe('skip action', () => {
     expect(await skip(sealItem('secret', 8, { kind: 'queue', id: 1 }))).toMatchObject({
       status: 400,
     });
-    expect(await skippedFor(store.current as never, 7)).toEqual({ queue: [], hidden: [], yesno: [] });
+    expect(await skippedFor(store.current as never, 7)).toEqual({
+      queue: [],
+      hidden: [],
+      yesno: [],
+    });
   });
 
   it('still moves the player on when the skip cannot be remembered', async () => {
@@ -94,5 +105,20 @@ describe('skip action', () => {
       list: async () => [],
     };
     expect(await skip(sealItem('secret', 7, { kind: 'queue', id: 1 }))).toEqual({ success: true });
+  });
+});
+
+describe('skip action for a muted player', () => {
+  it('refuses with a friendly 403 and remembers nothing', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    expect(await skip(sealItem('secret', 7, { kind: 'queue', id: 12 }))).toMatchObject({
+      status: 403,
+      data: { message: expect.stringMatching(/muted/i) },
+    });
+    expect(await skippedFor(store.current as never, 7)).toEqual({
+      queue: [],
+      hidden: [],
+      yesno: [],
+    });
   });
 });
