@@ -3,12 +3,9 @@
   import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import {
-    ToggleGroup,
-    ToggleGroupItem,
-  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
+  import YesNoPicker from './YesNoPicker.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { FormState } from '$lib/form-state.svelte';
@@ -117,17 +114,7 @@
       </label>
       <div class="flex items-center gap-2">
         <span class="text-sm text-dark-2">Correct answer</span>
-        <input type="hidden" name="answer" value={answer ?? ''} />
-        <ToggleGroup
-          type="single"
-          size="sm"
-          variant="outline"
-          value={answer ?? ''}
-          onValueChange={(v) => (answer = v === 'yes' || v === 'no' ? v : null)}
-        >
-          <ToggleGroupItem value="yes">Yes</ToggleGroupItem>
-          <ToggleGroupItem value="no">No</ToggleGroupItem>
-        </ToggleGroup>
+        <YesNoPicker value={answer} onchange={(v) => (answer = v)} />
       </div>
       <Textarea
         name="explanation"

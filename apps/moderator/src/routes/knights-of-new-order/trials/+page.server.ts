@@ -24,6 +24,7 @@ import {
   getYesNoReferenceCount,
   getYesNoReferences,
   setYesNoReferenceActive,
+  updateYesNoReference,
 } from '$lib/server/knights/yesno-reference.service';
 
 const TABS = ['core', 'fresh', 'spot-check', 'yes-no'] as const;
@@ -54,6 +55,7 @@ const forms = {
     id: int4Id,
     active: z.enum(['true', 'false']).transform((v) => v === 'true'),
   }),
+  updateYesNo: z.object({ id: int4Id, answer: yesNo, explanation: why.optional().default('') }),
   deleteYesNo: z.object({ id: int4Id }),
   add: z.object({ imageId: int4Id, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
@@ -115,6 +117,10 @@ export const actions: Actions = {
   toggleYesNo: (event) =>
     run(event, forms.toggleYesNo, 'update the pair', ({ id, active }) =>
       setYesNoReferenceActive(id, active)
+    ),
+  updateYesNo: (event) =>
+    run(event, forms.updateYesNo, 'save the pair', ({ id, ...rest }) =>
+      updateYesNoReference(id, rest)
     ),
   deleteYesNo: (event) =>
     run(event, forms.deleteYesNo, 'delete the pair', ({ id }) => deleteYesNoReference(id)),

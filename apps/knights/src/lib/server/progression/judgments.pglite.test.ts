@@ -299,6 +299,31 @@ describe('listJudgments', () => {
       expect(judgments[1].verdictLabel).toBe('PG-13');
       expect(judgments[0].imageKey).toBe('key-61');
     });
+
+    it('keeps listing an answer after its reference is deleted', async () => {
+      await seedImage(pg, 70);
+      await pg.exec(
+        `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('knights.yesno.practice','bool','Does this show violence?','[]') ON CONFLICT DO NOTHING`
+      );
+      const yesNo = await pg.query<{ id: number }>(
+        `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","createdBy") VALUES (70,'knights.yesno.practice',true,1) RETURNING id`
+      );
+      await pg.query(
+        `INSERT INTO "KnightsApprenticeAnswer" ("playerId","yesNoReferenceId","imageId","questionKey","answer","correctAnswer","correct","xp","createdAt") VALUES (1,$1,70,'knights.yesno.practice','yes','yes',true,100,'2026-12-15T09:00:00Z')`,
+        [yesNo.rows[0].id]
+      );
+      await pg.query(`DELETE FROM "KnightsYesNoReference" WHERE "id"=$1`, [yesNo.rows[0].id]);
+
+      const { judgments } = await listJudgments(db, 1, { page: 1 });
+
+      expect(judgments).toHaveLength(1);
+      expect(judgments[0]).toMatchObject({
+        kind: 'practice',
+        status: 'correct',
+        answerLabel: 'Yes',
+        imageKey: 'key-70',
+      });
+    });
   });
 
   describe('yes/no answers', () => {

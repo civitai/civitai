@@ -1,3 +1,5 @@
+import type { ExpressionBuilder } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { dbWrite } from '../db';
 import { CORESET } from './coreset.config';
@@ -15,6 +17,8 @@ export type YesNoReferenceItem = {
   answer: boolean;
   explanation: string | null;
   active: boolean;
+  /** Acolyte answers naming this pair. While any exist it can only be deactivated. */
+  answers: number;
   createdAt: Date;
 };
 
@@ -44,6 +48,9 @@ export async function getYesNoReferences(limit = CORESET.listLimit): Promise<Yes
       'r.explanation',
       'r.active',
       'r.createdAt',
+      sql<number>`(SELECT count(*)::int FROM "KnightsApprenticeAnswer" a WHERE a."yesNoReferenceId" = r."id")`.as(
+        'answers'
+      ),
       'i.url as imageKey',
       'i.name as imageName',
       'q.prompt as questionPrompt',
@@ -100,7 +107,7 @@ export async function addYesNoReference(input: {
     ? { ok: true }
     : {
         ok: false,
-        error: `Image ${input.imageId} already has a reference for this question. Delete or edit that one instead.`,
+        error: `Image ${input.imageId} already has a reference for this question. Change that one instead.`,
       };
 }
 
@@ -113,10 +120,57 @@ export async function setYesNoReferenceActive(id: number, active: boolean): Prom
   return Number(updated.numUpdatedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
 }
 
+/**
+ * Keys on `yesNoReferenceId` deliberately: "this pair has live answers". The Acolyte no-repeat rule keys on the
+ * image + question snapshot instead, which outlives the pair.
+ */
+const hasNoAnswers = (eb: ExpressionBuilder<DB, 'KnightsYesNoReference'>) =>
+  eb.not(
+    eb.exists(
+      eb
+        .selectFrom('KnightsApprenticeAnswer')
+        .select('id')
+        .whereRef('yesNoReferenceId', '=', 'KnightsYesNoReference.id')
+    )
+  );
+
+async function whyUntouched(id: number, verb: string): Promise<Outcome> {
+  const remaining = await dbWrite
+    .selectFrom('KnightsYesNoReference')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return remaining
+    ? {
+        ok: false,
+        error: `Acolytes have answered this pair, so it cannot be ${verb}. Deactivate it instead.`,
+      }
+    : { ok: false, error: GONE };
+}
+
+/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, so an edit would contradict it. */
+export async function updateYesNoReference(
+  id: number,
+  input: { answer: boolean; explanation: string }
+): Promise<Outcome> {
+  const updated = await dbWrite
+    .updateTable('KnightsYesNoReference')
+    .set({
+      answer: input.answer,
+      explanation: input.explanation.trim() || null,
+      updatedAt: utc(new Date()),
+    })
+    .where('id', '=', id)
+    .where(hasNoAnswers)
+    .executeTakeFirst();
+  return Number(updated.numUpdatedRows) > 0 ? { ok: true } : whyUntouched(id, 'edited');
+}
+
 export async function deleteYesNoReference(id: number): Promise<Outcome> {
   const deleted = await dbWrite
     .deleteFrom('KnightsYesNoReference')
     .where('id', '=', id)
+    .where(hasNoAnswers)
     .executeTakeFirst();
-  return Number(deleted.numDeletedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
+  return Number(deleted.numDeletedRows) > 0 ? { ok: true } : whyUntouched(id, 'deleted');
 }

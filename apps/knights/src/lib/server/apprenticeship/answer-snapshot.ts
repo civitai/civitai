@@ -1,0 +1,11 @@
+import { sql, type SqlBool } from 'kysely';
+
+/**
+ * The image and question an answer was given for. Read from the answer's own snapshot, falling back to the live
+ * reference for answers stored before the snapshot columns existed. Expects the aliases `a` (the answer) and
+ * `r` / `y` (its rating / yes/no reference, left-joined).
+ */
+export const answerImageId = sql<number>`COALESCE(a."imageId", r."imageId", y."imageId")`;
+export const answerQuestionKey = sql<string>`COALESCE(a."questionKey", r."questionKey", y."questionKey")`;
+
+export const answerImageJoin = sql<SqlBool>`img."id" = ${answerImageId}`;

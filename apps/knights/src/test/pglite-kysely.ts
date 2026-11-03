@@ -30,6 +30,7 @@ const MIGRATIONS = [
   '20261226120000_knights_v2_drop_trial_tables',
   '20261227120000_knights_v2_block_reason',
   '20261228120000_knights_v2_fervor_window',
+  '20261229120000_knights_v2_answer_snapshot',
 ].map((name) =>
   fileURLToPath(
     new URL(
