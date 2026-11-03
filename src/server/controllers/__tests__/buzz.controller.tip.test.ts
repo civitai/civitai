@@ -340,3 +340,59 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
     expect(mockCreateMany).not.toHaveBeenCalled();
   });
 });
+
+describe('createBuzzTipTransactionHandler — a model that is not commercially available', () => {
+  const mockVersionFindMany = dbMock.dbWrite.modelVersion.findMany;
+  const tipModel = () =>
+    createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Model', entityId: 77 },
+      ctx: ctxUser(),
+    });
+  const v = (baseModel: string, status = 'Published', availability = 'Public') => ({
+    baseModel,
+    status,
+    availability,
+  });
+
+  it.each([
+    ['all its versions are Flux.2 Klein 9B', [v('Flux.2 Klein 9B'), v('Flux.2 Klein 9B-base')]],
+    [
+      'its public versions are 9B and only a hidden draft is 4B',
+      [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B', 'Draft'), v('SDXL 1.0', 'Published', 'Private')],
+    ],
+    ['it has only hidden 9B versions', [v('Flux.2 Klein 9B', 'Draft')]],
+  ])('refuses a tip on a model when %s, and moves no Buzz', async (_, versions) => {
+    const ledger = installLedger();
+    mockVersionFindMany.mockResolvedValue(versions as never);
+    await expect(tipModel()).rejects.toThrow(
+      "This model isn't commercially available at the moment."
+    );
+    expect(mockVersionFindMany).toHaveBeenCalledWith({
+      where: { modelId: 77 },
+      select: { baseModel: true, status: true, availability: true },
+    });
+    expect(ledger.debits()).toBe(0);
+  });
+
+  it.each([
+    ['a Flux.2 Klein 4B model', [v('Flux.2 Klein 4B')]],
+    ['a Flux.3 Klein model', [v('Flux.3 Klein')]],
+    [
+      'a model with a public 9B and a public 4B version',
+      [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B')],
+    ],
+    ['a model with no versions found', []],
+  ])('still tips %s', async (_, versions) => {
+    const ledger = installLedger();
+    mockVersionFindMany.mockResolvedValue(versions as never);
+    await tipModel();
+    expect(ledger.debits()).toBe(1);
+  });
+
+  it('a profile tip with no entity never looks up versions', async () => {
+    const ledger = installLedger();
+    await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
+    expect(mockVersionFindMany).not.toHaveBeenCalled();
+    expect(ledger.debits()).toBe(1);
+  });
+});

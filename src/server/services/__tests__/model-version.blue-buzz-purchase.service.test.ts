@@ -96,13 +96,14 @@ const VERSION_ID = 555;
 const seed = ({
   acceptsBlueBuzz = false,
   goal = null as { id: number; active: boolean } | null,
+  baseModel = 'SDXL 1.0',
 } = {}) => {
   const versionRow = {
     id: VERSION_ID,
     status: 'Published',
     name: 'v1',
     meta: { hadEarlyAccessPurchase: true },
-    baseModel: 'SDXL 1.0',
+    baseModel,
     model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
   };
   // getDbWithoutLag('modelVersion', id) returns dbRead when REPLICATION_LAG_DELAY=0;
@@ -397,4 +398,43 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
     // A zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts back from it.
     expect(charged()).toBe(1);
   });
+});
+
+describe('earlyAccessPurchase — non-commercial base models', () => {
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
+    'refuses a %s purchase before any Buzz moves',
+    async (baseModel) => {
+      seed({ baseModel, goal: { id: 77, active: true } });
+
+      await expect(
+        earlyAccessPurchase({
+          userId: BUYER,
+          modelVersionId: VERSION_ID,
+          type: 'download',
+          buzzType: 'yellow',
+        })
+      ).rejects.toThrow(
+        `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`
+      );
+      expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.donation.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
+    'still sells a %s version (control)',
+    async (baseModel) => {
+      seed({ baseModel });
+
+      await earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType: 'yellow',
+      });
+
+      expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+      expect(mockCreateMultiAccountBuzzTransaction.mock.calls[0][0].amount).toBe(500);
+    }
+  );
 });

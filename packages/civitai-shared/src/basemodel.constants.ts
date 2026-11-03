@@ -2651,7 +2651,7 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 30,
-    name: 'FLUX Non-Commercial License',
+    name: 'FLUX Non-Commercial License v2.1',
     url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
     notice:
       'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',

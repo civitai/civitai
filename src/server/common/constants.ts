@@ -748,7 +748,7 @@ const baseLicenses: Record<string, LicenseDetails> = {
   'flux nc': {
     // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
     url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
-    name: 'FLUX Non-Commercial License',
+    name: 'FLUX Non-Commercial License v2.1',
     notice:
       'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
@@ -1087,6 +1087,18 @@ export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLice
 
 export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
   return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
+}
+
+// Creator compensation and tips stop only under the FLUX non-commercial license so far; the
+// other non-commercial licenses still pay them while their purchases and fees are refused.
+export function stopsCreatorEarnings(baseModel?: string | null): boolean {
+  return !!baseModel && baseModelLicenses[baseModel as BaseModel] === baseLicenses['flux nc'];
+}
+
+export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+
+export function notCommerciallyAvailableMessage(baseModel: string) {
+  return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
 }
 
 // Effective commercial-use permissions for a resource given its base model.

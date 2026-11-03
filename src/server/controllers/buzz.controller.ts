@@ -1,4 +1,5 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
@@ -34,7 +35,7 @@ import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { EntityType } from '~/shared/utils/prisma/enums';
+import { Availability, EntityType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import {
   handleLogError,
@@ -174,6 +175,20 @@ export async function createBuzzTipTransactionHandler({
     }
 
     const { entityType, entityId } = input;
+    if (entityType === 'Model' && entityId) {
+      const allVersions = await dbWrite.modelVersion.findMany({
+        where: { modelId: entityId },
+        select: { baseModel: true, status: true, availability: true },
+      });
+      const publicVersions = allVersions.filter(
+        (v) => v.status === ModelStatus.Published && v.availability !== Availability.Private
+      );
+      // A model is tipped as a whole, so it's refused only when no version can earn. Hidden versions
+      // count only when none are public, so a hidden draft can't unlock a public 9B model.
+      const versions = publicVersions.length ? publicVersions : allVersions;
+      if (versions.length > 0 && versions.every((v) => stopsCreatorEarnings(v.baseModel)))
+        throw throwBadRequestError(notCommerciallyAvailableMessage(versions[0].baseModel));
+    }
     let targetUserIds: number[] = input.toAccountId ? [input.toAccountId] : [];
 
     if ((entityType === 'Post' || entityType === 'Image') && entityId) {
