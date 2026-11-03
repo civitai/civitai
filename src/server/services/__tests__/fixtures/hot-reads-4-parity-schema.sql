@@ -1,6 +1,6 @@
 -- Minimal schema for hot-reads-4.kysely-parity.test.ts.
 --
--- Only the tables the reads behind kysely-hot-reads-4 touch, and only the columns those reads select,
+-- Only the tables the hot-reads-4 reads touch, and only the columns those reads select,
 -- filter, join or order on. Types, nullability and primary keys follow schema.full.prisma, except
 -- that the CITEXT columns ("User"."username", "Model"."name") are TEXT here, as in the other parity
 -- fixtures, so the throwaway database needs no extension. All of them are base TABLES in production

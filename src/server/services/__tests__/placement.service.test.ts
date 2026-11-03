@@ -12,15 +12,17 @@ import {
 } from '~/shared/utils/placement';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const findUnique = dbMock.dbRead.keyValue.findUnique;
+// The many-creator score read (`placementPriceRanges`), still raw SQL.
 const queryRaw = dbMock.dbRead.$queryRaw;
 
 const getCapTierViaKysely = vi.fn();
 const getCapTiers = vi.fn();
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// One creator's score (`placementPriceRange`), a Kysely read: `[]` for an unknown user, as the
+// query returns. Its rows, against a real database, are pinned in
+// placement-reads.kysely-parity.test.ts.
+const { userScore } = vi.hoisted(() => ({ userScore: vi.fn() }));
+vi.mock('@civitai/db-queries/placement', () => ({ getUserPlacementScore: userScore }));
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTierViaKysely,
@@ -40,7 +42,7 @@ const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value })
 beforeEach(() => {
   vi.clearAllMocks();
   findUnique.mockResolvedValue(null);
-  queryRaw.mockResolvedValue([{ score: 0 }]);
+  userScore.mockResolvedValue([{ score: 0 }]);
   getCapTierViaKysely.mockResolvedValue(null);
 });
 
@@ -158,7 +160,7 @@ describe('placementPriceRange', () => {
   // `getHighestTierSubscription` here would hand a lapsed gold member gold caps.
   it('resolves the tier through the cap helper, not the raw subscription', async () => {
     getCapTierViaKysely.mockResolvedValue(null);
-    queryRaw.mockResolvedValue([{ score: 100_000 }]);
+    userScore.mockResolvedValue([{ score: 100_000 }]);
 
     const range = await placementPriceRange(1, 'sticker');
 
@@ -169,7 +171,7 @@ describe('placementPriceRange', () => {
 
   it('caps by score band and tier together', async () => {
     getCapTierViaKysely.mockResolvedValue('gold');
-    queryRaw.mockResolvedValue([{ score: 100_000 }]);
+    userScore.mockResolvedValue([{ score: 100_000 }]);
 
     await expect(placementPriceRange(1, 'sticker')).resolves.toMatchObject({
       tier: 'gold',
@@ -184,7 +186,7 @@ describe('placementPriceRange', () => {
   });
 
   it('treats a user with no stored score as the bottom band', async () => {
-    queryRaw.mockResolvedValue([]);
+    userScore.mockResolvedValue([]);
     const range = await placementPriceRange(1, 'sticker');
     expect(range.score).toBe(0);
     expect(range.max).toBe(100);
@@ -208,7 +210,7 @@ describe('placementPriceRanges', () => {
     expect(getCapTiers).toHaveBeenCalledWith([1, 2, 3]);
 
     for (const { id, score, tier } of creators) {
-      queryRaw.mockResolvedValue([{ score }]);
+      userScore.mockResolvedValue([{ score }]);
       getCapTierViaKysely.mockResolvedValue(tier);
       expect(ranges.get(id)).toEqual(await placementPriceRange(id, 'storyline'));
     }
@@ -243,7 +245,7 @@ describe('placementPriceRanges', () => {
     findUnique.mockClear();
     const ranges = await placementPriceRanges([1], 'sticker', config);
     expect(findUnique).not.toHaveBeenCalled();
-    queryRaw.mockResolvedValue([{ score: 0 }]);
+    userScore.mockResolvedValue([{ score: 0 }]);
     getCapTierViaKysely.mockResolvedValue(null);
     expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));
     expect(ranges.get(1)?.min).toBe(PLACEMENT_SURFACES.sticker.serverMinPrice);

@@ -9,6 +9,7 @@ import {
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import type * as Hooks from '~/server/events/points/hooks';
+import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -89,6 +90,15 @@ vi.mock('~/server/services/free-placement.service', () => ({
 
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
+
+// The viewer's own pending submissions on the visibility card, one Kysely read: none unless a test
+// says otherwise. Its rows, against a real database, are pinned in
+// hot-reads-3.kysely-parity.test.ts.
+const { viewerPendingRows } = vi.hoisted(() => ({ viewerPendingRows: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads3>()),
+  listViewerPendingRemixPlacements: viewerPendingRows,
+}));
 
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
@@ -279,6 +289,7 @@ beforeEach(() => {
   // refusal landing above an insert is enough to leave one unconsumed.
   placementCreate.mockReset();
   placementUpdate.mockReset();
+  viewerPendingRows.mockReset().mockResolvedValue([]);
   primePlacementUpdate();
   placementFindFirst.mockReset();
   createFreePlacement.mockReset();
@@ -3213,21 +3224,32 @@ describe('the reads a Buzz figure is rendered from', () => {
     expect(rows[0].targetImage).toBeNull();
   });
 
+  // A Kysely read, so the `afterEach` above cannot see its columns: this pins that `free` reaches
+  // the card beside `amount`, from a free row the read returns.
   it('the submitter’s pending rows on the image detail card', async () => {
     queryRaw.mockImplementation(async () => [
       { exists: false, count: 0, nsfwLevel: NsfwLevel.PG, minor: false, showable: true },
     ]);
-    placementFindMany.mockResolvedValue([]);
+    viewerPendingRows.mockResolvedValue([
+      {
+        id: 7,
+        amount: 0,
+        free: true,
+        data: { imageId: REMIX_IMAGE },
+        createdAt: new Date(0),
+        expiresAt: null,
+      },
+    ]);
 
-    await getRemixGalleryVisibility({
+    const visibility = await getRemixGalleryVisibility({
       hostImageId: HOST_IMAGE,
       browsingLevel: allBrowsingLevelsFlag,
       viewerId: PLACER,
       domainLevels: allBrowsingLevelsFlag,
     });
 
-    // Same as above: the `afterEach` holds the assertion. This is the anchor.
-    expect(placementFindMany).toHaveBeenCalled();
+    expect(viewerPendingRows).toHaveBeenCalledTimes(1);
+    expect(visibility.viewerPending).toMatchObject([{ placementId: 7, amount: 0, free: true }]);
   });
 });
 
