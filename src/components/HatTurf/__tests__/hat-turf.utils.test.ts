@@ -13,7 +13,6 @@ import {
   orderedTeams,
   ringArcs,
   standingsLabel,
-  viewerBehind,
 } from '~/components/HatTurf/hat-turf.utils';
 
 const counted = { blue: 6, pink: 4, green: 2, yellow: 1 };
@@ -66,23 +65,6 @@ describe('badgeLeader', () => {
   it('is null with no leader, or a leader with nothing counted (shown-only stickers)', () => {
     expect(badgeLeader({ counted, leader: null })).toBeNull();
     expect(badgeLeader({ counted: { blue: 0 }, leader: 'blue' })).toBeNull();
-  });
-});
-
-describe('viewerBehind', () => {
-  it('shows the viewer’s team count when it is not the leader', () => {
-    expect(viewerBehind({ counted, leader: 'blue' }, 'pink')).toEqual({ team: 'pink', count: 4 });
-  });
-  it('is null for the leader, for no team, and when nobody leads', () => {
-    expect(viewerBehind({ counted, leader: 'blue' }, 'blue')).toBeNull();
-    expect(viewerBehind({ counted, leader: 'blue' }, null)).toBeNull();
-    expect(viewerBehind({ counted: {}, leader: null }, 'pink')).toBeNull();
-  });
-  it('a team with no hats yet reads 0', () => {
-    expect(viewerBehind({ counted: { blue: 2 }, leader: 'blue' }, 'green')).toEqual({
-      team: 'green',
-      count: 0,
-    });
   });
 });
 

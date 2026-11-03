@@ -25,12 +25,15 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 let armReady = true;
 let armVariant = 'control';
+let experimentEnabled: unknown;
 vi.mock('~/components/Experiments/useExperiment', async (importOriginal) => ({
   ...(await importOriginal<typeof UseExperimentModule>()),
-  useExperiment: () =>
-    armReady
+  useExperiment: (_key: string, opts?: { enabled?: boolean }) => {
+    experimentEnabled = opts?.enabled;
+    return armReady
       ? { ready: true, variant: armVariant, assignment: 'rule' }
-      : { ready: false, variant: undefined, assignment: undefined },
+      : { ready: false, variant: undefined, assignment: undefined };
+  },
 }));
 
 let askedWith: { enabled?: unknown } | undefined;
@@ -80,12 +83,14 @@ describe('useHatTurfFeed', () => {
     flag = false;
     expect(feed()).toBeNull();
     expect(askedWith?.enabled).toBe(false);
+    expect(experimentEnabled).toBe(false);
   });
 
   it('returns the event with the flag on and the event open', () => {
     flag = true;
     expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'control' });
     expect(askedWith?.enabled).toBe(true);
+    expect(experimentEnabled).toBe(true);
   });
 
   it('returns null with the flag on and the event open until the viewer arm is known', () => {

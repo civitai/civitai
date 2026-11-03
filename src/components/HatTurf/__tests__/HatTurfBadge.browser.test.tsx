@@ -234,7 +234,10 @@ describe('Hat Turf badge on a feed ImageCard', () => {
   test('badge-popover arm: tapping the badge opens every team’s count without opening the card', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink', 'badge-popover') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    badge()!.click();
+    const tap = new MouseEvent('click', { bubbles: true, cancelable: true });
+    badge()!.dispatchEvent(tap);
+    // The card is a link: without this the tap would also navigate to the image.
+    expect(tap.defaultPrevented).toBe(true);
     const standings = () =>
       document.body.querySelector('[data-testid="hat-turf-standings"]') as HTMLElement | null;
     await vi.waitFor(() => expect(standings()).not.toBeNull());
@@ -246,6 +249,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(
       document.body.querySelector('[data-testid="hat-turf-standings-note"]')!.textContent
     ).toBe('blue holds this image. pink needs 3 more to take it.');
+    standings()!.click();
     expect(onCardClick).not.toHaveBeenCalled();
     expect(trackAction).toHaveBeenCalledTimes(1);
     expect(trackAction).toHaveBeenCalledWith({

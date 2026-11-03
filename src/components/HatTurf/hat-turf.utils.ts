@@ -52,16 +52,6 @@ export function badgeLeader(summary: Pick<TurfSummary, 'counted' | 'leader'>): s
   return null;
 }
 
-/** The viewer's standing when their team is not the leader; null when they lead or are not on a team. */
-export function viewerBehind(
-  summary: Pick<TurfSummary, 'counted' | 'leader'>,
-  viewerTeam: string | null | undefined
-): { team: string; count: number } | null {
-  const lead = badgeLeader(summary);
-  if (!lead || !viewerTeam || viewerTeam === lead) return null;
-  return { team: viewerTeam, count: summary.counted[viewerTeam] ?? 0 };
-}
-
 /** The spoken form of the badge: who leads, every team's count, and where the viewer stands. */
 export function standingsLabel(
   summary: Pick<TurfSummary, 'counted' | 'leader'>,

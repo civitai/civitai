@@ -208,7 +208,7 @@ function HatTurfLayerContent({
         onSuccess: () => {
           setDraft(null);
           setPlaced(spot);
-          track('feed_place_save', feed.event);
+          if (source === 'feed') track('feed_place_save', feed.event);
           void utils.hatTurf.getStock.invalidate();
           void utils.hatTurf.getSummaries.invalidate();
           void utils.hatTurf.getStickersForImages.invalidate();
