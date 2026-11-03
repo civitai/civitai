@@ -66,8 +66,8 @@ export interface StudioBackend {
   /** The caller's recent single-image edits, one per result — the edit Data step's "From my edit
    *  generations". */
   listEditGenerations(): Promise<EditGenerationItem[]>;
-  /** What one "create the after image" run costs; null when unpriced. */
-  editImageQuote(): Promise<number | null>;
+  /** What one "create the after image" run from this starting image costs; null when unpriced. */
+  editImageQuote(imageUrl: string): Promise<number | null>;
   /** Generates after-image options from a starting image. Charges the caller, so the prompt goes
    *  through the main app's prompt check first and a refusal rejects with its reason. */
   editImageSubmit(req: EditImageRequest): Promise<{ workflowId: string }>;

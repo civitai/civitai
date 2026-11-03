@@ -17,13 +17,16 @@ import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/work
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
-import type {
-  TrainingDetailsBaseModelList,
-  TrainingDetailsObj,
+import type * as z from 'zod';
+import {
+  aiToolkitTrainingDetailsParams,
+  type TrainingDetailsBaseModelList,
+  type TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import {
   trainingBaseModelTypesAudio,
@@ -61,7 +64,7 @@ function mapLoraTypeToTrainingModelType(
 
 /** The training step's input, read defensively — the client types `input` loosely and a foreign run may
  * carry only some of these. `model` is the AIR (imageResourceTraining path); `ecosystem`/`modelVariant`
- * identify an AI Toolkit base. */
+ * identify an AI Toolkit base. The AI-Toolkit hyperparameters sit alongside under their trainingDetails names. */
 type TrainingStepInputLike = {
   model?: string;
   ecosystem?: string;
@@ -70,7 +73,53 @@ type TrainingStepInputLike = {
   steps?: number;
   triggerWord?: string;
   samples?: { prompts?: string[] };
-};
+} & Record<string, unknown>;
+
+type AiToolkitParams = z.infer<typeof aiToolkitTrainingDetailsParams>;
+
+/** For the required hyperparameters only: used when the step lacks one or carries a value
+ * `trainingDetails` rejects, so the stored params always parse. */
+const REQUIRED_HYPERPARAMETER_DEFAULTS = {
+  resolution: null,
+  lr: 0,
+  textEncoderLr: null,
+  trainTextEncoder: false,
+  lrScheduler: 'constant',
+  optimizerType: 'adamw',
+  networkDim: null,
+  networkAlpha: null,
+  noiseOffset: null,
+  minSnrGamma: null,
+  flipAugmentation: false,
+  shuffleTokens: false,
+  keepTokens: 0,
+} satisfies Partial<AiToolkitParams>;
+
+// Written from the run's identity instead; `continueFrom` would make a wizard retrain of the published
+// version continue from the source LoRA.
+const NON_HYPERPARAMETER_KEYS = new Set<string>([
+  'engine',
+  'ecosystem',
+  'modelVariant',
+  'continueFrom',
+]);
+
+/** The run's hyperparameters, read from the step input for every key the AI-Toolkit trainingDetails
+ * schema declares, so a knob added to the schema is carried without touching this list. */
+function readStepHyperparameters(input: TrainingStepInputLike) {
+  const params: Record<string, unknown> = { ...REQUIRED_HYPERPARAMETER_DEFAULTS };
+  const rejected: string[] = [];
+  for (const [key, field] of Object.entries(aiToolkitTrainingDetailsParams.shape)) {
+    if (NON_HYPERPARAMETER_KEYS.has(key) || input[key] === undefined) continue;
+    const parsed = field.safeParse(input[key]);
+    if (parsed.success) params[key] = parsed.data;
+    else rejected.push(key);
+  }
+  return {
+    params: params as typeof REQUIRED_HYPERPARAMETER_DEFAULTS & Partial<AiToolkitParams>,
+    rejected,
+  };
+}
 
 export function getTrainingStep(workflow: Workflow) {
   const step = workflow.steps?.find((s) => (s as { $type?: string }).$type === 'training') as
@@ -362,9 +411,6 @@ export async function createDraftModelFromWorkflow({
       'Trained LoRA'
   );
 
-  // Best-effort params so the version's trainingDetails is complete for the wizard. The load-bearing
-  // fields are `baseModel`/`type`; the rest are defaulted (the run's real hyperparameters live on the
-  // orchestrator workflow, which stays the source of truth) with the length knobs carried from the step.
   const mediaType = (trainingBaseModelTypesVideo as readonly string[]).includes(
     trainingBaseModelType
   )
@@ -375,6 +421,16 @@ export async function createDraftModelFromWorkflow({
 
   const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
 
+  const hyperparameters = readStepHyperparameters(input);
+  // A rejected value is stored as its default or dropped, which reads like a real value.
+  if (hyperparameters.rejected.length)
+    logToAxiom({
+      name: 'training-studio-publish-param-rejected',
+      type: 'warning',
+      workflowId: workflow.id,
+      keys: hyperparameters.rejected,
+    }).catch(() => undefined);
+
   const trainingDetails: TrainingDetailsObj = {
     type: trainingModelType ?? 'Character',
     mediaType,
@@ -384,21 +440,7 @@ export async function createDraftModelFromWorkflow({
       engine: 'ai-toolkit',
       ecosystem: input.ecosystem ?? trainingInfo.aiToolkit?.ecosystem ?? '',
       ...(input.modelVariant && { modelVariant: input.modelVariant }),
-      ...(typeof input.steps === 'number' && { steps: input.steps }),
-      ...(typeof input.epochs === 'number' && { epochs: input.epochs }),
-      resolution: null,
-      lr: 0,
-      textEncoderLr: null,
-      trainTextEncoder: false,
-      lrScheduler: 'constant',
-      optimizerType: 'adamw',
-      networkDim: null,
-      networkAlpha: null,
-      noiseOffset: null,
-      minSnrGamma: null,
-      flipAugmentation: false,
-      shuffleTokens: false,
-      keepTokens: 0,
+      ...hyperparameters.params,
     },
     samplePrompts: input.samples?.prompts ?? [],
   };

@@ -64,6 +64,25 @@ import {
 
 const AUTHOR = 101;
 
+/**
+ * Every value stored under `key` anywhere in a Prisma `where` tree. The live window is composed
+ * from a shared helper, so its predicates sit at whatever depth that helper puts them; these
+ * tests ask whether a predicate is present, not where.
+ */
+function valuesAt(where: unknown, key: string): unknown[] {
+  const found: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== 'object') return;
+    for (const [k, v] of Object.entries(node)) {
+      if (k === key) found.push(v);
+      walk(v);
+    }
+  };
+  walk(where);
+  return found;
+}
+
 type TxMock = {
   $executeRaw: ReturnType<typeof vi.fn>;
   announcement: Record<'create' | 'update' | 'findUnique', ReturnType<typeof vi.fn>>;
@@ -313,12 +332,12 @@ describe('the followed feed', () => {
 
     const where = (
       dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
-        where: { profileOnly: boolean; disabled: boolean; userId: unknown };
+        where: { profileOnly: boolean; userId: unknown };
       }
     ).where;
 
     expect(where.profileOnly).toBe(false);
-    expect(where.disabled).toBe(false);
+    expect(valuesAt(where, 'disabled')).toEqual([false]);
     // Platform rows have a null author and belong to the sitewide banner, not this feed.
     expect(where.userId).toEqual({ not: null });
   });
@@ -608,30 +627,23 @@ describe('branches the fix round added and left uncovered', () => {
   it('hides disabled and out-of-window rows from a public read', async () => {
     await getCreatorAnnouncements({ userId: AUTHOR });
 
-    const where = (
-      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
-        where: {
-          disabled?: boolean;
-          OR?: { startsAt?: unknown }[];
-          AND?: { OR: { endsAt?: unknown }[] }[];
-        };
-      }
-    ).where;
+    const where = (dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: unknown })
+      .where;
 
     // Without these an announcement a moderator disabled, or one scheduled for next week,
     // renders publicly and nothing goes red.
-    expect(where.disabled).toBe(false);
-    expect(where.OR).toBeDefined();
-    expect(where.AND?.[0].OR).toBeDefined();
+    expect(valuesAt(where, 'disabled')).toEqual([false]);
+    expect(valuesAt(where, 'startsAt')).toContainEqual({ lte: expect.any(Date) });
+    expect(valuesAt(where, 'endsAt')).toContainEqual({ gte: expect.any(Date) });
   });
 
   it('shows the author their own hidden rows when asked', async () => {
     await getCreatorAnnouncements({ userId: AUTHOR, includeHidden: true });
 
-    const where = (
-      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { disabled?: boolean } }
-    ).where;
-    expect(where.disabled).toBeUndefined();
+    const where = (dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: unknown })
+      .where;
+    expect(valuesAt(where, 'disabled')).toEqual([]);
+    expect(valuesAt(where, 'startsAt')).toEqual([]);
   });
 });
 

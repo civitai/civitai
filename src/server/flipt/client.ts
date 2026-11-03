@@ -392,17 +392,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
 
-  // On: the hub-session read path (`sessionClient.getSessionUser`) keeps a per-process cache of ES256
-  // signature verifications, keyed by a SHA-256 of the whole token, so a token seen again skips `jwtVerify`
-  // (packages/civitai-auth/src/verified-claims-cache.ts). Expiry is still enforced on a hit, and the
-  // revocation read (`isRevoked`) runs on every call, hit or miss, exactly as when off. Off (and unknown or
-  // unreachable): every call verifies the signature, as before, and the cache is emptied.
-  //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every session read. The key must exist in flag
-  // state (enabled: false is fine) before this code serves traffic, for the reason given at
-  // KYSELY_IMAGE_REACTIONS.
-  AUTH_VERIFIED_CLAIMS_CACHE = 'auth-verified-claims-cache',
-
   // On: the internal image-delivery lookup (`image-delivery.service.ts`) sends its statement
   // through the raw pg pools (`pgDbRead`, falling back to `pgDbWrite` on a replica error) instead
   // of Prisma's `dbRead`/`dbWrite`. Off (and unknown, or a client that has not initialised): Prisma,
