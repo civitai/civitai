@@ -366,27 +366,33 @@ async function main() {
     );
   }
 
-  const pg = new PgClient({ connectionString: process.env.READOUT_DATABASE_URL });
-  await pg.connect();
-  await pg.query('SET default_transaction_read_only = on');
   const placements = new Map<number, Placement[]>();
   const ids = rows.map((r) => Number(r.userId));
-  for (let i = 0; i < ids.length; i += 10_000) {
-    // Removed stickers still count: a moderator's removal says nothing about how the arm worked.
-    const res = await pg.query<{ userId: number; atMs: string; source: string | null }>(
-      `SELECT "userId", (extract(epoch from "createdAt") * 1000)::bigint AS "atMs",
+  const pg = new PgClient({ connectionString: process.env.READOUT_DATABASE_URL });
+  await pg.connect();
+  try {
+    // Not a session SET: behind a transaction pooler that outlives this client and makes the
+    // pooled backend read-only for whoever gets it next.
+    await pg.query('BEGIN READ ONLY');
+    for (let i = 0; i < ids.length; i += 10_000) {
+      // Removed stickers still count: a moderator's removal says nothing about how the arm worked.
+      const res = await pg.query<{ userId: number; atMs: string; source: string | null }>(
+        `SELECT "userId", (extract(epoch from "createdAt") * 1000)::bigint AS "atMs",
               data->>'source' AS source FROM "EventTurfSticker"
        WHERE event = $1 AND "userId" = ANY($2::int[])
          AND "createdAt" >= $3::timestamptz AND "createdAt" <= $4::timestamptz`,
-      [event, ids.slice(i, i + 10_000), `${since}T00:00:00Z`, `${until}T23:59:59Z`]
-    );
-    for (const p of res.rows) {
-      const list = placements.get(p.userId) ?? [];
-      list.push({ atMs: Number(p.atMs), source: p.source });
-      placements.set(p.userId, list);
+        [event, ids.slice(i, i + 10_000), `${since}T00:00:00Z`, `${until}T23:59:59Z`]
+      );
+      for (const p of res.rows) {
+        const list = placements.get(p.userId) ?? [];
+        list.push({ atMs: Number(p.atMs), source: p.source });
+        placements.set(p.userId, list);
+      }
     }
+    await pg.query('COMMIT');
+  } finally {
+    await pg.end();
   }
-  await pg.end();
 
   const users = toExposedUsers(rows, placements);
   const readout = buildReadout(exp, users);
