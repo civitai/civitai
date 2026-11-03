@@ -13,7 +13,8 @@ const m = vi.hoisted(() => {
     lPopCount: vi.fn(),
     lTrim: vi.fn(),
     expire: vi.fn(),
-    exec: vi.fn(async () => []),
+    // A MULTI's replies, one per queued command (the fold reads the LPOP's).
+    exec: vi.fn(async (): Promise<unknown[]> => []),
   };
   return {
     pipeline,
