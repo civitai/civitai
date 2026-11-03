@@ -4,8 +4,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { dismissResetNotice } from '../smites/smites.service';
 
 /**
- * A player's own career restart. Mirrors the main app's `resetPlayer` (`new-order.service.ts`): Acolyte, no XP or
- * fervor, unconverted gold forfeited, active smites cleansed, and `startAt` moved, which is what voids earlier votes.
+ * A player's own career restart. Mirrors the main app's `resetPlayer` (`new-order.service.ts`): Acolyte, no XP,
+ * unconverted gold forfeited, active smites cleansed, and `startAt` moved, which is what voids earlier votes and so their fervor. The shared `fervor` column is the original game's, so it is not written.
  * `startAt` comes from the database clock under the player row lock, the same ordering conversions rely on.
  */
 export async function restartCareer(
@@ -27,7 +27,6 @@ export async function restartCareer(
       .set({
         rankType: 'Acolyte',
         exp: 0,
-        fervor: 0,
         startAt: sql<Date>`clock_timestamp()`,
         goldPending: 0,
         goldEarned: sql<number>`"goldConverted"`,

@@ -29,6 +29,7 @@ const MIGRATIONS = [
   '20261225120000_knights_v2_apprenticeship',
   '20261226120000_knights_v2_drop_trial_tables',
   '20261227120000_knights_v2_block_reason',
+  '20261228120000_knights_v2_fervor_window',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -70,8 +71,23 @@ CREATE TABLE "NewOrderPlayer" (
   "payoutBlockReason" TEXT,
   "startAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE "Cosmetic" (
+  "id" INTEGER PRIMARY KEY,
+  "name" TEXT NOT NULL DEFAULT '',
+  "source" TEXT NOT NULL,
+  "data" JSONB
+);
+CREATE TABLE "UserCosmetic" (
+  "userId" INTEGER NOT NULL,
+  "cosmeticId" INTEGER NOT NULL REFERENCES "Cosmetic"("id") ON DELETE CASCADE,
+  "obtainedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "claimKey" TEXT NOT NULL DEFAULT 'claimed',
+  PRIMARY KEY ("userId", "cosmeticId", "claimKey")
+);
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY,
+  "username" TEXT,
+  "image" TEXT,
   "bannedAt" TIMESTAMP(3),
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false

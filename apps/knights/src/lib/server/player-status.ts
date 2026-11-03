@@ -1,7 +1,8 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
-import { calculateFervor, ledgerOf } from './progression/progression';
+import { calculateFervor, fervorLedgerOf } from './progression/fervor';
+import { ledgerOf } from './progression/progression';
 import {
   accuracyOf,
   nextLadderEntry,
@@ -37,7 +38,14 @@ export type PlayerStatus = {
   } | null;
 };
 
-type Extras = { ledger?: Ledger; goldPending?: number; goldEarned?: number; smites?: number };
+type Extras = {
+  ledger?: Ledger;
+  /** Votes settled in the fervor window; fervor is not read from the accuracy ledger. */
+  fervorLedger?: Ledger;
+  goldPending?: number;
+  goldEarned?: number;
+  smites?: number;
+};
 
 export function statusFrom(rank: string, exp: number, standing: Extras = {}): PlayerStatus {
   const progress = getLevelProgression(exp);
@@ -50,7 +58,7 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
     xpIntoLevel: progress.xpIntoLevel,
     xpForNextLevel: progress.xpForNextLevel,
     progressPercent: progress.progressPercent,
-    fervor: calculateFervor(ledger),
+    fervor: calculateFervor(standing.fervorLedger ?? { correct: 0, graded: 0 }),
     goldPending: standing.goldPending ?? 0,
     goldEarned: standing.goldEarned ?? 0,
     smites: standing.smites ?? 0,
@@ -71,7 +79,8 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
 
 export async function getPlayerStatus(
   db: Kysely<DB>,
-  userId: number
+  userId: number,
+  now = new Date()
 ): Promise<PlayerStatus | null> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -82,6 +91,7 @@ export async function getPlayerStatus(
     ? statusFrom(player.rankType, player.exp, {
         ...player,
         ledger: await ledgerOf(db, userId),
+        fervorLedger: await fervorLedgerOf(db, userId, now),
         smites: await activeSmiteCount(db, userId),
       })
     : null;
