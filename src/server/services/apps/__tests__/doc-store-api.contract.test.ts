@@ -3082,6 +3082,81 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     }
     expect(kv.get(readBucket(S, VIEWER_IDS.v1))).toBeUndefined();
   });
+
+  // ── Writes through an import are validated against the SOURCE collection's schema (R1-4) ──
+
+  it("a write through an import is checked against the source's schema, never the consumer's", async () => {
+    seq += 1;
+    const app = (label: string, manifest: unknown): AppRow => {
+      const r = {
+        id: `apb_impschema${label}${seq}`,
+        appId: `appblk-impschema${label}${seq}`,
+        blockId: `imp-schema-${label}-${seq}`,
+        status: 'approved',
+        manifest,
+      };
+      apps.push(r);
+      return r;
+    };
+    // The source's `notes`: `text` is required and at most 5 characters; anything else is free.
+    const S = app('src', {
+      scopes: ['apps:storage'],
+      storage: {
+        collections: {
+          notes: {
+            visibility: 'private',
+            schema: { type: 'object', required: ['text'], properties: { text: { maxLength: 5 } } },
+          },
+        },
+      },
+    });
+    // The consumer's OWN `notes` has a different schema: `title` is required.
+    const C = app('fork', {
+      scopes: CONSUMER_SCOPES,
+      storage: {
+        collections: {
+          notes: { visibility: 'private', schema: { type: 'object', required: ['title'] } },
+        },
+        imports: [{ from: S.blockId, collections: ['notes'], access: 'readwrite' }],
+      },
+    });
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = (key: string, data: unknown) =>
+      call({
+        token: c,
+        method: 'PUT',
+        path: `/notes/${key}`,
+        query: { from: S.blockId },
+        body: { data },
+      });
+    const inSource = async (key: string) =>
+      harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = $2`, [S.id, key]);
+
+    // Violates the source schema at /text, and satisfies the consumer's: refused, nothing written.
+    const refused = await put('bad', { title: 'x', text: 'too long' });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({
+      code: 'schema_violation',
+      details: { collection: 'notes', pointer: '/text', keyword: 'maxLength' },
+    });
+    expect(await inSource('bad')).toEqual([]);
+
+    // Satisfies the source schema and violates the consumer's (no `title`): accepted, in the source.
+    const accepted = await put('good', { text: 'short' });
+    expect(accepted.status).toBe(200);
+    expect(await inSource('good')).toEqual([{ '?column?': 1 }]);
+
+    // Control: the consumer's own schema still binds its own collection, without `from`.
+    const own = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/own',
+      body: { data: { text: 'short' } },
+    });
+    expect(own.status).toBe(400);
+    expect(own.body).toMatchObject({ code: 'schema_violation', details: { keyword: 'required' } });
+  });
 });
 
 describe('collection schemas: a violating write is refused before anything is spent on it', () => {

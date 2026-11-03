@@ -363,7 +363,14 @@ export async function resolveImportAccess(
       ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
       : [APP_STORAGE_BASE_SCOPE],
     consentUnavailable: false,
-    collections: sourceStorage.collections,
+    // MUTATION (tests-first, R1-4): the consumer's same-named schema instead of the source's.
+    collections: new Map(
+      [...sourceStorage.collections].map(([n, d]) => {
+        const { schema: _sourceSchema, ...rest } = d;
+        const mine = consumer.collections.get(n)?.schema;
+        return [n, mine ? { ...rest, schema: mine } : rest];
+      })
+    ),
     // An import is one hop: a source's own imports are never followed.
     imports: new Map(),
     tokenKind: consumer.tokenKind,
