@@ -35,14 +35,19 @@ import {
 export const STORAGE_IMPORT_UNAVAILABLE_MESSAGE =
   'Sharing data between apps is not available yet. Try again later.';
 
-/** `undefined_table`, as the driver or Prisma's raw-query error reports it. */
+/**
+ * `undefined_table` or `undefined_column`, as the driver or Prisma's raw-query error reports it:
+ * the hand-applied migration has not run, or a table from its earlier draft (no `collections` /
+ * `access`) is in place. Both fail closed the same way.
+ */
 export function isMissingTableError(err: unknown): boolean {
+  const codes = new Set(['42P01', '42703']);
   if (!err || typeof err !== 'object') return false;
   const e = err as { code?: unknown; meta?: unknown };
-  if (e.code === '42P01') return true;
+  if (codes.has(e.code as string)) return true;
   if (e.meta && typeof e.meta === 'object') {
     const meta = e.meta as { code?: unknown; message?: unknown };
-    if (meta.code === '42P01') return true;
+    if (codes.has(meta.code as string)) return true;
   }
   return false;
 }
@@ -56,7 +61,7 @@ function noteMissingTable(site: string): void {
       name: 'app-blocks-storage-import-grants-missing',
       type: 'error',
       message:
-        'app_storage_import_grants is missing from this database: apply migration 20261218120000_app_storage_import_grants. Every storage import is refused until it lands.',
+        'app_storage_import_grants is missing from this database, or lacks its collections/access columns: apply migration 20261218120000_app_storage_import_grants. Every storage import is refused until it lands.',
       site,
     },
     'app-blocks'

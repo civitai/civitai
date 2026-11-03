@@ -292,10 +292,10 @@ export function StorageImportConsentDetail({
         <List.Item key={i.from}>
           <strong>{consumerName}</strong> {i.access === 'readwrite' ? 'reads and changes' : 'reads'}{' '}
           your {i.collections.join(', ')} in <strong>{i.sourceName ?? i.from}</strong>
-          {/* An import is not publish consent in the source: adding to its shared lists asks
-              for `apps:storage:publish` there, separately. */}
+          {/* An import is not publish consent in the source: writes, counters and marks in its
+              shared collections need `apps:storage:publish` there, separately. */}
           {i.access === 'readwrite'
-            ? ` — as you. Adding to lists other people see there needs your separate permission in ${
+            ? ` — as you. Changing what other people see there, such as adding entries, votes or counts, needs your separate permission in ${
                 i.sourceName ?? i.from
               }.`
             : ''}

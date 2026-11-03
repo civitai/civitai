@@ -1509,14 +1509,12 @@ async function resolveHubTokenClaims(
     scopes?: unknown;
     page?: { buzzBudgetPerGen?: unknown };
   };
-  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
-  const { importScopeCoverage, withholdUncoveredImportScope } = await import(
-    '~/server/services/apps/storage-import-grant.service'
-  );
-  const scopes = withholdUncoveredImportScope(
-    partitionByConsent(declared, granted),
-    await importScopeCoverage(userId, block, declared)
-  ).signable;
+  // `apps:storage:import` is never carried, and its grant ledger is never read or pruned here: the
+  // storage route refuses an import on any hub token (`import_hub_token`).
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes)
+    .filter(isKnownBlockScope)
+    .filter((s) => s !== 'apps:storage:import');
+  const scopes = partitionByConsent(declared, granted).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
   const host = req.headers.host ?? '';

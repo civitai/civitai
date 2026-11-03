@@ -227,8 +227,12 @@ export async function resolveStorageAccess(
   };
 }
 
-/** The operations an import with `access: "read"` refuses. */
-export type ImportOp = 'read' | 'write';
+/**
+ * What one call through an import does: `read`; `delete`; or `author` (create, put, a counter or
+ * a mark). A `read` import refuses everything but `read`; only `author` can need the viewer's
+ * publish consent in the source, so only it reads that consent.
+ */
+export type ImportOp = 'read' | 'delete' | 'author';
 
 /**
  * The SOURCE app's access for one collection call through an import, for the same viewer — or a
@@ -248,11 +252,12 @@ export type ImportOp = 'read' | 'write';
  *      source, so a version that widens the import is prompted for before it reaches anything.
  *
  * The returned access carries the source's collections only and `apps:storage`. It carries
- * `apps:storage:publish` only for a write through a `readwrite` import by a viewer who granted
- * that scope to the SOURCE app themselves: an import consent is not publish consent there, so a
- * write to one of the source's shared collections without it is refused by the route's publish
- * check (`consent_required` naming `apps:storage:publish` and the source). A private source
- * collection needs only the import grant. The consumer's own publish grant is never consulted.
+ * `apps:storage:publish` only for an authoring call (create, put, a counter or a mark) through a
+ * `readwrite` import by a viewer who granted that scope to the SOURCE app themselves: an import
+ * consent is not publish consent there, so a write, counter or mark in one of the source's
+ * shared collections without it is refused by the route (`consent_required` naming
+ * `apps:storage:publish` and the source). A private source collection needs only the import
+ * grant. The consumer's own publish grant is never consulted.
  */
 export async function resolveImportAccess(
   consumer: StorageAccess,
@@ -279,7 +284,7 @@ export async function resolveImportAccess(
       { from, collection }
     );
   }
-  if (op === 'write' && declared.access === 'read') {
+  if (op !== 'read' && declared.access === 'read') {
     throw new DocStoreError('write_policy', `the import from ${from} is read-only`, {
       from,
       reason: 'import_read_only',
@@ -350,9 +355,9 @@ export async function resolveImportAccess(
   if (consumer.ctx.ns !== PUBLISHED_NS) {
     throw notEligible('import_namespace', 'this token cannot reach another app');
   }
-  // The viewer's own publish consent in the SOURCE, read only for a write that could use it.
+  // The viewer's own publish consent in the SOURCE, read only for a call that could use it.
   const publishes =
-    op === 'write' &&
+    op === 'author' &&
     declared.access === 'readwrite' &&
     (
       await dependency(getGrantedScopes({ userId: viewerUid, appBlockId: source.id, db: 'write' }))
@@ -363,14 +368,7 @@ export async function resolveImportAccess(
       ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
       : [APP_STORAGE_BASE_SCOPE],
     consentUnavailable: false,
-    // MUTATION (tests-first, R1-4): the consumer's same-named schema instead of the source's.
-    collections: new Map(
-      [...sourceStorage.collections].map(([n, d]) => {
-        const { schema: _sourceSchema, ...rest } = d;
-        const mine = consumer.collections.get(n)?.schema;
-        return [n, mine ? { ...rest, schema: mine } : rest];
-      })
-    ),
+    collections: sourceStorage.collections,
     // An import is one hop: a source's own imports are never followed.
     imports: new Map(),
     tokenKind: consumer.tokenKind,

@@ -25,8 +25,10 @@
 -- or either app removes the grant), two CHECKs, one index. Idempotent. A brand-new table, so
 -- the locks are on the two referenced tables only (SHARE ROW EXCLUSIVE for the foreign keys):
 -- bounded by lock_timeout, so a busy table makes this fail fast rather than queue writes behind
--- it. Re-run the file on a timeout. (An earlier draft of this file, without `collections` and
--- `access`, was never applied anywhere; `IF NOT EXISTS` would keep that shape if it had been.)
+-- it. Re-run the file on a timeout. An earlier draft of this file, without `collections` and
+-- `access`, was never applied anywhere; if it had been, `IF NOT EXISTS` would keep that shape,
+-- so the block after the CREATE refuses it out loud (drop the draft's table, which holds no
+-- grant the current rule can read, and re-run).
 
 SET lock_timeout = '5s';
 
@@ -52,6 +54,19 @@ CREATE TABLE IF NOT EXISTS "app_storage_import_grants" (
     CONSTRAINT "app_storage_import_grants_source_fkey"
       FOREIGN KEY ("source_app_block_id") REFERENCES "app_blocks"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+DO $$
+BEGIN
+  IF (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'app_storage_import_grants'
+      AND column_name IN ('collections', 'access')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'app_storage_import_grants exists without the collections and access columns (an earlier draft of this migration): drop it and re-run';
+  END IF;
+END
+$$;
 
 -- The source-side FK's cascade, and "who reaches this app's data", read by source.
 CREATE INDEX IF NOT EXISTS "app_storage_import_grants_source_idx"

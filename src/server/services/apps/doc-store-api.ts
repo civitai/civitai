@@ -54,6 +54,7 @@ import {
 import {
   resolveImportAccess,
   resolveStorageAccess,
+  type ImportOp,
   type StorageAccess,
 } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
@@ -537,17 +538,35 @@ function requireViewer(access: StorageAccess): number {
 /**
  * Creating, editing or deleting a document other viewers read needs the consent-gated scope.
  * Through an import it is the viewer's grant in the SOURCE app (`resolveImportAccess`), and the
- * refusal names the source (`from`), so the host can ask for it there.
+ * refusal names the source in `details.from`. ⚠️ No host code reads `from` yet: the host's
+ * consent flow asks only for the CONSUMER's scopes, so prompting for the publish scope in the
+ * source app is still to be built; until then the app surfaces this refusal to the viewer.
  */
 function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
   if (!collectionNeedsPublishScope(coll.config)) return;
   if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
+  throw publishRefusal(access);
+}
+
+/**
+ * A counter or mark on one of the SOURCE's shared collections, through an import: it changes
+ * state other viewers of the source see, so it needs the viewer's publish consent there exactly
+ * as a create or put does — whatever the collection's write policy, `none` included. An app's
+ * own tallies are unchanged (`apps:storage` covers them); a private collection has none.
+ */
+function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
+  if (access.importedFrom === undefined || !shared) return;
+  if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
+  throw publishRefusal(access);
+}
+
+function publishRefusal(access: StorageAccess): DocStoreError {
   if (access.consentUnavailable) {
-    throw new DocStoreError('consent_unavailable', 'permission state is temporarily unavailable', {
+    return new DocStoreError('consent_unavailable', 'permission state is temporarily unavailable', {
       retryAfter: 1,
     });
   }
-  throw new DocStoreError(
+  return new DocStoreError(
     'consent_required',
     access.importedFrom === undefined
       ? `${APP_STORAGE_PUBLISH_SCOPE} has not been granted`
@@ -879,6 +898,7 @@ async function run(
     }
     case 'increment': {
       const uid = requireViewer(access);
+      assertImportTallyPublishScope(access, shared);
       const { by } = parseBody(incrementBody, body);
       // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
@@ -898,6 +918,7 @@ async function run(
       // Before any budget or trust lookup: a withdrawal is a 400 for everyone.
       if (route.op === 'unmark') refuseReportWithdrawal(route.name);
       const uid = requireViewer(access);
+      assertImportTallyPublishScope(access, shared);
       if (route.op === 'mark') parseBody(markBody, body);
       await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
@@ -936,9 +957,14 @@ function importSourceOf(req: NextApiRequest): string | null {
   return raw;
 }
 
-/** Whether an operation changes anything — refused through a read-only import. */
-function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): 'read' | 'write' {
-  return route.op === 'list' || route.op === 'get' || route.op === 'getMany' ? 'read' : 'write';
+/**
+ * What an operation does, for an import: a read; a delete; or an authoring write (create, put,
+ * a counter or a mark), the only kind that can need the viewer's publish consent in the source.
+ * Every one but a read is refused through a read-only import.
+ */
+function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
+  if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
+  return route.op === 'delete' ? 'delete' : 'author';
 }
 
 /** Query parameters other than the route's own are refused everywhere except a list. */
