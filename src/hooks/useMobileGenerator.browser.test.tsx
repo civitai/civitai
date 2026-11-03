@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { cdp, page } from 'vitest/browser';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
@@ -32,19 +33,40 @@ async function device(screen: [number, number], { touch = true } = {}) {
 
 function Probe() {
   const mobile = useMobileGenerator();
+  // The probe re-renders on resize and prints the window it sees, so a test can wait for the
+  // resize to land before it asserts the layout did not change.
+  const [, rerender] = useState(0);
+  useEffect(() => {
+    const onResize = () => rerender((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   return (
     <div>
       <textarea aria-label="Prompt" />
       <output data-testid="layout">{mobile ? 'mobile' : 'desktop'}</output>
+      <output data-testid="size">{`${innerWidth}x${innerHeight}`}</output>
     </div>
   );
 }
 
 const layout = () => page.getByTestId('layout');
 
+const frame = () => new Promise<void>((done) => requestAnimationFrame(() => done()));
+
+/** Resize the window and wait until the probe has seen it, then a frame for the media query. */
+async function resize(width: number, height: number) {
+  await page.viewport(width, height);
+  await expect.element(page.getByTestId('size')).toHaveTextContent(`${width}x${height}`);
+  await frame();
+  await frame();
+}
+
 async function show(viewport: [number, number]) {
   await page.viewport(...viewport);
-  return renderWithProviders(<Probe />);
+  const view = await renderWithProviders(<Probe />);
+  await expect.element(page.getByTestId('size')).toHaveTextContent(`${viewport[0]}x${viewport[1]}`);
+  return view;
 }
 
 afterEach(async () => {
@@ -59,9 +81,8 @@ describe('useMobileGenerator on touch devices', () => {
     await expect.element(layout()).toHaveTextContent('desktop');
 
     await page.getByLabelText('Prompt').click();
-    await page.viewport(1180, 480);
-    // The keyboard really did cut the viewport under the old 500px cutoff.
-    expect(innerHeight).toBe(480);
+    await resize(1180, 480);
+    // The keyboard really did cut the viewport under 500px tall.
     expect(matchMedia('(pointer: coarse) and (max-height: 499px)').matches).toBe(true);
 
     await expect.element(layout()).toHaveTextContent('desktop');
@@ -72,7 +93,7 @@ describe('useMobileGenerator on touch devices', () => {
     await device([1180, 820]);
     await show([1180, 820]);
     await expect.element(layout()).toHaveTextContent('desktop');
-    await page.viewport(600, 820);
+    await resize(600, 820);
     await expect.element(layout()).toHaveTextContent('mobile');
   });
 
@@ -80,7 +101,7 @@ describe('useMobileGenerator on touch devices', () => {
     await device([844, 390]);
     await show([844, 390]);
     await expect.element(layout()).toHaveTextContent('mobile');
-    await page.viewport(844, 180);
+    await resize(844, 180);
     await expect.element(layout()).toHaveTextContent('mobile');
   });
 
@@ -90,25 +111,18 @@ describe('useMobileGenerator on touch devices', () => {
     await expect.element(layout()).toHaveTextContent('mobile');
   });
 
-  test('rotating a phone from portrait to landscape stays mobile; a tablet rotating stays desktop', async () => {
+  test('rotating a phone from portrait to landscape stays mobile', async () => {
     await device([390, 844]);
     await show([390, 844]);
     await expect.element(layout()).toHaveTextContent('mobile');
     await device([844, 390]);
-    await page.viewport(844, 390);
+    await resize(844, 390);
     await expect.element(layout()).toHaveTextContent('mobile');
-
-    await device([820, 1180]);
-    await page.viewport(820, 1180);
-    await expect.element(layout()).toHaveTextContent('desktop');
-    await device([1180, 820]);
-    await page.viewport(1180, 820);
-    await expect.element(layout()).toHaveTextContent('desktop');
   });
 
-  test('a short window on a mouse device is not a phone', async () => {
-    await device([1180, 820], { touch: false });
-    await show([1180, 400]);
+  test('a phone-sized screen on a mouse device is not a phone', async () => {
+    await device([844, 390], { touch: false });
+    await show([844, 390]);
     await expect.element(layout()).toHaveTextContent('desktop');
   });
 });

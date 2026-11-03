@@ -6,7 +6,6 @@
  */
 export const PHONE_MEDIA_QUERY = '(pointer: coarse) and (max-width: 767px)';
 
-/** Primary input is touch. */
 export const COARSE_POINTER_QUERY = '(pointer: coarse)';
 
 /** The short side of a phone's screen, in CSS px, is under this; the smallest tablets are 744. */
