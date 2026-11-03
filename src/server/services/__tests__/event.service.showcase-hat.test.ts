@@ -20,6 +20,10 @@ const { engine, settings, sync, showcase, creator } = vi.hoisted(() => ({
   showcase: {
     refreshShowcaseHats: vi.fn(),
     resolveShowcaseHatIds: vi.fn(async () => new Map([[5, 3]])),
+    getShowcaseHatForUser: vi.fn(async (userId: number) => ({
+      cosmeticId: 3,
+      url: `${userId}.png`,
+    })),
     SHOWCASE_EVENT: { name: 'birthday2026' },
     SHOWCASE_SETTING: 'eventShowcaseHat',
   },
@@ -45,7 +49,7 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticDetail: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({ getEntityCoverImage: vi.fn() }));
 
-const { setShowcaseHat } = await import('~/server/services/event.service');
+const { getMyShowcaseHatArt, setShowcaseHat } = await import('~/server/services/event.service');
 
 const user = { id: 5 };
 const event = 'birthday2026';
@@ -100,5 +104,18 @@ describe('setShowcaseHat', () => {
     engine.assertPlayable.mockRejectedValueOnce(new Error('The event has ended'));
     await expect(setShowcaseHat({ event, cosmeticId: null, user })).rejects.toThrow('ended');
     expect(settings.patchUserSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMyShowcaseHatArt', () => {
+  it("returns the caller's showcase hat for the showcase event", async () => {
+    expect(await getMyShowcaseHatArt({ event, user })).toEqual({ cosmeticId: 3, url: '5.png' });
+    expect(showcase.getShowcaseHatForUser).toHaveBeenCalledWith(5);
+  });
+
+  // The team panels ask for every scored event; only the showcase event has a hat on show.
+  it('returns no hat for any other event, without a lookup', async () => {
+    expect(await getMyShowcaseHatArt({ event: 'holiday2025', user })).toBeNull();
+    expect(showcase.getShowcaseHatForUser).not.toHaveBeenCalled();
   });
 });
