@@ -309,6 +309,7 @@ describe('orchestrator-key and a restricted account', () => {
     expect(status).toBe(403);
     expect(mintApiKey).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
   });
 });
 
