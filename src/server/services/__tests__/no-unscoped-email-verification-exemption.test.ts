@@ -105,8 +105,6 @@ const DERIVED_BASES: Record<string, string> = {
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
-  // `subscriptions.router.ts`: a moderator granted `membershipExtend` gives a Stripe member free days.
-  membershipExtendProcedure: 'moderatorProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',

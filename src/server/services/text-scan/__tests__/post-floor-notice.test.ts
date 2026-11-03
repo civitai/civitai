@@ -145,6 +145,9 @@ const answerRaw = async (query: Prisma.Sql) => {
       ];
     });
   }
+  if (sql.includes('SELECT bit_or(i."nsfwLevel") AS level FROM "Image" i WHERE i."postId" =')) {
+    return [{ level: stateOf(ids[0])?.images ?? null }];
+  }
   throw new Error(`unexpected raw query: ${sql}`);
 };
 // batcher() swallows throws, so a fake that throws would pass every no-notice case; afterEach fails on any.
@@ -238,6 +241,39 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     expect(ratingNotices().map(([n]) => n.key)).toEqual([
       `text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`,
     ]);
+  });
+
+  it.each([
+    ['does not notify when the images already give the level', FLOOR, 0],
+    ['notifies once when the floor lifts the post above its images', 1, 1],
+  ])('callback on rated images the job has not recomputed yet: %s', async (_, images, notices) => {
+    post.images = images;
+    vi.mocked(getWorkflow).mockResolvedValue(raisedWorkflow as never);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    await imageRated(0);
+
+    expect(post.level).toBe(FLOOR);
+    expect(ratingNotices()).toHaveLength(notices);
+  });
+
+  it('still notifies the rest of the batch when one notice fails', async () => {
+    verdict = raisedVerdict();
+    other = {
+      images: 1,
+      level: 0,
+      moderatorNsfwLevel: null,
+      verdict: { ...raisedVerdict(), workflowId: 'wf-9', nsfwLevel: 4 },
+    };
+    vi.mocked(createNotification).mockRejectedValueOnce(new Error('insert failed'));
+
+    await imageRated(1, [POST_ID, OTHER_ID]);
+
+    expect(ratingNotices().map(([n]) => n.key)).toEqual([
+      `text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`,
+      `text-scan-rating-raised-Post-${OTHER_ID}-4-wf-9`,
+    ]);
+    expect(post.level).toBe(FLOOR);
+    expect(other?.level).toBe(4);
   });
 
   it('does not credit the text when an image later raises a post the floor already held', async () => {

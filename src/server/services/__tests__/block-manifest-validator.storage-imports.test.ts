@@ -185,16 +185,16 @@ describe('manifest storage imports — scope rules', () => {
     );
   });
 
-  // Round-0 D2: an app may only import. These two pin the scope rule's special case for it, each
+  // An app may only import. These two pin the scope rule's special case for it, each
   // with exactly one clause of `appStorageScopeErrors` that would otherwise misfire.
-  it('D2: an import-only app with apps:storage is not refused for declaring no collections', () => {
+  it('an import-only app with apps:storage is not refused for declaring no collections', () => {
     const m = manifest({ imports: [NOTES_IMPORT] }, [STORAGE, IMPORT], {
       scopeJustifications: JUSTIFIED,
     });
     expect(validate(m)).toEqual({ valid: true });
   });
 
-  it('D2: own collections and an import without apps:storage report the collections once', () => {
+  it('own collections and an import without apps:storage report the collections once', () => {
     expect(
       validate(
         manifest(

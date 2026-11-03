@@ -91,8 +91,8 @@ describe('apps:storage:import — consent', () => {
 });
 
 describe('apps:storage:import — which mints carry it', () => {
-  // The bearer dev token does not carry it (operator decision D1, 2026-11-02): a development
-  // token reaches no other app, and the storage route refuses `?from=` on one as well.
+  // The bearer dev token does not carry it: a development token reaches no other app, and the
+  // storage route refuses `?from=` on one as well.
   it('the bearer dev-token clamp strips it and keeps apps:storage', () => {
     expect(DEV_TOKEN_SCOPE_ALLOWLIST.has(IMPORT)).toBe(false);
     expect(

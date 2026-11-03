@@ -239,7 +239,7 @@ describe('a grant covers exactly what the viewer was shown', () => {
   });
 });
 
-describe('the migration on a database holding the earlier draft of the table', () => {
+describe('the migration on a database whose table lacks the collections and access columns', () => {
   it('fails loudly instead of keeping the old shape', async () => {
     const old = new PGlite();
     try {

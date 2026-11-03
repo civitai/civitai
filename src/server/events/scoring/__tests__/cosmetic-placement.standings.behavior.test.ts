@@ -40,6 +40,7 @@ const {
   getUserCosmeticScores,
   hasStandingsSnapshot,
   refreshStandings,
+  teamHourlySeries,
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
@@ -637,6 +638,101 @@ describe('referee snapshot', () => {
     expect((await runEventPointsReferee(scored, 'live', settlesEnd)).final).toBe(true);
   });
 
+  describe('points per hour', () => {
+    const hourlyRow = (
+      date: string,
+      userId: number,
+      team: string,
+      hours: Record<number, number>
+    ) => ({
+      ...refereeRow(
+        date,
+        Object.values(hours).reduce((a, b) => a + b, 0)
+      ),
+      userId,
+      cosmeticId: 20 + userId,
+      team,
+      hours,
+    });
+    const answer = (rows: ReturnType<typeof hourlyRow>[]) =>
+      ch.query.mockImplementation(async ({ query }: { query: string }) => ({
+        json: async () => (query === eventPointsRefereeUsersSql ? [involved] : rows),
+      }));
+    // Each team's [hour index, points] where it earned anything, and how many hours are charted.
+    async function chartedHours() {
+      await refreshStandings(scored, dbMock.dbWrite as never);
+      const { hourly } = await getEventStandings(scored);
+      return {
+        start: hourly?.start.toISOString(),
+        hours: hourly?.teams[0].points.length,
+        earned: Object.fromEntries(
+          (hourly?.teams ?? []).map(({ team, points }) => [
+            team,
+            points.flatMap((p, i) => (p ? [[i, p]] : [])),
+          ])
+        ),
+      };
+    }
+
+    it('charts each team per settled UTC hour, summing its hats, up to the last whole hour', async () => {
+      answer([
+        hourlyRow('2026-11-04', 1, 'Yellow', { 3: 2, 23: 3 }),
+        hourlyRow('2026-11-05', 1, 'Yellow', { 0: 1, 11: 2 }),
+        hourlyRow('2026-11-05', 2, 'Yellow', { 0: 4 }),
+        hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 }),
+      ]);
+      await runEventPointsReferee(scored, 'live', HOURLY);
+      // Cut 11:55 on the 5th: hour 11 is still filling, so the chart stops at hour 10.
+      expect(await chartedHours()).toEqual({
+        start: '2026-11-04T00:00:00.000Z',
+        hours: 24 + 11,
+        earned: {
+          Yellow: [
+            [3, 2],
+            [23, 3],
+            [24, 5],
+          ],
+          Blue: [[30, 7]],
+          Pink: [],
+          Green: [],
+        },
+      });
+    });
+
+    // The chart's hash is the last write of a settle and only feeds the chart: losing it must not
+    // turn a landed settle into a failed one, which would hold back naming the winner.
+    it('still settles, and still serves standings, when the chart hash cannot be written or read', async () => {
+      answer([hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 })]);
+      const sys = redisMock.sysRedis;
+      const write = sys.hSet.getMockImplementation()!;
+      sys.hSet.mockImplementation(async (k: string, v: Record<string, string>) => {
+        if (k === keys.teamHours) throw new Error('sysRedis down');
+        return write(k, v);
+      });
+      const read = sys.hGetAll.getMockImplementation()!;
+      sys.hGetAll.mockImplementation(async (k: string) => {
+        if (k === keys.teamHours) throw new Error('sysRedis down');
+        return read(k);
+      });
+
+      await expect(runEventPointsReferee(scored, 'live', HOURLY)).resolves.toMatchObject({
+        rows: 1,
+      });
+      expect(hashes.get(keys.base('team'))).toEqual({ Blue: '7' });
+      const standings = await refreshStandings(scored, dbMock.dbWrite as never);
+      expect(standings.hourly).toBeUndefined();
+      expect(standings.teams[0]).toEqual({ team: 'Blue', score: 7, rank: 1 });
+    });
+
+    it('clears a recomputed day that lost its points, rather than keep the old hours', async () => {
+      answer([hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 })]);
+      await runEventPointsReferee(scored, 'live', HOURLY);
+      answer([]);
+      await runEventPointsReferee(scored, 'live', HOURLY);
+      expect((await chartedHours()).earned.Blue).toEqual([]);
+    });
+  });
+
   it('rerunning the same hour changes nothing', async () => {
     await insertDays([day('2026-11-02', 1, 21, 'claimed', 'Yellow', 10)]);
     await runEventPointsReferee(scored, 'live', HOURLY);
@@ -776,5 +872,40 @@ describe('referee snapshot', () => {
     await runEventPointsReferee(scored, 'live', HOURLY);
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+  });
+});
+
+describe('teamHourlySeries', () => {
+  const day = (teams: Record<string, number[]>) => JSON.stringify(teams);
+  const hoursOf = (values: Record<number, number>) =>
+    Array.from({ length: 24 }, (_, h) => values[h] ?? 0);
+
+  it('leaves an hour of a day the referee has not written as a gap, not a zero', () => {
+    const series = teamHourlySeries(
+      {
+        '2026-11-01': day({ Blue: hoursOf({ 5: 3 }) }),
+        '2026-11-03': day({ Blue: hoursOf({ 0: 2 }) }),
+        cut: '2026-11-03T01:00:00.000Z',
+      },
+      ['Blue'],
+      new Date('2026-11-01T00:00:00.000Z')
+    )!;
+    const points = series.teams[0].points;
+    expect(points).toHaveLength(49);
+    expect([points[5], points[24], points[47], points[48]]).toEqual([3, null, null, 2]);
+  });
+
+  it('starts at the first counted day, so a test run before scoreFrom is not charted', () => {
+    const series = teamHourlySeries(
+      {
+        '2026-10-31': day({ Blue: hoursOf({ 1: 9 }) }),
+        '2026-11-01': day({ Blue: hoursOf({ 1: 1 }) }),
+        cut: '2026-11-01T03:00:00.000Z',
+      },
+      ['Blue'],
+      new Date('2026-11-01T00:00:00.000Z')
+    )!;
+    expect(series.start.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(series.teams[0].points).toEqual([0, 1, 0]);
   });
 });

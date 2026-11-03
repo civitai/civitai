@@ -23,6 +23,7 @@ vi.mock('~/components/Notifications/PushRegistrationManager', () => ({
   PushRegistrationManager: () => null,
 }));
 // renderToString reads a zustand store's INITIAL state, so setState can't open the panel.
+vi.mock('~/components/Notifications/PushOptInPrompt', () => ({ PushOptInPrompt: () => null }));
 vi.mock('~/store/generation-panel.store', async (importOriginal) => ({
   ...(await importOriginal<typeof GenerationPanelStore>()),
   useGenerationPanelStore: (select: (s: { opened: boolean }) => unknown) =>
