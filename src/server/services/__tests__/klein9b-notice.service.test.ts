@@ -26,7 +26,6 @@ vi.mock('~/server/email/templates/klein9bNotice.email', async (importOriginal) =
 vi.mock('~/server/notifications/client', () => ({
   notifications: { createNotification: createNotificationMock },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
 const version = (over: Partial<Klein9bVersionRow>): Klein9bVersionRow => ({
   userId: 1,
