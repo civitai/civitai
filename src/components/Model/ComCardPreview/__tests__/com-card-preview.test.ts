@@ -7,20 +7,27 @@ import {
 } from '~/components/Model/ComCardPreview/com-card-preview';
 
 const viewer = { isOwnerOrModerator: false, onComSite: false };
+// What an owner with mature content on is sent: the .red pair plus the stored .com pair.
+const redPayload = {
+  name: 'Red title',
+  description: '<p>Red</p>',
+  sfwName: 'Com title',
+  sfwDescription: '<p>Com</p>',
+};
 const ownerOrMod = { isOwnerOrModerator: true, onComSite: false };
 
 describe('civitai.com card preview', () => {
   it('never offers a viewer who is neither owner nor moderator the toggle or the link', () => {
     for (const onComSite of [false, true]) {
-      expect(canPreviewComCard({ ...viewer, onComSite }, 'Com title')).toBe(false);
+      expect(canPreviewComCard({ ...viewer, onComSite }, redPayload)).toBe(false);
       expect(canLinkToRedCard({ ...viewer, onComSite }, 'Com title')).toBe(false);
     }
   });
 
   it('offers the owner or a moderator the toggle on civitai.red and the link on civitai.com', () => {
-    expect(canPreviewComCard(ownerOrMod, 'Com title')).toBe(true);
+    expect(canPreviewComCard(ownerOrMod, redPayload)).toBe(true);
     expect(canLinkToRedCard(ownerOrMod, 'Com title')).toBe(false);
-    expect(canPreviewComCard({ ...ownerOrMod, onComSite: true }, 'Com title')).toBe(false);
+    expect(canPreviewComCard({ ...ownerOrMod, onComSite: true }, redPayload)).toBe(false);
     expect(canLinkToRedCard({ ...ownerOrMod, onComSite: true }, 'Com title')).toBe(true);
   });
 
@@ -28,7 +35,7 @@ describe('civitai.com card preview', () => {
     const mod = getCardViewer({ id: 20, isModerator: true }, 10, true);
     expect(canLinkToRedCard(mod, 'Com title')).toBe(true);
     expect(
-      canPreviewComCard(getCardViewer({ id: 20, isModerator: true }, 10, false), 'Com title')
+      canPreviewComCard(getCardViewer({ id: 20, isModerator: true }, 10, false), redPayload)
     ).toBe(true);
   });
 
@@ -39,8 +46,13 @@ describe('civitai.com card preview', () => {
     expect(getCardViewer({ id: 30 }, undefined, false).isOwnerOrModerator).toBe(false);
   });
 
+  it('offers no switch when the page is already showing the civitai.com card', () => {
+    const comPayload = { ...redPayload, name: 'Com title', description: '<p>Com</p>' };
+    expect(canPreviewComCard(ownerOrMod, comPayload)).toBe(false);
+  });
+
   it('offers neither on a model with no civitai.com card', () => {
-    expect(canPreviewComCard(ownerOrMod, null)).toBe(false);
+    expect(canPreviewComCard(ownerOrMod, { ...redPayload, sfwName: null })).toBe(false);
     expect(canLinkToRedCard({ ...ownerOrMod, onComSite: true }, null)).toBe(false);
   });
 

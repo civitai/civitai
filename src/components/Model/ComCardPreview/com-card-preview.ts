@@ -11,11 +11,22 @@ export function getCardViewer(
   };
 }
 
+type CardPair = {
+  name: string;
+  description?: string | null;
+  sfwName?: string | null;
+  sfwDescription?: string | null;
+};
+
 export function canPreviewComCard(
   { isOwnerOrModerator, onComSite }: CardViewer,
-  sfwName: string | null | undefined
+  model: CardPair | undefined
 ) {
-  return isOwnerOrModerator && !onComSite && sfwName != null;
+  if (!isOwnerOrModerator || onComSite || model?.sfwName == null) return false;
+  // A viewer without mature content is already served the .com card, so there is nothing to swap.
+  return (
+    model.name !== model.sfwName || (model.description ?? null) !== (model.sfwDescription ?? null)
+  );
 }
 
 export function canLinkToRedCard(

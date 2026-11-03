@@ -472,7 +472,7 @@ export default function ModelDetailsV2({
   const [previewedModelId, setPreviewedModelId] = useState<number>();
   const previewComCard = previewedModelId === id;
   const setPreviewComCard = (on: boolean) => setPreviewedModelId(on ? id : undefined);
-  const showComCardToggle = canPreviewComCard(cardViewer, storedModel?.sfwName);
+  const showComCardToggle = canPreviewComCard(cardViewer, storedModel);
   const showRedCardLink = canLinkToRedCard(cardViewer, storedModel?.sfwName);
   const model = useMemo(
     () =>
@@ -1211,7 +1211,7 @@ export default function ModelDetailsV2({
                                 source: {
                                   type: UserHubSourceType.Model,
                                   targetId: model.id,
-                                  alias: model.name,
+                                  alias: storedModel?.name ?? model.name,
                                 },
                               },
                             })
