@@ -82,13 +82,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
-import { act, type ReactNode } from 'react';
+import { act } from 'react';
 import { cleanup } from 'vitest-browser-react';
 import { TurfSummaryProvider, useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 let latest: ReturnType<typeof useTurfFeed> = null;
-function Probe(): ReactNode {
+function Probe() {
   latest = useTurfFeed();
   return <span data-testid="probe">{latest ? 'on' : 'off'}</span>;
 }
