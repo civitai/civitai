@@ -49,9 +49,12 @@ import { userUpdateCounter } from '~/server/prom/client';
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
 
-// Stamped on `cancellation_details.comment` when a ban / restriction flow schedules a cancel, so
-// reinstateSubscription can tell our cancellation from the member's own.
+// A label on `cancellation_details.comment` for people reading the subscription. It decides nothing:
+// Stripe keeps the comment through later updates, and the billing portal's survey writes there too.
 const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
+// The `canceled_at` of the cancel a ban / restriction flow made. reinstateSubscription resumes only
+// while it matches: a member's own later cancel gets a new `canceled_at`.
+const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
 // A gift subscription's own `cancel_at` (the end of all its gifted months), saved when a moderation
 // cancel cuts it to the current period so a reinstate can put it back.
 const MODERATION_PREV_CANCEL_AT = 'civitai_moderation_prev_cancel_at';
@@ -1382,16 +1385,23 @@ export const cancelSubscription = async ({
 
   if (atPeriodEnd) {
     // A cancellation already due by period end is the member's own (or a gift's last month): leave
-    // it and don't stamp it, or reinstating would resume a membership they chose to end.
+    // it and don't mark it, or reinstating would resume a membership they chose to end.
     const live = await stripe.subscriptions.retrieve(subscriptionId);
     if (live.cancel_at_period_end) return;
     if (live.cancel_at && live.cancel_at <= live.current_period_end) return;
-    await stripe.subscriptions.update(subscriptionId, {
+    const cancelled = await stripe.subscriptions.update(subscriptionId, {
       cancel_at_period_end: true,
       cancellation_details: { comment: MODERATION_CANCELLATION },
       // Always written: a date left from an earlier cut would make reinstate treat this as a gift.
       metadata: { [MODERATION_PREV_CANCEL_AT]: live.cancel_at ? String(live.cancel_at) : '' },
     });
+    // canceled_at exists only once the cancel is written, hence a second update. If it fails, the
+    // cancel stands unmarked and is never resumed.
+    if (cancelled.canceled_at) {
+      await stripe.subscriptions.update(subscriptionId, {
+        metadata: { [MODERATION_CANCEL_MARK]: String(cancelled.canceled_at) },
+      });
+    }
     return;
   }
 
@@ -1411,8 +1421,8 @@ export const cancelSubscription = async ({
 };
 
 // Reverses a cancel_at_period_end cancellation that a ban / restriction flow made, once
-// the account is no longer banned or muted. A cancellation without our stamp stays: the
-// member's own, or one we made before the stamp existed (they renew themselves rather
+// the account is no longer banned or muted. A cancellation without our mark stays: the
+// member's own, or one we made before the mark existed (they renew themselves rather
 // than being billed against a cancel they may have chosen).
 export const reinstateSubscription = async ({ userId }: { userId: number }) => {
   const user = await dbWrite.user.findUnique({
@@ -1436,10 +1446,11 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
-  // Stripe's copy decides, not our row: the row lags the webhook and does not carry the stamp.
+  // Stripe's copy decides, not our row: the row lags the webhook and does not carry the mark.
   const live = await stripe.subscriptions.retrieve(subscription.id);
-  if (!live.cancel_at_period_end) return;
-  if (live.cancellation_details?.comment !== MODERATION_CANCELLATION) return;
+  if (!live.cancel_at_period_end || !live.canceled_at) return;
+  if (live.metadata?.[MODERATION_CANCEL_MARK] !== String(live.canceled_at)) return;
+  const unmark = { [MODERATION_CANCEL_MARK]: '', [MODERATION_PREV_CANCEL_AT]: '' };
 
   const prevCancelAt = Number(live.metadata?.[MODERATION_PREV_CANCEL_AT]);
   if (prevCancelAt) {
@@ -1448,15 +1459,16 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
     await stripe.subscriptions.update(subscription.id, {
       cancel_at: prevCancelAt,
       proration_behavior: 'none',
-      // Stripe keeps the comment through a cancel_at change; left, it would mark the gift's own
-      // last-period cancel as ours, and a later reinstate would renew the gift into paid.
-      cancellation_details: { comment: '' },
-      metadata: { [MODERATION_PREV_CANCEL_AT]: '' },
+      // Unmarked, the gift's own last-period cancel (cap true) is never resumed into paid.
+      metadata: unmark,
     });
     return;
   }
 
-  await stripe.subscriptions.update(subscription.id, { cancel_at_period_end: false });
+  await stripe.subscriptions.update(subscription.id, {
+    cancel_at_period_end: false,
+    metadata: unmark,
+  });
 };
 
 // NOTE: The Price rows returned here are the source of truth for the buzz

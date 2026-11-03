@@ -13,6 +13,7 @@ type FakeSub = {
   status: string;
   cancel_at_period_end: boolean;
   cancel_at: number | null;
+  canceled_at: number | null;
   current_period_end: number;
   metadata: Record<string, string>;
   cancellation_details: { comment: string | null; reason: string | null } | null;
@@ -25,22 +26,25 @@ type UpdateParams = {
   metadata?: Record<string, string>;
 };
 
-const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
+const { subs, retrieve, update, PERIOD_END, nextCancelTime } = vi.hoisted(() => {
   const PERIOD_END = Math.floor(Date.now() / 1000) + 30 * 86_400;
   const subs = new Map<string, FakeSub>();
+  let clock = PERIOD_END - 20 * 86_400;
+  const nextCancelTime = () => (clock += 60);
   return {
     PERIOD_END,
     subs,
+    nextCancelTime,
     retrieve: vi.fn(async (id: string) => {
       const sub = subs.get(id);
       if (!sub) throw new Error(`No such subscription: ${id}`);
       return structuredClone(sub);
     }),
-    // Mirrors Stripe (classic billing mode) for the fields under test: cancel_at_period_end:true
-    // sets cancel_at to the period end, replacing any earlier cancel_at, and records the
-    // cancellation with whatever comment came with it; clearing it clears both. A cancel_at past
-    // the period end leaves cancel_at_period_end false and keeps the comment unless one is sent
-    // ('' clears it). Metadata merges, '' unsets a key.
+    // Mirrors Stripe (classic billing mode) for the fields under test, as checked in test mode:
+    // cancel_at_period_end:true sets cancel_at to the period end, replacing any earlier cancel_at,
+    // stamps a new canceled_at and records the comment sent with it; false clears all three. A
+    // cancel_at past the period end leaves cancel_at_period_end false and keeps the comment and
+    // canceled_at; a comment sent with it is ignored. Metadata merges, '' unsets a key.
     update: vi.fn(async (id: string, params: UpdateParams) => {
       const sub = subs.get(id)!;
       if (params.metadata) {
@@ -56,6 +60,7 @@ const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
       if (params.cancel_at_period_end === true) {
         sub.cancel_at_period_end = true;
         sub.cancel_at = sub.current_period_end;
+        sub.canceled_at = nextCancelTime();
         sub.cancellation_details = {
           comment: params.cancellation_details?.comment ?? null,
           reason: 'cancellation_requested',
@@ -63,12 +68,8 @@ const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
       } else if (params.cancel_at_period_end === false) {
         sub.cancel_at_period_end = false;
         sub.cancel_at = null;
+        sub.canceled_at = null;
         sub.cancellation_details = { comment: null, reason: null };
-      } else if (params.cancellation_details?.comment !== undefined) {
-        sub.cancellation_details = {
-          reason: sub.cancellation_details?.reason ?? null,
-          comment: params.cancellation_details.comment || null,
-        };
       }
       return structuredClone(sub);
     }),
@@ -104,6 +105,7 @@ const activeSub = (overrides: Partial<FakeSub> = {}) => {
     status: 'active',
     cancel_at_period_end: false,
     cancel_at: null,
+    canceled_at: null,
     current_period_end: PERIOD_END,
     metadata: {},
     cancellation_details: null,
@@ -113,18 +115,20 @@ const activeSub = (overrides: Partial<FakeSub> = {}) => {
 };
 
 /** What the Stripe billing portal leaves behind when the member cancels and answers its survey. */
-const memberCancels = () => {
+const memberCancels = (comment = 'too expensive') => {
   const sub = subs.get(SUB_ID)!;
   sub.cancel_at_period_end = true;
   sub.cancel_at = PERIOD_END;
-  sub.cancellation_details = { comment: 'too expensive', reason: 'cancellation_requested' };
+  sub.canceled_at = nextCancelTime();
+  sub.cancellation_details = { comment, reason: 'cancellation_requested' };
 };
 
-/** "Keep my membership": clears the cancel; Stripe drops the cancellation details, not metadata. */
+/** Renewing in the portal, or "Keep my membership": Stripe drops the cancel, not our metadata. */
 const memberKeeps = () => {
   const sub = subs.get(SUB_ID)!;
   sub.cancel_at_period_end = false;
   sub.cancel_at = null;
+  sub.canceled_at = null;
   sub.cancellation_details = { comment: null, reason: null };
 };
 
@@ -257,10 +261,29 @@ describe('moderation cancel, then reinstate', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('does not resume an unstamped cancellation (made before the stamp existed)', async () => {
+  it("leaves a member's own re-cancel alone after they renewed out of our cancel", async () => {
+    activeSub();
+    account.bannedAt = new Date();
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    memberKeeps();
+    // Worst case for the comment: the portal leaves our label in place on the new cancel.
+    memberCancels('civitai-moderation-cancel');
+
+    account.bannedAt = null;
+    await reinstateSubscription({ userId: USER_ID });
+
+    expect(resumed()).toBe(false);
+  });
+
+  it('does not resume an unmarked cancellation (made before the mark existed)', async () => {
     activeSub({
       cancel_at_period_end: true,
-      cancellation_details: { comment: null, reason: 'cancellation_requested' },
+      cancel_at: PERIOD_END,
+      canceled_at: PERIOD_END - 86_400,
+      cancellation_details: {
+        comment: 'civitai-moderation-cancel',
+        reason: 'cancellation_requested',
+      },
     });
 
     await reinstateSubscription({ userId: USER_ID });
@@ -270,7 +293,7 @@ describe('moderation cancel, then reinstate', () => {
 });
 
 describe('reinstateSubscription reads Stripe, not our row', () => {
-  it('resumes a stamped cancel our row has not caught up with yet', async () => {
+  it('resumes a marked cancel our row has not caught up with yet', async () => {
     activeSub();
     await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
     // The webhook that copies cancel_at_period_end onto our row has not landed.
@@ -285,14 +308,14 @@ describe('reinstateSubscription reads Stripe, not our row', () => {
 });
 
 describe('reinstateSubscription guards', () => {
-  const stampedCancel = async () => {
+  const markedCancel = async () => {
     activeSub();
     await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
     update.mockClear();
   };
 
   it('does not resume while the account is still banned', async () => {
-    await stampedCancel();
+    await markedCancel();
     account.bannedAt = new Date();
 
     await reinstateSubscription({ userId: USER_ID });
@@ -301,7 +324,7 @@ describe('reinstateSubscription guards', () => {
   });
 
   it('does not resume while the account is still muted', async () => {
-    await stampedCancel();
+    await markedCancel();
     account.muted = true;
 
     await reinstateSubscription({ userId: USER_ID });
@@ -310,7 +333,7 @@ describe('reinstateSubscription guards', () => {
   });
 
   it('fails closed when Stripe cannot be read', async () => {
-    await stampedCancel();
+    await markedCancel();
     retrieve.mockRejectedValueOnce(new Error('stripe down'));
 
     await expect(reinstateSubscription({ userId: USER_ID })).rejects.toThrow('stripe down');
@@ -320,12 +343,11 @@ describe('reinstateSubscription guards', () => {
 });
 
 describe('cancelSubscription({ atPeriodEnd })', () => {
-  it('stamps the cancellation it writes', async () => {
+  it('labels the cancellation it writes for people reading it in Stripe', async () => {
     activeSub();
 
     await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
 
-    expect(update).toHaveBeenCalledTimes(1);
     expect(subs.get(SUB_ID)!.cancellation_details?.comment).toBeTruthy();
   });
 
