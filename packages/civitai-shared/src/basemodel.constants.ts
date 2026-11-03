@@ -2466,6 +2466,8 @@ export const supportOverrides: SupportOverride[] = [
   // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
   // separately, so this is per base model, never per ecosystem.
   { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
+  // An API model with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
+  { baseModelId: BM.Ideogram45, supportType: 'generation', modelTypes: ['Checkpoint'] },
 ];
 
 // =============================================================================
@@ -4659,9 +4661,8 @@ export function getCompatibleBaseModels(
     const modelEcosystem = ecosystemById.get(model.ecosystemId);
     if (!modelEcosystem) continue;
 
-    // Check if this model's ecosystem supports the model type for generation
-    const support = getEcosystemSupport(model.ecosystemId, 'generation');
-    if (!support || support.disabled || !support.modelTypes.includes(modelType)) continue;
+    // Per base model: an override can switch one off without its ecosystem (Ideogram 4.0).
+    if (!isModelSupported(model.id, 'generation', modelType)) continue;
 
     // Get support level
     const supportLevel = getGenerationSupport(ecosystemId, model.ecosystemId, modelType);
