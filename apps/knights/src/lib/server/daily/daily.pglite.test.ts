@@ -36,7 +36,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsPlayer","KnightsPlayerDay" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsPlayer","KnightsPlayerDay" RESTART IDENTITY CASCADE`
   );
 });
 

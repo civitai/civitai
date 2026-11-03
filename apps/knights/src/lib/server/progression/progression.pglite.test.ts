@@ -74,7 +74,7 @@ beforeEach(async () => {
   mirrorXp.mockResolvedValue(undefined);
   await pg.exec(`ALTER TABLE "NewOrderPlayer" DROP CONSTRAINT IF EXISTS no_gold`);
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 

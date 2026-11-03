@@ -11,7 +11,7 @@ export const PROGRESSION = {
   fervorAccuracyFloor: 0.1,
 } as const;
 
-/** Acolyte (Trials) and Inquisitor (moderators) are deliberately not on the ladder. */
+/** Acolyte (apprenticeship) and Inquisitor (moderators) are deliberately not on the ladder. */
 export const RANK_LADDER = [
   { rank: 'Knight', fromLevel: 1, accuracyBar: 0.7 },
   { rank: 'Templar', fromLevel: 21, accuracyBar: 0.8 },

@@ -3,13 +3,13 @@ import { DAILY } from './daily/config';
 import { RANK_LADDER } from './progression/config';
 import { rulesFacts } from './rules';
 import { SMITES } from './smites/config';
-import { TRIALS } from './trials/config';
+import { APPRENTICE } from './apprenticeship/config';
 
 describe('rulesFacts', () => {
   it('quotes the numbers the game runs on', () => {
     const facts = rulesFacts(5);
-    expect(facts.trials.length).toBe(TRIALS.runLength);
-    expect(facts.trials.passPercent).toBe(TRIALS.passMark * 100);
+    expect(facts.apprenticeship.knightLevel).toBe(APPRENTICE.knightLevel);
+    expect(facts.apprenticeship.accuracyPercent).toBe(APPRENTICE.accuracyBar * 100);
     expect(facts.watch.size).toBe(DAILY.watchSize);
     expect(facts.ranks.map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));
   });

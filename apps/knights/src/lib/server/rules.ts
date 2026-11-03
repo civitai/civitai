@@ -3,7 +3,7 @@ import { DAILY, streakBonusGold } from './daily/config';
 import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { SMITES } from './smites/config';
-import { TRIALS } from './trials/config';
+import { APPRENTICE } from './apprenticeship/config';
 
 const RATING_GUIDE_LEVELS = [
   NsfwLevel.PG,
@@ -26,10 +26,12 @@ export function ratingGuide() {
 /** Numbers the rules page quotes, read from the game's config. */
 export function rulesFacts(yesNoJudges: number) {
   return {
-    trials: {
-      length: TRIALS.runLength,
-      passPercent: Math.round(TRIALS.passMark * 100),
-      cooldownHours: TRIALS.cooldownHours,
+    apprenticeship: {
+      xpPerCorrect: APPRENTICE.xpPerCorrect,
+      knightLevel: APPRENTICE.knightLevel,
+      accuracyPercent: Math.round(APPRENTICE.accuracyBar * 100),
+      window: APPRENTICE.window,
+      checkpointEvery: APPRENTICE.checkpointEvery,
     },
     ranks: rankTable().map((r) => ({
       rank: r.rank,

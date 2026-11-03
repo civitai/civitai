@@ -33,17 +33,22 @@
   <div class="columns">
     <div class="col">
 <section>
-<h2>Acolyte Trials</h2>
+<h2>The Acolyte apprenticeship</h2>
 <ul>
   <li>
-    Everyone begins as an Acolyte. A Trial is a run of up to {facts.trials.length} images with known
-    answers; the first ones come with an explanation of why.
+    Everyone begins as an Acolyte. You practise on images and questions whose answers are known, so
+    every answer is checked, and each right answer earns {facts.apprenticeship.xpPerCorrect} XP.
   </li>
   <li>
-    Score {facts.trials.passPercent}% or more on the fresh images to become a Knight. If you fall
-    short you may try again after {facts.trials.cooldownHours} hours.
+    Reach level {facts.apprenticeship.knightLevel} with {facts.apprenticeship.accuracyPercent}%
+    accuracy over your last {facts.apprenticeship.window} answers and you become a Knight. If your
+    accuracy is a little short when you reach the level, carry on practising; nothing is lost.
   </li>
-  <li>An Acolyte's answers never decide anything, and earn no XP or gold.</li>
+  <li>
+    After every {facts.apprenticeship.checkpointEvery} answers a short recap shows how you did and
+    the ones you missed, with the right answers. An Acolyte's answers never decide anything and
+    earn no gold.
+  </li>
 </ul>
 </section>
 <section>
