@@ -20,9 +20,8 @@ export const fervorSince = (now: Date): Date =>
   new Date(now.getTime() - PROGRESSION.fervorWindowDays * DAY_MS);
 
 /**
- * Graded votes the player cast in the last `fervorWindowDays` that have since settled, no cap on how many. Excludes
- * inconclusive votes and votes cast before the player's `startAt` reset. Fervor is never stored: the shared
- * `NewOrderPlayer.fervor` column belongs to the original game's daily job.
+ * Graded, settled votes cast in the window, excluding inconclusive ones and anything before the player's `startAt`.
+ * Fervor is never stored: `NewOrderPlayer.fervor` belongs to the original game's daily job.
  */
 export async function fervorLedgerOf(db: Executor, playerId: number, now: Date): Promise<Ledger> {
   const totals = await db

@@ -1,4 +1,4 @@
-import { SKIP_STORE_TIMEOUT_MS, within } from './skips';
+import { REDIS_TIMEOUT_MS, within } from './redis-timeout';
 import type { Board } from './leaderboard';
 
 export type BoardStore = {
@@ -32,7 +32,7 @@ function parse(raw: string | null): Board | null {
  * serves as if empty. Concurrent callers in one process share one build; two instances may each build once, which is
  * one extra read a day.
  */
-export function createBoardCache(store: BoardStore, timeoutMs = SKIP_STORE_TIMEOUT_MS) {
+export function createBoardCache(store: BoardStore, timeoutMs = REDIS_TIMEOUT_MS) {
   let held: { key: string; board: Board } | undefined;
   const inFlight = new Map<string, Promise<Board>>();
 

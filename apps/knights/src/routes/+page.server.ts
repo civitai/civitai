@@ -12,7 +12,7 @@ import type { Actions, PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ locals }) => {
   const player = await db
     .selectFrom('NewOrderPlayer')
-    .select(['rankType', 'exp', 'fervor', 'startAt'])
+    .select(['rankType', 'exp', 'startAt'])
     .where('userId', '=', locals.user.id)
     .executeTakeFirst();
 

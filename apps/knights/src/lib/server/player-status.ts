@@ -40,7 +40,7 @@ export type PlayerStatus = {
 
 type Extras = {
   ledger?: Ledger;
-  /** Votes settled in the fervor window; fervor is not read from the accuracy ledger. */
+  /** Votes cast in the fervor window (not the accuracy ledger). */
   fervorLedger?: Ledger;
   goldPending?: number;
   goldEarned?: number;

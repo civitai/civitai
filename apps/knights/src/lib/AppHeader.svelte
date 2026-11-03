@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { afterNavigate } from '$app/navigation';
+  import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import { count } from './format';
   import { rankPill } from './chrome';
@@ -30,7 +31,6 @@
   } = $props();
 
   let open = $state(false);
-  let avatarFailed = $state(false);
   let wrapper = $state<HTMLElement>();
   let trigger = $state<HTMLButtonElement>();
   let panel = $state<HTMLElement>();
@@ -165,17 +165,7 @@
         bind:this={trigger}
         onclick={toggle}
       >
-        {#if player.avatarUrl && !avatarFailed}
-          <img
-            src={player.avatarUrl}
-            alt=""
-            width="28"
-            height="28"
-            onerror={() => (avatarFailed = true)}
-          />
-        {:else}
-          <span class="avatar" aria-hidden="true">{player.username[0].toUpperCase()}</span>
-        {/if}
+        <Avatar src={player.avatarUrl} name={player.username} size={28} />
         <span class="name">{player.username}</span>
       </button>
 
@@ -307,24 +297,6 @@
   .trigger:hover:not(:disabled) {
     background: none;
     color: var(--io-gold);
-  }
-  .trigger img,
-  .avatar {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border: 1px solid var(--io-gold);
-    border-radius: 50%;
-    background: var(--io-bg);
-  }
-  .trigger img {
-    object-fit: cover;
-  }
-  .avatar {
-    display: grid;
-    place-items: center;
-    color: var(--io-gold);
-    font: 700 13px/1 var(--io-font-display);
   }
   .name {
     max-width: 12rem;

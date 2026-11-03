@@ -1,5 +1,5 @@
 import { rankIndex } from './ranks';
-import { SKIP_STORE_TIMEOUT_MS, within } from './skips';
+import { REDIS_TIMEOUT_MS, within } from './redis-timeout';
 
 /** What the player has been shown: the rank and level they were last told about, and whether they dismissed the rating guide. */
 export type Seen = { rank: string; level: number; guide: boolean };
@@ -74,7 +74,7 @@ export async function readNotices(
   store: SeenStore,
   userId: number,
   now: Standing,
-  timeoutMs = SKIP_STORE_TIMEOUT_MS
+  timeoutMs = REDIS_TIMEOUT_MS
 ): Promise<{ guide: boolean; progress: ProgressNotice | null }> {
   try {
     const seen = await within(store.get(userId), timeoutMs);
@@ -118,7 +118,7 @@ export const dismissGuide = (
   store: SeenStore,
   userId: number,
   now: Standing,
-  timeoutMs = SKIP_STORE_TIMEOUT_MS
+  timeoutMs = REDIS_TIMEOUT_MS
 ) => update(store, userId, (seen) => ({ ...(seen ?? now), guide: true }), timeoutMs);
 
 /** Records the player's current standing as seen. False when it could not be stored. */
@@ -126,5 +126,5 @@ export const dismissProgress = (
   store: SeenStore,
   userId: number,
   now: Standing,
-  timeoutMs = SKIP_STORE_TIMEOUT_MS
+  timeoutMs = REDIS_TIMEOUT_MS
 ) => update(store, userId, (seen) => ({ ...now, guide: seen?.guide ?? false }), timeoutMs);

@@ -8,7 +8,7 @@ export const PROGRESSION = {
   baseGold: 100,
   /** Accuracy (and so rank) is over this many graded votes; it never decays with time. */
   accuracyWindow: 500,
-  /** Fervor counts the votes a player settled in this many days, with no cap on how many. */
+  /** Fervor counts votes cast in this many days (by createdAt), with no cap. */
   fervorWindowDays: 7,
   fervorPerCorrect: 100,
   fervorAccuracyFloor: 0.1,

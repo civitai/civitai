@@ -4,6 +4,7 @@ import { convertGold, type ConvertResult } from '$lib/server/conversion/convert'
 import { listRecentConversions } from '$lib/server/conversion/recent';
 import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { logToAxiom } from '$lib/server/axiom';
+import { count } from '$lib/format';
 import { db } from '$lib/server/db';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import type { Actions, PageServerLoad } from './$types';
@@ -82,7 +83,7 @@ export const actions: Actions = {
     return {
       ok: true,
       converted: result.buzz,
-      message: `Converted ${result.gold.toLocaleString('en-US')} gold into ${result.buzz} Buzz.`,
+      message: `Converted ${count(result.gold)} gold into ${result.buzz} Buzz.`,
     };
   },
 };
