@@ -6,7 +6,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // it — which is exactly how these media-type assertions first went green against unchanged
 // production code.
 import { respondWithRows } from '~/test-utils/queryRawProjection';
-import type * as RedisClientModule from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -25,18 +24,21 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * which never selects `type`/`mimeType`.
  */
 
-const { store,  } = vi.hoisted(() => ({
+const { store } = vi.hoisted(() => ({
   store: new Map<string, unknown>(),
-  
 }));
 const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
 const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
 
-// Keep the real REDIS_KEYS (so the key prefix matches the real one) and swap only the client.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClientModule>();
+// Keep the real REDIS_KEYS (so the key prefix matches the real one) and swap only the clients.
+// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
+// the global mock in src/__tests__/setup.ts.
+vi.mock('~/server/redis/client', async () => {
+  const { redisMock } = await import('~/__tests__/mocks/redis.mock');
   return {
-    ...actual,
+    ...(await import('@civitai/redis/client')),
+    ...(await import('~/server/redis/sys-read-deadline')),
+    sysRedis: redisMock.sysRedis,
     redis: {
       del: vi.fn(async (key: string) => (store.delete(key), 1)),
       packed: {

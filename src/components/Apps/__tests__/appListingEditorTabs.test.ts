@@ -853,3 +853,33 @@ describe('🔴 the shared AUTHORABLE set was not widened to make the repair stat
     }
   });
 });
+
+describe('a moderator on a listing they hold no seat on gets the content tabs only', () => {
+  it('on-site, live, with feedback: Details, Media and History — nothing owner- or money-shaped', () => {
+    expect(
+      editorTabsFor({
+        kind: 'onsite',
+        appBlockId: 'ab_1',
+        role: 'moderator',
+        status: 'approved',
+        capabilities: onsite,
+        lastModerationAction: null,
+        hasFeedback: true,
+      })
+    ).toEqual(['details', 'media', 'history']);
+  });
+
+  it('off-site draft: Details and History', () => {
+    expect(
+      editorTabsFor({
+        kind: 'offsite',
+        appBlockId: null,
+        role: 'moderator',
+        status: 'draft',
+        capabilities: offsite,
+        lastModerationAction: null,
+        hasFeedback: false,
+      })
+    ).toEqual(['details', 'history']);
+  });
+});

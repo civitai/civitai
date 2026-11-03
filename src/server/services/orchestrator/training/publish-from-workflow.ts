@@ -528,6 +528,8 @@ export async function assertTrainingSourcePublishable({
   if (meta?.trainingStudioModerationApproved === true) return;
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
+    // Someone else's run, e.g. a moderator publishing it: the owner's restriction is not theirs.
+    allowRestricted: callerId !== ownerId,
   });
   let workflow: Workflow;
   try {
@@ -566,6 +568,7 @@ export async function stampWorkflowPublished({
   try {
     const token = await getOrchestratorToken(ownerId, undefined, {
       bypassCache: callerId !== ownerId,
+      allowRestricted: callerId !== ownerId,
     });
     const workflow = await getWorkflow({ token, path: { workflowId } });
     const metadata = {

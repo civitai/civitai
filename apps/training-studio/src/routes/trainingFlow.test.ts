@@ -4,6 +4,7 @@ import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
   buildTrainingRuns,
+  stampMature,
   captionTriggerHit,
   compareFileNames,
   defaultRunParams,
@@ -411,5 +412,25 @@ describe('optimizer learning-rate coupling', () => {
     const r = run('sdxl');
     const params = { ...defaultRunParams(r), optimizer: 'Adafactor', unetLr: '0.0002' };
     expect(optimizerLrParams(r, params).unetLr).toBe('0.0002');
+  });
+});
+
+describe('stampMature', () => {
+  const run = { meta: { name: 'a' }, currencies: ['blue'] } as unknown as Parameters<
+    typeof stampMature
+  >[0][number];
+
+  it('puts one confirm and the mature count on every run of a sweep', () => {
+    const out = stampMature([run, { ...run, meta: { name: 'b' } }], true, 3);
+    expect(out.map((r) => [r.matureAck, r.meta.matureCount, r.meta.name])).toEqual([
+      [true, 3, 'a'],
+      [true, 3, 'b'],
+    ]);
+  });
+
+  it('sends no confirm when the user gave none, but still stamps the count', () => {
+    const [out] = stampMature([run], false, 2);
+    expect('matureAck' in out!).toBe(false);
+    expect(out!.meta.matureCount).toBe(2);
   });
 });

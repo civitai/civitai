@@ -1,4 +1,5 @@
 import { chunk } from 'lodash-es';
+import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import type { EventScoring } from '~/server/events/base.event';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
@@ -13,6 +14,8 @@ import {
   hatField,
   LIVE_BUCKET_MS,
   parseHatField,
+  utcDay,
+  TEAM_HOURS_CUT_FIELD,
   type EventPointSeason,
   type TotalScope,
 } from '~/server/events/points/keys';
@@ -23,6 +26,9 @@ import {
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { teamAwardsBy } from '~/server/events/scoring/team-awards';
+import type { TeamAward } from '~/server/events/base.event';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Settle only up to a bucket boundary this far back, so ledger rows still in ClickHouse's async
@@ -57,6 +63,8 @@ export type RefereeRow = {
   stickers: number;
   remixes: number;
   modelLikes: number;
+  // UTC hour (0-23) -> points granted in it.
+  hours: Record<number, number>;
 };
 
 const startOfUtcDay = (time: Date) =>
@@ -245,10 +253,11 @@ export async function queryReferee(event: RefereeEvent, window: Window) {
     stickers: Number(r.stickers),
     remixes: Number(r.remixes),
     modelLikes: Number(r.modelLikes),
+    hours: Object.fromEntries(
+      Object.entries(r.hours ?? {}).map(([hour, points]) => [Number(hour), Number(points)])
+    ),
   }));
 }
-
-const isoDay = (time: Date) => time.toISOString().slice(0, 10);
 
 // The durable record: one row per hat per day, which the standings, the winner and the per-hat
 // counts read. Recomputing a day replaces it, so a rerun never double counts. Days before
@@ -258,7 +267,7 @@ async function writeDailySnapshot(event: RefereeEvent, window: Window, rows: Ref
     dbWrite.$executeRaw`
       DELETE FROM "EventCosmeticScoreDaily"
       WHERE event = ${event.name}
-        AND day >= ${isoDay(window.recomputeFrom)}::date AND day <= ${isoDay(window.cut)}::date
+        AND day >= ${utcDay(window.recomputeFrom)}::date AND day <= ${utcDay(window.cut)}::date
     `,
     ...chunk(rows, 5000).map(
       (part) => dbWrite.$executeRaw`
@@ -311,9 +320,44 @@ async function finalDayTotals(event: RefereeEvent, window: Window) {
       sum(remixes)::int AS remixes, sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
     WHERE event = ${event.name}
-      AND day >= ${isoDay(window.start)}::date AND day < ${isoDay(window.recomputeFrom)}::date
+      AND day >= ${utcDay(window.start)}::date AND day < ${utcDay(window.recomputeFrom)}::date
     GROUP BY "userId", "cosmeticId", "claimKey"
   `;
+}
+
+// Every day the run recomputed, empty days included, so a day that lost all its points is cleared.
+export function teamHoursByDay(
+  window: Pick<Window, 'recomputeFrom' | 'cut'>,
+  rows: Pick<RefereeRow, 'day' | 'team' | 'hours'>[],
+  awards: readonly TeamAward[] = []
+) {
+  const days = new Map<string, Record<string, number[]>>();
+  for (
+    let t = startOfUtcDay(window.recomputeFrom).getTime();
+    t <= window.cut.getTime();
+    t += DAY_MS
+  )
+    days.set(utcDay(new Date(t)), {});
+  const awarded = awards.map(({ team, points, at }) => ({
+    day: utcDay(at),
+    team,
+    hours: { [at.getUTCHours()]: points },
+  }));
+  for (const { day, team, hours } of [...rows, ...awarded]) {
+    const teams = days.get(day);
+    if (!teams) continue;
+    const byHour = (teams[team] ??= new Array<number>(24).fill(0));
+    for (const [hour, points] of Object.entries(hours)) byHour[Number(hour)] += points;
+  }
+  return days;
+}
+
+async function writeTeamHours(event: RefereeEvent, window: Window, rows: RefereeRow[]) {
+  const days = teamHoursByDay(window, rows, teamAwardsBy(event, window.cut));
+  await sysRedis.hSet(eventSeasonKeys(event.name, 'live').teamHours, {
+    ...Object.fromEntries([...days].map(([day, teams]) => [day, JSON.stringify(teams)])),
+    [TEAM_HOURS_CUT_FIELD]: window.cut.toISOString(),
+  });
 }
 
 export type RefereeRedis = Pick<typeof sysRedis, 'get' | 'hGetAll' | 'del' | 'hSet' | 'multi'>;
@@ -377,13 +421,11 @@ export async function runEventPointsReferee(
   const rows = await queryReferee(event, window);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
-  const changed = await resetLiveBase(
-    sysRedis,
-    event,
-    season,
-    window.cut,
-    refereeTotals([...final, ...rows])
-  );
+  const totals = refereeTotals([...final, ...rows]);
+  // A preview's cut never passes the start, so no award reaches its base.
+  for (const { team, points } of teamAwardsBy(event, window.cut))
+    totals.team.set(team, (totals.team.get(team) ?? 0) + points);
+  const changed = await resetLiveBase(sysRedis, event, season, window.cut, totals);
   // This runs in a job: its corrections go out before it returns, not on a later window, except the
   // team totals while another server holds their push lease: this server retries those on its own
   // timer a window later, so it relies on the job running in a long-lived app process. A season's
@@ -394,10 +436,18 @@ export async function runEventPointsReferee(
   if (season === eventPointSeason(event.startDate, now) && changed.length) {
     for (const field of changed) {
       const hat = parseHatField(field);
+      // Turf credits have no live hat bucket, so every one reads as changed here, and none has a hat
+      // card on screen: marking them would crowd real hats out of the dirty set.
+      if (hat?.claimKey === TURF_CLAIM_KEY) continue;
       if (!hat || !markEventPointsDirty(event, hat, now)) unpushed++;
     }
     await drainEventPointsPush();
   }
+  // Feeds only the chart: a failed write must not fail a settle that has already landed.
+  if (season === 'live')
+    await writeTeamHours(event, window, rows).catch((error) =>
+      logSysRedisFailOpen('write-degraded', 'writeTeamHours', error, { event: event.name })
+    );
   return {
     season,
     rows: rows.length,

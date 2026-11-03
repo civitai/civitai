@@ -226,7 +226,7 @@ export function CommentContent({
         {concealed ? (
           <HiddenCommentAvatar size={26} />
         ) : (
-          <UserAvatar user={comment.user} size="sm" linkToProfile />
+          <UserAvatar user={comment.user} size="sm" linkToProfile withShowcaseHat />
         )}
       </Group>
 

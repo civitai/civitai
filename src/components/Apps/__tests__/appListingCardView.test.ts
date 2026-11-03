@@ -587,14 +587,17 @@ describe('the card geometry module', () => {
    * docblock NAMING the retired `CreatorChip` and explaining where attribution went.
    * An unstripped scan would read that prose and report the component present.
    */
-  it('🔴 the card shows its creator in the footer, linking to their profile', () => {
+  it('🔴 the card shows its creator in the footer through the shared avatar, linked to their profile', () => {
     const code = cardCode();
     expect(code, 'the stripper ate the component itself').toContain(
       'export function AppListingCard'
     );
     // The byline is right-aligned in the footer.
     expect(code).toContain('apps-listing-card-creator');
-    expect(code).toContain('/user/');
+    // The profile link and the hover card belong to the shared `UserAvatar`; the card must hand it
+    // the creator and ask for the link.
+    expect(code).toContain('<UserAvatar');
+    expect(code).toContain('linkToProfile');
     expect(code).toContain('card.creator');
     // The footer renders the creator inline, not through the detail page's chip.
     expect(code).not.toContain('CreatorChip');
