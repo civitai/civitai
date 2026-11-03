@@ -184,18 +184,23 @@ function drawnRect(fit: 'contain' | 'cover', [nw, nh]: [number, number]) {
   return { left: (CARD.width - width) / 2, top: (CARD.height - height) / 2, width, height };
 }
 
-async function dragTo(px: number, py: number) {
+// Re-sends the move until the layer has re-measured and the draft has landed: a single dispatch
+// can arrive before the layer has measured the picture and be dropped.
+async function dragTo(px: number, py: number, landed: () => boolean) {
   await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-  const frame = q('frame')!.getBoundingClientRect();
-  q('hat-turf-draft')!.dispatchEvent(
-    new PointerEvent('pointermove', {
-      bubbles: true,
-      buttons: 1,
-      pointerType: 'mouse',
-      clientX: frame.left + px,
-      clientY: frame.top + py,
-    })
-  );
+  await vi.waitFor(() => {
+    const frame = q('frame')!.getBoundingClientRect();
+    q('hat-turf-draft')!.dispatchEvent(
+      new PointerEvent('pointermove', {
+        bubbles: true,
+        buttons: 1,
+        pointerType: 'mouse',
+        clientX: frame.left + px,
+        clientY: frame.top + py,
+      })
+    );
+    expect(landed()).toBe(true);
+  });
 }
 
 const savedSpot = () => {
@@ -215,8 +220,11 @@ describe('hat placement against the drawn picture', () => {
     renderPicture('contain', [400, 100]);
     const rect = drawnRect('contain', [400, 100]);
     // A quarter of the way across the picture and a fifth of the way down it.
-    await dragTo(rect.left + rect.width * 0.25, rect.top + rect.height * 0.2);
-    await vi.waitFor(() => expect(q('hat-turf-draft')!.style.left).toBe('25%'));
+    await dragTo(
+      rect.left + rect.width * 0.25,
+      rect.top + rect.height * 0.2,
+      () => q('hat-turf-draft')!.style.left === '25%'
+    );
     const spot = savedSpot();
     expect(spot.x).toBeCloseTo(0.25, 2);
     expect(spot.y).toBeCloseTo(0.2, 2);
@@ -231,9 +239,8 @@ describe('hat placement against the drawn picture', () => {
     renderPicture('cover', [100, 400]);
     const rect = drawnRect('cover', [100, 400]);
     // The picture is far taller than the card; the pointer is dragged out past the card's top edge.
-    await dragTo(CARD.width / 2, -30);
     // The drag was applied (the draft left its starting spot) before anything is asserted about it.
-    await vi.waitFor(() => expect(q('hat-turf-draft')!.style.top).not.toBe('50%'));
+    await dragTo(CARD.width / 2, -30, () => q('hat-turf-draft')!.style.top !== '50%');
     const frame = q('frame')!.getBoundingClientRect();
     await vi.waitFor(() => {
       const hat = q('hat-turf-draft')!.getBoundingClientRect();

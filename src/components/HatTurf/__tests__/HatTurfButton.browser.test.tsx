@@ -272,7 +272,7 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(h.invalidate).toHaveBeenCalled();
   });
 
-  test('the draft hat can be placed from the keyboard', async () => {
+  test('the draft hat moves with the arrow keys', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
