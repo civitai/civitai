@@ -5218,6 +5218,19 @@ export interface KnightsTrialAnswer {
   createdAt: Date;
 }
 
+export interface KnightsApprenticeAnswer {
+  id: number;
+  playerId: number;
+  referenceId: number | null;
+  yesNoReferenceId: number | null;
+  answer: string;
+  correctAnswer: string;
+  correct: boolean;
+  xp: number;
+  createdAt: Date;
+  checkpointSeenAt: Date | null;
+}
+
 export interface KnightsHarvestCursor {
   name: string;
   lastActivityId: number;

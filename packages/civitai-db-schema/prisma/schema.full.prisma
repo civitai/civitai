@@ -8234,6 +8234,22 @@ model KnightsTrialAnswer {
   @@index([referenceId])
 }
 
+/// One graded Acolyte apprenticeship answer, to a rating reference image (`referenceId`) or a yes/no reference pair (`yesNoReferenceId`); exactly one is set. `correctAnswer` is the answer as it stood when given, `xp` what it paid, `checkpointSeenAt` is set on the answer that closed a checkpoint once the player moved past its recap. The foreign keys, the one-of check and the partial unique indexes (no repeats per player) live in the migration only.
+model KnightsApprenticeAnswer {
+  id               Int       @id @default(autoincrement())
+  playerId         Int
+  referenceId      Int?
+  yesNoReferenceId Int?
+  answer           String
+  correctAnswer    String
+  correct          Boolean
+  xp               Int       @default(0)
+  createdAt        DateTime  @default(now())
+  checkpointSeenAt DateTime?
+
+  @@index([playerId, id])
+}
+
 /// Where a harvest job stopped reading `ModActivity`.
 model KnightsHarvestCursor {
   name           String   @id

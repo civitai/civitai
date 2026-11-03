@@ -17,7 +17,7 @@
   <li class="card" class:mine={current === 'Acolyte'}>
     <RankEmblem rank="Acolyte" />
     <p class="name">Acolyte</p>
-    <p class="levels">The Trials</p>
+    <p class="levels">The Apprenticeship</p>
     <div class="facts">
       <p class="main">Everyone begins here</p>
       <p>Answers decide nothing; no XP or gold</p>

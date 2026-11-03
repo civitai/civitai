@@ -78,7 +78,7 @@ export function nextRankLine({ nextRank }: Pick<Standing, 'nextRank'>): string |
 /** What "Restart career" takes from this player, for the confirmation. Gold is the only money at stake, never smites. */
 export function restartLosses(status: Standing) {
   return [
-    { title: 'Your rank', detail: 'You return to Acolyte and begin again in the Trials.' },
+    { title: 'Your rank', detail: 'You return to Acolyte and begin your apprenticeship again.' },
     {
       title: 'Your level and experience',
       detail: `Level ${status.level} and ${count(status.exp)} XP, back to the start.`,

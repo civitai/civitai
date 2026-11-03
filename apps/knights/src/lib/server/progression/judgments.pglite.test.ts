@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsTrialAnswer","KnightsTrialRun","KnightsReferenceImage" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsTrialAnswer","KnightsTrialRun","KnightsReferenceImage" RESTART IDENTITY`
   );
   await pg.exec(
     `INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES (1,'Knight'),(2,'Knight')`
@@ -302,6 +302,40 @@ describe('listJudgments', () => {
         (await listJudgments(db, 1, { page: 1, filter })).judgments.map((j) => j.kind);
       expect(await only('wrong')).toEqual(['trial']);
       expect(await only('pending')).toEqual(['vote']);
+    });
+  });
+
+  describe('apprenticeship answers', () => {
+    it('lists rating and yes/no practice answers with their XP and the right answer', async () => {
+      await seedImage(pg, 60);
+      await seedImage(pg, 61);
+      await pg.exec(
+        `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('knights.yesno.practice','bool','Does this show violence?','[]') ON CONFLICT DO NOTHING`
+      );
+      const rating = await pg.query<{ id: number }>(
+        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES (60,'trials','2','harvested') RETURNING id`
+      );
+      const yesNo = await pg.query<{ id: number }>(
+        `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","createdBy") VALUES (61,'knights.yesno.practice',true,1) RETURNING id`
+      );
+      await pg.query(
+        `INSERT INTO "KnightsApprenticeAnswer" ("playerId","referenceId","answer","correctAnswer","correct","xp","createdAt") VALUES (1,$1,'4','2',false,0,'2026-12-15T08:00:00Z')`,
+        [rating.rows[0].id]
+      );
+      await pg.query(
+        `INSERT INTO "KnightsApprenticeAnswer" ("playerId","yesNoReferenceId","answer","correctAnswer","correct","xp","createdAt") VALUES (1,$1,'yes','yes',true,100,'2026-12-15T09:00:00Z')`,
+        [yesNo.rows[0].id]
+      );
+
+      const { judgments } = await listJudgments(db, 1, { page: 1 });
+
+      expect(judgments.map((j) => [j.kind, j.status, j.xp, j.answerLabel])).toEqual([
+        ['practice', 'correct', 100, 'Yes'],
+        ['practice', 'wrong', 0, 'R'],
+      ]);
+      expect(judgments[0].prompt).toBe('Does this show violence?');
+      expect(judgments[1].verdictLabel).toBe('PG-13');
+      expect(judgments[0].imageKey).toBe('key-61');
     });
   });
 

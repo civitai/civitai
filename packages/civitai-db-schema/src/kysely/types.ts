@@ -3680,6 +3680,18 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
+export type KnightsApprenticeAnswer = {
+  id: Generated<number>;
+  playerId: number;
+  referenceId: number | null;
+  yesNoReferenceId: number | null;
+  answer: string;
+  correctAnswer: string;
+  correct: boolean;
+  xp: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  checkpointSeenAt: Timestamp | null;
+};
 export type KnightsGoldConversion = {
   id: Generated<number>;
   playerId: number;
@@ -6668,6 +6680,7 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
+  KnightsApprenticeAnswer: KnightsApprenticeAnswer;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
   KnightsNotificationSend: KnightsNotificationSend;

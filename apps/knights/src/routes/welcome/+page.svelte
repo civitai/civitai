@@ -31,11 +31,11 @@
       <h1>Judge the image.<br />Rise in the Order.</h1>
       <p class="lede long">
         Knights of New Order rate how mature images should be, so the site can show each one to the right
-        people. Begin as an Acolyte, prove yourself in the Trials, and earn rank, glory and gold for every
+        people. Begin as an Acolyte, prove yourself as an apprentice, and earn rank, glory and gold for every
         judgment that holds.
       </p>
       <p class="lede short">
-        Rate how mature images should be. Begin as an Acolyte, prove yourself in the Trials, and earn rank and
+        Rate how mature images should be. Begin as an Acolyte, prove yourself as an apprentice, and earn rank and
         gold for every judgment that holds.
       </p>
       <div class="pillars short">
@@ -58,7 +58,7 @@
       <span class="crest"><Icon name="flame" size={36} /></span>
       <strong class="rank">Acolyte</strong>
       <span class="levels">Your first rank</span>
-      <p class="begin">Begin in the Trials</p>
+      <p class="begin">Begin as an apprentice</p>
       <p class="sub">Every Knight was once an Acolyte.</p>
     </aside>
   </div>

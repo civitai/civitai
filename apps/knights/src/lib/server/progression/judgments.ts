@@ -4,6 +4,11 @@ import { servableImage } from '@civitai/db/knights';
 
 export const JUDGMENTS_PAGE_SIZE = 20;
 
+const YES_NO_OPTIONS = [
+  { value: 'yes', label: 'Yes' },
+  { value: 'no', label: 'No' },
+];
+
 export type JudgmentStatus = 'pending' | 'correct' | 'wrong' | 'inconclusive' | 'forfeited';
 
 export const JUDGMENT_FILTERS = [
@@ -20,9 +25,9 @@ export const parseJudgmentFilter = (raw: string | null): JudgmentFilter =>
   JUDGMENT_FILTERS.find((f) => f === raw) ?? 'all';
 
 export type Judgment = {
-  /** A vote's item id, or a Trial's reference id; unique only together with `kind`. */
+  /** A vote's item id, a Trial's reference id, or a practice answer's id; unique only together with `kind`. */
   itemId: number;
-  kind: 'vote' | 'trial';
+  kind: 'vote' | 'trial' | 'practice';
   imageId: number;
   /** Null when the image is no longer one the public feeds would show. */
   imageKey: string | null;
@@ -139,7 +144,43 @@ export async function listJudgments(
     ])
     .where('a.playerId', '=', userId);
 
-  let query = db.selectFrom(votes.unionAll(trials).as('j')).selectAll();
+  // An apprenticeship answer is graded when it is given, like a Trial answer, but it pays XP.
+  const practice = db
+    .selectFrom('KnightsApprenticeAnswer as a')
+    .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
+    .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
+    .innerJoin('KnightsQuestion as q', (join) =>
+      join.on((eb) => eb('q.key', '=', eb.fn.coalesce('r.questionKey', 'y.questionKey')))
+    )
+    .leftJoin('Image as img', (join) =>
+      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('r.imageId', 'y.imageId')))
+    )
+    .leftJoin('Post as p', 'p.id', 'img.postId')
+    .select((eb) => [
+      sql<string>`'practice'`.as('kind'),
+      'a.id as itemId',
+      sql<number>`COALESCE(r."imageId", y."imageId")`.as('imageId'),
+      'a.answer',
+      sql<string>`CASE WHEN a.correct THEN 'correct' ELSE 'failed' END`.as('verdict'),
+      'a.createdAt as settledAt',
+      'a.xp',
+      sql<number>`0`.as('gold'),
+      'a.createdAt',
+      sql<Date | null>`NULL`.as('startAt'),
+      'q.prompt',
+      sql<string | null>`NULL`.as('itemPrompt'),
+      sql<
+        typeof YES_NO_OPTIONS
+      >`CASE WHEN a."yesNoReferenceId" IS NULL THEN q."options" ELSE ${JSON.stringify(
+        YES_NO_OPTIONS
+      )}::jsonb END`.as('options'),
+      'a.correctAnswer as resolved',
+      'img.url as imageKey',
+      servableImage(eb).as('servable'),
+    ])
+    .where('a.playerId', '=', userId);
+
+  let query = db.selectFrom(votes.unionAll(trials).unionAll(practice).as('j')).selectAll();
   if (filter !== 'all') query = query.where(filterClause(filter));
 
   const rows = await query

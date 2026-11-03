@@ -27,7 +27,7 @@ describe('readNotices', () => {
   it('reports a new rank once, and the level reached with it', async () => {
     const store = memorySeenStore();
     await store.set(1, { rank: 'Knight', level: 9, guide: true });
-    expect((await readNotices(store, 1, at('Templar', 10))).progress).toEqual({
+    expect((await readNotices(store, 1, at('Templar', 10))).progress).toMatchObject({
       kind: 'rank',
       rank: 'Templar',
       level: 10,
@@ -39,18 +39,21 @@ describe('readNotices', () => {
   it('reports a new level inside the same rank', async () => {
     const store = memorySeenStore();
     await store.set(1, { rank: 'Knight', level: 4, guide: true });
-    expect((await readNotices(store, 1, at('Knight', 5))).progress).toEqual({
+    expect((await readNotices(store, 1, at('Knight', 5))).progress).toMatchObject({
       kind: 'level',
       rank: 'Knight',
       level: 5,
     });
   });
 
-  it('leaves the Acolyte to Knight step to the Trials reveal', async () => {
+  it('announces the Acolyte to Knight step as a rank-up', async () => {
     const store = memorySeenStore();
-    await store.set(1, { rank: 'Acolyte', level: 1, guide: true });
-    expect((await readNotices(store, 1, at('Knight', 1))).progress).toBeNull();
-    expect(await store.get(1)).toEqual({ rank: 'Knight', level: 1, guide: true });
+    await store.set(1, { rank: 'Acolyte', level: 20, guide: true });
+    expect((await readNotices(store, 1, at('Knight', 20))).progress).toMatchObject({
+      kind: 'rank',
+      rank: 'Knight',
+      level: 20,
+    });
   });
 
   it('stays quiet about a drop, as after a career reset, and counts from the new standing', async () => {

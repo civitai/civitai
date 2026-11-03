@@ -10,7 +10,7 @@ export type SeenStore = {
   set: (userId: number, seen: Seen) => Promise<void>;
 };
 
-export type ProgressNotice = { kind: 'rank' | 'level'; rank: string; level: number };
+export type ProgressNotice = { kind: 'rank' | 'level'; rank: string; level: number; from: number };
 
 type RedisClient = {
   get: (key: string) => Promise<string | null>;
@@ -68,8 +68,7 @@ const ahead = (now: Standing, seen: Seen) =>
 
 /**
  * The notices the player has not dismissed. The first look records where they stand, so only later progress is announced;
- * a drop (a career reset has its own notice) and the Acolyte to Knight step (the last Trial's reveal says it) are recorded
- * silently. A store that is down shows nothing.
+ * a drop (a career reset has its own notice) is recorded silently. A store that is down shows nothing.
  */
 export async function readNotices(
   store: SeenStore,
@@ -90,12 +89,8 @@ export async function readNotices(
       }
       return { guide, progress: null };
     }
-    if (seen.rank === 'Acolyte' && now.rank === 'Knight') {
-      await within(store.set(userId, { ...now, guide: seen.guide }), timeoutMs);
-      return { guide, progress: null };
-    }
     const kind = now.rank === seen.rank ? 'level' : 'rank';
-    return { guide, progress: { kind, rank: now.rank, level: now.level } };
+    return { guide, progress: { kind, rank: now.rank, level: now.level, from: seen.level } };
   } catch (error) {
     console.error('knights: could not read what the player has seen', { userId, error });
     return { guide: false, progress: null };

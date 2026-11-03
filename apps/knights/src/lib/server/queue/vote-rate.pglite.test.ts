@@ -28,7 +28,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
   );
   await seedPlayer(pg, 1);
 });

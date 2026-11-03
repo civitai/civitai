@@ -59,7 +59,7 @@
               <span class="dot">·</span> The verdict: {judgment.verdictLabel}{/if}
           </p>
           <p class="when">
-            {#if judgment.kind === 'trial'}<span class="tag">Trial</span> · {/if}{new Date(
+            {#if judgment.kind === 'trial'}<span class="tag">Trial</span> · {:else if judgment.kind === 'practice'}<span class="tag">Practice</span> · {/if}{new Date(
               judgment.at
             ).toLocaleString()}
             {#if judgment.imageHref}

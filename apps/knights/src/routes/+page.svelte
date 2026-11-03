@@ -91,7 +91,7 @@
         <span class="arrow"><Icon name="arrow-left" size={24} /></span>
         <RankEmblem rank="Acolyte" />
         <p class="rank-name">Acolyte</p>
-        <p class="rank-sub">The Trials</p>
+        <p class="rank-sub">The Apprenticeship</p>
       </aside>
     </div>
   {:else}
@@ -172,10 +172,10 @@
       <div class="divider" aria-hidden="true"><span></span></div>
       <p class="vow">I will rate what the image shows, not what I would like to see.</p>
       <p class="vow">I will judge in good faith, and let the Order's verdict stand.</p>
-      <p class="vow">I will begin as an Acolyte, and earn my rank in the Trials.</p>
+      <p class="vow">I will begin as an Acolyte, and earn my rank as an apprentice.</p>
       <p class="small muted">
         Knights judge how mature images should be rated. New members begin as Acolytes and prove
-        themselves in the Trials. <a href="/rules">Read the rules</a> first if you like.
+        themselves as apprentices. <a href="/rules">Read the rules</a> first if you like.
       </p>
       {#if !warning}
         <p><button type="button" class="btn primary" onclick={() => (warning = true)}>Join the Order</button></p>

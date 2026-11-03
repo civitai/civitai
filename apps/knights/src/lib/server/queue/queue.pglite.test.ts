@@ -94,7 +94,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -166,7 +166,7 @@ describe('getFeed', () => {
     const second = await item(11, { priority: 2 });
 
     expect((await getFeed(db, 1, { exclude: [first] }))?.items.map((i) => i.id)).toEqual([second]);
-    expect((await getFeed(db, 1, { exclude: [first, second] }))).toBeNull();
+    expect(await getFeed(db, 1, { exclude: [first, second] })).toBeNull();
     expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([first, second]);
   });
 
