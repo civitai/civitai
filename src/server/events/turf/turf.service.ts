@@ -520,7 +520,7 @@ export async function getTurfStickersForImages(
         AND s."removedAt" IS NULL AND ${imageVisible}
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     ), picked AS (
-      SELECT *, row_number() OVER (
+      SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC
       ) AS n
       FROM ranked
