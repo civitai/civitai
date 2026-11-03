@@ -348,7 +348,6 @@ export async function resolveImportAccess(
   );
   if (!importGrantCovers(grant, declared)) throw consentRequired();
 
-  // Production data only: every other namespace was refused with its token above.
   if (consumer.ctx.ns !== PUBLISHED_NS) {
     throw notEligible('import_namespace', 'this token cannot reach another app');
   }

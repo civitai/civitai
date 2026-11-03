@@ -78,7 +78,6 @@ export function importGrantCovers(
 type GrantRow = { sourceAppBlockId: string; collections: string[]; access: string };
 const toGrant = (r: GrantRow): StorageImportGrant => ({
   collections: [...r.collections],
-  // The column's CHECK admits these two only.
   access: r.access === 'readwrite' ? 'readwrite' : 'read',
 });
 
@@ -157,6 +156,8 @@ export async function recordStorageImportGrants(opts: {
   userId: number;
   consumerAppBlockId: string;
   grants: ReadonlyArray<{ sourceAppBlockId: string } & StorageImportGrant>;
+  /** Sources this host could not show the viewer: their grants (from another host) are kept. */
+  keepUnshown?: readonly string[];
 }): Promise<void> {
   const bySource = new Map<string, StorageImportGrant>();
   for (const g of opts.grants) {
@@ -193,7 +194,7 @@ export async function recordStorageImportGrants(opts: {
     await pruneStorageImportGrants({
       userId: opts.userId,
       consumerAppBlockId: opts.consumerAppBlockId,
-      keep: sources,
+      keep: [...sources, ...(opts.keepUnshown ?? [])],
     });
   } catch (err) {
     if (!(await isLedgerMissing(err))) throw err;
@@ -239,22 +240,23 @@ export type ResolvedStorageImport = {
   access: AppStorageImportAccess;
   /** The approved source app, or null when none can be reached (see `unavailable`). */
   source: { appBlockId: string; name: string } | null;
-  /** Set when an approved app holds the blockId but this host may not show it (`host` given). */
+  /** Set when an approved app holds the blockId but this host may not show it (its rating). */
   unavailable?: 'source_rating';
+  /** With `unavailable`: that app's id, so a grant given on another host is kept, not pruned. */
+  unshownAppBlockId?: string;
 };
 
 /**
  * Every import a consumer manifest declares, each resolved to the APPROVED app that holds its
  * blockId (null when none does). A manifest whose storage does not parse declares none.
  *
- * With `host` (the consent surfaces), a source whose rating the host may not show
- * (`ratingAllowedOnHost`, the mint's rule) resolves as unavailable too, so no grant is offered or
- * written for it there; the storage route applies the same rule to the token's ceiling. The mint
- * passes no host: its coverage and pruning must not drop a grant given on another host.
+ * A source whose rating `host` may not show (`ratingAllowedOnHost`, the mint's rule) resolves as
+ * unavailable, so the consent surfaces and the mint's coverage on that host agree: it is neither
+ * offered, granted nor required there. Its grant from another host is kept (`unshownAppBlockId`).
  */
 export async function resolveDeclaredImports(
   manifest: unknown,
-  opts: { host?: string } = {}
+  opts: { host: string }
 ): Promise<ResolvedStorageImport[]> {
   const parsed = parseManifestStorage(manifest, ALL_FEATURES);
   if (parsed.errors.length > 0 || parsed.imports.size === 0) return [];
@@ -273,11 +275,13 @@ export async function resolveDeclaredImports(
     };
     const base = { from, collections: [...decl.collections], access: decl.access };
     if (!row) return { ...base, source: null };
-    if (
-      opts.host !== undefined &&
-      !ratingAllowedOnHost(typeof contentRating === 'string' ? contentRating : null, opts.host)
-    ) {
-      return { ...base, source: null, unavailable: 'source_rating' as const };
+    if (!ratingAllowedOnHost(typeof contentRating === 'string' ? contentRating : null, opts.host)) {
+      return {
+        ...base,
+        source: null,
+        unavailable: 'source_rating' as const,
+        unshownAppBlockId: row.id,
+      };
     }
     return {
       ...base,
@@ -287,35 +291,31 @@ export async function resolveDeclaredImports(
 }
 
 /**
- * Whether the viewer's per-source grants cover every source the consumer can reach today (every
- * declared import whose blockId an approved app holds), each by `importGrantCovers`. The mint
- * signs `apps:storage:import` only when this holds, so a source added by a later version, or an
- * import a later version widens, is prompted for. A declared source no approved app holds needs
- * no grant: nothing can be reached through it, and no grant could be written for it.
- *
- * It also drops the viewer's grants for sources the consumer no longer reaches (no longer
- * declared, or no longer approved), so a source declared again later is prompted again rather
- * than covered by a grant the viewer gave an earlier version. ⚠️ LAZY: that happens only when
- * this viewer mints a token while the source is absent. A viewer who never opens the app during
- * that window keeps the old row, which then still covers a re-added import exactly as wide as
- * what they were shown (never a wider one).
+ * Whether the viewer's grants cover every source the consumer can reach on `host` (an approved
+ * source the host may show), each by `importGrantCovers`. Also prunes grants for sources no longer
+ * reached, so a re-added source is prompted again. ⚠️ LAZY: only when this viewer mints while the
+ * source is absent; a source the host merely cannot show keeps its grant.
  */
 export async function isImportScopeCovered(opts: {
   userId: number;
   consumerAppBlockId: string;
   manifest: unknown;
+  host: string;
 }): Promise<boolean> {
   // A manifest whose storage does not parse covers nothing, and prunes nothing: it says nothing
   // about which sources the app still imports from.
   if (parseManifestStorage(opts.manifest, ALL_FEATURES).errors.length > 0) return false;
-  const imports = await resolveDeclaredImports(opts.manifest);
+  const imports = await resolveDeclaredImports(opts.manifest, { host: opts.host });
   const granted = await listStorageImportGrants({
     userId: opts.userId,
     consumerAppBlockId: opts.consumerAppBlockId,
     db: 'write',
   });
   const reachable = imports.filter((i) => i.source !== null);
-  const keep = reachable.map((i) => i.source!.appBlockId);
+  const keep = [
+    ...reachable.map((i) => i.source!.appBlockId),
+    ...imports.flatMap((i) => (i.unshownAppBlockId ? [i.unshownAppBlockId] : [])),
+  ];
   if ([...granted.keys()].some((id) => !keep.includes(id))) {
     await pruneStorageImportGrants({
       userId: opts.userId,
@@ -351,10 +351,17 @@ export function canonicalImports(
 export async function importScopeCoverage(
   userId: number,
   block: { id: string; manifest: unknown },
-  requestedScopes: readonly string[]
+  requestedScopes: readonly string[],
+  /** The mint's request host: coverage counts only the sources it may show. */
+  host: string
 ): Promise<boolean | null> {
   if (!requestedScopes.includes(APP_STORAGE_IMPORT_SCOPE)) return null;
-  return isImportScopeCovered({ userId, consumerAppBlockId: block.id, manifest: block.manifest });
+  return isImportScopeCovered({
+    userId,
+    consumerAppBlockId: block.id,
+    manifest: block.manifest,
+    host,
+  });
 }
 
 /**

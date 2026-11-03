@@ -226,7 +226,6 @@ export default function BlockConsentModal({
             size="xs"
             color="yellow"
             loading={grant.isPending}
-            // The viewer must see which apps' data they are allowing before they can allow it.
             disabled={budgetBlocksSubmit || (grantsImport && !imports.data)}
             onClick={() =>
               grant.mutate({

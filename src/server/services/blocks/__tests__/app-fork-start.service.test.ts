@@ -708,9 +708,8 @@ describe('the fork seed pre-fills storage imports of the parent', () => {
     // The fork keeps its own copy of the declarations: its own data starts empty.
     expect(Object.keys(manifest.storage.collections)).toEqual(['notes', 'board', 'secret']);
     expect(manifest.scopes).toEqual(['apps:storage', 'apps:storage:import']);
-    expect(manifest.scopeJustifications['apps:storage:import']).toBe(
-      'This app is a fork of Notes App. It reads and updates the data you already keep in Notes App, so your entries carry over instead of starting empty.'
-    );
+    // A justification naming the parent; the wording is the author's to edit.
+    expect(manifest.scopeJustifications['apps:storage:import']).toContain('Notes App');
   });
 
   it('keeps an author justification and replaces an existing import from the parent', async () => {

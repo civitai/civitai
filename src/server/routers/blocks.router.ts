@@ -3618,6 +3618,7 @@ export const blocksRouter = router({
         await recordStorageImportGrants({
           userId: ctx.user!.id,
           consumerAppBlockId: input.appBlockId,
+          keepUnshown: imports.flatMap((i) => (i.unshownAppBlockId ? [i.unshownAppBlockId] : [])),
           grants: imports.flatMap((i) =>
             i.source
               ? [
@@ -4085,8 +4086,6 @@ export const blocksRouter = router({
           sourceName: i.source?.name ?? null,
           collections: i.collections,
           access: i.access,
-          // Granted AND covering what the app imports now: a grant a later version widened past
-          // reads as not allowed, which is what the storage route answers too.
           granted: i.source ? importGrantCovers(granted.get(i.source.appBlockId), i) : false,
           hasGrant: i.source ? granted.has(i.source.appBlockId) : false,
           // The source exists but this host may not show it (its rating): offered nowhere here.

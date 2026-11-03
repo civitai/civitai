@@ -944,7 +944,6 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
   return Number(raw);
 }
 
-/** The query parameter naming the source app of an import (its blockId). */
 const FROM_PARAM = 'from';
 
 /** The import selector, or null. Only collection routes take one; `info` refuses it as stray. */
@@ -1003,7 +1002,6 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       });
       const route = match.route;
       const from = route.op === 'info' ? null : importSourceOf(req);
-      // Charged to the consumer's read bucket before resolving, so refusals are rate limited too.
       if (from !== null) await charge('read', own, req);
       const access =
         from === null || route.op === 'info'

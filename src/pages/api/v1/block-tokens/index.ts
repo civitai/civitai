@@ -1521,7 +1521,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     const granted = await getGrantedScopes({ userId, appBlockId: block.id, db: 'write' });
     const { signable, missing } = withholdUncoveredImportScope(
       partitionByConsent(requestedScopes, granted),
-      await importScopeCoverage(userId, block, requestedScopes)
+      await importScopeCoverage(userId, block, requestedScopes, req.headers.host ?? '')
     );
     manifestScopes = signable;
     missingScopes = missing;

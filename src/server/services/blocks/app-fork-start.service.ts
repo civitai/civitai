@@ -8,8 +8,7 @@
  *   2. a SEED — the parent's LATEST APPROVED source, zipped with its files at the root, secrets,
  *      dependencies and build output left out, its manifest's `blockId` rewritten to the fork's
  *      slug and `storage.imports` pre-filled to reach the viewer's data in the parent
- *      (`prefillParentStorageImports`), uploaded to the dedicated seed store and presigned for
- *      10 minutes;
+ *      (`prefillParentStorageImports`), uploaded to the dedicated seed store and presigned;
  *   3. a server-side FORK SESSION recording who forked what, at which commit.
  *
  * 🔴 THE FORK SESSION IS THE ONLY SOURCE OF A FORK'S PROVENANCE. When the fork's first version is
@@ -69,6 +68,8 @@ import {
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_MAX_IMPORT_COLLECTIONS,
   APP_STORAGE_MAX_IMPORTS,
+  isCollectionExportable,
+  type DeclaredStorageCollection,
 } from '~/shared/constants/block-storage.constants';
 
 // ---------------------------------------------------------------------------
@@ -213,7 +214,6 @@ export async function buildForkSeedZip(
   };
 }
 
-/** The justification a fork's manifest starts with for `apps:storage:import`; the author edits it. */
 export function defaultForkImportJustification(parentName: string): string {
   return `This app is a fork of ${parentName}. It reads and updates the data you already keep in ${parentName}, so your entries carry over instead of starting empty.`;
 }
@@ -242,10 +242,11 @@ export function prefillParentStorageImports(manifest: Record<string, unknown>): 
     .filter(
       ([name, decl]) =>
         APP_STORAGE_COLLECTION_NAME_RE.test(name) &&
+        // Only the shape is read here (see above); the opt-out rule is the parser's own.
         !(
           decl &&
           typeof decl === 'object' &&
-          (decl as { exportable?: unknown }).exportable === false
+          !isCollectionExportable(decl as DeclaredStorageCollection)
         )
     )
     .map(([name]) => name)
