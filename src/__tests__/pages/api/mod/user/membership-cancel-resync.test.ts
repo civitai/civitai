@@ -5,7 +5,7 @@ import type { Stripe } from 'stripe';
 import { dbMock, loggingMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import { toDateTime } from '~/server/services/stripe.service';
+import { MODERATION_CANCEL_MARK, toDateTime } from '~/server/services/stripe.service';
 
 /**
  * `/api/mod/user/membership-cancel*` and `/api/mod/user/membership-resync*`. Drives the REAL
@@ -122,7 +122,17 @@ function liveSub(over: Record<string, unknown> = {}) {
 function fakeStripe(
   sub = liveSub(),
   list: Stripe.Subscription[] = [],
-  hooks: { updateError?: Error; retrieveErrorAfterUpdate?: Error; invoiceOnUpdate?: string } = {}
+  hooks: {
+    updateError?: Error;
+    retrieveErrorAfterUpdate?: Error;
+    invoiceOnUpdate?: string;
+    /** Stripe answers the update but the subscription stays as it was. */
+    ignoreUpdate?: boolean;
+    /** An undo clears cancel_at_period_end but leaves cancel_at set. */
+    keepCancelAt?: boolean;
+    /** Runs after each update, e.g. to land a ban mid-flow. */
+    afterUpdate?: () => void;
+  } = {}
 ) {
   const state = structuredClone(sub) as unknown as Record<string, unknown>;
   const writes: string[] = [];
@@ -155,9 +165,14 @@ function fakeStripe(
       updates.push(params);
       if (hooks.updateError) throw hooks.updateError;
       updated = true;
+      hooks.afterUpdate?.();
+      if (params.metadata)
+        state.metadata = { ...(state.metadata as object), ...(params.metadata as object) };
+      if (hooks.ignoreUpdate || !('cancel_at_period_end' in params)) return structuredClone(state);
       state.cancel_at_period_end = params.cancel_at_period_end;
       state.canceled_at = params.cancel_at_period_end ? NOW : null;
-      state.cancel_at = params.cancel_at_period_end ? state.current_period_end : null;
+      if (params.cancel_at_period_end) state.cancel_at = state.current_period_end;
+      else if (!hooks.keepCancelAt) state.cancel_at = null;
       if (hooks.invoiceOnUpdate) state.latest_invoice = hooks.invoiceOnUpdate;
       return structuredClone(state);
     }),
@@ -621,10 +636,58 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
     const { status, body } = await resync();
     expect(status).toBe(200);
     expect(body.endedBuzzMembership).toBeNull();
+    expect(dbMock.dbWrite.customerSubscription.updateMany).not.toHaveBeenCalled();
   });
 });
 
 describe('cancel-at-period-end: after the write', () => {
+  it('a set Stripe answered but did not apply comes back ok: false, and is audited', async () => {
+    fakeStripe(liveSub(), [], { ignoreUpdate: true });
+    const { status, body } = await setCancel(true);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: false, written: true });
+    expect(body.problems).toContain('cancel_at_period_end is false');
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('an undo that leaves cancel_at set comes back ok: false: the member would still lapse', async () => {
+    fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }), [], {
+      keepCancelAt: true,
+    });
+    const { status, body } = await setCancel(false);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: false, written: true });
+    expect(String(body.problems)).toMatch(/cancel_at is .*, expected none/);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('control: an undo that applies cleanly comes back ok', async () => {
+    fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
+    const { body } = await setCancel(false);
+    expect(body).toMatchObject({ ok: true, written: true, problems: [] });
+  });
+
+  it('a ban landing during an undo puts the cancel back, marked for reinstatement', async () => {
+    const restricted = { customerId: 'cus_case', isModerator: false, bannedAt: null, muted: false };
+    const findUser = dbMock.dbWrite.user.findUnique;
+    findUser.mockResolvedValue(restricted);
+    const { updates } = fakeStripe(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }),
+      [],
+      { afterUpdate: () => findUser.mockResolvedValue({ ...restricted, bannedAt: new Date() }) }
+    );
+    const { status, body } = await setCancel(false);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: false, written: true });
+    expect(body.problems).toContain(
+      'the member was banned or muted during the undo; the cancel was put back'
+    );
+    expect(updates[0]).toEqual({ cancel_at_period_end: false });
+    expect(updates[1]).toMatchObject({ cancel_at_period_end: true });
+    expect(updates[2]).toMatchObject({ metadata: { [MODERATION_CANCEL_MARK]: String(NOW) } });
+    expect(body.after).toMatchObject({ cancelAtPeriodEnd: true });
+  });
+
   it('a new invoice after the update comes back ok: false, and is audited', async () => {
     fakeStripe(liveSub(), [], { invoiceOnUpdate: 'in_new' });
     const { status, body } = await setCancel(true);

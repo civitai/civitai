@@ -9,14 +9,16 @@ import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   cancelModeOf,
+  iso,
+  notFoundAsNull,
   ownershipProblems,
+  requireStripe,
   snapshot,
   type ExtensionSnapshot,
 } from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { MODERATION_CANCEL_MARK } from '~/server/services/stripe.service';
+import { cancelSubscription, MODERATION_CANCEL_MARK } from '~/server/services/stripe.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
-import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
@@ -37,9 +39,6 @@ export const MEMBERSHIP_CANCEL_ACTIVITY = {
 } as const;
 const LOCK_SECONDS = 600;
 const CHANGEABLE_STATUSES = ['active', 'trialing'];
-
-const iso = (epoch: number | null | undefined) =>
-  epoch == null ? null : new Date(epoch * 1000).toISOString();
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'mod-membership-cancel', ...data }, 'webhooks').catch(() => null);
@@ -146,22 +145,12 @@ async function load(stripe: Stripe, userId: number): Promise<Loaded> {
       }
     : null;
   if (!row || row.provider !== PaymentProvider.Stripe) return { row, sub: null, customer: null };
-  const notFound = (e: { statusCode?: number }) => {
-    if (e?.statusCode === 404) return null;
-    throw e;
-  };
-  const sub = await stripe.subscriptions.retrieve(row.id).catch(notFound);
+  const sub = await stripe.subscriptions.retrieve(row.id).catch(notFoundAsNull);
   const customer =
     sub && typeof sub.customer === 'string'
-      ? await stripe.customers.retrieve(sub.customer).catch(notFound)
+      ? await stripe.customers.retrieve(sub.customer).catch(notFoundAsNull)
       : null;
   return { row, sub, customer };
-}
-
-async function requireStripe() {
-  const stripe = await getServerStripe();
-  if (!stripe) throw throwBadRequestError('Stripe is not available');
-  return stripe;
 }
 
 function refuseOwn(userId: number, actorId: number) {
@@ -196,6 +185,30 @@ export async function previewMembershipCancel({
     problems: checked.problems,
     changed: checked.changed ?? null,
   };
+}
+
+/**
+ * A ban or mute landing after the re-check found the subscription still cancelling, so its cancel
+ * did nothing and the undo left a restricted member renewing. Put back the ban flow's own cancel,
+ * marked, so lifting the restriction resumes it.
+ */
+async function recancelIfRestricted(stripe: Stripe, result: MembershipCancelResult) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: result.userId },
+    select: { bannedAt: true, muted: true },
+  });
+  if (!user?.bannedAt && !user?.muted) return [];
+  try {
+    await cancelSubscription({ subscriptionId: result.subscriptionId, atPeriodEnd: true });
+    result.after = snapshot(await stripe.subscriptions.retrieve(result.subscriptionId));
+    return ['the member was banned or muted during the undo; the cancel was put back'];
+  } catch (e) {
+    return [
+      `the member was banned or muted during the undo, and putting the cancel back failed: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    ];
+  }
 }
 
 export type MembershipCancelResult = {
@@ -325,6 +338,7 @@ async function setLocked({
     const after = await stripe.subscriptions.retrieve(sub.id);
     result.after = snapshot(after);
     result.problems.push(...verifyCancelChange({ before: sub, after, cancelAtPeriodEnd }));
+    if (!cancelAtPeriodEnd) result.problems.push(...(await recancelIfRestricted(stripe, result)));
   } catch (e) {
     const type = (e as { type?: string }).type;
     rejected = !response && (type === 'StripeInvalidRequestError' || type === 'StripeCardError');

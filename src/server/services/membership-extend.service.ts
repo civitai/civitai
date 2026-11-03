@@ -39,8 +39,14 @@ const DAY_SECONDS = 86_400;
 const LOCK_SECONDS = 600;
 const EXTENDABLE_STATUSES = ['active', 'trialing'];
 
-const iso = (epoch: number | null | undefined) =>
+export const iso = (epoch: number | null | undefined) =>
   epoch == null ? null : new Date(epoch * 1000).toISOString();
+
+/** For a Stripe retrieve: a 404 reads as none; anything else still throws. */
+export const notFoundAsNull = (e: { statusCode?: number }) => {
+  if (e?.statusCode === 404) return null;
+  throw e;
+};
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'mod-membership-extend', ...data }, 'webhooks').catch(() => null);
@@ -302,16 +308,10 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
     return { row, sub: null, customer: null, recentExtensions, pendingInvoiceItems: 0 };
   const sub = await stripe.subscriptions
     .retrieve(row.id, { expand: ['latest_invoice'] })
-    .catch((e: { statusCode?: number }) => {
-      if (e?.statusCode === 404) return null;
-      throw e;
-    });
+    .catch(notFoundAsNull);
   const customer =
     sub && typeof sub.customer === 'string'
-      ? await stripe.customers.retrieve(sub.customer).catch((e: { statusCode?: number }) => {
-          if (e?.statusCode === 404) return null;
-          throw e;
-        })
+      ? await stripe.customers.retrieve(sub.customer).catch(notFoundAsNull)
       : null;
   const pending =
     sub && typeof sub.customer === 'string'
@@ -320,7 +320,7 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
   return { row, sub, customer, recentExtensions, pendingInvoiceItems: pending?.data.length ?? 0 };
 }
 
-async function requireStripe() {
+export async function requireStripe() {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
   return stripe;

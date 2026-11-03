@@ -2,13 +2,17 @@ import { TRPCError } from '@trpc/server';
 import type { Stripe } from 'stripe';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { ownershipProblems } from '~/server/services/membership-extend.service';
+import {
+  iso,
+  notFoundAsNull,
+  ownershipProblems,
+  requireStripe,
+} from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { env } from '~/env/server';
 import { toDateTime, upsertSubscription } from '~/server/services/stripe.service';
 import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
-import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } from '~/shared/utils/buzz-membership';
 import { randomUUID } from 'crypto';
 import { delIfValue } from '~/server/redis/atomic';
@@ -35,8 +39,6 @@ const ENDED_STATUSES = ['canceled', 'incomplete_expired'];
 // upsertSubscription ends a live Buzz membership only for these.
 const SUPERSEDING_STATUSES = ['active', 'trialing'];
 
-const iso = (epoch: number | null | undefined) =>
-  epoch == null ? null : new Date(epoch * 1000).toISOString();
 // The upsert stores Stripe times through toDateTime, shifted by 30 min plus a timezone-dependent
 // offset, and around spring-forward two seconds store as one. So a match is checked forward; only a
 // differing row is shown with the shift undone.
@@ -160,10 +162,6 @@ async function load(stripe: Stripe, userId: number) {
   if (stripeKeyMode(env.STRIPE_SECRET_KEY) !== 'live') problems.push('the Stripe key is not live');
   if (problems.length) return { problems, row, sub: null, customerId, buzz: null };
 
-  const notFound = (e: { statusCode?: number }) => {
-    if (e?.statusCode === 404) return null;
-    throw e;
-  };
   let sub: Stripe.Subscription | null = null;
   const listLive = async () => {
     const list = await stripe.subscriptions.list({
@@ -174,7 +172,7 @@ async function load(stripe: Stripe, userId: number) {
     return list.data.filter((s) => LIVE_STATUSES.includes(s.status));
   };
   if (row) {
-    sub = await stripe.subscriptions.retrieve(row.id).catch(notFound);
+    sub = await stripe.subscriptions.retrieve(row.id).catch(notFoundAsNull);
     if (!sub) problems.push(`Stripe has no subscription ${row.id}`);
     else if (!LIVE_STATUSES.includes(sub.status)) {
       // The row's subscription is over, but another may have replaced it (both webhooks missed):
@@ -206,7 +204,7 @@ async function load(stripe: Stripe, userId: number) {
   }
   if (sub && !sub.livemode) problems.push('the subscription is not a live-mode subscription');
   if (sub) {
-    const customer = await stripe.customers.retrieve(customerId as string).catch(notFound);
+    const customer = await stripe.customers.retrieve(customerId as string).catch(notFoundAsNull);
     problems.push(
       ...ownershipProblems({
         userId,
@@ -218,12 +216,6 @@ async function load(stripe: Stripe, userId: number) {
   }
   const endsBuzz = sub && buzz && SUPERSEDING_STATUSES.includes(sub.status) ? buzzView(buzz) : null;
   return { problems, row, sub, customerId, buzz: endsBuzz as BuzzMembership | null };
-}
-
-async function requireStripe() {
-  const stripe = await getServerStripe();
-  if (!stripe) throw throwBadRequestError('Stripe is not available');
-  return stripe;
 }
 
 function refuseOwn(userId: number, actorId: number) {
@@ -322,10 +314,7 @@ async function resyncLocked({
     throw throwConflictError("The member's Buzz-bought membership changed; preview again");
   }
   // Refuse to store a copy Stripe has moved past since the read; webhooks don't wait for our lock.
-  const fresh = await stripe.subscriptions.retrieve(sub.id).catch((e: { statusCode?: number }) => {
-    if (e?.statusCode === 404) return null;
-    throw e;
-  });
+  const fresh = await stripe.subscriptions.retrieve(sub.id).catch(notFoundAsNull);
   const moved = (s: Stripe.Subscription) =>
     JSON.stringify([stripeView(s), s.metadata ?? {}, s.canceled_at ?? null]);
   if (!fresh || moved(fresh) !== moved(sub)) {
