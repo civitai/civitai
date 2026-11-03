@@ -65,7 +65,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 const { ModelVersionEarlyAccessPurchase } = await import('./ModelVersionEarlyAccessPurchase');
 
-const seedPermission = (acceptsBlueBuzz: boolean) =>
+const seedPermission = (acceptsBlueBuzz: boolean, baseModel = 'SDXL 1.0') =>
   mockPermission.mockReturnValue({
     isLoadingAccess: false,
     canDownload: false,
@@ -81,7 +81,7 @@ const seedPermission = (acceptsBlueBuzz: boolean) =>
         ...(acceptsBlueBuzz ? { acceptsBlueBuzz: true } : {}),
       },
     },
-    modelVersion: { canGenerate: true, model: { id: 1, type: 'Checkpoint' } },
+    modelVersion: { baseModel, canGenerate: true, model: { id: 1, type: 'Checkpoint' } },
   });
 
 beforeEach(() => {
@@ -154,5 +154,32 @@ describe('ModelVersionEarlyAccessPurchase — Blue Buzz opt-in', () => {
       type: 'generation',
       payWithBlue: false,
     });
+  });
+});
+
+describe('ModelVersionEarlyAccessPurchase — non-commercial base model', () => {
+  test('says it is not commercially available and offers nothing to buy', async () => {
+    seedPermission(true, 'Flux.2 Klein 9B');
+    renderWithProviders(<ModelVersionEarlyAccessPurchase modelVersionId={1} />);
+
+    await expect
+      .element(page.getByText('Not commercially available at the moment'))
+      .toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(/Its base model, Flux.2 Klein 9B, is licensed for non-commercial use only/)
+      )
+      .toBeInTheDocument();
+    expect(page.getByTestId('buzz-button').elements()).toHaveLength(0);
+  });
+
+  test('a Flux.2 Klein 4B version still offers its purchase buttons (control)', async () => {
+    seedPermission(false, 'Flux.2 Klein 4B');
+    renderWithProviders(<ModelVersionEarlyAccessPurchase modelVersionId={1} />);
+
+    await expect
+      .element(page.getByRole('button', { name: 'Get Download Access' }))
+      .toBeInTheDocument();
+    expect(page.getByTestId('buzz-button').elements()).toHaveLength(2);
   });
 });
