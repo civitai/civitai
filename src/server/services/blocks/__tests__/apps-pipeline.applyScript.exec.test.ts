@@ -1,7 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join, resolve, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApplyScript } from '~/server/services/blocks/apps-pipeline.service';
@@ -49,6 +57,29 @@ echo "publish: WARNING: continuing WITHOUT publishing" >&2
 exit 0
 `;
 
+/**
+ * The script runs under bash in production, so it runs under bash here. On Windows that is Git's
+ * bash, found through `git` itself: `bash` on PATH there is often WSL, which cannot see these
+ * temp files. Its `usr/bin` copy, not `bin/bash.exe`: that one is a launcher that puts Git's own
+ * `curl` ahead of the stubs on PATH.
+ */
+function findBash() {
+  if (process.platform !== 'win32') return { bash: 'bash', tools: [] };
+  // <git>/mingw64/libexec/git-core, or <git>/libexec/git-core
+  const execPath = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim();
+  const bash = [
+    resolve(execPath, '../../../usr/bin/bash.exe'),
+    resolve(execPath, '../../usr/bin/bash.exe'),
+  ].find(existsSync);
+  if (!bash) throw new Error(`Git for Windows' bash.exe not found from ${execPath}`);
+  // The script's tools (tr, grep) live beside it, and a Windows PATH need not include them.
+  return { bash, tools: [dirname(bash)] };
+}
+const BASH = findBash();
+
+/** A path bash reads the same on every OS: `C:\x\y` becomes `C:/x/y`, which Git's bash accepts. */
+const forBash = (path: string) => path.split(sep).join('/');
+
 type RunOpts = {
   perAppObjects: boolean;
   slug: string;
@@ -87,17 +118,17 @@ function run(opts: RunOpts) {
   // path being rewritten is really there, or the tests below would run against nothing.
   expect(script).toContain('/templates/publish.sh');
   const local = script
-    .replaceAll('/templates/', `${templates}/`)
-    .replaceAll('/tmp/rendered.yaml', join(dir, 'rendered.yaml'));
+    .replaceAll('/templates/', `${forBash(templates)}/`)
+    .replaceAll('/tmp/rendered.yaml', forBash(join(dir, 'rendered.yaml')));
   const scriptPath = join(dir, 'apply.sh');
   writeFileSync(scriptPath, local);
 
-  const res = spawnSync('bash', [scriptPath], {
+  const res = spawnSync(BASH.bash, [forBash(scriptPath)], {
     encoding: 'utf8',
     env: {
-      PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-      CALL_LOG: callLog,
-      FAKE_TEMPLATES: templates,
+      PATH: [bin, ...BASH.tools, process.env.PATH ?? '/usr/bin:/bin'].join(delimiter),
+      CALL_LOG: forBash(callLog),
+      FAKE_TEMPLATES: forBash(templates),
       FAKE_PUBLISH_FAILS: opts.publishFails ? '1' : '0',
       SLUG: opts.slug,
       SHA,

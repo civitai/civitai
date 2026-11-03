@@ -6,6 +6,10 @@ import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
 import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
 
+// CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
+// every worker inherits it on any machine.
+process.env.TZ = 'UTC';
+
 // Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
@@ -304,6 +308,7 @@ const unitTestConfig = {
   // Tracker FIRST, so reads made while the main setup file loads are recorded too.
   setupFiles: [
     ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'src/__tests__/network-guard.ts',
     'src/__tests__/setup.ts',
   ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
