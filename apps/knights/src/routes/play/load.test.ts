@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
-const getTrial = vi.hoisted(() => vi.fn());
-const getTrialSummary = vi.hoisted(() => vi.fn());
-const pending = vi.hoisted(() => ({ runId: null as number | null }));
+const getApprentice = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const getRecap = vi.hoisted(() => vi.fn());
@@ -44,17 +42,13 @@ vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
-vi.mock('$lib/server/trials/runtime', () => ({ trialDeps: {} }));
-vi.mock('$lib/server/trials/trials.service', () => ({
-  answerTrial: vi.fn(),
-  getTrial,
-  getTrialSummary,
+vi.mock('$lib/server/apprenticeship/runtime', () => ({
+  apprenticeDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
 }));
-vi.mock('$lib/server/trials/summary-runtime', () => ({ summaryStore: {} }));
-vi.mock('$lib/server/trials/pending-summary', () => ({
-  pendingPassedSummary: async () => pending.runId,
-  markPassedSummary: vi.fn(),
-  acknowledgePassedSummary: vi.fn(),
+vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
+  answerApprentice: vi.fn(),
+  acknowledgeCheckpoint: vi.fn(),
+  getApprentice,
 }));
 
 const { load, actions } = await import('./+page.server');
@@ -66,10 +60,7 @@ const run = (user: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   getPlayerStatus.mockReset();
-  getTrial.mockReset();
-  getTrialSummary.mockReset();
-  getTrialSummary.mockResolvedValue(null);
-  pending.runId = null;
+  getApprentice.mockReset();
   getFeed.mockReset();
   getFeed.mockResolvedValue(null);
   skipList.list.mockReset();
@@ -114,109 +105,112 @@ describe('play load and the conversion switch', () => {
 });
 
 describe('play load', () => {
-  it('sends a level 1 Acolyte to Trials', async () => {
+  const progress = { answered: 12, graded: 12, correct: 9, accuracy: 0.75 };
+
+  it('sends an Acolyte to the apprenticeship, with the standing and no answer', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
-    getTrial.mockResolvedValue({ kind: 'unavailable' });
-
-    const page = await run();
-
-    expect(page.mode).toBe('trials');
-    expect(page.status).toMatchObject({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
-  });
-
-  it('sends an Acolyte to Trials', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 2 });
-    getTrial.mockResolvedValue({ kind: 'unavailable' });
-    expect((await run()).mode).toBe('trials');
-  });
-
-  const summary = (result: 'passed' | 'failed', runId = 9) => ({
-    runId,
-    result,
-    scored: 8,
-    right: result === 'passed' ? 7 : 4,
-    passMark: 0.75,
-    cooldownUntil: result === 'failed' ? new Date('2026-12-16T12:00:00Z') : null,
-    items: [
-      {
-        referenceId: 1,
-        imageKey: 'k1',
-        width: 10,
-        height: 20,
-        answer: '2',
-        answerLabel: 'PG-13',
-        correctAnswer: '4',
-        correctLabel: 'R',
-        correct: false,
-        scored: true,
-        explanation: 'because',
-      },
-    ],
-  });
-
-  it('shows an Acolyte on cooldown the summary of the run that failed, without raw answers', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
-    getTrial.mockResolvedValue({ kind: 'cooldown', until: new Date('2026-12-16T12:00:00Z') });
-    getTrialSummary.mockResolvedValue(summary('failed'));
-
-    const page = await run();
-
-    expect(page.trial).toMatchObject({
-      kind: 'summary',
-      result: 'failed',
-      secondsLeft: 86400,
-      items: [{ src: 'k1', answerLabel: 'PG-13', correctLabel: 'R', explanation: 'because' }],
-    });
-    expect(JSON.stringify(page.trial)).not.toMatch(/correctAnswer|"answer"/);
-  });
-
-  it('falls back to the plain cooldown when no failed run can be summarised', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
-    getTrial.mockResolvedValue({ kind: 'cooldown', until: new Date('2026-12-16T12:00:00Z') });
-    expect((await run()).trial).toEqual({ kind: 'cooldown', until: '2026-12-16T12:00:00.000Z' });
-  });
-
-  it('never asks for a summary while a question is being served', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
-    getTrial.mockResolvedValue({
+    getApprentice.mockResolvedValue({
       kind: 'question',
-      questionKey: 'q',
-      prompt: 'P',
-      options: [],
-      run: { id: 1, position: 2, total: 12 },
-      item: { referenceId: 5, imageKey: 'k', width: 1, height: 1 },
+      progress,
+      item: {
+        kind: 'rating',
+        referenceId: 5,
+        questionKey: 'q',
+        prompt: 'P',
+        options: [{ value: '1', label: 'PG' }],
+        imageKey: 'k',
+        width: 1,
+        height: 2,
+      },
     });
-    const page = await run();
-    expect(page.trial.kind).toBe('question');
-    expect(getTrialSummary).not.toHaveBeenCalled();
-  });
-
-  it('shows a new Knight the passed summary until they enter the Order', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 1 });
-    getTrialSummary.mockResolvedValue(summary('passed', 9));
-    pending.runId = 9;
 
     const page = await run();
 
-    expect(page.mode).toBe('trials');
-    expect(page.trial).toMatchObject({ kind: 'summary', result: 'passed', secondsLeft: null });
-
-    pending.runId = null;
-    expect((await run()).mode).toBe('queue');
+    expect(page.mode).toBe('apprentice');
+    expect(page.status).toMatchObject({ rank: 'Acolyte', level: 1 });
+    expect(page.apprentice).toMatchObject({
+      kind: 'question',
+      prompt: 'P',
+      progress: { accuracy: 0.75, bar: 0.75, knightLevel: 20 },
+      item: { kind: 'rating', referenceId: 5, src: 'k' },
+    });
+    expect(JSON.stringify(page.apprentice)).not.toMatch(/correctAnswer|"answer"|correctLabel/);
   });
 
-  it('ignores a pending marker that is not for the latest passed run', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 1 });
-    getTrialSummary.mockResolvedValue(summary('passed', 10));
-    pending.runId = 9;
-    expect((await run()).mode).toBe('queue');
+  it('gives a checkpoint recap with the missed items and their right answers', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 3 });
+    getApprentice.mockResolvedValue({
+      kind: 'checkpoint',
+      progress,
+      checkpoint: {
+        total: 20,
+        right: 14,
+        coach: true,
+        missed: [
+          {
+            kind: 'rating',
+            referenceId: 1,
+            imageKey: 'k1',
+            width: 10,
+            height: 20,
+            answerLabel: 'PG-13',
+            correctLabel: 'R',
+            explanation: 'because',
+          },
+        ],
+      },
+    });
+
+    const page = await run();
+
+    expect(page.apprentice).toMatchObject({
+      kind: 'checkpoint',
+      total: 20,
+      right: 14,
+      coach: true,
+      missed: [{ src: 'k1', answerLabel: 'PG-13', correctLabel: 'R', explanation: 'because' }],
+    });
+  });
+
+  it('tells an Acolyte with nothing left to practise on, not an error', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 3 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    expect((await run()).apprentice.kind).toBe('exhausted');
+  });
+
+  it('celebrates levels 5, 10 and 15 for an Acolyte and quietly records every other level', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 10 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true });
+
+    const page = await run();
+    expect(page.progress).toMatchObject({
+      kind: 'level',
+      level: 10,
+      milestone: expect.stringMatching(/halfway/),
+    });
+    expect(seenStore.set).not.toHaveBeenCalled();
+
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true });
+    const quiet = await run();
+    expect(quiet.progress).toBeNull();
+    expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Acolyte', level: 11, guide: true });
+  });
+
+  it('tells a newly knighted player about the rank, not a summary', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 20 });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 20, guide: true });
+    const page = await run();
+    expect(page.mode).toBe('queue');
+    expect(page.progress).toMatchObject({ kind: 'rank', rank: 'Knight' });
   });
 
   it('keeps Knights on the queue', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
     const page = await run();
     expect(page.mode).toBe('queue');
-    expect(getTrial).not.toHaveBeenCalled();
+    expect(getApprentice).not.toHaveBeenCalled();
   });
 
   it('gives a Knight the day, evaluated at the injected clock, and the recap', async () => {
@@ -235,9 +229,9 @@ describe('play load', () => {
     expect(getRecap).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
   });
 
-  it('keeps the daily loop off the Trials page', async () => {
+  it('keeps the daily loop off the apprenticeship page', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
-    getTrial.mockResolvedValue({ kind: 'unavailable' });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
     await run();
     expect(getDailyStatus).not.toHaveBeenCalled();
   });
@@ -282,7 +276,7 @@ describe('play load when not sworn in', () => {
   it('sends a user with no player row to the front page to join', async () => {
     getPlayerStatus.mockResolvedValue(null);
     await expect(run()).rejects.toMatchObject({ status: 303, location: '/' });
-    expect(getTrial).not.toHaveBeenCalled();
+    expect(getApprentice).not.toHaveBeenCalled();
   });
 });
 
@@ -363,12 +357,15 @@ describe('play load feed', () => {
     expect(page.notices).toEqual([{ title: 'T', message: 'M' }]);
   });
 
-  it('shows the reset notice on the Trials page, where a reset player lands', async () => {
+  it('shows the reset notice on the apprenticeship page, where a reset player lands', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, smites: 0, maxSmites: 3 });
-    getTrial.mockResolvedValue({ kind: 'unavailable' });
+    getApprentice.mockResolvedValue({
+      kind: 'exhausted',
+      progress: { answered: 0, graded: 0, correct: 0, accuracy: null },
+    });
     hasUnseenReset.mockResolvedValue(true);
     const page = await run();
-    expect(page.mode).toBe('trials');
+    expect(page.mode).toBe('apprentice');
     expect(page.resetNotice).toBe(true);
   });
 

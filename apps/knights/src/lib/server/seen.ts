@@ -68,8 +68,7 @@ const ahead = (now: Standing, seen: Seen) =>
 
 /**
  * The notices the player has not dismissed. The first look records where they stand, so only later progress is announced;
- * a drop (a career reset has its own notice) and the Acolyte to Knight step (the last Trial's reveal says it) are recorded
- * silently. A store that is down shows nothing.
+ * a drop (a career reset has its own notice) is recorded silently. A store that is down shows nothing.
  */
 export async function readNotices(
   store: SeenStore,
@@ -88,10 +87,6 @@ export async function readNotices(
       if (rankIndex(now.rank) < rankIndex(seen.rank) || now.level < seen.level) {
         await within(store.set(userId, { ...now, guide: seen.guide }), timeoutMs);
       }
-      return { guide, progress: null };
-    }
-    if (seen.rank === 'Acolyte' && now.rank === 'Knight') {
-      await within(store.set(userId, { ...now, guide: seen.guide }), timeoutMs);
       return { guide, progress: null };
     }
     const kind = now.rank === seen.rank ? 'level' : 'rank';

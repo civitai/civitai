@@ -29,7 +29,8 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
-  onMount(() => sound.play('rankup'));
+  // Becoming a Knight is the knighting; later ranks have their own chime.
+  onMount(() => sound.play(rank === 'Knight' ? 'knighting-ring' : 'rankup'));
   const close = () => {
     if (!submitting) form?.requestSubmit();
   };

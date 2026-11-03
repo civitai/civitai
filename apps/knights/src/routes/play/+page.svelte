@@ -2,14 +2,14 @@
   import { enhance } from '$app/forms';
   import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import ApprenticeMeter from './ApprenticeMeter.svelte';
+  import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
   import LevelToast from './LevelToast.svelte';
   import QueueClear from './QueueClear.svelte';
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
-  import TrialPips from './TrialPips.svelte';
-  import TrialSummary from './TrialSummary.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
@@ -23,7 +23,11 @@
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
-  let yesNo = $derived(data.mode === 'queue' && data.question?.kind === 'bool');
+  let yesNo = $derived(
+    data.mode === 'queue'
+      ? data.question?.kind === 'bool'
+      : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
+  );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
   let guideReopened = $state(false);
   let guideOpen = $derived(data.showGuide || guideReopened);
@@ -56,26 +60,38 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
-  // The sound is the Trials' only per-answer cue: called with whether the pick was right, before the next item loads.
-  // The page itself shows no verdict mid-run; the summary at the end does.
-  function onTrialAnswer(correct: boolean) {
+  // The sound is an Acolyte's only per-answer cue: called with whether the pick was right, before the next item loads.
+  // The page shows no verdict; the checkpoint recap lists what was missed.
+  function onApprenticeAnswer(correct: boolean) {
     sound.play(correct ? 'trial-correct' : 'trial-wrong');
   }
 
-  const submitTrial: SubmitFunction = ({ submitter }) => {
+  const submitApprentice: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = answerOf(submitter);
     if (picked) sound.play('press');
     return async ({ result, update }) => {
       try {
         if (result.type === 'success' && typeof result.data?.correct === 'boolean') {
-          onTrialAnswer(result.data.correct);
+          onApprenticeAnswer(result.data.correct);
         }
         await update();
         if (result.type === 'failure') await invalidate('app:play');
       } finally {
         submitting = false;
         picked = null;
+      }
+    };
+  };
+
+  const submitCheckpoint: SubmitFunction = () => {
+    submitting = true;
+    return async ({ result, update }) => {
+      try {
+        await update();
+        if (result.type === 'failure') await invalidate('app:play');
+      } finally {
+        submitting = false;
       }
     };
   };
@@ -152,6 +168,7 @@
       {submitting}
       {submit}
       {floating}
+      milestone={levelNotice.milestone ?? null}
     />
   {/if}
 {/snippet}
@@ -175,8 +192,14 @@
       {hearts}
       maxHearts={data.status.maxSmites}
     />
-  {:else if data.mode === 'trials' && data.trial.kind === 'question'}
-    <TrialPips position={data.trial.run.position} total={data.trial.run.total} passMark={data.trial.passMark} />
+  {:else if data.mode === 'apprentice'}
+    <ApprenticeMeter
+      level={data.status.level}
+      levelFraction={data.status.progressPercent / 100}
+      accuracy={data.apprentice.progress.accuracy}
+      bar={data.apprentice.progress.bar}
+      knightLevel={data.apprentice.progress.knightLevel}
+    />
   {/if}
 
   {#if data.notices.length > 0}
@@ -216,54 +239,56 @@
     </section>
   {/if}
 
-  {#if data.mode === 'trials'}
-    {#if data.trial.kind === 'question'}
+  {#if data.mode === 'apprentice'}
+    {#if data.apprentice.kind === 'question'}
       <div class="column">
-        <p class="question" title={data.trial.prompt}>
+        <p class="question" title={data.apprentice.prompt}>
           <span class="eyebrow">Question ·</span>
-          <span class="text">{data.trial.prompt}</span>
+          <span class="text">{data.apprentice.prompt}</span>
         </p>
         <div class="stagewrap">
-          {#key data.trial.item.referenceId}
+          {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
             <ImageStage
-              src={data.trial.item.src}
-              width={data.trial.item.width}
-              height={data.trial.item.height}
-              alt="The subject of this trial"
+              src={data.apprentice.item.src}
+              width={data.apprentice.item.width}
+              height={data.apprentice.item.height}
+              alt="The subject of this question"
             />
           {/key}
           {@render levelToast(true)}
         </div>
-        <div class="controls">
-          <form class="answers" method="POST" action="?/trial" use:enhance={submitTrial}>
-            <input type="hidden" name="questionKey" value={data.trial.questionKey} />
-            <input type="hidden" name="referenceId" value={data.trial.item.referenceId} />
-            {#each data.trial.options as option, index (option.value)}
+        <div class="controls" class:yesno={yesNo}>
+          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice}>
+            <input type="hidden" name="kind" value={data.apprentice.item.kind} />
+            <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
+            {#each data.apprentice.options as option, index (option.value)}
               {@render pill(option, index, false)}
             {/each}
           </form>
-          <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+          {#if !yesNo}
+            <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+          {/if}
         </div>
         {#if formMessage}
           <p class="notice flat" role="alert">{formMessage}</p>
         {/if}
       </div>
-    {:else if data.trial.kind === 'summary'}
+    {:else if data.apprentice.kind === 'checkpoint'}
       {@render levelToast(false)}
-      <TrialSummary
-        summary={data.trial}
+      <CheckpointRecap
+        recap={data.apprentice}
         message={formMessage}
         {submitting}
-        {submit}
+        submit={submitCheckpoint}
+        onguide={() => (guideReopened = true)}
       />
     {:else}
       <div class="panel">
         {@render levelToast(false)}
-        {#if data.trial.kind === 'cooldown'}
-          <p>Your last trial fell short. Return after {new Date(data.trial.until).toUTCString()}.</p>
-        {:else}
-          <p>The trials are not set out yet. Return later.</p>
-        {/if}
+        <section class="lockout" role="status" aria-label="No more practice items">
+          <h2>No more practice items right now</h2>
+          <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
+        </section>
       </div>
     {/if}
   {:else if data.mode === 'queue' && data.lockoutSeconds}

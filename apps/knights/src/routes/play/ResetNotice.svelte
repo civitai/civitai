@@ -16,13 +16,13 @@
   <div class="mark">
     <span class="ov-crest crest"><OverlayIcon name="flame" size={44} /></span>
     <p class="rank">Acolyte</p>
-    <p class="where">The Trials</p>
+    <p class="where">The Apprenticeship</p>
   </div>
   <div class="text">
     <p class="ov-eyebrow crimson">Career reset</p>
     <h1 id="reset-title">Your career has been reset.</h1>
     <p class="lead">
-      {smites} smites were more than the Order would bear. You are an Acolyte again at level 1, and the Trials await.
+      {smites} smites were more than the Order would bear. You are an Acolyte again at level 1, and your apprenticeship begins again.
     </p>
     {#if message}
       <p class="notice" role="alert">{message}</p>

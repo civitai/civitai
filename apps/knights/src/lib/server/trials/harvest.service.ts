@@ -13,7 +13,7 @@ import {
   servableImage,
 } from '@civitai/db/knights';
 import { HARVEST, type HarvestConfig } from './config';
-import { poolFor } from './plan';
+import { poolFor } from './pool';
 
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */

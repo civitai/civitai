@@ -11,6 +11,7 @@
     submitting,
     submit,
     floating = true,
+    milestone = null,
   }: {
     level: number;
     /** XP still needed for the next level, when it is known for this level. */
@@ -20,14 +21,16 @@
     submit: SubmitFunction;
     /** Over the top of the image stage; otherwise it sits in the page flow. */
     floating?: boolean;
+    /** Words for a milestone level; replaces the plain level-up line. */
+    milestone?: string | null;
   } = $props();
 </script>
 
 <section class="toast" class:floating role="status" aria-label="Level up">
   <span class="ov-crest crest">{level}</span>
   <div class="body">
-    <p class="ov-eyebrow">Level up</p>
-    <p class="heading">You have reached level {level}</p>
+    <p class="ov-eyebrow">{milestone ? 'Milestone' : 'Level up'}</p>
+    <p class="heading">{milestone ?? `You have reached level ${level}`}</p>
     {#if xpToNext !== null}<p class="sub">{count(xpToNext)} XP to level {level + 1}</p>{/if}
     {#if message}<p class="notice" role="alert">{message}</p>{/if}
   </div>

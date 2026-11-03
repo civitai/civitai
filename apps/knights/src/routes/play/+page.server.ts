@@ -23,20 +23,18 @@ import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
-import { TRIALS } from '$lib/server/trials/config';
-import { trialDeps } from '$lib/server/trials/runtime';
 import { pickYesNo } from '$lib/server/yesno/feed';
 import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
+import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
+import { milestoneCopy } from '$lib/server/apprenticeship/standing';
 import {
-  acknowledgePassedSummary,
-  markPassedSummary,
-  pendingPassedSummary,
-} from '$lib/server/trials/pending-summary';
-import { summaryStore } from '$lib/server/trials/summary-runtime';
-import { answerTrial, getTrial, getTrialSummary } from '$lib/server/trials/trials.service';
-import { summaryPayload } from './summary';
+  acknowledgeCheckpoint,
+  answerApprentice,
+  getApprentice,
+} from '$lib/server/apprenticeship/apprenticeship.service';
+import { apprenticePayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
 const REJECTION_TEXT: Record<RejectReason, string> = {
@@ -50,17 +48,19 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'reset-pending': 'Your career is being reset. Return in a moment.',
 };
 
-const TRIAL_REJECTION_TEXT = {
+const APPRENTICE_REJECTION_TEXT = {
   'no-player': 'You have not joined the Order yet.',
-  'no-run': 'You have no trial under way.',
+  'not-acolyte': 'Your apprenticeship is over.',
+  'checkpoint-pending': 'Take a look at your recap first.',
   'not-current': 'That is not the image before you now.',
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
 type RankPerks = { levels?: string; voteWeight?: number; goldMultiplier?: number };
+type Notice = ProgressNotice & RankPerks & { milestone?: string };
 
 // A rank-up notice says what the rank brings; a level-up carries nothing more.
-function withRankPerks(progress: ProgressNotice | null): (ProgressNotice & RankPerks) | null {
+function withRankPerks(progress: ProgressNotice | null): Notice | null {
   if (progress?.kind !== 'rank') return progress;
   const perks = rankTable().find((entry) => entry.rank === progress.rank);
   return perks
@@ -73,11 +73,24 @@ function withRankPerks(progress: ProgressNotice | null): (ProgressNotice & RankP
     : progress;
 }
 
+// An Acolyte levels up every few answers, so only the milestone levels are celebrated; every other level is recorded as seen.
+async function acolyteMilestone(
+  progress: Notice | null,
+  status: { rank: string; level: number },
+  userId: number
+): Promise<Notice | null> {
+  if (progress?.kind !== 'level') return progress;
+  const milestone = milestoneCopy(progress.level);
+  if (milestone) return { ...progress, milestone };
+  await dismissProgress(seenStore, userId, status);
+  return null;
+}
+
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
   const status = await requireMember(db, locals.user.id);
   const now = queueDeps.now();
-  // Shown on whichever page the player lands on: a reset player lands on the Trials.
+  // Shown on whichever page the player lands on: a reset player lands back in the apprenticeship.
   const [resetNotice, notices, seen] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
@@ -92,50 +105,15 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     ratingGuide: ratingGuide(),
   };
 
-  // A new Knight sees the summary of the Trials they just passed until they enter the Order.
-  if (status.rank !== 'Acolyte') {
-    const pending = await pendingPassedSummary(summaryStore, locals.user.id);
-    const summary = pending ? await getTrialSummary(db, locals.user.id) : null;
-    if (summary?.result === 'passed' && summary.runId === pending) {
-      return {
-        conversionOpen: conversionEnabled(),
-        mode: 'trials' as const,
-        ...common,
-        trial: summaryPayload(summary, now),
-      };
-    }
-  }
-
   if (status.rank === 'Acolyte') {
-    const trial = await getTrial(db, locals.user.id, trialDeps);
-    // A failed run's summary stays up for as long as its cooldown does.
-    const failed = trial.kind === 'cooldown' ? await getTrialSummary(db, locals.user.id) : null;
-    if (trial.kind !== 'not-acolyte') {
+    const view = await getApprentice(db, locals.user.id);
+    if (view.kind !== 'not-acolyte') {
       return {
         conversionOpen: conversionEnabled(),
-        mode: 'trials' as const,
+        mode: 'apprentice' as const,
         ...common,
-        trial:
-          trial.kind === 'question'
-            ? {
-                kind: 'question' as const,
-                questionKey: trial.questionKey,
-                prompt: trial.prompt,
-                options: trial.options,
-                run: trial.run,
-                passMark: TRIALS.passMark,
-                item: {
-                  referenceId: trial.item.referenceId,
-                  src: imageUrl(trial.item.imageKey),
-                  width: trial.item.width,
-                  height: trial.item.height,
-                },
-              }
-            : trial.kind === 'cooldown'
-            ? failed?.result === 'failed'
-              ? summaryPayload(failed, now)
-              : { kind: 'cooldown' as const, until: trial.until.toISOString() }
-            : { kind: 'unavailable' as const },
+        progress: await acolyteMilestone(common.progress, status, locals.user.id),
+        apprentice: apprenticePayload(view),
       };
     }
   }
@@ -363,45 +341,43 @@ export const actions: Actions = {
     }
   },
 
-  enterOrder: async ({ locals }) => {
-    if (!(await acknowledgePassedSummary(summaryStore, locals.user.id))) {
-      return fail(500, { message: 'Could not continue. Try again.' });
-    }
-    return { success: true };
-  },
-
-  trial: async ({ request, locals }) => {
+  apprentice: async ({ request, locals }) => {
     const form = await request.formData();
+    const kind = form.get('kind');
     const referenceId = Number(form.get('referenceId'));
-    const questionKey = form.get('questionKey');
     const answer = form.get('answer');
     if (
+      (kind !== 'rating' && kind !== 'yesno') ||
       !Number.isInteger(referenceId) ||
-      typeof questionKey !== 'string' ||
       typeof answer !== 'string'
     ) {
       return fail(400, { message: 'Pick an answer.' });
     }
 
     try {
-      const result = await answerTrial(
+      const result = await answerApprentice(
         db,
-        { userId: locals.user.id, questionKey, referenceId, answer },
-        trialDeps
+        { userId: locals.user.id, kind, referenceId, answer },
+        apprenticeDeps
       );
       if (result.status === 'rejected') {
-        return fail(409, { message: TRIAL_REJECTION_TEXT[result.reason] });
+        return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });
       }
-      if (result.finished?.result === 'passed') {
-        const summary = await getTrialSummary(db, locals.user.id);
-        if (summary?.result === 'passed') {
-          await markPassedSummary(summaryStore, locals.user.id, summary.runId);
-        }
-      }
-      return { success: true, correct: result.correct, finished: result.finished !== null };
+      // Only whether the pick was right: the page plays a sound and shows no verdict.
+      return { success: true, correct: result.correct, promoted: result.promoted };
     } catch (error) {
-      console.error('knights: trial answer failed', { referenceId, error });
+      console.error('knights: apprenticeship answer failed', { referenceId, error });
       return fail(500, { message: 'Your answer could not be recorded. Try again in a moment.' });
     }
+  },
+
+  continueCheckpoint: async ({ locals }) => {
+    try {
+      await acknowledgeCheckpoint(db, locals.user.id, apprenticeDeps.now());
+    } catch (error) {
+      console.error('knights: could not move past the checkpoint', { error });
+      return fail(500, { message: 'Could not continue. Try again.' });
+    }
+    return { success: true };
   },
 };
