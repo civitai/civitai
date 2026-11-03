@@ -396,8 +396,10 @@ export const userSettingsSchema = z.object({
   // of owners who have it are turf. Written only by hatTurf.setOptIn.
   eventTurfOptIn: z.record(z.string(), z.boolean()).optional(),
   // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
-  // or absent means the default. Written only by event.setShowcaseHat.
-  eventShowcaseHat: z.record(z.string(), z.number().int().nullable()).optional(),
+  // or absent means the default, 'off' means none. Written only by event.setShowcaseHat.
+  eventShowcaseHat: z
+    .record(z.string(), z.union([z.number().int(), z.literal('off')]).nullable())
+    .optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
