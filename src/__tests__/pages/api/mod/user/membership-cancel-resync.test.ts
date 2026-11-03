@@ -860,26 +860,41 @@ describe('re-sync: final-head lanes', () => {
   });
 
   it.each([
-    ['only its metadata changed', liveSub({ metadata: { userId: String(MEMBER), banned: 'x' } })],
-    ['only its canceled_at changed', liveSub({ canceled_at: NOW })],
-    ['Stripe no longer has it', Object.assign(new Error('gone'), { statusCode: 404 })],
-  ])('is refused (409) when, on the re-read before the upsert, %s', async (_label, second) => {
-    const { subscriptions } = fakeStripe(
-      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END })
-    );
-    subscriptions.retrieve.mockResolvedValueOnce(
-      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }) as never
-    );
-    if (second instanceof Error) subscriptions.retrieve.mockRejectedValueOnce(second);
-    else
-      subscriptions.retrieve.mockResolvedValueOnce({
-        ...second,
-        cancel_at_period_end: true,
-        cancel_at: PERIOD_END,
-      } as never);
-    expect((await resync()).status).toBe(409);
-    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
-  });
+    [
+      'only its metadata changed',
+      liveSub({ metadata: { userId: String(MEMBER), banned: 'x' } }),
+      'subscription changed',
+    ],
+    ['only its canceled_at changed', liveSub({ canceled_at: NOW }), 'subscription changed'],
+    [
+      'Stripe no longer has it',
+      Object.assign(new Error('gone'), { statusCode: 404 }),
+      'Stripe no longer has the subscription',
+    ],
+  ])(
+    'is refused (409) when, on the re-read before the upsert, %s',
+    async (_label, second, logged) => {
+      const { subscriptions } = fakeStripe(
+        liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END })
+      );
+      subscriptions.retrieve.mockResolvedValueOnce(
+        liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }) as never
+      );
+      if (second instanceof Error) subscriptions.retrieve.mockRejectedValueOnce(second);
+      else
+        subscriptions.retrieve.mockResolvedValueOnce({
+          ...second,
+          cancel_at_period_end: true,
+          cancel_at: PERIOD_END,
+        } as never);
+      expect((await resync()).status).toBe(409);
+      expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'refused', problems: [logged] }),
+        'webhooks'
+      );
+    }
+  );
 
   it('the lock is released after a refusal too', async () => {
     fakeStripe(liveSub({ status: 'canceled', ended_at: NOW }));

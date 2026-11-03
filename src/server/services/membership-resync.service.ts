@@ -369,7 +369,7 @@ async function resyncLocked({
       select: rowSelect,
     })
     .catch((e) => {
-      log({ type: 'reread-failed', userId, error: (e as Error).message });
+      log({ type: 'reread-failed', userId, error: e instanceof Error ? e.message : String(e) });
       return null;
     });
   const after = afterRow ? rowView(afterRow, sub) : null;
