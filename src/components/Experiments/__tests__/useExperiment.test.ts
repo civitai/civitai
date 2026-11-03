@@ -107,4 +107,16 @@ describe('useExperiment', () => {
     expect(result.current).toEqual({ ready: true, variant: 'control', assignment: 'signed-out' });
     expect(state.enabled.every((e) => e === false)).toBe(true);
   });
+
+  it('disabled, stays not ready and asks the server nothing, signed in or out', () => {
+    state.data = assigned('count-button');
+    expect(
+      renderHook(() => useExperiment('hatTurfFeedCard', { enabled: false })).result.current
+    ).toEqual({ ready: false, variant: undefined, assignment: undefined });
+    state.user = null;
+    expect(
+      renderHook(() => useExperiment('hatTurfFeedCard', { enabled: false })).result.current.ready
+    ).toBe(false);
+    expect(state.enabled.every((e) => e === false)).toBe(true);
+  });
 });

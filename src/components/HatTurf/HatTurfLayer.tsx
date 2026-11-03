@@ -10,6 +10,7 @@ import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import {
   HAT_DEFAULT_SCALE,
   badgeLeader,
@@ -60,6 +61,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const teamColor = useTeamColor();
   const utils = trpc.useUtils();
   const place = trpc.hatTurf.place.useMutation();
+  const track = useHatTurfAction('feed-card');
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
   const stickers = feed?.stickers[imageId];
@@ -181,6 +183,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
         onSuccess: () => {
           setDraft(null);
           setPlaced(spot);
+          track('feed_place_save', feed.event);
           void utils.hatTurf.getStock.invalidate();
           void utils.hatTurf.getSummaries.invalidate();
           void utils.hatTurf.getStickersForImages.invalidate();

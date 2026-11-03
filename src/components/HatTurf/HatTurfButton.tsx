@@ -3,6 +3,7 @@ import { Button, Popover, Switch, Text } from '@mantine/core';
 import { IconCheck, IconSettings } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfButton.module.css';
@@ -10,6 +11,7 @@ import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -31,6 +33,8 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
   const [menu, setMenu] = useState(false);
   const [join, setJoin] = useState(false);
+  const exposureRef = useExperimentExposure('hatTurfFeedCard', 'feed-card');
+  const track = useHatTurfAction('feed-card');
   const utils = trpc.useUtils();
   const setOptIn = trpc.hatTurf.setOptIn.useMutation({
     onSuccess: () => {
@@ -71,12 +75,13 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
         id: 'hat-turf-empty',
         message: 'Out of hats. You get more as the event goes on.',
       });
-    if (!cosmeticId) return;
-    setDraft(draft ?? { x: 0.5, y: 0.4 });
+    if (!cosmeticId || draft) return;
+    setDraft({ x: 0.5, y: 0.4 });
+    track('feed_place_start', feed.event);
   };
 
   return (
-    <div className={classes.wrap} data-testid="hat-turf-button">
+    <div ref={exposureRef} className={classes.wrap} data-testid="hat-turf-button">
       <button
         type="button"
         className={clsx(
@@ -150,7 +155,11 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
             size="xs"
             label="Show hats"
             checked={showHats}
-            onChange={(event) => setShowHats(event.currentTarget.checked)}
+            onChange={(event) => {
+              const show = event.currentTarget.checked;
+              setShowHats(show);
+              track(show ? 'hide_all_hats_off' : 'hide_all_hats_on', feed.event);
+            }}
           />
         </Popover.Dropdown>
       </Popover>

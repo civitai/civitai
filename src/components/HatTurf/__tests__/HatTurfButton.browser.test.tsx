@@ -4,6 +4,7 @@ import type * as Trpc from '~/utils/trpc';
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
+import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
 
 // The component project loads no global stylesheet, so Tailwind — including
 // preflight's `box-sizing: border-box` — is inert unless a test imports it.
@@ -34,6 +35,11 @@ const h = vi.hoisted(() => ({
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
   user: { id: 1 } as { id: number } | null,
+  trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackUtilsModule>()),
+  useTrackEvent: () => ({ trackAction: h.trackAction }),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -183,6 +189,10 @@ const q = (id: string) =>
   document.body.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
 const cardRendered = () =>
   vi.waitFor(() => expect(document.body.querySelector('[aria-label$="reaction"]')).not.toBeNull());
+const actions = () =>
+  h.trackAction.mock.calls.map(
+    ([data]) => (data as { details: { action: string } }).details.action
+  );
 const press = async () => {
   (
     document.body.querySelector(
@@ -197,6 +207,7 @@ beforeEach(() => {
   h.mutate.mockReset();
   h.optIn.mockReset();
   h.invalidate.mockClear();
+  h.trackAction.mockClear();
   onCardClick.mockClear();
   useHatTurfStore.setState({ cosmeticId: null, showHats: true });
 });
@@ -227,6 +238,12 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
     expect(onCardClick).not.toHaveBeenCalled();
     expect(h.mutate).not.toHaveBeenCalled();
+    await press();
+    expect(actions()).toEqual(['feed_place_start']);
+    expect(h.trackAction).toHaveBeenCalledWith({
+      type: 'HatTurf_Action',
+      details: { action: 'feed_place_start', event: 'birthday2026', surface: 'feed-card' },
+    });
   });
 
   test('drag then tick saves one hat at that spot with the default size', async () => {
@@ -264,8 +281,10 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(input.data.scale).toBeLessThanOrEqual(STICKER_PLACEMENT_MAX_SCALE);
     expect(input.data.x).toBeCloseTo(0.25, 1);
     expect(input.data.y).toBeCloseTo(0.3, 1);
+    expect(actions()).not.toContain('feed_place_save');
     // The server accepted it: the hat stays, the button says placed, stock is refetched.
     options.onSuccess();
+    expect(actions()).toEqual(['feed_place_start', 'feed_place_save']);
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();
     expect(document.body.querySelector('[aria-label="Your hat is placed here"]')).not.toBeNull();
@@ -449,6 +468,22 @@ describe('hats on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
     expect(hats().length).toBe(0);
     useHatTurfStore.setState({ showHats: true });
+  });
+
+  test('turning Show hats off and on again in the gear menu logs both', async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    q('hat-turf-gear')!.click();
+    const toggle = () =>
+      (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('input[type="checkbox"]')).not.toBeNull()
+    );
+    toggle();
+    await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
+    toggle();
+    await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(true));
+    expect(actions()).toEqual(['hide_all_hats_on', 'hide_all_hats_off']);
   });
 
   test('tells the provider the card is on screen, and stops when it leaves', async () => {
