@@ -225,14 +225,17 @@ export async function removeTurfSticker(id: bigint, moderatorId: number) {
 export async function setTurfOptIn(eventName: string, userId: number, optedIn: boolean) {
   const event = await getTurfEvent(eventName);
   if (!event) throw throwNotFoundError('This event has no turf');
-  await dbWrite.$executeRaw`
+  // Only a real change writes, and `changed` says so: the opt-in analytics count each change once.
+  const changed = await dbWrite.$executeRaw`
     UPDATE "User"
     SET settings = jsonb_set(
       COALESCE(settings, '{}'::jsonb) || jsonb_build_object(${TURF_SETTING}::text,
         COALESCE(settings -> ${TURF_SETTING}, '{}'::jsonb)),
       ARRAY[${TURF_SETTING}::text, ${event.name}::text], to_jsonb(${optedIn}::boolean))
     WHERE id = ${userId}
+      AND (settings -> ${TURF_SETTING} ->> ${event.name}) IS DISTINCT FROM ${String(optedIn)}
   `;
+  return { changed: changed > 0, event: event.name };
 }
 // #endregion
 
