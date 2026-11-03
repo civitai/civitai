@@ -120,6 +120,8 @@ export type LicenseRecord = {
   disableMature?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;
+  // License requires derivatives to carry the same license.
+  requiresSameLicense?: boolean;
 };
 
 export type BaseModelFamilyRecord = {
@@ -1303,7 +1305,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // MOSS Image - open weights, checkpoint and LoRA
-  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: [...checkpointAndLora, ModelType.LoCon] },
+  {
+    ecosystemId: ECO.MossImage,
+    supportType: 'generation',
+    modelTypes: [...checkpointAndLora, ModelType.LoCon],
+  },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -2645,12 +2651,14 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 30,
-    name: 'FLUX.2 Klein 9B Non-Commercial License',
-    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md',
+    name: 'FLUX Non-Commercial License',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
     notice:
-      'The FLUX.2 Klein 9B Model is licensed by Black Forest Labs. Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   {
     id: 31,
