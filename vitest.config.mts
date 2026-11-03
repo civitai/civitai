@@ -5,7 +5,7 @@ import path from 'path';
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
 import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
-import { componentPostcss } from './test/component-postcss.mjs';
+import { browserPostcss } from './test/browser-postcss.mjs';
 
 // CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
 // every worker inherits it on any machine.
@@ -522,6 +522,7 @@ const browserModeOptions = () => ({
 /** Everything a browser project needs outside its own `test` block. */
 const browserProjectShell = () => ({
   resolve: { ...browserResolve },
+  css: { postcss: browserPostcss },
   plugins: [componentGroupOrderPlugin],
   optimizeDeps: { ...browserOptimizeDeps },
 });
@@ -538,6 +539,7 @@ const browserProjectShell = () => ({
  */
 const browserTestShell = () => ({
   maxWorkers: componentMaxWorkers,
+  globalSetup: ['test/browser-global-setup.mjs'],
   // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
   // which serialises the browser projects against the node ones instead of interleaving
   // them; CI and every script select one project at a time.
@@ -640,12 +642,10 @@ export default defineConfig({
       },
       {
         ...browserProjectShell(),
-        css: { postcss: componentPostcss },
         test: {
           ...browserTestShell(),
           name: 'component',
           include: ['src/**/*.browser.test.tsx'],
-          globalSetup: ['test/component-global-setup.mjs'],
           // Held out of the blocking run, see scripts/ci/component-quarantine.mjs.
           exclude: ['**/node_modules/**', ...QUARANTINED_COMPONENT_FILES],
           // process-shim MUST come first (no imports) so it runs before any
@@ -659,12 +659,10 @@ export default defineConfig({
         // the groups that are skipped for the blocking run. Disjoint from `component` by
         // construction: the same list is its `include` and `component`'s `exclude`.
         ...browserProjectShell(),
-        css: { postcss: componentPostcss },
         test: {
           ...browserTestShell(),
           name: 'component-quarantine',
           include: QUARANTINED_COMPONENT_FILES,
-          globalSetup: ['test/component-global-setup.mjs'],
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
           provide: { quarantineRun: true },
         },

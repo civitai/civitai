@@ -434,8 +434,8 @@ describe('the image detail wears the image hat on the picture', () => {
       };
       watch(layer);
       document.querySelectorAll<HTMLElement>('[data-testid="drawn-media-hat"]').forEach(watch);
-      // A quiet stretch must come, and then nothing is read. Not a fixed sleep from mount: the
-      // first layout can still be settling when the hat appears, and on a slow runner it outlasts one.
+      // Wait for quiet, not a fixed sleep from mount: the first layout can still be settling when
+      // the hat appears.
       const quietThenNothing = async () => {
         await vi.waitFor(
           async () => {

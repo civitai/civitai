@@ -162,11 +162,11 @@ function setGenerated(outputs: unknown[], over: Record<string, unknown> = {}) {
 const LOAD_MORE_NOTE = 'No usable images found in the most recent pages.';
 
 /**
- * Runs `act` with the page's timers frozen, so a pending date cannot be applied mid-action however
- * slow the harness is, then lets twice the debounce pass.
+ * Runs `act` with setTimeout frozen, so a pending date cannot be applied mid-action however slow
+ * the harness is, then lets twice the debounce pass.
  */
 async function holdingDebounce(act: () => Promise<void>) {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldClearNativeTimers: true });
   try {
     await act();
     vi.advanceTimersByTime(PICKER_JUMP_DEBOUNCE_MS * 2);
@@ -175,6 +175,7 @@ async function holdingDebounce(act: () => Promise<void>) {
   }
 }
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 function openModal(
   props: { sources?: BlockImagePickerSource[]; max?: number | null; publicOnly?: boolean } = {}
@@ -857,7 +858,10 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
 
     await holdingDebounce(async () => {
       await userEvent.fill(input, '2024-06-30');
-      // Straight after the change: not applied yet.
+      vi.advanceTimersByTime(PICKER_JUMP_DEBOUNCE_MS - 1);
+      await nextFrame();
+      await nextFrame();
+      // Just short of the debounce: not applied yet.
       expect(mocks.postedQuery).not.toHaveBeenCalledWith(
         { toDate: expect.anything() },
         expect.anything()
