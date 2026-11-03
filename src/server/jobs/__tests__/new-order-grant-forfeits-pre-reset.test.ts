@@ -131,7 +131,7 @@ describe('new-order-grant-bless-buzz and career resets', () => {
 
     await grantJob.run({}).result;
 
-    expect(paid().get(1)).toBeGreaterThan(0);
+    expect(paid().get(1)).toBe(Math.floor(1000 * newOrderConfig.blessedBuzzConversionRatio));
     expect(decrements().get(1)).toBe(1000);
   });
 
@@ -143,6 +143,7 @@ describe('new-order-grant-bless-buzz and career resets', () => {
 
     expect(paid().has(2)).toBe(false);
     expect(decrements().has(2)).toBe(false);
+    expect(mocks.counters.pending.reset).toHaveBeenCalledWith({ id: 2 });
   });
 
   it('pays only judgments at or after a reset that fell inside the day', async () => {
@@ -157,6 +158,50 @@ describe('new-order-grant-bless-buzz and career resets', () => {
 
     expect(decrements().get(3)).toBe(3000);
     expect(paid().get(3)).toBe(Math.floor(3000 * newOrderConfig.blessedBuzzConversionRatio));
+  });
+
+  it('pays nothing when a mid-day reset has no judgments at or after startAt', async () => {
+    players = [{ userId: 5, startAt: at(12), rankType: 'Knight' }];
+    ratings = [
+      { userId: 5, createdAt: at(3), exp: 4000 },
+      { userId: 5, createdAt: at(11), exp: 4000 },
+    ];
+
+    await grantJob.run({}).result;
+
+    expect(paid().has(5)).toBe(false);
+    expect(decrements().has(5)).toBe(false);
+  });
+
+  it('keeps each player in a mixed batch on their own amount', async () => {
+    const ratio = newOrderConfig.blessedBuzzConversionRatio;
+    players = [
+      { userId: 1, startAt: before, rankType: 'Knight' },
+      { userId: 2, startAt: after, rankType: 'Knight' },
+      { userId: 3, startAt: at(12), rankType: 'Templar' },
+    ];
+    ratings = [
+      { userId: 1, createdAt: at(5), exp: 1100 },
+      { userId: 2, createdAt: at(5), exp: 2300 },
+      { userId: 3, createdAt: at(6), exp: 5000 },
+      { userId: 3, createdAt: at(13), exp: 1700 },
+    ];
+
+    await grantJob.run({}).result;
+
+    expect(paid()).toEqual(
+      new Map([
+        [1, Math.floor(1100 * ratio)],
+        [3, Math.floor(1700 * ratio)],
+      ])
+    );
+    expect(decrements()).toEqual(
+      new Map([
+        [1, 1100],
+        [3, 1700],
+      ])
+    );
+    expect(mocks.counters.pending.reset).toHaveBeenCalledWith({ id: 2 });
   });
 
   it('still excludes Acolytes', async () => {
