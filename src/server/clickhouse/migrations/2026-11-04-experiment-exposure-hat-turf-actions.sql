@@ -8,8 +8,13 @@
 --
 -- ORDER: apply AFTER 2026-11-03-push-prompt-action.sql (civitai/civitai#7584), which takes 29
 -- ('Push_Prompt'). This file restates it and appends 30 and 31; applied first, the push-prompt
--- ALTER would drop these two. Prod's last index on 2026-11-03 was 28 ('UserMenu_Click'), read from
--- `system.columns`. Appending at unused indices is a metadata-only ALTER: no data is
+-- ALTER would drop these two. MODIFY COLUMN replaces the whole definition, so this file must restate
+-- every live value; 29 is restated for that reason, not added.
+--
+-- 🔴 BEFORE APPLYING, re-read prod: `SELECT type FROM system.columns WHERE database = 'default' AND
+-- table = 'actions' AND name = 'type'`. It must list exactly 1..29 as below. Any other value (a
+-- type another PR applied since) must be added here at its live index first, and 30/31 moved past
+-- it, or this ALTER drops it. Appending at unused indices is a metadata-only ALTER: no data is
 -- rewritten and no mutation is scheduled. Do NOT renumber or rename an existing value; that WOULD
 -- rewrite the whole table.
 --
