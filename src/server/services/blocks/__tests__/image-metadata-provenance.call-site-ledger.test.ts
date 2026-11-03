@@ -753,6 +753,7 @@ describe('Image metadata provenance — write-site ledger', () => {
       'profilePicture',
       'sfwCoverImage',
       'sourceImage',
+      'sparkImage',
       'thumbnailImage',
     ]);
   });
