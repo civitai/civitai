@@ -81,7 +81,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   stored = { level: 1, floor: 0 };
   vi.mocked(getModerationAdapter).mockReturnValue(postTextScanAdapter);
-  vi.mocked(updatePostNsfwLevels).mockImplementation(async () => recompute());
+  vi.mocked(updatePostNsfwLevels).mockImplementation(async () => {
+    recompute();
+    return [];
+  });
   dbMock.dbWrite.post.findUnique.mockImplementation((async () => ({
     nsfwLevel: stored.level,
     moderatorNsfwLevel: null,

@@ -824,14 +824,19 @@ export const isCommentDetached = (commentId: number) => isDetached(commentDetach
 
 /**
  * Whether a member gets the comment as missing: gone, hidden for ToS, or detached. Read on the
- * primary, so a delete just made counts.
+ * primary, so a delete just made counts. A comment on a surface that writes CommentV3 has no
+ * CommentV2 row.
  */
 export const isCommentGoneForMembers = async (commentId: number) => {
   const row = await dbWrite.commentV2.findUnique({
     where: { id: commentId },
     select: { tosViolation: true },
   });
-  return !row || row.tosViolation || (await isCommentDetached(commentId));
+  if (!row) {
+    const v3 = await getV3WriteComment(prismaRunner(dbWrite), commentId);
+    return !v3 || v3.tosViolation;
+  }
+  return row.tosViolation || (await isCommentDetached(commentId));
 };
 
 export const getCommentThreadStorylineId = (threadId: number) =>
