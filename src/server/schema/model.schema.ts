@@ -245,10 +245,8 @@ export const modelUpsertSchema = z.object({
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
   sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH, SFW_NAME_TOO_LONG_MESSAGE).nullish(),
-  sfwDescription: z
-    .string()
-    .max(SFW_DESCRIPTION_MAX_LENGTH, SFW_DESCRIPTION_TOO_LONG_MESSAGE)
-    .pipe(getSanitizedStringSchema())
+  sfwDescription: getSanitizedStringSchema()
+    .pipe(z.string().max(SFW_DESCRIPTION_MAX_LENGTH, SFW_DESCRIPTION_TOO_LONG_MESSAGE))
     .nullish(),
   coverImageId: z.number().int().positive().nullish(),
   sfwCoverImageId: z.number().int().positive().nullish(),
