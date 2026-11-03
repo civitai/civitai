@@ -3,7 +3,7 @@ import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { trpc } from '~/utils/trpc';
 
-/** The viewer's hats available to place now. Signed out, or Hat Turf off: undefined. Never exposes the refill schedule. */
+/** The viewer's hats available to place now and whether they have joined. Signed out, or Hat Turf off: undefined. Never exposes the refill schedule. */
 export function useHatStock() {
   const feed = useTurfFeed();
   const user = useCurrentUser();
@@ -11,7 +11,7 @@ export function useHatStock() {
     { event: feed?.event ?? '' },
     { enabled: !!feed && !!user, staleTime: 30_000 }
   );
-  return data ? { available: data.available } : undefined;
+  return data ? { available: data.available, optedIn: data.optedIn } : undefined;
 }
 
 /** The hat a press places: the one picked in the gear menu, else the most recently used. */

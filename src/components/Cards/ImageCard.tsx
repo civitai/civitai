@@ -16,7 +16,7 @@ import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacement
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
-import { HatTurfDraftLayer } from '~/components/HatTurf/HatTurfDraftLayer';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
@@ -55,7 +55,7 @@ function ImageCardContent({ data }: Props) {
         safe && (
           <>
             {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
-            <HatTurfDraftLayer imageId={data.id} />
+            <HatTurfLayer imageId={data.id} />
           </>
         )
       }
@@ -131,7 +131,7 @@ function ImageCardActionRow({ data }: Props) {
         )}
         <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
-          <HatTurfButton ownerId={data.user.id} />
+          <HatTurfButton imageId={data.id} />
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>
               <ThemeIcon className={cardClasses.infoChip} variant="light">

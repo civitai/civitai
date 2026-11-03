@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { eventTurfTopic } from '~/server/events/turf/turf-map';
 import {
+  HAT_DEFAULT_SCALE,
   RING_LENGTH,
+  applyTurfPush,
+  hatTone,
+  readHatPose,
+  readTurfPush,
+  turfTopic,
   badgeLeader,
   orderedTeams,
   ringArcs,
@@ -86,5 +93,84 @@ describe('standingsLabel', () => {
   });
   it('says there are no hats yet', () => {
     expect(standingsLabel({ counted: {}, leader: null }, 'pink')).toBe('Hat Turf: no hats yet');
+  });
+});
+
+describe('readHatPose', () => {
+  it('reads a stored sticker and clamps it onto the picture at a legal size', () => {
+    expect(readHatPose({ x: 1.4, y: -2, scale: 9, rotation: 10, flip: true })).toEqual({
+      x: 1,
+      y: 0,
+      scale: 0.4,
+      rotation: 10,
+      flip: true,
+    });
+  });
+  it('defaults size, turn and flip when absent', () => {
+    expect(readHatPose({ x: 0.5, y: 0.5 })).toEqual({
+      x: 0.5,
+      y: 0.5,
+      scale: HAT_DEFAULT_SCALE,
+      rotation: 0,
+      flip: false,
+    });
+  });
+  it('is null for anything that cannot be placed', () => {
+    expect(readHatPose(null)).toBeNull();
+    expect(readHatPose('x')).toBeNull();
+    expect(readHatPose({ x: 'a', y: 1 })).toBeNull();
+    expect(readHatPose({ x: Number.NaN, y: 1 })).toBeNull();
+  });
+});
+
+describe('hatTone', () => {
+  it('lights the leader’s hats and dims the rest', () => {
+    expect(hatTone('blue', 'blue')).toBe('lead');
+    expect(hatTone('pink', 'blue')).toBe('dim');
+  });
+  it('leaves every hat plain when nobody leads', () => {
+    expect(hatTone('pink', null)).toBe('plain');
+  });
+});
+
+describe('turf pushes', () => {
+  const counts = { shown: { blue: 3 }, counted: { blue: 3 }, leader: 'blue', leaderCosmeticId: 5 };
+  const base = { 1: { ...counts, hatted: true } };
+
+  it('replaces an image’s counts and keeps what the push does not carry', () => {
+    const next = applyTurfPush(base, 1, {
+      ...counts,
+      counted: { blue: 3, pink: 4 },
+      leader: 'pink',
+    });
+    expect(next[1].leader).toBe('pink');
+    expect(next[1].hatted).toBe(true);
+  });
+  it('adds an image that had no turf, not hatted', () => {
+    expect(applyTurfPush({}, 9, counts)[9]).toEqual({ ...counts, hatted: false });
+  });
+  it('removes the image when the last sticker is gone, and is a no-op if it was not there', () => {
+    expect(applyTurfPush(base, 1, null)).toEqual({});
+    const empty = {};
+    expect(applyTurfPush(empty, 1, null)).toBe(empty);
+  });
+  it('reads a well-formed push for this event only', () => {
+    expect(readTurfPush({ event: 'e', imageId: 4, counts }, 'e')).toEqual({ imageId: 4, counts });
+    expect(readTurfPush({ event: 'other', imageId: 4, counts }, 'e')).toBeNull();
+    expect(readTurfPush({ event: 'e', imageId: 4, counts: null }, 'e')).toEqual({
+      imageId: 4,
+      counts: null,
+    });
+  });
+  it('refuses a malformed push instead of drawing from it', () => {
+    expect(readTurfPush({ event: 'e', imageId: 'x', counts }, 'e')).toBeNull();
+    expect(readTurfPush({ event: 'e', imageId: 4, counts: { shown: 1 } }, 'e')).toBeNull();
+    expect(readTurfPush(undefined, 'e')).toBeNull();
+  });
+});
+
+describe('turfTopic', () => {
+  it('is the topic the server pushes to', () => {
+    expect(turfTopic('birthday2026', 42)).toBe(eventTurfTopic('birthday2026', 42));
   });
 });

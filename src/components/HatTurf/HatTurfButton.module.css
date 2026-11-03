@@ -7,6 +7,8 @@
 
 .button {
   display: flex;
+  border: 0;
+  cursor: pointer;
   align-items: center;
   gap: 3px;
   height: 22px;
@@ -39,12 +41,12 @@
 /* Always on screen: a phone has no hover to reveal it. Overhangs the corner so it costs the row no width. */
 .gear {
   position: absolute;
-  top: -8px;
-  right: -7px;
+  top: -9px;
+  right: -8px;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   padding: 0;
   border: 1.5px solid var(--mantine-color-white);
   border-radius: 50%;
@@ -55,6 +57,10 @@
 
 .option {
   display: flex;
+  border: 0;
+  background-color: transparent;
+  color: inherit;
+  cursor: pointer;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -68,4 +74,11 @@
 .selected {
   background-color: light-dark(var(--mantine-color-yellow-1), rgba(252, 196, 25, 0.2));
   box-shadow: inset 0 0 0 1.5px var(--mantine-color-yellow-4);
+}
+
+/* Where the join popover points: the button's own box. */
+.anchor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }

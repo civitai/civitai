@@ -79,6 +79,11 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
   useBuzzTippingStore: () => 0,
 }));
 
+vi.mock('~/components/Signals/SignalsProvider', () => ({
+  useSignalTopic: () => undefined,
+  useSignalConnection: () => undefined,
+}));
+
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
@@ -142,6 +147,9 @@ const feedWith = (
   event: 'birthday2026',
   team,
   images,
+  open: {},
+  stickers: {},
+  watch: () => () => undefined,
 });
 
 afterEach(() => {
