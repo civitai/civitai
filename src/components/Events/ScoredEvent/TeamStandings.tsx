@@ -184,7 +184,7 @@ export function TeamStandings({
                   ]}
                 />
               </Group>
-              <div className="relative min-h-[240px] flex-1">
+              <div className="relative min-h-[240px] flex-1 @md:min-h-[380px]">
                 <Line options={options} data={data} />
               </div>
             </Stack>
@@ -225,7 +225,7 @@ function ChartPending({
   const starts = formatDate(startDate, 'MMM D', true);
   return (
     <div
-      className="relative flex min-h-[240px] flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed border-gray-4 bg-gray-0 p-6 text-center dark:border-dark-3 dark:bg-dark-7"
+      className="relative flex min-h-[240px] flex-col @md:min-h-[380px] items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed border-gray-4 bg-gray-0 p-6 text-center dark:border-dark-3 dark:bg-dark-7"
       data-testid="chart-pending"
     >
       <svg
