@@ -5,7 +5,7 @@ export type HarvestConfig = {
   maxRulingAgeDays: number;
   hiddenCheckShare: number;
   freshMaxAgeDays: number;
-  /** Hold harvested Trials items as `pending` until a moderator confirms the rating blind. */
+  /** Hold harvested apprenticeship items as `pending` until a moderator confirms the rating blind. */
   spotCheck: boolean;
 };
 

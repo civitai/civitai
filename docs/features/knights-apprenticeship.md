@@ -11,7 +11,9 @@ Replaces the old Trial (a 12-item run with a pass mark and a cooldown). Code: `a
 
 ## Data
 
-Migration `20261225120000_knights_v2_apprenticeship` (applied by hand, idempotent) adds `KnightsApprenticeAnswer`: one graded answer per row, pointing at exactly one of `referenceId` / `yesNoReferenceId`, with the answer as given, the correct answer as it stood, whether it was right, the XP paid and `checkpointSeenAt` (set on the answer that closed a checkpoint once the player moved past its recap). Partial unique indexes keep a player from answering a reference twice. Deploy order: apply the migration, then the Knights app.
+Migration `20261225120000_knights_v2_apprenticeship` (applied by hand, idempotent) adds `KnightsApprenticeAnswer`: one graded answer per row, pointing at exactly one of `referenceId` / `yesNoReferenceId`, with the answer as given, the correct answer as it stood, whether it was right, the XP paid and `checkpointSeenAt` (set on the answer that closed a checkpoint once the player moved past its recap). Partial unique indexes keep a player from answering a reference twice. Deploy order: apply by hand, in this order, `20261224120000_knights_v2_yesno_reference`, `20261225120000_knights_v2_apprenticeship`, `20261226120000_knights_v2_drop_trial_tables`, `20261227120000_knights_v2_block_reason` and `20261228120000_knights_v2_fervor_window`, then deploy the Knights app.
+
+Moderators manage the yes/no references on the `yes-no` tab of the moderator app's Knights of New Order trials page (`/knights-of-new-order/trials`): add a pair (image id or image page URL, question, answer, optional explanation), toggle it active or inactive, or delete it. There is no edit yet; change a pair by deleting and adding it again.
 
 Accuracy, the recap and promotion read only answers since the player's last career reset (`NewOrderPlayer.startAt`); the no-repeat rule reads all of them.
 

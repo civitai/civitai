@@ -8163,7 +8163,7 @@ model KnightsGoldConversion {
   @@index([status, createdAt])
 }
 
-/// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.
+/// An image with a known answer for the Acolyte apprenticeship or hidden checks. `answer` is the option value of `questionKey`.
 model KnightsReferenceImage {
   id            Int      @id @default(autoincrement())
   imageId       Int      @unique

@@ -1,5 +1,5 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Apply BEFORE deploying the Knights app build that replaces the Trial with the Acolyte apprenticeship.
+-- Apply BEFORE deploying the Knights app build that serves the Acolyte apprenticeship.
 -- Depends on 20261212120000_knights_v2_trials (KnightsReferenceImage) and 20261224120000_knights_v2_yesno_reference (KnightsYesNoReference).
 CREATE TABLE IF NOT EXISTS "KnightsApprenticeAnswer" (
   "id" SERIAL PRIMARY KEY,
@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS "KnightsApprenticeAnswer" (
   "xp" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "checkpointSeenAt" TIMESTAMP(3),
-  -- Each answer belongs to exactly one kind of reference.
   CONSTRAINT "KnightsApprenticeAnswer_one_reference"
     CHECK (("referenceId" IS NULL) <> ("yesNoReferenceId" IS NULL))
 );
@@ -25,7 +24,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_yesno_key"
 -- A player's latest answers, newest first.
 CREATE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_playerId_id_idx"
   ON "KnightsApprenticeAnswer" ("playerId", "id");
--- Deleting a reference cascades to its answers.
 CREATE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_referenceId_idx"
   ON "KnightsApprenticeAnswer" ("referenceId") WHERE "referenceId" IS NOT NULL;
 CREATE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_yesNoReferenceId_idx"

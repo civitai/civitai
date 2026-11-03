@@ -41,7 +41,6 @@
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
   let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
-  // Choosing Blocked on a rating question asks for a reason first; the vote is cast with the reason once one is picked.
   let choosingReason = $state(false);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
@@ -77,8 +76,6 @@
     if (blocked) answers?.requestSubmit(blocked);
   }
 
-  // The sound is an Acolyte's only per-answer cue: called with whether the pick was right, before the next item loads.
-  // The page shows no verdict; the checkpoint recap lists what was missed.
   function onApprenticeAnswer(correct: boolean) {
     sound.play(correct ? 'trial-correct' : 'trial-wrong');
   }
@@ -224,6 +221,7 @@
       accuracy={data.apprentice.progress.accuracy}
       bar={data.apprentice.progress.bar}
       knightLevel={data.apprentice.progress.knightLevel}
+      answerWindow={data.apprentice.progress.window}
     />
   {/if}
 
@@ -526,7 +524,7 @@
     overflow: hidden;
     color: var(--io-parchment);
     font: 700 16px/1.25 var(--io-font-display);
-    /* Wraps in full: a question must be read whole to be answered, and phones can't hover for the title. */
+    /* Wraps in full: phones can't hover for the title. */
   }
   .banner {
     flex: none;

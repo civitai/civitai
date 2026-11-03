@@ -32,7 +32,9 @@ export type BlockedVote = {
 export function consensusBlockReason(votes: BlockedVote[]): ConsensusBlockReason | null {
   const blocked = votes.filter((vote) => vote.answer === String(NsfwLevel.Blocked));
   const reasoned = blocked
-    .filter((vote) => vote.blockReason !== null && Object.hasOwn(BLOCK_REASON_LABELS, vote.blockReason))
+    .filter(
+      (vote) => vote.blockReason !== null && Object.hasOwn(BLOCK_REASON_LABELS, vote.blockReason)
+    )
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.playerId - b.playerId);
   if (reasoned.length === 0) return null;
 

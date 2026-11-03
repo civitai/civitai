@@ -13,6 +13,7 @@ function progressPayload(progress: ApprenticeProgress) {
     accuracy: progress.accuracy,
     bar: APPRENTICE.accuracyBar,
     knightLevel: APPRENTICE.knightLevel,
+    window: APPRENTICE.window,
   };
 }
 

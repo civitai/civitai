@@ -139,7 +139,7 @@ describe('play load', () => {
     expect(page.apprentice).toMatchObject({
       kind: 'question',
       prompt: 'P',
-      progress: { accuracy: 0.75, bar: 0.75, knightLevel: 20 },
+      progress: { accuracy: 0.75, bar: 0.75, knightLevel: 20, window: 100 },
       item: { kind: 'rating', referenceId: 5, src: 'k' },
     });
     expect(JSON.stringify(page.apprentice)).not.toMatch(/correctAnswer|"answer"|correctLabel/);
