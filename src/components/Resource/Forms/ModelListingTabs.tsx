@@ -29,7 +29,8 @@ import { InputRTE, InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { normalizeSfwFaceText } from '~/shared/utils/model-sfw-face';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import { normalizeSfwFaceText, SFW_DESCRIPTION_MAX_LENGTH } from '~/shared/utils/model-sfw-face';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -68,16 +69,22 @@ export function ModelListingTabs({
   const [site, setSite] = useState<Site>('red');
   const ownComContent = sfwName != null;
 
-  const nameVerdict = useSfwFaceVerdict('sfwName', ownComContent ? sfwName : null);
+  const nameVerdict = useSfwFaceVerdict(
+    'sfwName',
+    ownComContent ? sfwName : null,
+    MODEL_NAME_MAX_LENGTH
+  );
   const descriptionVerdict = useSfwFaceVerdict(
     'sfwDescription',
-    ownComContent ? sfwDescription : null
+    ownComContent ? sfwDescription : null,
+    SFW_DESCRIPTION_MAX_LENGTH
   );
   const versionsVerdict = useVersionsVerdict(ownComContent ? modelId : undefined);
 
   const redHasErrors = !!(errors.name || errors.description);
+  const comFieldHasErrors = !!(errors.sfwName || errors.sfwDescription || errors.sfwCoverImageId);
   const comHasErrors =
-    !!errors.sfwName ||
+    comFieldHasErrors ||
     nameVerdict?.verdict?.status === 'flagged' ||
     descriptionVerdict?.verdict?.status === 'flagged';
 
@@ -85,7 +92,7 @@ export function ModelListingTabs({
   useEffect(() => {
     if (!submitCount) return;
     if (redHasErrors) setSite('red');
-    else if (errors.sfwName) setSite('com');
+    else if (comFieldHasErrors) setSite('com');
   }, [submitCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -163,6 +170,7 @@ function ComListing({
   versionsVerdict?: VerdictState;
 }) {
   const form = useFormContext<ListingForm>();
+  const sfwNameLength = (useWatch({ control: form.control, name: 'sfwName' }) ?? '').trim().length;
 
   const setComContent = (name: string | null, description: string | null) => {
     form.setValue('sfwName', name, { shouldDirty: true, shouldValidate: name !== null });
@@ -254,6 +262,15 @@ function ComListing({
           label="Title"
           placeholder="Title shown on civitai.com"
           withAsterisk
+          description={
+            <Text
+              component="span"
+              size="xs"
+              c={sfwNameLength > MODEL_NAME_MAX_LENGTH ? 'red' : 'dimmed'}
+            >
+              {sfwNameLength}/{MODEL_NAME_MAX_LENGTH}
+            </Text>
+          }
         />
       </Stack>
       <Stack gap={4}>
@@ -376,14 +393,16 @@ type VerdictState = { checking: boolean; verdict?: SfwFaceVerdict };
 
 function useSfwFaceVerdict(
   field: Exclude<SfwFaceCheckField, 'versions'>,
-  value: string | null | undefined
+  value: string | null | undefined,
+  maxLength: number
 ): VerdictState | undefined {
   const [debounced] = useDebouncedValue(normalizeSfwFaceText(value), CHECK_DEBOUNCE_MS);
   const [state, setState] = useState<VerdictState>();
   const { mutateAsync } = trpc.model.checkSfwFace.useMutation();
 
   useEffect(() => {
-    if (!debounced) {
+    // Over the cap the check would refuse the input.
+    if (!debounced || debounced.trim().length > maxLength) {
       setState(undefined);
       return;
     }
@@ -397,7 +416,7 @@ function useSfwFaceVerdict(
     return () => {
       superseded = true;
     };
-  }, [debounced, field, mutateAsync]);
+  }, [debounced, field, maxLength, mutateAsync]);
 
   return state;
 }

@@ -96,6 +96,22 @@ describe('useExperimentExposure', () => {
     expect(state.sent).toHaveLength(1);
   });
 
+  it('still logs, once per tab, when storage throws', () => {
+    state.inView = true;
+    const denied = vi.fn(() => {
+      throw new DOMException('denied', 'SecurityError');
+    });
+    vi.stubGlobal('localStorage', { getItem: denied, setItem: denied });
+    try {
+      mount();
+      mount();
+      expect(denied).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(state.sent).toHaveLength(1);
+  });
+
   it.each([
     [
       'a signed-out assignment',
