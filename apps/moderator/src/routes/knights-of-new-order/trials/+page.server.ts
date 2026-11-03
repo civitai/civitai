@@ -32,13 +32,15 @@ type Tab = (typeof TABS)[number];
 const level = z.coerce.number().int();
 const why = z.string().max(2000);
 
+const BAD_IMAGE = 'Enter an image id or an image page URL.';
+
 /** An image id, or any civitai image page URL (`/images/<id>`). */
 const imageRef = z.preprocess((value) => {
   const text = typeof value === 'string' ? value.trim() : '';
   if (/^\d+$/.test(text)) return Number(text);
   const fromUrl = text.match(/\/images\/(\d+)(?:[/?#]|$)/);
   return fromUrl ? Number(fromUrl[1]) : NaN;
-}, z.number({ error: 'Enter an image id or an image page URL.' }).int().positive().max(MAX_INT4));
+}, z.number({ error: BAD_IMAGE }).int(BAD_IMAGE).positive(BAD_IMAGE).max(MAX_INT4, BAD_IMAGE));
 const yesNo = z.enum(['yes', 'no']).transform((value) => value === 'yes');
 
 const forms = {
