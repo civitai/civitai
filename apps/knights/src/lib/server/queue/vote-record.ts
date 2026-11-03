@@ -1,8 +1,7 @@
 import { sql, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { blockReasonProblem } from '../../block-reasons';
+import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
 import { recordVoteDay } from '../daily/daily.service';
 import { goldForRank, PROGRESSION } from '../progression/config';
 import { ledgerOf } from '../progression/progression';
@@ -68,7 +67,7 @@ export async function insertVote(
   }
   if (!subject.options.some((o) => o.value === input.answer)) return rejected('bad-answer');
   const reasonProblem =
-    subject.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION
+    asksBlockReason(subject.questionKey)
       ? blockReasonProblem(input.answer, input.blockReason)
       : input.blockReason
       ? 'unexpected'

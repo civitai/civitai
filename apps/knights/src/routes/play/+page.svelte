@@ -41,7 +41,8 @@
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
   let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
-  let choosingReason = $state(false);
+  let reasonItem = $state<string | null>(null);
+  let choosingReason = $derived(!!data.item && reasonItem === data.item.id);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
@@ -71,7 +72,7 @@
 
   function pickReason(reason: BlockReason) {
     blockReason = reason;
-    choosingReason = false;
+    reasonItem = null;
     const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
     if (blocked) answers?.requestSubmit(blocked);
   }
@@ -170,7 +171,7 @@
     onclick={asksReason && option.value === BLOCKED_ANSWER
       ? (event) => {
           event.preventDefault();
-          choosingReason = true;
+          reasonItem = data.item?.id ?? null;
         }
       : undefined}
   >
@@ -284,6 +285,7 @@
           <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice}>
             <input type="hidden" name="kind" value={data.apprentice.item.kind} />
             <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
+            <!-- Acolyte rating answers never carry a block reason; only queue votes do (enforced in insertVote). -->
             {#each data.apprentice.options as option, index (option.value)}
               {@render pill(option, index, false, false)}
             {/each}
@@ -371,7 +373,7 @@
           <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
         {/if}
         {#if choosingReason}
-          <BlockReasons onpick={pickReason} oncancel={() => (choosingReason = false)} />
+          <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
       </div>
       {#if formMessage}
