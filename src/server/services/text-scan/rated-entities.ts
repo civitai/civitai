@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import {
   updateArticleNsfwLevels,
@@ -30,6 +31,8 @@ const ratedEntities: Record<
   {
     recompute: (ids: number[]) => Promise<unknown>;
     read: (id: number) => Promise<RatedEntitySnapshot | null>;
+    /** What the images alone give, for a stored level of 0 the job has not recomputed yet. */
+    imageLevel?: (id: number) => Promise<number>;
   }
 > = {
   Article: {
@@ -50,6 +53,12 @@ const ratedEntities: Record<
         select: { nsfwLevel: true, moderatorNsfwLevel: true, userId: true, title: true },
       });
       return row && { ...row, url: `/posts/${id}` };
+    },
+    imageLevel: async (id) => {
+      const rows = await dbWrite.$queryRaw<{ level: number | null }[]>(Prisma.sql`
+        SELECT bit_or(i."nsfwLevel") AS level FROM "Image" i WHERE i."postId" = ${id}
+      `);
+      return rows?.[0]?.level ?? 0;
     },
   },
   Bounty: {
@@ -115,7 +124,14 @@ async function raiseToFloor(
   if (!outcome.nsfw.raised || before.moderatorNsfwLevel != null || !before.userId)
     return NOTHING_DEFERRED;
   const after = await entity.read(entityId);
-  if (!after || !ratingRose(before.nsfwLevel, after.nsfwLevel)) return NOTHING_DEFERRED;
+  if (!after) return NOTHING_DEFERRED;
+  // A stored 0 may only mean the job has not recomputed the post yet: judge against its images,
+  // or the text is credited for a rating the images set.
+  const shown =
+    before.nsfwLevel === 0 && entity.imageLevel
+      ? await entity.imageLevel(entityId)
+      : before.nsfwLevel;
+  if (!ratingRose(shown, after.nsfwLevel)) return NOTHING_DEFERRED;
 
   const notice: NotifyTextScanRatingRaisedArgs = {
     entityType,
