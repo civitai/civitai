@@ -14,9 +14,15 @@ import {
   getFreePlacementAllowance,
   hasUsedFreePlacementOn,
 } from '~/server/services/free-placement.service';
+import { countPlacements } from '@civitai/db-queries/placement';
+import {
+  freePlacementsTodayWhere,
+  teamWaivedWhere,
+} from '~/server/services/placement-count-predicates';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
+import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -36,6 +42,7 @@ import {
 import {
   declineFeeAmount,
   encodePlacementQueueCursor,
+  freePlacementDayStart,
   parsePlacementQueueCursor,
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
@@ -202,6 +209,12 @@ export type CreateRemixGallerySubmission = {
    */
   free?: boolean;
   /**
+   * Ask for an event's team waiver instead of paying. Allowed only for a remix
+   * this server resolved as derived from the host image, and only when
+   * `findTeamRemixWaiver` finds one for this placer, owner and host.
+   */
+  teamWaiver?: boolean;
+  /**
    * The domain's currency, decided at the router from the request's own feature
    * flags rather than anything the client sends — a client-supplied currency
    * would let a request on one domain spend the other's Buzz.
@@ -224,6 +237,12 @@ export type CreateRemixGallerySubmission = {
 const FREE_NEEDS_VERIFIED_REFUSAL =
   'remix gallery: free submissions are for remixes made from this image on-site, which is something we can check. Submit this one with Buzz instead.';
 
+const TEAM_WAIVER_NEEDS_VERIFIED_REFUSAL =
+  'remix gallery: free team remixes are for remixes made from this image on-site, which is something we can check. Submit this one with Buzz instead.';
+
+const TEAM_WAIVER_REFUSAL =
+  "remix gallery: this remix isn't free for your team. You both need to have joined the same team, and the image needs to be wearing a team hat.";
+
 /**
  * Submits an image into someone's remix gallery, charging the owner's price.
  *
@@ -244,6 +263,7 @@ export async function createRemixGallerySubmission({
   imageId,
   expectedPrice,
   free = false,
+  teamWaiver = false,
   spendType,
 }: CreateRemixGallerySubmission) {
   if (hostImageId === imageId)
@@ -344,6 +364,17 @@ export async function createRemixGallerySubmission({
   // decides whether someone gets into a creator's review queue without paying.
   if (free && !derivedFromHost) throw throwBadRequestError(FREE_NEEDS_VERIFIED_REFUSAL);
 
+  // The same verified-remix gate as free, for the same reason: without a price,
+  // nothing else stops arbitrary media from entering the owner's review queue.
+  if (teamWaiver && free)
+    throw throwBadRequestError('remix gallery: a submission is either free or team-waived');
+  if (teamWaiver && !derivedFromHost)
+    throw throwBadRequestError(TEAM_WAIVER_NEEDS_VERIFIED_REFUSAL);
+  const waiver = teamWaiver
+    ? await findTeamRemixWaiver({ placerId, ownerId: space.ownerId, hostImageId })
+    : null;
+  if (teamWaiver && !waiver) throw throwBadRequestError(TEAM_WAIVER_REFUSAL);
+
   const data = {
     imageId,
     remixOfId: submission.remixOfId,
@@ -372,13 +403,14 @@ export async function createRemixGallerySubmission({
   // where a submission is made (above), and by `createFreePlacement` itself
   // against `allowedModes`. So a free submission here is always pending and
   // always the owner's to answer.
-  if (free)
+  if (free || waiver)
     return createFreePlacement({
       surface: SURFACE,
       targetType: TARGET_TYPE,
       targetId: hostImageId,
       placerId,
       data,
+      teamWaiver: waiver ? { perDay: waiver.perDay } : undefined,
     }).catch(asDuplicateRefusal);
 
   // Every rule from here down is the paid path's, which is why none of them is
@@ -1570,7 +1602,9 @@ async function getViewerPendingSubmissions({
     limit: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   };
   const rows = await readViewerPendingPlacementsViaKysely(
-    (await loadKyselyDb()).kyselyRead,
+    (
+      await loadKyselyDb()
+    ).kyselyRead,
     pendingInput
   );
 
@@ -2015,7 +2049,7 @@ export async function getRemixGalleryFreeEligibility({
   /** The candidates on screen. Bounded by the schema. */
   imageIds: number[];
 }) {
-  const [allowance, usedHere, verified] = await Promise.all([
+  const [allowance, usedHere, verified, teamWaiver] = await Promise.all([
     getFreePlacementAllowance({ placerId }),
     hasUsedFreePlacementOn({
       placerId,
@@ -2037,6 +2071,7 @@ export async function getRemixGalleryFreeEligibility({
             AND ${hostImageId} = ANY(${sourceImageIdsSql()})
         `
       : [],
+    getTeamWaiverStanding({ hostImageId, placerId }),
   ]);
 
   return {
@@ -2044,6 +2079,47 @@ export async function getRemixGalleryFreeEligibility({
     /** Free is once per gallery per placer, ever — not once per day. */
     usedHere,
     verifiedImageIds: verified.map((row) => row.id),
+    /**
+     * Null when no event waives this gallery's price for this placer. Applies
+     * only to a verified remix, as free does: `verifiedImageIds` says which.
+     */
+    teamWaiver,
+  };
+}
+
+/** A listing like the rest of the eligibility: the mutation re-decides under its lock. */
+async function getTeamWaiverStanding({
+  hostImageId,
+  placerId,
+}: {
+  hostImageId: number;
+  placerId: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+  });
+  if (space.mode !== 'review' || space.ownerId === placerId) return null;
+  const waiver = await findTeamRemixWaiver({
+    placerId,
+    ownerId: space.ownerId,
+    hostImageId,
+    db: dbRead,
+  });
+  if (!waiver) return null;
+  // Display only, off the claim's lock, like the free allowance beside it.
+  const used = await countPlacements(
+    (
+      await loadKyselyDb()
+    ).kyselyRead,
+    teamWaivedWhere(freePlacementsTodayWhere(placerId))
+  );
+  return {
+    team: waiver.team,
+    remaining: Math.max(waiver.perDay - used, 0),
+    /** Midnight UTC ending the current day. */
+    resetsAt: new Date(freePlacementDayStart().getTime() + 24 * 3_600_000),
   };
 }
 

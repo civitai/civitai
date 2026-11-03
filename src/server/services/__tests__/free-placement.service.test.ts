@@ -5,7 +5,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
-import { FREE_PLACEMENTS_PER_DAY, PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  FREE_PLACEMENTS_PER_DAY,
+  PLACEMENT_SURFACES,
+  freePlacementDayStart,
+} from '~/shared/utils/placement';
 
 const resolveSpace = vi.fn();
 const assertCanPlace = vi.fn();
@@ -47,8 +51,17 @@ const executeRaw = dbMock.dbWrite.$executeRaw;
  * the service asked the same question four times — which is the mistake worth
  * catching, since these differ only in their predicates.
  */
-const givenCounts = ({ usedToday = 0, pending = 0, alreadyHere = 0, reserved = 0 } = {}) =>
+const givenCounts = ({
+  usedToday = 0,
+  pending = 0,
+  alreadyHere = 0,
+  reserved = 0,
+  waivedToday = 0,
+  waivedReserved = 0,
+} = {}) =>
   placementCount.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+    // The team-waived share of a free-tier count; waived rows are a subset of the free ones.
+    if (where.data) return where.createdAt ? waivedToday : where.status ? waivedReserved : 0;
     if (where.createdAt) return usedToday;
     if (where.ownerId !== undefined) return pending;
     if (where.status) return reserved;
@@ -322,6 +335,88 @@ describe('createFreePlacement — the free-tier refusals', () => {
   });
 });
 
+describe('createFreePlacement — a team-waived row', () => {
+  const PER_DAY = 10;
+  const claimWaived = () =>
+    createFreePlacement({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { imageId: 5 },
+      teamWaiver: { perDay: PER_DAY },
+    });
+
+  it('is a free row worth nothing, marked as waived, with a deadline', async () => {
+    await claimWaived();
+
+    const written = placementCreate.mock.calls[0][0].data;
+    expect(written).toMatchObject({ free: true, amount: 0, status: 'pending', ownerId: OWNER });
+    expect(written.data).toEqual({ imageId: 5, waiver: 'team' });
+    expect(written.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it('needs none of the free tier: no slots offered, the day spent, the slots taken', async () => {
+    givenSpace({ freeSlots: 0, setFreeSlots: 0 });
+    givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, reserved: 4, alreadyHere: 1 });
+
+    await expect(claimWaived()).resolves.toEqual({ id: 1 });
+    // Only the placer lock: the target's rules are the free tier's.
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses once the placer has made the day's waived submissions, counted under the lock", async () => {
+    givenCounts({ waivedToday: PER_DAY });
+
+    await expect(claimWaived()).rejects.toThrow(/free team remixes for today/);
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(whereOf((where) => !!where.data && !!where.createdAt)).toEqual({
+      placerId: PLACER,
+      free: true,
+      createdAt: { gte: freePlacementDayStart() },
+      data: { path: ['waiver'], equals: 'team' },
+    });
+  });
+
+  it('allows the last one of the day', async () => {
+    givenCounts({ waivedToday: PER_DAY - 1 });
+    await expect(claimWaived()).resolves.toEqual({ id: 1 });
+  });
+
+  it('keeps every refusal the paid path makes', async () => {
+    givenCounts({ pending: PLACEMENT_SURFACES.remixGallery.maxPendingPerOwner });
+    await expect(claimWaived()).rejects.toThrow(/maximum pending/);
+
+    givenCounts();
+    assertCanPlace.mockRejectedValueOnce(new Error('blocked'));
+    await expect(claimWaived()).rejects.toThrow(/blocked/);
+
+    givenSpace({ ownerId: PLACER });
+    await expect(claimWaived()).rejects.toThrow(/your own content/);
+
+    givenSpace({ mode: 'off' });
+    await expect(claimWaived()).rejects.toThrow(/not accepting/);
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFreePlacement — the free tier is counted net of waived rows', () => {
+  it("a waived submission today does not spend the placer's free placement", async () => {
+    givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, waivedToday: FREE_PLACEMENTS_PER_DAY });
+    await expect(claim()).resolves.toEqual({ id: 1 });
+  });
+
+  it("a waived submission holds none of the creator's free slots", async () => {
+    givenCounts({ reserved: 4, waivedReserved: 1 });
+    await expect(claim()).resolves.toEqual({ id: 1 });
+  });
+
+  it('a free placement still counts in full', async () => {
+    givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, waivedToday: FREE_PLACEMENTS_PER_DAY - 1 });
+    await expect(claim()).rejects.toThrow(/used your free placement for today/);
+  });
+});
+
 describe('createFreePlacement — the lock', () => {
   /**
    * The lock statements, reassembled from the tagged template.
@@ -534,7 +629,9 @@ describe('the advisory locks have exactly one call site', () => {
 
 describe('getFreePlacementAllowance', () => {
   it('reports the day as spent and says when it comes back', async () => {
-    displayCount.mockResolvedValue(FREE_PLACEMENTS_PER_DAY);
+    displayCount.mockImplementation(async (_db, where) =>
+      'data' in where ? 0 : FREE_PLACEMENTS_PER_DAY
+    );
 
     const allowance = await getFreePlacementAllowance({ placerId: PLACER });
 
@@ -547,7 +644,9 @@ describe('getFreePlacementAllowance', () => {
   });
 
   it('never reports a negative remainder', async () => {
-    displayCount.mockResolvedValue(FREE_PLACEMENTS_PER_DAY + 5);
+    displayCount.mockImplementation(async (_db, where) =>
+      'data' in where ? 0 : FREE_PLACEMENTS_PER_DAY + 5
+    );
 
     expect((await getFreePlacementAllowance({ placerId: PLACER })).remaining).toBe(0);
   });

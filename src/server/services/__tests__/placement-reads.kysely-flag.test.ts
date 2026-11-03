@@ -84,7 +84,7 @@ function givenRows({ subscriptions = [goldSubscription()], score = SCORE as numb
   } as never);
   q.getModelPlacementTarget.mockResolvedValue({ userId: OWNER, username: 'creator' } as never);
   q.listPlacementSpacesFor.mockResolvedValue([USER_SPACE] as never);
-  q.countPlacements.mockResolvedValue(RESERVED);
+  q.countPlacements.mockImplementation(async (_db, where) => ('data' in where ? 0 : RESERVED));
   q.getUserPlacementScore.mockResolvedValue([{ score }] as never);
   q.listUserSubscriptionRows.mockResolvedValue(subscriptions as never);
   // getCapTier's Prisma read, which only a non-placement caller makes (the getCapTier cases).

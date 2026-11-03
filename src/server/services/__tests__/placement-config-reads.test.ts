@@ -83,7 +83,9 @@ beforeEach(() => {
   placementReads.listPlacementSpacesFor.mockResolvedValue([
     { entityType: 'user', mode: 'review', price: 450, freeSlots: 5, settings: {} },
   ]);
-  placementReads.countPlacements.mockResolvedValue(1);
+  placementReads.countPlacements.mockImplementation(async (_db, where) =>
+    'data' in where ? 0 : 1
+  );
   placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'host-owner' });
   // One row answering every raw read on these paths: the has-entries probe and the host image.

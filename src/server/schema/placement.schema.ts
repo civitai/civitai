@@ -282,12 +282,23 @@ export const submitToRemixGallerySchema = z
      * asserts. `placerId` is never taken from here; it comes from the session.
      */
     free: z.boolean().default(false),
+    /**
+     * Ask for an event's team waiver instead of paying: the server decides whether
+     * this remix qualifies (`findTeamRemixWaiver`) and refuses if it does not.
+     */
+    teamWaiver: z.boolean().default(false),
   })
   .superRefine((input, ctx) => {
+    if (input.free && input.teamWaiver)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['teamWaiver'],
+        message: 'A submission is either free or team-waived, not both',
+      });
     // Without this, omitting `expectedPrice` on a paid submission reaches the
     // service as `undefined`, which it reads as "the submitter agreed to
     // whatever it is now" — the exact consent hole the field exists to close.
-    if (!input.free && input.expectedPrice == null)
+    if (!input.free && !input.teamWaiver && input.expectedPrice == null)
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['expectedPrice'],

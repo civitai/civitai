@@ -130,6 +130,7 @@ export const birthday2026 = createEvent(name, {
   badgePrefix: 'Birthday 2026',
   scoring: {
     capPerActorPerOwnerPerDay: 50,
+    teamRemixWaiver: { perPlacerPerDay: 10 },
     types: {
       view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
       reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },

@@ -91,6 +91,19 @@ vi.mock('~/server/services/free-placement.service', () => ({
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
 
+// Who qualifies for an event's team waiver is decided in team-remix-waiver.ts and tested there;
+// here it is an answer the submission and the listing act on. None unless a test says otherwise.
+const findTeamRemixWaiver = vi.fn<AnyFn>(async () => null);
+vi.mock('~/server/events/team-remix-waiver', () => ({
+  findTeamRemixWaiver: (...args: unknown[]) => findTeamRemixWaiver(...args),
+}));
+// The listing's count of today's waived submissions, a Kysely read.
+const displayCount = vi.fn<AnyFn>(async () => 0);
+vi.mock('@civitai/db-queries/placement', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  countPlacements: (...args: unknown[]) => displayCount(...args),
+}));
+
 // The viewer's own pending submissions on the visibility card, one Kysely read: none unless a test
 // says otherwise. Its rows, against a real database, are pinned in
 // hot-reads-3.kysely-parity.test.ts.
@@ -278,6 +291,8 @@ function primeQueries({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  findTeamRemixWaiver.mockResolvedValue(null);
+  displayCount.mockResolvedValue(0);
   // 🔴 `clearAllMocks` is mockClear, which does NOT drain a queued `...Once`, and
   // neither does a later `mockResolvedValue` — the queue is consulted first. So
   // an unconsumed `...Once` survives into the next test and reddens something
@@ -2976,6 +2991,76 @@ describe('free submissions', () => {
   });
 });
 
+describe('team-waived submissions', () => {
+  const WAIVER = { event: 'birthday2026', team: 'Pink', perDay: 10 };
+  const submitWaived = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]> = {}) =>
+    submit({ teamWaiver: true, expectedPrice: undefined, ...over });
+
+  beforeEach(() => {
+    findTeamRemixWaiver.mockResolvedValue(WAIVER);
+  });
+
+  it('claims through the free primitive with the event limit, never charging the price', async () => {
+    primeQueries({ submission: verifiedSubmission });
+
+    await expect(submitWaived()).resolves.toEqual({ id: FREE_PLACEMENT });
+
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+    expect(createFreePlacement).toHaveBeenCalledWith({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+      placerId: PLACER,
+      data: { imageId: REMIX_IMAGE, remixOfId: null, derivedFromHost: true },
+      teamWaiver: { perDay: WAIVER.perDay },
+    });
+    // The owner the submission lands with, and the host it lands on: the two facts the waiver is
+    // about. A swapped pair would ask whether the placer is their own teammate.
+    expect(findTeamRemixWaiver).toHaveBeenCalledWith({
+      placerId: PLACER,
+      ownerId: OWNER,
+      hostImageId: HOST_IMAGE,
+    });
+  });
+
+  it('refuses a remix the server did not resolve as made from the host', async () => {
+    // The waiver removes the price, the surface's only spam gate for an unverified remix.
+    await expect(submitWaived()).rejects.toThrow(/made from this image on-site/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses when no event waiver applies, rather than charging the price instead', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    findTeamRemixWaiver.mockResolvedValue(null);
+
+    await expect(submitWaived()).rejects.toThrow(/isn't free for your team/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a submission that asks to be both free and team-waived', async () => {
+    primeQueries({ submission: verifiedSubmission });
+
+    await expect(submitWaived({ free: true })).rejects.toThrow(/either free or team-waived/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('is not offered on an ordinary paid submission', async () => {
+    // A placer who did not ask for the waiver pays, even when they would qualify: the card offers
+    // it, and the mutation does not decide on the placer's behalf.
+    primeQueries({ submission: verifiedSubmission });
+
+    await submit();
+
+    expect(findTeamRemixWaiver).not.toHaveBeenCalled();
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('what the public visibility query says about free capacity', () => {
   const visibility = (viewerId?: number) => {
     // One row satisfying every raw read this path makes. The host has to come
@@ -3354,7 +3439,43 @@ describe('the free eligibility listing', () => {
       allowance: { used: 1, remaining: 0, resetsAt: new Date('2026-03-04') },
       usedHere: true,
       verifiedImageIds: [REMIX_IMAGE],
+      teamWaiver: null,
     });
+  });
+
+  it("names the team and what is left of today's waivers when one applies", async () => {
+    findTeamRemixWaiver.mockResolvedValue({ event: 'birthday2026', team: 'Pink', perDay: 10 });
+    displayCount.mockResolvedValue(3);
+
+    const { teamWaiver } = await eligibility();
+
+    expect(teamWaiver).toMatchObject({ team: 'Pink', remaining: 7 });
+    expect(teamWaiver?.resetsAt.toISOString()).toMatch(/T00:00:00\.000Z$/);
+    // Asked about this gallery's owner, on the replica: it is a listing.
+    expect(findTeamRemixWaiver).toHaveBeenCalledWith(
+      expect.objectContaining({ placerId: PLACER, ownerId: OWNER, hostImageId: HOST_IMAGE })
+    );
+    // Today's waived rows only: the free tier's own count is a different number.
+    expect(displayCount.mock.calls[0][1]).toMatchObject({
+      placerId: PLACER,
+      free: true,
+      createdAt: expect.any(Object),
+      data: { path: ['waiver'], equals: 'team' },
+    });
+  });
+
+  it('never reports a negative number of waivers left', async () => {
+    findTeamRemixWaiver.mockResolvedValue({ event: 'birthday2026', team: 'Pink', perDay: 10 });
+    displayCount.mockResolvedValue(12);
+
+    expect((await eligibility()).teamWaiver?.remaining).toBe(0);
+  });
+
+  it('offers no waiver on your own gallery, without asking the event', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, ownerId: PLACER });
+
+    expect((await eligibility()).teamWaiver).toBeNull();
+    expect(findTeamRemixWaiver).not.toHaveBeenCalled();
   });
 
   it('asks the never-twice question about THIS surface and THIS host', async () => {

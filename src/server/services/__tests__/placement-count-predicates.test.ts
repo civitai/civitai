@@ -5,6 +5,7 @@ import {
   freePlacementsOnWhere,
   freePlacementsTodayWhere,
   reservedFreeSlotsWhere,
+  teamWaivedWhere,
 } from '~/server/services/placement-count-predicates';
 import { freePlacementDayStart } from '~/shared/utils/placement';
 
@@ -57,5 +58,22 @@ describe('the shared placement count predicates translate to Kysely', () => {
         'and "surface" = $3 and "targetType" = $4 and "targetId" = $5'
     );
     expect(parameters).toEqual([4303, true, 'remixGallery', 'image', 4404]);
+  });
+});
+
+describe('the team-waived share translates to Kysely', () => {
+  it('matches the marker as text, so a row without it is not counted', async () => {
+    const { sql, parameters } = await compile(teamWaivedWhere(freePlacementsTodayWhere(4505)));
+    expect(sql).toBe(
+      'select count(*) as "count" from "Placement" where "placerId" = $1 and "free" = $2 ' +
+        'and "createdAt" >= $3::timestamp and "data"->>$4 = $5'
+    );
+    expect(parameters).toEqual([
+      4505,
+      true,
+      freePlacementDayStart().toISOString(),
+      'waiver',
+      'team',
+    ]);
   });
 });

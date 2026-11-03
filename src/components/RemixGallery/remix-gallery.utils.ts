@@ -362,3 +362,42 @@ export function remixGalleryModerating({
   if (!ownerKnown) return false;
   return !isOwner || asModerator;
 }
+
+export type TeamWaiverStanding = { team: string; remaining: number; resetsAt: Date } | null;
+
+/**
+ * What the submit card says about an event's team waiver for the selected remix.
+ *
+ * `available` replaces the free/paid choice: a waived submission costs neither
+ * Buzz nor the daily free placement, so there is nothing left to choose. A waiver
+ * whose daily limit is spent says so and leaves the ordinary choice in place.
+ * Nothing is said for an unverified remix: the waiver, like free, needs one, and
+ * the free option's own note already explains that.
+ */
+export function teamWaiverOffer({
+  verified,
+  open,
+  standing,
+}: {
+  verified: boolean;
+  open: boolean;
+  standing: TeamWaiverStanding | undefined;
+}): { available: boolean; note: string | null } {
+  if (!standing || !verified || !open) return { available: false, note: null };
+  if (standing.remaining <= 0)
+    return {
+      available: false,
+      note: `You've used today's free team remixes. They come back at ${standing.resetsAt.toLocaleTimeString(
+        [],
+        { hour: 'numeric', minute: '2-digit' }
+      )}.`,
+    };
+  return {
+    available: true,
+    note: `Free for Team ${
+      standing.team
+    }: you and this creator are teammates and the image is wearing a team hat. ${
+      standing.remaining === 1 ? '1 free team remix' : `${standing.remaining} free team remixes`
+    } left today. The creator still reviews it.`,
+  };
+}

@@ -86,7 +86,10 @@ type Scalar = string | number | boolean;
  * count on the Kysely path only.
  */
 export type PlacementCountWhere = Partial<
-  Record<PlacementColumn, Scalar | { in: readonly Scalar[] } | { gte: Date }>
+  Record<
+    PlacementColumn,
+    Scalar | { in: readonly Scalar[] } | { gte: Date } | { path: readonly string[]; equals: string }
+  >
 >;
 
 /**
@@ -112,6 +115,16 @@ export async function countPlacements(db: Kysely<DB>, where: PlacementCountWhere
       else query = query.where(ref, 'in', [...condition.in]);
     } else if (operators.length === 1 && 'gte' in condition && condition.gte instanceof Date) {
       query = query.where(ref, '>=', sql<Date>`${condition.gte.toISOString()}::timestamp`);
+    } else if (
+      operators.length === 2 &&
+      'path' in condition &&
+      'equals' in condition &&
+      condition.path.length === 1 &&
+      typeof condition.equals === 'string'
+    ) {
+      // Prisma's JSON path filter on one top-level key, matched as text. A row without the key
+      // compares NULL and is not counted, as in Prisma.
+      query = query.where(sql<string>`${ref}->>${condition.path[0]}`, '=', condition.equals);
     } else {
       throw new Error(
         `countPlacements: unsupported condition on "${column}": ${JSON.stringify(condition)}`
