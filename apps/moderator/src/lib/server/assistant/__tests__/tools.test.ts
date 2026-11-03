@@ -1063,6 +1063,26 @@ describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a 
     expect(JSON.stringify(refused)).not.toMatch(/secret|sub_other/);
   });
 
+  it.each([
+    ['preview_membership_extension', { userId: 5, days: 3 }, 'user.membership.extend'],
+    ['preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: true }, 'user.membership.cancel'],
+    ['preview_membership_resync', { userId: 5 }, 'user.membership.extend'],
+  ])('%s hides Stripe ids in a failed preview too', async (name, args, grant) => {
+    const preview = (
+      {
+        preview_membership_extension: previewMembershipExtension,
+        preview_membership_cancel: previewMembershipCancel,
+        preview_membership_resync: previewMembershipResync,
+      } as Record<string, { mockResolvedValueOnce: (v: never) => unknown }>
+    )[name];
+    preview.mockResolvedValueOnce({
+      ok: false,
+      error: 'Stripe returned sub_1Secret for cus_1Secret',
+    } as never);
+    const out = (await run(name, args, LOOKUP_PAGE, [grant])) as { data: { error: string } };
+    expect(out.data.error).toBe('Stripe returned [Stripe id] for [Stripe id]');
+  });
+
   it('proposing a re-sync returns a prefilled panel link and calls no write', async () => {
     const out = (await run(
       'propose_membership_resync',

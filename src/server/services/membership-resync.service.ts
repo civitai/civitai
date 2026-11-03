@@ -37,10 +37,9 @@ const SUPERSEDING_STATUSES = ['active', 'trialing'];
 
 const iso = (epoch: number | null | undefined) =>
   epoch == null ? null : new Date(epoch * 1000).toISOString();
-// The upsert stores Stripe times through toDateTime, which is offset from the epoch (30 min, plus the
-// process timezone's 1970 offset less its current one). A stored time that toDateTime gives for
-// Stripe's shows Stripe's, so a matching row compares equal. Any other is shown with the offset
-// undone, which is ambiguous around a spring-forward hour: toDateTime stores two seconds as one.
+// The upsert stores Stripe times through toDateTime, shifted by 30 min plus a timezone-dependent
+// offset, and around spring-forward two seconds store as one. So a match is checked forward; only a
+// differing row is shown with the shift undone.
 const storedIso = (d: Date | null, stripeEpoch?: number | null) => {
   if (d == null) return null;
   if (stripeEpoch != null && toDateTime(stripeEpoch).getTime() === d.getTime())
@@ -322,7 +321,7 @@ async function resyncLocked({
     await log({ type: 'refused', actorId, userId, reason, problems: ['Buzz membership changed'] });
     throw throwConflictError("The member's Buzz-bought membership changed; preview again");
   }
-  // Webhooks and the member's own changes take no lock: refuse to store a copy Stripe has moved past.
+  // Refuse to store a copy Stripe has moved past since the read; webhooks don't wait for our lock.
   const fresh = await stripe.subscriptions.retrieve(sub.id).catch((e: { statusCode?: number }) => {
     if (e?.statusCode === 404) return null;
     throw e;
@@ -357,7 +356,7 @@ async function resyncLocked({
   await syncFreshdeskMembership({ customerId }).catch((e) =>
     log({ type: 'freshdesk-sync-failed', userId, error: (e as Error).message })
   );
-  // Stored and audited by now: a failed re-read must not lose the log of what changed.
+  // The row is written: a failed re-read must not lose the log of what changed.
   const afterRow = await dbWrite.customerSubscription
     .findUnique({
       where: { userId_buzzType: { userId, buzzType: 'green' } },

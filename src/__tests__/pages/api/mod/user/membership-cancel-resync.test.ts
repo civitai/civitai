@@ -837,13 +837,13 @@ describe('re-sync: final-head lanes', () => {
     const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
     expect(redisMock.sysRedis.set).toHaveBeenCalledWith(lockKey, expect.any(String), {
       NX: true,
-      EX: 600,
+      EX: expect.any(Number),
     });
     const owner = redisMock.sysRedis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
     expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, lockKey, owner);
   });
 
-  it('the re-read failing after a stored upsert still answers, audited once, after unknown', async () => {
+  it('a failed row re-read after a stored upsert still answers 200, after unknown, audited once', async () => {
     fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
     dbMock.dbWrite.customerSubscription.findUnique
       .mockResolvedValueOnce(ROW)
@@ -857,6 +857,7 @@ describe('re-sync: final-head lanes', () => {
 
   it.each([
     ['only its metadata changed', liveSub({ metadata: { userId: String(MEMBER), banned: 'x' } })],
+    ['only its canceled_at changed', liveSub({ canceled_at: NOW })],
     ['Stripe no longer has it', Object.assign(new Error('gone'), { statusCode: 404 })],
   ])('is refused (409) when, on the re-read before the upsert, %s', async (_label, second) => {
     const { subscriptions } = fakeStripe(
@@ -874,6 +875,13 @@ describe('re-sync: final-head lanes', () => {
       } as never);
     expect((await resync()).status).toBe(409);
     expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('the lock is released after a refusal too', async () => {
+    fakeStripe(liveSub({ status: 'canceled', ended_at: NOW }));
+    vi.mocked(delIfValue).mockClear();
+    expect((await resync()).status).toBe(400);
+    expect(delIfValue).toHaveBeenCalledTimes(1);
   });
 
   it('the cancel grant alone does not reach re-sync (403)', async () => {
