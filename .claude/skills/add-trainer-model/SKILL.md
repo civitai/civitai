@@ -63,8 +63,10 @@ three are answered — each one changes what you do:
    - **Present** → note the exact `ecosystem` literal, whether `modelVariant` is required, any fixed
      fields (e.g. Boogu `batchSize` fixed at 1), and the server-computed `readonly` outputs (never send
      those).
-   - **Absent** → check `npm view @civitai/orchestration-client versions --json | tail` and bump with
-     `pnpm add @civitai/orchestration-client@<v>`. The current pin is in `package.json` (`@civitai/orchestration-client`). If the
+   - **Absent** → check `npm view @civitai/orchestration-client version` and bump to it in every
+     `package.json` that lists the client (`git grep -l '"@civitai/orchestration-client"' -- '*package.json'`),
+     then `pnpm install`; `src/__tests__/orchestration-client-single-version.test.ts` fails on a
+     partial bump. If the
      type is still absent after bumping, the AI-Toolkit dispatch casts `ecosystem as any` so it works
      untyped — but say so to the user and prefer a typed SDK. **The `@civitai/orchestration-client` bump, when needed,
      is the answer to the brief's "does the client need updating?" — surface it explicitly.**

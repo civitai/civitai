@@ -25,7 +25,7 @@ export const config = {
   },
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
-    metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents',
+    metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
   },
   redis: {
     url: process.env.REDIS_URL!,

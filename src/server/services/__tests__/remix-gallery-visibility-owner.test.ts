@@ -11,12 +11,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * reaches the caller.
  */
 const ownerLookup = dbMock.dbRead.user.findUnique;
-const hostImageRead = dbMock.dbWrite.image.findUnique;
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The Kysely placement reads this path makes. Their rows, against a real database, are pinned in
+// placement-reads.kysely-parity.test.ts.
+const placementReads = vi.hoisted(() => ({
+  getImagePlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+  getUserPlacementScore: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
+const hostImageRead = placementReads.getImagePlacementTarget;
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier: async () => null,
@@ -50,7 +55,8 @@ const hostOwnedBy = (username: string | null) =>
     id: HOST_IMAGE,
     userId: OWNER,
     postId: null,
-    user: { username },
+    type: 'image',
+    username,
   });
 
 const visibility = () =>
@@ -62,9 +68,11 @@ const visibility = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([]);
-  // One row answering every raw read on this path: the creator score, the
-  // has-entries probe and the host image.
+  placementReads.listPlacementSpacesFor.mockResolvedValue([]);
+  placementReads.countPlacements.mockResolvedValue(0);
+  placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
+  // One row answering every raw read on this path: the has-entries probe and
+  // the host image. The creator score comes from `getUserPlacementScore` above.
   dbMock.dbRead.$queryRaw.mockResolvedValue([
     { score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true },
   ]);

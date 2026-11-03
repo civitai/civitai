@@ -219,6 +219,45 @@ block as a fenced `json` block:
 }
 ```
 
+### Facts on every finding — required
+
+<!-- pr-review-gate:facts -->
+Still give your own best severity; the gate may recompute it from these facts. Report all three on
+every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
+otherwise end each finding with them as `impact / reach / evidence`, e.g.
+`money / unusual-state / traced src/server/services/x.service.ts:42`.
+
+- `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
+  user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
+  moderation, NSFW gating), `data-loss` (rows or files destroyed or corrupted), `privacy` (PII or private
+  content shown to the wrong person), `wrong-for-user` (a visible wrong result, nothing lost: a wrong
+  count, a dead button), `internal` (cost only we see: an extra query, log noise), `maintainability`
+  (nothing wrong yet: a duplicate, a misleading comment).
+- `reach`, when it happens: `normal-use` (an ordinary request on the main path), `unusual-state` (a rare
+  but real state: a retry, a webhook delivered twice, a race), `theoretical` (you found no path to it).
+- `evidence`, `{kind, ref}`: `traced` (you followed the path; `ref` is the `file:line` that does it),
+  `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
+  `ref` is the `file:line` you reasoned from).
+
+Report the reach you can show, not the worst you can imagine. The allowed values, for tools:
+
+```json
+{
+  "impact": ["money", "access", "data-loss", "privacy", "wrong-for-user", "internal", "maintainability"],
+  "reach": ["normal-use", "unusual-state", "theoretical"],
+  "evidence.kind": ["traced", "reproduced", "inferred"]
+}
+```
+<!-- /pr-review-gate:facts -->
+
+Example: a discount flag set on redeem and never reset when the order is refunded is `money /
+unusual-state / traced` at the write's `file:line`.
+
+On a safety or access finding, `reproduced` names the test or file you ran, never the request that
+exercises the gap (see "Describe the missing control"); `traced` with the `file:line` earns the same
+severity. **confirmed** is `traced` or `reproduced`, **plausible** is `inferred`. A finding whose
+reach would be `theoretical` failed "Verify before reporting": drop it.
+
 ## Delivering your report
 
 🔴 **Your findings reach nobody unless you deliver them.** Text you write in your own transcript is not

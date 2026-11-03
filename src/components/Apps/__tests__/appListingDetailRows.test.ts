@@ -573,3 +573,57 @@ describe('buildListingDetailRows — the SOURCE row', () => {
     expect(rows.filter((r) => r.href != null).map((r) => r.key)).toEqual(['source']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The CATEGORY row's store link and the RATING row's pill colour
+// ---------------------------------------------------------------------------
+
+const row = (rows: { key: string }[], key: string) =>
+  rows.find((r) => r.key === key) as ReturnType<typeof buildListingDetailRows>[number] | undefined;
+
+describe('buildListingDetailRows — category store link', () => {
+  it('a known category links to the store filtered to it', () => {
+    const rows = buildListingDetailRows(detail({ category: 'games' }), { formatDate: fmt });
+    expect(row(rows, 'category')?.storeHref).toBe('/apps?category=games');
+    // Not the OUTBOUND field — that one obliges target=_blank + noopener.
+    expect(row(rows, 'category')?.href).toBeUndefined();
+  });
+
+  it('no link for a category the store cannot filter by, nor in preview', () => {
+    const unknown = buildListingDetailRows(detail({ category: 'hats' }), { formatDate: fmt });
+    expect(row(unknown, 'category')?.value).toBe('hats');
+    expect(row(unknown, 'category')?.storeHref).toBeUndefined();
+    const preview = buildListingDetailRows(detail({ category: 'games' }), {
+      preview: true,
+      formatDate: fmt,
+    });
+    expect(row(preview, 'category')?.value).toBe('Games');
+    expect(row(preview, 'category')?.storeHref).toBeUndefined();
+  });
+
+  it('only the category row carries a storeHref', () => {
+    const rows = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt });
+    expect(rows.filter((r) => r.storeHref != null).map((r) => r.key)).toEqual(['category']);
+  });
+});
+
+describe('buildListingDetailRows — rating pill colour', () => {
+  // Literals per rung: the site's browsing-level colours (`nsfwLevelColors`), G sharing
+  // PG's ceiling. Pairwise the fixture covers four distinct colours plus the gray fallback.
+  it.each([
+    ['g', 'green'],
+    ['pg', 'green'],
+    ['pg13', 'yellow'],
+    ['r', 'orange'],
+    ['x', 'red'],
+    ['nc17', 'gray'],
+  ])('%s → %s', (rating, color) => {
+    const rows = buildListingDetailRows(detail({ contentRating: rating }), { formatDate: fmt });
+    expect(row(rows, 'rating')?.pillColor).toBe(color);
+  });
+
+  it('only the rating row carries a pill colour', () => {
+    const rows = buildListingDetailRows(detail(), { formatDate: fmt });
+    expect(rows.filter((r) => r.pillColor != null).map((r) => r.key)).toEqual(['rating']);
+  });
+});

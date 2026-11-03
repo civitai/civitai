@@ -327,6 +327,12 @@ describe('retired cards', () => {
   it('still resolves a past Hunyuan run to its card', () => {
     expect(cardByType('hunyuan')?.name).toBe('Hunyuan');
   });
+
+  it('offers no Ideogram 4 card to anyone, but still resolves past runs', () => {
+    const everyFlag = new Set(MODEL_CARDS.flatMap((c) => (c.flagKey ? [c.flagKey] : [])));
+    expect(cardsForMedia('image', everyFlag).map((c) => c.type)).not.toContain('ideogram4');
+    expect(cardByType('ideogram4')?.name).toBe('Ideogram 4');
+  });
 });
 
 describe('sample input images', () => {

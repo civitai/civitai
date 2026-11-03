@@ -63,6 +63,7 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { RequestLockReviewMenuItem } from '~/components/Model/LockReview/RequestLockReview';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
@@ -201,6 +202,7 @@ import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
@@ -1248,6 +1250,7 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </LoginRedirect>
                         )}
+                        <RequestLockReviewMenuItem model={model} />
                         {currentUser && (
                           <>
                             <Menu.Label>Moderation</Menu.Label>
@@ -1269,6 +1272,11 @@ export default function ModelDetailsV2({
                                 >
                                   Lookup Model
                                 </ModeratorLookupMenuItem>
+                                <TrainingAuditMenuItem
+                                  modelId={model.id}
+                                  uploadType={model.uploadType}
+                                  isModerator={isModerator}
+                                />
                                 {published && (
                                   <Menu.Item
                                     color="yellow"

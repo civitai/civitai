@@ -205,10 +205,6 @@ export const ReactionType = [
   'CommentV2_Delete',
   'Review_Create',
   'Review_Delete',
-  'Question_Create',
-  'Question_Delete',
-  'Answer_Create',
-  'Answer_Delete',
   'BountyEntry_Create',
   'BountyEntry_Delete',
   'Article_Create',
@@ -241,8 +237,6 @@ export type ImageActivityType =
   | 'Tags'
   | 'Resources'
   | 'Restore';
-export type QuestionType = 'Create' | 'Delete';
-export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
 export type BountyActivity = 'Create' | 'Update' | 'Delete' | 'Expire' | 'Refund';
 export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
@@ -567,7 +561,7 @@ export class Tracker {
               message: `Tracker returned ${res.status}`,
             },
             'clickhouse'
-          ).catch(() => {});
+          ).catch(() => undefined);
           failure = new Error(`tracker: ${table} rejected with ${res.status}`);
           break;
         }
@@ -590,7 +584,7 @@ export class Tracker {
             message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => undefined);
       } catch (e) {
         const error = e as Error;
         failure = error;
@@ -607,7 +601,7 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => undefined);
       }
     }
 
@@ -880,14 +874,6 @@ export class Tracker {
     nsfw: NsfwLevelDeprecated;
   }) {
     return this.track('reactions', values);
-  }
-
-  public question(values: { type: QuestionType; questionId: number }) {
-    return this.track('questions', values);
-  }
-
-  public answer(values: { type: AnswerType; questionId: number; answerId: number }) {
-    return this.track('answers', values);
   }
 
   public comment(values: { type: CommentType; entityId: number; nsfw: boolean }) {

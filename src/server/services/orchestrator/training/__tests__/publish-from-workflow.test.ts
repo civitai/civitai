@@ -38,7 +38,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   updateWorkflow: mockUpdateWorkflow,
 }));
 
-import type { Workflow } from '@civitai/orchestration-client';
+import type { TrainingStep, Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import {
@@ -456,7 +456,7 @@ describe('createDraftModelFromWorkflow', () => {
 
   it("records the run's hyperparameters in trainingDetails, defaulting or dropping any the schema rejects", async () => {
     const workflow = studioWorkflow();
-    Object.assign((workflow.steps![0] as { input: Record<string, unknown> }).input, {
+    Object.assign((workflow.steps![0] as TrainingStep).input, {
       batchSize: 0,
       numRepeats: 4,
       resolution: 1024,

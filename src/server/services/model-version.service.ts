@@ -30,6 +30,7 @@ import {
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -49,10 +50,7 @@ import {
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readDefaultModelVersionsViaKysely,
-  readDefaultModelVersionsViaPrisma,
-} from '~/server/services/hot-reads-3.reads';
+import { readDefaultModelVersionsViaKysely } from '~/server/services/hot-reads-3.reads';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   donationGoalVersionFindArgs,
@@ -278,17 +276,9 @@ export const getDefaultModelVersion = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  // `kysely-hot-reads-3` on: the same read in one Kysely statement instead of three Prisma queries,
-  // on the client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
-  const result = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-    ? await readDefaultModelVersionsViaKysely(await getKyselyWithoutLag('model', modelId), {
-        modelId,
-        modelVersionId,
-      })
-    : await readDefaultModelVersionsViaPrisma(await getDbWithoutLag('model', modelId), {
-        modelId,
-        modelVersionId,
-      });
+  // One Kysely statement, on the client the `getKyselyWithoutLag('model', …)` lag decision picks.
+  const db = await getKyselyWithoutLag('model', modelId);
+  const result = await readDefaultModelVersionsViaKysely(db, { modelId, modelVersionId });
 
   if (!result) throw throwNotFoundError();
 
@@ -2730,6 +2720,10 @@ export const earlyAccessPurchase = async ({
 
   if (!modelVersion) {
     throw throwNotFoundError('Model version not found.');
+  }
+
+  if (isNonCommercialBaseModel(modelVersion.baseModel)) {
+    throw throwBadRequestError(notCommerciallyAvailableMessage(modelVersion.baseModel));
   }
 
   if (userId === modelVersion.model.userId) {

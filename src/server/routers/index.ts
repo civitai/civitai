@@ -24,7 +24,6 @@ const routers = {
     import('~/server/routers/platform-feedback.router').then((m) => m.platformFeedbackRouter),
   account: () => import('./account.router').then((m) => m.accountRouter),
   announcement: () => import('./announcement.router').then((m) => m.announcementRouter),
-  answer: () => import('./answer.router').then((m) => m.answerRouter),
   apiKey: () => import('./apiKey.router').then((m) => m.apiKeyRouter),
   article: () => import('./article.router').then((m) => m.articleRouter),
   auth: () => import('./auth.router').then((m) => m.authRouter),
@@ -63,7 +62,6 @@ const routers = {
   postPreset: () => import('./post-preset.router').then((m) => m.postPresetRouter),
   postIntent: () => import('./post-intent.router').then((m) => m.postIntentRouter),
   promotion: () => import('./promotion.router').then((m) => m.promotionRouter),
-  question: () => import('./question.router').then((m) => m.questionRouter),
   ratingReview: () => import('./rating-review.router').then((m) => m.ratingReviewRouter),
   reaction: () => import('./reaction.router').then((m) => m.reactionRouter),
   report: () => import('./report.router').then((m) => m.reportRouter),
@@ -135,6 +133,7 @@ const routers = {
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter),
   orchestrator: () =>
     import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter),
+  remixApp: () => import('~/server/routers/remix-app.router').then((m) => m.remixAppRouter),
   moderator: () => import('~/server/routers/moderator').then((m) => m.modRouter),
   entityCollaborator: () =>
     import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter),

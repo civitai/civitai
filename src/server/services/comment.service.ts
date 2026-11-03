@@ -30,13 +30,9 @@ import {
   getKyselyWithoutLag,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   countTopLevelCommentsByHiddenViaKysely,
-  countTopLevelCommentsByHiddenViaPrisma,
   countTopLevelCommentsViaKysely,
-  countTopLevelCommentsViaPrisma,
-  findPinnedCommentsViaPrisma,
   findTopLevelCommentsViaPrisma,
   listPinnedCommentsViaKysely,
   listTopLevelCommentsViaKysely,
@@ -87,8 +83,8 @@ async function getViewerExclusionLists(
 
 /**
  * The filter shared by the comment list, the pinned list and the visible count so they can't drift.
- * Both the Prisma where (`topLevelCommentsWhere`) and the Kysely statements behind
- * `kysely-hot-reads-4` are pure functions of it (hot-reads-4.reads.ts).
+ * Both the Prisma where (`topLevelCommentsWhere`, the list pages Kysely does not serve) and the
+ * Kysely statements are pure functions of it (hot-reads-4.reads.ts).
  * Pass `lists` when building more than one filter for the same viewer, so the lists are read once.
  */
 async function getTopLevelCommentsFilter(
@@ -149,27 +145,10 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   return findTopLevelCommentsViaPrisma(db, topLevel, { limit, skip, cursor, sort }, select);
 };
 
-export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
-  input: { filterBy, ...filter },
-  select,
-  user,
-}: {
-  input: GetAllCommentsSchema;
-  select: TSelect;
-  user?: SessionUser;
-}) => {
-  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
-
-  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: false });
-
-  const db = await getDbWithoutLag('commentModel', filter.modelId);
-  return findPinnedCommentsViaPrisma(db, topLevel, select);
-};
-
 /**
- * `getComments` with the `comment.getAll` select, through Kysely (`kysely-hot-reads-4` on), for a
- * page `isKyselyCommentListPage` accepts: the first page, newest or oldest first. Same filter, same
- * lag decision (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+ * `getComments` with the `comment.getAll` select, through Kysely, for a page
+ * `isKyselyCommentListPage` accepts: the first page, newest or oldest first. Same filter, same lag
+ * decision (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
  */
 export const getCommentsViaKysely = async ({
   input: { limit = DEFAULT_PAGE_SIZE, page, filterBy, sort, ...filter },
@@ -188,7 +167,7 @@ export const getCommentsViaKysely = async ({
   return listTopLevelCommentsViaKysely(db, topLevel, { limit, skip, sort });
 };
 
-/** `getPinnedComments` with the `comment.getAll` select, through Kysely (`kysely-hot-reads-4` on). */
+/** Every pinned top-level comment with the `comment.getAll` select, through Kysely. */
 export const getPinnedCommentsViaKysely = async ({
   input: { filterBy, ...filter },
   user,
@@ -204,7 +183,7 @@ export const getPinnedCommentsViaKysely = async ({
   return listPinnedCommentsViaKysely(db, topLevel);
 };
 
-/** How many top-level comments `getComments` + `getPinnedComments` can return to this viewer. */
+/** How many top-level comments `comment.getAll` (unpinned + pinned) can return to this viewer. */
 export const getVisibleCommentCount = async ({
   input,
   user,
@@ -212,16 +191,10 @@ export const getVisibleCommentCount = async ({
   input: GetCommentCountByModelInput;
   user?: SessionUser;
 }) => {
-  // `kysely-hot-reads-4` on: the same counts through Kysely, on the client the same lag decision
-  // picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
-  let count: (filter: TopLevelCommentsFilter, pinned: PinnedScope) => Promise<number>;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
-    const db = await getKyselyWithoutLag('commentModel', input.modelId);
-    count = (filter, pinned) => countTopLevelCommentsViaKysely(db, filter, pinned);
-  } else {
-    const db = await getDbWithoutLag('commentModel', input.modelId);
-    count = (filter, pinned) => countTopLevelCommentsViaPrisma(db, filter, pinned);
-  }
+  // Through Kysely, on the client the `getKyselyWithoutLag('commentModel', …)` lag decision picks.
+  const db = await getKyselyWithoutLag('commentModel', input.modelId);
+  const count = (filter: TopLevelCommentsFilter, pinned: PinnedScope) =>
+    countTopLevelCommentsViaKysely(db, filter, pinned);
   const lists = await getViewerExclusionLists(user);
   const [unpinnedFilter, pinnedFilter] = await Promise.all([
     getTopLevelCommentsFilter(input, user, { ownerSeesBlockers: true }, lists),
@@ -261,18 +234,12 @@ export const getVisibleCommentCounts = async ({
       hidden: await getVisibleCommentCount({ input: { modelId, hidden: true }, user }),
     };
 
-  // `kysely-hot-reads-4` on: through Kysely, on the client the same lag decision picks.
-  let count: (
+  // Through Kysely, on the client the `getKyselyWithoutLag('commentModel', …)` lag decision picks.
+  const db = await getKyselyWithoutLag('commentModel', modelId);
+  const count = (
     filter: TopLevelCommentsBaseFilter,
     pinned: PinnedScope
-  ) => Promise<CommentCountsByHidden>;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
-    const db = await getKyselyWithoutLag('commentModel', modelId);
-    count = (filter, pinned) => countTopLevelCommentsByHiddenViaKysely(db, filter, pinned);
-  } else {
-    const db = await getDbWithoutLag('commentModel', modelId);
-    count = (filter, pinned) => countTopLevelCommentsByHiddenViaPrisma(db, filter, pinned);
-  }
+  ): Promise<CommentCountsByHidden> => countTopLevelCommentsByHiddenViaKysely(db, filter, pinned);
   const lists = await getViewerExclusionLists(user);
   // `hidden` is the only part of the filter the two views differ by, so the filters below are the
   // single counts' filters without it, and the equal/differing split is the one each single count

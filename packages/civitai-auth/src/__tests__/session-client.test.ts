@@ -460,3 +460,59 @@ describe('createSessionClient — invalidateAll (mass cutoff)', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('createSessionClient — cache read on a dead Redis (queued command never settles)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  // A disconnected node-redis client queues the command: no resolve, no reject.
+  const hang = () => h.cacheGet.mockImplementation(() => new Promise(() => {}));
+
+  it('getSessionUser gives up on the cache read and falls through to the hub fetch', async () => {
+    vi.useFakeTimers();
+    hang();
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    const p = createSessionClient().getSessionUser('7');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await p).toMatchObject({ id: 7 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('getSessionUserById gives up on the cache read and falls through to the hub fetch', async () => {
+    vi.useFakeTimers();
+    hang();
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    const p = createSessionClient().getSessionUserById(7);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await p).toMatchObject({ id: 7 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves no pending timer behind after a fast cache hit', async () => {
+    vi.useFakeTimers();
+    h.store.set(key(7), richUser(7));
+    await createSessionClient().getSessionUserById(7);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('swallows a late rejection of the abandoned read', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); // keep setImmediate real
+    let rejectRead!: (e: Error) => void;
+    h.cacheGet.mockImplementation(
+      () => new Promise((_res, rej) => (rejectRead = rej)) as Promise<never>
+    );
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const p = createSessionClient().getSessionUserById(7);
+      await vi.advanceTimersByTimeAsync(1000);
+      await p;
+      rejectRead(new Error('connection closed'));
+      await vi.advanceTimersByTimeAsync(10);
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+});

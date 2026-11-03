@@ -15,8 +15,6 @@ import {
   ImageSort,
   ModelSort,
   PostSort,
-  QuestionSort,
-  QuestionStatus,
   ThreadSort,
   ToolSort,
 } from '~/server/common/enums';
@@ -73,13 +71,6 @@ const modelFilterSchema = z.object({
 export const modelSortPeriodDefaults = modelFilterSchema
   .pick({ sort: true, period: true })
   .parse({});
-
-type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
-const questionFilterSchema = z.object({
-  sort: z.enum(QuestionSort).default(QuestionSort.MostLiked),
-  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
-  status: z.enum(QuestionStatus).optional(),
-});
 
 type ImageFilterSchema = z.infer<typeof imageFilterSchema>;
 const imageFilterSchema = z.object({
@@ -209,7 +200,6 @@ const auctionFilterSchema = z.object({
 
 type StorageState = {
   models: ModelFilterSchema;
-  questions: QuestionFilterSchema;
   images: ImageFilterSchema;
   modelImages: ModelImageFilterSchema;
   posts: PostFilterSchema;
@@ -236,7 +226,6 @@ export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>
 
 type StoreState = FilterState & {
   setModelFilters: (filters: Partial<ModelFilterSchema>) => void;
-  setQuestionFilters: (filters: Partial<QuestionFilterSchema>) => void;
   setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
   setModelImageFilters: (filters: Partial<ModelImageFilterSchema>) => void;
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
@@ -256,7 +245,6 @@ type StoreState = FilterState & {
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.ZodObject }>;
 const localStorageSchemas: LocalStorageSchema = {
   models: { key: 'model-filters', schema: modelFilterSchema },
-  questions: { key: 'question-filters', schema: questionFilterSchema },
   images: { key: 'image-filters', schema: imageFilterSchema },
   modelImages: { key: 'model-image-filters', schema: modelImageFilterSchema },
   posts: { key: 'post-filters', schema: postFilterSchema },
@@ -351,8 +339,6 @@ const createFilterStore = () =>
       ...getInitialLocalStorageValues(),
       setModelFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'models', data, state })),
-      setQuestionFilters: (data) =>
-        set((state) => handleLocalStorageChange({ key: 'questions', data, state })),
       setImageFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'images', data, state })),
       setModelImageFilters: (data) =>
@@ -423,7 +409,6 @@ export function useSetFilters(type: FilterSubTypes) {
           models: state.setModelFilters,
           posts: state.setPostFilters,
           images: state.setImageFilters,
-          questions: state.setQuestionFilters,
           modelImages: state.setModelImageFilters,
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,

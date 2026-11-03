@@ -37,8 +37,6 @@ export const threadContentSelect = {
   reviewId: true,
   bountyId: true,
   bountyEntryId: true,
-  questionId: true,
-  answerId: true,
   model3dId: true,
   model3dReviewId: true,
   comicProjectId: true,
@@ -57,8 +55,6 @@ type ThreadContent = {
   reviewId: number | null;
   bountyId: number | null;
   bountyEntryId: number | null;
-  questionId: number | null;
-  answerId: number | null;
   model3dId: number | null;
   model3dReviewId: number | null;
   comicProjectId: number | null;
@@ -115,17 +111,6 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
         })
       )?.userId ?? undefined
     );
-  if (thread.questionId)
-    return (
-      await guardDb.question.findUnique({
-        where: { id: thread.questionId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.answerId)
-    return (
-      await guardDb.answer.findUnique({ where: { id: thread.answerId }, select: { userId: true } })
-    )?.userId;
   if (thread.model3dId)
     return (
       await guardDb.model3D.findUnique({
@@ -410,20 +395,6 @@ export async function getBlockCheckOwnerIds({
     case 'review':
     case 'resourceReview': {
       const r = await guardDb.resourceReview.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
-      return r ? [r.userId] : [];
-    }
-    case 'question': {
-      const r = await guardDb.question.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
-      return r ? [r.userId] : [];
-    }
-    case 'answer': {
-      const r = await guardDb.answer.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });

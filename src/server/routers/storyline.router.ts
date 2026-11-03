@@ -1,3 +1,4 @@
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   addOwnerChapterSchema,
   createStorylineSchema,
@@ -225,11 +226,12 @@ export const storylineRouter = router({
     .input(setStorylineTakedownSchema)
     .mutation(({ input }) => setStorylineTakedown(input)),
 
-  create: storylineWriteProcedure
-    .input(createStorylineSchema)
-    .mutation(({ input, ctx }) =>
-      createStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+  create: storylineWriteProcedure.input(createStorylineSchema).mutation(({ input, ctx }) => {
+    // A creator turns sparks off through their remix gallery, which only this flag shows them.
+    if (input.sparkImageId && !ctx.features.remixGallery)
+      throw throwAuthorizationError('Starting a story from an image is not available yet');
+    return createStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  }),
 
   update: storylineWriteProcedure
     .input(updateStorylineSchema)

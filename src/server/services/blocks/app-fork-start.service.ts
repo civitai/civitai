@@ -7,8 +7,9 @@
  *   1. a new block slug for the fork (`<parent>-fork-<4 hex>`, unique, a valid blockId);
  *   2. a SEED — the parent's LATEST APPROVED source, zipped with its files at the root, secrets,
  *      dependencies and build output left out, its manifest's `blockId` rewritten to the fork's
- *      slug and `storage.imports` pre-filled to reach the viewer's data in the parent
- *      (`prefillParentStorageImports`), uploaded to the dedicated seed store and presigned;
+ *      slug, `storage.imports` pre-filled to reach the viewer's data in the parent
+ *      (`prefillParentStorageImports`), and the parent's `repository` and server-owned
+ *      `iframe.src` removed; uploaded to the dedicated seed store and presigned;
  *   3. a server-side FORK SESSION recording who forked what, at which commit.
  *
  * 🔴 THE FORK SESSION IS THE ONLY SOURCE OF A FORK'S PROVENANCE. When the fork's first version is
@@ -162,7 +163,8 @@ export type ForkSeedZip = {
  * Build the seed archive from the parent's files: files at the archive ROOT (no wrapper
  * directory — the sandbox service extracts as-is into `/workspace/<fork slug>`), exclusions
  * dropped, and `block.manifest.json`'s `blockId` set to the fork's slug so the copy publishes as
- * a NEW app rather than as an update of the parent. Deterministic (sorted, zero timestamps).
+ * a NEW app rather than as an update of the parent; the parent's `repository` and `iframe.src`
+ * are removed. Deterministic (sorted, zero timestamps).
  *
  * Throws {@link TRPCError} PRECONDITION_FAILED when there is no manifest to rewrite.
  */
@@ -195,6 +197,13 @@ export async function buildForkSeedZip(
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
   delete manifest.repository;
+  // `iframe.src` is PLATFORM-OWNED: the parent's is its own stamped URL, which the server
+  // re-stamps for the fork on submit anyway, and `civitai app validate` refuses an authored one.
+  // Only `src` goes; the rest of `iframe` (heights, resizable, sandbox) is the author's to keep.
+  const iframe = manifest.iframe;
+  if (iframe && typeof iframe === 'object' && !Array.isArray(iframe)) {
+    delete (iframe as Record<string, unknown>).src;
+  }
   kept[manifestIndex] = {
     path: MANIFEST_PATH,
     content: Buffer.from(JSON.stringify(manifest, null, 2) + '\n', 'utf8'),

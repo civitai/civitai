@@ -18,4 +18,8 @@ describe('Hat Turf on the Creator Journey unlock list', () => {
   it('is absent otherwise, so testers and the end of the event leave no stale promise', () => {
     expect(turfUnlock(false)).toBeUndefined();
   });
+
+  it('is absent while the Spark threshold is unread (0), rather than promised at no score', () => {
+    expect(turfUnlock(true, 0)).toBeUndefined();
+  });
 });

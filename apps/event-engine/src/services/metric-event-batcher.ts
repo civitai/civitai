@@ -199,8 +199,9 @@ export class MetricEventBatcher {
 
       // Commit offsets AFTER the insert succeeds, so a committed offset always
       // implies durability in ClickHouse. A commit failure simply leaves the
-      // offsets uncommitted: Kafka redelivers the batch and the
-      // entityMetricEvents ReplacingMergeTree dedupes the re-insert. The Redis
+      // offsets uncommitted: Kafka redelivers the batch, and the
+      // entityMetricEvents_month ReplacingMergeTree collapses the re-insert when
+      // it merges (until then a query sees both copies). The Redis
       // cache is applied inline + idempotently in the event processor, so it is
       // independent of this commit and needs no gating here.
       for (const cb of this.flushSubscribers) {
