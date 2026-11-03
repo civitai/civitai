@@ -1,5 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getEventAccess } from '~/server/events/event-access';
+import { loadEvents } from '~/server/events/load-events';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { cosmeticCache } from '~/server/redis/caches';
 import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
@@ -31,7 +33,7 @@ export async function resolveShowcaseHatIds(
 ): Promise<Map<number, number>> {
   if (!userIds.length) return new Map();
   const rows = await db.$queryRaw<{ userId: number; cosmeticId: number }[]>`
-    WITH ev AS MATERIALIZED (
+    WITH ev AS (
       SELECT id FROM "Cosmetic"
       WHERE type = 'ContentDecoration' AND data ->> 'event' = ${event}
     )
@@ -40,8 +42,8 @@ export async function resolveShowcaseHatIds(
     JOIN LATERAL (
       SELECT uc."cosmeticId"
       FROM "UserCosmetic" uc
-      JOIN ev ON ev.id = uc."cosmeticId"
-      WHERE uc."userId" = u.id
+      -- A semi-join, not a join: joined, the plan probes the key once per user per event hat.
+      WHERE uc."userId" = u.id AND uc."cosmeticId" IN (SELECT id FROM ev)
       -- The roster's shelf order (roster-sync.ts), with the pick in front of it.
       ORDER BY
         uc."cosmeticId"::text IS NOT DISTINCT FROM (u.settings -> ${SHOWCASE_SETTING} ->> ${event}) DESC,
@@ -108,10 +110,18 @@ export async function getShowcaseHatsForUsers(
   const ids = [...new Set(userIds)].filter((id) => id > 0);
   if (!ids.length || !isShowcaseLive(now)) return {};
   try {
+    if (!(await isShowcaseOpenToEveryone(now))) return {};
     return await readShowcaseHats(ids);
   } catch {
     return {};
   }
+}
+
+// The event's flag is its kill switch. Asked for a signed-out viewer, so the answer is the same for
+// every viewer: user.getCreator is edge-cached as one public response, so a per-viewer gate can't hold.
+async function isShowcaseOpenToEveryone(now: Date) {
+  const event = (await loadEvents()).find((e) => e.name === SHOWCASE_EVENT.name);
+  return !!event && (await getEventAccess(event, null, now)) === 'open';
 }
 
 async function readShowcaseHats(ids: number[]) {

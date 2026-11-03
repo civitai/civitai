@@ -405,7 +405,7 @@ export async function syncEventRosterMembers(
 ) {
   const ids = [...new Set(userIds)];
   if (!ids.length) return;
-  // Every caller here changed someone's hats, which can change the hat their avatar shows.
+  // Most callers changed someone's hats, which can change the hat their avatar shows.
   await refreshShowcaseHats(ids);
   let all: RosterEvent[];
   try {
