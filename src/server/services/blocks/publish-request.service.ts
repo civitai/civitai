@@ -1269,15 +1269,22 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const manifestDiffSummary = computeManifestDiff(manifest, previous?.manifest ?? null);
 
   // 🔴 APP STORAGE SCHEMA MIGRATIONS — refused HERE, before the upload and the review-repo push:
-  // a collection schema this version narrows (against the previous APPROVED version) can leave
+  // a collection schema this version narrows (against what the store enforces today) can leave
   // documents already stored unwritable, for this app and every fork writing its collections,
-  // unless a declared migration op covers each breaking change. Static diff of the two
-  // manifests; no document is read. Approve runs the same check again (a push-originated
-  // request never passes here). See `storage-schema-migrations.ts`.
-  const { assertStorageMigrationsCover, checkStorageMigrations } = await import(
-    '~/server/services/apps/storage-schema-migrations'
-  );
-  const storageMigrations = checkStorageMigrations(previous?.manifest ?? null, manifest);
+  // unless a declared migration op covers each breaking change. Static diff of the manifests; no
+  // document is read. Approve runs the same check again (a push-originated request never passes
+  // here). See `storage-schema-migrations.ts`.
+  const [
+    { assertStorageMigrationsCover, checkStorageMigrations },
+    { loadStorageMigrationBaseline },
+  ] = await Promise.all([
+    import('~/server/services/apps/storage-schema-migrations'),
+    import('~/server/services/apps/storage-migration-run.service'),
+  ]);
+  const baseline = existingApp
+    ? await loadStorageMigrationBaseline({ slug })
+    : { prev: null, history: [] };
+  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
 
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
@@ -2990,17 +2997,29 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
-  // APP STORAGE SCHEMA MIGRATIONS — the submit gate, again, against the version approved LAST
-  // (this request excluded): a push-originated request never passed `submitVersion`, and this is
-  // the comparison the plan below must be computed from. Refused before anything is written.
-  const { assertStorageMigrationsCover, checkStorageMigrations } = await import(
-    '~/server/services/apps/storage-schema-migrations'
-  );
-  const previousApproved = isFirstVersion
-    ? null
-    : await getPreviousApprovedState(request.slug, request.id);
-  const storageMigrations = checkStorageMigrations(previousApproved?.manifest ?? null, manifest);
+  // APP STORAGE SCHEMA MIGRATIONS — the submit gate, again, against what the store enforces now
+  // (`app_blocks.manifest`, not yet overwritten; earlier approvals, this request excluded, for a
+  // re-declared collection): a push-originated request never passed `submitVersion`, and this is
+  // the comparison the plan below must be computed from. Refused before anything is written —
+  // and so is a plan that could not be recorded or would strand an earlier, unfinished run.
+  const [
+    { assertStorageMigrationsCover, checkStorageMigrations },
+    { assertStorageMigrationsCanStart, loadStorageMigrationBaseline },
+  ] = await Promise.all([
+    import('~/server/services/apps/storage-schema-migrations'),
+    import('~/server/services/apps/storage-migration-run.service'),
+  ]);
+  const baseline = isFirstVersion
+    ? { prev: null, history: [] }
+    : await loadStorageMigrationBaseline({
+        slug: request.slug,
+        excludePublishRequestId: request.id,
+      });
+  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
+  if (storageMigrations.plans.size > 0 && existingAppBlock) {
+    await assertStorageMigrationsCanStart(existingAppBlock.id);
+  }
 
   // The listing writes below log and continue on failure, so a split decision they could not
   // write is refused HERE, before anything is written or built — otherwise the app would deploy

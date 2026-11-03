@@ -4983,6 +4983,8 @@ model AppStorageMigrationRun {
   invalid          Int       @default(0)
   failures         Json      @default("[]")
   lastError        String?   @map("last_error")
+  attempts         Int       @default(0)
+  claimToken       String?   @map("claim_token")
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   startedAt        DateTime? @map("started_at") @db.Timestamptz(6)
   heartbeatAt      DateTime? @map("heartbeat_at") @db.Timestamptz(6)

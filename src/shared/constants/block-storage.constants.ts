@@ -249,7 +249,10 @@ export const APP_STORAGE_SCHEMA_PATTERN_FLAGS = 'u';
  *
  * Every op is IDEMPOTENT, and the mutation ops must touch disjoint fields (no path equal to or
  * inside another's), so the whole list is too: applying it twice is applying it once, and a
- * re-run or a write racing the run is safe.
+ * re-run is safe. Each op also acts only on a document still in the OLD shape, so it never undoes
+ * a write made under the new schema while the run had not reached that document yet: `default`
+ * fills only a missing field, `rename` moves only a key the new schema refuses, and `remove`
+ * deletes only a value the new schema refuses there (`applyMigrationOps`).
  *
  * SCOPED TO ONE TRANSITION. Only the ops that cover a breaking change of THIS transition (the
  * previous approved version → this one) run; an op that covers nothing is a submit WARNING and

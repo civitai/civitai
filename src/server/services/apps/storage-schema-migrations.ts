@@ -362,13 +362,25 @@ function opLabel(name: string, index: number): string {
 }
 
 /**
- * THE check, at submit and again at approve: diff the previous approved manifest's storage
- * against the submitted one and match every breaking change to the ops that cover it. `prev`
- * null (a first version) has nothing to break. A manifest whose `storage` does not parse yields
- * an empty check: the manifest validator reports those errors itself, and a previous manifest
- * that does not parse cannot be compared (a warning says so).
+ * THE check, at submit and again at approve: diff the storage the app has now against the
+ * submitted one and match every breaking change to the ops that cover it.
+ *
+ * `prev` is the BASELINE — what the store enforces today (`app_blocks.manifest`), or null for a
+ * first version, which has nothing to break. `history` is the app's earlier approved manifests,
+ * newest first: a collection the baseline does not declare but the submission does is diffed
+ * against the most recent of them that declared it, so a collection dropped and later declared
+ * again is compared with the schema its stored documents were written under. A collection no
+ * manifest ever declared is new and has nothing stored.
+ *
+ * A manifest whose `storage` does not parse yields an empty check: the manifest validator
+ * reports those errors itself, and a baseline that does not parse cannot be compared (a warning
+ * says so; an unparseable `history` entry is skipped).
  */
-export function checkStorageMigrations(prev: unknown, next: unknown): StorageMigrationCheck {
+export function checkStorageMigrations(
+  prev: unknown,
+  next: unknown,
+  history: readonly unknown[] = []
+): StorageMigrationCheck {
   const check: StorageMigrationCheck = {
     breaking: [],
     uncovered: [],
@@ -387,14 +399,11 @@ export function checkStorageMigrations(prev: unknown, next: unknown): StorageMig
   const prevCollections: ReadonlyMap<string, DeclaredStorageCollection> =
     before && before.errors.length === 0 ? before.collections : new Map();
 
-  for (const [name, was] of prevCollections) {
-    const now = after.collections.get(name);
-    if (!now) {
-      check.warnings.push(
-        `storage: collection ${name} is no longer declared; its stored documents are kept and become reachable again if it is re-declared`
-      );
-      continue;
-    }
+  const compare = (
+    name: string,
+    was: DeclaredStorageCollection,
+    now: DeclaredStorageCollection
+  ) => {
     const diff = diffCollectionSchemasWithNotes(name, was.schema, now.schema);
     check.breaking.push(...diff.breaking);
     for (const pointer of diff.undescribed) {
@@ -404,6 +413,30 @@ export function checkStorageMigrations(prev: unknown, next: unknown): StorageMig
         )} is newly declared on a schema that left undeclared properties open — stored documents may already hold this key with another type, and those are refused on their next write`
       );
     }
+  };
+
+  for (const [name, was] of prevCollections) {
+    const now = after.collections.get(name);
+    if (!now) {
+      check.warnings.push(
+        `storage: collection ${name} is no longer declared; its stored documents are kept and become reachable again if it is re-declared`
+      );
+      continue;
+    }
+    compare(name, was, now);
+  }
+
+  // Declared again after an earlier version dropped it: its documents were written under the
+  // last schema that declared it.
+  let older: ReadonlyMap<string, DeclaredStorageCollection>[] | null = null;
+  for (const [name, now] of after.collections) {
+    if (prevCollections.has(name)) continue;
+    older ??= history
+      .map((m) => parseManifestStorage(m, ALL_FEATURES))
+      .filter((h) => h.errors.length === 0)
+      .map((h) => h.collections);
+    const was = older.find((c) => c.has(name))?.get(name);
+    if (was) compare(name, was, now);
   }
 
   const used = new Map<string, Set<number>>();
@@ -506,7 +539,7 @@ export class StorageMigrationRefusal extends Error {
           check.uncovered.length
         } breaking schema change(s) since the previous approved version can leave documents already stored unwritable, and no migration covers them: ${listed.join(
           '; '
-        )}. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" with the change's exact path and keyword to accept that stored documents violating it are refused on their next write until reshaped (a newly required field needs a "default")`
+        )}. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" with the change's exact path and keyword to accept that stored documents violating it are refused on their next write until reshaped (a newly required field needs a "default"). A newly required object together with a newly required field inside it takes two versions: first require the object with a "default" whose value already holds the field, then require the field with its own "default". A newly required field inside an array element or an additionalProperties schema ("…/*/…") cannot be filled by any op: declare it optional, or "remove" the whole optional array or object`
       );
     }
     parts.push(...check.errors.slice(0, MAX_LISTED));
@@ -548,15 +581,43 @@ function setOwn(obj: Node, key: string, value: unknown): void {
 }
 
 /**
- * Apply the mutation ops, in order, to a copy of `data`. Returns the new body, or null when no op
- * changed anything. IDEMPOTENT: `apply(apply(d)) == apply(d)` — each op only acts on the state
- * it leaves behind as a no-op (default: field present; rename: `from` absent; remove: field
- * absent), and the parser keeps the ops' fields disjoint so none undoes another. A step that
- * meets a missing parent, or a non-object where an object is expected, does nothing.
+ * Whether the value at `segments` must go for the document to match `schema`: the new schema no
+ * longer allows the key there, or the value fails the schema it is held to there. Without a
+ * schema nothing is refused, so nothing must go.
+ */
+function failsNewSchema(
+  schema: AppStorageCollectionSchema | undefined,
+  segments: string[],
+  value: unknown
+): boolean {
+  if (!schema) return false;
+  const target = fieldSchema(schema as Node, segments);
+  if (target === 'disallowed') return true;
+  return firstSchemaFailure(target as AppStorageCollectionSchema, value) !== null;
+}
+
+/**
+ * Apply the mutation ops, in order, to a copy of `data`, for a collection whose (new) schema is
+ * `schema`. Returns the new body, or null when no op changed anything.
+ *
+ * Each op acts only on a document still in the OLD shape, so it never undoes a write made under
+ * the new schema — the run reaches a document hours after approve, and the new build (or an old
+ * client still writing valid values) may have written it in between:
+ *   - `default` fills a field only when it is missing; under the new schema the field is required,
+ *     so a new-shape write always carries it.
+ *   - `rename` moves only when `from` is present and `to` absent; it covers only a property the new
+ *     schema refuses (`additionalProperties: false`), so no new-shape write can carry `from`.
+ *   - `remove` deletes only a value the new schema refuses there (the key is no longer allowed, or
+ *     the value fails the field's new schema). A value valid under the new schema is kept.
+ *
+ * IDEMPOTENT: `apply(apply(d)) == apply(d)` — each op's precondition is false in the state it leaves
+ * behind, and the parser keeps the ops' fields disjoint so none undoes another. A step that meets a
+ * missing parent, or a non-object where an object is expected, does nothing.
  */
 export function applyMigrationOps(
   data: Record<string, unknown>,
-  ops: readonly MigrationMutationOp[]
+  ops: readonly MigrationMutationOp[],
+  schema: AppStorageCollectionSchema | undefined
 ): Record<string, unknown> | null {
   const doc = structuredClone(data) as Node;
   let changed = false;
@@ -585,7 +646,8 @@ export function applyMigrationOps(
       const segments = jsonPointerSegments(op.path);
       const parent = parentOf(doc, segments);
       const key = segments[segments.length - 1];
-      if (parent && Object.hasOwn(parent, key)) {
+      // The guard that keeps a value written under the new schema (see above).
+      if (parent && Object.hasOwn(parent, key) && failsNewSchema(schema, segments, parent[key])) {
         delete parent[key];
         changed = true;
       }

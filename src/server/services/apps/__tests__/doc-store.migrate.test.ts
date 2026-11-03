@@ -32,7 +32,9 @@ const OPS: MigrationMutationOp[] = [
   { op: 'rename', from: '/name', to: '/title' },
   { op: 'remove', path: '/legacy' },
 ];
-const migrate = (data: Record<string, unknown>) => applyMigrationOps(data, OPS);
+/** The transform the run hands the store: the ops, under the collection's NEW schema. */
+const transformFor = (coll: DocCollection) => (data: Record<string, unknown>) =>
+  applyMigrationOps(data, OPS, coll.config.schema);
 
 const CARDS: DocCollection = {
   name: 'cards',
@@ -51,6 +53,29 @@ const BOARD: DocCollection = {
   name: 'board',
   config: decl({ visibility: 'shared', write: 'own' }),
 };
+/** BOARD under its new schema, which no longer allows `legacy`. */
+const BOARD_V2: DocCollection = {
+  name: 'board',
+  config: decl({
+    visibility: 'shared',
+    write: 'own',
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { status: { type: 'string' }, title: { type: 'string' } },
+    },
+  }),
+};
+/** `stars` narrowed (string → integer ≤ 5) and kept optional; `remove /stars` covers it. */
+const STARS_V1: DocCollection = { name: 'stars', config: decl({ visibility: 'private' }) };
+const STARS_V2: DocCollection = {
+  name: 'stars',
+  config: decl({
+    visibility: 'private',
+    schema: { type: 'object', properties: { stars: { type: 'integer', maximum: 5 } } },
+  }),
+};
+const REMOVE_STARS: MigrationMutationOp[] = [{ op: 'remove', path: '/stars' }];
 /** The declarations the documents were written under (before the migration). */
 const CARDS_V1: DocCollection = {
   name: 'cards',
@@ -75,7 +100,7 @@ async function runAll(app: string, coll: DocCollection, limit: number) {
   const total = { scanned: 0, migrated: 0, unchanged: 0, failed: 0, invalid: 0, pages: 0 };
   let after = null;
   for (;;) {
-    const r = await maint.migrateDocuments(app, coll, migrate, { after, limit });
+    const r = await maint.migrateDocuments(app, coll, transformFor(coll), { after, limit });
     total.scanned += r.scanned;
     total.migrated += r.migrated;
     total.unchanged += r.unchanged;
@@ -145,7 +170,7 @@ describe('migrateDocuments', () => {
       legacy: 'x'.repeat(1000),
     });
     const before = await store.usage(ctx(app, NS_PROD, ALICE));
-    const r = await maint.migrateDocuments(app, BOARD, migrate, { limit: 10 });
+    const r = await maint.migrateDocuments(app, BOARD_V2, transformFor(BOARD_V2), { limit: 10 });
     expect([r.migrated, r.failed, r.next]).toEqual([1, 0, null]);
     const after = await store.usage(ctx(app, NS_PROD, ALICE));
     // The removed 1000-character field is refunded to both ceilings, by the same amount.
@@ -179,7 +204,33 @@ describe('migrateDocuments', () => {
   it('counts the documents that still do not match the schema afterwards (an acknowledged narrowing)', async () => {
     const app = freshApp('MIGRATEINVALID');
     await store.put(ctx(app, NS_PROD, ALICE), CARDS_V1, 'odd', { status: 'archived' });
-    const r = await maint.migrateDocuments(app, CARDS, migrate, { limit: 10 });
+    const r = await maint.migrateDocuments(app, CARDS, transformFor(CARDS), { limit: 10 });
     expect([r.scanned, r.migrated, r.unchanged, r.invalid]).toEqual([1, 0, 1, 1]);
+  });
+
+  it('🔴 RACE: a valid value written under the new schema between two pages survives the run', async () => {
+    const app = freshApp('MIGRATERACE');
+    const me = ctx(app, NS_PROD, ALICE);
+    await store.put(me, STARS_V1, 'a', { stars: 'four' });
+    await store.put(me, STARS_V1, 'b', { stars: 'nine' });
+    const transform = (data: Record<string, unknown>) =>
+      applyMigrationOps(data, REMOVE_STARS, STARS_V2.config.schema);
+
+    // Page 1 reaches `a` only.
+    const first = await maint.migrateDocuments(app, STARS_V2, transform, { limit: 1 });
+    expect([first.migrated, first.next]).toEqual([1, { scopeUid: ALICE, key: 'a' }]);
+
+    // The new build writes `b` under the new schema before the cursor gets there.
+    await store.put(me, STARS_V2, 'b', { stars: 4 });
+
+    const second = await maint.migrateDocuments(app, STARS_V2, transform, {
+      after: first.next,
+      limit: 1,
+    });
+    expect([second.scanned, second.migrated, second.unchanged]).toEqual([1, 0, 1]);
+    expect((await store.get(me, STARS_V2, 'a'))?.data).toEqual({});
+    const b = await store.get(me, STARS_V2, 'b');
+    expect([b?.data, b?.version]).toEqual([{ stars: 4 }, 2]);
+    await assertUsageConsistent(h, app, NS_PROD);
   });
 });

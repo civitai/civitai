@@ -26,6 +26,8 @@ const COLLECTION = {
     marks: [],
     indexes: new Map(),
     showAuthor: false,
+    // The new schema no longer allows `legacy`, so the declared `remove /legacy` deletes it.
+    schema: { type: 'object', additionalProperties: false, properties: { keep: {} } },
   },
 } as const;
 
@@ -43,6 +45,8 @@ const run = (over: Partial<StorageMigrationRun> = {}): StorageMigrationRun => ({
   invalid: 0,
   failures: [],
   lastError: null,
+  attempts: 0,
+  claimToken: 'claim-1',
   ...over,
 });
 
@@ -145,9 +149,10 @@ describe('advanceStorageMigrationRun', () => {
       load: live,
       persist: async () => undefined,
     });
-    expect([left.status, left.lastError]).toEqual([
+    expect([left.status, left.lastError, left.attempts]).toEqual([
       'pending',
       'storage is temporarily unavailable',
+      1,
     ]);
   });
 
@@ -180,5 +185,44 @@ describe('advanceStorageMigrationRun', () => {
       'failed',
       'the approved manifest does not declare collection cards',
     ]);
+  });
+
+  it('🔴 the fifth consecutive failed attempt fails the run for good', async () => {
+    const { store } = scripted([new Error('relation is gone')]);
+    const persisted: [string, boolean][] = [];
+    const left = await advanceStorageMigrationRun(run({ attempts: 4 }), {
+      store,
+      load: live,
+      persist: async (r, done) => void persisted.push([r.status, done]),
+    });
+    expect([left.status, left.attempts, left.lastError]).toEqual([
+      'failed',
+      5,
+      'gave up after 5 failed attempts: relation is gone',
+    ]);
+    expect(persisted).toEqual([['failed', true]]);
+  });
+
+  it('a non-store error under the cap is recorded as pending and rethrown', async () => {
+    const { store } = scripted([new Error('boom')]);
+    const persisted: [string, number][] = [];
+    await expect(
+      advanceStorageMigrationRun(run({ attempts: 1 }), {
+        store,
+        load: live,
+        persist: async (r) => void persisted.push([r.status, r.attempts]),
+      })
+    ).rejects.toThrow('boom');
+    expect(persisted).toEqual([['pending', 2]]);
+  });
+
+  it('a page that completes resets the failed-attempt count', async () => {
+    const { store } = scripted([page({ scanned: 1, migrated: 1 })]);
+    const left = await advanceStorageMigrationRun(run({ attempts: 3 }), {
+      store,
+      load: live,
+      persist: async () => undefined,
+    });
+    expect([left.status, left.attempts]).toEqual(['completed', 0]);
   });
 });

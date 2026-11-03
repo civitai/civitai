@@ -39,6 +39,8 @@ const { db, s3, holder } = vi.hoisted(() => {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       // The previous approved version (`getPreviousApprovedState`): none.
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The storage-migration history (`loadStorageMigrationBaseline`): none.
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },

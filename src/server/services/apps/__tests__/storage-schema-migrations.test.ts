@@ -473,6 +473,32 @@ describe('checkStorageMigrations — coverage', () => {
     expect([covered.uncovered, covered.errors, covered.warnings]).toEqual([[], [], []]);
   });
 
+  it('🔴 a collection dropped and declared again is diffed against the last version that declared it', () => {
+    const v1 = manifest({ cards: cards(undefined), notes: cards(undefined) });
+    const v2 = manifest({ notes: cards(undefined) });
+    const v3 = manifest({
+      notes: cards(undefined),
+      cards: cards(obj({ title: {} }, { required: ['title'] })),
+    });
+    // Without history the re-declared collection would read as new and nothing would be refused.
+    expect(checkStorageMigrations(v2, v3).uncovered).toEqual([]);
+    expect(checkStorageMigrations(v2, v3, [v2, v1]).uncovered.map(at)).toEqual([
+      ['/title', 'required'],
+    ]);
+  });
+
+  it('the newest earlier declaration wins, and an unparseable history entry is skipped', () => {
+    const older = manifest({ cards: cards(obj({ n: { maximum: 100 } })) });
+    const newer = manifest({ cards: cards(obj({ n: { maximum: 10 } })) });
+    const broken = { storage: { collections: { cards: { visibility: 'nope' } } } };
+    const v = manifest({ cards: cards(obj({ n: { maximum: 50 } })) });
+    // Against `newer` (max 10) a max of 50 is a widening; against `older` it would be a narrowing.
+    expect(
+      checkStorageMigrations(manifest({ other: cards(undefined) }), v, [broken, newer, older])
+        .uncovered
+    ).toEqual([]);
+  });
+
   it('a first version has nothing to break', () => {
     expect(checkStorageMigrations(null, manifest({ cards: cards(V2) })).uncovered).toEqual([]);
   });
@@ -566,7 +592,7 @@ describe('StorageMigrationRefusal — the structured list and the message', () =
       { collection: 'cards', pointer: '/n', keyword: 'maximum', old: 10, new: 5 },
     ]);
     expect(err.message).toBe(
-      'storage: 1 breaking schema change(s) since the previous approved version can leave documents already stored unwritable, and no migration covers them: cards "/n" maximum: 10 → 5. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" with the change\'s exact path and keyword to accept that stored documents violating it are refused on their next write until reshaped (a newly required field needs a "default")'
+      'storage: 1 breaking schema change(s) since the previous approved version can leave documents already stored unwritable, and no migration covers them: cards "/n" maximum: 10 → 5. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" with the change\'s exact path and keyword to accept that stored documents violating it are refused on their next write until reshaped (a newly required field needs a "default"). A newly required object together with a newly required field inside it takes two versions: first require the object with a "default" whose value already holds the field, then require the field with its own "default". A newly required field inside an array element or an additionalProperties schema ("…/*/…") cannot be filled by any op: declare it optional, or "remove" the whole optional array or object'
     );
   });
 });
@@ -722,9 +748,14 @@ describe('applyMigrationOps', () => {
     { op: 'remove', path: '/legacy' },
     { op: 'default', path: '/meta/round', value: 1 },
   ] as const;
+  /** The new schema the ops were written for: `legacy` (and `name`) are no longer allowed. */
+  const NEW = obj(
+    { status: {}, title: {}, meta: { type: 'object' }, other: {} },
+    { additionalProperties: false }
+  );
 
   it('applies each op where its precondition holds', () => {
-    expect(applyMigrationOps({ name: 'n', legacy: true, meta: {} }, OPS)).toEqual({
+    expect(applyMigrationOps({ name: 'n', legacy: true, meta: {} }, OPS, NEW)).toEqual({
       title: 'n',
       status: 'draft',
       meta: { round: 1 },
@@ -734,17 +765,17 @@ describe('applyMigrationOps', () => {
   it('returns null when nothing changes (and never mutates its input)', () => {
     const doc = { status: 'live', title: 't', meta: { round: 3 } };
     const copy = structuredClone(doc);
-    expect(applyMigrationOps(doc, OPS)).toBeNull();
+    expect(applyMigrationOps(doc, OPS, NEW)).toBeNull();
     expect(doc).toEqual(copy);
   });
 
   it('a missing or non-object parent is a no-op, not a created object', () => {
-    expect(applyMigrationOps({ status: 'x', meta: 'flat' }, OPS)).toBeNull();
-    expect(applyMigrationOps({ status: 'x' }, OPS)).toBeNull();
+    expect(applyMigrationOps({ status: 'x', meta: 'flat' }, OPS, NEW)).toBeNull();
+    expect(applyMigrationOps({ status: 'x' }, OPS, NEW)).toBeNull();
   });
 
   it('rename does not overwrite a present target', () => {
-    expect(applyMigrationOps({ name: 'old', title: 'kept', status: 'x' }, OPS)).toBeNull();
+    expect(applyMigrationOps({ name: 'old', title: 'kept', status: 'x' }, OPS, NEW)).toBeNull();
   });
 
   // Pairwise-distinct fixtures covering every precondition branch of every op.
@@ -760,15 +791,17 @@ describe('applyMigrationOps', () => {
     { name: { deep: [1, { x: 2 }] }, legacy: [3], meta: { other: true } },
   ];
   it.each(DOCS.map((d) => [JSON.stringify(d), d]))('apply twice == apply once: %s', (_l, doc) => {
-    const once = applyMigrationOps(doc as Record<string, unknown>, OPS) ?? doc;
-    const twice = applyMigrationOps(once as Record<string, unknown>, OPS);
+    const once = applyMigrationOps(doc as Record<string, unknown>, OPS, NEW) ?? doc;
+    const twice = applyMigrationOps(once as Record<string, unknown>, OPS, NEW);
     expect(twice).toBeNull();
   });
 
   it('a field named __proto__ is an own property, never the prototype', () => {
-    const out = applyMigrationOps({}, [
-      { op: 'default', path: '/__proto__', value: { polluted: true } },
-    ]);
+    const out = applyMigrationOps(
+      {},
+      [{ op: 'default', path: '/__proto__', value: { polluted: true } }],
+      undefined
+    );
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
     expect(Object.hasOwn(out as object, '__proto__')).toBe(true);
     expect(JSON.stringify(out)).toBe('{"__proto__":{"polluted":true}}');
@@ -776,10 +809,58 @@ describe('applyMigrationOps', () => {
   });
 
   it('unescapes ~1 and ~0 in paths', () => {
-    expect(applyMigrationOps({ 'a/b': 1 }, [{ op: 'rename', from: '/a~1b', to: '/c~0d' }])).toEqual(
-      {
-        'c~d': 1,
-      }
-    );
+    expect(
+      applyMigrationOps({ 'a/b': 1 }, [{ op: 'rename', from: '/a~1b', to: '/c~0d' }], undefined)
+    ).toEqual({ 'c~d': 1 });
+  });
+});
+
+describe('applyMigrationOps — never undoes a write made under the new schema', () => {
+  // v2 narrows `stars` (string → integer ≤ 5) and keeps it optional; `remove /stars` covers it.
+  const NEW = obj({ stars: { type: 'integer', maximum: 5 }, title: { type: 'string' } });
+  const REMOVE = [{ op: 'remove', path: '/stars' }] as const;
+
+  it('🔴 RACE: a value written under the new schema before the run reaches the document is kept', () => {
+    // The new build (or an old client writing a value valid under both) wrote this after approve.
+    expect(applyMigrationOps({ stars: 4, title: 't' }, REMOVE, NEW)).toBeNull();
+  });
+
+  it.each<[string, unknown]>([
+    ['the old type', 'four'],
+    ['over the new maximum', 9],
+  ])('removes a value the new schema refuses: %s', (_l, stars) => {
+    expect(applyMigrationOps({ stars, title: 't' }, REMOVE, NEW)).toEqual({ title: 't' });
+  });
+
+  it('removes a key the new schema no longer allows at all', () => {
+    const closed = obj({ title: { type: 'string' } }, { additionalProperties: false });
+    expect(
+      applyMigrationOps({ legacy: 'x', title: 't' }, [{ op: 'remove', path: '/legacy' }], closed)
+    ).toEqual({ title: 't' });
+  });
+
+  it('removes a nested object only when it fails its new schema', () => {
+    const nested = obj({ meta: obj({ n: { maximum: 5 } }) });
+    const op = [{ op: 'remove', path: '/meta' }] as const;
+    expect(applyMigrationOps({ meta: { n: 3 } }, op, nested)).toBeNull();
+    expect(applyMigrationOps({ meta: { n: 8 } }, op, nested)).toEqual({});
+  });
+
+  it('a default never overwrites a present field, and a rename never overwrites its target', () => {
+    // The same class of race for the other two ops: both act only on the old shape.
+    expect(
+      applyMigrationOps(
+        { status: 'live' },
+        [{ op: 'default', path: '/status', value: 'draft' }],
+        NEW
+      )
+    ).toBeNull();
+    expect(
+      applyMigrationOps(
+        { name: 'old', title: 'new' },
+        [{ op: 'rename', from: '/name', to: '/title' }],
+        NEW
+      )
+    ).toBeNull();
   });
 });

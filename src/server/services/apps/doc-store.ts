@@ -2199,8 +2199,9 @@ function buildDocStore(deps: DocStoreDeps) {
    *
    * Each document is its own transaction: re-read under its row lock, transformed, and written
    * only when `transform` returns a body (null = unchanged). So a viewer's write that lands
-   * between the page read and the lock is what gets transformed — with an idempotent transform,
-   * a racing write or a re-run of the same page is safe. A changed document gets a new version
+   * between the page read and the lock is what gets transformed: the transform must leave a
+   * document already in the new shape unchanged (the migration ops do — `applyMigrationOps`), and
+   * then a write racing the run, or a re-run of the same page, is safe. A changed document gets a new version
    * and seq, its index rows are re-derived, and its size delta is charged exactly as a write
    * would charge it (the app's ceiling for a shared document, and the user the document is
    * charged to: its viewer for a private one, its author or counter creator for a shared one).

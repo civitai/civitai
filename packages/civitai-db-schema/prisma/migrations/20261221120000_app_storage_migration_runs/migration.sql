@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS "app_storage_migration_runs" (
     -- A sample of the documents whose rewrite was refused: [{ scopeUid, key, code }].
     "failures" JSONB NOT NULL DEFAULT '[]'::jsonb,
     "last_error" TEXT,
+    -- Consecutive attempts that ended in an error; at 5 the run is 'failed' and no longer picked.
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    -- The claim the current runner holds; a save under any other token is refused.
+    "claim_token" TEXT,
     "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "started_at" TIMESTAMPTZ(6),
     "heartbeat_at" TIMESTAMPTZ(6),
@@ -44,11 +48,11 @@ CREATE TABLE IF NOT EXISTS "app_storage_migration_runs" (
       FOREIGN KEY ("app_block_id") REFERENCES "app_blocks"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- The resume job's read: the runs still to do, oldest first.
+-- The resume job's read: the runs still to do, least recently touched first.
 CREATE INDEX IF NOT EXISTS "app_storage_migration_runs_open_idx"
-  ON "app_storage_migration_runs"("created_at")
+  ON "app_storage_migration_runs"("heartbeat_at" NULLS FIRST, "created_at")
   WHERE "status" IN ('pending', 'running');
 
--- The app_blocks FK's cascade, and "this app's runs".
+-- The app_blocks FK's cascade, "this app's runs", and approve's "is a run of this app open".
 CREATE INDEX IF NOT EXISTS "app_storage_migration_runs_app_block_idx"
   ON "app_storage_migration_runs"("app_block_id");

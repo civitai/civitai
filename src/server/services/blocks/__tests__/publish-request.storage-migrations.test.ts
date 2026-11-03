@@ -56,6 +56,7 @@ const V2_SCHEMA = {
 const storage = (collection: Record<string, unknown>) => ({
   collections: { cards: { visibility: 'private', ...collection } },
 });
+const V1_MANIFEST = { blockId: SLUG, version: '1.0.0', storage: storage({ schema: V1_SCHEMA }) };
 
 async function bundle(version: string, storageDecl: unknown): Promise<Buffer> {
   const zip = new JSZip();
@@ -79,16 +80,18 @@ beforeEach(() => {
   dbMock.dbRead.appBlock.findFirst.mockResolvedValue({ id: EXISTING_APP, appId: 'appblk-x' });
   dbMock.dbRead.appListing.findFirst.mockResolvedValue(null);
   dbMock.dbRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
-  // No pending request; the previous APPROVED version declares V1.
+  // No pending request; the previous APPROVED version declares V1 (the file diff's read).
   dbMock.dbRead.appBlockPublishRequest.findFirst.mockImplementation((async (args: {
     where: { status?: string };
   }) =>
     args.where.status === 'approved'
-      ? {
-          manifest: { blockId: SLUG, version: '1.0.0', storage: storage({ schema: V1_SCHEMA }) },
-          fileSummary: { files: [] },
-        }
+      ? { manifest: V1_MANIFEST, fileSummary: { files: [] } }
       : null) as never);
+  // What the store enforces (the schema-migration baseline, on the primary): V1 too.
+  dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: EXISTING_APP, manifest: V1_MANIFEST });
+  dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+    { id: 'pubreq_v1', manifest: V1_MANIFEST },
+  ]);
 });
 
 const submit = async (storageDecl: unknown) =>
@@ -168,5 +171,21 @@ describe('submitVersion — App Storage schema migrations', () => {
     const result = await submit(storage({ schema: widened }));
     expect(result.storageMigrationWarnings).toEqual([]);
     expect(dbMock.dbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 the baseline is what the store enforces, not the latest approved request row', async () => {
+    // The latest approved request already says V2, but app_blocks.manifest (enforced) is V1.
+    const V2_MANIFEST = {
+      blockId: SLUG,
+      version: '1.5.0',
+      storage: storage({ schema: V2_SCHEMA }),
+    };
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'pubreq_v2', manifest: V2_MANIFEST },
+    ]);
+    await expect(submit(storage({ schema: V2_SCHEMA }))).rejects.toThrow(
+      'no migration covers them: cards "/status" required: false → true; cards "/stars" maximum: 10 → 5.'
+    );
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
   });
 });
