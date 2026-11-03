@@ -81,9 +81,9 @@ describe('pushTurfCounts', () => {
     await pushTurfCounts(
       'e',
       [
-        { imageId: 10, counts },
-        { imageId: 11, counts },
-        { imageId: 12, counts: null },
+        { imageId: 10, counts, readAt: 1 },
+        { imageId: 11, counts, readAt: 1 },
+        { imageId: 12, counts: null, readAt: 1 },
       ],
       { redis: redis as never, send, now: NOW }
     );
@@ -91,7 +91,7 @@ describe('pushTurfCounts', () => {
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         topic: expect.stringMatching(/:e:turf:10$/),
-        data: { event: 'e', imageId: 10, counts },
+        data: { event: 'e', imageId: 10, counts, readAt: 1 },
       })
     );
   });

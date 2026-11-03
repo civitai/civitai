@@ -291,7 +291,9 @@ function computeImages(
   event: TurfEvent,
   rows: StickerRow[],
   cosmetics: Map<string, number>,
-  now: Date
+  now: Date,
+  // Which images' feed stickers to pick: only a changed image is pushed.
+  pickFor: (key: string, counts: TurfCounts) => boolean = () => true
 ) {
   const credited = stepAt(event.turf.creditedPlayers, now)?.players ?? 0;
   const byImage = new Map<number, StickerRow[]>();
@@ -307,7 +309,7 @@ function computeImages(
     const key = `Image:${imageId}`;
     const result = computeImageTurf(list, credited, (team) => cosmetics.get(team));
     counts.set(key, result.counts);
-    stickers.set(key, pickFeedStickers(list));
+    if (pickFor(key, result.counts)) stickers.set(key, pickFeedStickers(list));
     if (result.entry) entries.set(key, result.entry);
   }
   return { entries, counts, stickers };
@@ -359,7 +361,12 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
     if (value === before[i]) continue;
     if (value) await sysRedis.hSet(countsKey, k, value);
     else await sysRedis.hDel(countsKey, k);
-    changes.push({ imageId: imageIds[i], counts: c ?? null, stickers: stickers.get(k) ?? [] });
+    changes.push({
+      imageId: imageIds[i],
+      counts: c ?? null,
+      stickers: stickers.get(k) ?? [],
+      readAt: now.getTime(),
+    });
   }
   await pushTurfCounts(event.name, changes);
 }
@@ -370,6 +377,10 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const entries = new Map<string, TurfEntry>();
   const counts = new Map<string, TurfCounts>();
   const stickers = new Map<string, FeedSticker[]>();
+  // A snapshot only to choose which images to pick for; the diff below decides what is pushed, and
+  // an image changed since the snapshot is pushed without stickers, so its watchers read them back.
+  const before = (await sysRedis.hGetAll(turfKeys(event.name).counts)) ?? {};
+  const changed = (key: string, c: TurfCounts) => JSON.stringify(c) !== before[key];
   let after = 0;
   for (;;) {
     // Keyset over image ids through the live-sticker index, never a scan of Image.
@@ -385,7 +396,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
       Prisma.sql`s."imageId" = ANY(${ids.map((r) => r.imageId)}::int[])`,
       dbRead
     );
-    const part = computeImages(event, rows, cosmetics, now);
+    const part = computeImages(event, rows, cosmetics, now, changed);
     part.entries.forEach((v, k) => entries.set(k, v));
     part.counts.forEach((v, k) => counts.set(k, v));
     part.stickers.forEach((v, k) => stickers.set(k, v));
@@ -415,9 +426,15 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     ...countDiff.set.map(([k]) => ({
       imageId: imageIdOf(k),
       counts: counts.get(k) ?? null,
-      stickers: stickers.get(k) ?? [],
+      stickers: stickers.get(k),
+      readAt: now.getTime(),
     })),
-    ...countDiff.remove.map((k) => ({ imageId: imageIdOf(k), counts: null, stickers: [] })),
+    ...countDiff.remove.map((k) => ({
+      imageId: imageIdOf(k),
+      counts: null,
+      stickers: [],
+      readAt: now.getTime(),
+    })),
   ]);
   return { images: counts.size, turf: kept.size, dropped, ...written };
 }

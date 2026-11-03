@@ -69,7 +69,10 @@ export type TurfPush = {
   imageId: number;
   counts: TurfCounts | null;
   // What a feed card draws, so a watcher need not read it back; ids as strings (bigint is not JSON).
-  stickers: FeedSticker[];
+  // Absent, watchers read them back.
+  stickers?: FeedSticker[];
+  // When the rows behind it were read: a watcher keeps the newest, whatever order pushes arrive in.
+  readAt: number;
 };
 
 /**
@@ -96,11 +99,11 @@ export async function pushTurfCounts(
     // A reconcile can change thousands of watched images at once: a few sends at a time.
     for (const part of chunk(watched, PUSH_CONCURRENCY)) {
       const results = await Promise.allSettled(
-        part.map(({ imageId, counts, stickers }) =>
+        part.map(({ imageId, counts, stickers, readAt }) =>
           send({
             topic: eventTurfTopic(event, imageId),
             target: SignalMessages.EventPointsTurf,
-            data: { event, imageId, counts, stickers },
+            data: { event, imageId, counts, stickers, readAt },
           })
         )
       );

@@ -147,10 +147,12 @@ export function readTurfPush(push: unknown, event: string) {
     imageId,
     counts,
     stickers: rawStickers,
+    readAt: rawReadAt,
   } = (push ?? {}) as Record<string, unknown>;
   if (e !== event || typeof imageId !== 'number' || !Number.isInteger(imageId)) return null;
-  const stickers = readPushedStickers(rawStickers);
-  if (counts === null) return { imageId, counts: null, stickers };
+  const readAt = typeof rawReadAt === 'number' && Number.isFinite(rawReadAt) ? rawReadAt : null;
+  const stickers = readAt === null ? undefined : readPushedStickers(rawStickers);
+  if (counts === null) return { imageId, counts: null, stickers, readAt };
   if (!counts || typeof counts !== 'object') return null;
   const c = counts as Record<string, unknown>;
   const record = (v: unknown) =>
@@ -171,6 +173,7 @@ export function readTurfPush(push: unknown, event: string) {
       leaderCosmeticId: typeof c.leaderCosmeticId === 'number' ? c.leaderCosmeticId : null,
     },
     stickers,
+    readAt,
   };
 }
 
