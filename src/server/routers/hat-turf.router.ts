@@ -9,7 +9,8 @@ import {
   setTurfOptIn,
   watchTurfImages,
 } from '~/server/events/turf/turf.service';
-import { rateLimit } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 import {
   placeTurfStickerSchema,
   removeTurfStickerSchema,
@@ -50,6 +51,8 @@ export const hatTurfRouter = router({
   getStickersForImages: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfStickersForImagesSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getTurfStickersForImages(input.event, input.imageIds, input.perImage)),
   // Marks images as on screen so their count changes are pushed (turf-watch.ts). Called on view and
   // every 30s while in view; no Postgres on this path.
