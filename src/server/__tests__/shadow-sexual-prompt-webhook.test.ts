@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as EntityModeration from '~/server/services/entity-moderation.service';
 import type * as ModerationAdapters from '~/server/services/moderation-adapters';
@@ -115,7 +116,7 @@ const nothingWritten = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   insert.mockResolvedValue(undefined);
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }]);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ status: 'recorded', error: null }]);
   recordEntityModerationSuccess.mockResolvedValue(true);
   getModerationAdapter.mockReturnValue(undefined);
 });
@@ -126,7 +127,7 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
 
     expect(calledHybridNodes(['dbRead', 'dbWrite'])).toEqual(['dbWrite.$queryRaw']);
     const [sql] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[]];
-    expect(sql.join('?')).toContain('label_store.record_prediction');
+    expect(sql.join('?')).toContain('label_store.submit_predictions(');
     expect(predictionValues()).toEqual(
       expect.arrayContaining([
         'image.prompt_sexual',
@@ -201,6 +202,20 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('lock timeout'));
     expect(await deliver({ shadow: shadowMarker })).toBe(200);
     expect(insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs a prediction the label store refuses, and keeps the ClickHouse row', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ status: 'rejected', error: 'subject erased' }]);
+    expect(await deliver({ shadow: shadowMarker })).toBe(200);
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'shadow-sexual-prompt',
+        message: 'prediction rejected: subject erased',
+        imageId: 9001,
+      })
+    );
   });
 
   it('keys on the marker, not on a missing entity: a marked workflow with an entity stays shadow', async () => {
