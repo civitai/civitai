@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import type * as Caches from '~/server/redis/caches';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 import type * as GenerationService from '~/server/services/generation/generation.service';
@@ -9,6 +10,15 @@ import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake
 
 const { getModel } = vi.hoisted(() => ({ getModel: vi.fn() }));
 
+// The Kysely reads the handler makes after the model row: no posts, no suggested resources, no
+// owner settings. Their rows, against a real database, are pinned in
+// src/server/services/__tests__/hot-reads-3.kysely-parity.test.ts.
+vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads3>()),
+  listModelPagePosts: vi.fn(async () => []),
+  countSuggestedResources: vi.fn(async () => 0),
+  getUserSettings: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   getModel,

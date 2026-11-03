@@ -749,3 +749,56 @@ describe('the fork seed pre-fills storage imports of the parent', () => {
     expect(bare).toEqual({ blockId: 'notes-app-fork-ab12', name: 'Notes App', scopes: [] });
   });
 });
+
+describe('the fork seed drops the parent’s server-owned iframe.src', () => {
+  // The PARENT's platform-stamped URL. Distinct from any constant the code names: the seed must
+  // not advertise it as the fork's, and `civitai app validate` refuses any authored iframe.src.
+  const PARENT_IFRAME_SRC = 'https://parent-stamp-7731.apps-host.test/';
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-cd34'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('removes iframe.src and keeps every other iframe key with its literal value', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      iframe: {
+        src: PARENT_IFRAME_SRC,
+        minHeight: 333,
+        maxHeight: 1777,
+        resizable: true,
+        sandbox: 'allow-scripts allow-forms',
+      },
+    });
+    expect(manifest.blockId).toBe('notes-app-fork-cd34');
+    expect(manifest.iframe).toEqual({
+      minHeight: 333,
+      maxHeight: 1777,
+      resizable: true,
+      sandbox: 'allow-scripts allow-forms',
+    });
+    expect(JSON.stringify(manifest)).not.toContain(PARENT_IFRAME_SRC);
+  });
+
+  it('an iframe holding only src is left as an empty object', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      iframe: { src: PARENT_IFRAME_SRC },
+    });
+    expect(manifest.blockId).toBe('notes-app-fork-cd34');
+    expect(manifest.iframe).toEqual({});
+  });
+
+  it('a parent manifest with no iframe at all still builds, and gains none', async () => {
+    const manifest = await seedManifest({ blockId: 'notes-app', name: 'Notes App', scopes: [] });
+    expect(manifest).toEqual({ blockId: 'notes-app-fork-cd34', name: 'Notes App', scopes: [] });
+  });
+});

@@ -3,12 +3,14 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads4 from '@civitai/db-queries/hot-reads-4';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
+// Mocked for the invariant guard that no flag check remains on these reads (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read-4 statement stubbed: their rows against Prisma's are compared in
-// hot-reads-4.kysely-parity.test.ts.
+// Every hot-read-4 statement stubbed: their rows, against a real database, are pinned in
+// hot-reads-4.kysely-parity.test.ts. Here the two counts answer from the fixture rows below.
 vi.mock('@civitai/db-queries/hot-reads-4', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads4>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
@@ -44,7 +46,7 @@ import { getVisibleCommentCount, getVisibleCommentCounts } from '~/server/servic
  * one call. On fixture rows, each must equal the single count it replaces
  * (`getVisibleCommentCount` with `hidden: true` and with no `hidden`) for every viewer, including
  * the model owner with a blocker, where the unpinned and pinned filters differ. Plus which client
- * and statement each flag state uses, and that `includeVisible: false` runs no visible count.
+ * and statement it uses, and that `includeVisible: false` runs no visible count.
  */
 
 const flag = vi.mocked(isFlipt);
@@ -68,21 +70,21 @@ type Row = {
   hidden: boolean | null;
   pinnedAt: Date | null;
 };
-// Evaluates the closed set of Prisma conditions the comment where uses.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const matches = (r: Row, where: Record<string, any>) =>
-  Object.entries(where).every(([key, cond]) => {
-    if (cond === undefined) return true;
-    const value = r[key as keyof Row];
-    if (cond === null) return value === null;
-    if (typeof cond === 'object' && !(cond instanceof Date)) {
-      if ('notIn' in cond) return !cond.notIn.includes(value);
-      if ('equals' in cond) return cond.equals === null ? value === null : value === cond.equals;
-      if ('not' in cond && cond.not === null) return value !== null;
-      throw new Error(`fixture evaluator: unsupported condition on ${key}`);
-    }
-    return value === cond;
-  });
+type Filter = {
+  modelId?: number;
+  userId?: number;
+  excludedUserIds: number[];
+  excludeTosViolations: boolean;
+  hidden?: boolean;
+};
+type Scope = 'any' | 'unpinned' | 'pinned';
+/** A top-level comment the filter admits, before `hidden`: the conditions both counts share. */
+const admits = (r: Row, f: Filter, scope: Scope) =>
+  (f.modelId === undefined || r.modelId === f.modelId) &&
+  (f.userId ? r.userId === f.userId : !f.excludedUserIds.includes(r.userId)) &&
+  r.parentId === null &&
+  (!f.excludeTosViolations || !r.tosViolation) &&
+  (scope === 'any' || (scope === 'pinned') === (r.pinnedAt !== null));
 
 const PIN = new Date('2026-01-01');
 const row = (id: number, over: Partial<Row> = {}): Row => ({
@@ -115,8 +117,9 @@ const rows: Row[] = [
   row(16, { hidden: true }),
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const filtered = ({ where }: any) => rows.filter((r) => matches(r, where));
+/** How many fixture rows a count would find; a NULL `hidden` matches neither view. */
+const countOf = (f: Filter, scope: Scope, hiddenView: boolean) =>
+  rows.filter((r) => admits(r, f, scope) && r.hidden === hiddenView).length;
 
 const viewer = (isModerator = false) => ({ id: VIEWER, isModerator } as never);
 
@@ -130,17 +133,16 @@ beforeEach(() => {
   blockedBy.mockReset().mockResolvedValue([]);
   blocked.mockReset().mockResolvedValue([]);
   dbMock.dbRead.model.findUnique.mockResolvedValue(null);
-  dbMock.dbRead.comment.count.mockImplementation(
-    (async (arg: unknown) => filtered(arg).length) as never
-  );
-  dbMock.dbRead.comment.groupBy.mockImplementation((async (arg: unknown) => {
-    const groups = new Map<boolean | null, number>();
-    for (const r of filtered(arg)) groups.set(r.hidden, (groups.get(r.hidden) ?? 0) + 1);
-    return [...groups].map(([value, n]) => ({ hidden: value, _count: { _all: n } }));
-  }) as never);
+  q.countTopLevelComments.mockImplementation((async (_db: unknown, f: Filter, scope: Scope) =>
+    countOf(f, scope, f.hidden ?? false)) as never);
+  q.countTopLevelCommentsByHidden.mockImplementation((async (
+    _db: unknown,
+    f: Filter,
+    scope: Scope
+  ) => ({ visible: countOf(f, scope, false), hidden: countOf(f, scope, true) })) as never);
 });
 
-describe('getVisibleCommentCounts equals the two single counts (Prisma path, fixture rows)', () => {
+describe('getVisibleCommentCounts equals the two single counts (fixture rows)', () => {
   it.each([
     ['a viewer with no exclusions', {}, false, undefined, { visible: 5, hidden: 6 }],
     ['a moderator', {}, true, undefined, { visible: 6, hidden: 7 }],
@@ -196,23 +198,23 @@ describe('getVisibleCommentCounts equals the two single counts (Prisma path, fix
     });
   });
 
-  it('control: the owner case is two groupBy statements (the filters differ), the others one', async () => {
+  it('control: the owner case is two by-hidden statements (the filters differ), the others one', async () => {
     blockedBy.mockResolvedValue([{ id: BLOCKER }]);
     dbMock.dbRead.model.findUnique.mockResolvedValue({ userId: VIEWER } as never);
     await getVisibleCommentCounts({
       input: { modelId: MODEL, includeVisible: true },
       user: viewer(),
     });
-    expect(dbMock.dbRead.comment.groupBy).toHaveBeenCalledTimes(2);
+    expect(q.countTopLevelCommentsByHidden).toHaveBeenCalledTimes(2);
 
-    dbMock.dbRead.comment.groupBy.mockClear();
+    q.countTopLevelCommentsByHidden.mockClear();
     dbMock.dbRead.model.findUnique.mockResolvedValue(null);
     await getVisibleCommentCounts({
       input: { modelId: MODEL, includeVisible: true },
       user: viewer(),
     });
-    expect(dbMock.dbRead.comment.groupBy).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.comment.count).not.toHaveBeenCalled();
+    expect(q.countTopLevelCommentsByHidden).toHaveBeenCalledTimes(1);
+    expect(q.countTopLevelComments).not.toHaveBeenCalled();
   });
 });
 
@@ -221,26 +223,13 @@ describe('getVisibleCommentCounts routing', () => {
     await expect(
       getVisibleCommentCounts({ input: { modelId: MODEL, includeVisible: false }, user: viewer() })
     ).resolves.toStrictEqual({ visible: null, hidden: 6 });
-    const wheres = dbMock.dbRead.comment.count.mock.calls.map(([arg]) => arg.where);
-    expect(wheres).toHaveLength(1);
-    expect(wheres[0].hidden).toBe(true);
-    expect(dbMock.dbRead.comment.groupBy).not.toHaveBeenCalled();
+    const filters = q.countTopLevelComments.mock.calls.map(([, filter]) => filter);
+    expect(filters).toHaveLength(1);
+    expect(filters[0].hidden).toBe(true);
+    expect(q.countTopLevelCommentsByHidden).not.toHaveBeenCalled();
   });
 
-  it('OFF: one Prisma groupBy on the client the lag decision picked, no Kysely', async () => {
-    await getVisibleCommentCounts({
-      input: { modelId: MODEL, includeVisible: true },
-      user: viewer(),
-    });
-    expect(flag.mock.calls).toEqual([['kysely-hot-reads-4']]);
-    expect(getDbWithoutLag).toHaveBeenCalledWith('commentModel', MODEL);
-    expect(dbMock.dbRead.comment.groupBy.mock.calls[0][0]).toMatchObject({ by: ['hidden'] });
-    expect(dbMock.dbRead.comment.groupBy.mock.calls[0][0].where.hidden).toBeUndefined();
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-
-  it('ON: one Kysely statement on the replica, with the filter minus `hidden`', async () => {
-    flag.mockResolvedValue(true);
+  it('one Kysely statement on the replica, with the filter minus `hidden` (invariant: no flag check remains)', async () => {
     q.countTopLevelCommentsByHidden.mockResolvedValue({ visible: 21, hidden: 13 });
     await expect(
       getVisibleCommentCounts({ input: { modelId: MODEL, includeVisible: true }, user: viewer() })
@@ -256,11 +245,11 @@ describe('getVisibleCommentCounts routing', () => {
     expect(q.countTopLevelCommentsByHidden.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.comment.groupBy).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: follows the lag decision to the primary', async () => {
+  it('follows the lag decision to the primary', async () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
-    flag.mockResolvedValue(true);
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.countTopLevelCommentsByHidden.mockResolvedValue({ visible: 21, hidden: 13 });
     await getVisibleCommentCounts({
@@ -270,8 +259,7 @@ describe('getVisibleCommentCounts routing', () => {
     expect(q.countTopLevelCommentsByHidden.mock.calls[0][0]).toBe(kyselyWrite);
   });
 
-  it('ON: the owner case sums an unpinned and a pinned statement', async () => {
-    flag.mockResolvedValue(true);
+  it('the owner case sums an unpinned and a pinned statement', async () => {
     blockedBy.mockResolvedValue([{ id: BLOCKER }]);
     dbMock.dbRead.model.findUnique.mockResolvedValue({ userId: VIEWER } as never);
     q.countTopLevelCommentsByHidden.mockImplementation((async (

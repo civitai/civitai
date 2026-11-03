@@ -93,9 +93,8 @@ const rowFor = (id: number) => ({
 let usernames: Record<number, string>;
 let modelCounts: Record<number, number>;
 
-// One read returns the user and the count together, so both counters are that read's calls.
-const userReads = () => readCreator.mock.calls.length;
-const countReads = () => readCreator.mock.calls.length;
+// The card's one database read (the user and its published-model count together).
+const creatorReads = () => readCreator.mock.calls.length;
 const entryKey = (id: number) => `${REDIS_KEYS.CACHES.USER_CREATOR}:${id}`;
 let store: ReturnType<typeof installFakeCacheRedis>;
 
@@ -127,11 +126,10 @@ afterEach(() => {
 });
 
 describe('creator card cache: hit, miss, TTL', () => {
-  it('serves an id lookup from the cache after the first read, both queries included', async () => {
+  it('serves an id lookup from the cache after the first read', async () => {
     const first = await getUserCreator({ id: USER });
     const second = await getUserCreator({ id: USER });
-    expect(userReads()).toBe(1);
-    expect(countReads()).toBe(1);
+    expect(creatorReads()).toBe(1);
     for (const c of [first, second]) {
       expect(c?.username).toBe('first-name');
       expect(c?._count.models).toBe(3);
@@ -145,16 +143,16 @@ describe('creator card cache: hit, miss, TTL', () => {
     await getUserCreator({ id: USER });
     vi.setSystemTime(T0.getTime() + (TTL_S - 1) * 1000);
     await getUserCreator({ id: USER });
-    expect(userReads()).toBe(1);
+    expect(creatorReads()).toBe(1);
     vi.setSystemTime(T0.getTime() + (TTL_S + 1) * 1000);
     await getUserCreator({ id: USER });
-    expect(userReads()).toBe(2);
+    expect(creatorReads()).toBe(2);
   });
 
   it('reads a username lookup from the database every time', async () => {
     await getUserCreator({ username: 'first-name' });
     expect((await getUserCreator({ username: 'first-name' }))?.id).toBe(USER);
-    expect(userReads()).toBe(2);
+    expect(creatorReads()).toBe(2);
   });
 
   it('does not cache a user it could not find', async () => {
@@ -172,7 +170,7 @@ describe('creator card cache: hit, miss, TTL', () => {
       } as never);
     expect((await asUser(false))?.excludeFromLeaderboards).toBe(false);
     expect((await asUser(true))?.excludeFromLeaderboards).toBe(true);
-    expect(userReads()).toBe(1);
+    expect(creatorReads()).toBe(1);
   });
 
   // INVARIANT GUARD, not regression coverage: with no in-process copy every read decodes a fresh
@@ -186,7 +184,7 @@ describe('creator card cache: hit, miss, TTL', () => {
     await asUser(true); // miss: fills the entry
     expect((await asUser(false))?.excludeFromLeaderboards).toBe(false); // hit, masked
     expect((await asUser(true))?.excludeFromLeaderboards).toBe(true); // hit
-    expect(userReads()).toBe(1);
+    expect(creatorReads()).toBe(1);
   });
 
   it('pins the TTL', () => {
@@ -280,14 +278,14 @@ describe('creator card cache: bust on write', () => {
     vi.setSystemTime(T0.getTime() + (BUST_WINDOW_S * 1000) / 2);
     await getUserCreator({ id: USER });
     await getUserCreator({ id: USER });
-    expect(userReads()).toBe(3);
+    expect(creatorReads()).toBe(3);
     expect(store.peek(entryKey(USER))).toMatchObject({ debounce: true });
 
     // Past the window the marker is gone: the next read refills and the one after it is a hit.
     vi.setSystemTime(T0.getTime() + (BUST_WINDOW_S + 1) * 1000);
     await getUserCreator({ id: USER });
     await getUserCreator({ id: USER });
-    expect(userReads()).toBe(4);
+    expect(creatorReads()).toBe(4);
     expect(store.peek(entryKey(USER))).toMatchObject({ id: USER, username: 'first-name' });
   });
 

@@ -1,0 +1,471 @@
+{
+  "default-version:a missing model": null,
+  "default-version:a model with no versions": {
+    "modelVersions": []
+  },
+  "default-version:a model with several versions, in index order": {
+    "modelVersions": [
+      {
+        "id": 4302,
+        "status": "Draft",
+        "publishedAt": null,
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Private",
+        "trainingStatus": "Processing"
+      },
+      {
+        "id": 4304,
+        "status": "Scheduled",
+        "publishedAt": {
+          "$date": "2099-01-01T00:00:00.001Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Unsearchable",
+        "trainingStatus": null
+      },
+      {
+        "id": 4301,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-04-01T01:02:03.456Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4303,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-05-02T03:04:05.678Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "EarlyAccess",
+        "trainingStatus": "Approved"
+      }
+    ]
+  },
+  "default-version:a version id of 0 is no filter": {
+    "modelVersions": [
+      {
+        "id": 4302,
+        "status": "Draft",
+        "publishedAt": null,
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Private",
+        "trainingStatus": "Processing"
+      },
+      {
+        "id": 4304,
+        "status": "Scheduled",
+        "publishedAt": {
+          "$date": "2099-01-01T00:00:00.001Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Unsearchable",
+        "trainingStatus": null
+      },
+      {
+        "id": 4301,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-04-01T01:02:03.456Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4303,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-05-02T03:04:05.678Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "EarlyAccess",
+        "trainingStatus": "Approved"
+      }
+    ]
+  },
+  "default-version:more than ten versions (capped at ten)": {
+    "modelVersions": [
+      {
+        "id": 4411,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-11T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4410,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-10T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4409,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-09T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4408,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-08T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4407,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-07T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4406,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-06T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4405,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-05T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4404,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-04T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4403,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-03T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      },
+      {
+        "id": 4402,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-01-02T00:00:00.000Z"
+        },
+        "model": {
+          "id": 3303,
+          "userId": 1301,
+          "availability": "Public",
+          "status": "Scheduled"
+        },
+        "availability": "Public",
+        "trainingStatus": null
+      }
+    ]
+  },
+  "default-version:narrowed to another model`s version (no match)": {
+    "modelVersions": []
+  },
+  "default-version:narrowed to one version": {
+    "modelVersions": [
+      {
+        "id": 4302,
+        "status": "Draft",
+        "publishedAt": null,
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "Private",
+        "trainingStatus": "Processing"
+      }
+    ]
+  },
+  "default-version:narrowed to the NULL-index version": {
+    "modelVersions": [
+      {
+        "id": 4303,
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-05-02T03:04:05.678Z"
+        },
+        "model": {
+          "id": 3301,
+          "userId": 1301,
+          "availability": "EarlyAccess",
+          "status": "Published"
+        },
+        "availability": "EarlyAccess",
+        "trainingStatus": "Approved"
+      }
+    ]
+  },
+  "pending:another placer": [
+    {
+      "id": 6305,
+      "amount": 42,
+      "free": false,
+      "data": {
+        "imageId": 95
+      },
+      "createdAt": {
+        "$date": "2026-05-29T00:00:00.000Z"
+      },
+      "expiresAt": null
+    }
+  ],
+  "pending:another target": [
+    {
+      "id": 6306,
+      "amount": 43,
+      "free": false,
+      "data": {
+        "imageId": 96
+      },
+      "createdAt": {
+        "$date": "2026-05-28T00:00:00.000Z"
+      },
+      "expiresAt": null
+    }
+  ],
+  "pending:capped by the limit": [
+    {
+      "id": 6302,
+      "amount": 125,
+      "free": false,
+      "data": {
+        "imageId": 92
+      },
+      "createdAt": {
+        "$date": "2026-06-01T00:00:00.001Z"
+      },
+      "expiresAt": {
+        "$date": "2026-06-03T00:00:00.001Z"
+      }
+    },
+    {
+      "id": 6303,
+      "amount": 40,
+      "free": false,
+      "data": {
+        "list": [
+          1,
+          2
+        ],
+        "imageId": 93
+      },
+      "createdAt": {
+        "$date": "2026-06-02T00:00:00.002Z"
+      },
+      "expiresAt": {
+        "$date": "2026-06-04T00:00:00.002Z"
+      }
+    }
+  ],
+  "pending:nothing pending": [],
+  "pending:the viewer`s pending rows, oldest first": [
+    {
+      "id": 6302,
+      "amount": 125,
+      "free": false,
+      "data": {
+        "imageId": 92
+      },
+      "createdAt": {
+        "$date": "2026-06-01T00:00:00.001Z"
+      },
+      "expiresAt": {
+        "$date": "2026-06-03T00:00:00.001Z"
+      }
+    },
+    {
+      "id": 6303,
+      "amount": 40,
+      "free": false,
+      "data": {
+        "list": [
+          1,
+          2
+        ],
+        "imageId": 93
+      },
+      "createdAt": {
+        "$date": "2026-06-02T00:00:00.002Z"
+      },
+      "expiresAt": {
+        "$date": "2026-06-04T00:00:00.002Z"
+      }
+    },
+    {
+      "id": 6301,
+      "amount": 0,
+      "free": true,
+      "data": {
+        "note": "newest",
+        "imageId": 91
+      },
+      "createdAt": {
+        "$date": "2026-06-03T00:00:00.003Z"
+      },
+      "expiresAt": null
+    }
+  ],
+  "posts:a version with no posts": [],
+  "posts:another user": [
+    {
+      "id": 8302,
+      "modelVersionId": 4301
+    }
+  ],
+  "posts:no versions": [],
+  "posts:two versions": [
+    {
+      "id": 8301,
+      "modelVersionId": 4302
+    },
+    {
+      "id": 8303,
+      "modelVersionId": 4301
+    },
+    {
+      "id": 8305,
+      "modelVersionId": 4301
+    }
+  ],
+  "settings:JSON settings": {
+    "nested": [
+      1,
+      "two",
+      null
+    ],
+    "metricPrivacy": {
+      "downloads": true
+    }
+  },
+  "settings:NULL settings": null,
+  "settings:a missing user": null,
+  "settings:empty settings": {},
+  "suggested:a missing model": 0,
+  "suggested:a model with none": 0,
+  "suggested:a model with suggestions": 3
+}

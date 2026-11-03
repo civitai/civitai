@@ -35,6 +35,10 @@ import { trpc } from '~/utils/trpc';
  * gates and the anonymous ceiling of this host, from the listing's own media only — never mature
  * on any host, and never a civitai.red cover / icon override — carried with its level so
  * `Meta`'s own safe-level check applies too.
+ *
+ * LAYOUT: the body is CENTRED in the apps body column (`align="center"`), like the site's
+ * other detail pages — the one route that opts out of the layout's shared left edge. See
+ * `align` on `AppsPageLayout`.
  */
 type PageProps = { socialImage: ListingSocialImage | null };
 
@@ -89,7 +93,7 @@ export default function AppStoreListingDetailPage({ socialImage }: Partial<PageP
       ) : (
         <Meta title={title} description={description} deIndex />
       )}
-      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']}>
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']} align="center">
         {isLoading ? (
           <Center py="xl">
             <Loader />
