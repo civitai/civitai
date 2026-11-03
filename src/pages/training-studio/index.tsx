@@ -323,7 +323,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       : `/user/${currentUser.username}/models?section=training`;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+    <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
       <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>

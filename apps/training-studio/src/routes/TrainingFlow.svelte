@@ -214,14 +214,15 @@
 
 <section class="flex flex-col gap-6">
   <div class="flex items-center justify-between gap-3">
-    <nav class="flex flex-wrap items-center gap-1.5" aria-label="Training steps">
+    <nav class="flex min-w-0 items-center gap-1.5" aria-label="Training steps">
       {#each STEPS as s, i (s.n)}
         {@const state = s.n < step ? 'done' : s.n === step ? 'active' : 'todo'}
         <div class="flex items-center gap-1.5">
           <button
             type="button"
             onclick={() => jump(s.n)}
-            class="flex items-center gap-2 transition {state === 'todo' ? 'opacity-50' : 'opacity-100'}"
+            aria-current={state === 'active' ? 'step' : undefined}
+            class="flex shrink-0 items-center gap-2 transition {state === 'todo' ? 'opacity-50' : 'opacity-100'}"
           >
             <span
               class="grid h-6 w-6 place-items-center rounded-full border font-mono text-xs
@@ -233,12 +234,17 @@
             >
               {#if state === 'done'}<IconCheck size={13} stroke={3} />{:else}{s.n}{/if}
             </span>
-            <span class="text-sm font-semibold {state === 'active' ? 'text-dark-0' : 'text-dark-2'}">
+            <!-- Below sm only the current step is labelled, so the three steps fit one row. -->
+            <span
+              class="whitespace-nowrap text-sm font-semibold {state === 'active'
+                ? 'text-dark-0'
+                : 'sr-only text-dark-2 sm:not-sr-only'}"
+            >
               {s.label}
             </span>
           </button>
           {#if i < STEPS.length - 1}
-            <span class="h-px w-8 bg-dark-4"></span>
+            <span class="h-px w-4 bg-dark-4 sm:w-8"></span>
           {/if}
         </div>
       {/each}

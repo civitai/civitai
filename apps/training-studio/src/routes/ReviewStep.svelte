@@ -850,7 +850,7 @@
     </div>
   </div>
 
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <aside class="h-fit rounded-xl lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -1039,11 +1039,11 @@
   </aside>
 </div>
 
-<div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
+<div class="mt-6 flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
   <Button variant="outline" onclick={onBack}>
     <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
   </Button>
-  <span class="font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
+  <span class="text-right font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
 </div>
 
 <Dialog.Root bind:open={spendDialogOpen}>

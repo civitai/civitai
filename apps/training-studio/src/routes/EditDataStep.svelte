@@ -653,11 +653,14 @@
     </span>
   </button>
 
-  <div class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
+  <!-- Below lg the actions float over a long pair list instead of waiting at its end. -->
+  <div
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-3 max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+  >
     <Button variant="outline" onclick={onBack}>
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
     </Button>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
       {#if attentionCount > 0}
         <button
           id="edit-continue-blocked"
