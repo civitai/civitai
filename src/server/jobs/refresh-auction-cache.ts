@@ -2,12 +2,10 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { modelsSearchIndex } from '~/server/search-index';
-import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { FEATURED_MODELS_HOME_BLOCK_KEY } from '~/shared/constants/home-block.constants';
+import { bustFeaturedModelsHomeBlockCache } from '~/server/services/home-block-cache.service';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
 export const refreshAuctionCache = createJob('refresh-auction-cache', '6 0 * * *', async () => {
   const data = await dbWrite.coveredCheckpoint.findMany();
@@ -20,7 +18,7 @@ export const refreshAuctionCache = createJob('refresh-auction-cache', '6 0 * * *
     data.map((c) => ({ id: c.model_id, action: SearchIndexUpdateQueueAction.Update }))
   );
   await bustFeaturedModelsCache();
-  await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, FEATURED_MODELS_HOME_BLOCK_KEY);
+  await bustFeaturedModelsHomeBlockCache();
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds);
 });

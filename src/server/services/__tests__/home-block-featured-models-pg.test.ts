@@ -4,7 +4,11 @@ import { HomeBlockType } from '~/shared/utils/prisma/enums';
 // Module scope, as in home-block-fetch-sizing.test.ts: this graph's transform must not be charged
 // to one test's budget.
 import { getHomeBlockData } from '~/server/services/home-block.service';
-import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
+import {
+  bustFeaturedModelsHomeBlockCache,
+  getHomeBlockCached,
+} from '~/server/services/home-block-cache.service';
+import type { SessionUser } from '~/types/session';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ModelService from '~/server/services/model.service';
@@ -15,7 +19,7 @@ type FakeModel = {
   nsfw: boolean;
   poi: boolean;
   nsfwLevel: number;
-  user: { id: number; profilePicture: Img | null };
+  user: { id: number; image: string | null; profilePicture: Img | null };
   images: Img[];
 };
 
@@ -46,7 +50,7 @@ const model = (id: number, images: Img[], avatar: Img | null = null): FakeModel 
   nsfw: false,
   poi: false,
   nsfwLevel: images.reduce((acc, i) => acc | i.nsfwLevel, 0),
-  user: { id: 100 + id, profilePicture: avatar },
+  user: { id: 100 + id, image: `https://example.test/${id}.png`, profilePicture: avatar },
   images,
 });
 
@@ -57,13 +61,16 @@ const modelsFeedBlock = {
   metadata: { feed: { entity: 'models', limit: 42 } },
 };
 
-async function featured() {
-  const block = await getHomeBlockData({ input: { limit: 56 }, homeBlock: featuredBlock });
+async function featured(user?: SessionUser) {
+  const block = await getHomeBlockData({ input: { limit: 56 }, homeBlock: featuredBlock, user });
   return (block as { featuredModels: FakeModel[] }).featuredModels;
 }
 
 beforeEach(() => {
   getModelsWithImagesAndModelVersionsMock.mockClear();
+  redisMock.redis.packed.get.mockReset();
+  redisMock.redis.packed.get.mockImplementation(async () => null);
+  redisMock.redis.del.mockClear();
 });
 
 describe('Featured Models home block shows PG only', () => {
@@ -129,7 +136,23 @@ describe('Featured Models home block shows PG only', () => {
     const [first, second] = await featured();
 
     expect(first.user.profilePicture).toBeNull();
+    expect(first.user.image).toBeNull();
     expect(second.user.profilePicture?.id).toBe(92);
+  });
+
+  // The admin picker reads this block with the viewer attached; the cap is not the viewer's.
+  it('caps a signed-in viewer who allows PG-13 the same way', async () => {
+    state.items = [
+      model(1, [
+        { id: 11, nsfwLevel: PG13 },
+        { id: 12, nsfwLevel: PG },
+      ]),
+    ];
+    const viewer = { id: 7, showNsfw: true, browsingLevel: PG | PG13 } as unknown as SessionUser;
+
+    const [only] = await featured(viewer);
+
+    expect(only.images.map((i) => i.id)).toEqual([12]);
   });
 
   it('does not mutate the arrays the model service handed back', async () => {
@@ -172,5 +195,16 @@ describe('Featured Models home block shows PG only', () => {
     const block = await getHomeBlockCached(featuredBlock, undefined, {});
 
     expect((block as { featuredModels: FakeModel[] }).featuredModels.map((m) => m.id)).toEqual([1]);
+  });
+
+  // A won auction must clear the entry the block actually reads, or it serves the old winners.
+  it('busts the entry the block is cached under', async () => {
+    state.items = [model(1, [{ id: 11, nsfwLevel: PG }])];
+    await getHomeBlockCached(featuredBlock, undefined, {});
+    const readKey = redisMock.redis.packed.get.mock.calls[0][0];
+
+    await bustFeaturedModelsHomeBlockCache();
+
+    expect(redisMock.redis.del.mock.calls.map(([key]) => key)).toContain(readKey);
   });
 });

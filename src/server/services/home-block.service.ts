@@ -814,6 +814,8 @@ export const getHomeBlockData = async ({
           images: m.images.filter((image) => isPublicOnlyBrowsingLevel(image.nsfwLevel)),
           user: {
             ...m.user,
+            // Unrated; an avatar renderer falls back to it once the rated picture is dropped.
+            image: null,
             profilePicture:
               m.user.profilePicture && isPublicOnlyBrowsingLevel(m.user.profilePicture.nsfwLevel)
                 ? m.user.profilePicture

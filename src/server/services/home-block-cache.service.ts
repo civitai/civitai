@@ -5,7 +5,6 @@ import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
-import { FEATURED_MODELS_HOME_BLOCK_KEY } from '~/shared/constants/home-block.constants';
 import { createLogger } from '~/utils/logging';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
@@ -34,6 +33,9 @@ type HomeBlockForCache = {
 };
 
 const log = createLogger('home-block-cache', 'green');
+
+// Not 'default': entries under that key predate the PG cap and must never be read again.
+const FEATURED_MODELS_HOME_BLOCK_KEY = 'pg';
 
 /**
  * Takes RESOLVED metadata — the source block's, for a clone — never the row's own column. A
@@ -155,4 +157,8 @@ export async function homeBlockCacheBust(type: HomeBlockType, entityId: number |
   ];
   log(`Cache busted: ${base} (${keys.length} keys)`);
   await Promise.all(keys.map((key) => redis.del(key as typeof base)));
+}
+
+export async function bustFeaturedModelsHomeBlockCache() {
+  await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, FEATURED_MODELS_HOME_BLOCK_KEY);
 }
