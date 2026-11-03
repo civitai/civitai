@@ -1,6 +1,8 @@
 import { sql, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { blockReasonProblem } from '../../block-reasons';
 import { recordVoteDay } from '../daily/daily.service';
 import { goldForRank, PROGRESSION } from '../progression/config';
 import { ledgerOf } from '../progression/progression';
@@ -16,6 +18,7 @@ export type VoteRejection =
   | 'no-player'
   | 'not-eligible'
   | 'bad-answer'
+  | 'bad-block-reason'
   | 'already-voted'
   | 'no-weight'
   | 'reset-pending';
@@ -41,7 +44,14 @@ export type InsertedVote = {
 /** Validates a player's answer and writes the pending ledger row. Credit follows with `creditVote`. */
 export async function insertVote(
   trx: Transaction<DB>,
-  input: { userId: number; answer: string; now: Date; lockPlayer?: boolean },
+  input: {
+    userId: number;
+    answer: string;
+    /** Why the voter blocked the image: required with Blocked on the rating question, refused with anything else. */
+    blockReason?: string | null;
+    now: Date;
+    lockPlayer?: boolean;
+  },
   subject: VoteSubject
 ): Promise<{ status: 'rejected'; reason: VoteRejection } | InsertedVote> {
   const rejected = (reason: VoteRejection) => ({ status: 'rejected' as const, reason });
@@ -57,6 +67,13 @@ export async function insertVote(
     return rejected('not-eligible');
   }
   if (!subject.options.some((o) => o.value === input.answer)) return rejected('bad-answer');
+  const reasonProblem =
+    subject.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION
+      ? blockReasonProblem(input.answer, input.blockReason)
+      : input.blockReason
+      ? 'unexpected'
+      : null;
+  if (reasonProblem) return rejected('bad-block-reason');
 
   const already = await trx
     .selectFrom('KnightsVote')
@@ -91,6 +108,7 @@ export async function insertVote(
       imageId: subject.imageId,
       stage: subject.stage,
       answer: input.answer,
+      blockReason: input.blockReason || null,
       weight,
       xp: PROGRESSION.voteXp,
       gold,

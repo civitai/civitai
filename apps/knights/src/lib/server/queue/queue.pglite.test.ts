@@ -102,9 +102,22 @@ async function fiveKnights(first = 1) {
   for (let i = 0; i < 5; i++) await player(first + i, 'Knight');
 }
 
-async function vote(userId: number, itemId: number, answer: string) {
-  return castVote(db, { userId, itemId, answer }, deps());
+// A Blocked vote must name a reason; tests that are not about the reason give the catch-all.
+async function vote(userId: number, itemId: number, answer: string, blockReason?: string) {
+  return castVote(
+    db,
+    { userId, itemId, answer, blockReason: blockReason ?? (answer === '32' ? 'Other' : undefined) },
+    deps()
+  );
 }
+
+const reasons = async (id: number) =>
+  (
+    await pg.query<{ playerId: number; blockReason: string | null }>(
+      `SELECT "playerId", "blockReason" FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+      [id]
+    )
+  ).rows;
 
 describe('getFeed', () => {
   it('returns open Knight items the player has not voted, and never the rating', async () => {
@@ -246,6 +259,57 @@ describe('castVote rejections', () => {
     });
     expect(await vote(2, high, '4')).toMatchObject({ status: 'recorded' });
     expect(await vote(2, high, '8')).toMatchObject({ status: 'rejected', reason: 'already-voted' });
+  });
+});
+
+describe('castVote block reasons', () => {
+  const rejected = { status: 'rejected', reason: 'bad-block-reason' };
+
+  it('refuses a Blocked vote with no reason or one that is not on the list, and writes nothing', async () => {
+    await player(1, 'Knight');
+    await image(10);
+    const id = await item(10);
+
+    expect(await castVote(db, { userId: 1, itemId: id, answer: '32' }, deps())).toMatchObject(
+      rejected
+    );
+    expect(
+      await castVote(db, { userId: 1, itemId: id, answer: '32', blockReason: '' }, deps())
+    ).toMatchObject(rejected);
+    expect(await vote(1, id, '32', 'Whatever')).toMatchObject(rejected);
+    expect(await reasons(id)).toEqual([]);
+  });
+
+  it('refuses a reason on any other rating', async () => {
+    await player(1, 'Knight');
+    await image(10);
+    const id = await item(10);
+
+    expect(await vote(1, id, '8', 'Other')).toMatchObject(rejected);
+    expect(await reasons(id)).toEqual([]);
+  });
+
+  it('stores the reason on a Blocked vote and none on another rating', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    const id = await item(10);
+
+    expect(await vote(1, id, '32', 'DepictsRealPerson')).toMatchObject({ status: 'recorded' });
+    expect(await vote(2, id, '8')).toMatchObject({ status: 'recorded' });
+
+    expect(await reasons(id)).toEqual([
+      { playerId: 1, blockReason: 'DepictsRealPerson' },
+      { playerId: 2, blockReason: null },
+    ]);
+  });
+
+  it('refuses a reason on a question that is not the rating', async () => {
+    await player(1, 'Knight');
+    await image(10);
+    const id = await item(10, { question: 'knights.test.bool' });
+
+    expect(await vote(1, id, 'yes', 'Other')).toMatchObject(rejected);
   });
 });
 

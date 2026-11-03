@@ -5,6 +5,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
+import { consensusBlockReason, type ConsensusBlockReason } from './block-reason';
 
 export const INQUISITOR_QUEUE_LIMIT = 100;
 
@@ -25,6 +26,8 @@ export type InquisitorItem = {
   blockedFor: string | null;
   createdAt: Date;
   votes: InquisitorVote[];
+  /** What the Knights who voted Blocked said was the reason; null when none gave one. */
+  blockReason: ConsensusBlockReason | null;
 };
 
 type QuestionOption = { value: string; label: string };
@@ -86,11 +89,23 @@ export async function getInquisitorQueue(): Promise<InquisitorItem[]> {
     .groupBy(['itemId', 'answer'])
     .execute();
 
+  const blockedVotes = await dbWrite
+    .selectFrom('KnightsVote')
+    .select(['itemId', 'answer', 'blockReason', 'createdAt', 'playerId'])
+    .where(
+      'itemId',
+      'in',
+      items.map((item) => item.id)
+    )
+    .where('answer', '=', String(NsfwLevel.Blocked))
+    .execute();
+
   return items.map(({ options, ingestion, ...item }) => {
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
     return {
       ...item,
       hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
+      blockReason: consensusBlockReason(blockedVotes.filter((vote) => vote.itemId === item.id)),
       votes: tallies
         .filter((tally) => tally.itemId === item.id)
         .map((tally) => ({

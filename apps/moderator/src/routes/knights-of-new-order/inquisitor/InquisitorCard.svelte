@@ -77,6 +77,11 @@
           {/each}
         </TableBody>
       </Table>
+      {#if item.blockReason}
+        <p class="text-sm text-dark-2">
+          Blocked · {item.blockReason.label} ({item.blockReason.count} of {item.blockReason.of})
+        </p>
+      {/if}
     {/if}
 
     {#if item.hasBlockMarker}

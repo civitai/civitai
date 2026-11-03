@@ -65,6 +65,7 @@ export type RejectReason =
   | 'unavailable'
   | 'not-eligible'
   | 'bad-answer'
+  | 'bad-block-reason'
   | 'already-voted'
   | 'no-weight'
   | 'reset-pending';
@@ -307,7 +308,13 @@ export async function pacingGate(
 
 export async function castVote(
   db: Kysely<DB>,
-  input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
+  input: {
+    userId: number;
+    itemId: number;
+    answer: string;
+    blockReason?: string | null;
+    isModerator?: boolean;
+  },
   deps: QueueDeps
 ): Promise<CastVoteResult> {
   const now = deps.now();

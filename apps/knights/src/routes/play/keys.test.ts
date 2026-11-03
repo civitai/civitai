@@ -55,3 +55,18 @@ describe('answerForKeyPress', () => {
     expect(answerForKeyPress(options, '2', false)).toBe('2');
   });
 });
+
+describe('block reasons', () => {
+  it('are picked with the keys 1 to 5, in the original order, and no others', async () => {
+    const { BLOCK_REASONS } = await import('$lib/block-reasons');
+    const reasons = [...BLOCK_REASONS];
+    expect([1, 2, 3, 4, 5].map((n) => answerForKey(reasons, String(n)))).toEqual([
+      'InappropriateMinors',
+      'RealisticMinors',
+      'DepictsRealPerson',
+      'Bestiality',
+      'Other',
+    ]);
+    expect(answerForKey(reasons, '6')).toBeNull();
+  });
+});

@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import BlockReasons from './BlockReasons.svelte';
   import ApprenticeMeter from './ApprenticeMeter.svelte';
   import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
@@ -16,7 +17,8 @@
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { recapLines } from './recap-text';
-  import { answerForKeyPress } from './keys';
+  import { answerForKey, answerForKeyPress } from './keys';
+  import { BLOCKED_ANSWER, BLOCK_REASONS, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -39,6 +41,9 @@
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
   let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
+  // Choosing Blocked on a rating question asks for a reason first; the vote is cast with the reason once one is picked.
+  let choosingReason = $state(false);
+  let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
@@ -46,6 +51,11 @@
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
   // otherwise press it). Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
+    if (choosingReason) {
+      const reason = answerForKey([...BLOCK_REASONS], event.key);
+      if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
+      return;
+    }
     if (dialogOpen || data.mode !== 'queue' || !data.item || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
@@ -58,6 +68,13 @@
     if (imageFailed || !data.question) return;
     const value = answerForKeyPress(data.question.options, event.key, yesNo);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
+  }
+
+  function pickReason(reason: BlockReason) {
+    blockReason = reason;
+    choosingReason = false;
+    const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
+    if (blocked) answers?.requestSubmit(blocked);
   }
 
   // The sound is an Acolyte's only per-answer cue: called with whether the pick was right, before the next item loads.
@@ -111,9 +128,11 @@
   const answerOf = (submitter: HTMLElement | null) =>
     submitter instanceof HTMLButtonElement && submitter.name === 'answer' ? submitter.value : null;
 
-  const submit: SubmitFunction = ({ submitter }) => {
+  const submit: SubmitFunction = ({ submitter, formData }) => {
     submitting = true;
     picked = answerOf(submitter);
+    if (picked === BLOCKED_ANSWER && blockReason) formData.set('blockReason', blockReason);
+    blockReason = null;
     if (picked) sound.play('press');
     return async ({ result, update }) => {
       try {
@@ -138,7 +157,7 @@
 
 <svelte:window {onkeydown} />
 
-{#snippet pill(option: { value: string; label: string }, index: number, locked: boolean)}
+{#snippet pill(option: { value: string; label: string }, index: number, locked: boolean, asksReason: boolean)}
   {@const blocked = option.label.toLowerCase() === 'blocked'}
   {@const yesNoIcon = yesNo ? (option.value === 'yes' ? 'check' : 'x') : null}
   <button
@@ -151,6 +170,12 @@
     title={levelHint.get(option.value)}
     aria-label={blocked ? 'Blocked' : undefined}
     disabled={submitting || locked}
+    onclick={asksReason && option.value === BLOCKED_ANSWER
+      ? (event) => {
+          event.preventDefault();
+          choosingReason = true;
+        }
+      : undefined}
   >
     {#if yesNoIcon}<Icon name={yesNoIcon} />{/if}
     {#if blocked}<span class="ban"><Icon name="ban" size={20} /></span>{/if}
@@ -262,7 +287,7 @@
             <input type="hidden" name="kind" value={data.apprentice.item.kind} />
             <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
             {#each data.apprentice.options as option, index (option.value)}
-              {@render pill(option, index, false)}
+              {@render pill(option, index, false, false)}
             {/each}
           </form>
           {#if !yesNo}
@@ -335,7 +360,7 @@
         <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
           <input type="hidden" name="item" value={data.item.id} />
           {#each data.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed)}
+            {@render pill(option, index, imageFailed, !yesNo)}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
@@ -346,6 +371,9 @@
         </form>
         {#if !yesNo}
           <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+        {/if}
+        {#if choosingReason}
+          <BlockReasons onpick={pickReason} oncancel={() => (choosingReason = false)} />
         {/if}
       </div>
       {#if formMessage}
@@ -510,6 +538,7 @@
   }
 
   .controls {
+    position: relative;
     display: flex;
     flex: none;
     align-items: center;

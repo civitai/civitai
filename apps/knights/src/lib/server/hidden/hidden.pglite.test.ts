@@ -239,6 +239,29 @@ describe('answering a hidden check', () => {
     expect(await voteRow(1)).toHaveLength(1);
   });
 
+  it('asks a Blocked answer for a reason like a vote and stores it, the grade is on the level alone', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    expect(
+      await answerHiddenCheck(db, { userId: 1, referenceId: ref, answer: '32' }, deps(NOW))
+    ).toEqual({
+      status: 'rejected',
+      reason: 'bad-block-reason',
+    });
+    expect(await voteRow(1)).toHaveLength(0);
+
+    expect(
+      await answerHiddenCheck(
+        db,
+        { userId: 1, referenceId: ref, answer: '32', blockReason: 'Bestiality' },
+        deps(NOW)
+      )
+    ).toEqual({ status: 'recorded' });
+    expect(
+      (await pg.query(`SELECT "blockReason" FROM "KnightsVote" WHERE "playerId"=1`)).rows
+    ).toEqual([{ blockReason: 'Bestiality' }]);
+  });
+
   it('has no cost for a wrong answer until it is graded', async () => {
     await seedPlayer(pg, 1);
     const ref = await reference(10, '16');

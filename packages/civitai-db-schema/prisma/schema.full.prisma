@@ -8101,6 +8101,7 @@ model KnightsVote {
   converted   Boolean  @default(false)
   consequence String? // what a graded hidden check cost the player (warning | smite)
   noticedAt   DateTime? // when the player dismissed the notice of that cost
+  blockReason String? // why a Knight blocked an image (a NewOrderDamnedReason name); only on Blocked rating votes
 
   @@id([itemId, playerId, createdAt])
   @@index([playerId, createdAt])

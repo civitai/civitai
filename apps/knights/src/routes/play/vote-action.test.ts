@@ -213,6 +213,57 @@ describe('vote action', () => {
   });
 });
 
+describe('vote action block reason', () => {
+  it('passes the chosen reason to a rating vote and to a hidden check', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    answerHiddenCheck.mockResolvedValue({ status: 'recorded' });
+
+    expect(await submit({ item: queueItem(3), answer: '32', blockReason: 'Bestiality' })).toEqual({
+      success: true,
+    });
+    await submit({ item: hiddenItem(5), answer: '32', blockReason: 'Other' });
+
+    expect(castVote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ answer: '32', blockReason: 'Bestiality' }),
+      expect.anything()
+    );
+    expect(answerHiddenCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ answer: '32', blockReason: 'Other' }),
+      expect.anything()
+    );
+  });
+
+  it('answers 400 with a friendly message for a reason not on the list, writing nothing', async () => {
+    const result = await submit({ item: queueItem(3), answer: '32', blockReason: 'Nope' });
+    expect(result).toMatchObject({
+      status: 400,
+      data: { message: expect.stringMatching(/reason/i) },
+    });
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  it('answers 400, not 409, when the service finds Blocked without a reason or a reason without Blocked', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'bad-block-reason' });
+    expect(await submit({ item: queueItem(3), answer: '32' })).toMatchObject({
+      status: 400,
+      data: { message: expect.stringMatching(/reason/i) },
+    });
+    expect(await submit({ item: queueItem(3), answer: '8', blockReason: 'Other' })).toMatchObject({
+      status: 400,
+    });
+  });
+
+  it('refuses a reason on a yes/no answer', async () => {
+    const item = sealItem('secret', 7, { kind: 'yesno', id: 41 });
+    expect(await submit({ item, answer: 'yes', blockReason: 'Other' })).toMatchObject({
+      status: 400,
+    });
+    expect(castYesNoVote).not.toHaveBeenCalled();
+  });
+});
+
 describe('vote action for a muted player', () => {
   beforeEach(() => {
     getStanding.mockResolvedValue({ banned: false, muted: true });

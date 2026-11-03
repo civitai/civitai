@@ -3830,6 +3830,7 @@ export type KnightsVote = {
   converted: Generated<boolean>;
   consequence: string | null;
   noticedAt: Timestamp | null;
+  blockReason: string | null;
 };
 export type KnightsYesNoReference = {
   id: Generated<number>;
