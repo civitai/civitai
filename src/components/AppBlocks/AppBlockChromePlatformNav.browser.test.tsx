@@ -89,8 +89,8 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     expect(mine.getAttribute('href')).toBe('/apps/build?view=apps');
 
     // The home: the launcher of the apps the viewer has — the way out of a running app.
-    const home = page.getByRole('menuitem', { name: 'My apps' }).element();
-    expect(home.getAttribute('href')).toBe('/apps');
+    const myApps = page.getByRole('menuitem', { name: 'My apps' }).element();
+    expect(myApps.getAttribute('href')).toBe('/apps');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {
