@@ -33,7 +33,8 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { isHubTokenClaims } from '~/server/services/block-token-subject';
-import { ratingAllowedForCeiling } from '~/server/utils/server-domain';
+import { isMatureContentRating } from '~/server/utils/server-domain';
+import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
@@ -134,6 +135,17 @@ export function declaredStorage(
 /** The declared collections, or a retryable 503 (see {@link declaredStorage}). */
 export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
   return declaredStorage(appId, manifest).collections;
+}
+
+/**
+ * Whether a token with this `maxBrowsingLevel` claim may reach an app rated `rating`: the mint's
+ * rule (`isMatureContentRating`, refused off a red-capable host) read from the ceiling the mint
+ * derived from that host (`allowMatureContentForCeiling`). An absent claim is the SFW ceiling.
+ */
+function ratingAllowedForCeiling(rating: unknown, maxBrowsingLevel: number | undefined): boolean {
+  if (!isMatureContentRating(typeof rating === 'string' ? rating : null)) return true;
+  if (typeof maxBrowsingLevel !== 'number' || !Number.isFinite(maxBrowsingLevel)) return false;
+  return allowMatureContentForCeiling(maxBrowsingLevel) !== false;
 }
 
 /** The verified subject as a user id, or null for an anonymous token. */
@@ -287,9 +299,7 @@ export async function resolveImportAccess(
   // The mint refuses a mature-rated app off a red-capable host; its documents must not reach that
   // host through another app either. Same rule, read from the consumer token's ceiling.
   const rating = (source.manifest as { contentRating?: unknown } | null)?.contentRating;
-  if (
-    !ratingAllowedForCeiling(typeof rating === 'string' ? rating : null, consumer.maxBrowsingLevel)
-  ) {
+  if (!ratingAllowedForCeiling(rating, consumer.maxBrowsingLevel)) {
     throw notEligible('import_source_rating', `the app ${from} is not available on this site`);
   }
   const sourceStorage = declaredStorage(source.id, source.manifest);

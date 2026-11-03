@@ -1,4 +1,3 @@
-import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
 import {
   colorDomainNames,
   type ColorDomain,
@@ -135,21 +134,6 @@ export function isMatureContentRating(rating: string | null | undefined): boolea
 export function ratingAllowedOnHost(rating: string | null | undefined, host: string): boolean {
   if (!isMatureContentRating(rating)) return true;
   return isHostForColor(host, 'red');
-}
-
-/**
- * {@link ratingAllowedOnHost} for a caller that holds a block token rather than a host: its
- * `maxBrowsingLevel` claim is the ceiling the mint derived from the host (every level on a
- * red-capable host, SFW elsewhere), so a mature rating needs a ceiling that allows mature
- * content. An absent or non-finite claim (a legacy token) is the SFW ceiling.
- */
-export function ratingAllowedForCeiling(
-  rating: string | null | undefined,
-  maxBrowsingLevel: number | undefined
-): boolean {
-  if (!isMatureContentRating(rating)) return true;
-  if (typeof maxBrowsingLevel !== 'number' || !Number.isFinite(maxBrowsingLevel)) return false;
-  return allowMatureContentForCeiling(maxBrowsingLevel) !== false;
 }
 
 /** True if `host` is the canonical primary for its resolved color. */
