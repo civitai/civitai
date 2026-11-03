@@ -267,6 +267,29 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     expect(ratingNotices()[0][0]).toMatchObject({ details: { level: 4 } });
   });
 
+  // Post levels are masks here (bit_or of the images). A floor below the images' top level still
+  // drops the safe-browsing bits, which is the rise the callback reports too.
+  it('notifies at the top level when a lower floor drops safe browsing from a PG + X post', async () => {
+    verdict = { ...raisedVerdict(), nsfwLevel: 4 };
+    post.images = 1 | 8;
+
+    await imageRated(0);
+
+    expect(post.level).toBe(8);
+    expect(ratingNotices()).toHaveLength(1);
+    expect(ratingNotices()[0][0]).toMatchObject({ details: { level: 8 } });
+  });
+
+  it('does not notify when a lower floor leaves an R + X post as it was', async () => {
+    verdict = { ...raisedVerdict(), nsfwLevel: 4 };
+    post.images = 4 | 8;
+
+    await imageRated(0);
+
+    expect(post.level).toBe(4 | 8);
+    expect(ratingNotices()).toHaveLength(0);
+  });
+
   it('notifies each risen post in a batch at its own level', async () => {
     verdict = raisedVerdict();
     other = {
