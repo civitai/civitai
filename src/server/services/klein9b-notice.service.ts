@@ -2,6 +2,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { isEmailConfigured } from '~/server/email/client';
 import { klein9bNoticeEmail } from '~/server/email/templates/klein9bNotice.email';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 // The client throws on failure; the service wrapper swallows errors, which would record a failed send.
 import { notifications } from '~/server/notifications/client';
@@ -22,6 +23,8 @@ export type Klein9bVersionRow = {
   versionName: string;
   status: string;
   modelStatus: string;
+  /** Private on the version or its model: not public, so not "listed". */
+  private: boolean;
   licensingFee: number | null;
   paidAccess: boolean;
 };
@@ -40,14 +43,14 @@ export type Klein9bRecipient = Klein9bUserRow & {
 };
 
 /**
- * Only listed versions count (published, on a published model): both notices tell the creator the
+ * Only listed versions count (published and public, on a published, public model): both notices tell the creator the
  * versions "stay listed" / "stay published". Charged: a listed version with a fee or open paid access.
  * Uncharged: a listed version and nothing charged. Charged wins.
  */
 export function classifyKlein9bAudience(versions: Klein9bVersionRow[], users: Klein9bUserRow[]) {
   const byUser = new Map<number, { charged: string[] }>();
   for (const v of versions) {
-    if (v.status !== 'Published' || v.modelStatus !== 'Published') continue;
+    if (v.status !== 'Published' || v.modelStatus !== 'Published' || v.private) continue;
     const entry = byUser.get(v.userId) ?? { charged: [] };
     if ((v.licensingFee ?? 0) > 0 || v.paidAccess)
       entry.charged.push(`${v.modelName}: ${v.versionName}`);
@@ -79,6 +82,7 @@ export async function getKlein9bNoticeAudience() {
       mv.name AS "versionName",
       mv.status::text AS status,
       m.status::text AS "modelStatus",
+      (mv.availability::text = 'Private' OR m.availability::text = 'Private') AS private,
       mv."licensingFee" AS "licensingFee",
       EXISTS (
         SELECT 1 FROM "PaidAccess" pa
@@ -168,7 +172,13 @@ export async function sendKlein9bNotice({
             });
           }
           sent++;
-        } catch {
+        } catch (e) {
+          logToAxiom({
+            type: 'error',
+            name: 'klein9b-notice',
+            message: (e as Error).message,
+            details: { userId: user.id },
+          }).catch(() => undefined);
           failedUserIds.push(user.id);
           await sysRedis.hDel(SENT_KEY, String(user.id)).catch(() => stuckUserIds.push(user.id));
         }
