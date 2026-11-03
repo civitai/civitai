@@ -7,6 +7,7 @@ import type * as TrpcModule from '~/utils/trpc';
 const state = vi.hoisted(() => ({
   user: { id: 501 } as { id: number } | null,
   data: undefined as Record<string, { variant: string; assignment: string }> | undefined,
+  isError: false,
   enabled: [] as boolean[],
 }));
 
@@ -19,7 +20,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getAssignments: {
         useQuery: (_input: unknown, opts: { enabled: boolean }) => {
           state.enabled.push(opts.enabled);
-          return { data: opts.enabled ? state.data : undefined };
+          return { data: opts.enabled ? state.data : undefined, isError: state.isError };
         },
       },
     },
@@ -52,6 +53,21 @@ describe('useExperiment', () => {
     state.user = { id: 501 };
     state.data = undefined;
     state.enabled = [];
+    state.isError = false;
+  });
+
+  it.each([
+    [
+      'the server does not know the experiment',
+      { hatTurfImageDetail: { variant: 'control', assignment: 'rule' } },
+      false,
+    ],
+    ['the request failed', undefined, true],
+  ])('falls back to the default arm when %s', (_label, data, isError) => {
+    state.data = data;
+    state.isError = isError;
+    const { result } = renderHook(() => useExperiment('hatTurfFeedCard'));
+    expect(result.current).toEqual({ ready: true, variant: 'control', assignment: 'unavailable' });
   });
 
   it('is not ready for a signed-in viewer until the assignment arrives', () => {

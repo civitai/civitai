@@ -46,8 +46,7 @@ export async function getExperimentAssignments({
   overrideCookie?: string;
 }): Promise<ExperimentAssignments> {
   await ensureFliptInitialized();
-  // Bucketing hashes the entity id; segments (pins, testers) match context properties. Both are
-  // needed: an entity id alone cannot match any of our segments.
+  // Both: bucketing hashes the entity id, while every pin and tester segment matches context.
   const entityId = String(user.id);
   const context = buildFliptContext(user);
   const overrides = user.isModerator ? parseExperimentOverrides(overrideCookie) : {};

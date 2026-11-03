@@ -27,7 +27,7 @@ export type UseExperimentResult<K extends ExperimentKey> =
  */
 export function useExperiment<K extends ExperimentKey>(key: K): UseExperimentResult<K> {
   const currentUser = useCurrentUser();
-  const { data } = trpc.experiments.getAssignments.useQuery(undefined, {
+  const { data, isError } = trpc.experiments.getAssignments.useQuery(undefined, {
     enabled: !!currentUser,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
@@ -43,7 +43,16 @@ export function useExperiment<K extends ExperimentKey>(key: K): UseExperimentRes
   }
 
   const frozenKey = `${currentUser.id}:${key}`;
-  if (data && !frozen.has(frozenKey)) frozen.set(frozenKey, data[key]);
+  if (!frozen.has(frozenKey) && typeof window !== 'undefined') {
+    // A missing key is deploy skew: a newer client listing an experiment the server does not know.
+    if (data?.[key]) frozen.set(frozenKey, data[key]);
+    else if (data || isError) {
+      frozen.set(frozenKey, {
+        variant: experiments[key].defaultVariant,
+        assignment: 'unavailable',
+      });
+    }
+  }
   const assigned = frozen.get(frozenKey);
   if (!assigned) return { ready: false, variant: undefined, assignment: undefined };
   return {

@@ -84,6 +84,21 @@ describe('getExperimentAssignments', () => {
     expect(evals.map((e) => e.flag)).toEqual([DETAIL]);
   });
 
+  it('drops cookie pairs naming inherited properties instead of throwing', async () => {
+    answers.set(FEED, hit('control'));
+    const out = await getExperimentAssignments({
+      user: moderator,
+      overrideCookie: 'toString:x,constructor:y,__proto__:z',
+    });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'control', assignment: 'rule' });
+  });
+
+  it('marks a dev local override as an override', async () => {
+    answers.set(FEED, hit('count-button', ['local-override']));
+    const out = await getExperimentAssignments({ user });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'override' });
+  });
+
   it('ignores the preview cookie for everyone else', async () => {
     answers.set(FEED, hit('control'));
     const out = await getExperimentAssignments({

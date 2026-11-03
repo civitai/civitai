@@ -29,24 +29,33 @@ export type ExperimentVariant<K extends ExperimentKey> =
   (typeof experiments)[K]['variants'][number];
 export const experimentKeys = Object.keys(experiments) as ExperimentKey[];
 
-/**
- * How a user came to their arm. Only `rule` is a randomised assignment; the readout drops the rest.
- * - `pinned`: a Flipt segment whose key starts with `EXPERIMENT_PIN_SEGMENT_PREFIX` matched.
- * - `override`: a moderator's preview cookie, or a dev `FLIPT_LOCAL_OVERRIDES` entry.
- * - `unavailable`: Flipt not initialised, or the flag key missing from flag state.
- * - `off`: the flag is disabled, or no rule matched.
- * - `invalid`: Flipt returned a variant this registry does not list.
- */
-export type ExperimentAssignmentSource =
-  | 'rule'
-  | 'pinned'
-  | 'override'
-  | 'unavailable'
-  | 'off'
-  | 'invalid';
+// How a user came to their arm. Only `rule` is randomised; the readout drops the rest.
+export const EXPERIMENT_ASSIGNMENT_SOURCES = [
+  'rule',
+  'pinned',
+  'override',
+  'unavailable',
+  'off',
+  'invalid',
+] as const;
+export type ExperimentAssignmentSource = (typeof EXPERIMENT_ASSIGNMENT_SOURCES)[number];
 
 export type ExperimentAssignment = { variant: string; assignment: ExperimentAssignmentSource };
 export type ExperimentAssignments = Record<ExperimentKey, ExperimentAssignment>;
+
+export const EXPERIMENT_SURFACES = ['image-detail', 'feed-card'] as const;
+export type ExperimentSurface = (typeof EXPERIMENT_SURFACES)[number];
+
+export const HAT_TURF_CLIENT_ACTIONS = [
+  'invite_view',
+  'invite_dismiss',
+  'hat_count_open',
+  'feed_place_start',
+  'feed_place_save',
+  'hide_all_hats_on',
+  'hide_all_hats_off',
+] as const;
+export const HAT_TURF_SERVER_ACTIONS = ['opt_in', 'opt_out'] as const;
 
 export const EXPERIMENT_PIN_SEGMENT_PREFIX = 'exp-pin-';
 
@@ -67,7 +76,7 @@ export function parseExperimentOverrides(
   if (!raw) return out;
   for (const pair of raw.split(',')) {
     const [key, variant] = pair.split(':').map((s) => s.trim());
-    if (key in experiments && isExperimentVariant(key as ExperimentKey, variant)) {
+    if (Object.hasOwn(experiments, key) && isExperimentVariant(key as ExperimentKey, variant)) {
       out[key as ExperimentKey] = variant;
     }
   }

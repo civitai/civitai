@@ -282,7 +282,8 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
       if (!instance) return null;
       try {
         return evalVariantCached(instance, flag, entityId, context);
-      } catch {
+      } catch (e) {
+        onEvalError(e, flag);
         return null;
       }
     },
