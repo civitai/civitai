@@ -22,12 +22,28 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 // cannot see the difference between "omit the key" and "send null", which is the one
 // distinction the server acts on.
 const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
+const storageImports = {
+  imports: [
+    {
+      from: 'notes-app',
+      sourceAppBlockId: 'apb_notes_1',
+      sourceName: 'Notes App',
+      collections: ['notes', 'prefs'],
+      access: 'readwrite' as const,
+      granted: false,
+    },
+  ],
+};
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       grantScopes: {
         useMutation: () => ({ mutate, isPending: false }),
+      },
+      // Read only when `apps:storage:import` is being consented to.
+      getStorageImports: {
+        useQuery: () => ({ data: storageImports, isLoading: false }),
       },
     },
   },
@@ -249,5 +265,43 @@ describe('BlockConsentModal — per-app spend limit', () => {
     await input.fill('999999');
     await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
     expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe('BlockConsentModal — cross-app storage imports', () => {
+  test('names the consumer, the source app and its collections for apps:storage:import', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={['apps:storage:import']}
+        onGranted={() => undefined}
+      />
+    );
+    const detail = page.getByTestId('block-consent-storage-imports');
+    await expect.element(detail).toBeVisible();
+    // The viewer must see who reaches what, where; the wording around it is free.
+    for (const part of ['Notes Fork', 'notes, prefs', 'Notes App']) {
+      await expect.element(detail).toHaveTextContent(part);
+    }
+  });
+
+  test('Allow sends the imports the viewer was shown, so the grant records exactly those', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={['apps:storage:import']}
+        onGranted={() => undefined}
+      />
+    );
+    await page.getByRole('button', { name: 'Allow' }).click();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'app-1',
+      scopes: ['apps:storage:import'],
+      storageImports: [{ from: 'notes-app', collections: ['notes', 'prefs'], access: 'readwrite' }],
+    });
   });
 });

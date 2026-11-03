@@ -9,7 +9,11 @@ vi.mock('@civitai/db-queries/hot-reads', async () =>
 // The showcase hat has its own cache and tests (events/showcase-hat.ts); here it only has to reach
 // the right author.
 const SHOWCASE_HAT = { cosmeticId: 5, url: 'hat.png', until: '2026-12-01T00:00:00.000Z' };
-const showcase = vi.hoisted(() => ({ getShowcaseHatsForUsers: vi.fn(async () => ({})) }));
+const showcase = vi.hoisted(() => ({
+  getShowcaseHatsForUsers: vi.fn(
+    async (_ids: number[]): Promise<Record<number, typeof SHOWCASE_HAT>> => ({})
+  ),
+}));
 vi.mock('~/server/events/showcase-hat', () => ({ ...showcase, getShowcaseHatForUser: vi.fn() }));
 const hatFor = (...owners: number[]) =>
   showcase.getShowcaseHatsForUsers.mockImplementation(async (ids: number[]) =>
