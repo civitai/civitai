@@ -36,6 +36,10 @@ export const moderatorModelLookupPath = (modelId: number, versionId?: number) =>
     versionId ? `/models/${modelId}?modelVersionId=${versionId}` : modelId
   )}`;
 
+/** The training audit, narrowed to one model's training runs. */
+export const moderatorTrainingAuditPath = (modelId: number) =>
+  `/audit/training-models?modelId=${q(modelId)}`;
+
 /** A version whose model the caller does not know. `mv`, never `q`: a bare number in `q` is a valid
  *  model id AND a valid version id across most of the range, so it resolves model-first and would land
  *  on an unrelated model. The page resolves the version and shows its model with the version pinned. */
