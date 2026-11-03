@@ -7,8 +7,9 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- Postgres 18 refuses every UPDATE and DELETE on a published FULL table whose stored generated
--- columns the publication leaves out (CommentV3: rootId, depth). Debezium's filtered mode adds
--- tables to this publication by itself, so this must precede any of them going FULL.
+-- columns the publication leaves out (CommentV3: rootId, depth). Tables are added to this
+-- publication by hand (the connector never creates or extends it), so set this before any of them
+-- is added or made FULL.
 ALTER PUBLICATION debezium_publication SET (publish_generated_columns = stored);
 
 DO $$
@@ -39,8 +40,8 @@ BEGIN
   END LOOP;
 END $$;
 
--- Refuse any FULL table with a stored generated column that a publication carrying it, or the one
--- Debezium may add it to, does not publish: every write to that table would fail.
+-- Refuse any FULL table with a stored generated column that a publication carrying it, or
+-- debezium_publication if it is added later, does not publish: every write to that table would fail.
 DO $$
 DECLARE blocked text;
 BEGIN
