@@ -18,6 +18,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 type LockReviewDb = Pick<typeof dbRead, 'model' | 'appeal'>;
@@ -239,6 +240,11 @@ export async function resolveLockReviewAppeal({
           where: { id: modelId },
           data: { lockedProperties: locked.filter((key) => !(lift as string[]).includes(key)) },
         });
+      // As the model form does on a moderator's nsfw unlock: a later lock must not read as the system's.
+      if (lift.includes('nsfw'))
+        await tx.$executeRaw`
+          UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
+        `;
     }
 
     // Closed under the same lock, so a second moderator's ruling finds nothing pending.

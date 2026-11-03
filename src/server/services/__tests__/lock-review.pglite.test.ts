@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -92,7 +93,8 @@ beforeAll(async () => {
       "lockedProperties" text[] NOT NULL DEFAULT '{}',
       nsfw boolean NOT NULL DEFAULT false,
       poi boolean NOT NULL DEFAULT false,
-      minor boolean NOT NULL DEFAULT false
+      minor boolean NOT NULL DEFAULT false,
+      meta jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
@@ -140,13 +142,23 @@ type Seed = {
   minor?: boolean;
   held?: boolean;
   owner?: number;
+  meta?: Record<string, unknown>;
 };
 
-async function seed({ locked, asked = ['nsfw'], nsfw = true, poi, minor, held, owner }: Seed) {
+async function seed({
+  locked,
+  asked = ['nsfw'],
+  nsfw = true,
+  poi,
+  minor,
+  held,
+  owner,
+  meta = {},
+}: Seed) {
   await db.exec(`DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held";`);
   await db.query(
-    `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [MODEL, owner ?? OWNER, locked, nsfw, !!poi, !!minor]
+    `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [MODEL, owner ?? OWNER, locked, nsfw, !!poi, !!minor, meta]
   );
   await db.query(
     `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", context) VALUES (1, $1, 'Model', $2, $3)`,
@@ -162,6 +174,13 @@ const modelRow = async () =>
       [MODEL]
     )
   ).rows[0];
+
+const modelMeta = async () =>
+  (
+    await db.query<{ meta: Record<string, unknown> }>(`SELECT meta FROM "Model" WHERE id = $1`, [
+      MODEL,
+    ])
+  ).rows[0].meta;
 
 const appealRow = async () =>
   (
@@ -207,6 +226,26 @@ describe('approving a lock review', () => {
       { status: AppealStatus.Approved }
     );
     expect(loggedActivities()).toEqual(['approveLockReview', 'unlockProperty:nsfw']);
+  });
+
+  it('clears the system nsfw-lock marker when it lifts the nsfw lock, as a moderator unlock does', async () => {
+    await seed({ locked: ['nsfw'], meta: { [SYSTEM_NSFW_LOCK_META_KEY]: true, other: 1 } });
+
+    await approve();
+
+    expect(await modelMeta()).toEqual({ other: 1 });
+  });
+
+  it('keeps the marker when the nsfw lock is not among those lifted', async () => {
+    await seed({
+      locked: ['nsfw', 'tags'],
+      asked: ['tags'],
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: true },
+    });
+
+    await approve();
+
+    expect(await modelMeta()).toEqual({ [SYSTEM_NSFW_LOCK_META_KEY]: true });
   });
 
   it('refuses while the owner is under an evidence hold, and changes nothing', async () => {
