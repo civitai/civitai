@@ -827,14 +827,12 @@ describe('screenshot CRUD', () => {
     expect(res.removed).toBe('b');
     // A mod's edit is NOT staged on a shadow — nothing was cloned.
     expect(mockDb.appListing.create).not.toHaveBeenCalled();
-    expect(recordModeratorEdit).toHaveBeenCalledWith({
-      appListingId: 'apl_live',
-      actorUserId: 7,
-      surface: 'media',
-    });
+    expect(recordModeratorEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ appListingId: 'apl_live', actorUserId: 7, surface: 'media' })
+    );
   });
 
-  it("a moderator's media edit is audited before the write, and refused if the audit fails", async () => {
+  it("a moderator's media edit is audited inside the write's transaction, and refused if the audit fails", async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_live',
@@ -851,8 +849,10 @@ describe('screenshot CRUD', () => {
     await expect(removeListingScreenshot({ screenshotId: 'b' }, mod)).rejects.toThrow(
       'check constraint'
     );
-    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
-    expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
+    expect(mockDb.$transaction).toHaveBeenCalled();
+    expect(recordModeratorEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ db: expect.anything(), surface: 'media' })
+    );
   });
 
   it("a moderator's caption edit is audited", async () => {
@@ -870,11 +870,9 @@ describe('screenshot CRUD', () => {
     recordModeratorEdit.mockClear();
     const { updateListingScreenshotCaption } = await import('../app-listing-assets.service');
     await updateListingScreenshotCaption({ screenshotId: 'b', caption: 'hi' }, mod);
-    expect(recordModeratorEdit).toHaveBeenCalledWith({
-      appListingId: 'apl_live',
-      actorUserId: 7,
-      surface: 'media',
-    });
+    expect(recordModeratorEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ appListingId: 'apl_live', actorUserId: 7, surface: 'media' })
+    );
   });
 
   it('an owner who is also a moderator is not audited as a moderator edit', async () => {
@@ -1466,11 +1464,9 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
 
       await service[proc]({ listingId: 'apl_live', imageId: 500 }, mod);
 
-      expect(recordModeratorEdit).toHaveBeenCalledWith({
-        appListingId: 'apl_live',
-        actorUserId: 7,
-        surface: 'media',
-      });
+      expect(recordModeratorEdit).toHaveBeenCalledWith(
+        expect.objectContaining({ appListingId: 'apl_live', actorUserId: 7, surface: 'media' })
+      );
       expect(recordRatingChange).toHaveBeenCalledTimes(1);
       expect(recordRatingChange).toHaveBeenCalledWith({
         appListingId: 'apl_live',

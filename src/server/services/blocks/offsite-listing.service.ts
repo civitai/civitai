@@ -89,7 +89,11 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { ListingEditorRole } from '~/server/services/blocks/app-access.service';
-import { recordModeratorListingEdit } from '~/server/services/blocks/app-listing-moderator-edit';
+import {
+  assertModeratorMayUseShadow,
+  recordModeratorListingEdit,
+  withModeratorEditAudit,
+} from '~/server/services/blocks/app-listing-moderator-edit';
 import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
@@ -1505,13 +1509,12 @@ export async function updateListing(opts: {
   // anyway, so it applies the whole patch in one update exactly as before.
   const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
 
-  if (listing.callerRole === 'moderator') {
-    await recordModeratorListingEdit({
-      appListingId: listingId,
-      actorUserId: userId,
-      surface: 'details',
-    });
-  }
+  const audit = {
+    moderator: listing.callerRole === 'moderator',
+    appListingId: listingId,
+    actorUserId: userId,
+    surface: 'details' as const,
+  };
 
   // Every non-throwing branch assigns this and `break`s, so the fork opt-in below has ONE write
   // site after whichever branch ran.
@@ -1602,7 +1605,9 @@ export async function updateListing(opts: {
       // value (`material` is empty), so writing it is a harmless no-op — the same argument
       // the `approved` trivial-only branch makes.
       const data = buildListingPatchData(effectivePatch, patchOpts);
-      await dbWrite.appListing.update({ where: { id: listingId }, data });
+      await withModeratorEditAudit(audit, (db) =>
+        db.appListing.update({ where: { id: listingId }, data })
+      );
       // Catalog bust: DEFENCE IN DEPTH, not a cached axis. This branch edits a `removed`
       // (owner-unpublished) row, which the approved-only catalog query already excludes, so
       // it is INERT today. Of the trivial fields it can write, only `category` is a cached
@@ -1628,7 +1633,9 @@ export async function updateListing(opts: {
       // Edit IN PLACE — no re-review. A pending listing's existing pending request
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
       const data = buildListingPatchData(effectivePatch, patchOpts);
-      await dbWrite.appListing.update({ where: { id: listingId }, data });
+      await withModeratorEditAudit(audit, (db) =>
+        db.appListing.update({ where: { id: listingId }, data })
+      );
       // Catalog bust: DEFENCE IN DEPTH, not a cached axis — a `draft`/`pending` row is
       // outside the approved-only catalog query, so this is INERT today. Same reasoning as
       // the `removed` branch above, including the part about the rule not being uniform.
@@ -1650,7 +1657,9 @@ export async function updateListing(opts: {
         // material key present is byte-identical to the live value (material ===
         // false), so writing it is a harmless no-op.
         const data = buildListingPatchData(effectivePatch, patchOpts);
-        await dbWrite.appListing.update({ where: { id: listingId }, data });
+        await withModeratorEditAudit(audit, (db) =>
+          db.appListing.update({ where: { id: listingId }, data })
+        );
         // Catalog bust: LOAD-BEARING. This is the one edit branch that writes a LIVE
         // (approved) row, and `category` — trivial by the material/trivial split, cached by
         // the `al.category` filter — is exactly what it can move. (`tagline`/`description`
@@ -1698,6 +1707,9 @@ export async function updateListing(opts: {
       await dbWrite.$transaction(async (tx) => {
         await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
+        if (audit.moderator) {
+          await recordModeratorListingEdit({ ...audit, db: tx, appListingId: shadowId });
+        }
       });
       // Catalog bust: DEFENCE IN DEPTH, not a cached axis. The MATERIAL half is staged on a
       // shadow (excluded from the catalog by both the approved-only and `revision_of_id IS
@@ -1769,7 +1781,12 @@ export async function beginListingRevision(opts: {
     where: { revisionOfId: listingId },
     select: { id: true },
   });
-  if (existing) return { shadowId: existing.id, created: false };
+  if (existing) {
+    if (parent.callerRole === 'moderator') {
+      await assertModeratorMayUseShadow(dbWrite, { shadowId: existing.id, actorUserId: userId });
+    }
+    return { shadowId: existing.id, created: false };
+  }
 
   // 🔴 RE-READ THE SOURCE REPO ON THE **PRIMARY**, not from `parent` (which came off the
   // REPLICA via `loadOwnedEditableListing`). The two clients can disagree about this
@@ -1973,6 +1990,9 @@ export async function submitListingRevision(opts: {
       `a revision can only be submitted from draft (status is ${shadow.status})`
     );
   }
+  if (callerRole === 'moderator') {
+    await assertModeratorMayUseShadow(dbWrite, { shadowId, actorUserId: userId });
+  }
 
   // Publish FLOOR gate (icon+cover required; screenshots optional) — authoritative
   // on the primary (the asset mutators write to dbWrite, so a replica count could be
@@ -2017,27 +2037,30 @@ export async function submitListingRevision(opts: {
     return { publishRequestId: openRequest.id, shadowId, slug: openRequest.slug };
   }
 
-  if (callerRole === 'moderator') {
-    await recordModeratorListingEdit({
+  const publishRequestId = newAppListingPublishRequestId();
+  const parentSlug = shadow.revisionOf.slug;
+  await withModeratorEditAudit(
+    {
+      moderator: callerRole === 'moderator',
       appListingId: shadowId,
       actorUserId: userId,
       surface: 'revision',
-    });
-  }
-  const publishRequestId = newAppListingPublishRequestId();
-  await dbWrite.appListingPublishRequest.create({
-    data: {
-      id: publishRequestId,
-      appListingId: shadowId,
-      kind: shadow.kind,
-      // Denormalize the PUBLIC parent slug so the mod queue reads the live slug,
-      // not the synthetic rev-<ulid>.
-      slug: shadow.revisionOf.slug,
-      submittedByUserId: userId,
-      status: 'pending',
-      changelog,
     },
-  });
+    (db) =>
+      db.appListingPublishRequest.create({
+        data: {
+          id: publishRequestId,
+          appListingId: shadowId,
+          kind: shadow.kind,
+          // Denormalize the PUBLIC parent slug so the mod queue reads the live slug,
+          // not the synthetic rev-<ulid>.
+          slug: parentSlug,
+          submittedByUserId: userId,
+          status: 'pending',
+          changelog,
+        },
+      })
+  );
   // Catalog bust: DEFENCE IN DEPTH. Today this writes only a publish-request row against a
   // `draft` shadow, which the approved-only catalog query already excludes, so the bust is a
   // no-op. It is kept against a future parent write being added to this path — a judgement
@@ -2373,6 +2396,19 @@ async function loadListingEditView(
  * the listing itself. `slug` + `status` + `parentId` always describe the live
  * parent; `shadowId` hints whether the prefill came from a shadow.
  */
+async function findModeratorUsableShadow(
+  listingId: string,
+  userId: number
+): Promise<{ shadowId: string } | null> {
+  const existing = await dbWrite.appListing.findFirst({
+    where: { revisionOfId: listingId },
+    select: { id: true },
+  });
+  if (!existing) return null;
+  await assertModeratorMayUseShadow(dbWrite, { shadowId: existing.id, actorUserId: userId });
+  return { shadowId: existing.id };
+}
+
 export async function getMyListingForEdit(opts: {
   listingId: string;
   userId: number;
@@ -2434,9 +2470,13 @@ export async function getMyListingForEdit(opts: {
   let shadowId: string | null = null;
   let hasPendingRevision = false;
   if (listing.status === 'approved') {
-    const begun = await beginListingRevision({ listingId, userId, isModerator });
-    shadowId = begun.shadowId;
-    effectiveId = begun.shadowId;
+    // A moderator's revision is minted on their first write, never on this read.
+    const begun =
+      listing.callerRole === 'moderator'
+        ? await findModeratorUsableShadow(listingId, userId)
+        : await beginListingRevision({ listingId, userId, isModerator });
+    shadowId = begun?.shadowId ?? null;
+    effectiveId = shadowId ?? listingId;
     const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
       where: {
         status: 'pending',
@@ -2722,7 +2762,8 @@ export async function getMyListingForApp(opts: {
   // rows (and their screenshot row ids) right after the shadow started diverging.
   let effectiveId = listing.id;
   let shadowId: string | null = null;
-  if (listing.status === 'approved' && listing.revisionOfId == null) {
+  // A moderator's media edits apply to the live listing, never to someone's revision.
+  if (listing.status === 'approved' && listing.revisionOfId == null && callerRole !== 'moderator') {
     const existing = await dbWrite.appListing.findFirst({
       where: { revisionOfId: listing.id },
       select: { id: true },
@@ -2894,6 +2935,9 @@ export async function updateRevisionDraft(opts: {
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
   }
+  if (shadow.callerRole === 'moderator') {
+    await assertModeratorMayUseShadow(dbWrite, { shadowId, actorUserId: userId });
+  }
   // 🔴 THE FORK OPT-IN IS NEVER STAGED, and this path cannot write it: `buildListingPatchData`
   // does not know the key, so accepting it here would DROP it silently and report success. It is
   // refused instead, before anything is written; `updateListing` writes it to the live listing.
@@ -2996,13 +3040,6 @@ export async function updateRevisionDraft(opts: {
   const shadowData = buildListingPatchData(restPatch, patchOpts);
   const betaData = patchHasAnyField(betaPatch) ? buildListingPatchData(betaPatch, patchOpts) : null;
 
-  if (shadow.callerRole === 'moderator') {
-    await recordModeratorListingEdit({
-      appListingId: parentId,
-      actorUserId: userId,
-      surface: 'details',
-    });
-  }
   // 🔴 BOTH WRITES IN ONE TRANSACTION — they touch two different rows, so a failure between
   // them would leave the beta half applied while the shadow edit was never staged. The
   // interactive (callback) form rather than `$transaction([...])`: every transaction in this
@@ -3013,6 +3050,14 @@ export async function updateRevisionDraft(opts: {
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
     if (betaData) await tx.appListing.update({ where: { id: parentId }, data: betaData });
+    if (shadow.callerRole === 'moderator') {
+      await recordModeratorListingEdit({
+        db: tx,
+        appListingId: shadowId,
+        actorUserId: userId,
+        surface: 'details',
+      });
+    }
   });
   return { shadowId };
 }

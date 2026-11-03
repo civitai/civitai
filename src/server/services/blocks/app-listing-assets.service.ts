@@ -6,7 +6,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
-import { recordModeratorListingEdit } from '~/server/services/blocks/app-listing-moderator-edit';
+import {
+  assertModeratorMayUseShadow,
+  recordModeratorListingEdit,
+} from '~/server/services/blocks/app-listing-moderator-edit';
 import {
   readListingMediaSplit,
   readListingMediaSplitState,
@@ -443,14 +446,44 @@ async function resolveListingRole(
   return access?.role ?? null;
 }
 
-async function auditModeratorAssetEdit(listing: OwnedListing, user: SessionUser): Promise<void> {
-  if (!user.isModerator) return;
+/** True when a seatless moderator is editing; refuses them a revision holding others' work. */
+async function gateModeratorAssetEdit(listing: OwnedListing, user: SessionUser): Promise<boolean> {
+  if (!user.isModerator) return false;
   const role = await resolveListingRole(listing.id, user.id, dbWrite);
-  if (listingEditorRole(role, user.isModerator) !== 'moderator') return;
+  if (listingEditorRole(role, user.isModerator) !== 'moderator') return false;
+  if (listing.revisionOfId != null) {
+    await assertModeratorMayUseShadow(dbWrite, { shadowId: listing.id, actorUserId: user.id });
+  }
+  return true;
+}
+
+async function recordModeratorMediaEditInTx(
+  tx: Prisma.TransactionClient,
+  listing: OwnedListing,
+  user: SessionUser,
+  moderator: boolean
+): Promise<void> {
+  if (!moderator) return;
   await recordModeratorListingEdit({
+    db: tx,
     appListingId: listing.id,
     actorUserId: user.id,
     surface: 'media',
+  });
+}
+
+/** A single write, plus a seatless moderator's audit row in the same transaction. */
+async function withModeratorMediaAudit<T>(
+  listing: OwnedListing,
+  user: SessionUser,
+  moderator: boolean,
+  write: (db: Prisma.TransactionClient | typeof dbWrite) => Promise<T>
+): Promise<T> {
+  if (!moderator) return write(dbWrite);
+  return dbWrite.$transaction(async (tx) => {
+    const result = await write(tx);
+    await recordModeratorMediaEditInTx(tx, listing, user, moderator);
+    return result;
   });
 }
 
@@ -1342,7 +1375,7 @@ export async function setListingIcon(
     user
   );
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   const raised = await dbWrite.$transaction(async (tx) => {
@@ -1350,6 +1383,7 @@ export async function setListingIcon(
       where: { id: listing.id },
       data: { iconId: validated.imageId },
     });
+    await recordModeratorMediaEditInTx(tx, listing, user, moderatorEdit);
     return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   await recordModLiveEditRatingChange(listing, user, raised);
@@ -1379,7 +1413,7 @@ export async function setListingCover(
     user
   );
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   const raised = await dbWrite.$transaction(async (tx) => {
@@ -1387,6 +1421,7 @@ export async function setListingCover(
       where: { id: listing.id },
       data: { coverId: validated.imageId },
     });
+    await recordModeratorMediaEditInTx(tx, listing, user, moderatorEdit);
     return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   await recordModLiveEditRatingChange(listing, user, raised);
@@ -1412,7 +1447,7 @@ export async function addListingScreenshot(
     user
   );
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'screenshot', user, {
     allowPending: true,
   });
@@ -1451,6 +1486,7 @@ export async function addListingScreenshot(
         caption: args.caption ?? null,
       },
     });
+    await recordModeratorMediaEditInTx(tx, listing, user, moderatorEdit);
     return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   await recordModLiveEditRatingChange(listing, user, raised);
@@ -1494,7 +1530,7 @@ export async function setListingRedMedia(
     user
   );
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   let imageId: number | null = null;
   let scanPending: boolean | undefined;
   if (args.imageId != null) {
@@ -1515,6 +1551,7 @@ export async function setListingRedMedia(
         toListingId: listing.id,
       });
     await writeListingRedSlot(tx, { appListingId: listing.id, slot: args.slot, imageId });
+    await recordModeratorMediaEditInTx(tx, listing, user, moderatorEdit);
     return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
   await recordModLiveEditRatingChange(listing, user, raised);
@@ -1540,7 +1577,7 @@ export async function reorderListingScreenshots(
     user
   );
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   // 🔴 `orderedIds` are PARENT row ids whenever the mint above just happened. Re-key
   // them onto the shadow's clones BEFORE the permutation check — otherwise the check
   // fails (parent ids aren't in the shadow's set) or, worse without the retarget,
@@ -1590,6 +1627,7 @@ export async function reorderListingScreenshots(
       });
       if (count !== 1) throwScreenshotNoLongerOnRevision();
     }
+    await recordModeratorMediaEditInTx(tx, listing, user, moderatorEdit);
   });
   return { reordered: orderedIds.length };
 }
@@ -1678,13 +1716,15 @@ export async function updateListingScreenshotCaption(
   });
   const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   // 🔴 LISTING-SCOPED write — see `throwScreenshotNoLongerOnRevision`.
-  const { count } = await dbWrite.appListingScreenshot.updateMany({
-    where: { id: screenshotId, appListingId: listing.id },
-    data: { caption: args.caption ?? null },
+  await withModeratorMediaAudit(listing, user, moderatorEdit, async (db) => {
+    const { count } = await db.appListingScreenshot.updateMany({
+      where: { id: screenshotId, appListingId: listing.id },
+      data: { caption: args.caption ?? null },
+    });
+    if (count !== 1) throwScreenshotNoLongerOnRevision();
   });
-  if (count !== 1) throwScreenshotNoLongerOnRevision();
   // NB: `id` is the RESOLVED row id, which differs from `args.screenshotId` whenever
   // this call minted the shadow (the parent row id was re-keyed onto its clone).
   return { id: screenshotId };
@@ -1714,15 +1754,17 @@ export async function removeListingScreenshot(
   // review) — edits go through a shadow revision. Mods bypass (curation). Evaluated
   // on the RESOLVED target, so a re-map that failed to leave the parent throws here.
   assertOwnerAssetEditable(listing, user);
-  await auditModeratorAssetEdit(listing, user);
+  const moderatorEdit = await gateModeratorAssetEdit(listing, user);
   // 🔴 LISTING-SCOPED delete — see `throwScreenshotNoLongerOnRevision`. This is the
   // one write where the reparent race is destructive: an unscoped
   // `delete({ where: { id } })` would remove the row from the LIVE listing it had just
   // been moved onto.
-  const { count } = await dbWrite.appListingScreenshot.deleteMany({
-    where: { id: screenshotId, appListingId: listing.id },
+  await withModeratorMediaAudit(listing, user, moderatorEdit, async (db) => {
+    const { count } = await db.appListingScreenshot.deleteMany({
+      where: { id: screenshotId, appListingId: listing.id },
+    });
+    if (count !== 1) throwScreenshotNoLongerOnRevision();
   });
-  if (count !== 1) throwScreenshotNoLongerOnRevision();
   // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
