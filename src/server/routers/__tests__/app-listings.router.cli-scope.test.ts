@@ -79,6 +79,8 @@ const {
   mockListMyAppListings,
   mockUpdateListing,
   mockUpdateRevisionDraft,
+  mockGetAppListingAuthoringContext,
+  mockListListingHistory,
 } = vi.hoisted(() => ({
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
@@ -104,6 +106,8 @@ const {
   mockListMyAppListings: vi.fn(async () => [{ appListingId: 'lst_1', problems: [] }]),
   mockUpdateListing: vi.fn(async () => ({ listingId: 'lst_1', requiresReview: false })),
   mockUpdateRevisionDraft: vi.fn(async () => ({ shadowId: 'shd_1' })),
+  mockGetAppListingAuthoringContext: vi.fn(async () => ({ appListingId: 'lst_1' })),
+  mockListListingHistory: vi.fn(async () => []),
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -134,6 +138,10 @@ vi.mock('~/server/services/blocks/offsite-listing.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-access.service', () => ({
   listMyAppListings: mockListMyAppListings,
+  getAppListingAuthoringContext: mockGetAppListingAuthoringContext,
+}));
+vi.mock('~/server/services/blocks/app-listing-history.service', () => ({
+  listListingHistory: mockListListingHistory,
 }));
 vi.mock('~/server/services/blocks/listing-meta.service', () => ({
   ingestListingAssetFromDataUri: mockIngestListingAssetFromDataUri,
@@ -412,4 +420,63 @@ describe('🔴 app-listings CLI scope gate — the doctor procs are IN the matri
       expect(covered.has(name), `${name} is annotated but absent from PROCS`).toBe(true);
     }
   });
+});
+
+describe('moderator listing-edit authority needs a session or a full-access key', () => {
+  const MOD_READ_PROCS = [
+    {
+      name: 'getAuthoringContext',
+      input: { appListingId: 'lst_1' },
+      mock: mockGetAppListingAuthoringContext,
+    },
+    { name: 'listingHistory', input: { appListingId: 'lst_1' }, mock: mockListListingHistory },
+  ];
+  const MOD_WRITE_PROCS = PROCS.filter((p) =>
+    [
+      'getMyListingForEdit',
+      'getMyListingForApp',
+      'beginListingRevision',
+      'submitListingRevision',
+      'updateListing',
+      'updateRevisionDraft',
+    ].includes(p.name)
+  );
+  const MOD_EDIT_PROCS = [...MOD_READ_PROCS, ...MOD_WRITE_PROCS];
+
+  for (const { name, input, mock } of MOD_EDIT_PROCS) {
+    it(`${name}: a moderator's full-scope app token (not a personal key) does not act as a moderator`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller(tokenCtx(100, FULL) as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: false }));
+    });
+
+    it(`${name}: a moderator's session passes isModerator through`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller(authedCtx(100, true) as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
+    });
+
+    it(`${name}: a moderator's full-access personal key acts as a moderator`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller({
+        ...tokenCtx(100, FULL),
+        apiKeyType: 'User',
+        subject: { type: 'apiKey' },
+      } as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
+    });
+  }
+
+  // The CLI token reaches only the write procedures; the reads are refused by scope.
+  for (const { name, input, mock } of MOD_WRITE_PROCS) {
+    it(`${name}: a moderator's app-scoped CLI token does not act as a moderator`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller(tokenCtx(100, CLI) as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: false }));
+    });
+  }
 });
