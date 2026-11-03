@@ -17,11 +17,11 @@
 
 const q = (value: string | number) => encodeURIComponent(String(value));
 
-/** `section` is a slug from the app's `user-lookup/sections.ts` (`reports`, `notes`, …). Without one the
- *  bare route redirects to the default section, so a link that means "their reports" has to say so. */
 /** How many `workflows=` ids the generation section looks up; the rest are counted, not read. */
 export const MODERATOR_WORKFLOW_FILTER_MAX = 200;
 
+/** `section` is a slug from the app's `user-lookup/sections.ts` (`reports`, `notes`, …). Without one the
+ *  bare route redirects to the default section, so a link that means "their reports" has to say so. */
 export const moderatorUserLookupPath = (
   idOrUsername: string | number,
   section?: string,

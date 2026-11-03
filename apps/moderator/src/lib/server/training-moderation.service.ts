@@ -709,9 +709,6 @@ async function notifyTrainingWebhook(
 // `ModelVersion` row exists and nothing above can reach them: the Paused queue is a Postgres query, and
 // `moderateTrainingData` refuses a workflow without a `modelVersion:<id>` tag. Everything here is keyed
 // by the WORKFLOW id instead, and reads the run from the orchestrator rather than from our database.
-//
-// The workflow id is assigned by the orchestrator and begins with the submitter's user id. The owner is
-// read from THAT, never from `metadata` or `tags`, which the submitter writes.
 
 /**
  * Step types that are a training run, as the workflow JSON names them (`$type`). Not the ClickHouse
