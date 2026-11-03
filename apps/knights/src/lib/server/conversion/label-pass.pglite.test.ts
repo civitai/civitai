@@ -6,6 +6,7 @@ import { bootLabelStore, createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer, seedSettledVote } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { runLabelPass } from './label-pass';
+import { hasUnlabelled } from './labels';
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 
@@ -119,6 +120,18 @@ describe('labels', () => {
     expect(written.every((l) => l.question === 'knights.image.nsfwLevel')).toBe(true);
     expect(written.every((l) => /^KnightsVote:\d+:[0-9a-f]{64}$/.test(l.sourceRef))).toBe(true);
     expect(await labelled(1)).toEqual([true, true]);
+  });
+
+  it('never labels a hidden check (negative item id) and the pass still ends', async () => {
+    await seedPlayer(pg, 1);
+    await vote(-5, 1, 101, '4');
+    await vote(2, 1, 102, '8');
+
+    expect(await pass()).toMatchObject({ done: true, labelsWritten: 1, labelFailures: 0 });
+    expect(await pass()).toMatchObject({ done: true, labelsWritten: 0, labelFailures: 0 });
+
+    expect((await labels()).map((l) => l.value)).toEqual(['8']);
+    expect(await hasUnlabelled(db, 'rating')).toBe(false);
   });
 
   it('writes none again on a later tick', async () => {
