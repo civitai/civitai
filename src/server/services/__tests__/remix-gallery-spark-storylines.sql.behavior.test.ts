@@ -249,4 +249,50 @@ describe('storylines on a host card', () => {
     expect(summaries[HOST].storylines?.count).toBe(5);
     expect(summaries[HOST].storylines?.entries.map((e) => e.storylineId)).toEqual([5, 4, 3, 2]);
   });
+
+  describe('chapter previews', () => {
+    const PG13 = 2;
+    /** PG, PG-13 and R: a viewer who would see an R chapter anywhere else. */
+    const UP_TO_R = PG | PG13 | R;
+    // An X host, so the gallery's own rule (nothing above the host's rating) admits every level
+    // and the story's ceiling is what is under test.
+    beforeEach(() => db.pg.exec(`UPDATE "Image" SET "nsfwLevel" = 16 WHERE id = ${HOST}`));
+    const previews = async () => {
+      const summaries = await getRemixGalleryCardSummaries({
+        imageIds: [HOST],
+        browsingLevel: UP_TO_R,
+        storylinesFor: { viewer: { id: VIEWER } },
+      });
+      return summaries[HOST].storylines?.entries[0].previews.map((p) => p.url);
+    };
+
+    it("leave out a chapter above the story's ceiling, within the viewer's level", async () => {
+      await story(1, HOST);
+      await db.pg.exec(`UPDATE "Storyline" SET "maxNsfwLevel" = ${PG13} WHERE id = 1`);
+      await chapter(1, 1, { level: R });
+      await chapter(1, 2, { level: PG13 });
+      await db.pg.exec(`UPDATE "Image" SET "modelRestricted" = false`);
+      expect(await previews()).toEqual(['img-10', 'img-12']);
+    });
+
+    it('leave out a chapter by someone in a block with the viewer', async () => {
+      getBlockedPairIds.mockResolvedValue([3]);
+      await story(1, HOST);
+      await chapter(1, 1, { userId: 3 });
+      await chapter(1, 2);
+      expect(await previews()).toEqual(['img-10', 'img-12']);
+    });
+
+    it.each([
+      ['hold a story flagged by a minor scan to PG-13', true, ['img-10']],
+      ['show an R chapter under an X ceiling otherwise (control)', false, ['img-10', 'img-11']],
+    ])('%s', async (_name, minorByScan, expected) => {
+      await story(1, HOST);
+      await db.pg.exec(`UPDATE "Storyline" SET "minorByScan" = ${minorByScan} WHERE id = 1`);
+      await chapter(1, 1, { level: R });
+      // Not on a restricted base model, which would hide an R image for licensing.
+      await db.pg.exec(`UPDATE "Image" SET "modelRestricted" = false`);
+      expect(await previews()).toEqual(expected);
+    });
+  });
 });
