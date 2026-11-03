@@ -262,6 +262,19 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
         </Text>
       )}
       <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
+      {user && stock?.optedIn && (
+        <>
+          <div className={classes.row}>
+            <span className={classes.tag} data-testid="hat-turf-detail-left">
+              {stock.available} {stock.available === 1 ? 'hat' : 'hats'} left
+            </span>
+          </div>
+          <Text size="xs" c="dimmed">
+            Your supply grows during the event.
+          </Text>
+          <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
+        </>
+      )}
       {user && stock?.optedIn && activeName && (
         <div className={classes.row}>
           <TeamHat color={(feed.team && color(feed.team)) || FALLBACK} size={16} />

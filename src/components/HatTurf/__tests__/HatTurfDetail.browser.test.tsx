@@ -223,7 +223,9 @@ describe('Hat Turf on image detail', () => {
     const card = q('hat-turf-detail-stats')!;
     expect(card.textContent).toMatch(/Blue/);
     expect(card.textContent).toMatch(/Pink/);
-    expect(card.textContent).not.toMatch(/left|supply|refill|grows/i);
+    expect(q('hat-turf-detail-left')!.textContent).toBe('3 hats left');
+    expect(card.textContent).toContain('Your supply grows during the event.');
+    expect(card.textContent).not.toMatch(/refill|per hour|\/h|cap\b/i);
     click(card.querySelector('input[type="checkbox"]'));
     await vi.waitFor(() => expect(hats().length).toBe(0));
     expect(q('hat-turf-detail-badge')).not.toBeNull();
