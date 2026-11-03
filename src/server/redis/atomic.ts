@@ -550,3 +550,30 @@ export async function delIfValue(
   const reply = await client.eval(DEL_IF_VALUE_SCRIPT, { keys: [key], arguments: [value] });
   return Number(reply) === 1;
 }
+
+/**
+ * SADD a member and refresh the key's TTL, but only while the set already exists, in one script.
+ * A missing key stays missing, so a caller that treats "exists" as "fully built" is never handed
+ * a one-member set by a late append.
+ *
+ * @returns true when the member was written, false when the key was missing.
+ */
+export async function sAddIfExistsWithTTL(
+  client: EvalCapableClient,
+  key: string,
+  member: string,
+  ttlMs: number
+): Promise<boolean> {
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(`sAddIfExistsWithTTL: ttlMs must be a positive finite number, got ${ttlMs}`);
+  }
+  // KEYS[1]=key  ARGV[1]=member  ARGV[2]=ttlMs
+  const script = `
+    if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    return 1
+  `;
+  const reply = await client.eval(script, { keys: [key], arguments: [member, String(ttlMs)] });
+  return Number(reply) === 1;
+}

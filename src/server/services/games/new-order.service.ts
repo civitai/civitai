@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -38,6 +39,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { buildFinalRatingsInsert } from '~/server/games/new-order/final-ratings-sql';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { sAddIfExistsWithTTL } from '~/server/redis/atomic';
 import type { InfiniteQueryInput } from '~/server/schema/base.schema';
 import type {
   AddImageRatingInput,
@@ -405,6 +407,16 @@ export async function addImageRating({
 }: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
+  // Warm the rated set outside the per-image lock: a cold rebuild reads ClickHouse and must not
+  // eat into the lock's 30s TTL.
+  if (!isModerator) {
+    try {
+      await ensureRatedImagesCache({ userId: playerId });
+    } catch (e) {
+      handleLogError(e as Error, 'new-order-duplicate-vote-check', { playerId, imageId });
+    }
+  }
+
   // Use distributed lock to prevent race conditions
   const result = await withSpan('games:newOrder:addRating', () =>
     withDistributedLock(
@@ -557,8 +569,9 @@ async function processImageRating({
   // The ratings table keeps one row per (userId, imageId): a second vote on a re-queued image
   // would replace the player's settled row with a Pending one, so refuse it here.
   try {
-    const ratedKey = await ensureRatedImagesCache({ userId: playerId, startAt: player.startAt });
-    if (await redis?.sIsMember(ratedKey, String(imageId))) {
+    // A missing key means the warm-up failed: treat as not rated rather than rebuild under the lock.
+    const ratedKey = ratedImagesKey(playerId);
+    if ((await redis?.exists(ratedKey)) && (await redis?.sIsMember(ratedKey, String(imageId)))) {
       logToAxiom({
         type: 'info',
         name: 'new-order-duplicate-vote',
@@ -568,8 +581,8 @@ async function processImageRating({
       return { stats: player.stats };
     }
   } catch (e) {
-    // Fail open: a Redis/ClickHouse blip must not fail the vote.
-    handleLogError(e as Error, 'new-order-duplicate-vote-check');
+    // Fail open: a Redis blip must not fail the vote. In prod handleLogError sends the name to Axiom.
+    handleLogError(e as Error, 'new-order-duplicate-vote-check', { playerId, imageId });
   }
 
   // Atomically increment vote count and check limits
@@ -1511,6 +1524,10 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
+function ratedImagesKey(userId: number) {
+  return `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
+}
+
 /**
  * Ensures the rated images cache is populated for a user.
  * On cache miss, fetches from ClickHouse and populates the Redis set.
@@ -1519,26 +1536,21 @@ export async function getNewOrderRanks({ name }: { name: string }) {
  * Uses a sentinel member '0' (no real image has ID 0) to distinguish
  * "cache populated but user has no ratings" from "cache not populated".
  */
-async function ensureRatedImagesCache({ userId, startAt }: { userId: number; startAt: Date }) {
+async function ensureRatedImagesCache({ userId }: { userId: number }) {
   if (!redis || !clickhouse) throw throwInternalServerError('Redis not available');
 
-  const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
+  const key = ratedImagesKey(userId);
 
   // Check if cache is already populated (O(1))
   const exists = await redis.exists(key);
   if (exists) return key;
 
-  // Cache miss - fetch from ClickHouse
-  // No rank filter: a vote at any rank counts as rated, matching what addRatedImage records live.
-  const AND = [
-    `userId = ${userId}`,
-    `createdAt >= parseDateTimeBestEffort('${startAt.toISOString()}')`,
-  ];
-
+  // Full history, no startAt or rank filter: resetPlayer moves startAt forward but the ratings
+  // table still holds one row per (userId, imageId), and a vote at any rank counts as rated.
   const results = await clickhouse.$query<{ imageId: number }>`
     SELECT DISTINCT "imageId"
     FROM knights_new_order_image_rating
-    WHERE ${AND.join(' AND ')}
+    WHERE userId = ${userId}
   `;
 
   const imageIds = results.map((r) => r.imageId);
@@ -1547,15 +1559,24 @@ async function ensureRatedImagesCache({ userId, startAt }: { userId: number; sta
   // Real image IDs are always > 0, so the sentinel never interferes with SMISMEMBER checks.
   const members = imageIds.length > 0 ? ['0', ...imageIds.map(String)] : ['0'];
 
+  // Build under a temp key and RENAME it in: EXISTS on the real key is never true for a
+  // half-built set, and a crash leaves only a key that expires.
+  const tempKey = `${key}:build:${randomUUID()}`;
   // Chunk the SADD so a heavy rater (>100K rated images) doesn't block the Redis shard
   // for tens of ms. Each chunk is its own command (NOT inside MULTI/EXEC) so Redis can
   // interleave other clients' commands between chunks. Sequential await keeps the burst
   // small and predictable.
   const CHUNK_SIZE = 1000;
-  for (let i = 0; i < members.length; i += CHUNK_SIZE) {
-    await redis.sAdd(key, members.slice(i, i + CHUNK_SIZE));
+  try {
+    for (let i = 0; i < members.length; i += CHUNK_SIZE) {
+      await redis.sAdd(tempKey, members.slice(i, i + CHUNK_SIZE));
+      if (i === 0) await redis.expire(tempKey, CacheTTL.day);
+    }
+    await redis.rename(tempKey, key);
+  } catch (e) {
+    await redis.unlink(tempKey).catch(() => null);
+    throw e;
   }
-  await redis.expire(key, CacheTTL.day);
 
   return key;
 }
@@ -1575,16 +1596,15 @@ async function filterUnratedImages(key: string, imageIds: number[]): Promise<num
 async function addRatedImage(userId: number, imageId: number) {
   if (!redis) return;
 
-  const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
-  // Add image ID to the set (O(1) operation)
-  await redis.multi().sAdd(key, [imageId.toString()]).expire(key, CacheTTL.day).exec();
+  // Only append to a populated set; creating the key here would pass a partial set off as complete.
+  await sAddIfExistsWithTTL(redis, ratedImagesKey(userId), imageId.toString(), CacheTTL.day * 1000);
 }
 
 // Helper function to clear rated images cache for a player
 export async function clearRatedImages(userId: number) {
   if (!redis) return;
 
-  const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
+  const key = ratedImagesKey(userId);
   // UNLINK is non-blocking: returns immediately, frees memory in a background thread.
   // Daily-reset job fans this across all players via Promise.all; with DEL on
   // 100K-element sets that stampedes the shard.
@@ -1669,10 +1689,7 @@ export async function getImagesQueue({
   // Ensure the rated images cache is populated (O(1) EXISTS check, ClickHouse on miss).
   // Uses SMISMEMBER per-batch instead of SMEMBERS on the full set (which was 39K-141K members
   // for active users, taking 10-38ms and blocking the Redis shard).
-  const ratedKey = await ensureRatedImagesCache({
-    userId: playerId,
-    startAt: player.startAt,
-  });
+  const ratedKey = await ensureRatedImagesCache({ userId: playerId });
   const seenImageIds = new Set<number>();
   const isKnight = effectiveRankType === NewOrderRankType.Knight;
 
