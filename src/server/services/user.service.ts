@@ -1254,8 +1254,6 @@ export const deleteUser = async ({
 
   await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
   await runStep('revoke-user-tokens', () => revokeUserTokens(user.id));
-  // Awaited, unlike the other hooks, so it reads the chapters before delete-basic-data can remove
-  // them. It never throws.
   await runStep('story-spark-points', () => onStorySparkPostsHidden({ authorId: user.id }));
   await runStep('cancel-stripe-subscription', () =>
     cancelSubscription({ userId: user.id, removeRecord: true })
