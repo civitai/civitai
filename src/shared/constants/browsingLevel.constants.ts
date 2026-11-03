@@ -353,6 +353,11 @@ export function hasPublicBrowsingLevel(level: number) {
   return Flags.hasFlag(level, publicBrowsingLevelsFlag);
 }
 
+/** every bit is a public level; an unrated 0 is not */
+export function isPublicOnlyBrowsingLevel(level: number) {
+  return level !== 0 && Flags.hasFlag(publicBrowsingLevelsFlag, level);
+}
+
 export function hasSafeBrowsingLevel(level: number) {
   return Flags.intersects(level, sfwBrowsingLevelsFlag);
 }

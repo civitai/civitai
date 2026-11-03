@@ -58,6 +58,7 @@ import {
 } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
+import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
 import type {
   DocAuthor,
   DocCollection,
@@ -191,6 +192,7 @@ export type StorageApiCode = DocStoreErrorCode | 'internal_error' | 'method_not_
 export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   invalid_request: 400,
   index_not_declared: 400,
+  schema_violation: 400,
   unauthenticated: 401,
   sign_in_required: 401,
   insufficient_scope: 403,
@@ -829,6 +831,10 @@ async function run(
       // the write budget and the moderation scan — the manifest schema documents a refusal as
       // spending no write budget and no scan.
       const newData = created?.data ?? putIn?.data;
+      // The collection's schema first: the store checks it again itself (any caller), but here a
+      // refusal also spends no ownership lookup. A put replaces the whole body, so `newData` IS
+      // the resulting document.
+      if (newData) validateDocAgainstCollectionSchema(ctx, coll, newData);
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {

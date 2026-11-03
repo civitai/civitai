@@ -16,6 +16,7 @@ import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
 import {
   appStorageScopeErrors,
+  collectionSchemaPatterns,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -981,6 +982,33 @@ export class BlockManifestValidator {
         '~/server/services/blocks/settings-pattern-guard'
       );
       errors.push(...(await collectSettingsPatternErrors(settings)));
+    }
+
+    // The same ReDoS gate for every `pattern` in a storage collection's `schema`, which the
+    // document store runs on every write. `parseManifestStorage` already bounded each pattern's
+    // input (`maxLength`), which cannot save an exponential one, and the manifest's pattern
+    // count (APP_STORAGE_MANIFEST_MAX_PATTERNS). Fail-closed like settings. Analysed with the
+    // flags the store compiles them with, and each distinct (pattern, flags) once: every
+    // analysis blocks the event loop.
+    const schemaPatterns = collectionSchemaPatterns(parseManifestStorage(manifest));
+    if (schemaPatterns.length > 0) {
+      const { isPatternRedosVulnerable } = await import(
+        '~/server/services/blocks/settings-pattern-guard'
+      );
+      const verdicts = new Map<string, boolean>();
+      for (const { at, pattern, flags } of schemaPatterns) {
+        const key = JSON.stringify([pattern, flags]);
+        let vulnerable = verdicts.get(key);
+        if (vulnerable === undefined) {
+          vulnerable = await isPatternRedosVulnerable(pattern, flags);
+          verdicts.set(key, vulnerable);
+        }
+        if (vulnerable) {
+          errors.push(
+            `${at} is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
+          );
+        }
+      }
     }
 
     return errors.length === 0 ? { valid: true } : { valid: false, errors };

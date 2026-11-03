@@ -150,6 +150,79 @@ export const APP_STORAGE_OWNED_MODEL_VERSIONS_WRITE_POLICIES: readonly AppStorag
 ];
 
 /**
+ * COLLECTION SCHEMAS (`schema`): an opt-in JSON Schema SUBSET that every document's `data` in
+ * the collection must match, checked by the store on every create and update (never on
+ * counters or marks; `doc-store-schema.ts`). Only these keywords exist; any other is refused
+ * by name, so a keyword the store would silently ignore can never read as enforced.
+ *
+ * Semantics (shared with every other evaluator of the subset, the CLI's included): keywords
+ * that do not apply to a value's type are ignored (draft 2020-12); `integer` is a number with
+ * no fraction and `number` includes it; string lengths count code points; `pattern` is an
+ * ECMAScript regular expression with the `u` flag, unanchored; `enum` and `const` compare by
+ * JSON value; `items` is one schema for every element; `required` and `additionalProperties`
+ * use own keys only.
+ */
+export const APP_STORAGE_SCHEMA_KEYWORDS = [
+  'type',
+  'properties',
+  'required',
+  'additionalProperties',
+  'items',
+  'enum',
+  'const',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'minimum',
+  'maximum',
+  'minItems',
+  'maxItems',
+  'description',
+] as const;
+export const APP_STORAGE_SCHEMA_TYPES = [
+  'object',
+  'array',
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'null',
+] as const;
+export type AppStorageSchemaType = (typeof APP_STORAGE_SCHEMA_TYPES)[number];
+/** A collection schema as declared: a JSON object whose keywords are the subset above. */
+export type AppStorageCollectionSchema = { readonly [keyword: string]: unknown };
+/**
+ * Most schemas nested inside one another, the collection's own schema counting as 1 (each
+ * `properties` entry, `items` and `additionalProperties` schema is one level deeper).
+ */
+export const APP_STORAGE_SCHEMA_MAX_DEPTH = 16;
+/** Most bytes of one collection schema, as UTF-8 JSON (`JSON.stringify`, no whitespace). */
+export const APP_STORAGE_SCHEMA_MAX_BYTES = 16 * 1024;
+/** Longest `pattern` source, in code points (as JSON Schema's `maxLength` counts). */
+export const APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH = 256;
+/**
+ * A schema with a `pattern` must also declare `maxLength` of at most this, so a stored pattern
+ * only ever runs against a bounded string (the store checks `maxLength` before `pattern`). The
+ * submit gate also refuses a pattern that can backtrack catastrophically (recheck), which input
+ * length alone cannot bound. The same ceiling as a manifest setting's patterned input.
+ */
+export const APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH = 1000;
+/** Most `pattern`s one collection schema may declare: each costs a ReDoS analysis at submit. */
+export const APP_STORAGE_SCHEMA_MAX_PATTERNS = 16;
+/**
+ * Most `pattern`s all of a manifest's collection schemas may declare together. Each distinct
+ * one costs a ReDoS analysis at submit that blocks the event loop (up to about a second for a
+ * long pattern), so without this a manifest could queue 16 collections × 16 patterns.
+ */
+export const APP_STORAGE_MANIFEST_MAX_PATTERNS = 32;
+/**
+ * The flags a collection schema's `pattern` is compiled with, by the store and the parser,
+ * and analysed with by the submit-time ReDoS gate. One constant, so the gate can never read a
+ * pattern differently from how it runs.
+ */
+export const APP_STORAGE_SCHEMA_PATTERN_FLAGS = 'u';
+
+/**
  * Most errors one parse reports; the rest are summarised in one final line. The errors are
  * joined into the submit response, so without a cap a crafted manifest can turn into a
  * multi-megabyte error message.
@@ -211,6 +284,11 @@ export type DeclaredStorageCollection = {
    * ({@link isCollectionExportable}).
    */
   exportable?: boolean;
+  /**
+   * The schema every document's `data` must match, exactly as declared (validated by
+   * {@link parseCollectionSchema}). Absent: documents are not checked.
+   */
+  schema?: AppStorageCollectionSchema;
 };
 
 /** Whether another app may reach this collection through an import. */
@@ -261,6 +339,7 @@ const COLLECTION_KEYS = new Set([
   'dailyWritesPerAuthor',
   'ownedModelVersions',
   'exportable',
+  'schema',
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -592,6 +671,17 @@ function parseCollection(
     errors.push(`${at}.exportable must be a boolean`);
   }
 
+  let schema: AppStorageCollectionSchema | null = null;
+  if (raw.schema !== undefined) {
+    if (write === 'none') {
+      errors.push(
+        `${at}.schema does not apply to write "none" — no document body is ever written to that collection, so a schema would check nothing`
+      );
+    } else {
+      schema = parseCollectionSchema(`${at}.schema`, raw.schema, errors);
+    }
+  }
+
   if (errors.length > before) return null;
   const collection: DeclaredStorageCollection = {
     kind,
@@ -608,6 +698,7 @@ function parseCollection(
     collection.dailyWritesPerAuthor = raw.dailyWritesPerAuthor as number;
   if (ownedModelVersions) collection.ownedModelVersions = ownedModelVersions;
   if (raw.exportable !== undefined) collection.exportable = raw.exportable as boolean;
+  if (schema) collection.schema = schema;
   return collection;
 }
 
@@ -721,6 +812,216 @@ function parseImports(
   return imports;
 }
 
+const SCHEMA_KEYWORDS = new Set<string>(APP_STORAGE_SCHEMA_KEYWORDS);
+const SCHEMA_TYPES = new Set<string>(APP_STORAGE_SCHEMA_TYPES);
+const SCHEMA_COUNT_KEYWORDS = ['minLength', 'maxLength', 'minItems', 'maxItems'] as const;
+const SCHEMA_BOUND_PAIRS = [
+  ['minLength', 'maxLength'],
+  ['minItems', 'maxItems'],
+  ['minimum', 'maximum'],
+] as const;
+
+function utf8Bytes(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+/**
+ * Parses one collection's `schema` (see {@link APP_STORAGE_SCHEMA_KEYWORDS}). Returns the
+ * schema as declared, or null after pushing one error per problem found. The size is checked
+ * first, so the walk below only ever sees at most {@link APP_STORAGE_SCHEMA_MAX_BYTES}; the
+ * walk stops descending at the depth limit, so its recursion is bounded too.
+ */
+export function parseCollectionSchema(
+  at: string,
+  raw: unknown,
+  errors: string[]
+): AppStorageCollectionSchema | null {
+  if (!isPlainObject(raw)) {
+    errors.push(`${at} must be a schema object`);
+    return null;
+  }
+  const bytes = utf8Bytes(JSON.stringify(raw));
+  if (bytes > APP_STORAGE_SCHEMA_MAX_BYTES) {
+    errors.push(
+      `${at} is ${bytes} bytes of JSON — a collection schema may be at most ${APP_STORAGE_SCHEMA_MAX_BYTES} bytes`
+    );
+    return null;
+  }
+  const before = errors.length;
+  const state = { patterns: 0 };
+  parseSchemaNode(at, raw, 1, errors, state);
+  if (state.patterns > APP_STORAGE_SCHEMA_MAX_PATTERNS) {
+    errors.push(
+      `${at} declares ${state.patterns} patterns — a collection schema may declare at most ${APP_STORAGE_SCHEMA_MAX_PATTERNS}`
+    );
+  }
+  return errors.length > before ? null : raw;
+}
+
+function parseSchemaNode(
+  at: string,
+  node: unknown,
+  depth: number,
+  errors: string[],
+  state: { patterns: number }
+): void {
+  if (depth > APP_STORAGE_SCHEMA_MAX_DEPTH) {
+    errors.push(
+      `${at} is nested too deeply — a collection schema may nest at most ${APP_STORAGE_SCHEMA_MAX_DEPTH} schemas`
+    );
+    return;
+  }
+  if (!isPlainObject(node)) {
+    errors.push(`${at} must be a schema object`);
+    return;
+  }
+  for (const key of Object.keys(node)) {
+    if (!SCHEMA_KEYWORDS.has(key)) {
+      errors.push(
+        `${at} uses the schema keyword ${quoteName(
+          key
+        )}, which is not supported — the supported keywords are ${APP_STORAGE_SCHEMA_KEYWORDS.join(
+          ', '
+        )}`
+      );
+    }
+  }
+  const child = (path: string, sub: unknown) =>
+    parseSchemaNode(path, sub, depth + 1, errors, state);
+
+  if (node.type !== undefined) {
+    const list = Array.isArray(node.type) ? node.type : [node.type];
+    const valid =
+      list.length > 0 &&
+      list.every((t) => typeof t === 'string' && SCHEMA_TYPES.has(t)) &&
+      new Set(list).size === list.length;
+    if (!valid) {
+      errors.push(
+        `${at}.type must be one of ${APP_STORAGE_SCHEMA_TYPES.join(
+          ', '
+        )}, or a non-empty array of them without repeats`
+      );
+    }
+  }
+  if (node.properties !== undefined) {
+    if (!isPlainObject(node.properties)) {
+      errors.push(`${at}.properties must be an object mapping a property name to its schema`);
+    } else {
+      for (const [name, sub] of Object.entries(node.properties)) {
+        child(`${at}.properties.${boundKey(name)}`, sub);
+      }
+    }
+  }
+  if (node.required !== undefined) {
+    const list = node.required;
+    if (
+      !Array.isArray(list) ||
+      !list.every((k) => typeof k === 'string') ||
+      new Set(list).size !== list.length
+    ) {
+      errors.push(`${at}.required must be an array of distinct property names`);
+    }
+  }
+  if (node.additionalProperties !== undefined && typeof node.additionalProperties !== 'boolean') {
+    child(`${at}.additionalProperties`, node.additionalProperties);
+  }
+  if (node.items !== undefined) child(`${at}.items`, node.items);
+  if (node.enum !== undefined && !(Array.isArray(node.enum) && node.enum.length > 0)) {
+    errors.push(`${at}.enum must be a non-empty array of values`);
+  }
+  for (const keyword of SCHEMA_COUNT_KEYWORDS) {
+    const value = node[keyword];
+    if (value !== undefined && !isIntegerIn(value, 0, Number.MAX_SAFE_INTEGER)) {
+      errors.push(`${at}.${keyword} must be a whole number of 0 or more`);
+    }
+  }
+  for (const keyword of ['minimum', 'maximum'] as const) {
+    const value = node[keyword];
+    if (value !== undefined && !(typeof value === 'number' && Number.isFinite(value))) {
+      errors.push(`${at}.${keyword} must be a number`);
+    }
+  }
+  for (const [low, high] of SCHEMA_BOUND_PAIRS) {
+    const a = node[low];
+    const b = node[high];
+    if (typeof a === 'number' && typeof b === 'number' && a > b) {
+      errors.push(`${at}.${low} (${a}) is greater than ${high} (${b}), so nothing could match`);
+    }
+  }
+  if (node.pattern !== undefined) {
+    state.patterns++;
+    const pattern = node.pattern;
+    if (
+      typeof pattern !== 'string' ||
+      Array.from(pattern).length > APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH
+    ) {
+      errors.push(
+        `${at}.pattern must be a string of at most ${APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH} characters`
+      );
+    } else {
+      try {
+        new RegExp(pattern, APP_STORAGE_SCHEMA_PATTERN_FLAGS);
+      } catch {
+        errors.push(
+          `${at}.pattern is not a valid regular expression (JavaScript syntax with the "u" flag)`
+        );
+      }
+    }
+    if (
+      !isIntegerIn(node.maxLength, 0, APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH) &&
+      // A malformed maxLength already has its own error.
+      (node.maxLength === undefined || isIntegerIn(node.maxLength, 0, Number.MAX_SAFE_INTEGER))
+    ) {
+      errors.push(
+        `${at}.pattern needs a maxLength of at most ${APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH} on the same schema — a pattern only ever runs against a bounded string`
+      );
+    }
+  }
+  if (node.description !== undefined && typeof node.description !== 'string') {
+    errors.push(`${at}.description must be a string`);
+  }
+}
+
+/**
+ * Every `pattern` in the declared collection schemas, with where it is and the flags it is
+ * compiled with — for the submit-time ReDoS gate (`BlockManifestValidator.validateSubmission`),
+ * which needs a server-only analyser. Empty when `storage` does not parse (its errors are
+ * reported anyway), so a manifest over {@link APP_STORAGE_MANIFEST_MAX_PATTERNS} is never
+ * analysed.
+ */
+export function collectionSchemaPatterns(
+  parsed: ParsedManifestStorage
+): { at: string; pattern: string; flags: string }[] {
+  if (parsed.errors.length > 0) return [];
+  return schemaPatternSites(parsed.collections).map(({ at, pattern }) => ({
+    at,
+    pattern,
+    flags: APP_STORAGE_SCHEMA_PATTERN_FLAGS,
+  }));
+}
+
+/** Every `pattern` in the collections' schemas, in declaration order, with where it is. */
+function schemaPatternSites(
+  collections: ReadonlyMap<string, DeclaredStorageCollection>
+): { at: string; pattern: string }[] {
+  const out: { at: string; pattern: string }[] = [];
+  const walk = (at: string, node: unknown) => {
+    if (!isPlainObject(node)) return;
+    if (typeof node.pattern === 'string') out.push({ at: `${at}.pattern`, pattern: node.pattern });
+    if (isPlainObject(node.properties)) {
+      for (const [name, sub] of Object.entries(node.properties)) {
+        walk(`${at}.properties.${boundKey(name)}`, sub);
+      }
+    }
+    walk(`${at}.items`, node.items);
+    walk(`${at}.additionalProperties`, node.additionalProperties);
+  };
+  for (const [name, collection] of collections) {
+    if (collection.schema) walk(`storage.collections.${name}.schema`, collection.schema);
+  }
+  return out;
+}
+
 function parse(
   manifest: unknown,
   features: Readonly<Record<AppStorageFeature, boolean>>
@@ -781,6 +1082,13 @@ function parse(
     }
     const collection = parseCollection(`storage.collections.${name}`, raw[name], features, errors);
     if (collection) collections.set(name, collection);
+  }
+  // Counted over the collections that parsed: one over its own cap is already refused.
+  const patterns = schemaPatternSites(collections).length;
+  if (patterns > APP_STORAGE_MANIFEST_MAX_PATTERNS) {
+    errors.push(
+      `storage.collections declare ${patterns} patterns across their schemas — a manifest may declare at most ${APP_STORAGE_MANIFEST_MAX_PATTERNS} in all`
+    );
   }
   return done();
 }
