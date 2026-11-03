@@ -1,8 +1,6 @@
 -- Idempotent: applied by hand, possibly more than once.
 -- Apply BEFORE deploying the Knights and moderator app builds that read the snapshot (after 20261225120000_knights_v2_apprenticeship).
--- An Acolyte's answer outlives its reference: deleting a yes/no pair or the reference's Image used to cascade-delete the
--- answer, which moved the accuracy window, checkpoints, promotion and the no-repeat rule while the XP stayed.
--- The answer now keeps the image and question it was given for, and the reference foreign keys only go NULL.
+-- Answers outlive their reference: `imageId` + `questionKey` identify the answer once its reference foreign keys go NULL (ON DELETE SET NULL).
 ALTER TABLE "KnightsApprenticeAnswer" ADD COLUMN IF NOT EXISTS "imageId" INTEGER;
 ALTER TABLE "KnightsApprenticeAnswer" ADD COLUMN IF NOT EXISTS "questionKey" TEXT;
 
@@ -31,6 +29,6 @@ ALTER TABLE "KnightsApprenticeAnswer" ADD CONSTRAINT "KnightsApprenticeAnswer_on
     OR ("imageId" IS NOT NULL AND "questionKey" IS NOT NULL AND "referenceId" IS NULL AND "yesNoReferenceId" IS NULL)
   );
 
--- Not expressible in Prisma: the no-repeat rule, which survives a deleted and re-added reference.
+-- Prisma can't express this partial unique index. It is the no-repeat rule and must survive a deleted and re-added reference.
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_image_question_key"
   ON "KnightsApprenticeAnswer" ("playerId", "imageId", "questionKey") WHERE "imageId" IS NOT NULL;

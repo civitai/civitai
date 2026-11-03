@@ -565,7 +565,6 @@ describe('answers outlive their reference', () => {
     await rating(2);
     await play(1, 2);
     await pg.query(`DELETE FROM "KnightsYesNoReference" WHERE "id"=$1`, [pair]);
-    // The same pair added again gets a new id; the image was already answered.
     await pg.query(
       `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","createdBy") VALUES (1,$1,true,1)`,
       [YESNO_Q]

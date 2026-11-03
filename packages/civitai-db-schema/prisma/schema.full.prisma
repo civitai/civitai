@@ -8201,7 +8201,7 @@ model KnightsYesNoReference {
   @@index([active, questionKey])
 }
 
-/// One graded Acolyte apprenticeship answer, to a rating reference image (`referenceId`) or a yes/no reference pair (`yesNoReferenceId`); exactly one is set until that reference is deleted, after which both are NULL and `imageId` + `questionKey` (copied when the answer is given) identify the answer. `correctAnswer` is the answer as it stood when given, `xp` what it paid, `checkpointSeenAt` is set on the answer that closed a checkpoint once the player moved past its recap. The foreign keys (ON DELETE SET NULL), the one-of check and the partial unique indexes (no repeats per player) live in the migration only.
+/// One graded Acolyte apprenticeship answer, to a rating reference image (`referenceId`) or a yes/no pair (`yesNoReferenceId`). Exactly one is set until that reference is deleted; then both are NULL and `imageId` + `questionKey` identify the answer. `correctAnswer` is the answer as it stood when given, `xp` what it paid, `checkpointSeenAt` is set on the answer that closed a checkpoint once the player moved past its recap. The foreign keys (ON DELETE SET NULL), the one-of check and the partial unique indexes live in the migration only.
 model KnightsApprenticeAnswer {
   id               Int       @id @default(autoincrement())
   playerId         Int

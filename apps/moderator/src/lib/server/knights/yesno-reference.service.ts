@@ -17,7 +17,7 @@ export type YesNoReferenceItem = {
   answer: boolean;
   explanation: string | null;
   active: boolean;
-  /** Acolyte answers that name this pair (see `hasNoAnswers`). While there are any, the pair can only be deactivated. */
+  /** Acolyte answers naming this pair. While any exist it can only be deactivated. */
   answers: number;
   createdAt: Date;
 };
@@ -134,7 +134,6 @@ const hasNoAnswers = (eb: ExpressionBuilder<DB, 'KnightsYesNoReference'>) =>
     )
   );
 
-/** After a guarded write touched nothing: the pair is either gone or frozen by its answers. */
 async function whyUntouched(id: number, verb: string): Promise<Outcome> {
   const remaining = await dbWrite
     .selectFrom('KnightsYesNoReference')

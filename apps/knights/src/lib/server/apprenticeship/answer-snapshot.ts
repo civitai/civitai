@@ -8,5 +8,4 @@ import { sql, type SqlBool } from 'kysely';
 export const answerImageId = sql<number>`COALESCE(a."imageId", r."imageId", y."imageId")`;
 export const answerQuestionKey = sql<string>`COALESCE(a."questionKey", r."questionKey", y."questionKey")`;
 
-/** Join condition for `Image as img` on the answer's image. */
 export const answerImageJoin = sql<SqlBool>`img."id" = ${answerImageId}`;
