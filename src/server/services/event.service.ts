@@ -75,6 +75,7 @@ import {
   refreshShowcaseHats,
   resolveShowcaseHatIds,
   SHOWCASE_EVENT,
+  SHOWCASE_OFF,
   SHOWCASE_SETTING,
 } from '~/server/events/showcase-hat';
 import { bustUserCreator } from '~/server/services/user-creator.service';
@@ -1038,7 +1039,7 @@ export async function setRosterOptIn({
 }
 
 // The caller's showcase pick and the hat their avatar shows, from the primary: read right after they
-// pick. `pick` is null when they never picked or cleared it.
+// pick. `pick` is null when they never picked, cleared it or turned the hat off.
 export async function getMyShowcaseHat({
   event,
   user,
@@ -1049,9 +1050,12 @@ export async function getMyShowcaseHat({
       getUserSettings(user.id),
       resolveShowcaseHatIds(scored.name, [user.id], dbWrite),
     ]);
+    const stored = settings[SHOWCASE_SETTING]?.[scored.name] ?? null;
+    const off = stored === SHOWCASE_OFF;
     return {
-      pick: settings[SHOWCASE_SETTING]?.[scored.name] ?? null,
+      pick: off ? null : stored,
       showing: resolved.get(user.id) ?? null,
+      off,
     };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
@@ -1065,17 +1069,18 @@ export async function getMyShowcaseHatArt({ event, user }: EventInput & { user: 
   return getShowcaseHatForUser(user.id);
 }
 
-// Picks (or, with null, clears) the hat the caller's avatar shows during the event. Only a hat of
-// this event they hold now; it is a pointer, so nothing is copied, moved or scored.
+// Picks (or, with null, clears) the hat the caller's avatar shows during the event, or turns it off.
+// Only a hat of this event they hold now; it is a pointer, so nothing is copied, moved or scored.
 export async function setShowcaseHat({
   event,
   cosmeticId,
+  off,
   user,
 }: ShowcaseHatInput & { user: { id: number; isModerator?: boolean } }) {
   try {
     if (event !== SHOWCASE_EVENT.name) throw throwBadRequestError('This event has no showcase hat');
     await eventEngine.assertPlayable(event, user);
-    if (cosmeticId !== null) {
+    if (typeof cosmeticId === 'number') {
       const owned = await dbWrite.$queryRaw<{ ok: number }[]>`
         SELECT 1 AS ok
         FROM "UserCosmetic" uc
@@ -1087,7 +1092,7 @@ export async function setShowcaseHat({
       if (!owned.length) throw throwBadRequestError("You don't have that hat");
     }
     await patchUserSettings(user.id, {
-      mergeInto: { [SHOWCASE_SETTING]: { [event]: cosmeticId } },
+      mergeInto: { [SHOWCASE_SETTING]: { [event]: off ? SHOWCASE_OFF : cosmeticId ?? null } },
       location: 'event.service:setShowcaseHat',
     });
     await refreshShowcaseHats([user.id]);

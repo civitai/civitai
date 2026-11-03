@@ -84,3 +84,22 @@ describe('submitToRemixGallerySchema', () => {
     expect(parsed).not.toHaveProperty('placerId');
   });
 });
+
+describe('submitToRemixGallerySchema — the team waiver', () => {
+  it('needs no price, since nothing is charged', () => {
+    expect(
+      submitToRemixGallerySchema.safeParse({ hostImageId: 1, imageId: 2, teamWaiver: true }).success
+    ).toBe(true);
+  });
+
+  it('refuses asking to be both free and team-waived', () => {
+    expect(
+      submitToRemixGallerySchema.safeParse({
+        hostImageId: 1,
+        imageId: 2,
+        free: true,
+        teamWaiver: true,
+      }).success
+    ).toBe(false);
+  });
+});
