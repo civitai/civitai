@@ -189,7 +189,7 @@ async function classifyItem({
         collectionId,
         imageId: item.imageId,
         attempts,
-        error: describeProviderError(error),
+        error: describeProviderError(error, { sent: [item.prompt, config.prompt] }),
       }).catch(() => undefined);
       // Most failures clear on a later run, so the item is left for the next one. Stamped once the
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not

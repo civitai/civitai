@@ -122,6 +122,18 @@ describe('describeProviderError', () => {
       }),
     ],
     ['a field name no list would hold', JSON.stringify({ error: { query: 'PROMPT_TAIL' } })],
+    [
+      'a request echoed with a message field per turn',
+      JSON.stringify({ request: { messages: [{ message: 'PROMPT_TAIL' }] } }),
+    ],
+    [
+      'a quoted key inside a kept message',
+      JSON.stringify({ error: { message: 'Invalid "input": PROMPT_TAIL' } }),
+    ],
+    [
+      'encoded quotes the echoed text wrote itself',
+      JSON.stringify({ error: { message: 'Blocked term "x%22 PROMPT_TAIL %22y"' } }),
+    ],
     ['a percent-encoded form body', 'bad body: messages%5B0%5D%5Bcontent%5D=PROMPT_TAIL'],
     ['a backticked serde value', 'messages[0]: unknown variant `PROMPT_TAIL`, expected `user`'],
     ['a Python repr under an unlisted name', "{'error': 'bad', 'query': 'PROMPT_TAIL'}"],
@@ -213,6 +225,26 @@ describe('describeProviderError', () => {
     const text = describeProviderError(chatErrorFrom(body));
     expect(text).not.toContain('PROMPT_TAIL');
     expect(text.length).toBeLessThanOrEqual(PROVIDER_ERROR_LOG_LIMIT);
+  });
+
+  // The SDK's fallback error carries the whole raw body inside its message, as free text.
+  it("reads the body, not the SDK message's copy of it", () => {
+    const body = JSON.stringify({
+      error: { message: 'bad', metadata: { raw: JSON.stringify({ detail: 'PROMPT_TAIL' }) } },
+    });
+    const error = Object.assign(new Error(`API error occurred: Status 403\nBody: ${body}`), {
+      body,
+    });
+    expect(describeProviderError(error)).not.toContain('PROMPT_TAIL');
+  });
+
+  it('replaces a line that repeats text the request carried', () => {
+    const prompt = 'a lighthouse at dusk painted in thick impasto strokes';
+    const body = JSON.stringify({ error: { message: `Rejected: ${prompt.toUpperCase()}` } });
+    const text = describeProviderError(chatErrorFrom(body), { sent: [prompt] });
+    expect(text).not.toMatch(/impasto/i);
+    // The same line with nothing to compare against shows the comparison is what removed it.
+    expect(describeProviderError(chatErrorFrom(body))).toMatch(/impasto/i);
   });
 
   it('caps the result at about 1 KB', () => {

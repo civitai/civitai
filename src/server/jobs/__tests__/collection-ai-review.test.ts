@@ -191,6 +191,36 @@ describe('reviewCollection: a failed model call', () => {
       })
     );
   });
+
+  it("keeps the submitter's prompt out of the log when a provider repeats it in prose", async () => {
+    const prompt = 'a lighthouse at dusk painted in thick impasto strokes';
+    queuePending([pendingItem({ prompt })]);
+    const body = JSON.stringify({
+      error: { message: `Rejected because ${prompt} was not allowed`, code: 400 },
+    });
+    reviewImage.mockRejectedValue(
+      new ChatError(
+        {
+          error: { message: 'Provider returned error', code: 400 },
+          request$: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response$: new Response(body, { status: 400 }),
+          body$: body,
+        } as never,
+        {
+          request: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response: new Response(body, { status: 400 }),
+          body,
+        }
+      )
+    );
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    const logged = loggingMock.logToAxiom.mock.calls.map((call) => JSON.stringify(call[0]));
+    expect(logged.some((line) => line.includes('job-error'))).toBe(true);
+    expect(logged.join('\n')).not.toContain('impasto');
+  });
 });
 
 describe('recordFailedAttempt', () => {

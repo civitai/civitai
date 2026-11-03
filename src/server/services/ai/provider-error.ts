@@ -57,36 +57,58 @@ const KEPT_STRING_KEYS = new Set([
   'type',
   'param',
   'status',
-  'name',
   'provider_name',
   'model_slug',
-  'reasons',
   'raw',
 ]);
-// For text that cannot be parsed: a key-shaped echo anywhere, in JSON at any escape depth, a
-// Python repr ('input': ...) or pydantic's `input_value=`, including inside a longer name.
+// Arrays hold the echoed chat turns, so their strings go unless they are these category labels.
+const KEPT_ARRAY_KEYS = new Set(['reasons']);
+// A key-shaped echo anywhere, in JSON at any escape depth, a Python repr ('input': ...) or
+// pydantic's `input_value=`, including inside a longer name.
 const ECHO_ANYWHERE_PATTERN =
-  /(?:input|content|messages|prompt|text|instructions|system)[\w[\].]{0,40}\\*["']?\s*(?:[:=>\uff1a]|->)/i;
-// Free text quotes what it echoes (Google quotes the rejected value; a Python repr quotes every
-// value, serde backticks it), so quoted runs go too, through to the end of the text when unclosed.
-const QUOTED_PATTERN = /"[^"]*(?:"|$)|`[^`]*(?:`|$)|(?<![A-Za-z])'[^']*(?:'|$)/g;
+  /(?:input|content|messages|prompt|text|instructions|system)[\w[\].]{0,40}\\*["']?\s*(?:[:=>：]|->)/i;
+// Escapes and encodings that can hide a quote or a key from the two patterns above.
+const ENCODED_PATTERN = /\\[u"'/x\\]|%[0-9a-fA-F]{2}|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/;
 // Bounds the regex work; far more than the log line keeps.
-const SCAN_LIMIT = 64 * 1024;
+const SCAN_LIMIT = 1024 * 1024;
+const FREE_TEXT_LIMIT = 300;
 const MAX_DEPTH = 32;
-const HTML_ENTITIES: Record<string, string> = { quot: '"', apos: "'", lt: '<', gt: '>', amp: '&' };
 
-function keepDiagnostics(value: unknown, key?: string, depth = 0): unknown {
+function keepDiagnostics(value: unknown, key = '', depth = 0, inArray = false): unknown {
   if (depth > MAX_DEPTH) return '[redacted]';
-  if (typeof value === 'string')
-    return key !== undefined && KEPT_STRING_KEYS.has(key.toLowerCase())
-      ? redactFreeText(value)
-      : '[redacted]';
-  if (Array.isArray(value)) return value.map((item) => keepDiagnostics(item, key, depth + 1));
+  const lowerKey = key.toLowerCase();
+  if (typeof value === 'string') {
+    const kept = inArray ? KEPT_ARRAY_KEYS.has(lowerKey) : KEPT_STRING_KEYS.has(lowerKey);
+    return kept ? redactFreeText(value) : '[redacted]';
+  }
+  if (Array.isArray(value)) return value.map((item) => keepDiagnostics(item, key, depth + 1, true));
   if (value && typeof value === 'object')
     return Object.fromEntries(
-      Object.entries(value).map(([k, item]) => [k, keepDiagnostics(item, k, depth + 1)])
+      Object.entries(value).map(([k, item]) => [k, keepDiagnostics(item, k, depth + 1, inArray)])
     );
   return value;
+}
+
+// Free text quotes what it echoes (Google quotes the rejected value; a Python repr quotes every
+// value, serde backticks it), so quoted runs go too, through to the end of the text when unclosed.
+// A single pass rather than a regex: an unclosed run must not cost a rescan from every quote.
+function removeQuoted(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const opens = ch === '"' || ch === '`' || (ch === "'" && !/[A-Za-z]/.test(text[i - 1] ?? ''));
+    if (!opens) {
+      out += ch;
+      i++;
+      continue;
+    }
+    i++;
+    while (i < text.length && text[i] !== ch) i += text[i] === '\\' ? 2 : 1;
+    i++;
+    out += '[quoted]';
+  }
+  return out;
 }
 
 function parseJson(text: string): unknown {
@@ -100,24 +122,16 @@ function parseJson(text: string): unknown {
 }
 
 // Every part, and every kept string, may itself be a JSON body: OpenRouter nests the provider's
-// own as `metadata.raw`.
+// own as `metadata.raw`. Anything else is free text, and the user's prompt can be anywhere in it.
 function redactFreeText(text: string): string {
   const parsed = parseJson(text);
   if (parsed !== undefined) return JSON.stringify(keepDiagnostics(parsed));
-  return cutAtEcho(text).replace(QUOTED_PATTERN, '[quoted]');
-}
-
-// The echoed text is user-written and arrives in formats no parser here knows, so the line ends at
-// the first sign of one rather than trying to find where the echo stops.
-function cutAtEcho(text: string): string {
-  const decoded = text
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/&#(\d{1,6});/g, (_, dec: string) => String.fromCharCode(Number(dec) % 0x10000))
-    .replace(/&(quot|apos|lt|gt|amp);/g, (_, name: string) => HTML_ENTITIES[name])
-    .replace(/\\(["/])/g, '$1');
-  const echo = ECHO_ANYWHERE_PATTERN.exec(decoded);
-  return echo ? `${decoded.slice(0, echo.index)}[echoed request redacted]` : decoded;
+  // Decoding would let attacker-written escapes close a quote early, so encoded text is not read.
+  if (ENCODED_PATTERN.test(text)) return '[encoded text redacted]';
+  const echo = ECHO_ANYWHERE_PATTERN.exec(text);
+  const cut = removeQuoted(echo ? text.slice(0, echo.index) : text);
+  const result = echo ? `${cut}[echoed request redacted]` : cut;
+  return result.length > FREE_TEXT_LIMIT ? `${result.slice(0, FREE_TEXT_LIMIT)}…` : result;
 }
 
 // Scheme, `data:` or scheme-relative.
@@ -128,17 +142,47 @@ const TOKEN_PATTERN =
   /\b(?:Bearer|Basic)\s+[^\s"']+|\bsk-[\w-]{8,}|\bAIza[\w-]{20,}|[\w+/=-]{32,}/gi;
 
 export const PROVIDER_ERROR_LOG_LIMIT = 1024;
+const SECRET_WINDOW = 16;
+const SECRET_MIN = 8;
+
+const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ');
+
+// The backstop for prose a provider writes around an echo, which no shape rule can see: any
+// 16-character stretch of a text we sent condemns the whole line.
+function echoesSecret(output: string, secrets: (string | null | undefined)[]) {
+  const haystack = normalize(output);
+  return secrets.some((secret) => {
+    const needle = normalize(secret ?? '').trim();
+    if (needle.length < SECRET_MIN) return false;
+    if (needle.length <= SECRET_WINDOW) return haystack.includes(needle);
+    for (let i = 0; i + SECRET_WINDOW <= needle.length; i++)
+      if (haystack.includes(needle.slice(i, i + SECRET_WINDOW))) return true;
+    return false;
+  });
+}
 
 /**
  * The provider's error, fit for a log line: the message plus the raw body, with URLs (signed image
- * URLs among them) and credential-looking strings removed, capped at ~1 KB.
+ * URLs among them) and credential-looking strings removed, capped at ~1 KB. `sent` is the text
+ * the request carried (prompts); a line that repeats any of it is replaced whole.
  */
-export function describeProviderError(error: unknown, maxLength = PROVIDER_ERROR_LOG_LIMIT) {
+export function describeProviderError(
+  error: unknown,
+  {
+    sent = [],
+    maxLength = PROVIDER_ERROR_LOG_LIMIT,
+  }: { sent?: (string | null | undefined)[]; maxLength?: number } = {}
+) {
   try {
-    const parts = [...new Set(errorTextParts(error))].map((part) => part.slice(0, SCAN_LIMIT));
+    const all = [...new Set(errorTextParts(error))].map((part) => part.slice(0, SCAN_LIMIT));
+    // When the SDK has the body, its message is either generic or a copy of that body as free
+    // text (`API error occurred: … Body: …`), which the parsed body already covers.
+    const hasBody = all.some((part) => parseJson(part) !== undefined);
+    const parts = hasBody ? all.filter((part) => parseJson(part) !== undefined) : all;
     const text = (parts.length ? parts : [safeStringify(error)]).map(redactFreeText).join('\n');
     const redacted = text.replace(URL_PATTERN, '[url]').replace(TOKEN_PATTERN, '[redacted]');
-    return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
+    const line = redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
+    return echoesSecret(line, sent) ? 'provider error that echoed the request (redacted)' : line;
   } catch {
     // A log line must not take down the error path that wanted it.
     return 'unreadable provider error';
