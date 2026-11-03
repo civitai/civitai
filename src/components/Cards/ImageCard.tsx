@@ -13,6 +13,7 @@ import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
@@ -44,9 +45,12 @@ export function ImageCard({ data }: Props) {
       }
       header={
         <div className="flex w-full items-start justify-between">
-          {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
-            <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
-          )}
+          <div className="flex flex-col items-start gap-1">
+            <HatTurfBadge imageId={data.id} />
+            {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
+              <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
+            )}
+          </div>
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />

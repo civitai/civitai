@@ -540,6 +540,10 @@ const featureFlags = createFeatureFlags({
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
   // `event.getAccess` (usePlayableEventDecoration) instead.
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
+  // Hat Turf on feed image cards: the team ring on the card's corner, the hat button and the placing
+  // gesture. Its own flag, apart from the image-detail one, so each surface opens to testers on its own.
+  // Read it only through useHatTurfFeed (one place), which also asks whether the event is playable.
+  hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
