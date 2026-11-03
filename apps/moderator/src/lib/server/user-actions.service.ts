@@ -1716,10 +1716,10 @@ export async function revokeMembershipCode(input: {
 }
 
 // MEMBERSHIP EXTENSION (free days on a Stripe membership). The endpoint writes its own ModActivity
-// row and Axiom record, and its 25-day cooldown counts those rows, so no `logAction` here.
+// row and Axiom record, and its cooldown counts those rows, so no `logAction` here.
 
-// Up to four Stripe calls at 80 s each sit behind the extend endpoint, so a short client timeout would
-// report a failure while the extension lands.
+// The endpoint makes several Stripe calls; a short client timeout reports a failure while the
+// extension lands. Past this, or past the proxy's own limit, the answer is EXTEND_OUTCOME_UNKNOWN.
 const EXTEND_TIMEOUT_MS = 120_000;
 
 export const EXTEND_OUTCOME_UNKNOWN =

@@ -876,21 +876,48 @@ describe('membership extension: the assistant reads and proposes, a person exten
     expect(extendMembership).not.toHaveBeenCalled();
   });
 
-  it('the preview hands the model the verdict but not the compare-and-swap value a write would need', async () => {
+  it('the preview hands the model status, dates and the verdict, and no Stripe ids', async () => {
+    previewMembershipExtension.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        days: 3,
+        subscription: {
+          id: 'sub_secret',
+          status: 'active',
+          currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+          trialEnd: null,
+          cancelAtPeriodEnd: false,
+          cancelAt: null,
+          latestInvoiceId: 'in_secret',
+        },
+        problems: [],
+        expectedCurrentPeriodEnd: 1795314120,
+        trialEndIso: '2026-11-25T02:22:00.000Z',
+        mode: 'renewing',
+      },
+    } as never);
     const out = (await run(
       'preview_membership_extension',
       { userId: 5, days: 3 },
       LOOKUP_PAGE,
       GRANT
     )) as { data: Record<string, unknown> };
-    expect(out.data).toMatchObject({ problems: [], trialEndIso: '2026-11-25T02:22:00.000Z' });
-    expect(out.data).not.toHaveProperty('expectedCurrentPeriodEnd');
+    expect(out.data).toEqual({
+      days: 3,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: false,
+      },
+      problems: [],
+      newEnd: '2026-11-25T02:22:00.000Z',
+      mode: 'renewing',
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/sub_secret|in_secret/);
     expect(extendMembership).not.toHaveBeenCalled();
   });
 
-  // If you are here to add an "extend" tool: the extension is a money write that a moderator previews
-  // and confirms on the panel. A tool the model can call would let text in a member's profile or a
-  // report talk it into one. Propose instead.
   it('no tool can reach the extend write', async () => {
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');

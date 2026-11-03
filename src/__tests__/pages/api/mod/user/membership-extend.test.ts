@@ -236,6 +236,13 @@ describe('the grant is held by roles', () => {
     expect(ok.body).toMatchObject({ problems: [], expectedCurrentPeriodEnd: PERIOD_END });
   });
 
+  it('a non-moderator in a granted role is refused (403)', async () => {
+    const { stripe } = fakeStripe();
+    session.user = { ...session.user, isModerator: false };
+    expect((await extend()).status).toBe(403);
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
   it('a mutating GET is refused (405): extend is POST only', async () => {
     const { stripe } = fakeStripe();
     expect((await call(extendHandler, 'GET', EXTEND)).status).toBe(405);
@@ -250,6 +257,15 @@ describe('the money rules, through this endpoint', () => {
     expect(stripe.subscriptions.update).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a reason under 10 characters', { reason: 'too short' }],
+    ['no expectedCurrentPeriodEnd from a preview', { expectedCurrentPeriodEnd: undefined }],
+  ])('%s is refused (400) with nothing written', async (_label, over) => {
+    const { stripe } = fakeStripe();
+    expect((await extend(over)).status).toBe(400);
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
   it('control: 31 days, the most allowed, goes through', async () => {
     const { updates } = fakeStripe();
     expect((await extend({ days: 31 })).status).toBe(200);
@@ -261,6 +277,13 @@ describe('the money rules, through this endpoint', () => {
     asModerator([GRANTED_ROLE], MEMBER);
     expect((await extend({ actorId: MOD })).status).toBe(403);
     expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  it('previewing your own membership is refused (403) too', async () => {
+    const { stripe } = fakeStripe();
+    asModerator([GRANTED_ROLE], MEMBER);
+    expect((await preview()).status).toBe(403);
+    expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled();
   });
 
   it('a stale preview (moved current_period_end) is refused (409), nothing written, no cooldown row', async () => {

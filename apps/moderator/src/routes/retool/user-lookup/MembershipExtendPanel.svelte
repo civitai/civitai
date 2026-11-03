@@ -43,6 +43,7 @@
       preview = null;
       extended = null;
       confirming = false;
+      extendForm.error = null;
     },
     onSuccess: (data) => {
       preview = (data?.extendPreview as MembershipExtensionPreview | undefined) ?? null;
@@ -95,11 +96,17 @@
           : 'charge'}
         {dateTime(r.trialEnd)} (was {dateTime(r.before.currentPeriodEnd)}).
         {#if r.newInvoiceId}<span class="block text-xs">$0 invoice {r.newInvoiceId}</span>{/if}
+        <span class="block text-xs">The Subscription panel shows the new end once Stripe syncs.</span>
       </div>
     {:else}
       <div class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-        Stripe was written to, but the check afterwards failed. Do not retry: open the subscription
-        in Stripe first.
+        {#if r.after}
+          Stripe was changed, but the check afterwards failed. Do not retry: open the subscription in
+          Stripe first.
+        {:else}
+          Stripe did not confirm the change; it may or may not have happened. Open the subscription in
+          Stripe before trying again.
+        {/if}
         <ul class="mt-1 list-disc pl-5 text-xs">
           {#each r.problems as p (p)}<li>{p}</li>{/each}
         </ul>

@@ -1,6 +1,6 @@
 // The main app's `/api/mod/user/membership-extend*` payloads, as the panel and the assistant read them.
 // The rules (which subscriptions qualify, the cooldown, the $0 invoice) live in the main app's
-// membership-extend.service only; nothing here decides anything.
+// membership-extend.service only.
 
 /** Mirrors `MEMBERSHIP_EXTEND_MAX_DAYS` in the main app; the endpoint enforces it again. */
 export const MEMBERSHIP_EXTEND_MAX_DAYS = 31;

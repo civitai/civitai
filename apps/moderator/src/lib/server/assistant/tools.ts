@@ -875,20 +875,34 @@ export const TOOLS = [
     },
   }),
 
-  // Membership extension: the assistant may read the verdict and hand the moderator a prefilled form,
-  // and nothing more. The extension itself is a money write a person previews and confirms on the
-  // panel; there is deliberately no tool that calls the extend endpoint.
+  // Membership extension: read the verdict and prefill the panel, nothing more. Do not add a tool that
+  // calls the extend endpoint: it is a money write, and text in a member's profile or a report could
+  // talk the model into one. A person previews and confirms it on the panel.
   tool({
     name: 'preview_membership_extension',
     description: `What extending one account's Stripe membership by N free days (1-${MEMBERSHIP_EXTEND_MAX_DAYS}) would do: the subscription's status and period end, the new end, and every reason it would be refused. Read-only.`,
     input: z.object({ userId, days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS) }),
     requires: [LOOKUP],
     grant: 'user.membership.extend',
+    // The preview request itself may take 60 s; the loop's default would give up first.
+    timeoutMs: 65_000,
     run: async ({ userId: id, days }) => {
       const r = await previewMembershipExtension({ userId: id, days });
       if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
-      const { userId: _u, expectedCurrentPeriodEnd: _cas, ...preview } = r.preview;
-      return { data: preview, rows: 1, truncated: false, sources: [userSource(id)] };
+      // Status, dates and the verdict only: no Stripe ids for the model provider.
+      const { subscription: sub, problems, trialEndIso, mode } = r.preview;
+      const data = {
+        days,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        newEnd: trialEndIso,
+        mode,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
     },
   }),
 
