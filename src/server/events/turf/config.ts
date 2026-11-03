@@ -45,8 +45,9 @@ const overrideSchema = z
     renderLimit: z.number().int().positive(),
     mapMaxEntries: z.number().int().positive(),
   })
-  .partial()
-  .strict();
+  // Not strict: a key this build no longer knows (one an older build read) is dropped, rather than
+  // failing the whole override and silently reverting every field to the event file.
+  .partial();
 
 /**
  * The event file's config with the live override applied. An override that does not parse is

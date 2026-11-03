@@ -1036,6 +1036,22 @@ describe('Hat Turf', () => {
     expect(await engine.hasTurfMark(action)).toBe(true);
   });
 
+  it('nets out a reaction earned under a hat that has since come off', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 100,
+      sourceId: 'ImageReaction:100:30',
+    };
+    await engine.awardEventPoints([action]);
+    fake.setHat(EVENT.name, 'Image:100', '');
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 100)).toBe(false);
+    expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
   it('never asks Redis about a removal on an image that was never turf', async () => {
     build({ loadScoredEvents: async () => [turfEvent('live')] });
     await engine.refresh();

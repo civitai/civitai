@@ -1,3 +1,4 @@
+import { chunk } from 'lodash-es';
 import { SignalMessages } from '~/server/common/enums';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventTurfTopic, turfKeys, type TurfCounts } from '~/server/events/turf/turf-map';
@@ -14,6 +15,7 @@ import { signalClient } from '~/utils/signal-client';
 export const TURF_WATCH_TTL_MS = 90_000;
 export const MAX_TURF_WATCHED = 20_000;
 export const MAX_TURF_IMAGES_PER_MARK = 50;
+const PUSH_CONCURRENCY = 20;
 
 export type TurfWatchRedis = Pick<
   typeof sysRedis,
@@ -84,16 +86,20 @@ export async function pushTurfCounts(
       changes.map((c) => String(c.imageId))
     );
     const watched = changes.filter((_, i) => scores[i] != null && Number(scores[i]) > now);
-    const results = await Promise.allSettled(
-      watched.map(({ imageId, counts }) =>
-        send({
-          topic: eventTurfTopic(event, imageId),
-          target: SignalMessages.EventPointsTurf,
-          data: { event, imageId, counts },
-        })
-      )
-    );
-    const failed = results.filter((r) => r.status === 'rejected').length;
+    let failed = 0;
+    // A reconcile can change thousands of watched images at once: a few sends at a time.
+    for (const part of chunk(watched, PUSH_CONCURRENCY)) {
+      const results = await Promise.allSettled(
+        part.map(({ imageId, counts }) =>
+          send({
+            topic: eventTurfTopic(event, imageId),
+            target: SignalMessages.EventPointsTurf,
+            data: { event, imageId, counts },
+          })
+        )
+      );
+      failed += results.filter((r) => r.status === 'rejected').length;
+    }
     if (failed)
       void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed }).catch(
         () => undefined

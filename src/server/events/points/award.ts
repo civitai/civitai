@@ -181,9 +181,10 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   let loading: Promise<void> | undefined;
   // Live bucket keys this server already gave a TTL, so each gets one EXPIRE, not one per award.
   const bucketTtlSet = new Set<string>();
-  // Every image this server has seen in a turf map since it started, so a removal checks Redis for a
-  // turf earning only where one can exist. A restart forgets images that left the map before it.
-  const everTurf = new Set<string>();
+  // Every entity this server has seen in a hat or turf map since it started, so a removal checks
+  // Redis for an earning only where one can exist (a lead that ended, a hat taken off). Accepted gap:
+  // a restart forgets entities that left both maps before it, and their removals are skipped.
+  const everEarning = new Set<string>();
 
   // Live weights win over the config, so a weight can change without a deploy.
   async function loadWeights(def: ScoredEventDef) {
@@ -207,6 +208,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     for (const [key, value] of Object.entries(raw ?? {})) {
       const hat = decodeHat(value);
       if (hat) hats.set(key, hat);
+      everEarning.add(key);
     }
     // A fresh map: any topic-id index built over the old one no longer applies.
     return { hats, cursor: last?.id ?? '0-0', topicIds: undefined };
@@ -239,6 +241,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         if (old) countTopic(topicIds.ids, id(old), -1);
         if (hat) countTopic(topicIds.ids, id(hat), 1);
       }
+      everEarning.add(key);
       if (hat) hats.set(key, hat);
       else hats.delete(key);
     });
@@ -254,7 +257,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     for (const [key, value] of Object.entries(raw ?? {})) {
       const entry = decodeTurfEntry(value);
       if (entry) entries.set(key, entry);
-      everTurf.add(key);
+      everEarning.add(key);
     }
     return { entries, cursor: last?.id ?? '0-0' };
   }
@@ -270,7 +273,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     const values = await deps.redis.hmGet(keys.map, changed);
     changed.forEach((key, i) => {
       const entry = values[i] ? decodeTurfEntry(values[i]!) : undefined;
-      everTurf.add(key);
+      everEarning.add(key);
       if (entry) prev.entries.set(key, entry);
       else prev.entries.delete(key);
     });
@@ -482,15 +485,21 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     const weight = event.weights[action.type] ?? 0;
     if (weight <= 0) return;
     const day = utcDay(time);
-    const totals = await Promise.all(
+    // Settled one by one: a failed cap increment costs only that player's live grant.
+    const totals = await Promise.allSettled(
       players.map((p) => deps.redis.hIncrBy(keys.cap(day, p), actor, weight))
     );
     const granted = players
-      .map((ownerId, i) => ({
-        ownerId,
-        firstToday: Number(totals[i]) === weight,
-        grant: cappedGrant(weight, Number(totals[i]), def.scoring.capPerActorPerOwnerPerDay),
-      }))
+      .flatMap((ownerId, i) => {
+        const result = totals[i];
+        if (result.status === 'rejected') {
+          deps.logError('redis', 'eventPoints.turfCap', result.reason);
+          return [];
+        }
+        const total = Number(result.value);
+        const grant = cappedGrant(weight, total, def.scoring.capPerActorPerOwnerPerDay);
+        return [{ ownerId, firstToday: total === weight, grant }];
+      })
       .filter((g) => g.grant > 0 || g.firstToday);
     const bucket = liveBucket(time);
     const ownerKey = keys.live(bucket, 'owner');
@@ -701,7 +710,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   // same mark a hat earning sets, so it also finds a reaction earned under a hat since taken off.
   async function hasTurfMark(removal: EventPointRemoval) {
     await ensureFresh();
-    if (!everTurf.has(entityKey(removal.entityType, removal.entityId))) return false;
+    if (!everEarning.has(entityKey(removal.entityType, removal.entityId))) return false;
     for (const event of loaded) {
       if (!event.def.turfMode) continue;
       const rule = event.def.scoring.types[removal.type];

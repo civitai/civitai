@@ -421,14 +421,14 @@ export async function reconcileAllTurf(now = new Date()) {
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
  * protects the image, so its stickers earn nothing until the hat comes off. `open`: for every image
  * asked about, whether it can take a new sticker now (visible, owner opted in); owners may sticker
- * their own.
+ * their own. `mine`: whether the viewer has already stickered it, so cannot again.
  */
 export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
   const event = await getTurfEvent(eventName);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
-    return { team: null, images: {}, open: {} };
+    return { team: null, images: {}, open: {}, mine: {} };
   const keys = imageIds.map((id) => `Image:${id}`);
-  const [counts, hats, openRows] = await Promise.all([
+  const [counts, hats, openRows, mineRows] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
     dbRead.$queryRaw<{ id: number }[]>`
@@ -438,7 +438,17 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
       WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible}
         AND (o.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true'
     `,
+    // Removed ones too: the unique key refuses a second sticker either way.
+    viewerId
+      ? dbRead.$queryRaw<{ imageId: number }[]>`
+          SELECT "imageId" FROM "EventTurfSticker"
+          WHERE event = ${event.name} AND "userId" = ${viewerId}
+            AND "imageId" = ANY(${imageIds}::int[])
+        `
+      : [],
   ]);
+  const mineIds = new Set(mineRows.map((r) => r.imageId));
+  const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
   const openIds = new Set(openRows.map((r) => r.id));
   const open = Object.fromEntries(imageIds.map((id) => [id, openIds.has(id)]));
   const images: Record<number, TurfCounts & { hatted: boolean }> = {};
@@ -446,7 +456,7 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
     if (counts[i]) images[id] = { ...(JSON.parse(counts[i]!) as TurfCounts), hatted: !!hats[i] };
   });
   const team = viewerId ? await event.getUserTeam(viewerId).catch(() => null) : null;
-  return { team: team ?? null, images, open };
+  return { team: team ?? null, images, open, mine };
 }
 
 type DrawnSticker = {
