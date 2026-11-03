@@ -493,7 +493,6 @@ export const serverSchema = z
     // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
     // `src/server/trpc/batch-cap.ts`.
     TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
-    // Thresholds for blue-buzz-paid-access-detection.
     BLUE_PAID_ACCESS_RING_WINDOW_DAYS: z.coerce.number().int().min(1).max(90).catch(7),
     BLUE_PAID_ACCESS_RING_MIN_BUYERS: z.coerce.number().int().min(2).max(1_000).catch(5),
     BLUE_PAID_ACCESS_RING_MIN_SHARE_PCT: z.coerce.number().int().min(1).max(100).catch(80),

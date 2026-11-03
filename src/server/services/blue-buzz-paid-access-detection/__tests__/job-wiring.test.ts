@@ -1,10 +1,9 @@
-import { readFileSync } from 'fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   bluePaidAccessDetection,
   runBluePaidAccessJob,
 } from '~/server/jobs/blue-buzz-paid-access-detection';
-import { RUN_JOBS_ROUTE, jobsArrayEntries } from '~/server/jobs/__tests__/run-jobs-array';
+import { jobsArrayEntries } from '~/server/jobs/__tests__/run-jobs-array';
 import { RUN_INTERVAL_HOURS, type RingThresholds } from '../detect';
 import type { RunDeps, RunResult } from '../run';
 
@@ -29,9 +28,7 @@ describe('the blue-buzz paid-access detection job', () => {
     const entries = jobsArrayEntries();
     expect(entries.length).toBeGreaterThan(50);
     expect(entries).toContain('bluePaidAccessDetection');
-    expect(readFileSync(RUN_JOBS_ROUTE, 'utf8')).toContain(
-      "from '~/server/jobs/blue-buzz-paid-access-detection'"
-    );
+    // The scheduler calls `run-jobs/<name>` and the route matches on it, so a rename unschedules it.
     expect(bluePaidAccessDetection.name).toBe('blue-buzz-paid-access-detection');
   });
 

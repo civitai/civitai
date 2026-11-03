@@ -16,7 +16,7 @@ import {
   type RingBuyer,
 } from '../detect';
 import { PROPOSED_ACTION, toFinding } from '../report';
-import { runBluePaidAccessDetection, type RunDeps } from '../run';
+import { ringsWithinCap, runBluePaidAccessDetection, type RunDeps } from '../run';
 
 const NOW = new Date('2026-11-02T08:00:00Z');
 const at = (iso: string) => new Date(iso);
@@ -192,9 +192,10 @@ describe('blue-buzz-paid-access detection', () => {
   });
 
   it('files whole rings up to the per-report cap and counts what it dropped', async () => {
-    // Three rings of 600, 500 and 400 buyers. The 600 and the 400 fill the cap exactly; the 500 does
-    // not fit beside the 600 and is dropped whole rather than split.
-    const sizes = { 9301: 600, 9302: 500, 9303: 400 };
+    // Rings of 400, 500 and 600 buyers, read smallest first. Largest-first, the 600 and the 400 fill
+    // the cap exactly and the 500 is dropped whole rather than split; in read order the 400 and 500
+    // would be filed instead, so this also pins the size ordering.
+    const sizes = { 9301: 400, 9302: 500, 9303: 600 };
     const pairs = Object.entries(sizes).flatMap(([creator, n], r) =>
       Array.from({ length: n }, (_, i) =>
         pair(Number(creator), 100_000 * (r + 1) + i, 1_000, 1_000, 1, 1)
@@ -208,8 +209,8 @@ describe('blue-buzz-paid-access detection', () => {
     for (const f of report.findings)
       perGroup.set(String(f.groupKey), (perGroup.get(String(f.groupKey)) ?? 0) + 1);
     expect(Object.fromEntries(perGroup)).toEqual({
-      'blue-paid-access:9301': 600,
-      'blue-paid-access:9303': 400,
+      'blue-paid-access:9303': 600,
+      'blue-paid-access:9301': 400,
     });
     expect(report.counters).toMatchObject({
       rings: 3,
@@ -237,6 +238,19 @@ describe('blue-buzz-paid-access detection', () => {
     expect(report.counters).toMatchObject({ buyers_filed: 1_000, findings_dropped: 3 });
     expect(report.findings[0].reason).toContain('One of 1003 accounts');
     expect(report.findings[0].reason).toContain('0 other Blue Buzz buyers');
+  });
+
+  it('skips, rather than cuts, a ring larger than the cap once another ring is filed', () => {
+    const ring = (creatorId: number, n: number) =>
+      ({
+        creatorId,
+        buyers: Array.from({ length: n }, (_, i) => ({ buyerId: i })),
+      } as unknown as Ring);
+    const filed = ringsWithinCap([ring(9401, 3), ring(9402, 12), ring(9403, 4)], 10);
+    expect(filed.map((f) => [f.ring.creatorId, f.buyers.length])).toEqual([
+      [9401, 3],
+      [9403, 4],
+    ]);
   });
 
   it('truncates a reason past MAX_REASON_LENGTH and keeps the proposed action', () => {

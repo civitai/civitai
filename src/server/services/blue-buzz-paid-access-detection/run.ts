@@ -90,9 +90,9 @@ export async function runBluePaidAccessDetection(deps: RunDeps): Promise<RunResu
 }
 
 /** The buyers filed under the per-report cap, ring by ring in the order given. A ring that fits is
- *  filed whole and one that does not is skipped, so a smaller ring may take the room. Only a single
- *  ring bigger than the whole cap is cut, to its first `cap` buyers; its reasons still describe the
- *  whole ring. */
+ *  filed whole and one that does not is skipped, so a smaller ring may take the room. A ring bigger
+ *  than the whole cap is cut to its first `cap` buyers only when it is the first to be filed; after
+ *  that it is skipped. A cut ring's reasons still describe the whole ring. */
 export function ringsWithinCap(
   rings: Ring[],
   cap = MAX_FINDINGS_PER_REPORT
