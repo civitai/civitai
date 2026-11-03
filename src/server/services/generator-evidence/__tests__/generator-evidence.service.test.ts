@@ -199,7 +199,7 @@ describe('preserveGeneratorEvidence', () => {
       steps: [
         {
           ...workflow.steps[0],
-          output: { images: [{ id: OUTPUT, available: false, blockedReason: 'Csam' }] },
+          output: { images: [{ id: OUTPUT, available: false, blockedReason: 'Withheld' }] },
         },
       ],
     };
@@ -211,7 +211,7 @@ describe('preserveGeneratorEvidence', () => {
       if (url.pathname === `/v2/consumer/blobs/${OUTPUT}`)
         return new Response(null, {
           status: 308,
-          headers: { location: '/v2/consumer/blobs/blocked/token', 'x-blocked-reason': 'Csam' },
+          headers: { location: '/v2/consumer/blobs/blocked/token', 'x-blocked-reason': 'Withheld' },
         });
       if (url.pathname.endsWith('/refresh')) return new Response('{}', { status: 200 });
       if (url.pathname.startsWith('/v2/consumer/blobs/content/'))

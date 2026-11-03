@@ -83,7 +83,7 @@ describe('preserveBlob', () => {
       url.pathname.endsWith('/refresh')
         ? new Response('{}', { status: 200 })
         : url.pathname === `/v2/consumer/blobs/${BLOB}`
-        ? redirect('/v2/consumer/blobs/blocked/placeholder-token', { 'x-blocked-reason': 'Csam' })
+        ? redirect('/v2/consumer/blobs/blocked/placeholder-token', { 'x-blocked-reason': 'Withheld' })
         : new Response(Buffer.from('placeholder png'), {
             status: 403,
             headers: { 'content-type': 'image/png' },
@@ -92,7 +92,7 @@ describe('preserveBlob', () => {
 
     const result = await preserveBlob({ config, store }, input);
 
-    expect(result).toMatchObject({ status: 'blocked-unreadable', blockedReason: 'Csam' });
+    expect(result).toMatchObject({ status: 'blocked-unreadable', blockedReason: 'Withheld' });
     expect(store.upload).not.toHaveBeenCalled();
     expect(calls.some((c) => c.url.pathname.includes('/blocked/'))).toBe(false);
   });
@@ -105,7 +105,7 @@ describe('preserveBlob', () => {
         ? redirect('/v2/consumer/blobs/content/signed-token')
         : new Response(Buffer.from('placeholder png'), {
             status: 200,
-            headers: { 'content-type': 'image/png', 'x-blocked-reason': 'Csam' },
+            headers: { 'content-type': 'image/png', 'x-blocked-reason': 'Withheld' },
           });
     const store = memoryStore();
 
@@ -148,7 +148,7 @@ describe('preserveBlob', () => {
     routes = (url) =>
       url.pathname.endsWith('/refresh')
         ? new Response('{}', { status: 200 })
-        : redirect('/v2/consumer/blobs/blocked/placeholder-token', { 'x-blocked-reason': 'Csam' });
+        : redirect('/v2/consumer/blobs/blocked/placeholder-token', { 'x-blocked-reason': 'Withheld' });
 
     const result = await preserveBlob({ config, store: memoryStore() }, input);
 
