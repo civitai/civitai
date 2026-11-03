@@ -162,16 +162,17 @@ function setGenerated(outputs: unknown[], over: Record<string, unknown> = {}) {
 const LOAD_MORE_NOTE = 'No usable images found in the most recent pages.';
 
 /**
- * Fill a date input, failing as "the harness was too slow" when the fill alone outlasted the
- * debounce: a test that relies on acting before a date is applied means nothing past that point.
+ * Runs `act` with the page's timers frozen, so a pending date cannot be applied mid-action however
+ * slow the harness is, then lets twice the debounce pass.
  */
-async function fillWithinDebounce(input: ReturnType<typeof page.getByLabelText>, value: string) {
-  const started = performance.now();
-  await userEvent.fill(input, value);
-  expect(
-    performance.now() - started,
-    `the fill took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
-  ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
+async function holdingDebounce(act: () => Promise<void>) {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    await act();
+    vi.advanceTimersByTime(PICKER_JUMP_DEBOUNCE_MS * 2);
+  } finally {
+    vi.useRealTimers();
+  }
 }
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -854,12 +855,14 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
     const input = page.getByLabelText('Jump to date');
 
-    await fillWithinDebounce(input, '2024-06-30');
-    // Straight after the change: not applied yet.
-    expect(mocks.postedQuery).not.toHaveBeenCalledWith(
-      { toDate: expect.anything() },
-      expect.anything()
-    );
+    await holdingDebounce(async () => {
+      await userEvent.fill(input, '2024-06-30');
+      // Straight after the change: not applied yet.
+      expect(mocks.postedQuery).not.toHaveBeenCalledWith(
+        { toDate: expect.anything() },
+        expect.anything()
+      );
+    });
     await vi.waitFor(
       () =>
         expect(mocks.postedQuery).toHaveBeenLastCalledWith(
@@ -898,14 +901,11 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
 
   test('Back to newest cancels a date still waiting to be applied', async () => {
     await applyJune30();
-    const started = performance.now();
-    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-07-15');
-    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
-    expect(
-      performance.now() - started,
-      `fill + click took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
-    ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
-    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
+    await holdingDebounce(async () => {
+      await userEvent.fill(page.getByLabelText('Jump to date'), '2024-07-15');
+      await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    });
+    await settle(PICKER_JUMP_DEBOUNCE_MS);
 
     expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything());
     expect(boundsQueried()).not.toContain(JULY_15.toDate.getTime());
@@ -916,14 +916,11 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     openModal({ sources: ['posted'] });
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
     const input = page.getByLabelText('Jump to date');
-    const started = performance.now();
-    await userEvent.fill(input, '2024-06-30');
-    await userEvent.clear(input);
-    expect(
-      performance.now() - started,
-      `fill + clear took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
-    ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
-    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
+    await holdingDebounce(async () => {
+      await userEvent.fill(input, '2024-06-30');
+      await userEvent.clear(input);
+    });
+    await settle(PICKER_JUMP_DEBOUNCE_MS);
 
     expect(boundsQueried().filter((bound) => bound !== undefined)).toEqual([]);
   });
