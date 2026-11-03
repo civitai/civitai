@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 
 // A version on a non-commercial base model can't charge: no licensing fee, no paid access, no early
 // access (a timed gate). Flux.2 Klein 4B is Apache 2.0 and stays monetizable, so it is the control for
@@ -91,6 +91,15 @@ const VERSION_ID = 100;
 const NON_COMMERCIAL = /non-commercial/;
 const REACHED_WRITE = 'reached the write';
 
+// Evaluates the guard's endsAt filter against one stored gate, so a guard that stops refusing a running
+// gate, or starts refusing an ended one, fails here instead of reading a canned answer.
+const gateMatches = (endsAt: Date | null, or?: { endsAt?: null | { gt?: Date } }[]) =>
+  !!or?.some((clause) =>
+    clause.endsAt === null
+      ? endsAt === null
+      : clause.endsAt?.gt != null && endsAt != null && endsAt > clause.endsAt.gt
+  );
+
 const terms = { accessPrice: 500 };
 const permanentGate = { permanent: true, terms };
 const earlyAccess = { permanent: false, timeframeDays: 7, terms };
@@ -157,6 +166,54 @@ describe('upsertModelVersion — non-commercial base model', () => {
   });
 });
 
+describe('upsertModelVersion — a stored fee moving onto a non-commercial base model', () => {
+  const edit = (storedBaseModel: string, baseModel: string) => {
+    dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
+      nsfw: false,
+      meta: null,
+      userId: OWNER_ID,
+      poi: false,
+      availability: 'Public',
+      type: 'LORA',
+    });
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      status: ModelStatus.Published,
+      trainingStatus: null,
+      publishedAt: new Date('2026-09-01'),
+      baseModel: storedBaseModel,
+      usageControl: ModelUsageControl.Download,
+      licensingFee: 5,
+      meta: null,
+      model: { id: MODEL_ID, meta: null, availability: 'Public', type: 'LORA' },
+      monetization: null,
+    });
+    mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+    // No licensingFee key: the shape of a partial write, which keeps whatever fee is stored.
+    return upsertModelVersion({
+      id: VERSION_ID,
+      modelId: MODEL_ID,
+      name: 'v1',
+      baseModel,
+      usageControl: ModelUsageControl.Download,
+      actorUserId: OWNER_ID,
+    } as never);
+  };
+  const writtenFee = () => mockTx.modelVersion.update.mock.calls[0]?.[0]?.data?.licensingFee;
+
+  it('clears a 4B fee when the version moves to 9B without resending it', async () => {
+    await edit(KLEIN_4B, KLEIN_9B).catch(() => undefined);
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(writtenFee()).toBeNull();
+  });
+
+  it('keeps the stored fee on a 4B edit that omits it (control)', async () => {
+    await edit(KLEIN_4B, KLEIN_4B).catch(() => undefined);
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(writtenFee()).toBeUndefined();
+  });
+});
+
 describe('updateModelVersionPaidAccess — non-commercial base model', () => {
   const update = (baseModel: string, paidAccess: unknown) => {
     dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
@@ -195,11 +252,12 @@ describe('publishModelVersionById — stored charges on a non-commercial base mo
   const seed = ({
     baseModel = KLEIN_9B,
     fee = false,
-    gate = false,
+    gate,
   }: {
     baseModel?: string;
     fee?: boolean;
-    gate?: boolean;
+    /** The stored gate's endsAt: null is pending or permanent; omit for no gate. */
+    gate?: Date | null;
   } = {}) => {
     dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({
       id: VERSION_ID,
@@ -223,8 +281,11 @@ describe('publishModelVersionById — stored charges on a non-commercial base mo
       where?: { licensingFee?: { gt?: number } };
     }) => (fee && args?.where?.licensingFee?.gt === 0 ? [{ id: VERSION_ID }] : [])) as never);
     dbMock.dbWrite.paidAccess.findMany.mockImplementation((async (args: {
-      where?: { OR?: unknown[] };
-    }) => (gate && args?.where?.OR ? [{ entityId: VERSION_ID }] : [])) as never);
+      where?: { OR?: { endsAt?: null | { gt?: Date } }[] };
+    }) =>
+      gate !== undefined && gateMatches(gate, args?.where?.OR)
+        ? [{ entityId: VERSION_ID }]
+        : []) as never);
     dbMock.dbWrite.paidAccess.findFirst.mockResolvedValue(null);
     mockTx.modelVersion.update.mockRejectedValue(new Error(REACHED_WRITE));
   };
@@ -237,20 +298,19 @@ describe('publishModelVersionById — stored charges on a non-commercial base mo
   });
 
   it('refuses a 9B draft with a pending early-access gate', async () => {
-    seed({ gate: true });
+    seed({ gate: null });
     await expect(publish()).rejects.toThrowError(NON_COMMERCIAL);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('refuses scheduling one too', async () => {
-    seed({ gate: true });
-    await expect(
-      publishModelVersionById({
-        id: VERSION_ID,
-        enforceTakedown: false,
-        publishedAt: new Date(Date.now() + 86_400_000),
-      })
-    ).rejects.toThrowError(NON_COMMERCIAL);
+  it('refuses a 9B version whose timed gate is still running', async () => {
+    seed({ gate: new Date(Date.now() + 86_400_000) });
+    await expect(publish()).rejects.toThrowError(NON_COMMERCIAL);
+  });
+
+  it('publishes a 9B version whose gate has already ended (control)', async () => {
+    seed({ gate: new Date(Date.now() - 86_400_000) });
+    await expect(publish()).rejects.toThrowError(REACHED_WRITE);
   });
 
   it('publishes a 9B version with no charges (control)', async () => {
