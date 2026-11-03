@@ -160,6 +160,7 @@ function ComListing({
   versionsVerdict?: VerdictState;
 }) {
   const form = useFormContext<ListingForm>();
+  const nsfw = useWatch({ control: form.control, name: 'nsfw' });
 
   const setComContent = (name: string | null, description: string | null) => {
     form.setValue('sfwName', name, { shouldDirty: true, shouldValidate: name !== null });
