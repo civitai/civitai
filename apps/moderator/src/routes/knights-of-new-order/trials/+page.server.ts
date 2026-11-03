@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
 import { int4Id, parseForm } from '$lib/server/query';
+import { MAX_INT4 } from '$lib/server/users.service';
 import {
   addCoreImage,
   getCoreItems,
@@ -37,7 +38,7 @@ const imageRef = z.preprocess((value) => {
   if (/^\d+$/.test(text)) return Number(text);
   const fromUrl = text.match(/\/images\/(\d+)(?:[/?#]|$)/);
   return fromUrl ? Number(fromUrl[1]) : NaN;
-}, z.number({ error: 'Enter an image id or an image page URL.' }).pipe(int4Id));
+}, z.number({ error: 'Enter an image id or an image page URL.' }).int().positive().max(MAX_INT4));
 const yesNo = z.enum(['yes', 'no']).transform((value) => value === 'yes');
 
 const forms = {
