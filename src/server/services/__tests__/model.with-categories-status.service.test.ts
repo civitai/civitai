@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as SystemCache from '~/server/services/system-cache';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Drives the real getAllModelsWithCategories; I/O stubs follow model.service.vae-append-no-mutation.test.ts.
 
@@ -20,14 +21,6 @@ const visible = ({ where }: { where: Where }) =>
       (!where.availability || r.availability !== where.availability.not)
   );
 
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    model: { findMany: vi.fn(), count: vi.fn() },
-    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
@@ -73,14 +66,6 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: { fetch: vi.fn().mockResolvedValue({}), bust: vi.fn() },
   userModelCountCache: { fetch: vi.fn(), bust: vi.fn() },
 }));
-// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
-// the global mock in src/__tests__/setup.ts.
-vi.mock('~/server/redis/client', async () => ({
-  ...(await import('@civitai/redis/client')),
-  ...(await import('~/server/redis/sys-read-deadline')),
-  redis: { packed: { get: async () => null, set: async () => undefined } },
-  sysRedis: {},
-}));
 
 import { getAllModelsWithCategories } from '~/server/services/model.service';
 import { modelTagCache } from '~/server/redis/caches';
@@ -91,8 +76,13 @@ const names = async (viewer: { id?: number; isModerator?: boolean } | null) =>
   );
 
 beforeEach(() => {
-  mockDbRead.model.findMany.mockImplementation(async (args: { where: Where }) => visible(args));
-  mockDbRead.model.count.mockImplementation(async (args: { where: Where }) => visible(args).length);
+  const { dbRead } = dbMock;
+  dbRead.$transaction.mockImplementation((async (ops: unknown[]) => Promise.all(ops)) as never);
+  dbRead.model.findMany.mockImplementation((async (args: { where: Where }) =>
+    visible(args)) as never);
+  dbRead.model.count.mockImplementation(
+    (async (args: { where: Where }) => visible(args).length) as never
+  );
   vi.mocked(modelTagCache.fetch).mockResolvedValue({});
 });
 
