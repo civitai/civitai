@@ -26,7 +26,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
-  addApiKey: vi.fn(async () => 'minted-api-key'),
+  mintApiKey: vi.fn(async () => 'minted-api-key'),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'minted-orchestrator-token'),
@@ -69,7 +69,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   getUserSettings: vi.fn(async () => ({ features: {} })),
 }));
 
-const { addApiKey } = await import('~/server/services/api-key.service');
+const { mintApiKey } = await import('~/server/services/api-key.service');
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
 const { enableAppAssistant, mintAppAssistantToken } = await import(
   '~/server/services/app-assistant/app-assistant.service'
@@ -91,7 +91,7 @@ const routes: {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
     handler: (await import('~/pages/api/user/orchestrator-key')).default as unknown as Handler,
-    minted: () => addApiKey,
+    minted: () => mintApiKey,
   },
   {
     name: 'GET /api/training-studio/host',
@@ -307,8 +307,9 @@ describe('orchestrator-key and a restricted account', () => {
     ] as never);
     const { status } = await call(routes[0]);
     expect(status).toBe(403);
-    expect(addApiKey).not.toHaveBeenCalled();
+    expect(mintApiKey).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
   });
 });
 

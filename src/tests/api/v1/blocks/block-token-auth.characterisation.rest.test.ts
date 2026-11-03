@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: installs the shared db/redis/env/prom mocks and the REAL test RSA keypair
 // before `block-token.service` evaluates env at module load, so tokens below are really signed
 // and really verified.
@@ -79,6 +80,37 @@ function subjectFlag() {
   return async (opts?: { user?: { id?: number } }) =>
     opts?.user ? opts.user.id === 42 : h.flagBase.on;
 }
+
+// The model routes' raw queries: no rows. A cell past auth only has to answer, not find a model.
+const { emptyPool } = vi.hoisted(() => {
+  const client = { query: async () => ({ rows: [] }), release: () => undefined };
+  const query = async () => ({ rows: [] });
+  const cancellableQuery = async () => ({ result: async () => [], cancel: async () => undefined });
+  return { emptyPool: { connect: async () => client, query, cancellableQuery } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),

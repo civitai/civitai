@@ -13,7 +13,11 @@ import { useViewerEventDecorations } from '~/components/Decorations/useViewerEve
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
-import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
+import {
+  dedupeOrder,
+  useDedupedCappedItems,
+  useModelClaimKeys,
+} from '~/components/HomeBlocks/homeBlockDedupe';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -86,6 +90,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
   // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
   // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
   // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  const modelKeysFor = useModelClaimKeys();
   const items = useDedupedCappedItems(
     useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
       entity: type,
@@ -98,6 +103,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
       entity: type,
       rows,
       maxPerUser,
+      keysFor: type === 'model' ? modelKeysFor : undefined,
     }
   );
 
