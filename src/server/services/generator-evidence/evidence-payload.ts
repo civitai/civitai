@@ -5,6 +5,7 @@ import type {
   StoredEvidenceJob,
 } from '~/server/services/generator-evidence/evidence-meta';
 import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
+import { escapeXml, xmlSafe, xmlText } from '~/server/services/ncmec-xml';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
@@ -67,35 +68,21 @@ export function evidenceFileDetails(
   const valuePair: { name: string; value: string }[] = [];
   const prompt = trimNonAlphanumeric(job.prompt);
   const negativePrompt = trimNonAlphanumeric(job.negativePrompt);
-  if (prompt) valuePair.push({ name: 'prompt', value: xmlSafe(prompt) });
-  if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: xmlSafe(negativePrompt) });
+  if (prompt) valuePair.push({ name: 'prompt', value: xmlText(prompt) });
+  if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: xmlText(negativePrompt) });
   if (job.resources?.length)
-    valuePair.push({ name: 'resources', value: xmlSafe(job.resources.join(',')) });
+    valuePair.push({ name: 'resources', value: xmlText(job.resources.join(',')) });
   return {
-    originalFileName: blob.blobId,
+    originalFileName: xmlText(blob.blobId),
     fileViewedByEsp: viewedByEsp,
     publiclyAvailable: false,
     fileAnnotations: { generativeAi: blob.role === 'output' },
     ...(valuePair.length && { details: [{ type: FileDetailType.EXIF, valuePair }] }),
-    additionalInfo: [xmlSafe(describe(file)), ...generationText(job)],
+    additionalInfo: [xmlText(describe(file)), ...generationText(job)],
   };
 }
 
-// Outside the XML 1.0 Char production, lone surrogates included: NCMEC rejects the file's details
-// after the CyberTip is already open.
-const XML_ILLEGAL = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu;
-
-export const xmlSafe = (text: string) => text.replace(XML_ILLEGAL, '\uFFFD');
-
-/** Whether any string anywhere in `value` would make the XML NCMEC receives ill-formed. */
-export function hasXmlIllegal(value: unknown): boolean {
-  if (typeof value === 'string') return new RegExp(XML_ILLEGAL.source, 'u').test(value);
-  if (Array.isArray(value)) return value.some(hasXmlIllegal);
-  if (value && typeof value === 'object') return Object.values(value).some(hasXmlIllegal);
-  return false;
-}
-
-/** Each line, label and marker included, is at most this many code points. */
+/** Each line, label and marker included, is at most this many code points before escaping. */
 export const MAX_GENERATION_LINE_CHARS = 4000;
 export const TRUNCATION_MARKER = '[truncated; full text preserved]';
 const CUT = `… ${TRUNCATION_MARKER}`;
@@ -103,8 +90,9 @@ const CUT = `… ${TRUNCATION_MARKER}`;
 function line(label: string, text: string) {
   const chars = [...xmlSafe(text.trim())];
   const room = MAX_GENERATION_LINE_CHARS - label.length;
-  if (chars.length <= room) return label + chars.join('');
-  return label + chars.slice(0, room - CUT.length).join('') + CUT;
+  const kept =
+    chars.length <= room ? chars.join('') : chars.slice(0, room - CUT.length).join('') + CUT;
+  return label + escapeXml(kept);
 }
 
 /** The generation's words as plain text, alongside the EXIF pairs, for a reader who never opens those. */

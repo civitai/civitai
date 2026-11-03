@@ -77,11 +77,11 @@ import {
   evidenceFileDetails,
   evidenceFilesToSend,
   evidenceReportInfo,
-  hasXmlIllegal,
   readVerifiedEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
 import { readEvidenceObject, sha256Hex } from '~/server/services/generator-evidence/evidence-store';
 import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
+import { fileDetailsXmlProblem, reportXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import {
@@ -641,6 +641,7 @@ async function getInitialReportData(claim: SendClaim) {
 
   const userActivity = await snapshotUserActivity(claim);
   if (!userActivity) return;
+  const reportedUserInfo = getReportedUserAdditionalInfo(reportedUser.email, userActivity);
 
   return {
     incidentSummary: {
@@ -649,8 +650,8 @@ async function getInitialReportData(claim: SendClaim) {
     },
     reporter: {
       reportingPerson: {
-        email: reportingUser.email ? [{ email: reportingUser.email }] : [],
-        firstName: reportingUser.name ?? undefined,
+        email: reportingUser.email ? [{ email: xmlText(reportingUser.email) }] : [],
+        firstName: reportingUser.name ? xmlText(reportingUser.name) : undefined,
       },
       contactPerson: {
         email: [{ email: CYBERTIP_CONTACT_EMAIL }],
@@ -658,7 +659,7 @@ async function getInitialReportData(claim: SendClaim) {
     },
     personOrUserReported: {
       espIdentifier: reportedUser.id.toString(),
-      screenName: reportedUser.username ?? undefined,
+      screenName: reportedUser.username ? xmlText(reportedUser.username) : undefined,
       ipCaptureEvent: userActivity?.map((activity) => {
         const [year, month, day, hour, minute, second] = activity.time.split(/[-: ]/).map(Number);
         return {
@@ -667,7 +668,7 @@ async function getInitialReportData(claim: SendClaim) {
           dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         };
       }),
-      additionalInfo: getReportedUserAdditionalInfo(reportedUser.email, userActivity),
+      additionalInfo: reportedUserInfo && xmlText(reportedUserInfo),
     },
   } satisfies Report;
 }
@@ -1600,41 +1601,41 @@ async function reportPreservedEvidence(claim: SendClaim) {
     const viewedByEsp = viewed.has(file.blob.blobId);
     return [{ file, read, viewedByEsp, fileDetails: evidenceFileDetails(file, viewedByEsp) }];
   });
-  // Checked before the CyberTip is opened: details NCMEC rejects would cancel it on every run.
-  if (hasXmlIllegal([notCarried, toSend.map(({ fileDetails }) => fileDetails)]))
+  const cyberTip = {
+    ...initialReport,
+    ...(priorCTReports?.length && {
+      personOrUserReported: { ...initialReport.personOrUserReported, priorCTReports },
+    }),
+    ...(notCarried.length && { additionalInfo: xmlText(notCarried.join('\n')) }),
+  };
+  // Checked before the CyberTip is opened: XML NCMEC refuses would cancel it on every run.
+  const xmlProblem =
+    reportXmlProblem(cyberTip) ??
+    toSend.map(({ fileDetails }) => fileDetailsXmlProblem(fileDetails)).find(Boolean);
+  if (xmlProblem)
     return logSendFailure(
       report,
-      new Error('a file description holds characters XML cannot carry'),
+      new Error(`the CyberTip would not be well-formed XML: ${xmlProblem}`),
       'evidence-xml'
     );
   let sending: ReturnType<typeof sendEach> | undefined;
-  await sendCyberTip(
-    claim,
-    {
-      ...initialReport,
-      ...(priorCTReports?.length && {
-        personOrUserReported: { ...initialReport.personOrUserReported, priorCTReports },
-      }),
-      ...(notCarried.length && { additionalInfo: notCarried.join('\n') }),
+  await sendCyberTip(claim, cyberTip, {
+    sendFiles: async (reportId) => {
+      sending = sendEach(toSend, async ({ file, read, viewedByEsp, fileDetails }) => {
+        const bytes = read.bytes as Uint8Array<ArrayBuffer>;
+        const {
+          data: { fileId, hash },
+        } = await uploadToCyberTip(
+          claim,
+          blobToFile(new Blob([bytes], { type: read.contentType }), file.blob.blobId)
+        );
+        await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetails });
+        return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
+      });
+      return { generatedImageUploads: await sending.sent };
     },
-    {
-      sendFiles: async (reportId) => {
-        sending = sendEach(toSend, async ({ file, read, viewedByEsp, fileDetails }) => {
-          const bytes = read.bytes as Uint8Array<ArrayBuffer>;
-          const {
-            data: { fileId, hash },
-          } = await uploadToCyberTip(
-            claim,
-            blobToFile(new Blob([bytes], { type: read.contentType }), file.blob.blobId)
-          );
-          await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetails });
-          return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
-        });
-        return { generatedImageUploads: await sending.sent };
-      },
-      beforeCancel: async () => sending?.settled(),
-    }
-  );
+    beforeCancel: async () => sending?.settled(),
+  });
 }
 
 async function reportTrainingData(claim: SendClaim) {

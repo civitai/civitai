@@ -99,7 +99,8 @@ import {
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import type { EvidenceStore as PreserveStore } from '~/server/services/generator-evidence/preserve-blob';
-import { buildSubmitFileDetails } from '@civitai/cybertipline-tools';
+import { buildReport, buildSubmitFileDetails } from '@civitai/cybertipline-tools';
+import { Parser } from 'xml2js';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { createHash } from 'crypto';
 
@@ -174,6 +175,15 @@ async function deleteMany({ where }: { where: Where }) {
   return { count: result.affectedRows ?? 0 };
 }
 
+/** As NCMEC answers: XML that is not well-formed is refused. */
+function refuseIllFormed(xml: string) {
+  if (/[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u.test(xml))
+    throw new Error('synthetic NCMEC refusal: a character outside XML');
+  new Parser({ strict: true, async: false }).parseString(xml, (e: Error | null) => {
+    if (e) throw new Error(`synthetic NCMEC refusal: ${e.message}`);
+  });
+}
+
 async function readRow(id: number) {
   const { rows } = await db.pg.query<CsamReportProps>(`SELECT * FROM "CsamReport" WHERE id = $1`, [
     id,
@@ -223,12 +233,12 @@ beforeEach(() => {
   }));
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
-  submitReport.mockReset().mockResolvedValue({ data: { reportId: 900 } });
-  // As NCMEC answers: details that are not well-formed XML are refused.
+  submitReport.mockReset().mockImplementation(async (report) => {
+    refuseIllFormed(buildReport(report));
+    return { data: { reportId: 900 } };
+  });
   submitFileDetails.mockReset().mockImplementation(async (details) => {
-    const xml = buildSubmitFileDetails(details);
-    if (/[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u.test(xml))
-      throw new Error('synthetic NCMEC refusal: not well-formed');
+    refuseIllFormed(buildSubmitFileDetails(details));
     return { data: { responseCode: 0 } };
   });
   readEvidenceObject
@@ -711,5 +721,70 @@ describe('a file a moderator excluded', () => {
         });
         expect(await outputStatus(id)).toBe('preserved');
       });
+  });
+});
+
+describe('markup characters in what NCMEC is sent', () => {
+  const markup = 'cat <lora:x:0.8> & "q" dog';
+  const escaped = 'cat &lt;lora:x:0.8&gt; &amp; "q" dog';
+
+  it('sends a prompt, negative prompt and resources holding markup, escaped once', async () => {
+    const details = evidenceDetails();
+    Object.assign(details.generatedImages[0], {
+      prompt: markup,
+      negativePrompt: markup,
+      resources: [markup],
+    });
+
+    const id = await sendEvidenceReport(details);
+
+    expect((await readRow(id)).reportSentAt).not.toBeNull();
+    expect(detailsFor(OUTPUT).details[0].valuePair.map((p: { value: string }) => p.value)).toEqual([
+      escaped,
+      escaped,
+      escaped,
+    ]);
+    expect(detailsFor(OUTPUT).additionalInfo[1]).toBe(
+      [`Prompt: ${escaped}`, `Negative prompt: ${escaped}`, `Resources: ${escaped}`].join('\n')
+    );
+  });
+
+  it('counts a line against the limit before escaping', async () => {
+    const details = evidenceDetails();
+    details.generatedImages[0].prompt = '&'.repeat(MAX_GENERATION_LINE_CHARS - 'Prompt: '.length);
+
+    await sendEvidenceReport(details);
+
+    const [promptLine] = detailsFor(OUTPUT).additionalInfo[1].split('\n');
+    expect(promptLine).not.toContain(TRUNCATION_MARKER);
+    expect(promptLine).toBe(`Prompt: ${'&amp;'.repeat(MAX_GENERATION_LINE_CHARS - 8)}`);
+  });
+
+  it('sends a report whose moderator name and reported username hold markup', async () => {
+    dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+      where.id === 10
+        ? { id: 10, email: 'mod@example.invalid', name: 'Mod & <Co>', isModerator: true }
+        : { id: 20, email: 'user@example.invalid', name: 'User', username: '<user>' }
+    );
+
+    const id = await sendEvidenceReport(evidenceDetails());
+
+    expect((await readRow(id)).reportSentAt).not.toBeNull();
+    const [report] = submitReport.mock.calls[0];
+    expect(report.reporter.reportingPerson.firstName).toBe('Mod &amp; &lt;Co&gt;');
+    expect(report.personOrUserReported.screenName).toBe('&lt;user&gt;');
+  });
+
+  it('opens no CyberTip when any part of it would not be well-formed XML', async () => {
+    const details = {
+      ...evidenceDetails(),
+      userActivity: [{ type: 'Login', ip: '192.0.2.1 & more', time: '2026-11-01 00:00:00' }],
+    };
+
+    const id = await sendEvidenceReport(details);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect((await readRow(id)).reportSentAt).toBeNull();
   });
 });
