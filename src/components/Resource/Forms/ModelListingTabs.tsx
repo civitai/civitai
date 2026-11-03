@@ -61,13 +61,15 @@ export function ModelListingTabs({
   redFields: ReactNode;
 }) {
   const form = useFormContext<ListingForm>();
-  const [sfwName, sfwDescription] = useWatch({
+  const [sfwName, sfwDescription, nsfw] = useWatch({
     control: form.control,
-    name: ['sfwName', 'sfwDescription'],
+    name: ['sfwName', 'sfwDescription', 'nsfw'],
   });
   const { errors, submitCount } = useFormState({ control: form.control });
-  const [site, setSite] = useState<Site>('red');
+  const features = useFeatureFlags();
+  const [site, setSite] = useState<Site>(features.isGreen ? 'com' : 'red');
   const ownComContent = sfwName != null;
+  const cardState: CardState = ownComContent ? 'custom' : nsfw ? 'redOnly' : 'same';
 
   const nameVerdict = useSfwFaceVerdict(
     'sfwName',
@@ -103,28 +105,23 @@ export function ModelListingTabs({
             Title, description &amp; cover
           </Text>
           <Text size="xs" c="dimmed">
-            The only parts of the listing that differ between civitai.com and civitai.red —
-            everything else about this model is shared across both sites.
+            Your model has a card on civitai.red and a card on civitai.com. These are the parts each
+            card can set for itself; everything else about the model is shared across both sites.
           </Text>
         </div>
         <Tabs value={site} onChange={(value) => value && setSite(value as Site)} keepMounted>
           <Tabs.List>
-            <Tabs.Tab value="red" rightSection={redHasErrors ? <ErrorDot /> : undefined}>
-              civitai.red
-            </Tabs.Tab>
             <Tabs.Tab
               value="com"
-              rightSection={
-                comHasErrors ? (
-                  <ErrorDot />
-                ) : (
-                  <Badge size="xs" variant="light" color={ownComContent ? 'green' : 'gray'}>
-                    {ownComContent ? 'Own content' : 'Same as .red'}
-                  </Badge>
-                )
-              }
+              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
             >
               civitai.com
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="red"
+              rightSection={redHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
+            >
+              civitai.red
             </Tabs.Tab>
           </Tabs.List>
 
@@ -170,6 +167,7 @@ function ComListing({
   versionsVerdict?: VerdictState;
 }) {
   const form = useFormContext<ListingForm>();
+  const nsfw = useWatch({ control: form.control, name: 'nsfw' });
   const sfwNameLength = (useWatch({ control: form.control, name: 'sfwName' }) ?? '').trim().length;
 
   const setComContent = (name: string | null, description: string | null) => {
@@ -204,10 +202,10 @@ function ComListing({
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
-        title: 'Show the civitai.red listing on civitai.com?',
+        title: 'Use the same card on both sites?',
         message:
-          'The civitai.com title, description and cover are removed, and civitai.com shows the same listing as civitai.red.',
-        labels: { confirm: 'Use the civitai.red listing', cancel: 'Keep it' },
+          'The civitai.com title, description and cover are removed, and civitai.com shows the same card as civitai.red.',
+        labels: { confirm: 'Use the same card on both sites', cancel: 'Keep it' },
         confirmProps: { color: 'red' },
         onConfirm: () => setComContent(null, null),
       },
@@ -227,10 +225,14 @@ function ComListing({
   if (!ownContent)
     return (
       <Stack gap="sm" align="flex-start">
-        <Text size="sm">civitai.com shows the same title and description as civitai.red.</Text>
+        <Text size="sm">
+          {nsfw
+            ? 'This model is marked mature, so it doesn’t appear on civitai.com until you set up its civitai.com card with a cover.'
+            : 'civitai.com shows the same card as civitai.red.'}
+        </Text>
         <Text size="sm" c="dimmed">
-          civitai.com shows no mature content. Give it its own listing when yours is meant for
-          civitai.red.
+          Set up a civitai.com card to give this model its own title, description and cover there.
+          civitai.com is for a general audience, so its card is checked for that.
         </Text>
         <Group gap="xs">
           <Button
@@ -240,7 +242,7 @@ function ComListing({
               setComContent(name, description ?? '');
             }}
           >
-            Write a civitai.com version
+            Customize for civitai.com
           </Button>
           {draftButton}
         </Group>
@@ -251,7 +253,7 @@ function ComListing({
     <Stack>
       <Group justify="space-between" gap="xs">
         <Text size="xs" c="dimmed">
-          Checked for mature content as you type.
+          Checked for civitai.com as you type.
         </Text>
         {draftButton}
       </Group>
@@ -294,10 +296,10 @@ function ComListing({
       {modelId && <SiteCoverPicker site="com" modelId={modelId} />}
       <Group justify="space-between" gap="xs">
         <Text size="xs" c="dimmed">
-          Version descriptions are not shown on civitai.com while it has its own listing.
+          Version descriptions are not shown on civitai.com while it has its own card.
         </Text>
         <Button variant="subtle" color="red" size="compact-sm" onClick={handleUseRed}>
-          Use the civitai.red listing
+          Use the same card on both sites
         </Button>
       </Group>
     </Stack>
@@ -376,12 +378,28 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
       {site === 'com' && nsfw && !value && (
         <Alert color="yellow" p="xs">
           <Text size="xs">
-            This model is marked mature, so it stays off civitai.com until you pick a civitai.com
-            cover.
+            This model is marked mature, so it won&apos;t appear on civitai.com until you pick a
+            civitai.com cover.
           </Text>
         </Alert>
       )}
     </Stack>
+  );
+}
+
+type CardState = 'custom' | 'same' | 'redOnly';
+const cardBadges: Record<CardState, { label: string; color: string }> = {
+  custom: { label: 'Custom for this site', color: 'green' },
+  same: { label: 'Same on both sites', color: 'gray' },
+  redOnly: { label: 'Only on civitai.red', color: 'yellow' },
+};
+
+function CardBadge({ state }: { state: CardState }) {
+  const { label, color } = cardBadges[state];
+  return (
+    <Badge size="xs" variant="light" color={color}>
+      {label}
+    </Badge>
   );
 }
 
