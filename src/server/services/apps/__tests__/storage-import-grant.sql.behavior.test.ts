@@ -222,3 +222,41 @@ describe('a grant covers exactly what the viewer was shown', () => {
     expect((await rows()).map((r) => r.source_app_block_id)).toEqual(['apb_src_3412']);
   });
 });
+
+describe('the migration on a database holding the earlier draft of the table', () => {
+  it('fails loudly instead of keeping the old shape', async () => {
+    const old = new PGlite();
+    try {
+      await old.exec(`
+        CREATE TABLE "User" ("id" integer PRIMARY KEY);
+        CREATE TABLE "app_blocks" ("id" text PRIMARY KEY);
+        CREATE TABLE "app_storage_import_grants" (
+          "user_id" integer NOT NULL,
+          "consumer_app_block_id" text NOT NULL,
+          "source_app_block_id" text NOT NULL,
+          "granted_at" timestamptz(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY ("user_id", "consumer_app_block_id", "source_app_block_id")
+        );
+      `);
+      await expect(old.exec(readFileSync(MIGRATION, 'utf8'))).rejects.toThrow(
+        'app_storage_import_grants exists without the collections and access columns'
+      );
+    } finally {
+      await old.close();
+    }
+  });
+
+  it('runs twice on a fresh database (control: the guard passes the real shape)', async () => {
+    const fresh = new PGlite();
+    try {
+      await fresh.exec(`
+        CREATE TABLE "User" ("id" integer PRIMARY KEY);
+        CREATE TABLE "app_blocks" ("id" text PRIMARY KEY);
+      `);
+      await fresh.exec(readFileSync(MIGRATION, 'utf8'));
+      await fresh.exec(readFileSync(MIGRATION, 'utf8'));
+    } finally {
+      await fresh.close();
+    }
+  });
+});

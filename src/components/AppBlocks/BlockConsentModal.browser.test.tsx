@@ -283,7 +283,7 @@ describe('BlockConsentModal — cross-app storage imports', () => {
     await expect
       .element(detail)
       .toHaveTextContent(
-        'Notes Fork reads and changes your notes, prefs in Notes App — as you. Adding to lists other people see there needs your separate permission in Notes App.'
+        'Notes Fork reads and changes your notes, prefs in Notes App — as you. Changing what other people see there, such as adding entries, votes or counts, needs your separate permission in Notes App.'
       );
   });
 

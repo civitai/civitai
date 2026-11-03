@@ -65,6 +65,20 @@ describe('apps:storage:import — registry', () => {
     expect(scopes.indexOf(IMPORT)).toBe(scopes.indexOf('apps:storage:publish') + 1);
     expect(schema.properties.scopeJustifications.description).toContain(`\`${IMPORT}\``);
   });
+
+  // The whole sentence, so a reword that drops the publish requirement fails here.
+  it('the readwrite description says shared writes and tallies need the source publish grant', () => {
+    const schema = JSON.parse(
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../../public/schemas/app-block/v1.json'),
+        'utf8'
+      )
+    );
+    const access = schema.properties.storage.properties.imports.items.properties.access;
+    expect(access.description).toBe(
+      '"read": reads only; every write is refused. "readwrite": reads and writes, under the source collection\'s own write policy. A write, counter or mark in one of the source\'s SHARED collections also needs the viewer\'s own `apps:storage:publish` grant in the source app; a private collection needs only the import grant.'
+    );
+  });
 });
 
 describe('apps:storage:import — consent', () => {

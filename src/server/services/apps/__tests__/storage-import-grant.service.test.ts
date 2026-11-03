@@ -8,6 +8,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const {
+  getStorageImportGrant,
   importScopeCoverage,
   listStorageImportGrants,
   recordStorageImportGrants,
@@ -130,5 +131,42 @@ describe('a database without the hand-applied table', () => {
     await expect(
       listStorageImportGrants({ userId: 7301, consumerAppBlockId: CONSUMER.id })
     ).rejects.toThrow('connection reset');
+  });
+});
+
+describe('a database whose table predates the collections and access columns', () => {
+  // `undefined_column`: a table created by the earlier draft of the migration. Fail closed like
+  // a missing table, never a 500 on every import call.
+  const oldShape = Object.assign(new Error('column "collections" does not exist'), {
+    code: 'P2010',
+    meta: { code: '42703' },
+  });
+
+  it('reads as nobody granted anything', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(oldShape);
+    expect(
+      await listStorageImportGrants({ userId: 7301, consumerAppBlockId: CONSUMER.id })
+    ).toEqual(new Map());
+    expect(
+      await getStorageImportGrant({
+        userId: 7301,
+        consumerAppBlockId: CONSUMER.id,
+        sourceAppBlockId: 'apb_src_3311',
+      })
+    ).toBeNull();
+  });
+
+  it('refuses a grant write out loud', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(oldShape);
+    await expect(
+      recordStorageImportGrants({
+        userId: 7301,
+        consumerAppBlockId: CONSUMER.id,
+        grants: [{ sourceAppBlockId: 'apb_src_3311', collections: ['notes'], access: 'read' }],
+      })
+    ).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'Sharing data between apps is not available yet. Try again later.',
+    });
   });
 });

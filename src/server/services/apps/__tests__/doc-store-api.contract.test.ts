@@ -175,6 +175,7 @@ import {
   recordStorageImportGrants,
 } from '~/server/services/apps/storage-import-grant.service';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { HUB_TOKEN_JTI_PREFIX } from '~/server/services/block-token-subject';
 
 // ---------------------------------------------------------------------------
 // The contract
@@ -2842,7 +2843,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       sub: `user:${VIEWER_IDS.v1}`,
       iat,
       exp: iat + 900,
-      jti: 'hub_7713',
+      jti: `${HUB_TOKEN_JTI_PREFIX}7713`,
       blockId: C.blockId,
       appId: C.appId,
       appBlockId: C.id,
@@ -3081,6 +3082,105 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       expect(r.body).toMatchObject({ code: 'rate_limited', details: { bucket: 'read' } });
     }
     expect(kv.get(readBucket(S, VIEWER_IDS.v1))).toBeUndefined();
+  });
+
+  // ── Counters and marks on the source's SHARED collections need its publish consent too ────
+
+  it("a tally through a readwrite import needs the viewer's apps:storage:publish in the source", async () => {
+    seq += 1;
+    const app = (label: string, manifest: unknown): AppRow => {
+      const r = {
+        id: `apb_imptally${label}${seq}`,
+        appId: `appblk-imptally${label}${seq}`,
+        blockId: `imp-tally-${label}-${seq}`,
+        status: 'approved',
+        manifest,
+      };
+      apps.push(r);
+      return r;
+    };
+    const S = app('src', {
+      scopes: ['apps:storage', PUBLISH_SCOPE],
+      storage: {
+        collections: {
+          board: { visibility: 'shared', write: 'own', marks: ['vote'] },
+          // `write: "none"`: no viewer authors a document, but a tally is still shared state.
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+        },
+      },
+    });
+    const C = app('fork', {
+      scopes: CONSUMER_SCOPES,
+      storage: {
+        collections: { own: { visibility: 'private' } },
+        imports: [{ from: S.blockId, collections: ['board', 'plays'], access: 'readwrite' }],
+      },
+    });
+    await grant(VIEWER_IDS.v1, C, S);
+    // A shared document in the source to mark, written by another viewer there.
+    const made = await call({
+      token: await sourceToken(S, VIEWER_IDS.v2),
+      method: 'PUT',
+      path: '/board/b1',
+      body: { data: { title: 'hi' } },
+    });
+    expect(made.status).toBe(200);
+    const c = await as(C, VIEWER_IDS.v1);
+    const tallies = [
+      { method: 'POST', path: '/plays/p1/counters/plays', body: { by: 1 } },
+      { method: 'PUT', path: '/board/b1/marks/vote' },
+      { method: 'PUT', path: '/board/b1/marks/report' },
+      { method: 'DELETE', path: '/board/b1/marks/vote' },
+    ];
+    for (const t of tallies) {
+      const r = await call({ token: c, ...t, query: { from: S.blockId } });
+      expect(r.status, `${t.method} ${t.path}`).toBe(403);
+      expect(r.body, `${t.method} ${t.path}`).toMatchObject({
+        code: 'consent_required',
+        details: { scope: PUBLISH_SCOPE, from: S.blockId },
+      });
+    }
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'p1'`, [S.id])
+    ).toEqual([]);
+    // With the viewer's own publish consent in the source, the same tallies land.
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    for (const t of tallies) {
+      const r = await call({ token: c, ...t, query: { from: S.blockId } });
+      expect(r.status, `${t.method} ${t.path}`).toBe(200);
+    }
+  });
+
+  it('a read or a delete through an import never reads the source publish consent', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/d1',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    const lookups = dbMock.dbWrite.appUserScopeGrant.findUnique;
+    lookups.mockClear();
+    for (const t of [
+      { method: 'GET', path: '/notes/d1' },
+      { method: 'DELETE', path: '/notes/d1' },
+    ]) {
+      const r = await call({ token: c, ...t, query: { from: S.blockId } });
+      expect(r.status, `${t.method} ${t.path}`).toBe(200);
+    }
+    expect(lookups).not.toHaveBeenCalled();
+    // Control: a put does read it.
+    await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/d2',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    expect(lookups).toHaveBeenCalled();
   });
 
   // ── Writes through an import are validated against the SOURCE collection's schema (R1-4) ──
