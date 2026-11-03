@@ -20,6 +20,7 @@ export type Klein9bVersionRow = {
   modelName: string;
   versionName: string;
   status: string;
+  modelStatus: string;
   licensingFee: number | null;
   paidAccess: boolean;
 };
@@ -39,7 +40,8 @@ export type Klein9bRecipient = Klein9bUserRow & {
 
 /**
  * Charged: any 9B / 9B-base version, in any status, with a fee or open paid access (a draft can be
- * published later). Uncharged: a published 9B / 9B-base version and nothing charged. Charged wins.
+ * published later). Uncharged: a published 9B / 9B-base version on a published model, and nothing
+ * charged. Charged wins.
  */
 export function classifyKlein9bAudience(versions: Klein9bVersionRow[], users: Klein9bUserRow[]) {
   const byUser = new Map<number, { charged: string[]; published: boolean }>();
@@ -47,7 +49,7 @@ export function classifyKlein9bAudience(versions: Klein9bVersionRow[], users: Kl
     const entry = byUser.get(v.userId) ?? { charged: [], published: false };
     if ((v.licensingFee ?? 0) > 0 || v.paidAccess)
       entry.charged.push(`${v.modelName}: ${v.versionName}`);
-    if (v.status === 'Published') entry.published = true;
+    if (v.status === 'Published' && v.modelStatus === 'Published') entry.published = true;
     byUser.set(v.userId, entry);
   }
   const recipients: Klein9bRecipient[] = [];
@@ -75,6 +77,7 @@ export async function getKlein9bNoticeAudience() {
       m.name AS "modelName",
       mv.name AS "versionName",
       mv.status::text AS status,
+      m.status::text AS "modelStatus",
       mv."licensingFee" AS "licensingFee",
       EXISTS (
         SELECT 1 FROM "PaidAccess" pa

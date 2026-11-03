@@ -8,6 +8,7 @@ const version = (over: Partial<Klein9bVersionRow>): Klein9bVersionRow => ({
   modelName: 'Model',
   versionName: 'v1',
   status: 'Published',
+  modelStatus: 'Published',
   licensingFee: null,
   paidAccess: false,
   ...over,
@@ -43,14 +44,15 @@ describe('classifyKlein9bAudience', () => {
     ]);
   });
 
-  it('sends the uncharged notice only for a published version with nothing charged', () => {
+  it('sends the uncharged notice only for a published version on a published model, nothing charged', () => {
     const { recipients } = classifyKlein9bAudience(
       [
         version({ userId: 3 }),
         version({ userId: 4, status: 'Draft' }),
         version({ userId: 5, status: 'Unpublished', licensingFee: 0 }),
+        version({ userId: 9, modelStatus: 'Draft' }),
       ],
-      [user(3), user(4), user(5)]
+      [user(3), user(4), user(5), user(9)]
     );
     expect(recipients.map((r) => [r.id, r.variant])).toEqual([[3, 'uncharged']]);
   });
