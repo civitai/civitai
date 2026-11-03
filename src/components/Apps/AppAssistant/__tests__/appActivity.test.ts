@@ -165,6 +165,57 @@ describe('mergeAppActivity', () => {
     expect(activity.items[0]!.at).toBe(ago(1 * MIN));
   });
 
+  // A loop error at the SDK's 20/min filled the list in minutes and pushed the first (root-cause)
+  // error out of the 50 returned: repeats now fold as calls do, keeping their count and both times.
+  it('folds back-to-back identical errors (message, source, first frame) into one, and only those', () => {
+    const stack = (frame: string) =>
+      `TypeError: x is undefined\n    at ${frame}\n    at tick (a.ts:1:1)`;
+    const loop = (at: number, over: Partial<ErrorActivity> = {}) =>
+      error({
+        at: ago(at),
+        message: 'TypeError: x is undefined',
+        stack: stack('next (a.ts:41:9)'),
+        ...over,
+      });
+    const activity = mergeAppActivity(
+      'my-app',
+      {
+        generations: [],
+        calls: [],
+        errors: [
+          loop(1 * MIN),
+          loop(2 * MIN),
+          // Already folded when it was kept: its count and first time carry over.
+          loop(3 * MIN, { count: 5, firstAt: ago(9 * MIN) }),
+          // Another frame, another source, another message: each breaks the run.
+          loop(10 * MIN, { stack: stack('other (a.ts:7:2)') }),
+          loop(11 * MIN, { source: 'console' }),
+          loop(12 * MIN, { message: 'root cause' }),
+          loop(13 * MIN),
+        ],
+      },
+      NOW
+    );
+    expect(
+      activity.items.map((i) => {
+        const e = i as ErrorActivity;
+        return [e.message, e.source, e.count ?? 1, e.firstAt ?? e.at, e.at];
+      })
+    ).toEqual([
+      ['TypeError: x is undefined', 'error', 7, ago(9 * MIN), ago(1 * MIN)],
+      ['TypeError: x is undefined', 'error', 1, ago(10 * MIN), ago(10 * MIN)],
+      ['TypeError: x is undefined', 'console', 1, ago(11 * MIN), ago(11 * MIN)],
+      ['root cause', 'error', 1, ago(12 * MIN), ago(12 * MIN)],
+      ['TypeError: x is undefined', 'error', 1, ago(13 * MIN), ago(13 * MIN)],
+    ]);
+    // The summary counts every occurrence, folded or not.
+    expect(activity.summary).toBe('0 generations: 0 succeeded; 0 failed; 0 in progress; 11 errors');
+    expect(formatAppActivity(activity, NOW).split('\n').slice(2, 4)).toEqual([
+      '- 1 min ago · error (error) · "TypeError: x is undefined" ×7 (first 9 min ago)',
+      '    at "next (a.ts:41:9)"',
+    ]);
+  });
+
   it('returns at most 50 items, says how many more, and still counts them all in the summary', () => {
     const errors = Array.from({ length: 63 }, (_, i) =>
       error({ at: ago((i + 1) * SEC), message: `e${i}` })

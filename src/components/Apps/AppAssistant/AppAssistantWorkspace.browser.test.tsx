@@ -2339,6 +2339,46 @@ describe('AppAssistantWorkspace hold while the app starts', () => {
   });
 });
 
+describe('AppAssistantWorkspace app_activity', () => {
+  /** The page's own `app_activity` read (`GET /api/apps/assistant/activity`): the block id asked. */
+  function stubActivityEndpoint() {
+    const asked: string[] = [];
+    const original = window.fetch.bind(window);
+    const spy = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), location.href);
+      if (url.pathname !== '/api/apps/assistant/activity') return original(input, init);
+      const blockId = url.searchParams.get('blockId') ?? '';
+      asked.push(blockId);
+      return Response.json({ ...act.activity, app: blockId });
+    });
+    onTestFinished(() => spy.mockRestore());
+    return asked;
+  }
+
+  // REGRESSION: the app key (`app-aaaa`) previews under another blockId when its own is taken, and
+  // the preview's calls and errors are kept under that block id: the tool read the app key.
+  test('reads the block id the live preview runs under, not the app key', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('slideshow-2');
+    const asked = stubActivityEndpoint();
+    const out = await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['slideshow-2']);
+    expect(String(out).split('\n')[0]).toBe(
+      'App activity of slideshow-2 in the last 2 hours, newest first:'
+    );
+  });
+
+  // The control (an invariant guard: it held before the fix too).
+  test('reads the app key while no preview runs', async () => {
+    await mount();
+    await openFirst();
+    const asked = stubActivityEndpoint();
+    await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['app-aaaa']);
+  });
+});
+
 describe('AppAssistantWorkspace tool gate', () => {
   test('offers create_app, generate_app_cover, report_ready, set_checklist and submit_for_review beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();

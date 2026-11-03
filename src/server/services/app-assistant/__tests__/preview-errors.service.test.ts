@@ -10,6 +10,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 const m = vi.hoisted(() => {
   const pipeline = {
     lPush: vi.fn(),
+    lPopCount: vi.fn(),
     lTrim: vi.fn(),
     expire: vi.fn(),
     exec: vi.fn(async () => []),
@@ -152,7 +153,179 @@ describe('storePreviewErrors', () => {
   });
 });
 
+describe('storePreviewErrors folds repeats', () => {
+  // A loop error at the SDK's 20/min filled the 200-entry list in about 10 minutes and pushed the
+  // first (root-cause) error out. Identical consecutive errors are now one entry with a count.
+  const KEY = 'system:blocks:dev-preview-errors:41:slideshow';
+  const STACK = 'TypeError: x is undefined\n    at next (a.ts:41:9)\n    at tick (a.ts:1:1)';
+  const loop = (at: number) => ({
+    message: 'TypeError: x is undefined',
+    source: 'error',
+    stack: STACK,
+    at,
+  });
+  const pushed = () =>
+    (m.pipeline.lPush.mock.calls[0] as unknown as [string, string[]])[1].map((raw) =>
+      JSON.parse(raw)
+    );
+
+  beforeEach(() => {
+    m.tunnel.mockResolvedValue({ userId: 41, blockId: 'slideshow' });
+    lRange.mockResolvedValue([]);
+  });
+
+  it('folds identical consecutive reports in one batch, keeping the count and first and last times', async () => {
+    const out = await storePreviewErrors({
+      userId: 41,
+      blockId: 'slideshow',
+      reports: [
+        loop(NOW - 1_000),
+        loop(NOW - 3_000),
+        { message: 'root cause', at: NOW - 9_000 },
+        loop(NOW - 2_000),
+      ],
+      now: NOW,
+    });
+    expect(out).toEqual({ status: 'stored', stored: 2 });
+    expect(pushed()).toEqual([
+      {
+        kind: 'error',
+        at: new Date(NOW - 9_000).toISOString(),
+        source: 'reported',
+        fatal: false,
+        message: 'root cause',
+        stack: null,
+      },
+      {
+        kind: 'error',
+        at: new Date(NOW - 1_000).toISOString(),
+        firstAt: new Date(NOW - 3_000).toISOString(),
+        count: 3,
+        source: 'error',
+        fatal: false,
+        message: 'TypeError: x is undefined',
+        stack: STACK,
+      },
+    ]);
+    expect(m.pipeline.lPopCount).not.toHaveBeenCalled();
+  });
+
+  it('folds into the newest kept entry when it is the same error, replacing it', async () => {
+    const head = JSON.stringify({
+      kind: 'error',
+      at: new Date(NOW - 60_000).toISOString(),
+      firstAt: new Date(NOW - 600_000).toISOString(),
+      count: 40,
+      source: 'error',
+      fatal: false,
+      message: 'TypeError: x is undefined',
+      stack: STACK,
+    });
+    lRange.mockResolvedValue([head]);
+    m.pipeline.exec.mockResolvedValue([[head], 1, 'OK', 1]);
+    await storePreviewErrors({
+      userId: 41,
+      blockId: 'slideshow',
+      reports: [loop(NOW - 2_000), loop(NOW - 1_000)],
+      now: NOW,
+    });
+    expect(lRange).toHaveBeenCalledWith(KEY, 0, 0);
+    expect(m.pipeline.lPopCount).toHaveBeenCalledWith(KEY, 1);
+    expect(pushed()).toEqual([
+      {
+        kind: 'error',
+        at: new Date(NOW - 1_000).toISOString(),
+        firstAt: new Date(NOW - 600_000).toISOString(),
+        count: 42,
+        source: 'error',
+        fatal: false,
+        message: 'TypeError: x is undefined',
+        stack: STACK,
+      },
+    ]);
+    // Only the one replaced entry was taken: nothing to put back.
+    expect(m.pipeline.lPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the newest kept entry alone when it is another error', async () => {
+    lRange.mockResolvedValue([
+      JSON.stringify({
+        kind: 'error',
+        at: new Date(NOW - 60_000).toISOString(),
+        source: 'error',
+        fatal: false,
+        message: 'other',
+        stack: null,
+      }),
+    ]);
+    await storePreviewErrors({
+      userId: 41,
+      blockId: 'slideshow',
+      reports: [loop(NOW - 1_000)],
+      now: NOW,
+    });
+    expect(m.pipeline.lPopCount).not.toHaveBeenCalled();
+    expect(pushed()).toHaveLength(1);
+  });
+
+  it('puts back an entry another write pushed between the read and the replace', async () => {
+    const head = JSON.stringify({
+      kind: 'error',
+      at: new Date(NOW - 60_000).toISOString(),
+      source: 'error',
+      fatal: false,
+      message: 'TypeError: x is undefined',
+      stack: STACK,
+    });
+    const raced = JSON.stringify({
+      kind: 'error',
+      at: new Date(NOW - 30_000).toISOString(),
+      source: 'console',
+      fatal: false,
+      message: 'raced',
+      stack: null,
+    });
+    lRange.mockResolvedValue([head]);
+    m.pipeline.exec.mockResolvedValueOnce([[raced], 1, 'OK', 1]);
+    await storePreviewErrors({
+      userId: 41,
+      blockId: 'slideshow',
+      reports: [loop(NOW - 1_000)],
+      now: NOW,
+    });
+    expect(m.pipeline.lPush).toHaveBeenCalledTimes(2);
+    expect(m.pipeline.lPush.mock.calls[1]).toEqual([KEY, [raced]]);
+  });
+});
+
 describe('readPreviewErrors', () => {
+  it('keeps a folded entry’s count and first time', async () => {
+    lRange.mockResolvedValue([
+      JSON.stringify({
+        kind: 'error',
+        at: '2026-10-30T11:59:00.000Z',
+        firstAt: '2026-10-30T11:50:00.000Z',
+        count: 12,
+        source: 'error',
+        fatal: false,
+        message: 'loop',
+        stack: null,
+      }),
+    ]);
+    expect(await readPreviewErrors({ userId: 41, blockId: 'slideshow' })).toEqual([
+      {
+        kind: 'error',
+        at: '2026-10-30T11:59:00.000Z',
+        firstAt: '2026-10-30T11:50:00.000Z',
+        count: 12,
+        source: 'error',
+        fatal: false,
+        message: 'loop',
+        stack: null,
+      },
+    ]);
+  });
+
   it('reads the user’s own list and skips entries that do not parse', async () => {
     lRange.mockResolvedValue([
       JSON.stringify({

@@ -173,6 +173,50 @@ describe('app_activity on the runner', () => {
     expect(lines[2]).toMatch(/^- .* · error \(unhandledrejection\) · "boom"$/);
   });
 
+  /** As sandbox-mcp's read_file answers a project's manifest: its text in `content`. */
+  const manifestAt = (path: string, manifest: Record<string, unknown>) =>
+    fake.tools.set('read_file', (args) =>
+      args.path === path
+        ? JSON.stringify({ path, size: 64, truncated: false, content: JSON.stringify(manifest) })
+        : 'export {}'
+    );
+
+  // REGRESSION: the app key `slideshow` previews as `slideshow-2` when `slideshow` is taken (the
+  // assistant picks another blockId in the manifest), and the preview's calls and errors are kept
+  // under that block id. Reading by the app key answered "not one of your apps", or an empty
+  // all-clear for an unclaimed slug.
+  it('reads the block id the preview runs under (the manifest’s), not the app key', async () => {
+    fake.add('slideshow');
+    manifestAt('slideshow/block.manifest.json', { blockId: 'slideshow-2' });
+    const asked: string[] = [];
+    const { tools } = await open('slideshow', {
+      read: async (app) => {
+        asked.push(app);
+        return { ...ACTIVITY, app };
+      },
+    });
+    const out = await call(tools.tools, APP_ACTIVITY);
+    expect(asked).toEqual(['slideshow-2']);
+    expect(String(out).split('\n')[0]).toBe(
+      'App activity of slideshow-2 in the last 2 hours, newest first:'
+    );
+  });
+
+  // The control for the case above (an invariant guard: it held before the fix too).
+  it('falls back to the app key when the project has no readable manifest block id', async () => {
+    fake.add('slideshow');
+    manifestAt('slideshow/block.manifest.json', { name: 'Slideshow' });
+    const asked: string[] = [];
+    const { tools } = await open('slideshow', {
+      read: async (app) => {
+        asked.push(app);
+        return { ...ACTIVITY, app };
+      },
+    });
+    await call(tools.tools, APP_ACTIVITY);
+    expect(asked).toEqual(['slideshow']);
+  });
+
   it('an app civitai says is not the user’s reads as not found', async () => {
     fake.add('their-app');
     const { tools } = await open('their-app', { read: async () => null });
