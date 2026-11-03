@@ -84,9 +84,11 @@ describe('model.getById stored .com pair', () => {
   it.each([
     ['owner', owner],
     ['moderator', moderator],
-  ])('is sent to the %s on civitai.red', async (_, user) => {
-    const model = await get(user, true);
-    expect(model.sfwName).toBe('Com title');
-    expect(model.sfwDescription).toBe('<p>Com description</p>');
+  ])('is sent to the %s on either site', async (_, user) => {
+    for (const canViewNsfw of [true, false]) {
+      const model = await get(user, canViewNsfw);
+      expect(model.sfwName).toBe('Com title');
+      expect(model.sfwDescription).toBe('<p>Com description</p>');
+    }
   });
 });
