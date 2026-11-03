@@ -361,6 +361,8 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
       [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B', 'Draft'), v('SDXL 1.0', 'Published', 'Private')],
     ],
     ['it has only hidden 9B versions', [v('Flux.2 Klein 9B', 'Draft')]],
+    ['all its versions are Flux.3 Klein', [v('Flux.3 Klein'), v('Flux.3 Klein-base')]],
+    ['its versions are Ideogram 4.0 and Qwen 2.1', [v('Ideogram 4.0'), v('Qwen 2.1')]],
   ])('refuses a tip on a model when %s, and moves no Buzz', async (_, versions) => {
     const ledger = installLedger();
     mockVersionFindMany.mockResolvedValue(versions as never);
@@ -376,7 +378,7 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
 
   it.each([
     ['a Flux.2 Klein 4B model', [v('Flux.2 Klein 4B')]],
-    ['a Flux.3 Klein model', [v('Flux.3 Klein')]],
+    ['an SDXL model', [v('SDXL 1.0')]],
     [
       'a model with a public 9B and a public 4B version',
       [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B')],

@@ -78,6 +78,7 @@ function pickBestTrainingFile<T extends { metadata: unknown }>(files: T[]): T | 
 export type TrainingFeedQuery = {
   limit: number;
   cursor?: number;
+  modelId?: number;
   username?: string;
   workflowId?: string;
   dateFrom?: Date;
@@ -126,7 +127,7 @@ export async function getTrainingModelsFeed(query: TrainingFeedQuery): Promise<{
   items: TrainingFeedModel[];
   nextCursor?: number;
 }> {
-  const { limit, cursor, username, workflowId, dateFrom, dateTo, cannotPublish } = query;
+  const { limit, cursor, modelId, username, workflowId, dateFrom, dateTo, cannotPublish } = query;
 
   const models = await dbRead
     .selectFrom('Model as m')
@@ -134,6 +135,7 @@ export async function getTrainingModelsFeed(query: TrainingFeedQuery): Promise<{
     .where('m.uploadType', '=', 'Trained')
     .where('m.deletedAt', 'is', null)
     .$if(cursor != null, (qb) => qb.where('m.id', '<', cursor!))
+    .$if(modelId != null, (qb) => qb.where('m.id', '=', modelId!))
     // Exact match, as the main app's feed does — a `contains` here would quietly widen a moderator's
     // "show me this account" into every account whose name contains it.
     .$if(!!username, (qb) => qb.where('u.username', '=', username!))

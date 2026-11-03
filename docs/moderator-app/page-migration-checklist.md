@@ -215,8 +215,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     version page reads their dataset from the training workflow and renders it with
     `$lib/components/WorkflowDataset.svelte`, shared with `/audit/training-data/workflow/[workflowId]`,
     and `trainingData.resolve` refuses that row.
-  - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
-    publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
+  - Filters: username is an EXACT match (as in the main app), plus model id (deep link from the main-app model menu; an unusable id matches nothing), workflow id,
+    created-date range and publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
   - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
     `model.toggleCannotPublish`, `training.setAnnouncement` and their services/schemas
     (`getTrainingModelsForModerators`, `toggleCannotPublish`, `getTrainingModerationFeedSchema`).

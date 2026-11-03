@@ -10,7 +10,9 @@
         "coverId"
       ],
       "model": "Article",
-      "field": "coverImage"
+      "field": "coverImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ArticleRank|articleId|ArticleRank|article|Article",
@@ -21,7 +23,9 @@
         "articleId"
       ],
       "model": "ArticleRank",
-      "field": "article"
+      "field": "article",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|BountyEntryRank|bountyEntryId|BountyEntryRank|BountyEntry|BountyEntry",
@@ -32,7 +36,9 @@
         "bountyEntryId"
       ],
       "model": "BountyEntryRank",
-      "field": "BountyEntry"
+      "field": "BountyEntry",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|BountyRank|bountyId|BountyRank|Bounty|Bounty",
@@ -43,7 +49,9 @@
         "bountyId"
       ],
       "model": "BountyRank",
-      "field": "Bounty"
+      "field": "Bounty",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|Challenge|eventId|Challenge|event|ChallengeEvent",
@@ -54,7 +62,9 @@
         "eventId"
       ],
       "model": "Challenge",
-      "field": "event"
+      "field": "event",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ChallengeEvent|createdById|ChallengeEvent|createdBy|User",
@@ -65,7 +75,9 @@
         "createdById"
       ],
       "model": "ChallengeEvent",
-      "field": "createdBy"
+      "field": "createdBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|Club|avatarId|Club|avatar|Image",
@@ -76,7 +88,9 @@
         "avatarId"
       ],
       "model": "Club",
-      "field": "avatar"
+      "field": "avatar",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|Club|coverImageId|Club|coverImage|Image",
@@ -87,7 +101,9 @@
         "coverImageId"
       ],
       "model": "Club",
-      "field": "coverImage"
+      "field": "coverImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|Club|headerImageId|Club|headerImage|Image",
@@ -98,7 +114,9 @@
         "headerImageId"
       ],
       "model": "Club",
-      "field": "headerImage"
+      "field": "headerImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ClubPost|coverImageId|ClubPost|coverImage|Image",
@@ -109,7 +127,9 @@
         "coverImageId"
       ],
       "model": "ClubPost",
-      "field": "coverImage"
+      "field": "coverImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ClubRank|clubId|ClubRank|Club|Club",
@@ -120,7 +140,9 @@
         "clubId"
       ],
       "model": "ClubRank",
-      "field": "Club"
+      "field": "Club",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ClubTier|coverImageId|ClubTier|coverImage|Image",
@@ -131,7 +153,9 @@
         "coverImageId"
       ],
       "model": "ClubTier",
-      "field": "coverImage"
+      "field": "coverImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|Collection|imageId|Collection|image|Image",
@@ -142,7 +166,9 @@
         "imageId"
       ],
       "model": "Collection",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|CollectionRank|collectionId|CollectionRank|collection|Collection",
@@ -153,7 +179,9 @@
         "collectionId"
       ],
       "model": "CollectionRank",
-      "field": "collection"
+      "field": "collection",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|CosmeticShopSection|imageId|CosmeticShopSection|image|Image",
@@ -164,7 +192,9 @@
         "imageId"
       ],
       "model": "CosmeticShopSection",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|DownloadHistory|modelVersionId|DownloadHistory|modelVersion|ModelVersion",
@@ -175,7 +205,9 @@
         "modelVersionId"
       ],
       "model": "DownloadHistory",
-      "field": "modelVersion"
+      "field": "modelVersion",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageConnection|imageId|ImageConnection|image|Image",
@@ -186,7 +218,9 @@
         "imageId"
       ],
       "model": "ImageConnection",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageEngagement|imageId|ImageEngagement|image|Image",
@@ -197,7 +231,9 @@
         "imageId"
       ],
       "model": "ImageEngagement",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageFlag|imageId|ImageFlag|image|Image",
@@ -208,7 +244,9 @@
         "imageId"
       ],
       "model": "ImageFlag",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageRatingRequest|imageId|ImageRatingRequest|image|Image",
@@ -219,7 +257,9 @@
         "imageId"
       ],
       "model": "ImageRatingRequest",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageReaction|imageId|ImageReaction|image|Image",
@@ -230,7 +270,9 @@
         "imageId"
       ],
       "model": "ImageReaction",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageResource|imageId|ImageResource|image|Image",
@@ -241,7 +283,9 @@
         "imageId"
       ],
       "model": "ImageResource",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageResourceNew|imageId|ImageResourceNew|image|Image",
@@ -252,7 +296,9 @@
         "imageId"
       ],
       "model": "ImageResourceNew",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ImageResourceNew|modelVersionId|ImageResourceNew|modelVersion|ModelVersion",
@@ -263,7 +309,9 @@
         "modelVersionId"
       ],
       "model": "ImageResourceNew",
-      "field": "modelVersion"
+      "field": "modelVersion",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|ModelBaseModelMetric|modelId|ModelBaseModelMetric|model|Model",
@@ -274,7 +322,9 @@
         "modelId"
       ],
       "model": "ModelBaseModelMetric",
-      "field": "model"
+      "field": "model",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|PurchasableReward|coverImageId|PurchasableReward|coverImage|Image",
@@ -285,7 +335,9 @@
         "coverImageId"
       ],
       "model": "PurchasableReward",
-      "field": "coverImage"
+      "field": "coverImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|TagRank|tagId|TagRank|tag|Tag",
@@ -296,7 +348,9 @@
         "tagId"
       ],
       "model": "TagRank",
-      "field": "tag"
+      "field": "tag",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|TagsOnImageNew|imageId|TagsOnImageNew|image|Image",
@@ -307,7 +361,9 @@
         "imageId"
       ],
       "model": "TagsOnImageNew",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|TagsOnImageVote|imageId|TagsOnImageVote|image|Image",
@@ -318,7 +374,9 @@
         "imageId"
       ],
       "model": "TagsOnImageVote",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|User|profilePictureId|User|profilePicture|Image",
@@ -329,7 +387,9 @@
         "profilePictureId"
       ],
       "model": "User",
-      "field": "profilePicture"
+      "field": "profilePicture",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|UserProfile|coverImageId|UserProfile|coverImage|Image",
@@ -340,7 +400,9 @@
         "coverImageId"
       ],
       "model": "UserProfile",
-      "field": "coverImage"
+      "field": "coverImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "missing-foreign-key|UserRank|userId|UserRank|user|User",
@@ -351,7 +413,9 @@
         "userId"
       ],
       "model": "UserRank",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|ArticleMetric|updatedAt|ArticleMetric|updatedAt|required",
@@ -362,7 +426,9 @@
         "updatedAt"
       ],
       "model": "ArticleMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|BountyEntryMetric|updatedAt|BountyEntryMetric|updatedAt|required",
@@ -373,7 +439,9 @@
         "updatedAt"
       ],
       "model": "BountyEntryMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|BountyMetric|updatedAt|BountyMetric|updatedAt|required",
@@ -384,7 +452,9 @@
         "updatedAt"
       ],
       "model": "BountyMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|ChallengeEvent|createdById|ChallengeEvent|createdById|optional",
@@ -395,7 +465,9 @@
         "createdById"
       ],
       "model": "ChallengeEvent",
-      "field": "createdById"
+      "field": "createdById",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|CollectionMetric|updatedAt|CollectionMetric|updatedAt|required",
@@ -406,7 +478,9 @@
         "updatedAt"
       ],
       "model": "CollectionMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|ModelMetric|updatedAt|ModelMetric|updatedAt|required",
@@ -417,7 +491,9 @@
         "updatedAt"
       ],
       "model": "ModelMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|ModelVersionMetric|updatedAt|ModelVersionMetric|updatedAt|required",
@@ -428,7 +504,9 @@
         "updatedAt"
       ],
       "model": "ModelVersionMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|PostMetric|updatedAt|PostMetric|updatedAt|required",
@@ -439,7 +517,9 @@
         "updatedAt"
       ],
       "model": "PostMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|Purchase|userId|Purchase|userId|required",
@@ -450,7 +530,9 @@
         "userId"
       ],
       "model": "Purchase",
-      "field": "userId"
+      "field": "userId",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|TagMetric|updatedAt|TagMetric|updatedAt|required",
@@ -461,7 +543,9 @@
         "updatedAt"
       ],
       "model": "TagMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "nullability|UserMetric|updatedAt|UserMetric|updatedAt|required",
@@ -472,7 +556,9 @@
         "updatedAt"
       ],
       "model": "UserMetric",
-      "field": "updatedAt"
+      "field": "updatedAt",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_block_publish_requests|app_block_id|AppBlockPublishRequest|appBlock|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -483,7 +569,9 @@
         "app_block_id"
       ],
       "model": "AppBlockPublishRequest",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_block_publish_requests|reviewed_by_user_id|AppBlockPublishRequest|reviewedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -494,7 +582,9 @@
         "reviewed_by_user_id"
       ],
       "model": "AppBlockPublishRequest",
-      "field": "reviewedBy"
+      "field": "reviewedBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_block_publish_requests|submitted_by_user_id|AppBlockPublishRequest|submittedBy|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -505,7 +595,9 @@
         "submitted_by_user_id"
       ],
       "model": "AppBlockPublishRequest",
-      "field": "submittedBy"
+      "field": "submittedBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_blocks|app_id|AppBlock|app|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -516,7 +608,9 @@
         "app_id"
       ],
       "model": "AppBlock",
-      "field": "app"
+      "field": "app",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_collaborators|app_listing_id|AppCollaborator|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -527,7 +621,9 @@
         "app_listing_id"
       ],
       "model": "AppCollaborator",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_collaborators|invited_by|AppCollaborator|inviter|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -538,7 +634,9 @@
         "invited_by"
       ],
       "model": "AppCollaborator",
-      "field": "inviter"
+      "field": "inviter",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_collaborators|user_id|AppCollaborator|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -549,7 +647,9 @@
         "user_id"
       ],
       "model": "AppCollaborator",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_metrics|app_listing_id|AppListingMetric|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -560,7 +660,9 @@
         "app_listing_id"
       ],
       "model": "AppListingMetric",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_moderation_events|actor_user_id|AppListingModerationEvent|actor|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -571,7 +673,9 @@
         "actor_user_id"
       ],
       "model": "AppListingModerationEvent",
-      "field": "actor"
+      "field": "actor",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_moderation_events|app_listing_id|AppListingModerationEvent|appListing|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -582,7 +686,9 @@
         "app_listing_id"
       ],
       "model": "AppListingModerationEvent",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_moderation_events|report_id|AppListingModerationEvent|report|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -593,7 +699,9 @@
         "report_id"
       ],
       "model": "AppListingModerationEvent",
-      "field": "report"
+      "field": "report",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_publish_requests|app_listing_id|AppListingPublishRequest|appListing|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -604,7 +712,9 @@
         "app_listing_id"
       ],
       "model": "AppListingPublishRequest",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_publish_requests|reviewed_by_user_id|AppListingPublishRequest|reviewedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -615,7 +725,9 @@
         "reviewed_by_user_id"
       ],
       "model": "AppListingPublishRequest",
-      "field": "reviewedBy"
+      "field": "reviewedBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_publish_requests|submitted_by_user_id|AppListingPublishRequest|submittedBy|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -626,7 +738,9 @@
         "submitted_by_user_id"
       ],
       "model": "AppListingPublishRequest",
-      "field": "submittedBy"
+      "field": "submittedBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_reports|app_listing_id|AppListingReport|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -637,7 +751,9 @@
         "app_listing_id"
       ],
       "model": "AppListingReport",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_reports|reporter_user_id|AppListingReport|reporter|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -648,7 +764,9 @@
         "reporter_user_id"
       ],
       "model": "AppListingReport",
-      "field": "reporter"
+      "field": "reporter",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_reports|resolved_by_user_id|AppListingReport|resolvedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -659,7 +777,9 @@
         "resolved_by_user_id"
       ],
       "model": "AppListingReport",
-      "field": "resolvedBy"
+      "field": "resolvedBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_reviews|app_listing_id|AppListingReview|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -670,7 +790,9 @@
         "app_listing_id"
       ],
       "model": "AppListingReview",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_reviews|user_id|AppListingReview|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -681,7 +803,9 @@
         "user_id"
       ],
       "model": "AppListingReview",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_screenshots|app_listing_id|AppListingScreenshot|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -692,7 +816,9 @@
         "app_listing_id"
       ],
       "model": "AppListingScreenshot",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listing_screenshots|image_id|AppListingScreenshot|image|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -703,7 +829,9 @@
         "image_id"
       ],
       "model": "AppListingScreenshot",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listings|app_block_id|AppListing|appBlock|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -714,7 +842,9 @@
         "app_block_id"
       ],
       "model": "AppListing",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listings|connect_client_id|AppListing|connectClient|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -725,7 +855,9 @@
         "connect_client_id"
       ],
       "model": "AppListing",
-      "field": "connectClient"
+      "field": "connectClient",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listings|cover_id|AppListing|cover|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -736,7 +868,9 @@
         "cover_id"
       ],
       "model": "AppListing",
-      "field": "cover"
+      "field": "cover",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listings|icon_id|AppListing|icon|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -747,7 +881,9 @@
         "icon_id"
       ],
       "model": "AppListing",
-      "field": "icon"
+      "field": "icon",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listings|revision_of_id|AppListing|revisionOf|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -758,7 +894,9 @@
         "revision_of_id"
       ],
       "model": "AppListing",
-      "field": "revisionOf"
+      "field": "revisionOf",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_listings|user_id|AppListing|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -769,7 +907,9 @@
         "user_id"
       ],
       "model": "AppListing",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_ownership_events|actor_user_id|AppOwnershipEvent|actor|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -780,7 +920,9 @@
         "actor_user_id"
       ],
       "model": "AppOwnershipEvent",
-      "field": "actor"
+      "field": "actor",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_ownership_events|app_listing_id|AppOwnershipEvent|appListing|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -791,7 +933,9 @@
         "app_listing_id"
       ],
       "model": "AppOwnershipEvent",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_ownership_events|target_user_id|AppOwnershipEvent|target|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -802,7 +946,9 @@
         "target_user_id"
       ],
       "model": "AppOwnershipEvent",
-      "field": "target"
+      "field": "target",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_ownership_transfers|app_listing_id|AppOwnershipTransfer|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -813,7 +959,9 @@
         "app_listing_id"
       ],
       "model": "AppOwnershipTransfer",
-      "field": "appListing"
+      "field": "appListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_ownership_transfers|from_user_id|AppOwnershipTransfer|fromUser|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -824,7 +972,9 @@
         "from_user_id"
       ],
       "model": "AppOwnershipTransfer",
-      "field": "fromUser"
+      "field": "fromUser",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_ownership_transfers|to_user_id|AppOwnershipTransfer|toUser|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -835,7 +985,9 @@
         "to_user_id"
       ],
       "model": "AppOwnershipTransfer",
-      "field": "toUser"
+      "field": "toUser",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_review_agent_reports|prior_report_id|AppReviewAgentReport|priorReport|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -846,7 +998,9 @@
         "prior_report_id"
       ],
       "model": "AppReviewAgentReport",
-      "field": "priorReport"
+      "field": "priorReport",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_sub_listing_parents|parent_listing_id|AppSubListingParent|parentListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -857,7 +1011,9 @@
         "parent_listing_id"
       ],
       "model": "AppSubListingParent",
-      "field": "parentListing"
+      "field": "parentListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_sub_listings|author_user_id|AppSubListing|author|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -868,7 +1024,9 @@
         "author_user_id"
       ],
       "model": "AppSubListing",
-      "field": "author"
+      "field": "author",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_sub_listings|image_id|AppSubListing|image|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -879,7 +1037,9 @@
         "image_id"
       ],
       "model": "AppSubListing",
-      "field": "image"
+      "field": "image",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_sub_listings|moderated_by_id|AppSubListing|moderatedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -890,7 +1050,9 @@
         "moderated_by_id"
       ],
       "model": "AppSubListing",
-      "field": "moderatedBy"
+      "field": "moderatedBy",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_sub_listings|parent_listing_id|AppSubListing|parentListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -901,7 +1063,9 @@
         "parent_listing_id"
       ],
       "model": "AppSubListing",
-      "field": "parentListing"
+      "field": "parentListing",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|app_sub_listings|pending_image_id|AppSubListing|pendingImage|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -912,7 +1076,9 @@
         "pending_image_id"
       ],
       "model": "AppSubListing",
-      "field": "pendingImage"
+      "field": "pendingImage",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_attribution_payout|app_owner_user_id|BlockAttributionPayout|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -923,7 +1089,9 @@
         "app_owner_user_id"
       ],
       "model": "BlockAttributionPayout",
-      "field": "appOwner"
+      "field": "appOwner",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_buzz_attribution|app_block_id|BlockBuzzAttribution|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -934,7 +1102,9 @@
         "app_block_id"
       ],
       "model": "BlockBuzzAttribution",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_buzz_attribution|app_id|BlockBuzzAttribution|app|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -945,7 +1115,9 @@
         "app_id"
       ],
       "model": "BlockBuzzAttribution",
-      "field": "app"
+      "field": "app",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_buzz_attribution|app_owner_user_id|BlockBuzzAttribution|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -956,7 +1128,9 @@
         "app_owner_user_id"
       ],
       "model": "BlockBuzzAttribution",
-      "field": "appOwner"
+      "field": "appOwner",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_buzz_attribution|user_id|BlockBuzzAttribution|user|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -967,7 +1141,9 @@
         "user_id"
       ],
       "model": "BlockBuzzAttribution",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_spend_attribution|app_block_id|BlockSpendAttribution|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -978,7 +1154,9 @@
         "app_block_id"
       ],
       "model": "BlockSpendAttribution",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_spend_attribution|app_id|BlockSpendAttribution|app|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -989,7 +1167,9 @@
         "app_id"
       ],
       "model": "BlockSpendAttribution",
-      "field": "app"
+      "field": "app",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_spend_attribution|app_owner_user_id|BlockSpendAttribution|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1000,7 +1180,9 @@
         "app_owner_user_id"
       ],
       "model": "BlockSpendAttribution",
-      "field": "appOwner"
+      "field": "appOwner",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_spend_attribution|user_id|BlockSpendAttribution|user|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1011,7 +1193,9 @@
         "user_id"
       ],
       "model": "BlockSpendAttribution",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_subscription_attribution|app_block_id|BlockSubscriptionAttribution|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1022,7 +1206,9 @@
         "app_block_id"
       ],
       "model": "BlockSubscriptionAttribution",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_subscription_attribution|app_id|BlockSubscriptionAttribution|app|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1033,7 +1219,9 @@
         "app_id"
       ],
       "model": "BlockSubscriptionAttribution",
-      "field": "app"
+      "field": "app",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_subscription_attribution|app_owner_user_id|BlockSubscriptionAttribution|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1044,7 +1232,9 @@
         "app_owner_user_id"
       ],
       "model": "BlockSubscriptionAttribution",
-      "field": "appOwner"
+      "field": "appOwner",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_subscription_attribution|user_id|BlockSubscriptionAttribution|user|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1055,7 +1245,9 @@
         "user_id"
       ],
       "model": "BlockSubscriptionAttribution",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_user_settings|user_id|BlockUserSettings|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1066,7 +1258,9 @@
         "user_id"
       ],
       "model": "BlockUserSettings",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_user_subscriptions|app_block_id|BlockUserSubscription|appBlock|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1077,7 +1271,9 @@
         "app_block_id"
       ],
       "model": "BlockUserSubscription",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|block_user_subscriptions|user_id|BlockUserSubscription|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1088,7 +1284,9 @@
         "user_id"
       ],
       "model": "BlockUserSubscription",
-      "field": "user"
+      "field": "user",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|BoxContent|boxDefinitionId|BoxContent|box|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1099,7 +1297,9 @@
         "boxDefinitionId"
       ],
       "model": "BoxContent",
-      "field": "box"
+      "field": "box",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|BoxContent|rewardDefinitionId|BoxContent|reward|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1110,7 +1310,9 @@
         "rewardDefinitionId"
       ],
       "model": "BoxContent",
-      "field": "reward"
+      "field": "reward",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|BoxContent|tierId|BoxContent|tier|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1121,7 +1323,9 @@
         "tierId"
       ],
       "model": "BoxContent",
-      "field": "tier"
+      "field": "tier",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|BoxOddsSnapshot|boxDefinitionId|BoxOddsSnapshot|box|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1132,7 +1336,9 @@
         "boxDefinitionId"
       ],
       "model": "BoxOddsSnapshot",
-      "field": "box"
+      "field": "box",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|BoxRevision|boxDefinitionId|BoxRevision|box|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1143,7 +1349,9 @@
         "boxDefinitionId"
       ],
       "model": "BoxRevision",
-      "field": "box"
+      "field": "box",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|BoxTier|boxDefinitionId|BoxTier|box|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
@@ -1154,7 +1362,9 @@
         "boxDefinitionId"
       ],
       "model": "BoxTier",
-      "field": "box"
+      "field": "box",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|CosmeticShopItem|itemDefinitionId|CosmeticShopItem|itemDefinition|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1165,7 +1375,9 @@
         "itemDefinitionId"
       ],
       "model": "CosmeticShopItem",
-      "field": "itemDefinition"
+      "field": "itemDefinition",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|Item|itemDefinitionId|Item|itemDefinition|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1176,7 +1388,9 @@
         "itemDefinitionId"
       ],
       "model": "Item",
-      "field": "itemDefinition"
+      "field": "itemDefinition",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|ItemDefinition|cosmeticId|ItemDefinition|cosmetic|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1187,7 +1401,9 @@
         "cosmeticId"
       ],
       "model": "ItemDefinition",
-      "field": "cosmetic"
+      "field": "cosmetic",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|platform_default_blocks|app_block_id|PlatformDefaultBlock|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
@@ -1198,7 +1414,9 @@
         "app_block_id"
       ],
       "model": "PlatformDefaultBlock",
-      "field": "appBlock"
+      "field": "appBlock",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "referential-action|platform_default_blocks|promoted_by|PlatformDefaultBlock|promoter|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
@@ -1209,7 +1427,9 @@
         "promoted_by"
       ],
       "model": "PlatformDefaultBlock",
-      "field": "promoter"
+      "field": "promoter",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "uniqueness|AnnouncementSpend|announcementId|AnnouncementSpend|",
@@ -1219,7 +1439,9 @@
       "columns": [
         "announcementId"
       ],
-      "model": "AnnouncementSpend"
+      "model": "AnnouncementSpend",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     },
     {
       "fingerprint": "uniqueness|ImageResource|modelVersionId,name,imageId|ImageResource|",
@@ -1231,7 +1453,9 @@
         "name",
         "imageId"
       ],
-      "model": "ImageResource"
+      "model": "ImageResource",
+      "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
+      "ref": "#6323"
     }
   ]
 }
