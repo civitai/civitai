@@ -1,4 +1,4 @@
-import type { TeamAward } from '~/server/events/base.event';
+import type { EventScoring } from '~/server/events/base.event';
 
 // The awards a team holds by `until`. Every reader (live base, standings, winner, payout, chart)
 // goes through this one window: inside the event, and before `until`, as an action counts before
@@ -8,7 +8,7 @@ export const teamAwardsBy = (
     startDate: Date;
     endDate: Date;
     teams: readonly string[];
-    scoring?: { teamAwards?: readonly TeamAward[] };
+    scoring?: Partial<EventScoring>;
   },
   until: Date
 ) =>

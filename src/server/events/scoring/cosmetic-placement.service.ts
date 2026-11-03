@@ -26,7 +26,7 @@ export type ScoredEvent = {
 type StandingsEvent = Pick<ScoredEvent, 'name' | 'teams' | 'startDate' | 'scoreFrom'>;
 // What the hourly job builds the snapshot from, including the window team awards count in.
 type SettledEvent = StandingsEvent &
-  Pick<ScoredEvent, 'endDate'> & { scoring?: Pick<EventScoring, 'teamAwards'> };
+  Pick<ScoredEvent, 'endDate'> & { scoring?: Partial<EventScoring> };
 const scoreFromDay = (event: Pick<ScoredEvent, 'startDate' | 'scoreFrom'>) => {
   const from = event.scoreFrom ?? event.startDate;
   return new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
