@@ -129,10 +129,9 @@ describe('the full-ci label', () => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
   });
 
-  // Regression test (red with the `github.event_name != 'push'` conjunct it replaced): the
-  // test-file ratchet also runs on push to `main`. Skipping push let type errors from draft and
-  // red-merged PRs land on `main` unmeasured, and every later PR inherited the red. The whole
-  // conjunct set is pinned, so any event-excluding clause added back fails here.
+  // typecheck-tests must also run on push to `main`: skipping it lets type errors from draft and
+  // red-merged PRs land unmeasured. The whole conjunct set is pinned, so any event-excluding clause
+  // added back fails here.
   it('lint.yml runs typecheck-tests on push to main, with only the draft and dispatch gates', () => {
     const doc = load('lint.yml');
     expect((doc.on?.push as { branches?: string[] } | null)?.branches).toContain('main');
