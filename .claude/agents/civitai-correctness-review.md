@@ -142,6 +142,24 @@ The richest seam in this codebase, and the one that produces the "it looked fine
   populated" questions in one `SELECT` (always pass `--prod` or `--dev`; the default is prod, and it is
   read-only).
 
+### Stamps and flags: who clears them
+
+For **every stamp, flag or metadata key the diff writes** — a DB column, a cache or Redis key, a JSON
+metadata field, a cookie, a user setting — find where it is **cleared or reset**, and when. A stamp set
+on one path that no path clears stays true after the state it records has changed: the purchase
+refunded, the ban lifted, the content edited. That is the stale-stamp bug, and it reads as correct in a
+diff that only shows the write. An expiry counts as the clear: for a key written with a TTL, the clear
+is the line that sets the TTL. Record each in `checks.writes`; `cleared_at: "none"` is a finding unless
+its `reason` says why (an immutable record such as a creation time).
+
+### Sibling grant paths
+
+For **every capability the diff grants or gates** — a permission, an entitlement, a purchase or unlock,
+access to a resource — find the **other code paths that grant the same capability** (another procedure,
+a webhook, a job, an admin tool, a REST endpoint) and check each against the same rules. A fix to one
+path that its siblings skip leaves the gap open. Record them in `checks.siblings`; a sibling you found
+and did not check is a finding, unless the entry's `reason` says why.
+
 ## Verify before reporting
 
 Do not report a suspicion. For each candidate, construct the concrete failure: the input or state, and
@@ -163,6 +181,43 @@ Re-read the write-up rules at the top before you send it.
 **Findings only.** Do not inventory the checks you ran and found satisfied. Say plainly if the segment
 is clean — that is a real outcome and padding the list wastes the fix. One exception, one line: a
 hazard you confirmed is *not* a bug today but that the next edit would turn into one.
+
+### The `checks` block — required, findings or not
+
+The one structured exception to "findings only": it records the method, so a reader can tell a lane that
+checked from one that skipped.
+
+- `writes`: **one entry per key written** (stamp, flag or metadata key), at the line that writes it,
+  with `cleared_at` as the `file:line` that clears or resets it (comma-separated if several; for a key
+  with a TTL, the line that sets the TTL), or `"none"`.
+- `siblings`: **one entry per capability granted or gated**, with `paths` listing **every other path
+  that grants it**, each as `file:line`, and `[]` if there is none. Listing a path does not say you
+  checked it — there is no field for that — so a path you did not check is a finding unless the entry's
+  `reason` says why.
+
+Both take an optional `reason` string: why a `"none"` clear or an unchecked path is not a bug. With a
+reason it is not a finding; without one it is. An empty list means nothing applied; never omit a key.
+It names paths, not bypasses, so the write-up rules above still hold. When your invoker gives you a
+JSON result contract, put its `checks` object in that result; otherwise end your report with this
+block as a fenced `json` block:
+
+```json
+{
+  "checks": {
+    "writes": [
+      { "key": "User.thingGrantedAt", "file": "src/…", "line": 42, "cleared_at": "src/…:97" },
+      {
+        "key": "Thing.createdAt",
+        "file": "src/…",
+        "line": 50,
+        "cleared_at": "none",
+        "reason": "creation time, immutable"
+      }
+    ],
+    "siblings": [{ "capability": "unlock thing", "paths": ["src/…:88", "src/…:120"] }]
+  }
+}
+```
 
 ## Delivering your report
 
