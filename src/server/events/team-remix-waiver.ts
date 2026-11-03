@@ -57,6 +57,7 @@ export async function findTeamRemixWaiver({
       FROM "UserCosmetic" uc
       JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
       WHERE uc."userId" IN (${placerId}, ${ownerId})
+        AND c.type = 'ContentDecoration'
         AND uc."claimKey" = ${def.join.claimKey}
         AND c.data->>'event' = ${def.name}
         AND c.data->>'design' = ${def.join.design}

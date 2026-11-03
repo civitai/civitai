@@ -3471,6 +3471,19 @@ describe('the free eligibility listing', () => {
     expect((await eligibility()).teamWaiver?.remaining).toBe(0);
   });
 
+  it('reads a failing event lookup as no waiver, keeping the free option', async () => {
+    findTeamRemixWaiver.mockRejectedValue(new Error('flipt down'));
+    getFreePlacementAllowance.mockResolvedValue({
+      used: 0,
+      remaining: 1,
+      resetsAt: new Date('2026-03-04'),
+    });
+
+    const result = await eligibility();
+    expect(result.teamWaiver).toBeNull();
+    expect(result.allowance.remaining).toBe(1);
+  });
+
   it('offers no waiver on your own gallery, without asking the event', async () => {
     resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, ownerId: PLACER });
 

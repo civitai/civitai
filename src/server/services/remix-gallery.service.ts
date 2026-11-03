@@ -2087,8 +2087,22 @@ export async function getRemixGalleryFreeEligibility({
   };
 }
 
-/** A listing like the rest of the eligibility: the mutation re-decides under its lock. */
-async function getTeamWaiverStanding({
+/**
+ * A listing like the rest of the eligibility: the mutation re-decides under its lock. A failure
+ * reads as no waiver, so the event layer cannot take the free option down with it.
+ */
+const getTeamWaiverStanding = (input: { hostImageId: number; placerId: number }) =>
+  readTeamWaiverStanding(input).catch((error) => {
+    logToAxiom({
+      name: 'remix-gallery',
+      type: 'error',
+      message: 'team waiver standing failed; shown as no waiver',
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+    return null;
+  });
+
+async function readTeamWaiverStanding({
   hostImageId,
   placerId,
 }: {

@@ -361,8 +361,16 @@ describe('createFreePlacement — a team-waived row', () => {
     givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, reserved: 4, alreadyHere: 1 });
 
     await expect(claimWaived()).resolves.toEqual({ id: 1 });
-    // Only the placer lock: the target's rules are the free tier's.
-    expect(executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('still takes the target lock, after the placer lock, so a free claim never counts mid-insert', async () => {
+    await claimWaived();
+
+    // The free claim reads reserved slots net of waived rows in two statements; a waived insert
+    // between them would undercount by one if it did not wait on the same target lock.
+    expect(executeRaw).toHaveBeenCalledTimes(2);
+    expect(String(executeRaw.mock.calls[0][0])).toContain('pg_advisory_xact_lock');
+    expect(String(executeRaw.mock.calls[1][0])).toContain('hashtext');
   });
 
   it("refuses once the placer has made the day's waived submissions, counted under the lock", async () => {

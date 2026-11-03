@@ -275,15 +275,18 @@ export async function createFreePlacement({
         'placement: you already have the maximum pending placements with this creator'
       );
 
-    // The target's rules are the free tier's: a waived row takes no slot and does not count as the
-    // placer's free placement here, so it needs neither the target lock nor these counts.
-    if (!teamWaiver) {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${TARGET_LOCK_CLASS}::int, hashtext(${spaceLockKey(
-        surface,
-        targetType,
-        targetId
-      )}))`;
+    // Taken by a waived row too, although it skips the counts below: the reserved-slot count is
+    // read net of waived rows in two statements, and a waived insert landing between them would
+    // make a concurrent free claim undercount the slots by one.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${TARGET_LOCK_CLASS}::int, hashtext(${spaceLockKey(
+      surface,
+      targetType,
+      targetId
+    )}))`;
 
+    // The target's rules are the free tier's: a waived row takes no slot and does not count as the
+    // placer's free placement here.
+    if (!teamWaiver) {
       const already = await countFreePlacementsOn(tx, { placerId, ...target });
       if (already > 0)
         throw throwBadRequestError(
