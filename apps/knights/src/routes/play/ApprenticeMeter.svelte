@@ -15,7 +15,7 @@
     knightLevel: number;
   } = $props();
 
-  let accuracyPercent = $derived(accuracy === null ? null : Math.round(accuracy * 100));
+  let accuracyPercent = $derived(accuracy === null ? null : Math.floor(accuracy * 100));
   let barPercent = $derived(Math.round(bar * 100));
   let onBar = $derived(accuracy !== null && accuracy >= bar);
   // The track fills as levels are climbed, and is full at the level that makes a Knight.

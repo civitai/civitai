@@ -29,7 +29,7 @@
     <h1>{recap.right} of {recap.total} correct</h1>
     {#if accuracy !== null}
       <p class="accuracy" class:good={onBar} class:low={!onBar}>
-        Accuracy {Math.round(accuracy * 100)}%&nbsp;·&nbsp;bar {Math.round(recap.progress.bar * 100)}%
+        Accuracy {Math.floor(accuracy * 100)}%&nbsp;·&nbsp;bar {Math.round(recap.progress.bar * 100)}%
       </p>
     {/if}
   </header>

@@ -162,8 +162,8 @@
 {#snippet levelToast(floating: boolean)}
   {#if levelNotice}
     <LevelToast
-      level={levelNotice.level}
-      xpToNext={levelNotice.level === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
+      level={levelNotice.milestoneLevel ?? levelNotice.level}
+      xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
       message={form?.progressFailed ? form.message : null}
       {submitting}
       {submit}

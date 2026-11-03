@@ -57,7 +57,7 @@ const APPRENTICE_REJECTION_TEXT = {
 } as const;
 
 type RankPerks = { levels?: string; voteWeight?: number; goldMultiplier?: number };
-type Notice = ProgressNotice & RankPerks & { milestone?: string };
+type Notice = ProgressNotice & RankPerks & { milestone?: string; milestoneLevel?: number };
 
 // A rank-up notice says what the rank brings; a level-up carries nothing more.
 function withRankPerks(progress: ProgressNotice | null): Notice | null {
@@ -81,7 +81,7 @@ async function acolyteMilestone(
 ): Promise<Notice | null> {
   if (progress?.kind !== 'level') return progress;
   const milestone = crossedMilestone(progress.from, progress.level);
-  if (milestone) return { ...progress, milestone: milestone.copy };
+  if (milestone) return { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level };
   await dismissProgress(seenStore, userId, status);
   return null;
 }

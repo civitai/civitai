@@ -206,6 +206,7 @@ describe('play load', () => {
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'level',
+      milestoneLevel: 10,
       milestone: expect.stringMatching(/halfway/),
     });
     expect(seenStore.set).not.toHaveBeenCalled();
