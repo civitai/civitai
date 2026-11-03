@@ -7,13 +7,12 @@ type Finding = AbuseReportInput['findings'][number];
 export const PROPOSED_ACTION =
   'Proposed action: review these buyers as one ring; consider revoking the paid-access grants they bought from this creator with Blue Buzz.';
 
-/** Shared by every buyer in one ring, so the board groups them for one decision. It names only the
- *  creator, which every reason in the ring states. */
+/** Same key for every buyer in a ring, so the board groups them; it must name only the creator,
+ *  which every reason in the ring states. */
 export const ringGroupKey = (ring: Ring) => `blue-paid-access:${ring.creatorId}`;
 
 const day = (d: Date) => d.toISOString().slice(0, 16).replace('T', ' ');
 
-/** Every number the rule used, about this buyer and this ring, so a moderator can check it. */
 export function renderReason(
   ring: Ring,
   buyer: RingBuyer,
@@ -47,11 +46,8 @@ export function renderReason(
   return `${evidence.length <= room ? evidence : `${evidence.slice(0, room - 1)}…`}${tail}`;
 }
 
-/**
- * 🔴 `actioned: false` IS A LITERAL, AND `action` IS ABSENT. This detector holds no write client;
- * a finding revokes nothing and bans nobody. Confidence is only the board's sort order: the buyer's
- * share of spend on this creator.
- */
+/** 🔴 `actioned: false` is a literal and `action` is absent: this detector revokes and bans nothing.
+ *  `confidence` only orders the board. */
 export function toFinding(
   ring: Ring,
   buyer: RingBuyer,

@@ -21,13 +21,8 @@ export const ringThresholdsFromEnv = (
   minSharePct: e.BLUE_PAID_ACCESS_RING_MIN_SHARE_PCT,
 });
 
-/**
- * Report-only: files rings of Blue Buzz paid-access buyers on the moderator app's abuse board with
- * `actioned: false`, for a moderator to decide on. It revokes and bans nothing.
- *
- * Daily, matching `RUN_INTERVAL_HOURS`. The cron string is the deployment: `/api/internal/get-jobs`
- * publishes it to the external scheduler.
- */
+/** The cron must stay in step with `RUN_INTERVAL_HOURS`; `/api/internal/get-jobs` publishes it to the
+ *  external scheduler, so it is the deployment. */
 export const bluePaidAccessDetection = createJob(
   'blue-buzz-paid-access-detection',
   '30 7 * * *',

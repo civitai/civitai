@@ -3,24 +3,16 @@ import { clickhouseTransactionTypePredicate } from '~/server/clickhouse/transact
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 /**
- * Rings of accounts buying one creator's paid access with Blue Buzz.
- *
- * A ring is one creator with at least `minBuyers` distinct Blue Buzz buyers of their paid access in
- * the window, counting only buyers who sent at least `minSharePct` percent of their own Blue Buzz
- * paid-access spend in that window to this creator. A buyer who also buys elsewhere is not counted,
- * so a creator with many ordinary buyers is not a ring.
+ * A ring is one creator with at least `minBuyers` Blue Buzz buyers of their paid access in the
+ * window who each sent at least `minSharePct` percent of their Blue Buzz paid-access spend to them.
  */
 
 /** The producer key. Opaque — it groups runs on the board, so renaming it orphans this detector's
  *  history. */
 export const BLUE_PAID_ACCESS_DETECTOR = 'blue-buzz-paid-access';
 
-/**
- * 🔴 EQUAL TO THE JOB'S CADENCE, AND PINNED TO IT BY `__tests__/job-wiring.test.ts`. The run does not
- * dedupe against earlier runs: it files a ring only when one of its buyers bought in the last
- * interval, so a ring is filed again only on a day it is still buying. A faster cron would file one
- * day's activity more than once; a slower one would skip days.
- */
+/** 🔴 Must equal the job's cron interval (pinned by `__tests__/job-wiring.test.ts`): a ring is filed
+ *  only if a buyer bought within it, and runs do not dedupe against each other. */
 export const RUN_INTERVAL_HOURS = 24;
 
 /** A ceiling on rows read back. Hitting it is logged, because the rings past it go unread. */
@@ -28,7 +20,6 @@ export const PAIR_CEILING = 200_000;
 
 export type RingThresholds = { windowDays: number; minBuyers: number; minSharePct: number };
 
-/** One buyer's Blue Buzz paid-access purchases from one creator in the window. */
 export type BuyerPair = {
   creatorId: number;
   buyerId: number;
@@ -46,7 +37,6 @@ export type RingBuyer = BuyerPair & { sharePct: number };
 
 export type Ring = {
   creatorId: number;
-  /** Concentrated buyers, the ones reported. */
   buyers: RingBuyer[];
   /** Every distinct Blue Buzz buyer of this creator's access in the window. */
   allBuyers: number;
@@ -56,18 +46,13 @@ export type Ring = {
   lastAt: Date;
 };
 
-/** `$query` is the only method used, so the port is stated rather than importing the whole client
- *  type — and it is what a test substitutes. */
 export type DetectionClickhouse = { $query: <T extends object>(sql: string) => Promise<T[]> };
 
 const clickhouseDateTime = (at: Date) =>
   `toDateTime('${at.toISOString().slice(0, 19).replace('T', ' ')}', 'UTC')`;
 
-/**
- * Per (creator, buyer) totals, with each buyer's total across all creators. Only creators with at
- * least `minBuyers` distinct buyers are read back: a creator below that cannot be a ring whatever
- * the shares are.
- */
+/** Only creators with at least `minBuyers` distinct buyers are read back; below that no share can
+ *  make a ring. */
 export function buyerPairsSql({ since, minBuyers }: { since: Date; minBuyers: number }) {
   return `
     WITH purchases AS (
@@ -119,8 +104,6 @@ export async function findBuyerPairs(
   }));
 }
 
-/** The ring rule over the pairs, largest ring first. `activeSince` drops rings none of whose
- *  buyers bought after it. */
 export function findRings(
   pairs: BuyerPair[],
   {
