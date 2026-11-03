@@ -61,7 +61,7 @@
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -488,7 +488,14 @@
 
   // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
   // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
-  const furtherMature = $derived(quote?.matureCount ?? 0);
+  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  let refusedFurther = $state<{ run: string; count: number } | null>(null);
+  const furtherMature = $derived(
+    Math.max(
+      quote?.matureCount ?? 0,
+      refusedFurther?.run === workflowIdKey ? refusedFurther.count : 0
+    )
+  );
   const furtherSpend = $derived(
     quote?.cost != null
       ? nonBlueSpend(quote.cost, buzzMode.value, {
@@ -507,7 +514,7 @@
 
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote == null || furtherAckMissing) return;
+    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
     continuing = true;
     continueError = '';
     try {
@@ -521,7 +528,9 @@
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      confirming = false;
+      if (err instanceof MatureAckRequiredError)
+        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      else confirming = false;
     } finally {
       continuing = false;
     }
@@ -1197,7 +1206,7 @@
               {#if confirming}
                 <Button
                   onclick={doTrainFurther}
-                  disabled={continuing || quote == null || furtherAckMissing}
+                  disabled={continuing || quote?.cost == null || furtherAckMissing}
                 >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
@@ -1225,6 +1234,8 @@
                       ? 'Green'
                       : 'Yellow'}</span
                   >{/if}
+              {:else if quote}
+                <span class="text-red-400">Could not price this</span>
               {:else}
                 pricing…
               {/if}

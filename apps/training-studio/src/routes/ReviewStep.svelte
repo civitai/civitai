@@ -13,7 +13,7 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
@@ -80,7 +80,7 @@
     presetType = $bindable(),
     imageCount,
     trainsPairs = false,
-    matureCount,
+    matureCount: scannedMature,
     onStart,
     onBack,
     onShowMature,
@@ -106,7 +106,8 @@
       name: string,
       currencies: string[],
       /** The user ticked the mature-dataset Yellow confirm. */
-      matureAck: boolean
+      matureAck: boolean,
+      matureCount: number
     ) => Promise<void>;
     onBack: () => void;
     /** Back to the Data step, filtered to the mature images. */
@@ -136,6 +137,9 @@
   // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
   // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
+  // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
+  let refusedMature = $state(0);
+  const matureCount = $derived(Math.max(scannedMature, refusedMature));
   const mature = $derived(matureCount > 0);
 
 
@@ -461,9 +465,11 @@
         prompts,
         name,
         buzzMode.currencies,
-        ackKey !== null && !ackMissing
+        ackKey !== null && !ackMissing,
+        matureCount
       );
     } catch (e) {
+      if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
       startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
@@ -955,9 +961,11 @@
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
           <strong>mature</strong> (R or above).
-          <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
-            See which
-          </button>.
+          {#if scannedMature > 0}
+            <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
+              See which
+            </button>.
+          {/if}
           {#if membership === true}
             Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
             <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is charged

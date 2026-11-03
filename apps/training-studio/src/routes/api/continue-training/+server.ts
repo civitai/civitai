@@ -66,7 +66,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       ),
     });
   } catch (err) {
-    if (err instanceof MatureAckRequiredError) error(409, err.message);
+    if (err instanceof MatureAckRequiredError)
+      error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');

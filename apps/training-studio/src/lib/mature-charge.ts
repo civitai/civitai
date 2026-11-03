@@ -47,3 +47,16 @@ export function matureAckKey(price: number | null | undefined, matureCount: numb
 export function matureAckMissing(ackedFor: string | null, key: string | null): boolean {
   return key !== null && ackedFor !== key;
 }
+
+/** A mature dataset submitted without the user's confirm: nothing was charged. */
+export class MatureAckRequiredError extends Error {
+  readonly matureCount: number;
+  constructor(matureCount: number) {
+    super(
+      `This dataset has ${matureCount} mature image${
+        matureCount === 1 ? '' : 's'
+      }, so training on it is charged in Yellow. Confirm the charge to continue.`
+    );
+    this.matureCount = matureCount;
+  }
+}

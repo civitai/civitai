@@ -46,6 +46,7 @@ import {
   ecosystemTrainsPairs,
   isRetiredBaseAir,
 } from '$lib/data/trainingModels';
+import { MatureAckRequiredError } from '$lib/mature-charge';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
 
@@ -106,7 +107,7 @@ export interface TrainingRunInput {
    *  by `resolveCurrencies` — never trusted from the wire. */
   currencies?: string[];
   /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
-   *  charged from Blue + Yellow (see `chargeFields`). */
+   *  charged from Blue + Yellow. */
   matureAck?: boolean;
   meta: TrainingStudioMeta;
 }
@@ -581,18 +582,7 @@ export interface ContinueOpts {
   matureAck?: boolean;
 }
 
-/** A mature dataset submitted without the user's confirm: nothing was charged. */
-export class MatureAckRequiredError extends Error {
-  readonly matureCount: number;
-  constructor(matureCount: number) {
-    super(
-      `This dataset has ${matureCount} mature image${
-        matureCount === 1 ? '' : 's'
-      }, so training on it is charged in Yellow. Confirm the charge to continue.`
-    );
-    this.matureCount = matureCount;
-  }
-}
+export { MatureAckRequiredError };
 
 const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const PROBE_CONCURRENCY = 8;
@@ -601,7 +591,7 @@ const PROBE_CACHE_MAX = 200;
 const probeCache = new Map<string, { at: number; count: Promise<number> }>();
 
 /** How many of a dataset's blobs were rated R or above, from each blob's X-NSFW-Level header. Never
- *  send a workflowId on these HEADs (see `chargeFields`). */
+ *  send a workflowId on these HEADs. */
 async function countMatureBlobs(
   client: OrchestratorClient,
   airs: string[]

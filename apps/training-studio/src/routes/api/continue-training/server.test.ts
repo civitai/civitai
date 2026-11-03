@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 const continueTrainingWhatIf = vi.fn();
 const continueTraining = vi.fn();
-class MatureAckRequiredError extends Error {}
+class MatureAckRequiredError extends Error {
+  constructor(message: string, readonly matureCount = 0) {
+    super(message);
+  }
+}
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
 vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,
@@ -51,10 +55,10 @@ describe('POST /api/continue-training', () => {
   });
 
   it('answers 409 with the reason when the mature confirm is missing', async () => {
-    continueTraining.mockRejectedValueOnce(new MatureAckRequiredError('Confirm the charge'));
+    continueTraining.mockRejectedValueOnce(new MatureAckRequiredError('Confirm the charge', 3));
     await expect(post(body)).rejects.toMatchObject({
       status: 409,
-      body: { message: 'Confirm the charge' },
+      body: { message: 'Confirm the charge', matureCount: 3 },
     });
   });
 });

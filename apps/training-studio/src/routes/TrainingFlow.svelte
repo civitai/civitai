@@ -184,7 +184,8 @@
     prompts: SamplePrompt[],
     name: string,
     currencies: string[],
-    matureAck: boolean
+    matureAck: boolean,
+    reviewedMature: number
   ) {
     if (!selection) return;
     // An edit run's pairs go as blobs placed by path — each image was uploaded and scanned on its own.
@@ -201,7 +202,7 @@
       edit
     );
     const { workflowIds: ids, failure } = await backend().submitTraining(
-      stampMature(runs, matureAck, matureCount)
+      stampMature(runs, matureAck, reviewedMature)
     );
     if (failure)
       submitNotice.set(
