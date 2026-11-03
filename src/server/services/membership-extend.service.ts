@@ -353,6 +353,9 @@ export type ExtendMembershipResult = {
   cancelRestored: boolean;
   newInvoiceId: string | null;
   problems: string[];
+  /** Whether Stripe took the update: true it did, false it refused it (nothing written, no cooldown),
+   *  null unknown (no answer). Not `after`, which is null whenever a later call failed. */
+  written: boolean | null;
 };
 
 export async function extendMembership({
@@ -448,6 +451,7 @@ async function extendLocked({
     cancelRestored: false,
     newInvoiceId: null,
     problems: [],
+    written: null,
   };
   let response: Stripe.Subscription | null = null;
   // Stripe refused the first update outright (a 4xx invalid-request or card error): nothing was
@@ -489,6 +493,7 @@ async function extendLocked({
     );
   } finally {
     result.ok = result.problems.length === 0;
+    result.written = response ? true : rejected ? false : null;
     // From the first write attempt on: the activity counts toward the cooldown even when the write's
     // outcome is unknown. Only a definite Stripe rejection of the first update is left out.
     if (!rejected)

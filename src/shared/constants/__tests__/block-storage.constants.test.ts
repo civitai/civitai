@@ -110,6 +110,22 @@ describe('parseManifestStorage', () => {
     expect(parsed.collections.get('picks')?.ownedModelVersions).toEqual(pointers);
   });
 
+  it('carries a declared schema into the declaration exactly as declared; none means no key', () => {
+    const schema = {
+      type: 'object',
+      required: ['label'],
+      properties: { label: { type: 'string', maxLength: 33 } },
+    };
+    const parsed = parseManifestStorage({
+      storage: {
+        collections: { cards: { visibility: 'private', schema }, prefs: { visibility: 'private' } },
+      },
+    });
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.collections.get('cards')?.schema).toEqual(schema);
+    expect(parsed.collections.get('prefs')).not.toHaveProperty('schema');
+  });
+
   it('refuses ownedModelVersions on a private collection as a shared-only field', () => {
     const { errors } = parseManifestStorage({
       storage: { collections: { drafts: { visibility: 'private', ownedModelVersions: ['/v'] } } },

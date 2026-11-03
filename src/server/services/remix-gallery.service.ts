@@ -5,11 +5,7 @@ import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readViewerPendingPlacementsViaKysely,
-  readViewerPendingPlacementsViaPrisma,
-} from '~/server/services/hot-reads-3.reads';
+import { readViewerPendingPlacementsViaKysely } from '~/server/services/hot-reads-3.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';
 import { getAllImages } from '~/server/services/image.service';
@@ -1565,7 +1561,7 @@ async function getViewerPendingSubmissions({
   /** The viewer own band. Marked on each row, never filtered on. */
   viewerLevels: number;
 }) {
-  // `kysely-hot-reads-3` on: the same read through Kysely, on the replica as before.
+  // Through Kysely, on the replica.
   const pendingInput = {
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -1573,9 +1569,10 @@ async function getViewerPendingSubmissions({
     placerId: viewerId,
     limit: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   };
-  const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-    ? await readViewerPendingPlacementsViaKysely((await loadKyselyDb()).kyselyRead, pendingInput)
-    : await readViewerPendingPlacementsViaPrisma(dbRead, pendingInput);
+  const rows = await readViewerPendingPlacementsViaKysely(
+    (await loadKyselyDb()).kyselyRead,
+    pendingInput
+  );
 
   const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);

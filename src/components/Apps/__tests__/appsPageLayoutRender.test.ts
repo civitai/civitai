@@ -104,7 +104,7 @@ type Tree = {
   band: Element;
 };
 
-function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
+function renderLayout(measure?: AppsMeasure, withHeader = false, align?: 'start' | 'center'): Tree {
   const html = renderToStaticMarkup(
     createElement(
       MantineProvider,
@@ -113,6 +113,7 @@ function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
         AppsPageLayout,
         {
           measure,
+          ...(align ? { align } : {}),
           ...(withHeader
             ? {
                 title: 'A title',
@@ -142,7 +143,8 @@ function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
   // mode a structural test can have. The markers are read from the rendered tree, so a
   // renamed/removed one throws here rather than silently re-pointing.
   const band = doc.querySelector('[data-apps-chrome="band"]');
-  const rootStack = band?.parentElement;
+  // The root stack is the body column's only child; the band sits inside a wrapper under it.
+  const rootStack = doc.querySelector('[data-apps-chrome="body-column"]')?.firstElementChild;
   if (!band || !rootStack) throw new Error('could not resolve the layout band / root stack');
 
   const allBoxes = Array.from(doc.querySelectorAll('[style*="max-width"]')) as unknown as Element[];
@@ -390,5 +392,31 @@ describe('the measure box, on the rendered tree', () => {
       const container = node!.parentElement;
       expect(container?.getAttribute('style') ?? '').toContain(remOf(APPS_PAGE_CONTAINER_WIDTH));
     }
+  });
+});
+
+describe('`align="center"` — the one declared opt-out from the shared left edge', () => {
+  // The listing DETAIL page centres its measured body (a product decision; see `align` on
+  // the layout). Everything above pins the DEFAULT, which renders no `align` at all; these
+  // pin that the opt-out does what it says and changes nothing else.
+  it('centres the MEASURED body box with auto inline margins', () => {
+    const t = renderLayout(1068, false, 'center');
+    expect(t.measureBox, 'the measure box must still render').not.toBeNull();
+    expect(t.measureBox!.getAttribute('style') ?? '').toMatch(/margin-inline:\s*auto/);
+    // Still the SAME box — a direct child of the root stack, outside the chrome.
+    expect(t.measureBox!.parentElement).toBe(t.rootStack);
+    expect(t.measureBox!.contains(t.nav)).toBe(false);
+  });
+
+  it('`align="start"` is byte-identical to omitting it (the default stays left-aligned)', () => {
+    const explicit = renderLayout(1068, false, 'start');
+    expect(explicit.measureBox!.getAttribute('style') ?? '').not.toMatch(/margin/i);
+    expect(explicit.measureBox!.outerHTML).toBe(renderLayout(1068).measureBox!.outerHTML);
+  });
+
+  it('without a measure there is nothing to centre: the body stays unbounded', () => {
+    const t = renderLayout(undefined, false, 'center');
+    expect(t.measureBox).toBeNull();
+    expect(t.body.parentElement).toBe(t.rootStack);
   });
 });

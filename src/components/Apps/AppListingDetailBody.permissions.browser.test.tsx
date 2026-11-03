@@ -258,3 +258,103 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     await expect.element(within.getByTestId('apps-listing-permissions')).toBeInTheDocument();
   });
 });
+
+/**
+ * One grouped, ordered permission list for both listing shapes, asserted on the rendered TEXT
+ * ORDER of the section (not on a test id or component name).
+ *
+ * Fixtures are stored in an order the grouping must CHANGE (plain scopes first, sensitive
+ * scopes in descending bit order), span both groups with two rows each, and include an
+ * on-site scope with no OAuth bit, which must sort last in its group. Expected titles are
+ * literals, not read from the scope tables.
+ */
+function expectInOrder(section: Element, texts: string[]) {
+  const text = section.textContent ?? '';
+  const positions = texts.map((t) => text.indexOf(t));
+  texts.forEach((t, i) => expect(positions[i], `"${t}" is not in the section`).toBeGreaterThan(-1));
+  expect(
+    positions,
+    `expected, in this order: ${texts.join(' → ')}; got positions ${positions.join(', ')}`
+  ).toEqual([...positions].sort((a, b) => a - b));
+}
+
+describe('permissions — grouped and ordered the same way for every listing shape', () => {
+  test('🔴 ON-SITE app: sensitive group first, then the rest, each in scope order', async () => {
+    const { container } = await renderBody(
+      base({
+        scopes: ['apps:storage', 'models:read:self', 'social:tip:self', 'ai:write:budgeted'],
+      })
+    );
+    const section = container.querySelector('[data-testid="apps-listing-permissions"]');
+    expect(section, 'the on-site permissions section must render').not.toBeNull();
+    expectInOrder(section!, [
+      'Sensitive permissions (2)',
+      'Run AI work with your Buzz',
+      'Tip on your behalf',
+      'Other permissions (2)',
+      'See the model it sits on',
+      'Store your data and read shared entries',
+    ]);
+  });
+
+  test('OFF-SITE connect app: the same grouping and order (invariant guard)', async () => {
+    const { container } = await renderBody(
+      base({
+        kind: 'offsite',
+        scopes: [],
+        connectScopes: ['ModelsRead', 'CollectionsRead', 'SocialTip', 'BuzzRead'],
+        kindData: {
+          kind: 'offsite',
+          externalUrl: 'https://example.com',
+          connectClientId: 'client-1',
+        },
+      })
+    );
+    const section = container.querySelector('[data-testid="connect-scopes-disclosure"]');
+    expect(section, 'the connect permissions section must render').not.toBeNull();
+    expectInOrder(section!, [
+      'Sensitive permissions (2)',
+      'View buzz balance & history',
+      'Tip other users',
+      'Other permissions (2)',
+      'Browse & download models',
+      'View collections',
+    ]);
+  });
+
+  test('both shapes render through ONE component: identical row and group structure', async () => {
+    // The structural half: the same group containers and the same row marker on both, so a
+    // second renderer reappearing for either shape fails here even if it copied the order.
+    const onsite = await renderBody(base({ scopes: ['models:read:self', 'ai:write:budgeted'] }));
+    const connect = await renderBody(
+      base({
+        kind: 'offsite',
+        scopes: [],
+        connectScopes: ['ModelsRead', 'BuzzRead'],
+        kindData: {
+          kind: 'offsite',
+          externalUrl: 'https://example.com',
+          connectClientId: 'client-1',
+        },
+      })
+    );
+    const shape = (root: Element, testid: string) => {
+      const section = root.querySelector(`[data-testid="${testid}"]`)!;
+      const group = (name: string) =>
+        Array.from(
+          section.querySelectorAll(
+            `[data-testid="listing-permissions-${name}-group"] [data-permission-row]`
+          )
+        ).map((r) => r.getAttribute('data-permission-row'));
+      return { sensitive: group('sensitive'), other: group('other') };
+    };
+    expect(shape(onsite.container, 'apps-listing-permissions')).toEqual({
+      sensitive: ['ai:write:budgeted'],
+      other: ['models:read:self'],
+    });
+    expect(shape(connect.container, 'connect-scopes-disclosure')).toEqual({
+      sensitive: ['BuzzRead'],
+      other: ['ModelsRead'],
+    });
+  });
+});

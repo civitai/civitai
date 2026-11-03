@@ -18,6 +18,7 @@ const JAN_TEXT: BaseModel[] = ['LTXV2', 'LTXV 2.3'];
 const OWN_TEXT: BaseModel[] = ['LTXV']; // 0.9.x, a separate Lightricks licence
 // Not LTX: the FLUX Kommunity License applies every restriction to derivatives (2a, 3a).
 const FLUX_KOMMUNITY: BaseModel[] = ['Flux.3 Klein', 'Flux.3 Klein-base'];
+const FLUX_NC: BaseModel[] = ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'];
 
 // Exact permalinks. `baseModelLicenses` cannot audit itself, so the LTX list is derived
 // from `baseModelRecords` — the registry of what actually exists — and matched loosely
@@ -52,7 +53,9 @@ describe('LTX same-license enforcement', () => {
   // e.g. flux1D, which six Flux base models share — would silently lock merges on models
   // whose licence does not require it. Enumerating a couple of unrelated names misses that.
   it('locks exactly the base models whose licence requires it, and no others', () => {
-    expect([...sameLicenseBaseModels].sort()).toEqual([...AUG_TEXT, ...FLUX_KOMMUNITY].sort());
+    expect([...sameLicenseBaseModels].sort()).toEqual(
+      [...AUG_TEXT, ...FLUX_KOMMUNITY, ...FLUX_NC].sort()
+    );
   });
 
   it('does not constrain a base model absent from the licence map', () => {

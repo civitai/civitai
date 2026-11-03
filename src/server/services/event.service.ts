@@ -23,6 +23,7 @@ import type {
   EventInput,
   PlaceableContentPageInput,
   RosterOptInInput,
+  ShowcaseHatInput,
   TeamRosterInput,
   TeamScoreHistoryInput,
   WornEventHatInput,
@@ -68,7 +69,15 @@ import {
   getUserSettings,
   patchUserSettings,
 } from '~/server/services/user.service';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  getShowcaseHatForUser,
+  refreshShowcaseHats,
+  resolveShowcaseHatIds,
+  SHOWCASE_EVENT,
+  SHOWCASE_SETTING,
+} from '~/server/events/showcase-hat';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isDefined } from '~/utils/type-guards';
 
 // Every event read is gated on what the viewer may see (event-access.ts); a closed event reads as an
@@ -945,7 +954,7 @@ export async function getTeamRoster({
       profilePictureCache.fetch(userIds),
       cosmeticCache.fetch([...new Set(page.rows.flatMap((r) => r.hats.map((h) => h.id)))]),
     ]);
-    const hatOf = ({ id, worn, price }: RosterHat) => {
+    const hatOf = ({ id, worn, price, picked }: RosterHat) => {
       const c = cosmetics[id];
       if (!c) return null;
       const data = (c.data ?? {}) as { url?: unknown; team?: unknown };
@@ -955,6 +964,7 @@ export async function getTeamRoster({
         url: typeof data.url === 'string' ? data.url : null,
         worn,
         price,
+        picked: picked === true,
       };
     };
     const items = page.rows.flatMap((row) => {
@@ -1022,6 +1032,69 @@ export async function setRosterOptIn({
     if (rosterEvent) await syncRosterMembersWith(rosterEvent, [user.id], defaultRosterSyncDeps());
     const team = await sysRedis.hGet(eventRosterKeys(scored.name).members, String(user.id));
     return { optedIn: optIn, listedTeam: rosterTeam(team) };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// The caller's showcase pick and the hat their avatar shows, from the primary: read right after they
+// pick. `pick` is null when they never picked or cleared it.
+export async function getMyShowcaseHat({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, user);
+    const [settings, resolved] = await Promise.all([
+      getUserSettings(user.id),
+      resolveShowcaseHatIds(scored.name, [user.id], dbWrite),
+    ]);
+    return {
+      pick: settings[SHOWCASE_SETTING]?.[scored.name] ?? null,
+      showing: resolved.get(user.id) ?? null,
+    };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// The hat the caller's avatar shows now, from the cache, for their own "You're on Team X" panels: the
+// homepage block is one of them, so no primary read. Null when it is not on show.
+export async function getMyShowcaseHatArt({ event, user }: EventInput & { user: { id: number } }) {
+  if (event !== SHOWCASE_EVENT.name) return null;
+  return getShowcaseHatForUser(user.id);
+}
+
+// Picks (or, with null, clears) the hat the caller's avatar shows during the event. Only a hat of
+// this event they hold now; it is a pointer, so nothing is copied, moved or scored.
+export async function setShowcaseHat({
+  event,
+  cosmeticId,
+  user,
+}: ShowcaseHatInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    if (event !== SHOWCASE_EVENT.name) throw throwBadRequestError('This event has no showcase hat');
+    await eventEngine.assertPlayable(event, user);
+    if (cosmeticId !== null) {
+      const owned = await dbWrite.$queryRaw<{ ok: number }[]>`
+        SELECT 1 AS ok
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        WHERE uc."userId" = ${user.id} AND uc."cosmeticId" = ${cosmeticId}
+          AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${event}
+        LIMIT 1
+      `;
+      if (!owned.length) throw throwBadRequestError("You don't have that hat");
+    }
+    await patchUserSettings(user.id, {
+      mergeInto: { [SHOWCASE_SETTING]: { [event]: cosmeticId } },
+      location: 'event.service:setShowcaseHat',
+    });
+    await refreshShowcaseHats([user.id]);
+    // The creator card and profile header carry it; a listed member's roster card leads with it.
+    await bustUserCreator(user.id);
+    void syncEventRosterMember(user.id, { event, onlyIfListed: true });
+    return getMyShowcaseHat({ event, user });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

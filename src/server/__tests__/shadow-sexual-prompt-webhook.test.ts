@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as EntityModeration from '~/server/services/entity-moderation.service';
 import type * as ModerationAdapters from '~/server/services/moderation-adapters';
@@ -105,6 +106,19 @@ async function deliver(
 }
 
 const predictionValues = () => dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1) as unknown[];
+const predictionItem = () => {
+  const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+  const item: Record<string, unknown> = {};
+  values.forEach((value, i) => {
+    const key = /'(\w+)',\s*$/.exec(strings[i])?.[1];
+    if (key) item[key] = value;
+  });
+  return item;
+};
+const predictionKeys = () => {
+  const [strings] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[]];
+  return [...strings.join('').matchAll(/^\s*'(\w+)',/gm)].map((m) => m[1]);
+};
 const nothingWritten = () => {
   expect(insert).not.toHaveBeenCalled();
   expect(calledHybridNodes(['dbRead', 'dbWrite'])).toEqual([]);
@@ -115,7 +129,7 @@ const nothingWritten = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   insert.mockResolvedValue(undefined);
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }]);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ status: 'recorded', error: null }]);
   recordEntityModerationSuccess.mockResolvedValue(true);
   getModerationAdapter.mockReturnValue(undefined);
 });
@@ -126,7 +140,60 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
 
     expect(calledHybridNodes(['dbRead', 'dbWrite'])).toEqual(['dbWrite.$queryRaw']);
     const [sql] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[]];
-    expect(sql.join('?')).toContain('label_store.record_prediction');
+    expect(sql.join('?')).toContain('label_store.submit_predictions(');
+    // The keys submit_predictions reads. A misspelt required key refuses the item; a misspelt optional
+    // one is silently NULL.
+    expect(predictionKeys()).toEqual([
+      'subjectType',
+      'subjectId',
+      'contentHash',
+      'question',
+      'value',
+      'modelRef',
+      'sourceRef',
+      'predictedAt',
+      'questionVersion',
+      'confidence',
+      'scores',
+      'versions',
+      'inputHash',
+      'detail',
+    ]);
+    expect(predictionItem()).toMatchObject({
+      subjectId: '9001',
+      question: 'image.prompt_sexual',
+      value: 'sexual',
+      modelRef: 'xguard-prompt@p1',
+      sourceRef: 'ShadowSexualPrompt:wf-shadow',
+      confidence: 0.91,
+      inputHash: PROMPT_HASH,
+      scores: JSON.stringify({ sexual: 0.91 }),
+      versions: JSON.stringify({ policy: 'p1', threshold: 0.123 }),
+      detail: JSON.stringify({
+        field: 'Positive Prompt',
+        triggered: true,
+        onSite: false,
+        currentNsfwLevel: 1,
+        wouldNsfwLevel: 4,
+      }),
+      predictedAt: new Date('2026-11-03T02:00:00Z'),
+    });
+    const text = (sql as string[]).join('?');
+    expect(text).toMatch(/'subjectType', 'image',/);
+    expect(text).toMatch(/'contentHash', label_store\.text_hash\(i\."url"\),/);
+    expect(text).toMatch(/'questionVersion', 1,/);
+    // Exactly one line, and nothing from the prompt in it.
+    expect(loggingMock.logToAxiom.mock.calls).toEqual([
+      [
+        {
+          type: 'info',
+          name: 'shadow-sexual-prompt',
+          message: 'prediction submitted',
+          status: 'recorded',
+          workflowId: 'wf-shadow',
+        },
+      ],
+    ]);
     expect(predictionValues()).toEqual(
       expect.arrayContaining([
         'image.prompt_sexual',
@@ -201,6 +268,23 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('lock timeout'));
     expect(await deliver({ shadow: shadowMarker })).toBe(200);
     expect(insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs a prediction the label store refuses, and keeps the ClickHouse row', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ status: 'rejected', error: 'subject erased' }]);
+    expect(await deliver({ shadow: shadowMarker })).toBe(200);
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'shadow-sexual-prompt',
+        message: 'prediction rejected: subject erased',
+        imageId: 9001,
+      })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'info', status: 'rejected', workflowId: 'wf-shadow' })
+    );
   });
 
   it('keys on the marker, not on a missing entity: a marked workflow with an entity stays shadow', async () => {

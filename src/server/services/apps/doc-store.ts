@@ -47,6 +47,9 @@
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
+// A collection's declared `schema` it DOES check, on every document write (put and create;
+// counters and marks are not document bodies): `doc-store-schema.ts`.
+//
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
 // `kind: 'log'`, `maxEntries` and `dailyWritesPerAuthor`.
@@ -93,6 +96,7 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
+import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
 import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
@@ -1408,6 +1412,9 @@ function buildDocStore(deps: DocStoreDeps) {
       throw invalid('ifVersion must be a non-negative integer');
     }
     const json = serializeData(data);
+    // Here, not only in the REST layer, so that every write of a document body is checked
+    // whoever calls the store. `data` is the whole body the row will hold.
+    validateDocAgainstCollectionSchema(ctx, coll, data);
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];

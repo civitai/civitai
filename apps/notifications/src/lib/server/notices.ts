@@ -22,6 +22,7 @@ import { noticesChunkPauseMs, noticesDailyRecipientCeiling } from '../../env';
 const categoryByType: Record<SystemNoticeType, NotificationCategory> = {
   'system-message': NotificationCategory.Other,
   'system-announcement': NotificationCategory.System,
+  'event-reminder': NotificationCategory.System,
 };
 
 // Longer than the slowest call (50,000 per-user rows, paced); only reached if a call dies holding it.
@@ -48,10 +49,11 @@ export type NoticeCaller = { credential: 'notices-token'; actorUserId?: number }
 const dedupeKeyFor = (sendId: string) => `notice:${sendId}`;
 const userKeyFor = (sendId: string, userId: number) => `notice:${sendId}:${userId}`;
 
-function contentHash(input: Pick<SendSystemNoticesParsed, 'type' | 'message' | 'url'>) {
-  return createHash('sha256')
-    .update(JSON.stringify([input.type, input.message, input.url ?? null]))
-    .digest('hex');
+// title joins the hash only when set, so a send recorded before titles existed keeps its hash.
+function contentHash(input: Pick<SendSystemNoticesParsed, 'type' | 'message' | 'url' | 'title'>) {
+  const content: unknown[] = [input.type, input.message, input.url ?? null];
+  if (input.title !== undefined) content.push(input.title);
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
 
 // Every notif query goes through the write pool (the primary) as a standalone statement, so nothing
@@ -106,20 +108,22 @@ async function bucketRecipients(
     ).map((r) => r.userId)
   );
 
-  // On the primary, so replica lag cannot hide an earlier call's rows.
-  const dedupeKey = dedupeKeyFor(input.sendId);
+  // On the primary, so replica lag cannot hide an earlier call's rows. An excluded sendId may have
+  // used per-user keys whatever this call uses, so its per-user keys are always checked.
+  const excluded = (input.excludeSendIds ?? []).filter((id) => id !== input.sendId);
+  const perUserSendIds = [...(input.recipients ? [input.sendId] : []), ...excluded];
   const sent = new Set(
     (
       await notifRows<{ userId: number }>(
-        `SELECT "userId" FROM "UserNotification" WHERE "dedupeKey" = $1 AND "userId" = ANY($2::int[])
+        `SELECT "userId" FROM "UserNotification" WHERE "dedupeKey" = ANY($1::text[]) AND "userId" = ANY($2::int[])
          UNION
-         SELECT unnest(users) FROM "PendingNotification" WHERE "dedupeKey" = $1
+         SELECT unnest(users) FROM "PendingNotification" WHERE "dedupeKey" = ANY($1::text[])
          UNION
          SELECT split_part(key, ':', 3)::int FROM "Notification" WHERE key = ANY($3::text[])`,
         [
-          dedupeKey,
+          [input.sendId, ...excluded].map(dedupeKeyFor),
           userIds,
-          input.recipients ? userIds.map((id) => userKeyFor(input.sendId, id)) : [],
+          perUserSendIds.flatMap((sendId) => userIds.map((id) => userKeyFor(sendId, id))),
         ]
       )
     ).map((r) => Number(r.userId))
@@ -149,14 +153,17 @@ function buildRows(input: SendSystemNoticesParsed, queued: number[]): CreateNoti
     category: categoryByType[input.type],
     dedupeKey: dedupeKeyFor(input.sendId),
   };
-  const url = input.url ? { url: input.url } : {};
+  const extra = {
+    ...(input.url ? { url: input.url } : {}),
+    ...(input.title ? { title: input.title } : {}),
+  };
   if (input.recipients) {
     const paramsById = new Map(input.recipients.map((r) => [r.userId, r.params]));
     const perUser = queued.map((userId) => ({
       ...base,
       key: userKeyFor(input.sendId, userId),
       users: [userId],
-      details: { message: renderNoticeMessage(input.message, paramsById.get(userId)), ...url },
+      details: { message: renderNoticeMessage(input.message, paramsById.get(userId)), ...extra },
     }));
     return chunk(perUser, WRITE_CHUNK);
   }
@@ -167,7 +174,7 @@ function buildRows(input: SendSystemNoticesParsed, queued: number[]): CreateNoti
       ...base,
       key: dedupeKeyFor(input.sendId),
       users,
-      details: { message: input.message, ...url },
+      details: { message: input.message, ...extra },
     },
   ]);
 }
@@ -211,7 +218,7 @@ async function ensureSendRecord(
   if (existing?.contentHash !== hash) {
     throw new NoticeError(
       409,
-      'sendId was already used with a different type, message or url; pick a new sendId'
+      'sendId was already used with a different type, message, url or title; pick a new sendId'
     );
   }
 }

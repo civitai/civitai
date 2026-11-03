@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   APPS_STORE_DEFAULTS,
+  appsStoreCategoryHref,
   appsStoreFiltersToQuery,
   countActiveAppsStoreFilters,
   hasActiveAppsStoreFilters,
@@ -21,7 +22,7 @@ describe('parseAppsStoreFilters — a bare /apps', () => {
     expect(parseAppsStoreFilters({})).toEqual({
       kind: 'all',
       category: null,
-      sort: 'top-rated',
+      sort: 'popular',
       query: '',
     });
     expect(parseAppsStoreFilters({})).toEqual(APPS_STORE_DEFAULTS);
@@ -105,7 +106,7 @@ describe('resolveAppsStoreFilters — pure and deterministic', () => {
 describe('appsStoreFiltersToQuery — only NON-default filters reach the URL', () => {
   test('a default value serialises to undefined so removeEmpty strips it', () => {
     expect(appsStoreFiltersToQuery({ kind: 'all' })).toEqual({ kind: undefined });
-    expect(appsStoreFiltersToQuery({ sort: 'top-rated' })).toEqual({ sort: undefined });
+    expect(appsStoreFiltersToQuery({ sort: 'popular' })).toEqual({ sort: undefined });
     expect(appsStoreFiltersToQuery({ category: null })).toEqual({ category: undefined });
     expect(appsStoreFiltersToQuery({ query: '' })).toEqual({ query: undefined });
     expect(appsStoreFiltersToQuery({ query: '  ' })).toEqual({ query: undefined });
@@ -113,6 +114,7 @@ describe('appsStoreFiltersToQuery — only NON-default filters reach the URL', (
 
   test('a non-default value is written through', () => {
     expect(appsStoreFiltersToQuery({ kind: 'offsite' })).toEqual({ kind: 'offsite' });
+    expect(appsStoreFiltersToQuery({ sort: 'top-rated' })).toEqual({ sort: 'top-rated' });
     expect(appsStoreFiltersToQuery({ category: 'games' })).toEqual({ category: 'games' });
     expect(appsStoreFiltersToQuery({ sort: 'newest' })).toEqual({ sort: 'newest' });
     expect(appsStoreFiltersToQuery({ query: 'gen' })).toEqual({ query: 'gen' });
@@ -163,5 +165,31 @@ describe('hasActiveAppsStoreFilters — the empty state, DELIBERATELY broader', 
   test('a dropdown filter alone is enough', () => {
     expect(hasActiveAppsStoreFilters({ kind: 'offsite', category: null, query: '' })).toBe(true);
     expect(hasActiveAppsStoreFilters({ kind: 'all', category: 'other', query: '' })).toBe(true);
+  });
+});
+
+describe('appsStoreCategoryHref — the store filtered to one category', () => {
+  test('a known category → exactly `/apps?category=<value>` (literals, not re-derived)', () => {
+    expect(appsStoreCategoryHref('utility')).toBe('/apps?category=utility');
+    expect(appsStoreCategoryHref('games')).toBe('/apps?category=games');
+  });
+
+  test('the link READS BACK as that one filter and nothing else', () => {
+    // The relationship that makes it a working link: the store's own parser, fed the
+    // link's query string, lands on the category with every other filter at its default.
+    const href = appsStoreCategoryHref('generation')!;
+    const query = Object.fromEntries(new URL(href, 'https://x.invalid').searchParams);
+    expect(parseAppsStoreFilters(query)).toEqual({
+      ...APPS_STORE_DEFAULTS,
+      category: 'generation',
+    });
+  });
+
+  test('an unknown, empty or absent category → null (never a link to the unfiltered grid)', () => {
+    // Positive control above: a known value DOES produce an href.
+    expect(appsStoreCategoryHref('hats')).toBeNull();
+    expect(appsStoreCategoryHref('')).toBeNull();
+    expect(appsStoreCategoryHref(null)).toBeNull();
+    expect(appsStoreCategoryHref(undefined)).toBeNull();
   });
 });

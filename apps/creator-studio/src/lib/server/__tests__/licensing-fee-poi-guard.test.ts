@@ -408,6 +408,43 @@ describe('returning the slot when a fee is cleared', () => {
   });
 });
 
+// The spoke writes the fee with its own SQL, so the licence check has to hold here too.
+describe('licensing fee on a non-commercial base model', () => {
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base', 'Flux.3 Klein'])(
+    'refuses a fee on %s, and writes nothing',
+    async (baseModel) => {
+      state.rows = [version({ baseModel })];
+
+      const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: 400,
+        error: expect.stringContaining('non-commercial'),
+      });
+      expect(state.written).toEqual([]);
+    }
+  );
+
+  it('refuses a bulk fee when any selected version is on a 9B base', async () => {
+    state.rows = [version(), version({ id: 2, baseModel: 'Flux.2 Klein 9B' })];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2], 1, true);
+
+    expect(result.ok).toBe(false);
+    expect(state.written).toEqual([]);
+  });
+
+  it('allows the same fee on Flux.2 Klein 4B (control)', async () => {
+    state.rows = [version({ baseModel: 'Flux.2 Klein 4B' })];
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toEqual({ ok: true });
+    expect(state.written[0]).toMatchObject({ licensingFee: '1.00' });
+  });
+});
+
 // Creator Studio writes `licensingFee` with its own SQL and never reaches the main app, so the POI rule
 // #3903 enforces there has to be re-applied here or this spoke is a way around it. The non-POI cases are
 // the positive control: they prove the refusal is attributable to `poi` rather than to ownership or a

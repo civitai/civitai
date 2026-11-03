@@ -32,6 +32,22 @@
         "visibility": "shared",
         "write": "none",
         "counters": ["plays"]
+      },
+      "cards": {
+        "visibility": "private",
+        "schema": {
+          "type": "object",
+          "required": ["title"],
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "tags": {
+              "type": "array",
+              "maxItems": 3,
+              "items": { "enum": ["red", "green", "blue"] }
+            }
+          }
+        }
       }
     }
   },
@@ -764,6 +780,130 @@
           "expect": {
             "status": 404,
             "code": "not_found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a collection schema: every document write must match it; counters and marks are not document bodies",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/cards/c1",
+          "body": {
+            "data": {
+              "title": "Lantern",
+              "tags": ["red"]
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "key": "c1",
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/cards/c1",
+          "body": {
+            "data": {
+              "title": "Lantern",
+              "tags": ["red", "mauve"]
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "schema_violation",
+            "body": {
+              "message": "document does not match the schema of collection cards at \"/tags/1\": must be one of the schema's enum values",
+              "details": {
+                "collection": "cards",
+                "pointer": "/tags/1",
+                "keyword": "enum"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/cards/c1",
+          "body": {
+            "data": {
+              "tags": ["red"]
+            },
+            "ifVersion": 1
+          },
+          "expect": {
+            "status": 400,
+            "code": "schema_violation",
+            "body": {
+              "message": "document does not match the schema of collection cards at \"/title\": is required",
+              "details": {
+                "collection": "cards",
+                "pointer": "/title",
+                "keyword": "required"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/cards",
+          "body": {
+            "data": {
+              "title": "Kite",
+              "color": "red"
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "schema_violation",
+            "body": {
+              "message": "document does not match the schema of collection cards at \"/color\": is not a property the schema allows",
+              "details": {
+                "collection": "cards",
+                "pointer": "/color",
+                "keyword": "additionalProperties"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/cards/c1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1,
+              "data": {
+                "title": "Lantern",
+                "tags": ["red"]
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/p1",
+          "body": {
+            "data": {
+              "title": 7,
+              "color": "mauve"
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1
+            }
           }
         }
       ]

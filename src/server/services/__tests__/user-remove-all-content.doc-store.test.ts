@@ -286,6 +286,7 @@ describe('removeAllContent → document store', () => {
         userId,
         namespaces: [],
         failures: [{ appId: app, ns: NS_PROD, error: 'lock timeout' }],
+        stopped: false,
       }),
     };
     await expect(removeAllContent({ id: TARGET })).resolves.toEqual({

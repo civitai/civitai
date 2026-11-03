@@ -56,3 +56,9 @@ export const placeableContentPageSchema = eventSchema.extend({
 
 export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
 export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });
+
+export type ShowcaseHatInput = z.infer<typeof showcaseHatSchema>;
+// null clears the pick, so the avatar shows the default hat again.
+export const showcaseHatSchema = eventSchema.extend({
+  cosmeticId: z.number().int().positive().nullable(),
+});

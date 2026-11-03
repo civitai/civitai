@@ -21,6 +21,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { notifyPostFloorRaises } from '~/server/services/text-scan/post-floor-notice';
 
 // Postgres caps a prepared statement at 32767 bind variables, and an `in` list
 // spends one per id. A backlogged JobQueue easily exceeds that, which fails the
@@ -276,7 +277,9 @@ export async function updateNsfwLevels({
   comicProjectIds?: number[];
   model3dIds?: number[];
 }) {
-  const updatePosts = batcher(postIds, updatePostNsfwLevels);
+  const updatePosts = batcher(postIds, async (ids) =>
+    notifyPostFloorRaises(await updatePostNsfwLevels(ids))
+  );
   const updateArticles = batcher(articleIds, updateArticleNsfwLevels);
   const updateBounties = batcher(bountyIds, updateBountyNsfwLevels);
   const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
@@ -312,12 +315,16 @@ export async function updateNsfwLevels({
   }
 }
 
-export async function updatePostNsfwLevels(postIds: number[]) {
-  if (!postIds.length) return;
-  await dbWrite.$queryRaw(Prisma.sql`
+export type PostNsfwLevelChange = { id: number; before: number; after: number };
+
+/** Returns the posts whose level changed. */
+export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwLevelChange[]> {
+  if (!postIds.length) return [];
+  return dbWrite.$queryRaw<PostNsfwLevelChange[]>(Prisma.sql`
     WITH next AS (
       SELECT
         p.id,
+        p."nsfwLevel" "before",
         COALESCE(p."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql('Post', 'p')}) "nsfwLevel"
       FROM "Post" p
       WHERE p.id IN (${Prisma.join(postIds)})
@@ -326,7 +333,8 @@ export async function updatePostNsfwLevels(postIds: number[]) {
     UPDATE "Post" p
     SET "nsfwLevel" = next."nsfwLevel"
     FROM next
-    WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel";
+    WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"
+    RETURNING p.id, next."before", p."nsfwLevel" "after";
   `);
 }
 

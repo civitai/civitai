@@ -200,8 +200,6 @@ const SCHEDULED_GIVEN_BY_HELD = 7911;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
-  'Answer',
-  'Question',
   'ResourceReview',
   'CommentV2',
   'Comment',
@@ -211,6 +209,8 @@ const EVIDENCE = [
   'ChatMessage',
   'ChatMember',
 ];
+// Kept as data with no code for them: the wipe leaves these rows alone.
+const QA_DATA = ['Question', 'Answer'];
 
 /** Runs just before the delete from `landsBefore`: a hold landing after the check. */
 let beforeEvidence: (() => Promise<unknown>) | null = null;
@@ -240,9 +240,9 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text
     );
-    ${EVIDENCE.map(
-      (t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`
-    ).join('\n')}
+    ${[...EVIDENCE, ...QA_DATA]
+      .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
+      .join('\n')}
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
     ALTER TABLE "BountyBenefactor" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
     ALTER TABLE "BountyEntry" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
@@ -286,8 +286,6 @@ beforeAll(async () => {
       "articleId" int REFERENCES "Article"(id) ON DELETE CASCADE,
       "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE,
       "bountyEntryId" int REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
-      "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE,
-      "answerId" int REFERENCES "Answer"(id) ON DELETE CASCADE,
       "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "commentId" int,
@@ -364,8 +362,8 @@ beforeEach(async () => {
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
       "CommentV3", "CommentV3Report", "CommentV3Reaction", "CommentTopic",
-      "ModActivity", "BountyUnpaidAward", "HeldResourceReview", "HeldAnswer",
-      ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
+      "ModActivity", "BountyUnpaidAward", "HeldResourceReview",
+      ${[...EVIDENCE, ...QA_DATA].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
     ALTER SEQUENCE "Model_id_seq" RESTART ${MODEL};
@@ -376,10 +374,12 @@ beforeEach(async () => {
       (${CLEAN * 100}, ${CLEAN}, 1), (${CLEAN * 100 + 1}, ${CLEAN}, 1),
       (${HELD * 100}, ${HELD}, NULL), (${MARKED * 100}, ${MARKED}, NULL),
       (${BYSTANDER * 100}, ${BYSTANDER}, NULL);
-    ${EVIDENCE.map(
-      (t) =>
-        `INSERT INTO "${t}" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});`
-    ).join('\n')}
+    ${[...EVIDENCE, ...QA_DATA]
+      .map(
+        (t) =>
+          `INSERT INTO "${t}" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});`
+      )
+      .join('\n')}
   `);
 
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
@@ -528,6 +528,10 @@ describe('removeAllContent', () => {
 
     expect(await remaining(CLEAN)).toEqual(all(0));
     expect(await remaining(BYSTANDER)).toEqual(all(1));
+    for (const t of QA_DATA) {
+      const left = await holder.db.query(`SELECT 1 FROM "${t}" WHERE "userId" = ${CLEAN}`);
+      expect(left.rows, t).toHaveLength(1);
+    }
     expect(dropped()).toEqual({
       models: [MODEL],
       images: [CLEAN * 100, CLEAN * 100 + 1],
@@ -784,23 +788,6 @@ describe('removeAllContent', () => {
       ).toEqual([{ userId: HELD, modelId: MODEL, details: 'held', holdReasons: ['report'] }]);
     });
 
-    it('copies a held author’s answer to its question, and not a bystander’s', async () => {
-      const [{ id: question }] = (await rows(
-        `SELECT id FROM "Question" WHERE "userId" = ${CLEAN}`
-      )) as { id: number }[];
-      await holder.db.exec(`
-        INSERT INTO "Answer" ("userId", "questionId", content) VALUES
-          (${HELD}, ${question}, 'held'), (${BYSTANDER}, ${question}, 'bystander');
-      `);
-
-      await removeAllContent({ id: CLEAN });
-
-      expect(await rows(`SELECT id FROM "Answer" WHERE "questionId" = ${question}`)).toEqual([]);
-      expect(
-        await rows(`SELECT "userId", "questionId", content, "holdReasons" FROM "HeldAnswer"`)
-      ).toEqual([{ userId: HELD, questionId: question, content: 'held', holdReasons: ['report'] }]);
-    });
-
     it('keeps, hidden, a bounty a held author entered, and deletes one only a bystander entered', async () => {
       const [{ id: bystanders }] = (await rows(
         `INSERT INTO "Bounty" ("userId") VALUES (${CLEAN}) RETURNING id`
@@ -842,7 +829,7 @@ describe('removeAllContent', () => {
       await holder.db.exec(
         `INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES (${HELD}, ${BOUNTY})`
       );
-      landsBefore = 'Answer';
+      landsBefore = 'ResourceReview';
       beforeEvidence = () =>
         holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
 
@@ -2022,7 +2009,12 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
   });
 
   it.each([
-    ['after it was hidden, leaves it hidden and out of search', 'Answer', RECORD, 'Private'],
+    [
+      'after it was hidden, leaves it hidden and out of search',
+      'ResourceReview',
+      RECORD,
+      'Private',
+    ],
     ['before it was hidden, leaves it as it was', 'Bounty', null, 'Public'],
   ])('a hold landing mid-wipe %s', async (_, before, meta, availability) => {
     landsBefore = before;

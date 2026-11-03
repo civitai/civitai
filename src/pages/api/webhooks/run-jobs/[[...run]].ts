@@ -20,6 +20,7 @@ import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
 import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
@@ -85,6 +86,7 @@ import {
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
 } from '~/server/jobs/event-engine-work';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
@@ -228,6 +230,7 @@ export const jobs: Job[] = [
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -265,6 +268,7 @@ export const jobs: Job[] = [
   linkedAccountReview,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  bluePaidAccessDetection,
   creatorProgramCounterpartyReview,
   creatorProgramPrepayoutReview,
   giftMembershipArming,

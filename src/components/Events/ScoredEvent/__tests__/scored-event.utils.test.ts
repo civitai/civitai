@@ -4,6 +4,7 @@ import {
   coverRequestWidth,
   defaultPlaceableTab,
   describeEntityTypes,
+  hourlySeries,
   minutesUntilMovable,
   placeableTabCount,
   teamPositionsOverTime,
@@ -252,5 +253,19 @@ describe('buildStandingsSeries', () => {
     });
     expect(byTeam(series, 'Yellow')).toHaveLength(2);
     expect(byTeam(series, 'Pink')).toHaveLength(2);
+  });
+});
+
+describe('hourlySeries', () => {
+  it('places each value at its hour and keeps an unsettled hour as a gap, not a zero', () => {
+    const start = new Date('2026-11-01T00:00:00.000Z');
+    const [blue] = hourlySeries({ start, teams: [{ team: 'Blue', points: [3, null, 0, 5] }] });
+    const hour = (h: number) => start.getTime() + h * 60 * 60 * 1000;
+    expect(blue.points).toEqual([
+      { x: hour(0), y: 3 },
+      { x: hour(1), y: null },
+      { x: hour(2), y: 0 },
+      { x: hour(3), y: 5 },
+    ]);
   });
 });

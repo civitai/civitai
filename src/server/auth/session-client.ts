@@ -17,12 +17,6 @@ import {
   observeSessionRollFailed,
 } from './session-metrics';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  FLIPT_FEATURE_FLAGS,
-  ensureFliptInitialized,
-  getFliptClientSync,
-  isFliptSync,
-} from '~/server/flipt/client';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
 // Validation routes through this client (getHubSession) instead of next-auth's jwt()/session(); refresh +
@@ -44,19 +38,7 @@ export const sessionClient = createSessionClient({
     observeSessionLeg('identity-by-id', outcome, durationSeconds),
   onHubWriteLeg: (outcome, durationSeconds) =>
     observeSessionLeg('hub-write', outcome, durationSeconds),
-  // Per-process cache of signature verifications, behind AUTH_VERIFIED_CLAIMS_CACHE (created off). A hit skips
-  // only jwtVerify; expiry is still enforced and `isRevoked` above still runs on every call. Read with
-  // isFliptSync and no entity id: one cached global evaluation, no await, and an unwarmed client reads off.
-  claimsCache: { enabled: isVerifiedClaimsCacheOn },
 });
-
-export function isVerifiedClaimsCacheOn(): boolean {
-  const on = isFliptSync(FLIPT_FEATURE_FLAGS.AUTH_VERIFIED_CLAIMS_CACHE);
-  // An uninitialised client reads off. Start its initialisation, so a process whose other paths never warm
-  // Flipt does not read off for good (which would make turning the flag on do nothing there).
-  if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
-  return on === true;
-}
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
 const sessionTokenClient = createSessionTokenClient();
 

@@ -7,6 +7,7 @@ import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectio
 import type { MyHat } from '~/components/Events/ScoredEvent/MyHatCard';
 import { MyHatCard } from '~/components/Events/ScoredEvent/MyHatCard';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
+import { ShowcaseHatButton } from '~/components/Events/ScoredEvent/ShowcaseHatPicker';
 import { minutesUntilMovable } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
 import { useEventMysteryBoxes } from '~/components/MysteryBox/useEventMysteryBoxes';
@@ -68,7 +69,9 @@ export function MyEventHats({
             points for your team
           </>
         }
-      />
+      >
+        {!ended && <ShowcaseHatButton event={event} color={teamColor} />}
+      </EventSectionHeading>
 
       {idleHat && (
         <Paper

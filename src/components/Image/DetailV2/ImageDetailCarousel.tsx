@@ -2,6 +2,8 @@ import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
+import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
+import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
@@ -380,6 +382,7 @@ function ImageContent({
             embla={embla}
           />
           {safe && <ImageStickerOverlay imageId={image.id} />}
+          {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>

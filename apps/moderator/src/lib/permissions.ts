@@ -66,6 +66,9 @@ export const PERMISSIONS = [
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
   },
+  // Money: free days on a member's Stripe subscription. The main app checks this literal
+  // (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.membership.extend', label: 'Extend a member’s Stripe membership by free days' },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.

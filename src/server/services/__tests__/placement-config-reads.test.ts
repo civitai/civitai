@@ -13,10 +13,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 const configRead = dbMock.dbRead.keyValue.findUnique;
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The Kysely placement reads these paths make. Their rows, against a real database, are pinned in
+// placement-reads.kysely-parity.test.ts.
+const placementReads = vi.hoisted(() => ({
+  getImagePlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+  getUserPlacementScore: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier: async () => null,
@@ -66,21 +71,22 @@ const target = {
 beforeEach(() => {
   vi.clearAllMocks();
   configRead.mockResolvedValue({ value: STORED });
-  dbMock.dbWrite.image.findUnique.mockResolvedValue({
+  placementReads.getImagePlacementTarget.mockResolvedValue({
     id: HOST_IMAGE,
     userId: OWNER,
     postId: null,
-    user: { username: 'host-owner' },
+    type: 'image',
+    username: 'host-owner',
   });
   // Priced above the cap and offering more free slots than the cap, so both
   // config-derived ceilings are what the result shows.
-  dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([
+  placementReads.listPlacementSpacesFor.mockResolvedValue([
     { entityType: 'user', mode: 'review', price: 450, freeSlots: 5, settings: {} },
   ]);
-  dbMock.dbRead.placement.count.mockResolvedValue(1);
+  placementReads.countPlacements.mockResolvedValue(1);
+  placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'host-owner' });
-  // One row answering every raw read on these paths: the creator score, the
-  // has-entries probe and the host image.
+  // One row answering every raw read on these paths: the has-entries probe and the host image.
   dbMock.dbRead.$queryRaw.mockResolvedValue([
     { score: 0, exists: false, count: 0, nsfwLevel: 1, minor: false, showable: true },
   ]);
@@ -139,7 +145,7 @@ describe('placement config reads per call', () => {
   });
 
   it('quotes no decline fee on an unpriced gallery', async () => {
-    dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([
+    placementReads.listPlacementSpacesFor.mockResolvedValue([
       { entityType: 'user', mode: 'off', price: null, freeSlots: null, settings: {} },
     ]);
     const original = PLACEMENT_SURFACES.remixGallery.defaultPrice;

@@ -273,7 +273,8 @@ describe('getMyRemovedImages', () => {
   // in for it by reading the filters off the query it is sent.
   const serve = (rows: { imageId: number; removedAt: number; reason: string | null }[]) =>
     chQuery.mockImplementation(async ({ query, query_params }) => {
-      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      const excluded: string[] =
+        (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
       expect(Number.isInteger(query_params.windowStart)).toBe(true);
       // Applied only when the SQL carries the clause, so dropping it from the query fails a test.
       const start = query.includes('removedAt > {windowStart:Int64}')

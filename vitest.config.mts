@@ -521,6 +521,7 @@ const browserModeOptions = () => ({
 /** Everything a browser project needs outside its own `test` block. */
 const browserProjectShell = () => ({
   resolve: { ...browserResolve },
+  css: { postcss: path.resolve(__dirname, 'test/browser-postcss') },
   plugins: [componentGroupOrderPlugin],
   optimizeDeps: { ...browserOptimizeDeps },
 });
@@ -537,6 +538,7 @@ const browserProjectShell = () => ({
  */
 const browserTestShell = () => ({
   maxWorkers: componentMaxWorkers,
+  globalSetup: ['test/browser-global-setup.mjs'],
   // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
   // which serialises the browser projects against the node ones instead of interleaving
   // them; CI and every script select one project at a time.

@@ -30,7 +30,6 @@ const disallowPaths = [
   '/research/*',
   '/claim/*',
   '/collections/youtube/auth',
-  '/questions/*',
 ];
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {

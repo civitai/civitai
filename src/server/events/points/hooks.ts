@@ -2,8 +2,8 @@
 // they never throw and are never awaited, so a points failure cannot fail or slow the reaction,
 // comment, approval or tracking request it rides on.
 //
-// Every award and removal is gated on `isHattedEntity`, an in-memory check, so content without an
-// event hat costs nothing past that check. The one exception is a comment reply or a deleted
+// Every award and removal is gated on `isHattedEntity`, an in-memory check (true for a hat or a Hat
+// Turf leader), so content that earns nothing costs nothing past that check. The one exception is a comment reply or a deleted
 // comment, whose thread must be read to learn which Image or Article it belongs to.
 //
 // Each action carries `time`, taken synchronously at the write site, so two quick opposite writes
@@ -21,6 +21,7 @@ import { dbWrite } from '~/server/db/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import {
   awardEventPoints,
+  hasTurfMark,
   isHattedEntity,
   isHattedEntityOnceLoaded,
   removeEventPoints,
@@ -115,7 +116,12 @@ async function removeIfLast(
     Pick<EventPointAction, 'time'>,
   stillHas: () => Promise<number>
 ) {
-  if (!(await isHattedEntityOnceLoaded(action.entityType, action.entityId))) return;
+  // A turf lead can end between the add and its removal; the earned mark still finds it.
+  if (
+    !(await isHattedEntityOnceLoaded(action.entityType, action.entityId)) &&
+    !(await hasTurfMark(action))
+  )
+    return;
   if ((await stillHas()) > 0) return;
   await removeEventPoints([action]);
 }

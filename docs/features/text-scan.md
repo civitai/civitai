@@ -108,6 +108,9 @@ changes while scheduled or published; a draft's edits are not scanned. A draft k
 its last scan, including after an unschedule, until it is scheduled or published again: that scan
 reads its current text, and the old floor holds until the new verdict lands. Unchanged text is not
 rescanned.
+A post whose images are not rated yet stays unrated whatever the verdict. Its floor takes effect when
+the post is first rated, and that recompute sends the rating notice if the floor raised the post
+above what its images give alone. A post with a moderator rating gets no notice.
 A refused `ImageCaption` is only hidden from readers: its author is not notified, there is no
 appeal, and a clean scan of the caption's current text lets it back.
 

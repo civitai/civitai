@@ -414,6 +414,12 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   string,
   { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
 > = {
+  // A team hat sticker on someone's image: any visible image in a published post is a target by
+  // design, and placeTurfSticker checks that before the write.
+  'src/server/events/turf/turf.service.ts#placeTurfSticker': {
+    writes: ['imageId'],
+    decision: 'subject',
+  },
   // Called from the daily-challenge jobs, and from upsertUserChallenge with its resolved cover.
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeRecord': {
     writes: ['coverImageId: input.coverImageId'],

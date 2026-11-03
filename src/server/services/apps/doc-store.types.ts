@@ -135,10 +135,16 @@ export type DocStoreErrorCode =
   | 'sign_in_required'
   | 'insufficient_scope'
   | 'consent_required'
+  /** A collection call named another app (`from`) that the caller's manifest does not import. */
+  | 'import_not_declared'
+  /** The source app's collection is declared `exportable: false`. */
+  | 'not_exportable'
   | 'not_eligible'
   | 'not_author'
   | 'write_policy'
   | 'resource_not_owned'
+  /** A document body does not match its collection's declared `schema` (`doc-store-schema.ts`). */
+  | 'schema_violation'
   | 'not_found'
   | 'collection_not_declared'
   | 'version_conflict'
