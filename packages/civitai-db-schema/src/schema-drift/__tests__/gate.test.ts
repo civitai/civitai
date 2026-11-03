@@ -743,6 +743,50 @@ describe('baseline reasons', () => {
       expect(result.problems).toEqual([expect.stringMatching(/^--reason is a placeholder/)]);
     });
 
+    // A finding accepted as `pending` ("the column does not exist yet") that comes back
+    // `enforced` is a different acceptance: the reason it was accepted for is no longer true.
+    // Carrying the old reason would absorb a blocking escalation with no --reason at all.
+    describe('a tier change is a new acceptance', () => {
+      const fk = committed.entries.find((e) => e.kind === 'missing-foreign-key');
+      const oldReason = 'accepted while the column did not exist yet, pending its migration';
+      const previous = {
+        entries: fk ? [{ ...fk, tier: 'pending' as const, reason: oldReason, ref: '#11' }] : [],
+      };
+      const escalated = {
+        catalog: committed.catalog,
+        entries: fk ? [{ ...findingOf(fk), tier: 'enforced' as const }] : [],
+      };
+
+      it('refuses a pending -> enforced entry without --reason, and says it rose', () => {
+        expect(fk).toBeDefined();
+        const result = acceptIntoBaseline(previous, escalated, {});
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.needReason.map((e) => e.fingerprint)).toEqual([fk?.fingerprint]);
+        expect(result.problems).toContainEqual(
+          expect.stringMatching(/rose from pending to enforced/)
+        );
+      });
+
+      it('records the new --reason and --ref on a pending -> enforced entry', () => {
+        expect(fk).toBeDefined();
+        const result = acceptIntoBaseline(previous, escalated, {
+          reason: 'the column landed without its constraint and that is accepted for now',
+          ref: '#12',
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.carried).toBe(0);
+        expect(result.accepted.map((e) => e.fingerprint)).toEqual([fk?.fingerprint]);
+        expect(result.baseline.entries).toHaveLength(1);
+        expect(result.baseline.entries[0]).toMatchObject({
+          tier: 'enforced',
+          reason: 'the column landed without its constraint and that is accepted for now',
+          ref: '#12',
+        });
+      });
+    });
+
     it('treats a missing previous baseline as every entry being new', () => {
       expect(acceptIntoBaseline(null, candidate, {}).ok).toBe(false);
     });

@@ -234,6 +234,45 @@ describe('extractMigrationTables — the forms it refuses to guess at', () => {
     ]);
   });
 
+  // A statement-level CASCADE on a statement that would otherwise be IGNORED. `DROP TYPE x
+  // CASCADE` drops every column of that type, on tables the statement does not name, so it is
+  // exactly the "touches no table" answer the module comment promises never to give. The check
+  // has to run before the ignorable list, not after it.
+  it.each([
+    ['DROP TYPE ... CASCADE', 'DROP TYPE "X" CASCADE;'],
+    ['lowercase drop type if exists ... cascade', 'drop type if exists s cascade'],
+    ['DROP DOMAIN ... CASCADE', 'DROP DOMAIN d CASCADE'],
+    ['DROP EXTENSION ... CASCADE', 'DROP EXTENSION vector CASCADE'],
+  ])('a CASCADE on an otherwise-ignorable statement is refused: %s', (_label, sql) => {
+    const result = extractMigrationTables(sql);
+    expect(result.ignored).toEqual([]);
+    expect(result.touched).toEqual([]);
+    expect(result.unparsed).toHaveLength(1);
+    expect(result.unparsed[0].reason).toMatch(/^CASCADE also changes objects/);
+  });
+
+  // Control for the cases above: without CASCADE the same statements are still ignored, so
+  // what refuses them is the CASCADE and not some other rule.
+  it.each(['DROP TYPE "X";', 'drop type if exists s', 'DROP DOMAIN d', 'DROP EXTENSION vector'])(
+    'without CASCADE, %s is still ignored',
+    (sql) => {
+      const result = extractMigrationTables(sql);
+      expect(result.unparsed).toEqual([]);
+      expect(result.ignored).toHaveLength(1);
+    }
+  );
+
+  it('ON DELETE CASCADE alone, with a quoted referenced column, still classifies', () => {
+    expect(
+      tablesOf(
+        'ALTER TABLE "A" ADD CONSTRAINT f FOREIGN KEY ("b") REFERENCES "B"("id") ON DELETE CASCADE'
+      )
+    ).toEqual([
+      ['A', 'present'],
+      ['B', 'present'],
+    ]);
+  });
+
   it('names the quoted identifiers an unparsed statement mentions, as a hint', () => {
     const [u] = refused('DO $$ BEGIN ALTER TABLE "Placement" VALIDATE CONSTRAINT "c"; END $$;');
     expect(u.mentions).toEqual(['Placement', 'c']);
