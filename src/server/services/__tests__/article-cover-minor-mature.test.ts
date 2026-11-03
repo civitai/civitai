@@ -41,13 +41,13 @@ const MOD = 30;
 const COVER = 500;
 const OTHER_IMAGE_OWNER = 40;
 
-const viewers = {
+type Viewer = { id: number; isModerator?: boolean } | undefined;
+const viewers: Record<string, Viewer> = {
   'a signed-out viewer': undefined,
   'a stranger': { id: STRANGER },
   'the owner': { id: OWNER },
   'a moderator': { id: MOD, isModerator: true },
 };
-type Viewer = (typeof viewers)[keyof typeof viewers];
 
 const cover = (nsfwLevel: number, minor: boolean | null, imageOwner = OWNER) => ({
   id: COVER,
