@@ -90,9 +90,16 @@ import {
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import {
-  MAX_GENERATION_TEXT_CHARS,
+  EXCLUDED_FILES_NOTICE,
+  MAX_GENERATION_LINE_CHARS,
   TRUNCATION_MARKER,
 } from '~/server/services/generator-evidence/evidence-payload';
+import {
+  excludeGeneratorEvidenceFile,
+  recopyGeneratorEvidenceFile,
+} from '~/server/services/generator-evidence/generator-evidence.service';
+import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
+import { buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { createHash } from 'crypto';
 
@@ -217,7 +224,13 @@ beforeEach(() => {
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
   submitReport.mockReset().mockResolvedValue({ data: { reportId: 900 } });
-  submitFileDetails.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
+  // As NCMEC answers: details that are not well-formed XML are refused.
+  submitFileDetails.mockReset().mockImplementation(async (details) => {
+    const xml = buildSubmitFileDetails(details);
+    if (/[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u.test(xml))
+      throw new Error('synthetic NCMEC refusal: not well-formed');
+    return { data: { responseCode: 0 } };
+  });
   readEvidenceObject
     .mockReset()
     .mockImplementation(async () => ({ bytes: new Uint8Array(stored) }));
@@ -425,17 +438,16 @@ describe('sending a report of preserved generator evidence', () => {
       );
   });
 
-  it('cuts a prompt past the limit and says the full text is preserved', async () => {
+  it('cuts a prompt past the limit within the limit, and says the full text is preserved', async () => {
     const details = evidenceDetails();
-    const long = 'p'.repeat(MAX_GENERATION_TEXT_CHARS + 50);
+    const long = 'p'.repeat(MAX_GENERATION_LINE_CHARS + 50);
     details.generatedImages[0].prompt = long;
 
     await sendEvidenceReport(details);
 
     const [promptLine, ...rest] = detailsFor(OUTPUT).additionalInfo[1].split('\n');
-    expect(promptLine).toBe(
-      `Prompt: ${'p'.repeat(MAX_GENERATION_TEXT_CHARS)}… ${TRUNCATION_MARKER}`
-    );
+    expect(promptLine).toMatch(/^Prompt: p+… \[truncated; full text preserved\]$/);
+    expect([...promptLine]).toHaveLength(MAX_GENERATION_LINE_CHARS);
     expect(TRUNCATION_MARKER).toContain('truncated; full text preserved');
     expect(rest).toEqual([
       'Negative prompt: the negative text',
@@ -545,5 +557,159 @@ describe('a preserved-evidence report left waiting for approval', () => {
       CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS * 3_600_000 - 1000
     );
     expect(overdueLines()).toEqual([expect.objectContaining({ reportId: 1, type: 'error' })]);
+  });
+});
+
+describe('free text NCMEC cannot carry as XML', () => {
+  it('sends a prompt whose cut falls inside an emoji, cut on whole characters', async () => {
+    const details = evidenceDetails();
+    details.generatedImages[0].prompt = 'p' + '\u{1F600}'.repeat(MAX_GENERATION_LINE_CHARS);
+
+    const id = await sendEvidenceReport(details);
+
+    expect((await readRow(id)).reportSentAt).not.toBeNull();
+    const [promptLine] = detailsFor(OUTPUT).additionalInfo[1].split('\n');
+    expect([...promptLine].length).toBeLessThanOrEqual(MAX_GENERATION_LINE_CHARS);
+    expect(promptLine.endsWith(TRUNCATION_MARKER)).toBe(true);
+  });
+
+  it('sends a prompt holding a control character, which is replaced in every field', async () => {
+    const details = evidenceDetails();
+    details.generatedImages[0].prompt = 'before\u0008after';
+
+    const id = await sendEvidenceReport(details);
+
+    expect((await readRow(id)).reportSentAt).not.toBeNull();
+    expect(detailsFor(OUTPUT).additionalInfo[1]).toContain('Prompt: before\uFFFDafter');
+    expect(detailsFor(OUTPUT).details[0].valuePair[0].value).toBe('before\uFFFDafter');
+  });
+});
+
+describe('a file a moderator excluded', () => {
+  const excluded = {
+    reason: 'damaged copy',
+    byId: 10,
+    at: '2026-11-02T00:00:00Z',
+    status: 'preserved',
+  };
+
+  it('tells NCMEC only that more content is preserved, and nothing when no file is excluded', async () => {
+    await sendEvidenceReport(evidenceDetails());
+    expect(submitReport.mock.calls[0][0].additionalInfo ?? '').not.toContain(EXCLUDED_FILES_NOTICE);
+
+    submitReport.mockClear();
+    const details = evidenceDetails();
+    Object.assign(details.generatedImages[0].blobs[0], { status: 'excluded', excluded });
+    await sendEvidenceReport(details);
+
+    const info: string = submitReport.mock.calls[0][0].additionalInfo;
+    expect(info.split('\n')).toContain(
+      'Civitai has preserved additional content from this account and will provide it on lawful request.'
+    );
+    expect(info).not.toContain('damaged copy');
+  });
+
+  it('is not sent even where another workflow names the same file as preserved', async () => {
+    const details = evidenceDetails();
+    const [job] = details.generatedImages;
+    details.generatedImages.push({
+      ...job,
+      jobId: '20-20261102000000000000',
+      workflowId: '20-20261102000000000000',
+      blobs: [{ ...job.blobs[0] }],
+    });
+    Object.assign(job.blobs[0], { status: 'excluded', excluded });
+
+    await sendEvidenceReport(details);
+
+    expect(submitFileDetails.mock.calls.map(([d]) => d.originalFileName)).toEqual([INPUT]);
+  });
+
+  describe('changing a file of a report that is sent or being sent', () => {
+    const config = {
+      base: 'https://orchestrator.example.invalid',
+      origin: 'https://orchestrator.example.invalid',
+      token: 'test-token',
+    };
+    const objects = new Map<string, Buffer>();
+    const store: EvidenceStore = {
+      read: async (key) => new Uint8Array(objects.get(key) ?? Buffer.alloc(0)),
+      upload: async (key, body) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of body) chunks.push(Buffer.from(chunk));
+        objects.set(key, Buffer.concat(chunks));
+      },
+      head: async (key) => (objects.has(key) ? { bytes: objects.get(key)!.length } : null),
+      sha256: async (key) =>
+        createHash('sha256')
+          .update(objects.get(key) ?? Buffer.alloc(0))
+          .digest('hex'),
+    };
+    // The send fakes read Prisma's JSON-path filter as plain equality; the report's id is enough here.
+    const findById = async ({ where }: { where: Record<string, unknown> }) => {
+      const { details: _details, type: _type, ...rest } = where;
+      const params: unknown[] = [];
+      const { rows } = await db.pg.query(
+        `SELECT * FROM "CsamReport" WHERE ${whereSql(rest, params)} LIMIT 1`,
+        params
+      );
+      return rows[0] ?? null;
+    };
+
+    async function seedReport(state: 'unsent' | 'sent' | 'claimed') {
+      const { rows } = await db.pg.query<{ id: number }>(
+        `INSERT INTO "CsamReport" ("userId", "reportedById", "type", "details", "reportSentAt", "sendClaimId", "sendClaimedAt")
+         VALUES (20, 10, 'GeneratedImage', $1::jsonb, $2, $3, $4) RETURNING id`,
+        [
+          JSON.stringify(evidenceDetails()),
+          state === 'sent' ? new Date() : null,
+          state === 'claimed' ? '00000000-0000-4000-8000-000000000001' : null,
+          state === 'claimed' ? new Date() : null,
+        ]
+      );
+      return rows[0].id;
+    }
+    const outputStatus = async (id: number) =>
+      ((await readRow(id)).details as ReturnType<typeof evidenceDetails>).generatedImages[0]
+        .blobs[0].status;
+
+    beforeEach(() => {
+      dbMock.dbWrite.csamReport.findFirst.mockImplementation(findById as never);
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.startsWith('/v2/consumer/blobs/content/'))
+          return new Response(stored, { status: 200, headers: { 'content-type': 'image/png' } });
+        return new Response(null, {
+          status: 308,
+          headers: { location: '/v2/consumer/blobs/content/token' },
+        });
+      });
+    });
+
+    it('changes an unsent, unclaimed report (control)', async () => {
+      const id = await seedReport('unsent');
+      await excludeGeneratorEvidenceFile({
+        reportId: id,
+        userId: 20,
+        moderatorId: 10,
+        blobId: OUTPUT,
+        reason: 'damaged copy',
+      });
+      expect(await outputStatus(id)).toBe('excluded');
+    });
+
+    for (const state of ['sent', 'claimed'] as const)
+      it(`refuses to exclude or re-copy a file of a ${state} report`, async () => {
+        const id = await seedReport(state);
+        const file = { reportId: id, userId: 20, moderatorId: 10, blobId: OUTPUT };
+
+        await expect(
+          excludeGeneratorEvidenceFile({ ...file, reason: 'damaged copy' })
+        ).rejects.toMatchObject({ code: 'CONFLICT' });
+        await expect(recopyGeneratorEvidenceFile(file, { config, store })).rejects.toMatchObject({
+          code: 'CONFLICT',
+        });
+        expect(await outputStatus(id)).toBe('preserved');
+      });
   });
 });

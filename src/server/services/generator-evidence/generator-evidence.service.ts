@@ -502,28 +502,35 @@ export async function recopyGeneratorEvidenceFile(
   });
   if (fresh.status !== 'preserved') return { status: fresh.status, reason: fresh.reason };
 
-  const { version } = await changeEvidenceFile(input, (current) => ({
-    ...current,
-    status: 'preserved',
-    evidenceKey: fresh.evidenceKey,
-    sha256: fresh.sha256,
-    bytes: fresh.bytes,
-    contentType: fresh.contentType,
-    preservedAt: fresh.preservedAt,
-    preservedById: fresh.preservedById,
-    reason: undefined,
-    blockedReason: undefined,
-    refreshedAt: undefined,
-    replaced: [
-      ...(current.replaced ?? []),
-      {
-        status: current.status,
-        evidenceKey: current.evidenceKey,
-        sha256: current.sha256,
-        at: now.toISOString(),
-        byId: input.moderatorId,
-      },
-    ],
-  }));
+  const { version } = await changeEvidenceFile(input, (current) => {
+    if (current.status === 'excluded')
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'This file was excluded from the report while it was being copied.',
+      });
+    return {
+      ...current,
+      status: 'preserved',
+      evidenceKey: fresh.evidenceKey,
+      sha256: fresh.sha256,
+      bytes: fresh.bytes,
+      contentType: fresh.contentType,
+      preservedAt: fresh.preservedAt,
+      preservedById: fresh.preservedById,
+      reason: undefined,
+      blockedReason: undefined,
+      refreshedAt: undefined,
+      replaced: [
+        ...(current.replaced ?? []),
+        {
+          status: current.status,
+          evidenceKey: current.evidenceKey,
+          sha256: current.sha256,
+          at: now.toISOString(),
+          byId: input.moderatorId,
+        },
+      ],
+    };
+  });
   return { status: fresh.status, version };
 }

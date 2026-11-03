@@ -77,6 +77,7 @@ import {
   evidenceFileDetails,
   evidenceFilesToSend,
   evidenceReportInfo,
+  hasXmlIllegal,
   readVerifiedEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
 import { readEvidenceObject, sha256Hex } from '~/server/services/generator-evidence/evidence-store';
@@ -1594,7 +1595,18 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
   const priorCTReports = details.generatorEvidence.priorCTReports;
   const notCarried = evidenceReportInfo(details);
-  const toSend = reads.flatMap(({ file, read }) => (read.ok ? [{ file, read }] : []));
+  const toSend = reads.flatMap(({ file, read }) => {
+    if (!read.ok) return [];
+    const viewedByEsp = viewed.has(file.blob.blobId);
+    return [{ file, read, viewedByEsp, fileDetails: evidenceFileDetails(file, viewedByEsp) }];
+  });
+  // Checked before the CyberTip is opened: details NCMEC rejects would cancel it on every run.
+  if (hasXmlIllegal([notCarried, toSend.map(({ fileDetails }) => fileDetails)]))
+    return logSendFailure(
+      report,
+      new Error('a file description holds characters XML cannot carry'),
+      'evidence-xml'
+    );
   let sending: ReturnType<typeof sendEach> | undefined;
   await sendCyberTip(
     claim,
@@ -1607,7 +1619,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
     },
     {
       sendFiles: async (reportId) => {
-        sending = sendEach(toSend, async ({ file, read }) => {
+        sending = sendEach(toSend, async ({ file, read, viewedByEsp, fileDetails }) => {
           const bytes = read.bytes as Uint8Array<ArrayBuffer>;
           const {
             data: { fileId, hash },
@@ -1615,12 +1627,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
             claim,
             blobToFile(new Blob([bytes], { type: read.contentType }), file.blob.blobId)
           );
-          const viewedByEsp = viewed.has(file.blob.blobId);
-          await cybertipClient.submitFileDetails({
-            reportId,
-            fileId,
-            ...evidenceFileDetails(file, viewedByEsp),
-          });
+          await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetails });
           return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
         });
         return { generatedImageUploads: await sending.sent };

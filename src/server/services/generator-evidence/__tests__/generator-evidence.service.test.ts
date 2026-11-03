@@ -550,6 +550,21 @@ describe('preserveGeneratorEvidence', () => {
       expect(written().generatorEvidence).toMatchObject({ approvedAt: null });
     });
 
+    it('does not undo an exclusion made while the file was being copied', async () => {
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({ details: report() } as never);
+      const excludedMeanwhile = report();
+      Object.assign(excludedMeanwhile.generatedImages[0].blobs[0], { status: 'excluded' });
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: excludedMeanwhile }] as never);
+
+      await expect(
+        recopyGeneratorEvidenceFile(
+          { reportId: 3, userId: USER, moderatorId: 2, blobId: OUTPUT },
+          { config, store: memoryStore() }
+        )
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
     it('leaves the report as it was when the generator no longer has the file', async () => {
       dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({ details: report() } as never);
       vi.mocked(globalThis.fetch).mockResolvedValue(new Response(null, { status: 404 }));

@@ -67,36 +67,58 @@ export function evidenceFileDetails(
   const valuePair: { name: string; value: string }[] = [];
   const prompt = trimNonAlphanumeric(job.prompt);
   const negativePrompt = trimNonAlphanumeric(job.negativePrompt);
-  if (prompt) valuePair.push({ name: 'prompt', value: prompt });
-  if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: negativePrompt });
-  if (job.resources?.length) valuePair.push({ name: 'resources', value: job.resources.join(',') });
+  if (prompt) valuePair.push({ name: 'prompt', value: xmlSafe(prompt) });
+  if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: xmlSafe(negativePrompt) });
+  if (job.resources?.length)
+    valuePair.push({ name: 'resources', value: xmlSafe(job.resources.join(',')) });
   return {
     originalFileName: blob.blobId,
     fileViewedByEsp: viewedByEsp,
     publiclyAvailable: false,
     fileAnnotations: { generativeAi: blob.role === 'output' },
     ...(valuePair.length && { details: [{ type: FileDetailType.EXIF, valuePair }] }),
-    additionalInfo: [describe(file), ...generationText(job)],
+    additionalInfo: [xmlSafe(describe(file)), ...generationText(job)],
   };
 }
 
-export const MAX_GENERATION_TEXT_CHARS = 4000;
-export const TRUNCATION_MARKER = '[truncated; full text preserved]';
+// Outside the XML 1.0 Char production, lone surrogates included: NCMEC rejects the file's details
+// after the CyberTip is already open.
+const XML_ILLEGAL = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu;
 
-const capped = (text: string) =>
-  text.length <= MAX_GENERATION_TEXT_CHARS
-    ? text
-    : `${text.slice(0, MAX_GENERATION_TEXT_CHARS)}… ${TRUNCATION_MARKER}`;
+export const xmlSafe = (text: string) => text.replace(XML_ILLEGAL, '\uFFFD');
+
+/** Whether any string anywhere in `value` would make the XML NCMEC receives ill-formed. */
+export function hasXmlIllegal(value: unknown): boolean {
+  if (typeof value === 'string') return new RegExp(XML_ILLEGAL.source, 'u').test(value);
+  if (Array.isArray(value)) return value.some(hasXmlIllegal);
+  if (value && typeof value === 'object') return Object.values(value).some(hasXmlIllegal);
+  return false;
+}
+
+/** Each line, label and marker included, is at most this many code points. */
+export const MAX_GENERATION_LINE_CHARS = 4000;
+export const TRUNCATION_MARKER = '[truncated; full text preserved]';
+const CUT = `… ${TRUNCATION_MARKER}`;
+
+function line(label: string, text: string) {
+  const chars = [...xmlSafe(text.trim())];
+  const room = MAX_GENERATION_LINE_CHARS - label.length;
+  if (chars.length <= room) return label + chars.join('');
+  return label + chars.slice(0, room - CUT.length).join('') + CUT;
+}
 
 /** The generation's words as plain text, alongside the EXIF pairs, for a reader who never opens those. */
 function generationText(job: StoredEvidenceJob) {
   const lines = [
-    job.prompt?.trim() && `Prompt: ${capped(job.prompt.trim())}`,
-    job.negativePrompt?.trim() && `Negative prompt: ${capped(job.negativePrompt.trim())}`,
-    job.resources?.length && `Resources: ${capped(job.resources.join(', '))}`,
-  ].filter((line): line is string => !!line);
+    job.prompt?.trim() && line('Prompt: ', job.prompt),
+    job.negativePrompt?.trim() && line('Negative prompt: ', job.negativePrompt),
+    job.resources?.length && line('Resources: ', job.resources.join(', ')),
+  ].filter((text): text is string => !!text);
   return lines.length ? [lines.join('\n')] : [];
 }
+
+export const EXCLUDED_FILES_NOTICE =
+  'Civitai has preserved additional content from this account and will provide it on lawful request.';
 
 /** Report-level lines for files the report names but cannot carry. */
 export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
@@ -115,6 +137,7 @@ export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
     counts.unavailable && `${counts.unavailable} file(s) could not be read for this report.`,
     counts.external &&
       `${counts.external} input file(s) came from another source and are not attached.`,
+    counts.excluded && EXCLUDED_FILES_NOTICE,
   ].filter((line): line is string => !!line);
 }
 
