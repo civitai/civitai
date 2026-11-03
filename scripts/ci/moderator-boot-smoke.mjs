@@ -2,7 +2,10 @@
 // Boots the built apps/moderator server (`node build`, adapter-node output) and fails unless it
 // answers HTTP while still running. Typecheck and the unit suites never load the bundled server,
 // so a defect that only exists in the Rollup output (a broken module namespace, a top-level throw
-// in a chunk) reaches production unseen; this is the check that can see it.
+// in a chunk) reaches production unseen. This check sees it in the code the server loads at
+// startup: the entry, `hooks.server.ts` and their imports. Route modules load lazily and the
+// unauthenticated `GET /` is redirected before any route runs, so a module only a route imports
+// is not covered.
 //
 // Any HTTP status counts as an answer: there is no database behind the placeholder env, so a page
 // may well render an error. The question is only whether the server came up and stayed up.
@@ -15,8 +18,8 @@ import { resolve } from 'node:path';
 const appDir = resolve(process.argv[2] ?? 'apps/moderator');
 const port = Number(process.env.SMOKE_PORT ?? 3917);
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 60_000);
-// After the first answer, the server must still be running this long later: a crash on a lazily
-// loaded chunk shows up just after the first request rather than at startup.
+// After the first answer, the server must still be running this long later, so a crash just
+// after it starts listening still fails the check.
 const settleMs = 3_000;
 
 if (!existsSync(resolve(appDir, 'build/index.js'))) {
