@@ -162,6 +162,22 @@ const cleanOldCollectionItems = async (now: Dayjs) => {
   log(oldIds.length, 'busted old cache');
 };
 
+// A version can't win once it's unpublished, or once it's on a base model that can't be promoted for
+// Buzz; both can change after the bid was placed.
+export const _ineligibleModelVersionIds = async (entityIds: number[]) => {
+  const ineligible = new Set<number>();
+  if (!entityIds.length) return ineligible;
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { id: { in: entityIds } },
+    select: { id: true, status: true, baseModel: true },
+  });
+  for (const mv of versions) {
+    if (mv.status !== ModelStatus.Published || stopsCreatorEarnings(mv.baseModel))
+      ineligible.add(mv.id);
+  }
+  return ineligible;
+};
+
 const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers = true) => {
   // Get the bids from previous auctions
   const allAuctionsWithBids = await _fetchAuctionsWithBids(now);
@@ -177,20 +193,13 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
     if (auctionRow.bids.length > 0) {
       const sortedBids = prepareBids(auctionRow, true);
 
-      // Disqualify bids on non-Published ModelVersions so they get refunded as losers
-      const ineligibleEntityIds = new Set<number>();
-      if (auctionRow.auctionBase.type === AuctionType.Model) {
-        const entityIds = [...new Set(sortedBids.map((b) => b.entityId))];
-        if (entityIds.length) {
-          const ineligible = await dbWrite.modelVersion.findMany({
-            where: { id: { in: entityIds }, status: { not: ModelStatus.Published } },
-            select: { id: true },
-          });
-          for (const mv of ineligible) ineligibleEntityIds.add(mv.id);
-          if (ineligibleEntityIds.size) {
-            log('disqualified non-Published entity ids', [...ineligibleEntityIds].join(','));
-          }
-        }
+      // Disqualified bids are refunded as losers.
+      const ineligibleEntityIds =
+        auctionRow.auctionBase.type === AuctionType.Model
+          ? await _ineligibleModelVersionIds([...new Set(sortedBids.map((b) => b.entityId))])
+          : new Set<number>();
+      if (ineligibleEntityIds.size) {
+        log('disqualified entity ids', [...ineligibleEntityIds].join(','));
       }
 
       const { winners, losers } = sortedBids.reduce(

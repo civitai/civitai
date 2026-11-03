@@ -35,7 +35,7 @@ import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { EntityType } from '~/shared/utils/prisma/enums';
+import { Availability, EntityType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import {
   handleLogError,
@@ -177,7 +177,11 @@ export async function createBuzzTipTransactionHandler({
     const { entityType, entityId } = input;
     if (entityType === 'Model' && entityId) {
       const versions = await dbWrite.modelVersion.findMany({
-        where: { modelId: entityId },
+        where: {
+          modelId: entityId,
+          status: ModelStatus.Published,
+          availability: { not: Availability.Private },
+        },
         select: { baseModel: true },
       });
       // A model is tipped as a whole, so it's refused only when no version can earn.

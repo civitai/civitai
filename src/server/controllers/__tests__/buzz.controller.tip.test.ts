@@ -358,9 +358,11 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
     await expect(tipModel()).rejects.toThrow(
       "This model isn't commercially available at the moment."
     );
-    expect(mockVersionFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { modelId: 77 } })
-    );
+    // Only versions the public can see count: a hidden draft must not make the model tippable.
+    expect(mockVersionFindMany).toHaveBeenCalledWith({
+      where: { modelId: 77, status: 'Published', availability: { not: 'Private' } },
+      select: { baseModel: true },
+    });
     expect(ledger.debits()).toBe(0);
   });
 
