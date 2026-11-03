@@ -40,10 +40,10 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .select([
       'p.userId',
       sql<string>`coalesce(u."username", 'Knight')`.as('username'),
-      // The profile picture when it is rated PG, else the legacy `User.image`: what the main app's avatar lookups do.
-      sql<string | null>`coalesce(case when pic."nsfwLevel" = 1 then pic.url end, u.image)`.as(
-        'image'
-      ),
+      // The profile picture when it is rated PG or PG-13 (shown unblurred site-wide), else the legacy `User.image`.
+      sql<
+        string | null
+      >`coalesce(case when pic."nsfwLevel" in (1, 2) then pic.url end, u.image)`.as('image'),
       'p.rankType',
       'p.exp',
       sql<string>`count(*)`.as('graded'),
