@@ -21,7 +21,7 @@ function usePhoneScreen() {
 }
 
 /**
- * True when the mobile generator is showing: the `mobileGenerator` flag is on and the window is a
+ * True when the mobile generator is showing: the `mobileGenerator` flag is on and the device is a
  * phone. Off outside the flag provider, so shared inputs render their usual layout there.
  */
 export function useMobileGenerator() {
