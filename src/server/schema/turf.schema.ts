@@ -38,7 +38,7 @@ export const turfImageSchema = z.object({
   before: z
     .object({
       createdAt: z.iso.datetime(),
-      id: z.coerce.bigint().positive().max(9223372036854775807n),
+      id: z.coerce.bigint().positive().max(BigInt('9223372036854775807')),
     })
     .optional(),
 });
