@@ -314,15 +314,15 @@ describe('/apps chrome vertical geometry', () => {
     ).toBe(SUBNAV_STICKY_GAP);
   });
 
-  test('no-header page: the body starts one band-gap below the chrome', async () => {
+  test('no-header page: the body starts at the top of the chrome, with no empty band above it', async () => {
     const g = await renderAndMeasure(<AppsPageLayout>{body}</AppsPageLayout>);
     expect(g.styleSheetLoaded).toBe(true);
     expect(g.hasTitle).toBe(false);
-    // The band renders but is EMPTY on a desktop viewport: its only child on a no-header
-    // page is the drawer trigger, which is `display: none` at ≥1300. So the whole chrome
-    // above the body is the root stack's own `xl` gap.
-    expect(g.topToBody).toBe(32);
-    expect(g.bandToBody).toBe(32);
+    // At ≥1300 a no-header page's band holds only the drawer trigger, which is `display: none`,
+    // so the band's wrapper is hidden too and takes the root stack's `xl` gap with it: the body
+    // starts level with the rail instead of one empty band lower (design review, recording 2582).
+    expect(g.topToBody).toBe(0);
+    expect(g.bandToBody).toBe(0);
   });
 
   test('hasHeader page: the 32px band→body gap survives unchanged', async () => {

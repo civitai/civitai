@@ -453,7 +453,7 @@ describe('AppListingsMarketplaceBody', () => {
     expect(page.getByText('Recently opened').elements()).toHaveLength(0);
   });
 
-  test('🔴 a viewer WITH recents sees the rail BELOW the controls and ABOVE the grid (CLS)', async () => {
+  test('🔴 a viewer WITH recents sees the rail ABOVE the "App Marketplace" heading and the search, and ABOVE the grid', async () => {
     recordRecentlyOpenedApp(
       {
         id: 'ab_1',
@@ -471,24 +471,17 @@ describe('AppListingsMarketplaceBody', () => {
     await expect.element(rail).toBeInTheDocument();
     await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
 
-    // Document order, asserted on BOTH sides — `compareDocumentPosition` is the
-    // direct encoding of position, where a visual-only check would pass with the
-    // rail appended at the bottom like the legacy body did.
+    // Document order, asserted on every side: rail, then heading, then search, then the first card.
     const railEl = rail.element();
+    const heading = page.getByRole('heading', { name: 'App Marketplace' }).element();
     const search = page.getByLabelText('Search').element();
     const firstCard = page.getByTestId('apps-listing-grid-col').elements()[0];
 
-    // 1. The rail comes AFTER the search input. The rail hydrates one frame late
-    //    (localStorage is client-only), so placing it above the primary controls
-    //    shifted them down by ~90px after paint — a CLS regression Faro RUM
-    //    reports for this page. Below the controls, the late insertion only moves
-    //    the grid.
-    expect(search.compareDocumentPosition(railEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 2. …but still BEFORE the first result card, so "jump back in" outranks
-    //    browsing and stays above the fold.
-    expect(
-      railEl.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    const follows = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(railEl, heading)).toBe(true);
+    expect(follows(heading, search)).toBe(true);
+    expect(follows(search, firstCard)).toBe(true);
   });
 
   test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {

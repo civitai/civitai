@@ -143,7 +143,8 @@ function renderLayout(measure?: AppsMeasure, withHeader = false, align?: 'start'
   // mode a structural test can have. The markers are read from the rendered tree, so a
   // renamed/removed one throws here rather than silently re-pointing.
   const band = doc.querySelector('[data-apps-chrome="band"]');
-  const rootStack = band?.parentElement;
+  // The root stack is the body column's only child; the band sits inside a wrapper under it.
+  const rootStack = doc.querySelector('[data-apps-chrome="body-column"]')?.firstElementChild;
   if (!band || !rootStack) throw new Error('could not resolve the layout band / root stack');
 
   const allBoxes = Array.from(doc.querySelectorAll('[style*="max-width"]')) as unknown as Element[];

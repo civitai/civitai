@@ -395,34 +395,36 @@ export function AppsPageLayout({
               floating; the vertical padding around the band is free to move, these two
               are not.
             */}
-            <Stack gap="md" data-apps-chrome="band">
-              {hasRail && (
-                <div className={classes.railDrawerTrigger} data-apps-chrome="drawer-trigger">
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    leftSection={<IconMenu2 size={16} />}
-                    onClick={drawer.open}
-                  >
-                    App sections
-                  </Button>
-                </div>
-              )}
-              {hasHeader &&
-                bounded(
-                  <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
-                    <Stack gap={4} style={{ minWidth: 0 }}>
-                      {title && <Title order={2}>{title}</Title>}
-                      {subtitle && (
-                        <Text c="dimmed" size="sm">
-                          {subtitle}
-                        </Text>
-                      )}
-                    </Stack>
-                    {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
-                  </Group>
+            <div className={hasHeader ? undefined : classes.bandBare}>
+              <Stack gap="md" data-apps-chrome="band">
+                {hasRail && (
+                  <div className={classes.railDrawerTrigger} data-apps-chrome="drawer-trigger">
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      leftSection={<IconMenu2 size={16} />}
+                      onClick={drawer.open}
+                    >
+                      App sections
+                    </Button>
+                  </div>
                 )}
-            </Stack>
+                {hasHeader &&
+                  bounded(
+                    <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
+                      <Stack gap={4} style={{ minWidth: 0 }}>
+                        {title && <Title order={2}>{title}</Title>}
+                        {subtitle && (
+                          <Text c="dimmed" size="sm">
+                            {subtitle}
+                          </Text>
+                        )}
+                      </Stack>
+                      {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
+                    </Group>
+                  )}
+              </Stack>
+            </div>
 
             {/*
               The BODY, optionally capped. 🔴 THE CAP IS HERE, INSIDE THE `Stack gap="xl"`,
