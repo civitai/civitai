@@ -1,0 +1,114 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as SystemCache from '~/server/services/system-cache';
+
+// Drives the real getAllModelsWithCategories; I/O stubs follow model.service.vae-append-no-mutation.test.ts.
+
+const OWNER_ID = 5;
+const ROWS = [
+  { id: 1, name: 'published', status: 'Published' },
+  { id: 2, name: 'draft', status: 'Draft' },
+  { id: 3, name: 'training', status: 'Training' },
+];
+
+type Where = { status: { in: string[] } };
+const visible = ({ where }: { where: Where }) =>
+  ROWS.filter((r) => where.status.in.includes(r.status));
+
+const { mockDbRead } = vi.hoisted(() => ({
+  mockDbRead: {
+    model: { findMany: vi.fn(), count: vi.fn() },
+    $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
+  },
+}));
+
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof SystemCache>()),
+  getCategoryTags: vi.fn().mockResolvedValue([]),
+}));
+vi.mock('~/server/services/image.service', () => ({
+  getImagesForModelVersion: vi.fn(),
+  getImagesForModelVersionCache: vi.fn().mockResolvedValue({}),
+  queueImageSearchIndexUpdate: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn().mockResolvedValue(false),
+}));
+vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+  enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
+}));
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: vi.fn(),
+  getPublicPaidAccessForModelVersions: vi.fn().mockResolvedValue({}),
+  getModelPaidAccessGates: vi.fn().mockResolvedValue(new Map()),
+  bustPaidAccessCache: vi.fn(),
+  bustModelSaleCache: vi.fn(),
+}));
+vi.mock('~/server/services/creator-program.service', () => ({
+  getValidCreatorMembershipMap: vi.fn().mockResolvedValue(new Map()),
+  getUserMetricPrivacyDefaultsMap: vi.fn().mockResolvedValue(new Map()),
+}));
+vi.mock('~/server/services/user.service', () => ({
+  deleteBasicDataForUser: vi.fn(),
+  getCosmeticsForUsers: vi.fn().mockResolvedValue({}),
+  getProfilePicturesForUsers: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticsForEntity: vi.fn() }));
+// This list must track model.service's own import list from this module. A missing name is not a
+// test failure — vitest throws it during module evaluation, so the file collects ZERO tests and the
+// run stays green with this guard silently absent.
+vi.mock('~/server/redis/caches', () => ({
+  dataForModelsCache: { fetch: vi.fn() },
+  modelVersionPublicDonationGoalsCache: { fetch: vi.fn(), bust: vi.fn() },
+  modelTagCache: { fetch: vi.fn(), bust: vi.fn() },
+  modelVotableTagsCache: { fetch: vi.fn(), bust: vi.fn() },
+  userBasicCache: { fetch: vi.fn().mockResolvedValue({}), bust: vi.fn() },
+  userModelCountCache: { fetch: vi.fn(), bust: vi.fn() },
+}));
+// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
+// the global mock in src/__tests__/setup.ts.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
+  ...(await import('~/server/redis/sys-read-deadline')),
+  redis: { packed: { get: async () => null, set: async () => undefined } },
+  sysRedis: {},
+}));
+
+import { getAllModelsWithCategories } from '~/server/services/model.service';
+import { modelTagCache } from '~/server/redis/caches';
+
+const names = async (viewer: { id?: number; isModerator?: boolean } | null) =>
+  (await getAllModelsWithCategories({ userId: OWNER_ID, page: 1, limit: 50, viewer })).items.map(
+    (m) => m.name
+  );
+
+beforeEach(() => {
+  mockDbRead.model.findMany.mockImplementation(async (args: { where: Where }) => visible(args));
+  mockDbRead.model.count.mockImplementation(async (args: { where: Where }) => visible(args).length);
+  vi.mocked(modelTagCache.fetch).mockResolvedValue({});
+});
+
+describe('getAllModelsWithCategories, unpublished models', () => {
+  it('lists only published models to a signed-out viewer', async () => {
+    expect(await names(null)).toEqual(['published']);
+  });
+
+  it("lists only published models to another user's viewer", async () => {
+    expect(await names({ id: OWNER_ID + 1 })).toEqual(['published']);
+  });
+
+  it('lists draft and training models to their owner', async () => {
+    expect(await names({ id: OWNER_ID })).toEqual(['published', 'draft', 'training']);
+  });
+
+  it('lists draft and training models to a moderator', async () => {
+    expect(await names({ id: OWNER_ID + 1, isModerator: true })).toEqual([
+      'published',
+      'draft',
+      'training',
+    ]);
+  });
+});

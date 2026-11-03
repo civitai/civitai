@@ -158,6 +158,28 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(wrote()).toBe(0);
   });
 
+  it.each([
+    [
+      'fullwidth',
+      '\uFF23\uFF49\uFF56\uFF49\uFF54\uFF41\uFF49 \uFF2D\uFF4F\uFF44\uFF45\uFF52\uFF41\uFF54\uFF49\uFF4F\uFF4E',
+    ],
+    ['mixed-script', '\u0421ivit\u0430i M\u043Ederation'],
+    ['digit-for-letter', 'C1vitai Moderation'],
+    ['symbol-for-letter', 'C|vitai Moderation'],
+  ])('refuses a %s spelling of the reserved name', async (_, name) => {
+    const { status, body } = await call({ userId: SYSTEM_ID, name });
+    expect({ status, body: JSON.stringify(body) }).toEqual({
+      status: 400,
+      body: expect.stringContaining('name is reserved'),
+    });
+    expect(wrote()).toBe(0);
+  });
+
+  it('admits a name that only shares words with the reserved one', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'Civitai Moderation Bot' });
+    expect(status).toBe(200);
+  });
+
   it('refuses a request that sets nothing', async () => {
     expect((await call({ userId: SYSTEM_ID })).status).toBe(400);
     expect(wrote()).toBe(0);

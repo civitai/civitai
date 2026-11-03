@@ -48,5 +48,7 @@ export default AuthedEndpoint(
     setSessionCookie(res, minted.token, { host: req.headers.host, requestCookies: req.cookies });
     return res.status(200).json({ ok: true });
   },
-  ['POST', 'DELETE']
+  ['POST', 'DELETE'],
+  // While impersonating, the session user is the target, who may be banned; the hub checks the moderator's own ban.
+  { allowBanned: true }
 );

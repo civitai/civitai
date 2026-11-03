@@ -2,7 +2,7 @@ import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { isReservedModerationUsername } from '~/server/auth/moderation-account';
+import { resemblesReservedModerationUsername } from '~/server/auth/moderation-account';
 import {
   systemAccountRefusal,
   systemAccountSelect,
@@ -32,7 +32,10 @@ const schema = z
         'name may not hold control or format characters'
       )
       .refine(
-        (value) => !isReservedModerationUsername(value.replace(/[^\p{L}\p{N}]/gu, '')),
+        (value) =>
+          !resemblesReservedModerationUsername(
+            value.normalize('NFKC').replace(/[^\p{L}\p{N}|!]/gu, '')
+          ),
         'name is reserved'
       )
       .optional(),

@@ -5534,8 +5534,13 @@ export const getAllModelsWithCategories = async ({
   viewer?: { id?: number; isModerator?: boolean | null } | null;
 }) => {
   const { take, skip } = getPagination(limit, page);
+  const seesUnpublished = !!viewer?.isModerator || (!!viewer?.id && userId === viewer.id);
   const where: Prisma.ModelFindManyArgs['where'] = {
-    status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
+    status: {
+      in: seesUnpublished
+        ? [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training]
+        : [ModelStatus.Published],
+    },
     deletedAt: null,
     userId,
     // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
