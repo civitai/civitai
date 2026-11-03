@@ -116,8 +116,9 @@ describe('the free-placement claim', () => {
   });
 
   it('a placer who has used the day is refused on the in-lock count, whatever Kysely says', async () => {
+    // `data` is the team-waived share, read net of the day's count: none here.
     tx.placement.count.mockImplementation(async ({ where }) =>
-      where.createdAt ? FREE_PLACEMENTS_PER_DAY : 0
+      where.createdAt && !where.data ? FREE_PLACEMENTS_PER_DAY : 0
     );
     q.countPlacements.mockResolvedValue(0);
 
@@ -128,15 +129,17 @@ describe('the free-placement claim', () => {
 
 describe('the free-placement display counts', () => {
   it('the allowance counts through Kysely on the replica, since UTC midnight', async () => {
-    q.countPlacements.mockResolvedValue(1);
+    q.countPlacements.mockImplementation(async (_db, where) => ('data' in where ? 0 : 1));
 
     await expect(getFreePlacementAllowance({ placerId: PLACER })).resolves.toMatchObject({
       used: 1,
       remaining: Math.max(FREE_PLACEMENTS_PER_DAY - 1, 0),
     });
     expect(dbMock.dbRead.placement.count).not.toHaveBeenCalled();
-    expect(q.countPlacements).toHaveBeenCalledTimes(1);
+    // The day's free rows, then the team-waived share of them, both on the replica.
+    expect(q.countPlacements).toHaveBeenCalledTimes(2);
     expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.countPlacements.mock.calls[1][0]).toBe(kyselyRead);
     expect(kyselyRead).not.toBe(kyselyWrite);
     // The daily predicate, the one the claim's in-lock count takes.
     expect(q.countPlacements.mock.calls[0][1]).toEqual({
@@ -156,7 +159,7 @@ describe('the free-placement display counts', () => {
       targetType: 'image',
       targetId: TARGET,
     } as const;
-    q.countPlacements.mockResolvedValue(count);
+    q.countPlacements.mockImplementation(async (_db, where) => ('data' in where ? 0 : count));
 
     await expect(hasUsedFreePlacementOn(input)).resolves.toBe(used);
     expect(dbMock.dbRead.placement.count).not.toHaveBeenCalled();

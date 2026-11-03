@@ -58,7 +58,12 @@ function chatCivHosts() {
 const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
 /** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
-const v3PageBudgetOverrides: Record<string, number> = {};
+const v3PageBudgetOverrides: Record<string, number> = {
+  image: 10,
+  bountyEntry: 10,
+  review: 10,
+  post: 15,
+};
 const v3PageBudget = 40;
 
 function getCommentAutoExpandDepth(entityType: string) {
@@ -444,7 +449,20 @@ export const constants = {
      * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
      * it here and mounts `CommentSection`; notifications build their deep links from this list.
      */
-    v3ReadSurfaces: ['article'] as string[],
+    v3ReadSurfaces: [
+      'article',
+      'post',
+      'image',
+      'review',
+      'bounty',
+      'bountyEntry',
+      'challenge',
+      'crucible',
+      'storyline',
+      'model3d',
+      'appListing',
+      'comicChapter',
+    ] as string[],
     /**
      * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
      * on one exists only there.

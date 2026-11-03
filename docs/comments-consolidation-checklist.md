@@ -370,9 +370,11 @@ the undeclared set like `top_*`):
       would promote a reply to top level on a live entity) — step `unmirrored` reports them by
       reason (`v2_no_thread`, `v2_dead_parent`, `v2_unresolved_entity`, `v2_no_topic`,
       `v1_dead_parent`, `v1_no_topic`) with sample ids, and whatever none of those explains as
-      `v2_pending_unexplained` / `v1_pending_unexplained`, the two the monitor pages on. Prod holds two such classes the FK cascades
-      predate: 8,531 v2 comments (ids 1857994–1868035, 2026-02-27 to 03-01) whose `Thread` row is
-      gone, with 4,409 reactions, and 2 v1 replies whose parent comment is gone; none of them can
+      `v2_pending_unexplained` / `v1_pending_unexplained`, the two the monitor pages on. Prod holds two such classes: 8,531 v2
+      comments (ids 1857994–1868035, 2026-02-27 to 03-01) bulk-rewritten around 03-01 without their
+      `Thread` rows, which no FK cascade explains (not archived: they go with the Phase 6 drops,
+      decided 2026-11-03), with 4,409
+      reactions, and 2 v1 replies whose parent comment is gone; none of them can
       render today, so they stay out and the parity counts leave them aside, plus every link whose comment is mirrored but whose link is not
 - [x] Parity checks: per-entity counts vs `Thread.commentCount`, reaction counts vs both source
       tables, spot checksums, `ThreadMute` count vs `CommentMute` + `CommentTopicMute` + skipped,
@@ -502,8 +504,8 @@ flip — these MUST land before the first Phase 4 write flip):
       `assertCommentEntityVisible` / `getCommentThreadBounty` / `getCommentThreadCrucibleId` /
       the storyline lookups, which guard v2 writes on the thread they are given
 
-Not on this list, each a surface's own read that moves with it: `comics.router.ts::getChapterThread`
-(Phase 4, comicChapter), the v1 reply counts in `comment.controller.ts` (Phase 4, model),
+Not on this list, each a surface's own read that moves with it: the v1 reply counts in
+`comment.controller.ts` (Phase 4, model),
 `entity-moderation.ts`'s selectors (Phase 4, first write flip) and the event-engine comment
 handlers (Phase 5 CDC item, provisioned before the first write flip). Accepted, not changed: a mute
 on a comment past the depth cap reaches a clamped reply that answers it directly, not a reply to
@@ -527,8 +529,9 @@ deploys; reverse-copy proven on a prod sample.
 Repeat this block per surface, in the Phase 0 order (model **last**):
 
 - [ ] Notification deep links switch `commentParentId` from `replyToId` to `parentId` with the read
-      flip: under v3 reads a clamped reply hangs off its parent (article: built, awaiting stage A
-      deploy; see `docs/plans/comments-v3-article-flip.md`)
+      flip: under v3 reads a clamped reply hangs off its parent (article: live; every other surface
+      but model: built 2026-11-02, awaiting deploy; see
+      `docs/plans/comments-v3-article-flip.md`, "Read flip as built")
 - [ ] Read flip deployed → soak → verify (comments render, counts match, hidden/blocked exclusions hold,
       pinned order, deep-links/`targetCommentId`, reply pagination, mute menu state matches whether
       notifications actually arrive)
@@ -593,9 +596,10 @@ Surface-specific extras:
       2026-10-29); post still to do
 - [ ] **image**: re-point the `EntityMetric` (`metricType='Comment'`) writer (the judge gate and
       `getJudgeCommentForImage` read CommentV3 since Phase 3)
-- [ ] **comicChapter**: `ChapterComments.tsx` client shape change (drops `parentThreadId`;
-      `entityId` becomes `ComicChapter.id`, returned by `getChapterThread`); `createChapterComment`
-      is removed and chapter comments write through the `commentv3` mutations (decided 2026-10-30)
+- [ ] **comicChapter**: reads built 2026-11-03 (`CommentSection` on the comics page keyed by
+      `ComicChapter.id`; `getChapterThread` removed). Left for its write flip:
+      `createChapterComment` (now addressed by chapter id) is removed and chapter comments write
+      through the `commentv3` mutations (decided 2026-10-30)
 - [ ] **crucible**: `getCommentThreadCrucibleId` + `new-crucible-comment` notification
 - [ ] **storyline**: `getCommentThreadStorylineId` / `getCommentStorylineId` +
       `new-storyline-comment` notification
@@ -752,8 +756,8 @@ After the last surface's write flip has soaked:
       `commentv3/write.service.ts`), `throwIfV3WriteTarget` and its call sites in
       `commentsv2.service.ts`
 - [ ] Thread lock on the v3 router: `toggleLockCommentsThread` / `getCommentsThreadDetails2`'s
-      CommentTopic arm moves there, and the article stops mounting
-      `CommentsV2/ToggleLockComments` (mutes are the Phase 5 router item)
+      CommentTopic arm moves there, and `CommentsV3/ToggleLockComments` moves onto it (mutes are
+      the Phase 5 router item)
 - [ ] Reverse copy: `comment-v3-reverse-copy.service.ts`, the `reverse*` steps of
       `api/admin/temp/comment-v3-backfill.ts`, and `comment-v3-reverse-copy.sql.behavior.test.ts`
 
@@ -790,8 +794,11 @@ With the old tables (before the drops below):
 - [ ] Old main-app files: `comment.router.ts`, `commentv2.router.ts`, `comment.controller.ts`,
       `commentv2.controller.ts`, `comment.schema.ts`, `commentv2.schema.ts`,
       `commentsv2.service.ts`, `commentsv2.reply-threads.ts`, the old arms of `comment.service.ts`,
-      `comment.selector.ts`, `commentv2.selector.ts`, and the `components/CommentsV2/` and
-      `components/CommentSection/` folders
+      `comment.selector.ts`, `commentv2.selector.ts`, and the `components/CommentSection/` folder
+      (`components/CommentsV2/` went with the read flip); plus `getImageThread` in
+      `@civitai/db-queries/hot-reads`, its case in `hot-reads-2.kysely-parity.test.ts` and its
+      mock in `kysely-reads-over-db-mock.ts` (kept past the read flip only for clients on the
+      previous build)
 - [ ] Moderator app: `withoutOldCommentLink` / `linkFilter` in `report-entities.ts` and its
       `reportLinkFilter` call sites; the `commentV3` label in `src/lib/reports.ts` and the
       `CommentV3` label in `routes/csam/text-holds/hold-entity.ts` become 'Comment' (labels key the

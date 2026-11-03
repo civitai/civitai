@@ -23,7 +23,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { IconLock, IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
