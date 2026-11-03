@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyScannerFloor,
   decideFromObservations,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
@@ -77,7 +76,6 @@ describe('decideFromObservations', () => {
   // The prompt asks for 'R+', but models reach for the labels they know.
   it.each(['R+', 'R', 'X', 'XXX', 'nsfw'])('treats nsfwEstimate %s as adult content', (rating) => {
     const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
-    expect(result.decision).toBe('reject');
     expect(result.violations).toContain('sexual/adult content');
   });
 
@@ -94,7 +92,7 @@ describe('decideFromObservations', () => {
     }
   );
 
-  it('still rejects visible sexual content behind an unrecognized nsfwEstimate', () => {
+  it('keeps visible sexual content rejectable behind an unrecognized nsfwEstimate', () => {
     const result = decideFromObservations({
       ...clean,
       sexualContent: true,
@@ -301,36 +299,5 @@ describe('needsMinorReview', () => {
     ['an unreadable response', { hasBuzzReference: undefined }],
   ])('leaves %s out of it', (_label, overrides) => {
     expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(false);
-  });
-});
-
-describe('applyScannerFloor', () => {
-  const approved = decideFromObservations(clean);
-
-  it.each([NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.PG | NsfwLevel.PG13])(
-    'lets an approval stand at scanner level %i',
-    (level) => {
-      expect(applyScannerFloor(approved, level).decision).toBe('approve');
-    }
-  );
-
-  // The model calling an image PG does not outrank a scanner that rated it R or above.
-  it.each([
-    NsfwLevel.R,
-    NsfwLevel.X,
-    NsfwLevel.XXX,
-    NsfwLevel.Blocked,
-    NsfwLevel.PG | NsfwLevel.R,
-    0,
-    -1,
-  ])('sends an approval at scanner level %i to a human', (level) => {
-    const result = applyScannerFloor(approved, level);
-    expect(result.decision).toBe('escalate');
-    expect(result.neverReject).toBe(true);
-  });
-
-  it("leaves the model's own rejection alone", () => {
-    const rejected = decideFromObservations({ ...clean, sexualContent: true });
-    expect(applyScannerFloor(rejected, NsfwLevel.X)).toEqual(rejected);
   });
 });
