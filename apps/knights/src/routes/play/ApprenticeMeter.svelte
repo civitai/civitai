@@ -14,7 +14,6 @@
     accuracy: number | null;
     bar: number;
     knightLevel: number;
-    /** `APPRENTICE.window`: how many of the latest answers the accuracy covers. */
     answerWindow: number;
   } = $props();
 

@@ -285,7 +285,6 @@
           <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice}>
             <input type="hidden" name="kind" value={data.apprentice.item.kind} />
             <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
-            <!-- Acolyte rating answers never carry a block reason; only queue votes do (enforced in insertVote). -->
             {#each data.apprentice.options as option, index (option.value)}
               {@render pill(option, index, false, false)}
             {/each}

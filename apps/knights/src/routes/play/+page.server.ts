@@ -98,7 +98,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getStanding(db, locals.user.id),
   ]);
   const now = queueDeps.now();
-  // A reset player lands back in the apprenticeship.
   const [resetNotice, notices, seen] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
