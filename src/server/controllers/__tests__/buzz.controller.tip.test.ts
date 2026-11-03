@@ -348,32 +348,43 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
       input: { ...baseInput, entityType: 'Model', entityId: 77 },
       ctx: ctxUser(),
     });
+  const v = (baseModel: string, status = 'Published', availability = 'Public') => ({
+    baseModel,
+    status,
+    availability,
+  });
 
-  it('refuses a tip on a model whose versions are all Flux.2 Klein 9B, and moves no Buzz', async () => {
+  it.each([
+    ['all its versions are Flux.2 Klein 9B', [v('Flux.2 Klein 9B'), v('Flux.2 Klein 9B-base')]],
+    [
+      'its public versions are 9B and only a hidden draft is 4B',
+      [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B', 'Draft'), v('SDXL 1.0', 'Published', 'Private')],
+    ],
+    ['it has only hidden 9B versions', [v('Flux.2 Klein 9B', 'Draft')]],
+  ])('refuses a tip on a model when %s, and moves no Buzz', async (_, versions) => {
     const ledger = installLedger();
-    mockVersionFindMany.mockResolvedValue([
-      { baseModel: 'Flux.2 Klein 9B' },
-      { baseModel: 'Flux.2 Klein 9B-base' },
-    ] as never);
+    mockVersionFindMany.mockResolvedValue(versions as never);
     await expect(tipModel()).rejects.toThrow(
       "This model isn't commercially available at the moment."
     );
-    // Only versions the public can see count: a hidden draft must not make the model tippable.
     expect(mockVersionFindMany).toHaveBeenCalledWith({
-      where: { modelId: 77, status: 'Published', availability: { not: 'Private' } },
-      select: { baseModel: true },
+      where: { modelId: 77 },
+      select: { baseModel: true, status: true, availability: true },
     });
     expect(ledger.debits()).toBe(0);
   });
 
   it.each([
-    ['a Flux.2 Klein 4B model', ['Flux.2 Klein 4B']],
-    ['a Flux.3 Klein model', ['Flux.3 Klein']],
-    ['a model with a 9B and a 4B version', ['Flux.2 Klein 9B', 'Flux.2 Klein 4B']],
+    ['a Flux.2 Klein 4B model', [v('Flux.2 Klein 4B')]],
+    ['a Flux.3 Klein model', [v('Flux.3 Klein')]],
+    [
+      'a model with a public 9B and a public 4B version',
+      [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B')],
+    ],
     ['a model with no versions found', []],
-  ])('still tips %s', async (_, baseModels) => {
+  ])('still tips %s', async (_, versions) => {
     const ledger = installLedger();
-    mockVersionFindMany.mockResolvedValue(baseModels.map((baseModel) => ({ baseModel })) as never);
+    mockVersionFindMany.mockResolvedValue(versions as never);
     await tipModel();
     expect(ledger.debits()).toBe(1);
   });

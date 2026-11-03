@@ -176,15 +176,16 @@ export async function createBuzzTipTransactionHandler({
 
     const { entityType, entityId } = input;
     if (entityType === 'Model' && entityId) {
-      const versions = await dbWrite.modelVersion.findMany({
-        where: {
-          modelId: entityId,
-          status: ModelStatus.Published,
-          availability: { not: Availability.Private },
-        },
-        select: { baseModel: true },
+      const allVersions = await dbWrite.modelVersion.findMany({
+        where: { modelId: entityId },
+        select: { baseModel: true, status: true, availability: true },
       });
-      // A model is tipped as a whole, so it's refused only when no version can earn.
+      const publicVersions = allVersions.filter(
+        (v) => v.status === ModelStatus.Published && v.availability !== Availability.Private
+      );
+      // A model is tipped as a whole, so it's refused only when no version can earn. Hidden versions
+      // count only when none are public, so a hidden draft can't unlock a public 9B model.
+      const versions = publicVersions.length ? publicVersions : allVersions;
       if (versions.length > 0 && versions.every((v) => stopsCreatorEarnings(v.baseModel)))
         throw throwBadRequestError(notCommerciallyAvailableMessage(versions[0].baseModel));
     }
