@@ -114,7 +114,7 @@ beforeEach(() => {
     rankType: NewOrderRankType.Knight,
     startAt: new Date('2026-01-01T00:00:00Z'),
   });
-  redisMock.redis.exists.mockResolvedValue(1);
+  redisMock.redis.sIsMember.mockImplementation(async (_key: string, id: string) => id === '0'); // sentinel: set is built
   redisMock.redis.smIsMember.mockImplementation(async (_key: string, ids: string[]) =>
     ids.map(() => false)
   );

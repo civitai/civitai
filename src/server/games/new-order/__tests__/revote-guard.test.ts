@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ChClient from '~/server/clickhouse/client';
+import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 // The ratings table keeps one row per (userId, imageId), so a second vote on a re-queued image
 // would replace the player's settled row with a Pending one. The submit path refuses it.
@@ -23,6 +25,7 @@ const { counter, knightPool, ratingsCounter, mockCh, lockMock } = vi.hoisted(() 
   };
 });
 
+// Wholesale on purpose: the real module builds Redis-backed counters at import time.
 vi.mock('~/server/games/new-order/utils', () => ({
   acolyteFailedJudgments: counter,
   allJudgmentsCounter: counter,
@@ -47,8 +50,12 @@ vi.mock('~/server/games/new-order/utils', () => ({
   getVotingCooldownUntil: vi.fn().mockResolvedValue(null),
   getVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
 }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockCh }));
-vi.mock('~/server/utils/errorHandling', () => ({
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChClient>()),
+  clickhouse: mockCh,
+}));
+vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
+  ...(await importOriginal<typeof ErrorHandling>()),
   handleLogError: vi.fn(),
   throwBadRequestError: vi.fn(),
   throwInternalServerError: vi.fn(),
@@ -82,6 +89,7 @@ import { addImageRating } from '~/server/services/games/new-order.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
@@ -90,7 +98,10 @@ const PLAYER = 5;
 const STATS = { exp: 0, smites: 0 };
 
 const sets = new Map<string, Set<string>>();
-const ttls = new Set<string>();
+const ttlSeconds = new Map<string, number>();
+const allTtls: number[] = [];
+let execCalls = 0;
+let failExecAt = 0;
 
 type ChRow = { imageId: number; rank: string; createdAt: string };
 let chRows: ChRow[] = [];
@@ -110,7 +121,10 @@ const ratedKey = `${REDIS_KEYS.NEW_ORDER.RATED}:${5}`;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  ttls.clear();
+  ttlSeconds.clear();
+  allTtls.length = 0;
+  execCalls = 0;
+  failExecAt = 0;
   dbMock.dbRead.image.findUnique.mockImplementation(async (args: any) =>
     args.where.id === IMAGE
       ? Object.fromEntries(
@@ -134,34 +148,43 @@ beforeEach(() => {
   mockCh.$query.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) =>
     runRatingsQuery(String.raw({ raw: strings }, ...values))
   );
-  redisMock.redis.exists.mockImplementation(async (key: string) => (sets.has(key) ? 1 : 0));
   redisMock.redis.sIsMember.mockImplementation(
     async (key: string, id: string) => sets.get(key)?.has(id) ?? false
   );
-  redisMock.redis.sAdd.mockImplementation(async (key: string, members: string[]) => {
-    const set = sets.get(key) ?? new Set<string>();
-    members.forEach((m) => set.add(m));
-    sets.set(key, set);
-    return members.length;
+  // One multi() per call; exec applies SADD then EXPIRE on the single key, or throws when told to.
+  redisMock.redis.multi.mockImplementation(() => {
+    const ops: Array<() => void> = [];
+    const chain: any = {
+      sAdd: (key: string, members: string[]) => {
+        ops.push(() => {
+          const set = sets.get(key) ?? new Set<string>();
+          members.forEach((m) => set.add(m));
+          sets.set(key, set);
+        });
+        return chain;
+      },
+      expire: (key: string, seconds: number) => {
+        ops.push(() => {
+          ttlSeconds.set(key, seconds);
+          allTtls.push(seconds);
+        });
+        return chain;
+      },
+      exec: async () => {
+        if (++execCalls === failExecAt) throw new Error('redis dropped');
+        ops.forEach((op) => op());
+        return [];
+      },
+    };
+    return chain;
   });
-  redisMock.redis.expire.mockImplementation(async (key: string) => {
-    if (sets.has(key)) ttls.add(key);
-    return true;
-  });
-  redisMock.redis.rename.mockImplementation(async (from: string, to: string) => {
-    if (!ttls.has(from)) throw new Error('renamed a set that has no expiry');
-    sets.set(to, sets.get(from)!);
-    sets.delete(from);
-    ttls.delete(from);
-    ttls.add(to);
-    return 'OK';
-  });
-  redisMock.redis.unlink.mockImplementation(async (key: string) => (sets.delete(key) ? 1 : 0));
-  // The real script is covered in redis/__tests__/atomic.append-if-exists.test.ts.
+  // The real script is exercised by the atomic helper's own tests; this applies its effect.
   redisMock.redis.eval.mockImplementation(
     async (_script: string, { keys, arguments: argv }: { keys: string[]; arguments: string[] }) => {
-      if (!sets.has(keys[0])) return 0;
-      sets.get(keys[0])!.add(argv[0]);
+      const set = sets.get(keys[0]) ?? new Set<string>();
+      set.add(argv[0]);
+      sets.set(keys[0], set);
+      ttlSeconds.set(keys[0], Number(argv[1]));
       return 1;
     }
   );
@@ -171,17 +194,6 @@ beforeEach(() => {
   redisMock.sysRedis.get.mockResolvedValue(String(Date.now()));
   mockCh.insert.mockResolvedValue(undefined);
   mockCh.$exec.mockResolvedValue(undefined);
-  const chain: any = {
-    sAdd: (key: string, members: string[]) => {
-      const set = sets.get(key) ?? new Set<string>();
-      members.forEach((m) => set.add(m));
-      sets.set(key, set);
-      return chain;
-    },
-    expire: () => chain,
-    exec: async () => [],
-  };
-  redisMock.redis.multi.mockReturnValue(chain);
   knightPool.exists.mockImplementation(async (id: number) => id === IMAGE);
   knightPool.getCount.mockResolvedValue(0);
   knightPool.increment.mockResolvedValue(1);
@@ -266,7 +278,51 @@ describe('warming the rated set', () => {
     expect(order).toEqual(['rebuild', 'lock']);
   });
 
-  it('does not rebuild under the lock when the warm-up failed: the vote goes through', async () => {
+  it('completes a set that has no sentinel by union, adding the sentinel last', async () => {
+    sets.set(ratedKey, new Set(['900']));
+    chRows = [{ imageId: IMAGE + 1, rank: 'Knight', createdAt: '2026-03-01T00:00:00Z' }];
+
+    await castVote();
+
+    expect(mockCh.$query).toHaveBeenCalledTimes(1);
+    expect([...sets.get(ratedKey)!]).toEqual(expect.arrayContaining(['900', '2', '0']));
+    expect([...sets.get(ratedKey)!].indexOf('0')).toBeGreaterThan(
+      [...sets.get(ratedKey)!].indexOf('2')
+    );
+  });
+
+  it('does not query ClickHouse again for a set that carries the sentinel', async () => {
+    sets.set(ratedKey, new Set(['0']));
+
+    await castVote();
+
+    expect(mockCh.$query).not.toHaveBeenCalled();
+  });
+
+  it('writes the sentinel only after every chunk: a build that dies keeps its members but not the sentinel', async () => {
+    chRows = Array.from({ length: 1500 }, (_, i) => ({
+      imageId: 100 + i,
+      rank: 'Knight',
+      createdAt: '2026-03-01T00:00:00Z',
+    }));
+    failExecAt = 2;
+
+    const { written } = await castVote();
+
+    expect(sets.get(ratedKey)!.size).toBeGreaterThanOrEqual(1000);
+    expect(sets.get(ratedKey)!.has('0')).toBe(false);
+    expect(written).toHaveLength(1);
+  });
+
+  it('expires the set after a day, in the unit the client expects', async () => {
+    chRows = [{ imageId: IMAGE + 1, rank: 'Knight', createdAt: '2026-03-01T00:00:00Z' }];
+    await castVote();
+
+    expect(allTtls.length).toBeGreaterThan(0);
+    expect(allTtls.every((t) => t === CacheTTL.day)).toBe(true);
+  });
+
+  it('keeps the warm-up failure from triggering a second ClickHouse read under the lock', async () => {
     mockCh.$query.mockRejectedValue(new Error('clickhouse down'));
 
     const { written } = await castVote();
@@ -274,50 +330,24 @@ describe('warming the rated set', () => {
     expect(written).toHaveLength(1);
     expect(mockCh.$query).toHaveBeenCalledTimes(1);
   });
-
-  it('builds under a temp key with an expiry and renames it in', async () => {
-    chRows = [{ imageId: IMAGE + 1, rank: 'Knight', createdAt: '2026-03-01T00:00:00Z' }];
-
-    await castVote();
-
-    const written = redisMock.redis.sAdd.mock.calls.map(([key]) => key as string);
-    expect(written.length).toBeGreaterThan(0);
-    written.forEach((key) => expect(key).toMatch(/:build:/));
-    expect(redisMock.redis.rename).toHaveBeenCalledWith(written[0], ratedKey);
-    expect([...sets.keys()]).toEqual([ratedKey]);
-    expect(sets.get(ratedKey)).toContain(String(IMAGE + 1));
-  });
-
-  it('leaves the real key absent when the build dies part-way', async () => {
-    chRows = Array.from({ length: 1500 }, (_, i) => ({
-      imageId: 100 + i,
-      rank: 'Knight',
-      createdAt: '2026-03-01T00:00:00Z',
-    }));
-    const add = redisMock.redis.sAdd.getMockImplementation()!;
-    redisMock.redis.sAdd.mockImplementation(async (...args: any[]) => {
-      if (redisMock.redis.sAdd.mock.calls.length > 1) throw new Error('redis dropped');
-      return add(...args);
-    });
-
-    const { written } = await castVote();
-
-    expect(sets.has(ratedKey)).toBe(false);
-    expect([...sets.keys()]).toEqual([]);
-    expect(written).toHaveLength(1);
-  });
 });
 
 describe('recording a vote in the rated set', () => {
   const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-  it('does not create the set when it is missing, so it is never passed off as complete', async () => {
-    mockCh.$query.mockRejectedValue(new Error('clickhouse down'));
+  it('creates a missing set without the sentinel, which the next warm-up completes', async () => {
+    mockCh.$query.mockRejectedValueOnce(new Error('clickhouse down'));
 
     await castVote();
     await flush();
 
-    expect(sets.has(ratedKey)).toBe(false);
+    expect([...sets.get(ratedKey)!]).toEqual([String(IMAGE)]);
+    expect(ttlSeconds.get(ratedKey)).toBe(CacheTTL.day);
+
+    chRows = [{ imageId: 50, rank: 'Knight', createdAt: '2026-03-01T00:00:00Z' }];
+    await castVote();
+
+    expect([...sets.get(ratedKey)!]).toEqual(expect.arrayContaining([String(IMAGE), '50', '0']));
   });
 
   it('appends to a set that already exists', async () => {
