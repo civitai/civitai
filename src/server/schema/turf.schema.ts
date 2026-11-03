@@ -35,7 +35,12 @@ export const turfImageSchema = z.object({
   event: eventName,
   imageId: z.number().int().positive(),
   // The last sticker of the previous page: return only stickers older than it.
-  before: z.object({ createdAt: z.iso.datetime(), id: z.coerce.bigint().positive() }).optional(),
+  before: z
+    .object({
+      createdAt: z.iso.datetime(),
+      id: z.coerce.bigint().positive().max(9223372036854775807n),
+    })
+    .optional(),
 });
 export type TurfStickersCursor = { createdAt: string; id: string };
 
