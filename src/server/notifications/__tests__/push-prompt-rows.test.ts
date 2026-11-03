@@ -5,7 +5,7 @@ import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
 // The opt-in prompt tells a new subscriber what we will push. That list has to be exactly what
 // granting permission turns on (DEFAULT_PUSH_TYPES), or the prompt promises the wrong thing.
 describe('PUSH_PROMPT_ROWS', () => {
-  const listed = PUSH_PROMPT_ROWS.flatMap((row) => [...row.types]);
+  const listed: string[] = PUSH_PROMPT_ROWS.flatMap((row) => [...row.types]);
 
   it('lists only types that are push-on by default', () => {
     expect(listed.filter((t) => !DEFAULT_PUSH_TYPES.includes(t))).toEqual([]);

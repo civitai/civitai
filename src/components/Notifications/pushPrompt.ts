@@ -3,7 +3,6 @@ import dayjs from 'dayjs';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import type { PushSupport } from '~/store/push-subscription.store';
-import { usePushSubscriptionStore } from '~/store/push-subscription.store';
 import type { PUSH_PROMPT_ACTIONS, PUSH_PROMPT_VARIANTS } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -87,7 +86,7 @@ export function usePushPromptActions(
   variant: PushPromptVariant,
   platform: 'desktop' | 'mobile'
 ) {
-  const { enable } = usePushSubscription();
+  const { enable, busy } = usePushSubscription();
   const { trackAction } = useTrackEvent();
   const { data: settings } = trpc.user.getSettings.useQuery();
   const queryUtils = trpc.useUtils();
@@ -124,11 +123,12 @@ export function usePushPromptActions(
 
   const enableTracked = useCallback(async () => {
     // enable() is a no-op while another surface's call is in flight; nothing to record.
-    if (usePushSubscriptionStore.getState().busy) return false;
+    if (busy) return false;
     track('enable_click');
-    const before = usePushSubscriptionStore.getState().permission;
+    // Read from the browser, not the push store: the store keeps a single importer (its SSR guard).
+    const before = Notification.permission;
     const ok = await enable();
-    const after = usePushSubscriptionStore.getState().permission;
+    const after = Notification.permission;
     if (after === 'granted' && before !== 'granted') track('granted');
     if (ok) track('subscribed');
     else if (after === 'denied') track('denied');
@@ -137,7 +137,7 @@ export function usePushPromptActions(
       spendDismissal();
     } else track('failed');
     return ok;
-  }, [track, enable, spendDismissal]);
+  }, [track, enable, busy, spendDismissal]);
 
   return { track, notNow, enable: enableTracked };
 }
