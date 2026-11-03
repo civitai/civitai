@@ -11,11 +11,16 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { isMissingColumnError } from '~/server/services/blocks/scope-grant.service';
+import {
+  isMissingColumnError,
+  recordScopeGrant,
+} from '~/server/services/blocks/scope-grant.service';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
   APP_STORAGE_ENABLED_FEATURES,
   APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
   parseManifestStorage,
   type AppStorageFeature,
   type AppStorageImportAccess,
@@ -25,8 +30,8 @@ export const STORAGE_IMPORT_UNAVAILABLE_MESSAGE =
   'Sharing data between apps is not available yet. Try again later.';
 
 /**
- * The ledger's hand-applied migration has not run (no table), or a table from its earlier draft
- * (no `collections` / `access`) is in place: both read as "nobody granted anything". The two
+ * No table (the hand-applied migration has not run), or a table without `collections` /
+ * `access`: both read as "nobody granted anything". The two
  * canonical predicates, composed; `app-access.service` is imported lazily, as
  * `app-listing.service` does, so the storage route does not load the listing services.
  */
@@ -288,6 +293,76 @@ export async function resolveDeclaredImports(
       source: { appBlockId: row.id, name: typeof name === 'string' ? name : from },
     };
   });
+}
+
+export const SOURCE_PUBLISH_ONLY_MESSAGE = `With from, the only scope that can be granted is ${APP_STORAGE_PUBLISH_SCOPE}`;
+
+/**
+ * The viewer's prompted consent to `apps:storage:publish` in the SOURCE app of one of the
+ * consumer's imports, recorded in the viewer's ordinary scope grant for that source (the grant
+ * `resolveImportAccess` reads for an authoring write through the import). The consumer's block
+ * names `from`, so the source must be one the consumer's APPROVED manifest imports with
+ * `readwrite`, an approved app this host may show, and one whose own approved manifest asks for
+ * the scope; anything else is refused before any write. The grant is the source's, so it also
+ * lets the source app itself publish as this viewer, which the prompt says.
+ *
+ * `consumer` is the consumer's approved row as the caller read it. Returns the source and what
+ * `recordScopeGrant` returns, for the caller's revocation-marker and OAuth follow-ups.
+ */
+export async function grantImportSourcePublish(opts: {
+  userId: number;
+  consumer: { id: string; manifest: unknown };
+  from: string;
+  host: string;
+}): Promise<{
+  source: { id: string; manifest: unknown };
+  revokedScopesAfterClear: string[] | null;
+}> {
+  const { from } = opts;
+  const imports = await resolveDeclaredImports(opts.consumer.manifest, { host: opts.host });
+  const declared = imports.find((i) => i.from === from);
+  if (!declared || declared.access !== 'readwrite') {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: `This app does not change your data in ${from}, so it cannot ask for this permission there.`,
+    });
+  }
+  if (declared.unavailable === 'source_rating') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: `${from} is not available on this site` });
+  }
+  const source =
+    declared.source && declared.source.appBlockId !== opts.consumer.id
+      ? await dbRead.appBlock.findUnique({
+          where: { id: declared.source.appBlockId },
+          select: { status: true, manifest: true, approvedScopes: true, version: true },
+        })
+      : null;
+  if (!declared.source || !source || source.status !== 'approved') {
+    throw new TRPCError({ code: 'NOT_FOUND', message: `${from} is not available` });
+  }
+  // The source's own ceiling, by the same rule `blocks.grantScopes` applies to any app.
+  const ceiling = effectiveBlockScopes(
+    source.manifest as { scopes?: unknown },
+    source.approvedScopes
+  );
+  if (!ceiling.includes(APP_STORAGE_PUBLISH_SCOPE)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `${from} does not ask for ${APP_STORAGE_PUBLISH_SCOPE}`,
+    });
+  }
+  const { revokedScopesAfterClear } = await recordScopeGrant({
+    userId: opts.userId,
+    appBlockId: declared.source.appBlockId,
+    version: source.version ?? '',
+    scopes: [APP_STORAGE_PUBLISH_SCOPE],
+    // The viewer allowed exactly this scope in a prompt naming the source.
+    clearRevocations: true,
+  });
+  return {
+    source: { id: declared.source.appBlockId, manifest: source.manifest },
+    revokedScopesAfterClear,
+  };
 }
 
 /**

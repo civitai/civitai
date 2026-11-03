@@ -46,6 +46,7 @@ import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -54,6 +55,7 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
+import { APP_STORAGE_PUBLISH_SCOPE } from '~/shared/constants/block-storage.constants';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
@@ -2044,6 +2046,13 @@ export function IframeHost({
       // `useRequestConsent`), its payload is `{ scopes? }` with NO requestId, and
       // there is no host→block reply message for it — so there is nothing to
       // reply TO and no promise to fail fast. Dropping it cannot hang the block.
+      //
+      // A request carrying `from` asks for `apps:storage:publish` in ANOTHER app, which only the
+      // page host prompts for. Refused here, never read as a request for this app's own scopes.
+      if (resolveSourcePublishConsentRequest(payload) !== null) {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
       const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
       if (scopesToGrant != null) {
         openConsentModal(scopesToGrant);
