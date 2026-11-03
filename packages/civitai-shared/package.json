@@ -33,6 +33,7 @@
     "./resolution-reasons": "./src/resolution-reasons.ts",
     "./bounty-award": "./src/bounty-award.ts",
     "./site-appeal": "./src/site-appeal.ts",
+    "./lock-review": "./src/lock-review.ts",
     "./post-scheduling": "./src/post-scheduling.ts",
     "./platform-feedback-version": "./src/platform-feedback-version.ts",
     "./reaction-privacy": "./src/reaction-privacy.ts",
