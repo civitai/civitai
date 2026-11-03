@@ -183,10 +183,12 @@ describe('storylines on a host card', () => {
     ).resolves.toEqual({});
   });
 
-  it('leaves out a storyline with no chapter 1, or one taken down', async () => {
+  it('leaves out a storyline with no chapter 1, chapter 1 removed, or one taken down', async () => {
     await story(1, HOST, { root: false });
     await story(2, HOST, { tosViolation: true });
     await story(3, HOST);
+    await story(4, HOST);
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 40`);
     expect(await listed()).toEqual({ [HOST]: [3] });
   });
 

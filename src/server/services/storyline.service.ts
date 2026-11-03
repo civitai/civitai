@@ -3860,7 +3860,7 @@ export type StorylineFeedCover = {
   poi: boolean;
 };
 
-type StorylineImageGate = {
+export type StorylineImageGate = {
   viewer: Viewer;
   browsingLevel: number;
   blockedUserIds: ReadonlySet<number>;
@@ -3989,7 +3989,7 @@ async function withFirstImages<T extends { post: { id: number } | null }>(
  * chapter-image gate (so never above the story's ceiling), from a published post, by an account in
  * good standing outside a block with the reader. Otherwise null, and the story reads without it.
  */
-async function getStorylineSpark(
+export async function getStorylineSpark(
   gate: StorylineImageGateSource,
   storylineId: number,
   sparkImageId: number | null
