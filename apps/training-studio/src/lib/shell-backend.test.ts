@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MatureAckRequiredError } from './mature-charge';
 import { shellBackend } from './shell-backend';
 
 const fetchMock = vi.fn();
@@ -33,5 +34,27 @@ describe('keep-training errors', () => {
     await expect(shellBackend.continueQuote('wf-1', 10, 5, [])).rejects.toThrow(
       /^pricing is down$/
     );
+  });
+});
+
+describe('a submit refused for a missing mature confirm', () => {
+  const refusal = () =>
+    Response.json({ message: 'Confirm the charge', matureCount: 3 }, { status: 409 });
+
+  it.each([
+    ['train', () => shellBackend.submitTraining([])],
+    ['train further', () => shellBackend.continueRun('wf-1', 10, 5, ['blue'], false)],
+  ])('%s hands back the mature count so the confirm can show', async (_, run) => {
+    fetchMock.mockResolvedValueOnce(refusal());
+    const err = await run().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MatureAckRequiredError);
+    expect((err as MatureAckRequiredError).matureCount).toBe(3);
+  });
+
+  it('keeps any other failure a plain error with the server message', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ message: 'busy' }, { status: 502 }));
+    const err = await shellBackend.continueRun('wf-1', 10, 5, ['blue'], false).catch((e) => e);
+    expect(err).not.toBeInstanceOf(MatureAckRequiredError);
+    expect((err as Error).message).toBe('busy');
   });
 });
