@@ -121,6 +121,15 @@ describe('AppAssistantChat', () => {
     expect(chatEl().children).toHaveLength(0);
   });
 
+  test('shows every tool call as a row the viewer can open (tool-calls="details")', async () => {
+    renderWithProviders(
+      <AppAssistantChat tokens={tokens()} tools={{}} instructions={() => ''} mcpServers={[]} />
+    );
+    await vi.waitFor(() => expect(chatEl()).not.toBeNull());
+    // Unset, the element's default is `activity`: a line while a call runs, then nothing.
+    expect(chatEl().getAttribute('tool-calls')).toBe('details');
+  });
+
   test('grants only the scopes the chat token holds', async () => {
     const tokens: AssistantTokenProvider = {
       getToken: vi.fn(async () => 'chat-token'),

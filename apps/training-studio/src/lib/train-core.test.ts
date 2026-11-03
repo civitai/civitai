@@ -3,6 +3,7 @@ import { cardByType } from '$lib/data/trainingModels';
 import {
   continueTraining,
   continueTrainingWhatIf,
+  MatureAckRequiredError,
   submitTraining,
   submitTrainingBatch,
   TrainingTextRefusedError,
@@ -13,6 +14,7 @@ import {
 const submitWorkflow = vi.fn();
 const getWorkflow = vi.fn();
 const getResource = vi.fn();
+const headBlob = vi.fn();
 // Hand-listed rather than spread over importOriginal: @civitai/orchestration-client's dist imports a directory,
 // which Node's ESM loader refuses when the factory resolves the real module — the main app's
 // suites mock this package the same way.
@@ -26,6 +28,7 @@ vi.mock('@civitai/orchestration-client', () => ({
   getWorkflow: (...args: unknown[]) => getWorkflow(...args),
   updateWorkflow: vi.fn(),
   submitWorkflow: (...args: unknown[]) => submitWorkflow(...args),
+  headBlob: (...args: unknown[]) => headBlob(...args),
 }));
 
 const client = {} as Parameters<typeof submitTraining>[0];
@@ -517,5 +520,269 @@ describe('Prodigy learning rate', () => {
       submitTrainingBatch(client, [{ ...baseRun(), textEncoderLr: 0.1 }], { checkText })
     ).rejects.toThrow(/textEncoderLr must be less than 0.1 for non-Prodigy optimizers/);
     expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
+// Mature training data is charged in Yellow only after the user confirms: every body is `manual`, and only a
+// confirmed mature run carries the unlock.
+describe('mature charge: Yellow only after the user confirms', () => {
+  const nsfwHead = (level: string | null) => ({
+    response: new Response(null, {
+      status: 204,
+      headers: level ? { 'X-NSFW-Level': level } : {},
+    }),
+  });
+  const matureSource = (id: string, meta: Record<string, unknown> = {}) => ({
+    data: {
+      id,
+      metadata: meta,
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem: 'sdxl',
+            epochs: 10,
+            steps: 2000,
+            trainingData: {
+              type: 'blobs',
+              items: [
+                { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+                { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
+              ],
+            },
+          },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  });
+  const rateSpicy = (args: { path: { blobId: string } }) =>
+    Promise.resolve(nsfwHead(args.path.blobId === 'spicy-2' ? 'R' : 'PG'));
+
+  describe('fresh submit', () => {
+    it('a non-mature run: manual, no unlock, and the currencies the user picked (unchanged)', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-a' } });
+      await submitTraining(client, { ...baseRun(), currencies: ['blue', 'green'] });
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'green']);
+    });
+
+    it('a non-mature run with no pick still falls back to blue + yellow', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-b' } });
+      await submitTraining(client, baseRun());
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('an acked mature run unlocks at submit and is charged from Blue + Yellow, never Green', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-c' } });
+      await submitTraining(client, {
+        ...baseRun(),
+        currencies: ['blue', 'green'],
+        matureAck: true,
+      });
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect(body.allowMatureContent).toBe(true);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('refuses an unconfirmed mature dataset before anything is charged, rating a sweep once', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      const items = [
+        { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+        { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
+      ];
+      await expect(
+        submitTrainingBatch(
+          client,
+          [
+            { ...baseRun(), items },
+            { ...baseRun(), epochs: 12, items },
+          ],
+          { checkText }
+        )
+      ).rejects.toBeInstanceOf(MatureAckRequiredError);
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+      expect(headBlob).toHaveBeenCalledTimes(2);
+      for (const [args] of headBlob.mock.calls) expect(args.query?.workflowId).toBeUndefined();
+    });
+
+    it('submits a confirmed mature sweep without re-rating it', async () => {
+      headBlob.mockReset();
+      submitWorkflow
+        .mockResolvedValueOnce({ data: { id: 'wf-s1' } })
+        .mockResolvedValueOnce({ data: { id: 'wf-s2' } });
+      const { workflowIds } = await submitTrainingBatch(
+        client,
+        [
+          { ...baseRun(), matureAck: true },
+          { ...baseRun(), epochs: 12, matureAck: true },
+        ],
+        { checkText }
+      );
+      expect(workflowIds).toEqual(['wf-s1', 'wf-s2']);
+      expect(headBlob).not.toHaveBeenCalled();
+    });
+
+    it('refuses a non-boolean ack before anything is submitted', async () => {
+      const before = submitWorkflow.mock.calls.length;
+      await expect(
+        submitTrainingBatch(client, [{ ...baseRun(), matureAck: 'yes' as unknown as boolean }], {
+          checkText,
+        })
+      ).rejects.toThrow(/matureAck/);
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('names Yellow when an acked mature run is short of it', async () => {
+      submitWorkflow.mockResolvedValueOnce({
+        error: { detail: 'insufficientBuzz' },
+        response: { status: 400 },
+      });
+      await expect(submitTraining(client, { ...baseRun(), matureAck: true })).rejects.toThrow(
+        /Yellow/
+      );
+    });
+  });
+
+  describe('train further', () => {
+    const opts = { fromEpoch: 10, addEpochs: 5, currencies: ['blue', 'green'] };
+
+    it('quotes a mature source with its mature count, on a manual body with no unlock', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-q1'));
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      const quote = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-q1' });
+      expect(quote.matureCount).toBe(1);
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+    });
+
+    it('refuses a mature source without the ack, and submits nothing', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-r1'));
+      headBlob.mockImplementation(rateSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      await expect(
+        continueTraining(client, { ...opts, workflowId: 'wf-r1' }, { checkText })
+      ).rejects.toBeInstanceOf(MatureAckRequiredError);
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('with the ack, unlocks at submit and charges Blue + Yellow, never Green', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-r2'));
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-r2', matureAck: true },
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect(body.allowMatureContent).toBe(true);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+      expect(body.metadata.matureCount).toBe(1);
+    });
+
+    it('a non-mature source: manual, no unlock, currencies unchanged, ack or not', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-n1'));
+      headBlob.mockImplementation(() => Promise.resolve(nsfwHead('PG13')));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-n1', matureAck: true },
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'green']);
+    });
+
+    it('rates the dataset with a HEAD that never carries a workflowId', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-h1'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-h1' });
+      expect(headBlob).toHaveBeenCalledTimes(2);
+      for (const [args] of headBlob.mock.calls) {
+        expect(JSON.stringify(args)).not.toMatch(/workflowId/i);
+        expect(args.query?.workflowId).toBeUndefined();
+      }
+      expect(headBlob.mock.calls.map(([a]) => a.path.blobId).sort()).toEqual(['safe-1', 'spicy-2']);
+    });
+
+    it('rates a source once per page: the quote and the submit share the probe', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-c1'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-c1' });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-c1', matureAck: true },
+        { checkText }
+      );
+      expect(headBlob).toHaveBeenCalledTimes(2);
+    });
+
+    it('ignores an ack on the quote: it is priced without the unlock', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-qa'));
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-qa', matureAck: true });
+      expect('allowMatureContent' in submitWorkflow.mock.calls.at(-1)![0].body).toBe(false);
+    });
+
+    it('names Yellow when a confirmed continuation is short of it', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-y1'));
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({
+        error: { detail: 'insufficientBuzz' },
+        response: { status: 400 },
+      });
+      await expect(
+        continueTraining(client, { ...opts, workflowId: 'wf-y1', matureAck: true }, { checkText })
+      ).rejects.toThrow(/Yellow/);
+    });
+
+    it('rates the dataset again after a probe with a failed HEAD', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-f1'));
+      headBlob.mockReset();
+      headBlob.mockRejectedValueOnce(new Error('network')).mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValue({ data: { cost: { total: 900 } } });
+      await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-f1' });
+      const again = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-f1' });
+      expect(again.matureCount).toBe(1);
+      expect(headBlob).toHaveBeenCalledTimes(4);
+      submitWorkflow.mockReset();
+    });
+
+    it("trusts a source's stamped mature count without probing, but probes when it says 0", async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      getWorkflow.mockResolvedValue(matureSource('wf-m1', { matureCount: 3 }));
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      const stamped = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-m1' });
+      expect(stamped.matureCount).toBe(3);
+      expect(headBlob).not.toHaveBeenCalled();
+
+      getWorkflow.mockResolvedValue(matureSource('wf-m0', { matureCount: 0 }));
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      const probed = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-m0' });
+      expect(probed.matureCount).toBe(1);
+      expect(headBlob).toHaveBeenCalledTimes(2);
+    });
   });
 });

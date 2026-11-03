@@ -349,11 +349,11 @@ describe('the runner upgrades an app on an old @civitai/sdk itself', () => {
 
   it('a current range with an older SDK still installed is installed again, package.json untouched', async () => {
     fake.add('my-app');
-    const state = app({ pkg: pkg4('^0.22.0'), installed: '0.19.1' });
+    const state = app({ pkg: pkg4(CURRENT), installed: '0.19.1' });
     await open(provider());
     expect(state.writes).toEqual([]);
     expect(installCount()).toBe(1);
-    expect(state.installed).toBe('0.22.0');
+    expect(state.installed).toBe(CURRENT_VERSION);
   });
 
   it('a current pin with a current SDK installed makes no change at all', async () => {

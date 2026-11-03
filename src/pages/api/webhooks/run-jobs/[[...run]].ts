@@ -20,6 +20,7 @@ import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
 import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
@@ -48,6 +49,8 @@ import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
+import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
+import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
@@ -83,6 +86,7 @@ import {
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
 } from '~/server/jobs/event-engine-work';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
@@ -226,6 +230,7 @@ export const jobs: Job[] = [
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -263,6 +268,7 @@ export const jobs: Job[] = [
   linkedAccountReview,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  bluePaidAccessDetection,
   creatorProgramCounterpartyReview,
   creatorProgramPrepayoutReview,
   giftMembershipArming,
@@ -272,6 +278,8 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
+  reapDeletedAppStorageJob,
+  removeDeletedAccountAppDataJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,

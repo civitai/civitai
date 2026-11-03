@@ -9,6 +9,15 @@ import { trackedReasons } from '~/utils/login-helpers';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
 import {
+  EXPERIMENT_ASSIGNMENT_SOURCES,
+  EXPERIMENT_SURFACES,
+  experimentKeys,
+  HAT_TURF_CLIENT_ACTIONS,
+  HAT_TURF_EVENTS,
+  isExperimentVariant,
+  type ExperimentKey,
+} from '~/shared/constants/experiments.constants';
+import {
   USER_MENU_GROUP_IDS,
   USER_MENU_HEADER_GROUP,
 } from '~/shared/constants/user-menu-groups.constants';
@@ -885,6 +894,54 @@ const userMenuClickSchema = z.object({
   }),
 });
 
+// Push opt-in funnel, from the visit prompt and the settings-page card. Client-postable like
+// `UserMenu_Click`: an inflated count only misleads us. Every field is closed.
+export const PUSH_PROMPT_ACTIONS = [
+  'shown',
+  'enable_click',
+  'not_now',
+  'granted',
+  'native_dismissed',
+  'denied',
+  'subscribed',
+  'failed',
+] as const;
+export const PUSH_PROMPT_VARIANTS = ['new', 'finish', 'another-device'] as const;
+const pushPromptSchema = z.object({
+  type: z.literal('Push_Prompt'),
+  details: z.object({
+    action: z.enum(PUSH_PROMPT_ACTIONS),
+    surface: z.enum(['visit-prompt', 'settings-card']),
+    variant: z.enum(PUSH_PROMPT_VARIANTS),
+    platform: z.enum(['desktop', 'mobile']),
+  }),
+});
+
+// Client-postable: a forged exposure can only add a row for the poster's own session user, and the
+// readout counts each user once.
+const experimentExposureSchema = z.object({
+  type: z.literal('Experiment_Exposure'),
+  details: z
+    .object({
+      exp: z.enum(experimentKeys as [ExperimentKey, ...ExperimentKey[]]),
+      variant: z.string().max(64),
+      assignment: z.enum(EXPERIMENT_ASSIGNMENT_SOURCES),
+      surface: z.enum(EXPERIMENT_SURFACES),
+    })
+    .refine((d) => isExperimentVariant(d.exp, d.variant), { message: 'unknown variant' }),
+});
+
+// Only the UI actions: `opt_in`/`opt_out` (HAT_TURF_SERVER_ACTIONS) are written by the server, so a
+// script cannot inflate an arm's join rate.
+const hatTurfActionSchema = z.object({
+  type: z.literal('HatTurf_Action'),
+  details: z.object({
+    action: z.enum(HAT_TURF_CLIENT_ACTIONS),
+    event: z.enum(HAT_TURF_EVENTS),
+    surface: z.enum(EXPERIMENT_SURFACES).optional(),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -912,6 +969,9 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   announcementClickSchema,
   appsBuildActionSchema,
   userMenuClickSchema,
+  pushPromptSchema,
+  experimentExposureSchema,
+  hatTurfActionSchema,
 ]);
 // What `track.addAction` parses: the action, with its whole JSON length capped at
 // `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through

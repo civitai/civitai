@@ -27,6 +27,7 @@
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_PUBLISH_SCOPE,
 } from '~/shared/constants/block-storage.constants';
 import { BLOCK_HOST_LOCAL_PREVIEW_STORAGE, type BlockHostSurface } from './blockInitFragmentGate';
@@ -40,6 +41,33 @@ export function resolveRequestConsent(
   if (status !== 'ready') return null;
   if (!Array.isArray(missingScopes) || missingScopes.length === 0) return null;
   return missingScopes;
+}
+
+/** What a `REQUEST_CONSENT` carrying `from` asks for: see `resolveSourcePublishConsentRequest`. */
+export type SourcePublishConsentRequest = { from: string } | 'invalid' | null;
+
+/**
+ * A block asking for `apps:storage:publish` IN the source app of one of its imports:
+ * `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from: '<source blockId>' }`. Returns
+ * `null` when the payload carries no `from` (the ordinary request above), `{ from }` for that
+ * exact shape, and `'invalid'` for any other payload with a `from`, which the host refuses rather
+ * than reading as a request for this app's own missing scopes. Only the shape is checked here:
+ * the modal names the source from the consumer's approved imports, and the server grants only for
+ * a source the consumer imports with `readwrite`.
+ */
+export function resolveSourcePublishConsentRequest(payload: unknown): SourcePublishConsentRequest {
+  if (typeof payload !== 'object' || payload === null || !('from' in payload)) return null;
+  const { from, scopes } = payload as { from?: unknown; scopes?: unknown };
+  if (
+    typeof from === 'string' &&
+    APP_STORAGE_IMPORT_FROM_RE.test(from) &&
+    Array.isArray(scopes) &&
+    scopes.length === 1 &&
+    scopes[0] === APP_STORAGE_PUBLISH_SCOPE
+  ) {
+    return { from };
+  }
+  return 'invalid';
 }
 
 /**

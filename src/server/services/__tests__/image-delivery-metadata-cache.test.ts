@@ -20,7 +20,7 @@ import { CacheTTL } from '~/server/common/constants';
 // matter what was asked for, and every assertion about a NEWLY-selected column passes on code
 // that never selects it — measured: 5 of the media-type assertions below went green against
 // the pre-change service until this was introduced.
-import { respondWithRows } from '~/test-utils/queryRawProjection';
+import { respondWithRows, statementOf } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -148,7 +148,7 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
   it('passes the exact url to the DB query as the WHERE value', async () => {
     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
     await getCachedImageDeliveryMetadata(URL);
-    const values = dbReadQueryRaw.mock.calls[0].slice(1);
+    const { values } = statementOf(dbReadQueryRaw.mock.calls[0]);
     expect(values).toContain(URL);
   });
 
@@ -349,7 +349,7 @@ describe('getCachedImageDeliveryMetadata — media type', () => {
     expect(dbReadQueryRaw).toHaveBeenCalledTimes(1); // one query total, not two
     expect(dbWriteQueryRaw).not.toHaveBeenCalled();
     // The columns come from that one statement's SELECT list.
-    const sql = (dbReadQueryRaw.mock.calls[0][0] as string[]).join('?');
+    const sql = statementOf(dbReadQueryRaw.mock.calls[0]).strings.join('?');
     expect(sql).toContain('"mimeType"');
     expect(sql).toMatch(/\btype\b/);
     expect(sql).toContain('"hideMeta"');

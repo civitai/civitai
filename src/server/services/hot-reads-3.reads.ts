@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -10,9 +10,9 @@ import {
 } from '@civitai/db-queries/hot-reads-3';
 
 /**
- * The reads behind `kysely-hot-reads-3`, each as a Prisma reader and its Kysely twin taking the
- * client, so the parity suite (__tests__/hot-reads-3.kysely-parity.test.ts) runs the very code the
- * services run. The Prisma readers are the original reads, moved here verbatim.
+ * The Kysely reads that replaced the Prisma ones (formerly behind a server Flipt flag), each
+ * returning the shape the Prisma read returned. Each takes the client, so
+ * __tests__/hot-reads-3.kysely-parity.test.ts runs the very code the services run.
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -41,21 +41,11 @@ export type DefaultModelVersionRead = Prisma.ModelGetPayload<{
   select: ReturnType<typeof defaultModelVersionSelect>;
 }> | null;
 
-/** The Prisma read, unchanged: the model, its versions, and each version's model. */
-export function readDefaultModelVersionsViaPrisma(
-  db: PrismaClient,
-  { modelId, modelVersionId }: DefaultModelVersionInput
-): Promise<DefaultModelVersionRead> {
-  return db.model.findUnique({
-    where: { id: modelId },
-    select: defaultModelVersionSelect(modelVersionId),
-  });
-}
-
 /**
- * The same answer from ONE statement (`listDefaultModelVersionRows`): no rows is a missing model
- * (`null`), and a single row with a NULL version id is a model with no matching version
- * (`{ modelVersions: [] }`).
+ * The model, its versions, and each version's model, as the Prisma `model.findUnique` with
+ * `defaultModelVersionSelect` returned them, from ONE statement (`listDefaultModelVersionRows`): no
+ * rows is a missing model (`null`), and a single row with a NULL version id is a model with no
+ * matching version (`{ modelVersions: [] }`).
  */
 export async function readDefaultModelVersionsViaKysely(
   db: Kysely<DB>,
@@ -86,21 +76,11 @@ export async function readDefaultModelVersionsViaKysely(
 // ---------------------------------------------------------------------------------------------
 // Three reads `getModelHandler` (model.controller.ts) makes after the model row.
 
-/** The Prisma read, unchanged. */
-export function countSuggestedResourcesViaPrisma(db: PrismaClient, modelId: number) {
-  return db.modelAssociations.count({ where: { fromModelId: modelId, type: 'Suggested' } });
-}
-
 export function countSuggestedResourcesViaKysely(db: Kysely<DB>, modelId: number) {
   return countSuggestedResources(db, modelId);
 }
 
 /** The owner's `settings`, `null` for a missing user or a NULL column, as the handler reads it. */
-export async function readOwnerSettingsViaPrisma(db: PrismaClient, userId: number) {
-  const owner = await db.user.findUnique({ where: { id: userId }, select: { settings: true } });
-  return (owner?.settings ?? null) as Prisma.JsonValue | null;
-}
-
 export async function readOwnerSettingsViaKysely(db: Kysely<DB>, userId: number) {
   const owner = await getUserSettings(db, userId);
   return (owner?.settings ?? null) as Prisma.JsonValue | null;
@@ -108,18 +88,7 @@ export async function readOwnerSettingsViaKysely(db: Kysely<DB>, userId: number)
 
 export type ModelPagePostsInput = { modelVersionIds: number[]; userId: number };
 
-/** The Prisma read, unchanged. */
-export function readModelPagePostsViaPrisma(
-  db: PrismaClient,
-  { modelVersionIds, userId }: ModelPagePostsInput
-) {
-  return db.post.findMany({
-    where: { modelVersionId: { in: modelVersionIds }, userId },
-    select: { id: true, modelVersionId: true },
-    orderBy: { id: 'asc' },
-  });
-}
-
+/** The owner's posts on the versions, in id order. */
 export function readModelPagePostsViaKysely(
   db: Kysely<DB>,
   input: ModelPagePostsInput
@@ -139,23 +108,12 @@ export type ViewerPendingPlacementsInput = {
   limit: number;
 };
 
-/** The Prisma read, unchanged. */
-export function readViewerPendingPlacementsViaPrisma(
-  db: PrismaClient,
-  { surface, targetType, targetId, placerId, limit }: ViewerPendingPlacementsInput
-) {
-  return db.placement.findMany({
-    where: { surface, targetType, targetId, placerId, status: 'pending' },
-    select: { id: true, amount: true, free: true, data: true, createdAt: true, expiresAt: true },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
-  });
-}
+/** One of the viewer's pending rows, in the shape the Prisma `placement.findMany` returned. */
+export type ViewerPendingPlacementRow = Prisma.PlacementGetPayload<{
+  select: { id: true; amount: true; free: true; data: true; createdAt: true; expiresAt: true };
+}>;
 
-export type ViewerPendingPlacementRow = Awaited<
-  ReturnType<typeof readViewerPendingPlacementsViaPrisma>
->[number];
-
+/** The viewer's pending rows, oldest first, capped at `limit`. */
 export async function readViewerPendingPlacementsViaKysely(
   db: Kysely<DB>,
   input: ViewerPendingPlacementsInput

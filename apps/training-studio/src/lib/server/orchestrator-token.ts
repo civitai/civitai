@@ -26,17 +26,17 @@ const TTL_SECONDS = 3600;
 
 export class ClosedAccountError extends Error {
   constructor() {
-    super('account is banned or deleted');
+    super('account is restricted, banned or deleted');
   }
 }
 
 async function isClosed(userId: number) {
   const row = await db
     .selectFrom('User')
-    .select(['bannedAt', 'deletedAt'])
+    .select(['muted', 'bannedAt', 'deletedAt'])
     .where('id', '=', userId)
     .executeTakeFirst();
-  return !!(row?.bannedAt || row?.deletedAt);
+  return !row || row.muted || !!(row.bannedAt || row.deletedAt);
 }
 
 /**
@@ -48,6 +48,8 @@ export async function orchestratorToken(userId: number): Promise<string> {
   if (env.ORCHESTRATOR_MODE === 'dev' && env.ORCHESTRATOR_ACCESS_TOKEN)
     return env.ORCHESTRATOR_ACCESS_TOKEN;
 
+  // Before the caches: a token cached before a restriction must not be served after it.
+  if (await isClosed(userId)) throw new ClosedAccountError();
   const field = String(userId);
 
   // 1. Shared cache — a token the main app / any pod already minted for this user. Raw. Fail-open.
@@ -70,7 +72,6 @@ export async function orchestratorToken(userId: number): Promise<string> {
   //    is `timestamp without time zone`, and node-postgres writes a JS Date's LOCAL wall-clock into it — so
   //    on a machine behind UTC the row lands already-expired, and `/api/v1/me` (which filters
   //    `expiresAt >= now()`) never finds the key → orchestrator 401. Computing it server-side is tz-proof.
-  if (await isClosed(userId)) throw new ClosedAccountError();
   const token = generateKey();
   const secret = generateSecretHash(token);
   await db

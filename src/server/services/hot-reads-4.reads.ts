@@ -15,11 +15,12 @@ import type { getAllCommentsWithCachedUserSelect } from '~/server/selectors/comm
 export type { PinnedScope, TopLevelCommentsBaseFilter, TopLevelCommentsFilter };
 
 /**
- * The model page's comment reads behind `kysely-hot-reads-4` (comment.service.ts): the visible
- * top-level comment count and the `comment.getAll` lists, each as a Prisma reader and its Kysely
- * twin taking the client and the same `TopLevelCommentsFilter`, so the parity suite
- * (__tests__/hot-reads-4.kysely-parity.test.ts) runs the very code the service runs. The Prisma
- * readers are the original reads, moved here verbatim.
+ * The model page's comment reads (comment.service.ts): the visible top-level comment counts and the
+ * `comment.getAll` lists, through Kysely. They replaced the Prisma reads (formerly behind a server
+ * Flipt flag), except for the list pages Kysely does not serve (a cursor page or a sort other than
+ * newest/oldest), which still read through `findTopLevelCommentsViaPrisma`. Each takes the client
+ * and the same `TopLevelCommentsFilter`, so __tests__/hot-reads-4.kysely-parity.test.ts runs the
+ * very code the service runs.
  */
 
 /** The Prisma where for a `TopLevelCommentsFilter`; the Kysely conditions are its twin. */
@@ -36,26 +37,8 @@ export function topLevelCommentsWhere(
   };
 }
 
-const pinnedAtWhere = (pinned: PinnedScope): Prisma.CommentWhereInput =>
-  pinned === 'unpinned'
-    ? { pinnedAt: null }
-    : pinned === 'pinned'
-    ? { pinnedAt: { not: null } }
-    : {};
-
 // ---------------------------------------------------------------------------------------------
 // The visible top-level comment count (`getVisibleCommentCount`).
-
-/** The Prisma read, unchanged. */
-export function countTopLevelCommentsViaPrisma(
-  db: PrismaClient,
-  filter: TopLevelCommentsFilter,
-  pinned: PinnedScope
-) {
-  return db.comment.count({
-    where: { ...topLevelCommentsWhere(filter), ...pinnedAtWhere(pinned) },
-  });
-}
 
 export function countTopLevelCommentsViaKysely(
   db: Kysely<DB>,
@@ -71,22 +54,7 @@ export function countTopLevelCommentsViaKysely(
 
 export type CommentCountsByHidden = { visible: number; hidden: number };
 
-/** One `groupBy hidden` over the base filter; a NULL `hidden` group counts in neither view. */
-export async function countTopLevelCommentsByHiddenViaPrisma(
-  db: PrismaClient,
-  filter: TopLevelCommentsBaseFilter,
-  pinned: PinnedScope
-): Promise<CommentCountsByHidden> {
-  const groups = await db.comment.groupBy({
-    by: ['hidden'],
-    where: { ...topLevelCommentsWhere(filter), ...pinnedAtWhere(pinned) },
-    _count: { _all: true },
-  });
-  const countOf = (hidden: boolean) =>
-    groups.find((group) => group.hidden === hidden)?._count._all ?? 0;
-  return { visible: countOf(false), hidden: countOf(true) };
-}
-
+/** Both views' counts from one statement; a NULL `hidden` counts in neither view. */
 export function countTopLevelCommentsByHiddenViaKysely(
   db: Kysely<DB>,
   filter: TopLevelCommentsBaseFilter,
@@ -96,7 +64,7 @@ export function countTopLevelCommentsByHiddenViaKysely(
 }
 
 // ---------------------------------------------------------------------------------------------
-// The `comment.getAll` lists (`getComments`, `getPinnedComments`).
+// The `comment.getAll` lists (`getComments`, `getCommentsViaKysely`, `getPinnedCommentsViaKysely`).
 
 export type CommentListPage = {
   limit: number;
@@ -105,7 +73,10 @@ export type CommentListPage = {
   sort?: ReviewSort;
 };
 
-/** The Prisma read, unchanged: one page of unpinned top-level comments. */
+/**
+ * One page of unpinned top-level comments through Prisma: the pages `isKyselyCommentListPage`
+ * rejects (a cursor page, or a sort other than newest/oldest).
+ */
 export function findTopLevelCommentsViaPrisma<TSelect extends Prisma.CommentSelect>(
   db: PrismaClient,
   filter: TopLevelCommentsFilter,
@@ -123,19 +94,6 @@ export function findTopLevelCommentsViaPrisma<TSelect extends Prisma.CommentSele
       reactions: sort === ReviewSort.MostLiked ? { _count: 'desc' } : undefined,
       comments: sort === ReviewSort.MostComments ? { _count: 'desc' } : undefined,
     },
-    select,
-  });
-}
-
-/** The Prisma read, unchanged: every pinned top-level comment. */
-export function findPinnedCommentsViaPrisma<TSelect extends Prisma.CommentSelect>(
-  db: PrismaClient,
-  filter: TopLevelCommentsFilter,
-  select: TSelect
-) {
-  return db.comment.findMany({
-    where: { ...topLevelCommentsWhere(filter), pinnedAt: { not: null } },
-    orderBy: { pinnedAt: 'desc' },
     select,
   });
 }
@@ -204,7 +162,7 @@ export async function listTopLevelCommentsViaKysely(
   return rows.map(toCommentListItem);
 }
 
-/** `findPinnedCommentsViaPrisma` with the `comment.getAll` select. */
+/** Every pinned top-level comment, `pinnedAt` desc, in the `comment.getAll` select's shape. */
 export async function listPinnedCommentsViaKysely(
   db: Kysely<DB>,
   filter: TopLevelCommentsFilter

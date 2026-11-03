@@ -105,9 +105,13 @@ import { FOOTER_RESET } from './footer-reset';
 import { CostPicker } from './CostPicker';
 import { QuantityPicker, TitleRowReset } from './MobileFooterParts';
 import { FooterStrips } from '~/components/generation_v2/FooterStrips';
-import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
-import { useSelectedResourceIds, type GenerationStore } from './store';
+import {
+  useSelectedResourceIds,
+  type GenerationStore,
+  formStateKey,
+  useFormStateKey,
+} from './store';
 import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
 
 // =============================================================================
@@ -433,6 +437,11 @@ function BaseModelWarnings() {
 // =============================================================================
 
 const PREPARING_REMIX_LABEL = 'Preparing remix…';
+/** How long the button says "Submitted" after a generation goes through. */
+export const SUBMITTED_FLASH_MS = 1500;
+
+/** The form as it was last submitted: `key` is its `formStateKey`, `at` tells repeat submits apart. */
+export type LastSubmitted = { key: string; at: number };
 const REMIX_LINK_TIMEOUT_MESSAGE =
   "Couldn't prepare the remix link in time; this generation won't count toward a free remix-gallery spot.";
 
@@ -441,12 +450,14 @@ export function SubmitButton({
   isLoading: isSubmitting,
   preparing,
   onSubmit,
+  lastSubmitted,
 }: {
   store: GenerationStore;
   isLoading?: boolean;
   /** Waiting on the reuse-prompt remix link before submitting. */
   preparing?: boolean;
   onSubmit?: () => void;
+  lastSubmitted?: LastSubmitted;
 }) {
   const { running, helpers, setBlockedTarget } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
@@ -484,6 +495,27 @@ export function SubmitButton({
     onSubmit?.();
   };
 
+  // After a submit the button confirms it, then reads "Generate again" for as long as the form is
+  // what was submitted, so a second tap is a choice rather than a missed confirmation.
+  const formKey = useFormStateKey(store);
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!lastSubmitted) return;
+    setFlash(true);
+    const timer = setTimeout(() => setFlash(false), SUBMITTED_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [lastSubmitted]);
+  const label = preparing ? (
+    PREPARING_REMIX_LABEL
+  ) : flash ? (
+    <span className="inline-flex items-center gap-1">
+      <IconCheck size={18} />
+      Submitted
+    </span>
+  ) : lastSubmitted?.key === formKey ? (
+    'Generate again'
+  ) : undefined;
+
   return (
     <GenerateButton
       type="button"
@@ -494,7 +526,7 @@ export function SubmitButton({
       disabled={submitBlocked || preparing}
       onClick={handleClick}
     >
-      {preparing ? PREPARING_REMIX_LABEL : undefined}
+      {label}
     </GenerateButton>
   );
 }
@@ -830,6 +862,7 @@ export function FormFooter({
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
+  const [lastSubmitted, setLastSubmitted] = useState<LastSubmitted>();
   const [insufficientBuzzError, setInsufficientBuzzError] = useState(false);
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -1093,9 +1126,9 @@ export function FormFooter({
       }
 
       if (snapshot.ecosystem) trackRecentEcosystem(snapshot.ecosystem);
+      // After the clean-up above, so what it cleared doesn't read as an edit.
+      setLastSubmitted({ key: formStateKey(store), at: Date.now() });
       onSubmitSuccess?.();
-      if (useMobileGeneratorStore.getState().showing)
-        useMobileGeneratorStore.setState({ submittedAt: Date.now() });
     };
 
     conditionalPerformTransaction(totalCost + boostFee, performTransaction);
@@ -1178,6 +1211,7 @@ export function FormFooter({
               isLoading={generateMutation.isPending || isMinLoading}
               preparing={preparingRemix}
               onSubmit={handleSubmit}
+              lastSubmitted={lastSubmitted}
             />
             {currentUser && <ConnectedCostPicker store={store} />}
           </Button.Group>

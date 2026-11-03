@@ -8,10 +8,18 @@ const spaceFindMany = dbMock.dbWrite.placementSpace.findMany;
 const spaceUpsert = dbMock.dbWrite.placementSpace.upsert;
 const imageFindUnique = dbMock.dbWrite.image.findUnique;
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The Kysely reads `resolvePlacementSpaceFor` makes (`setPlacementSpace` reads through Prisma,
+// above). Their rows, against a real database, are pinned in placement-reads.kysely-parity.test.ts.
+const placementReads = vi.hoisted(() => ({
+  getImagePlacementTarget: vi.fn(),
+  getModelPlacementTarget: vi.fn(),
+  getChapterPlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
+const imageTarget = placementReads.getImagePlacementTarget;
+const spaceRows = placementReads.listPlacementSpacesFor;
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
   placementPriceRange: async () => ({
@@ -53,6 +61,8 @@ beforeEach(() => {
   // Both the ownership check and `inheritedPrice` read the image through this
   // one call, selecting different columns.
   imageFindUnique.mockResolvedValue({ userId: OWNER, postId: 99 });
+  spaceRows.mockResolvedValue([]);
+  placementReads.countPlacements.mockResolvedValue(0);
 });
 
 describe('setPlacementSpace — the price guard', () => {
@@ -242,18 +252,19 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
   // `dbRead`: the reservation feeds a display-only number on a public query, and
   // the claim re-counts under its own lock. Everything else in this resolver
   // reads the primary because it decides a mutation.
-  const placementCount = dbMock.dbRead.placement.count;
+  const placementCount = placementReads.countPlacements;
 
   const resolve = () =>
     resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: 42 });
 
   beforeEach(() => {
     capState.freeSlotCap = 4;
-    imageFindUnique.mockResolvedValue({
+    imageTarget.mockResolvedValue({
       id: 42,
       userId: OWNER,
       postId: null,
-      user: { username: 'creator' },
+      type: 'image',
+      username: 'creator',
     });
     placementCount.mockResolvedValue(0);
   });
@@ -267,7 +278,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
   });
 
   it('subtracts what is already reserved', async () => {
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 4 },
     ]);
     placementCount.mockResolvedValue(3);
@@ -279,13 +290,13 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
   // release a slot after a decline; one that ignored `free` would let paid
   // placements eat the free capacity, which the two counters exist to keep apart.
   it('reserves against pending and approved free rows, and nothing else', async () => {
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 4 },
     ]);
 
     await resolve();
 
-    const { where } = placementCount.mock.calls[0][0];
+    const where = placementCount.mock.calls[0][1];
     expect(where).toMatchObject({
       surface: 'sticker',
       targetType: 'image',
@@ -298,7 +309,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
   it('never reports negative room when the owner lowers their slider', async () => {
     // Not a takeback: the placements they already accepted stay, and the space
     // simply accepts nothing further until one is released.
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 1 },
     ]);
     placementCount.mockResolvedValue(3);
@@ -308,7 +319,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
 
   it('ceilings a stored count at the cap without rewriting the row', async () => {
     capState.freeSlotCap = 2;
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 9 },
     ]);
 
@@ -319,7 +330,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
   });
 
   it('asks nothing of the database when the space takes no free placements', async () => {
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 0 },
     ]);
 
@@ -441,8 +452,8 @@ describe('the host decline fee', () => {
 
   // The default every promotion host starts on, at the layer that sizes the hold.
   it('resolves a promotion host who never chose to 0%, holding nothing', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue({ userId: OWNER, user: { username: 'h' } });
-    spaceFindMany.mockResolvedValue([
+    placementReads.getModelPlacementTarget.mockResolvedValue({ userId: OWNER, username: 'h' });
+    spaceRows.mockResolvedValue([
       { entityType: 'user', mode: 'review', price: 200, freeSlots: null, settings: {} },
     ]);
     const space = await resolvePlacementSpaceFor({
@@ -456,8 +467,8 @@ describe('the host decline fee', () => {
   });
 
   it('resolves a promotion space to the host fee, and a sticker space to 30%', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue({ userId: OWNER, user: { username: 'h' } });
-    spaceFindMany.mockResolvedValue([
+    placementReads.getModelPlacementTarget.mockResolvedValue({ userId: OWNER, username: 'h' });
+    spaceRows.mockResolvedValue([
       {
         entityType: 'user',
         mode: 'review',
@@ -476,7 +487,13 @@ describe('the host decline fee', () => {
     ]);
 
     // A fee key hand-written onto a sticker row is ignored, not honoured.
-    imageFindUnique.mockResolvedValue({ userId: OWNER, postId: 99, user: { username: 'h' } });
+    imageTarget.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      postId: 99,
+      type: 'image',
+      username: 'h',
+    });
     const sticker = await resolvePlacementSpaceFor({
       surface: 'sticker',
       targetType: 'image',
@@ -496,42 +513,71 @@ describe('the host decline fee', () => {
  * the storyline creator's queue at the creator's price.
  */
 describe('resolvePlacementSpaceFor — a storyline chapter', () => {
-  const chapterFindUnique = dbMock.dbWrite.storylineChapter.findUnique;
+  const chapterTarget = placementReads.getChapterPlacementTarget;
+  /** The chapter and its storyline, as the target read returns them (`null`: not a chapter). */
+  const givenChapter = (
+    chapter: {
+      removedAt?: Date;
+      storyline: {
+        id: number;
+        userId: number;
+        status?: string;
+        tosViolation?: boolean;
+        user: { username: string };
+      };
+    } | null
+  ) =>
+    chapterTarget.mockResolvedValue(
+      chapter
+        ? {
+            removedAt: chapter.removedAt,
+            storylineId: chapter.storyline.id,
+            storylineUserId: chapter.storyline.userId,
+            storylineStatus: chapter.storyline.status,
+            storylineTosViolation: chapter.storyline.tosViolation,
+            username: chapter.storyline.user.username,
+          }
+        : undefined
+    );
   const STORYLINE = 31;
   const resolveChapter = () =>
     resolvePlacementSpaceFor({ surface: 'storyline', targetType: 'post', targetId: 55 });
 
   beforeEach(() => {
-    chapterFindUnique.mockResolvedValue({
+    givenChapter({
       storyline: { id: STORYLINE, userId: OWNER, user: { username: 'storyteller' } },
     });
     // Someone else wrote the chapter post (and owns any image a wrong lookup
     // would land on), so an owner taken from either would be visibly wrong.
     dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OWNER + 5 });
-    imageFindUnique.mockResolvedValue({ userId: OWNER + 5, postId: 55 });
+    imageTarget.mockResolvedValue({
+      id: 56,
+      userId: OWNER + 5,
+      postId: 55,
+      type: 'image',
+      username: 'collaborator',
+    });
   });
 
   it('takes the owner from the storyline, not from the chapter post', async () => {
     const space = await resolveChapter();
 
-    expect(chapterFindUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { postId: 55 } })
-    );
+    expect(chapterTarget).toHaveBeenCalledWith(expect.anything(), 55);
     expect(space).toMatchObject({
       ownerId: OWNER,
       storylineId: STORYLINE,
       ownerUsername: 'storyteller',
     });
-    expect(imageFindUnique).not.toHaveBeenCalled();
+    expect(imageTarget).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.post.findUnique).not.toHaveBeenCalled();
   });
 
   it('reads the storyline and account levels only', async () => {
     await resolveChapter();
 
-    expect(spaceFindMany.mock.calls[0][0].where).toEqual({
+    expect(spaceRows.mock.calls[0][1]).toEqual({
       surface: 'storyline',
-      OR: [
+      levels: [
         { entityType: 'storyline', entityId: STORYLINE },
         { entityType: 'user', entityId: OWNER },
       ],
@@ -545,7 +591,7 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
   });
 
   it('lets the storyline row outrank the account row', async () => {
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'user', mode: 'review', price: 200, freeSlots: null, settings: {} },
       { entityType: 'storyline', mode: 'off', price: null, freeSlots: null, settings: {} },
     ]);
@@ -560,26 +606,26 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
   // The fake answers by the storyline id each query names, so a resolver that read the wrong
   // storyline would get A's price for B.
   it('keeps one storyline’s price off another', async () => {
-    spaceFindMany.mockImplementation(
-      async ({ where }: { where: { OR: { entityType: string; entityId: number }[] } }) =>
-        where.OR.some((level) => level.entityType === 'storyline' && level.entityId === STORYLINE)
+    spaceRows.mockImplementation(
+      async (_db: unknown, { levels }: { levels: { entityType: string; entityId: number }[] }) =>
+        levels.some((level) => level.entityType === 'storyline' && level.entityId === STORYLINE)
           ? [{ entityType: 'storyline', mode: 'review', price: 50, freeSlots: null, settings: {} }]
           : []
     );
     await expect(resolveChapter()).resolves.toMatchObject({ setPrice: 50 });
 
-    chapterFindUnique.mockResolvedValue({
+    givenChapter({
       storyline: { id: STORYLINE + 1, userId: OWNER, user: { username: 'storyteller' } },
     });
     await expect(resolveChapter()).resolves.toMatchObject({ setPrice: 0 });
-    expect(spaceFindMany.mock.calls[1][0].where.OR[0]).toEqual({
+    expect(spaceRows.mock.calls[1][1].levels[0]).toEqual({
       entityType: 'storyline',
       entityId: STORYLINE + 1,
     });
   });
 
   it('lets the storyline row win price, free slots and settings too', async () => {
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       {
         entityType: 'user',
         mode: 'review',
@@ -604,7 +650,7 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
   });
 
   it('refuses a chapter of a taken-down storyline', async () => {
-    chapterFindUnique.mockResolvedValue({
+    givenChapter({
       storyline: {
         id: STORYLINE,
         userId: OWNER,
@@ -619,7 +665,7 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
 
   // Its space would still read as open with a price; nothing may be offered on it.
   it('refuses a removed chapter of a live storyline', async () => {
-    chapterFindUnique.mockResolvedValue({
+    givenChapter({
       removedAt: new Date(),
       storyline: {
         id: STORYLINE,
@@ -629,7 +675,7 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
         user: { username: 'storyteller' },
       },
     });
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'storyline', mode: 'review', price: 50, freeSlots: null, settings: {} },
     ]);
 
@@ -639,7 +685,7 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
   // Complete closes the storyline from the storyline row itself, even when the
   // space still says review.
   it('reads a completed storyline as closed', async () => {
-    chapterFindUnique.mockResolvedValue({
+    givenChapter({
       storyline: {
         id: STORYLINE,
         userId: OWNER,
@@ -648,7 +694,7 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
         user: { username: 'storyteller' },
       },
     });
-    spaceFindMany.mockResolvedValue([
+    spaceRows.mockResolvedValue([
       { entityType: 'storyline', mode: 'review', price: 0, freeSlots: null, settings: {} },
     ]);
 
@@ -656,17 +702,17 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
   });
 
   it('refuses a post that is not a storyline chapter', async () => {
-    chapterFindUnique.mockResolvedValue(null);
+    givenChapter(null);
 
     await expect(resolveChapter()).rejects.toThrow(/not a chapter of an open storyline/);
-    expect(spaceFindMany).not.toHaveBeenCalled();
+    expect(spaceRows).not.toHaveBeenCalled();
   });
 
   it('refuses a post target on a surface that does not take posts', async () => {
     await expect(
       resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'post', targetId: 55 })
     ).rejects.toThrow(/sticker cannot be placed on a post/);
-    expect(chapterFindUnique).not.toHaveBeenCalled();
+    expect(chapterTarget).not.toHaveBeenCalled();
   });
 });
 

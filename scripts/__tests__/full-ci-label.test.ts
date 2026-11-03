@@ -112,6 +112,7 @@ describe('the full-ci label', () => {
   // drafts already) and `unit` is gated by UNIT_PR_GATE, which implies it.
   it.each([
     ['lint.yml', 'typecheck'],
+    ['lint.yml', 'typecheck-tests'],
     ['lint.yml', 'packages'],
     ['lint.yml', 'component'],
     ['apps.yml', 'apps'],
@@ -122,10 +123,22 @@ describe('the full-ci label', () => {
   // Ledger: the job set the assertions above were written against. A new job fails here so its
   // author decides which draft gate it takes.
   it.each([
-    ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'unit']],
+    ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit']],
     ['apps.yml', ['apps']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
+  });
+
+  // typecheck-tests must also run on push to `main`: skipping it lets type errors from draft and
+  // red-merged PRs land unmeasured. The whole conjunct set is pinned, so any event-excluding clause
+  // added back fails here.
+  it('lint.yml runs typecheck-tests on push to main, with only the draft and dispatch gates', () => {
+    const doc = load('lint.yml');
+    expect((doc.on?.push as { branches?: string[] } | null)?.branches).toContain('main');
+    expect(conjuncts(doc.jobs?.['typecheck-tests']?.if ?? '')).toEqual([
+      DRAFT_GATE,
+      "(!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests')",
+    ]);
   });
 
   describe('full-ci.yml, the dispatcher', () => {

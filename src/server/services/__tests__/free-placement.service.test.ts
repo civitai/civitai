@@ -10,13 +10,14 @@ import { FREE_PLACEMENTS_PER_DAY, PLACEMENT_SURFACES } from '~/shared/utils/plac
 const resolveSpace = vi.fn();
 const assertCanPlace = vi.fn();
 
+// The display-only allowance count (`getFreePlacementAllowance`), a Kysely read off the claim's
+// transaction. Its rows, against a real database, are pinned in
+// placement-reads.kysely-parity.test.ts.
+const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
+vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
 // `reservedFreeSlots` is deliberately NOT stubbed: it is the predicate the claim
 // decides on, and a double would let the count-under-lock be tested against a
 // shape the real query does not have.
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,
@@ -91,6 +92,7 @@ const whereOf = (predicate: (where: Record<string, unknown>) => boolean) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  displayCount.mockResolvedValue(0);
   givenCounts();
   givenSpace();
   assertCanPlace.mockResolvedValue(undefined);
@@ -532,7 +534,7 @@ describe('the advisory locks have exactly one call site', () => {
 
 describe('getFreePlacementAllowance', () => {
   it('reports the day as spent and says when it comes back', async () => {
-    dbMock.dbRead.placement.count.mockResolvedValue(FREE_PLACEMENTS_PER_DAY);
+    displayCount.mockResolvedValue(FREE_PLACEMENTS_PER_DAY);
 
     const allowance = await getFreePlacementAllowance({ placerId: PLACER });
 
@@ -545,7 +547,7 @@ describe('getFreePlacementAllowance', () => {
   });
 
   it('never reports a negative remainder', async () => {
-    dbMock.dbRead.placement.count.mockResolvedValue(FREE_PLACEMENTS_PER_DAY + 5);
+    displayCount.mockResolvedValue(FREE_PLACEMENTS_PER_DAY + 5);
 
     expect((await getFreePlacementAllowance({ placerId: PLACER })).remaining).toBe(0);
   });
@@ -553,9 +555,9 @@ describe('getFreePlacementAllowance', () => {
   // The predicate is shared with the claim rather than written twice. Scope it by
   // status in one copy and the surface offers a placement the mutation refuses.
   it('asks the same question the claim decides on', async () => {
-    dbMock.dbRead.placement.count.mockResolvedValue(0);
+    displayCount.mockResolvedValue(0);
     await getFreePlacementAllowance({ placerId: PLACER });
-    const displayed = dbMock.dbRead.placement.count.mock.calls[0][0].where;
+    const displayed = displayCount.mock.calls[0][1];
 
     givenCounts();
     await claim();

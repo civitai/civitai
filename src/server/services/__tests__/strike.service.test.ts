@@ -1062,6 +1062,8 @@ describe('strike.service', () => {
     it('throws NOT_FOUND when user does not exist', async () => {
       mockDbRead.user.findUnique.mockReset();
       mockDbRead.user.findUnique.mockResolvedValueOnce(null);
+      // Missing from the primary too (the replica-lag fallback reads it).
+      mockDbWrite.user.findUnique.mockResolvedValueOnce(null);
 
       await expect(createStrike(baseInput)).rejects.toThrow('User 100 not found');
     });

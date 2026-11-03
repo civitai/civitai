@@ -30,6 +30,10 @@ const buzz = vi.hoisted(() => ({
   getTransactionByExternalId: vi.fn(),
   refundTransaction: vi.fn(),
 }));
+// The deal flows notify buyer and seller; accept the call without asserting on it.
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   ...buzz,

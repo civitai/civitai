@@ -313,101 +313,107 @@
   );
 }
 
-/* The image card's action row. A container so the reaction counts can pick their form from the
-   row's own width (ImageCard sets data-count-len to the characters in its longest full count).
-   Each step below is the row width that fits four counts of that length, about 41px per extra
-   character, with some slack. Narrower rows abbreviate and the reactions take the whole row. */
+/* Must be the footer wrapper, not the row: a container can't size to its own content, and the
+   one-line form below needs the row to. */
+.footer {
+  container-type: inline-size;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .actionRow {
   display: flex;
-  container-type: inline-size;
+}
 
-  & [data-count='abbr'] {
-    display: none;
+.actionRow .reactions,
+.tipRow > .reactions {
+  height: 22px;
+}
+
+.actionRow .reactions {
+  height: auto;
+  min-height: 22px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  padding-right: 0;
+  gap: 2px !important; /* beats the gap-1 utility on the bar */
+
+  & :global(.mantine-Button-root) {
+    --button-height: 22px;
+    --button-padding-x: 6px;
+    --button-fz: 12px;
+  }
+
+  & :global(.mantine-Button-label) {
+    gap: 2px !important; /* beats the gap-1 utility on the label */
   }
 }
 
-@container (max-width: 299.98px) {
-  .actionRow[data-count-len='5'] [data-count='full'] {
-    display: none;
-  }
-
-  .actionRow[data-count-len='5'] [data-count='abbr'] {
-    display: inline;
-  }
-
-  .actionRow[data-count-len='5'] .reactionsFill {
-    width: 100%;
-  }
-}
-
-@container (max-width: 340.98px) {
-  .actionRow[data-count-len='6'] [data-count='full'] {
-    display: none;
-  }
-
-  .actionRow[data-count-len='6'] [data-count='abbr'] {
-    display: inline;
-  }
-
-  .actionRow[data-count-len='6'] .reactionsFill {
-    width: 100%;
-  }
-}
-
-@container (max-width: 381.98px) {
-  .actionRow[data-count-len='7'] [data-count='full'] {
-    display: none;
-  }
-
-  .actionRow[data-count-len='7'] [data-count='abbr'] {
-    display: inline;
-  }
-
-  .actionRow[data-count-len='7'] .reactionsFill {
-    width: 100%;
-  }
-}
-
-@container (max-width: 422.98px) {
-  .actionRow[data-count-len='8'] [data-count='full'] {
-    display: none;
-  }
-
-  .actionRow[data-count-len='8'] [data-count='abbr'] {
-    display: inline;
-  }
-
-  .actionRow[data-count-len='8'] .reactionsFill {
-    width: 100%;
-  }
-}
-
-@container (max-width: 463.98px) {
-  .actionRow[data-count-len='9'] [data-count='full'] {
-    display: none;
-  }
-
-  .actionRow[data-count-len='9'] [data-count='abbr'] {
-    display: inline;
-  }
-
-  .actionRow[data-count-len='9'] .reactionsFill {
-    width: 100%;
-  }
-}
-
-/* The Buzz tip, sticker badge and info button, always on their own line under the reactions. Hidden
-   when none of them rendered (a card with no tip and a sticker badge that returned null), so an
-   empty line takes no height. Its display is set here, not by a utility class: this module is in a
+/* The Buzz tip, sticker badge and info button. Hidden when
+   none of them rendered (a card with no tip and a sticker badge that returned null), so an empty
+   line takes no height. Its display is set here, not by a utility class: this module is in a
    lower layer, so a utility's `display` would beat the `none` below. */
 .tipRow {
   display: flex;
+  align-self: stretch;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
-  min-height: 28px;
+  margin-top: 3px;
+  min-height: 22px;
+
+  & .infoChip {
+    --ti-size: 22px;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+  }
+
+  & .tipEnd > button:not(.infoChip) {
+    height: 22px !important;
+    padding: 0 6px !important;
+  }
+}
+
+.tipEnd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 
 .tipRow:not(:has(> :not(:empty))) {
   display: none;
+}
+
+/* A footer wide enough for everything (a 420px card has a 404px footer) puts it all on one line:
+   the two wrappers dissolve so reactions, tip and badges share one wrapping row, the badges pushed
+   right. Counts too long for the line wrap the badges to a second one. */
+@container (min-width: 404px) {
+  .actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .actionRow,
+  .tipRow {
+    display: contents;
+  }
+
+  .tipRow > .reactions {
+    margin-left: 1px;
+    border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  }
+
+  .actions:has(.tipRow > .reactions) .actionRow .reactions {
+    border-radius: var(--mantine-radius-sm) 0 0 var(--mantine-radius-sm);
+  }
+
+  .tipEnd {
+    padding-left: 6px;
+  }
 }

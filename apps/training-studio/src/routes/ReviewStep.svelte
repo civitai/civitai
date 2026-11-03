@@ -13,7 +13,7 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
@@ -44,11 +44,11 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
-    PARAM_HELP,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
     paramDisplay,
+    paramHelpText,
     promptHasTrigger,
     runCard,
     runExtraCapabilities,
@@ -80,7 +80,7 @@
     presetType = $bindable(),
     imageCount,
     trainsPairs = false,
-    matureCount,
+    matureCount: scannedMature,
     onStart,
     onBack,
     onShowMature,
@@ -104,7 +104,10 @@
       launched: LaunchedRun[],
       prompts: SamplePrompt[],
       name: string,
-      currencies: string[]
+      currencies: string[],
+      /** The user ticked the mature-dataset Yellow confirm. */
+      matureAck: boolean,
+      matureCount: number
     ) => Promise<void>;
     onBack: () => void;
     /** Back to the Data step, filtered to the mature images. */
@@ -134,6 +137,9 @@
   // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
   // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
+  // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
+  let refusedMature = $state(0);
+  const matureCount = $derived(Math.max(scannedMature, refusedMature));
   const mature = $derived(matureCount > 0);
 
 
@@ -223,7 +229,7 @@
   const spend = $derived(
     nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
   );
-  const ackKey = $derived(matureAckKey(spend, matureCount));
+  const ackKey = $derived(matureAckKey(spend?.amount ?? total, matureCount));
   let ackedFor = $state<string | null>(null);
   const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
@@ -324,7 +330,7 @@
     const run = selection.runs[i]!;
     if (field === 'textEncoderLr' && teLocked(run))
       return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
-    return PARAM_HELP[field].replace('{recommended}', paramDisplay(defaultsAt(i)[field]));
+    return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
   function setField(i: number, field: ParamField, value: NumericInput | boolean) {
@@ -458,9 +464,12 @@
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
         prompts,
         name,
-        buzzMode.currencies
+        buzzMode.currencies,
+        ackKey !== null && !ackMissing,
+        matureCount
       );
     } catch (e) {
+      if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
       startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
@@ -952,9 +961,11 @@
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
           <strong>mature</strong> (R or above).
-          <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
-            See which
-          </button>.
+          {#if scannedMature > 0}
+            <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
+              See which
+            </button>.
+          {/if}
           {#if membership === true}
             Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
             <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is charged
@@ -979,10 +990,16 @@
             class="mt-0.5 shrink-0"
           />
           <label for="ack-mature-yellow" class="cursor-pointer">
-            I understand {spend?.uncertain ? 'up to ' : ''}<strong
-              >{spend?.amount.toLocaleString()} Yellow Buzz</strong
-            >
-            will be charged because this dataset has mature images.
+            {#if spend}
+              I understand {spend.uncertain ? 'up to ' : ''}<strong
+                >{spend.amount.toLocaleString()} Yellow Buzz</strong
+              >
+              will be charged because this dataset has mature images.
+            {:else}
+              I understand this dataset has mature images, so anything beyond my
+              <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
           </label>
         </div>
       {/if}

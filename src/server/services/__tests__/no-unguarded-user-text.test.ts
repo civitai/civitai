@@ -56,7 +56,6 @@ const SURFACES: Record<string, number> = {
   'src/server/routers/blocks.router.ts': 1,
   'src/server/routers/comics.router.ts': 7,
   'src/server/routers/oauth-client.router.ts': 2,
-  'src/server/services/answer.service.ts': 1,
   'src/server/services/apps/shared-content-safety.ts': 1,
   'src/server/services/article.service.ts': 3,
   'src/server/services/blocks/app-listing-assets.service.ts': 2,
@@ -87,7 +86,6 @@ const SURFACES: Record<string, number> = {
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
   'src/server/services/post.service.ts': 3,
-  'src/server/services/question.service.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
   'src/server/services/sticker-placement.service.ts': 1,
@@ -142,7 +140,6 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateReference: 1,
   },
   'src/server/routers/oauth-client.router.ts': { create: 1, update: 1 },
-  'src/server/services/answer.service.ts': { upsertAnswer: 1 },
   'src/server/services/apps/shared-content-safety.ts': { assertSharedTextSafe: 1 },
   'src/server/services/article.service.ts': {
     applyArticleContentChange: 1,
@@ -199,7 +196,6 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
   'src/server/services/post.service.ts': { addPostTag: 1, createPost: 1, updatePost: 1 },
-  'src/server/services/question.service.ts': { upsertQuestion: 1 },
   'src/server/services/rating-review.service.ts': { createRatingReview: 1 },
   'src/server/services/resourceReview.service.ts': {
     createResourceReview: 1,

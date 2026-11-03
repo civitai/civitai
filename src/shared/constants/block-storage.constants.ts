@@ -30,11 +30,36 @@ export const APP_STORAGE_BASE_SCOPE = 'apps:storage';
  * viewer's own identity. Sensitive (needs a `scopeJustifications` entry) and consent-gated.
  */
 export const APP_STORAGE_PUBLISH_SCOPE = 'apps:storage:publish';
+/**
+ * The scope that lets an app read (and, with `access: "readwrite"`, write) the viewer's data in
+ * ANOTHER app, as that viewer, through the imports it declares in `storage.imports`. Sensitive
+ * (needs a `scopeJustifications` entry) and consent-gated; the grant is recorded per (viewer,
+ * consumer app, source app) with the collections and access the prompt showed — see
+ * `storage-import-grant.service.ts`. It is not publish consent in the source: a write to one of
+ * the source's shared collections also needs the viewer's own {@link APP_STORAGE_PUBLISH_SCOPE}
+ * there.
+ */
+export const APP_STORAGE_IMPORT_SCOPE = 'apps:storage:import';
 
 /** Collection names. The length lives in the regex so the schema key equals its `.source`. */
 export const APP_STORAGE_COLLECTION_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
 /** Most collections one app may declare. */
 export const APP_STORAGE_MAX_COLLECTIONS = 16;
+
+/**
+ * `storage.imports`: the collections of OTHER apps this app reads or writes as the viewer.
+ * `from` is the source app's `blockId` — its slug, the one public app identifier that is unique
+ * (`app_blocks_block_id_unique`) and stable across versions (the database id of a block row is
+ * not public, and an OAuth client id changes on re-approval). Same rule as the manifest's own
+ * `blockId`. At most {@link APP_STORAGE_MAX_IMPORTS} imports, one per source app, each naming 1
+ * to {@link APP_STORAGE_MAX_IMPORT_COLLECTIONS} of the source's collections (the most a source
+ * can declare, so a fork can import every collection of its parent).
+ */
+export const APP_STORAGE_MAX_IMPORTS = 8;
+export const APP_STORAGE_MAX_IMPORT_COLLECTIONS = 16;
+export const APP_STORAGE_IMPORT_FROM_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+export const APP_STORAGE_IMPORT_ACCESS = ['read', 'readwrite'] as const;
+export type AppStorageImportAccess = (typeof APP_STORAGE_IMPORT_ACCESS)[number];
 
 /** Counter and mark names — the same rule as a collection name. */
 export const APP_STORAGE_TALLY_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
@@ -125,6 +150,79 @@ export const APP_STORAGE_OWNED_MODEL_VERSIONS_WRITE_POLICIES: readonly AppStorag
 ];
 
 /**
+ * COLLECTION SCHEMAS (`schema`): an opt-in JSON Schema SUBSET that every document's `data` in
+ * the collection must match, checked by the store on every create and update (never on
+ * counters or marks; `doc-store-schema.ts`). Only these keywords exist; any other is refused
+ * by name, so a keyword the store would silently ignore can never read as enforced.
+ *
+ * Semantics (shared with every other evaluator of the subset, the CLI's included): keywords
+ * that do not apply to a value's type are ignored (draft 2020-12); `integer` is a number with
+ * no fraction and `number` includes it; string lengths count code points; `pattern` is an
+ * ECMAScript regular expression with the `u` flag, unanchored; `enum` and `const` compare by
+ * JSON value; `items` is one schema for every element; `required` and `additionalProperties`
+ * use own keys only.
+ */
+export const APP_STORAGE_SCHEMA_KEYWORDS = [
+  'type',
+  'properties',
+  'required',
+  'additionalProperties',
+  'items',
+  'enum',
+  'const',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'minimum',
+  'maximum',
+  'minItems',
+  'maxItems',
+  'description',
+] as const;
+export const APP_STORAGE_SCHEMA_TYPES = [
+  'object',
+  'array',
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'null',
+] as const;
+export type AppStorageSchemaType = (typeof APP_STORAGE_SCHEMA_TYPES)[number];
+/** A collection schema as declared: a JSON object whose keywords are the subset above. */
+export type AppStorageCollectionSchema = { readonly [keyword: string]: unknown };
+/**
+ * Most schemas nested inside one another, the collection's own schema counting as 1 (each
+ * `properties` entry, `items` and `additionalProperties` schema is one level deeper).
+ */
+export const APP_STORAGE_SCHEMA_MAX_DEPTH = 16;
+/** Most bytes of one collection schema, as UTF-8 JSON (`JSON.stringify`, no whitespace). */
+export const APP_STORAGE_SCHEMA_MAX_BYTES = 16 * 1024;
+/** Longest `pattern` source, in code points (as JSON Schema's `maxLength` counts). */
+export const APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH = 256;
+/**
+ * A schema with a `pattern` must also declare `maxLength` of at most this, so a stored pattern
+ * only ever runs against a bounded string (the store checks `maxLength` before `pattern`). The
+ * submit gate also refuses a pattern that can backtrack catastrophically (recheck), which input
+ * length alone cannot bound. The same ceiling as a manifest setting's patterned input.
+ */
+export const APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH = 1000;
+/** Most `pattern`s one collection schema may declare: each costs a ReDoS analysis at submit. */
+export const APP_STORAGE_SCHEMA_MAX_PATTERNS = 16;
+/**
+ * Most `pattern`s all of a manifest's collection schemas may declare together. Each distinct
+ * one costs a ReDoS analysis at submit that blocks the event loop (up to about a second for a
+ * long pattern), so without this a manifest could queue 16 collections × 16 patterns.
+ */
+export const APP_STORAGE_MANIFEST_MAX_PATTERNS = 32;
+/**
+ * The flags a collection schema's `pattern` is compiled with, by the store and the parser,
+ * and analysed with by the submit-time ReDoS gate. One constant, so the gate can never read a
+ * pattern differently from how it runs.
+ */
+export const APP_STORAGE_SCHEMA_PATTERN_FLAGS = 'u';
+
+/**
  * Most errors one parse reports; the rest are summarised in one final line. The errors are
  * joined into the submit response, so without a cap a crafted manifest can turn into a
  * multi-megabyte error message.
@@ -179,7 +277,33 @@ export type DeclaredStorageCollection = {
   dailyWritesPerAuthor?: number;
   /** JSON Pointers into `data` that must name the author's own model versions. */
   ownedModelVersions?: readonly string[];
+  /**
+   * Whether another app may reach this collection through `storage.imports`. Default true (opt
+   * out); absent reads as exportable ({@link isCollectionExportable}).
+   */
+  exportable?: boolean;
+  /**
+   * The schema every document's `data` must match, exactly as declared (validated by
+   * {@link parseCollectionSchema}). Absent: documents are not checked.
+   */
+  schema?: AppStorageCollectionSchema;
 };
+
+/** Whether another app may reach this collection through an import. */
+export function isCollectionExportable(collection: DeclaredStorageCollection): boolean {
+  return collection.exportable !== false;
+}
+
+/** One declared import: which of the source app's collections, and how. */
+export type DeclaredStorageImport = {
+  /** The source app's blockId. */
+  from: string;
+  collections: ReadonlySet<string>;
+  access: AppStorageImportAccess;
+};
+
+/** Source blockId → its import. A `Map` for the same reason as the collections map. */
+export type DeclaredStorageImports = ReadonlyMap<string, DeclaredStorageImport>;
 
 /**
  * Collection name → declaration.
@@ -194,10 +318,12 @@ export type ParsedManifestStorage = {
   /** True when the manifest has a `storage` key at all, valid or not. */
   declared: boolean;
   collections: DeclaredStorageCollections;
+  imports: DeclaredStorageImports;
   errors: string[];
 };
 
-const STORAGE_KEYS = new Set(['collections']);
+const STORAGE_KEYS = new Set(['collections', 'imports']);
+const IMPORT_KEYS = new Set(['from', 'collections', 'access']);
 const COLLECTION_KEYS = new Set([
   'kind',
   'visibility',
@@ -210,6 +336,8 @@ const COLLECTION_KEYS = new Set([
   'maxEntries',
   'dailyWritesPerAuthor',
   'ownedModelVersions',
+  'exportable',
+  'schema',
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -537,6 +665,21 @@ function parseCollection(
     }
   }
 
+  if (raw.exportable !== undefined && typeof raw.exportable !== 'boolean') {
+    errors.push(`${at}.exportable must be a boolean`);
+  }
+
+  let schema: AppStorageCollectionSchema | null = null;
+  if (raw.schema !== undefined) {
+    if (write === 'none') {
+      errors.push(
+        `${at}.schema does not apply to write "none" — no document body is ever written to that collection, so a schema would check nothing`
+      );
+    } else {
+      schema = parseCollectionSchema(`${at}.schema`, raw.schema, errors);
+    }
+  }
+
   if (errors.length > before) return null;
   const collection: DeclaredStorageCollection = {
     kind,
@@ -552,6 +695,8 @@ function parseCollection(
   if (raw.dailyWritesPerAuthor !== undefined)
     collection.dailyWritesPerAuthor = raw.dailyWritesPerAuthor as number;
   if (ownedModelVersions) collection.ownedModelVersions = ownedModelVersions;
+  if (raw.exportable !== undefined) collection.exportable = raw.exportable as boolean;
+  if (schema) collection.schema = schema;
   return collection;
 }
 
@@ -584,39 +729,345 @@ function parseOwnedPointers(at: string, raw: unknown, errors: string[]): string[
   return seen;
 }
 
+function parseImports(
+  raw: unknown,
+  ownBlockId: unknown,
+  errors: string[]
+): Map<string, DeclaredStorageImport> {
+  const imports = new Map<string, DeclaredStorageImport>();
+  if (!Array.isArray(raw)) {
+    errors.push('storage.imports must be an array of { from, collections, access }');
+    return imports;
+  }
+  if (raw.length === 0) {
+    errors.push('storage.imports must declare at least one import (or omit it)');
+    return imports;
+  }
+  if (raw.length > APP_STORAGE_MAX_IMPORTS) {
+    errors.push(
+      `storage.imports may declare at most ${APP_STORAGE_MAX_IMPORTS} imports (found ${raw.length})`
+    );
+    return imports;
+  }
+  for (const [index, entry] of raw.entries()) {
+    const at = `storage.imports[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push(`${at} must be an object`);
+      continue;
+    }
+    const before = errors.length;
+    for (const key of Object.keys(entry)) {
+      if (!IMPORT_KEYS.has(key)) errors.push(`${at}.${boundKey(key)} is not allowed`);
+    }
+    const { from, access } = entry;
+    if (typeof from !== 'string' || !APP_STORAGE_IMPORT_FROM_RE.test(from)) {
+      errors.push(
+        `${at}.from must be the source app's blockId: 3 to 40 of a-z, 0-9 or -, starting with a letter`
+      );
+    } else if (from === ownBlockId) {
+      errors.push(`${at}.from names this app itself — declare its collections instead`);
+    } else if (imports.has(from)) {
+      errors.push(`${at} imports from ${quoteName(from)} again — declare one import per app`);
+    }
+    if (
+      typeof access !== 'string' ||
+      !(APP_STORAGE_IMPORT_ACCESS as readonly string[]).includes(access)
+    ) {
+      errors.push(
+        `${at}.access is required and must be one of ${APP_STORAGE_IMPORT_ACCESS.join(', ')}`
+      );
+    }
+    const names = entry.collections;
+    const seen = new Set<string>();
+    if (!Array.isArray(names) || names.length === 0) {
+      errors.push(`${at}.collections must be a non-empty array of collection names`);
+    } else if (names.length > APP_STORAGE_MAX_IMPORT_COLLECTIONS) {
+      errors.push(
+        `${at}.collections may name at most ${APP_STORAGE_MAX_IMPORT_COLLECTIONS} collections (found ${names.length})`
+      );
+    } else {
+      for (const [i, name] of names.entries()) {
+        if (typeof name !== 'string' || !APP_STORAGE_COLLECTION_NAME_RE.test(name)) {
+          errors.push(
+            `${at}.collections[${i}] must be lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _`
+          );
+        } else if (seen.has(name)) {
+          errors.push(
+            `${at}.collections[${i}] duplicates an earlier collection (${quoteName(name)})`
+          );
+        } else {
+          seen.add(name);
+        }
+      }
+    }
+    if (errors.length > before) continue;
+    imports.set(from as string, {
+      from: from as string,
+      collections: seen,
+      access: access as AppStorageImportAccess,
+    });
+  }
+  return imports;
+}
+
+const SCHEMA_KEYWORDS = new Set<string>(APP_STORAGE_SCHEMA_KEYWORDS);
+const SCHEMA_TYPES = new Set<string>(APP_STORAGE_SCHEMA_TYPES);
+const SCHEMA_COUNT_KEYWORDS = ['minLength', 'maxLength', 'minItems', 'maxItems'] as const;
+const SCHEMA_BOUND_PAIRS = [
+  ['minLength', 'maxLength'],
+  ['minItems', 'maxItems'],
+  ['minimum', 'maximum'],
+] as const;
+
+function utf8Bytes(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+/**
+ * Parses one collection's `schema` (see {@link APP_STORAGE_SCHEMA_KEYWORDS}). Returns the
+ * schema as declared, or null after pushing one error per problem found. The size is checked
+ * first, so the walk below only ever sees at most {@link APP_STORAGE_SCHEMA_MAX_BYTES}; the
+ * walk stops descending at the depth limit, so its recursion is bounded too.
+ */
+export function parseCollectionSchema(
+  at: string,
+  raw: unknown,
+  errors: string[]
+): AppStorageCollectionSchema | null {
+  if (!isPlainObject(raw)) {
+    errors.push(`${at} must be a schema object`);
+    return null;
+  }
+  const bytes = utf8Bytes(JSON.stringify(raw));
+  if (bytes > APP_STORAGE_SCHEMA_MAX_BYTES) {
+    errors.push(
+      `${at} is ${bytes} bytes of JSON — a collection schema may be at most ${APP_STORAGE_SCHEMA_MAX_BYTES} bytes`
+    );
+    return null;
+  }
+  const before = errors.length;
+  const state = { patterns: 0 };
+  parseSchemaNode(at, raw, 1, errors, state);
+  if (state.patterns > APP_STORAGE_SCHEMA_MAX_PATTERNS) {
+    errors.push(
+      `${at} declares ${state.patterns} patterns — a collection schema may declare at most ${APP_STORAGE_SCHEMA_MAX_PATTERNS}`
+    );
+  }
+  return errors.length > before ? null : raw;
+}
+
+function parseSchemaNode(
+  at: string,
+  node: unknown,
+  depth: number,
+  errors: string[],
+  state: { patterns: number }
+): void {
+  if (depth > APP_STORAGE_SCHEMA_MAX_DEPTH) {
+    errors.push(
+      `${at} is nested too deeply — a collection schema may nest at most ${APP_STORAGE_SCHEMA_MAX_DEPTH} schemas`
+    );
+    return;
+  }
+  if (!isPlainObject(node)) {
+    errors.push(`${at} must be a schema object`);
+    return;
+  }
+  for (const key of Object.keys(node)) {
+    if (!SCHEMA_KEYWORDS.has(key)) {
+      errors.push(
+        `${at} uses the schema keyword ${quoteName(
+          key
+        )}, which is not supported — the supported keywords are ${APP_STORAGE_SCHEMA_KEYWORDS.join(
+          ', '
+        )}`
+      );
+    }
+  }
+  const child = (path: string, sub: unknown) =>
+    parseSchemaNode(path, sub, depth + 1, errors, state);
+
+  if (node.type !== undefined) {
+    const list = Array.isArray(node.type) ? node.type : [node.type];
+    const valid =
+      list.length > 0 &&
+      list.every((t) => typeof t === 'string' && SCHEMA_TYPES.has(t)) &&
+      new Set(list).size === list.length;
+    if (!valid) {
+      errors.push(
+        `${at}.type must be one of ${APP_STORAGE_SCHEMA_TYPES.join(
+          ', '
+        )}, or a non-empty array of them without repeats`
+      );
+    }
+  }
+  if (node.properties !== undefined) {
+    if (!isPlainObject(node.properties)) {
+      errors.push(`${at}.properties must be an object mapping a property name to its schema`);
+    } else {
+      for (const [name, sub] of Object.entries(node.properties)) {
+        child(`${at}.properties.${boundKey(name)}`, sub);
+      }
+    }
+  }
+  if (node.required !== undefined) {
+    const list = node.required;
+    if (
+      !Array.isArray(list) ||
+      !list.every((k) => typeof k === 'string') ||
+      new Set(list).size !== list.length
+    ) {
+      errors.push(`${at}.required must be an array of distinct property names`);
+    }
+  }
+  if (node.additionalProperties !== undefined && typeof node.additionalProperties !== 'boolean') {
+    child(`${at}.additionalProperties`, node.additionalProperties);
+  }
+  if (node.items !== undefined) child(`${at}.items`, node.items);
+  if (node.enum !== undefined && !(Array.isArray(node.enum) && node.enum.length > 0)) {
+    errors.push(`${at}.enum must be a non-empty array of values`);
+  }
+  for (const keyword of SCHEMA_COUNT_KEYWORDS) {
+    const value = node[keyword];
+    if (value !== undefined && !isIntegerIn(value, 0, Number.MAX_SAFE_INTEGER)) {
+      errors.push(`${at}.${keyword} must be a whole number of 0 or more`);
+    }
+  }
+  for (const keyword of ['minimum', 'maximum'] as const) {
+    const value = node[keyword];
+    if (value !== undefined && !(typeof value === 'number' && Number.isFinite(value))) {
+      errors.push(`${at}.${keyword} must be a number`);
+    }
+  }
+  for (const [low, high] of SCHEMA_BOUND_PAIRS) {
+    const a = node[low];
+    const b = node[high];
+    if (typeof a === 'number' && typeof b === 'number' && a > b) {
+      errors.push(`${at}.${low} (${a}) is greater than ${high} (${b}), so nothing could match`);
+    }
+  }
+  if (node.pattern !== undefined) {
+    state.patterns++;
+    const pattern = node.pattern;
+    if (
+      typeof pattern !== 'string' ||
+      Array.from(pattern).length > APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH
+    ) {
+      errors.push(
+        `${at}.pattern must be a string of at most ${APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH} characters`
+      );
+    } else {
+      try {
+        new RegExp(pattern, APP_STORAGE_SCHEMA_PATTERN_FLAGS);
+      } catch {
+        errors.push(
+          `${at}.pattern is not a valid regular expression (JavaScript syntax with the "u" flag)`
+        );
+      }
+    }
+    if (
+      !isIntegerIn(node.maxLength, 0, APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH) &&
+      // A malformed maxLength already has its own error.
+      (node.maxLength === undefined || isIntegerIn(node.maxLength, 0, Number.MAX_SAFE_INTEGER))
+    ) {
+      errors.push(
+        `${at}.pattern needs a maxLength of at most ${APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH} on the same schema — a pattern only ever runs against a bounded string`
+      );
+    }
+  }
+  if (node.description !== undefined && typeof node.description !== 'string') {
+    errors.push(`${at}.description must be a string`);
+  }
+}
+
+/**
+ * Every `pattern` in the declared collection schemas, with where it is and the flags it is
+ * compiled with — for the submit-time ReDoS gate (`BlockManifestValidator.validateSubmission`),
+ * which needs a server-only analyser. Empty when `storage` does not parse (its errors are
+ * reported anyway), so a manifest over {@link APP_STORAGE_MANIFEST_MAX_PATTERNS} is never
+ * analysed.
+ */
+export function collectionSchemaPatterns(
+  parsed: ParsedManifestStorage
+): { at: string; pattern: string; flags: string }[] {
+  if (parsed.errors.length > 0) return [];
+  return schemaPatternSites(parsed.collections).map(({ at, pattern }) => ({
+    at,
+    pattern,
+    flags: APP_STORAGE_SCHEMA_PATTERN_FLAGS,
+  }));
+}
+
+/** Every `pattern` in the collections' schemas, in declaration order, with where it is. */
+function schemaPatternSites(
+  collections: ReadonlyMap<string, DeclaredStorageCollection>
+): { at: string; pattern: string }[] {
+  const out: { at: string; pattern: string }[] = [];
+  const walk = (at: string, node: unknown) => {
+    if (!isPlainObject(node)) return;
+    if (typeof node.pattern === 'string') out.push({ at: `${at}.pattern`, pattern: node.pattern });
+    if (isPlainObject(node.properties)) {
+      for (const [name, sub] of Object.entries(node.properties)) {
+        walk(`${at}.properties.${boundKey(name)}`, sub);
+      }
+    }
+    walk(`${at}.items`, node.items);
+    walk(`${at}.additionalProperties`, node.additionalProperties);
+  };
+  for (const [name, collection] of collections) {
+    if (collection.schema) walk(`storage.collections.${name}.schema`, collection.schema);
+  }
+  return out;
+}
+
 function parse(
   manifest: unknown,
   features: Readonly<Record<AppStorageFeature, boolean>>
 ): ParsedManifestStorage {
   const collections = new Map<string, DeclaredStorageCollection>();
+  const noImports = new Map<string, DeclaredStorageImport>();
   if (!isPlainObject(manifest) || manifest.storage === undefined) {
-    return { declared: false, collections, errors: [] };
+    return { declared: false, collections, imports: noImports, errors: [] };
   }
   const storage = manifest.storage;
   if (!isPlainObject(storage)) {
-    return { declared: true, collections, errors: ['storage must be an object'] };
+    return {
+      declared: true,
+      collections,
+      imports: noImports,
+      errors: ['storage must be an object'],
+    };
   }
   const errors: string[] = [];
   for (const key of Object.keys(storage)) {
     if (!STORAGE_KEYS.has(key)) {
-      errors.push(`storage.${boundKey(key)} is not allowed (storage takes only collections)`);
+      errors.push(
+        `storage.${boundKey(key)} is not allowed (storage takes only collections and imports)`
+      );
     }
   }
+  const imports =
+    storage.imports === undefined
+      ? noImports
+      : parseImports(storage.imports, manifest.blockId, errors);
+  const done = (): ParsedManifestStorage => ({ declared: true, collections, imports, errors });
   const raw = storage.collections;
+  // An app that only reads other apps' data declares no collections of its own.
+  if (raw === undefined && storage.imports !== undefined) return done();
   if (!isPlainObject(raw)) {
     errors.push('storage.collections must be an object mapping collection name to declaration');
-    return { declared: true, collections, errors };
+    return done();
   }
   const names = Object.keys(raw);
   if (names.length === 0) {
     errors.push('storage.collections must declare at least one collection (or omit storage)');
-    return { declared: true, collections, errors };
+    return done();
   }
   if (names.length > APP_STORAGE_MAX_COLLECTIONS) {
     errors.push(
       `storage.collections may declare at most ${APP_STORAGE_MAX_COLLECTIONS} collections (found ${names.length})`
     );
-    return { declared: true, collections, errors };
+    return done();
   }
   for (const name of names) {
     if (!APP_STORAGE_COLLECTION_NAME_RE.test(name)) {
@@ -630,7 +1081,14 @@ function parse(
     const collection = parseCollection(`storage.collections.${name}`, raw[name], features, errors);
     if (collection) collections.set(name, collection);
   }
-  return { declared: true, collections, errors };
+  // Counted over the collections that parsed: one over its own cap is already refused.
+  const patterns = schemaPatternSites(collections).length;
+  if (patterns > APP_STORAGE_MANIFEST_MAX_PATTERNS) {
+    errors.push(
+      `storage.collections declare ${patterns} patterns across their schemas — a manifest may declare at most ${APP_STORAGE_MANIFEST_MAX_PATTERNS} in all`
+    );
+  }
+  return done();
 }
 
 /**
@@ -638,7 +1096,7 @@ function parse(
  * that needs the declaration (the storage routes, the review table) reads `collections`.
  *
  * - **Total.** Never throws. A manifest with no `storage` key is valid and declares nothing.
- * - **All or nothing.** If there is ANY error, `collections` is empty.
+ * - **All or nothing.** If there is ANY error, `collections` and `imports` are empty.
  * - **Bounded errors.** At most {@link APP_STORAGE_MAX_ERRORS} messages plus one summary.
  * - **Phase-gated.** Features switched off in `features` (default
  *   {@link APP_STORAGE_ENABLED_FEATURES}) are refused even though the schema admits them.
@@ -657,6 +1115,7 @@ export function parseManifestStorage(
     invalid: (errors, parsed) => ({
       declared: parsed?.declared ?? true,
       collections: new Map(),
+      imports: new Map(),
       errors,
     }),
   });
@@ -701,9 +1160,11 @@ function availableViewerAuthoredPolicies(): string[] {
  * - Declaring a shared collection whose `write` is `own` or `anyone` requires
  *   {@link APP_STORAGE_PUBLISH_SCOPE}. `owner` and `none` do not: no viewer authors a
  *   document in them (marks and counters are `apps:storage`).
- * - REFUSED, not warned: requesting either scope with nothing in `storage` for it to
+ * - Declaring any import requires {@link APP_STORAGE_IMPORT_SCOPE} (and the base scope:
+ *   the storage route requires it on every call).
+ * - REFUSED, not warned: requesting any of these scopes with nothing in `storage` for it to
  *   reach. The validator has no warning channel, and a permission that can reach nothing
- *   is over-asking at review and, for the publish scope, a consent prompt about nothing.
+ *   is over-asking at review and, for the consent-gated scopes, a prompt about nothing.
  */
 export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestStorage): string[] {
   if (parsed.errors.length > 0) return [];
@@ -712,10 +1173,30 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
   );
   const errors: string[] = [];
   const names = [...parsed.collections.keys()];
+  const sources = [...parsed.imports.keys()];
   const publishing = [...parsed.collections.entries()]
     .filter(([, c]) => collectionNeedsPublishScope(c))
     .map(([name]) => name);
 
+  if (names.length === 0 && sources.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) {
+    errors.push(
+      `storage imports from ${sources.join(
+        ', '
+      )} but scopes does not include ${APP_STORAGE_BASE_SCOPE} — add it, or remove storage`
+    );
+  }
+  if (sources.length > 0 && !declared.has(APP_STORAGE_IMPORT_SCOPE)) {
+    errors.push(
+      `storage imports from ${sources.join(
+        ', '
+      )}, which requires the ${APP_STORAGE_IMPORT_SCOPE} scope — add it to scopes with a scopeJustifications entry`
+    );
+  }
+  if (sources.length === 0 && declared.has(APP_STORAGE_IMPORT_SCOPE)) {
+    errors.push(
+      `scopes includes ${APP_STORAGE_IMPORT_SCOPE} but storage declares no imports — declare them under storage.imports, or remove the scope`
+    );
+  }
   if (names.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) {
     errors.push(
       `storage declares ${names.join(
@@ -730,7 +1211,7 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
       )} lets viewers write documents other users read, which requires the ${APP_STORAGE_PUBLISH_SCOPE} scope — add it to scopes with a scopeJustifications entry`
     );
   }
-  if (names.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) {
+  if (names.length === 0 && sources.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) {
     errors.push(
       `scopes includes ${APP_STORAGE_BASE_SCOPE} but storage declares no collections — declare them under storage.collections, or remove the scope`
     );

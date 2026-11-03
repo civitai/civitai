@@ -351,6 +351,19 @@
     What each role and moderator may spend on the mod assistant per day is set on
     <a href="/admin/spend-caps" class="underline">Assistant spend caps</a>.
   </p>
+  <p class="mt-2 text-dark-2">
+    Who is responsible for covering each queue is set on
+    <a href="/admin/queue-owners" class="underline">Queue owners</a>.
+    {#if data.queueOwners === null}
+      <span class="text-red-300">The owner count could not be read.</span>
+    {:else if data.queueOwners.unowned}
+      <a href="/admin/queue-owners" class="font-medium text-yellow-300 underline">
+        {data.queueOwners.unowned} of {data.queueOwners.total} queues have no owner.
+      </a>
+    {:else}
+      Every queue has an owner.
+    {/if}
+  </p>
 </header>
 
 <!-- The outcome sits beside the button that caused it: the tree is taller than the viewport, so at the

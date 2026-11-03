@@ -2,7 +2,12 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import { Flags } from '~/shared/utils/flags';
+
+export const SFW_NAME_TOO_LONG_MESSAGE = `Title must be ${MODEL_NAME_MAX_LENGTH} characters or fewer.`;
+export const SFW_DESCRIPTION_MAX_LENGTH = 50_000;
+export const SFW_DESCRIPTION_TOO_LONG_MESSAGE = 'Description is too long.';
 
 /**
  * A model's .com face: `Model.sfwName` / `sfwDescription`, shown in place of the name and

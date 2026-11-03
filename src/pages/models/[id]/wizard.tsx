@@ -37,7 +37,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    await ssg?.model.getById.prefetch({ id });
+    await ssg?.model.getById.prefetch({ id, forEditor: true });
   },
 });
 

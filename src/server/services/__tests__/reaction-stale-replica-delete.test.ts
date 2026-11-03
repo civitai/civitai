@@ -25,8 +25,6 @@ function makeTable(rows: Row[]) {
 }
 
 const REACTION_MODELS = [
-  ['question', 'questionReaction', 'questionId'],
-  ['answer', 'answerReaction', 'answerId'],
   ['commentOld', 'commentReaction', 'commentId'],
   ['comment', 'commentV2Reaction', 'commentId'],
   ['image', 'imageReaction', 'imageId'],
@@ -39,7 +37,7 @@ const REACTION_MODELS = [
 // The subset whose deletes queue a metric update, i.e. the ones with an
 // `if (count > 0)` guard to regress.
 const METRIC_MODELS = REACTION_MODELS.filter(([entityType]) =>
-  ['question', 'answer', 'post', 'article', 'bountyEntry'].includes(entityType)
+  ['post', 'article', 'bountyEntry'].includes(entityType)
 );
 
 const { mockQueueUpdate } = vi.hoisted(() => ({
@@ -60,11 +58,9 @@ vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMo
 vi.mock('~/server/metrics', () => {
   const metrics = { queueUpdate: mockQueueUpdate };
   return {
-    answerMetrics: metrics,
     articleMetrics: metrics,
     bountyEntryMetrics: metrics,
     postMetrics: metrics,
-    questionMetrics: metrics,
   };
 });
 vi.mock('~/server/services/block-check.service', () => ({

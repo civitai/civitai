@@ -28,6 +28,16 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
 }));
 
+// The real prom/client builds `pg.Pool`s, and a scrape queries them through its gauges. Same stub
+// as metrics-endpoint-registry-failure.test.ts: the gauges read only these counters.
+const poolStub = () => ({ totalCount: 0, idleCount: 0, waitingCount: 0 });
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: poolStub(),
+  pgDbWrite: poolStub(),
+  pgDbReadLong: poolStub(),
+}));
+vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: poolStub() }));
+
 const readPrometheus = dbMock.dbRead.$metrics.prometheus;
 const writePrometheus = dbMock.dbWrite.$metrics.prometheus;
 type Handler = (req: unknown, res: NextApiResponse) => Promise<void> | void;

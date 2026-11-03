@@ -6,6 +6,10 @@ import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
 import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
 
+// CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
+// every worker inherits it on any machine.
+process.env.TZ = 'UTC';
+
 // Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
@@ -296,11 +300,15 @@ const unitTestConfig = {
   globals: true,
   environment: 'node' as const,
   exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
+  // Stands in for a shell exporting real notifications credentials, so the guard on setup.ts
+  // deleting them (notifications-client-stub.test.ts) can fail in CI too.
+  env: { NOTIFICATIONS_ENDPOINT: 'http://127.0.0.1:9', NOTIFICATIONS_TOKEN: 'unit-test-sentinel' },
   // The fs tracker records which files each test reads, for the result cache. It is loaded only
   // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
   // Tracker FIRST, so reads made while the main setup file loads are recorded too.
   setupFiles: [
     ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'src/__tests__/network-guard.ts',
     'src/__tests__/setup.ts',
   ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
@@ -513,6 +521,7 @@ const browserModeOptions = () => ({
 /** Everything a browser project needs outside its own `test` block. */
 const browserProjectShell = () => ({
   resolve: { ...browserResolve },
+  css: { postcss: path.resolve(__dirname, 'test/browser-postcss') },
   plugins: [componentGroupOrderPlugin],
   optimizeDeps: { ...browserOptimizeDeps },
 });
@@ -529,6 +538,7 @@ const browserProjectShell = () => ({
  */
 const browserTestShell = () => ({
   maxWorkers: componentMaxWorkers,
+  globalSetup: ['test/browser-global-setup.mjs'],
   // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
   // which serialises the browser projects against the node ones instead of interleaving
   // them; CI and every script select one project at a time.

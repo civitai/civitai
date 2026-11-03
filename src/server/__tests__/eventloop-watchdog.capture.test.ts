@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WATCHDOG_WORKER_SOURCE, resolveCaptureConfig } from '~/server/eventloop-watchdog';
+import { allowConnection } from '~/__tests__/network-guard';
 
 // The capture half of the worker. Like the detector suite, this drives the REAL
 // inlined source rather than a TypeScript stand-in, because the source is neither
@@ -142,6 +143,8 @@ describe('starvation classifier', () => {
         });
         worker.on('error', reject);
       });
+      // The worker's own server: the guard does not see a listen in another thread.
+      allowConnection('127.0.0.1', port);
 
       // 🔴 Let the worker's CPU ring accumulate samples that PRE-DATE the wedge. The
       // classifier reads main-thread CPU over [wedge start, detection] and returns null
@@ -313,6 +316,7 @@ describe('capture metrics', () => {
       });
       worker.on('error', reject);
     });
+    allowConnection('127.0.0.1', port);
 
     const body = await (
       await fetch(`http://127.0.0.1:${port}/metrics?token=capture-test-token`)

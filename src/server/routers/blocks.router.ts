@@ -3,6 +3,15 @@ import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from 
 import * as z from 'zod';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
+  APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_IMPORT_ACCESS,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
+import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
   PAGE_SLOT_ID,
@@ -2082,6 +2091,59 @@ async function appBlockDetailVisibleTo(
   return listingVisibleInStore({ status: listing.status, visibility: level.visibility, floor });
 }
 
+/**
+ * What follows a PROMPTED scope grant (`blocks.grantScopes`) recorded for `appBlockId`: the app
+ * the viewer consented to, which with `from` is the import's SOURCE app rather than the caller.
+ */
+async function afterPromptedGrant(
+  userId: number,
+  appBlockId: string,
+  manifest: unknown,
+  revokedScopesAfterClear: string[] | null
+): Promise<void> {
+  // ── RE-PUBLISH THE IN-FLIGHT SUPPRESSION MARKER, but only if this consent actually
+  // lifted something.
+  //
+  // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
+  // write did not touch revocations — an ordinary consent with nothing suppressed — and
+  // calling `publish` with an empty list there would DELETE a live marker, reopening in
+  // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
+  // suppression really was lifted, and the marker should go so the app stops being refused
+  // before the TTL elapses.
+  //
+  // A pre-migration database has three outcomes:
+  //   * `revoked_at` was never set (the common row) → `unrevokeData` returns early and
+  //     `revocationData` has nothing to subtract, so this is reached with `null`.
+  //   * `revoked_at` set and the re-consent covers everything granted → `[]`: nothing is
+  //     withheld afterwards, so a stale marker must go.
+  //   * `revoked_at` set and it does not → `PRECONDITION_FAILED`, so this is never reached.
+  //
+  // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
+  // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
+  // token lifetime of refusals on a permission they just re-granted — annoying, and it
+  // self-heals when the marker expires. Failing to NARROW it (the revoke path) leaves a
+  // permission the user withdrew in force, which does not self-correct in any sense the
+  // user can see. So a failure here must not 500 a successful consent write.
+  if (revokedScopesAfterClear !== null) {
+    await ConsentRevocation.publish({
+      userId,
+      appBlockId,
+      revokedScopes: revokedScopesAfterClear,
+    }).catch(() => {
+      /* see above — widening access is the direction that may safely fail */
+    });
+  }
+  if (
+    env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
+    (manifest as { auth?: unknown } | null)?.auth === 'oauth'
+  ) {
+    const { syncOauthConsentFromGrant } = await import(
+      '~/server/services/blocks/oauth-consent-sync.service'
+    );
+    await syncOauthConsentFromGrant({ userId, appBlockId });
+  }
+}
+
 export const blocksRouter = router({
   /**
    * Lists enabled block installs for a (modelId, slotId). Public — anon users
@@ -3481,6 +3543,33 @@ export const blocksRouter = router({
           .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY)
           .nullable()
           .optional(),
+        /**
+         * With `apps:storage:import`: the imports the consent modal DISPLAYED (from
+         * `getStorageImports`). The grant records exactly these, and only when they equal the
+         * approved manifest's current imports — a version approved while the prompt was open
+         * is refused, never recorded as consented to.
+         */
+        storageImports: z
+          .array(
+            z.object({
+              from: z.string().regex(APP_STORAGE_IMPORT_FROM_RE),
+              collections: z
+                .array(z.string().regex(APP_STORAGE_COLLECTION_NAME_RE))
+                .min(1)
+                .max(APP_STORAGE_MAX_IMPORT_COLLECTIONS),
+              access: z.enum(APP_STORAGE_IMPORT_ACCESS),
+            })
+          )
+          .max(APP_STORAGE_MAX_IMPORTS)
+          .optional(),
+        /**
+         * The blockId of a SOURCE app `appBlockId` imports from: the viewer grants
+         * `apps:storage:publish` to that source, for this app's writes there (the block asked with
+         * `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }`). `scopes` must then be
+         * exactly that scope, with no budget or imports; see `grantImportSourcePublish` for which
+         * sources qualify.
+         */
+        from: z.string().regex(APP_STORAGE_IMPORT_FROM_RE).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -3490,6 +3579,17 @@ export const blocksRouter = router({
           message: 'Apps are not available to this account',
         });
       }
+      if (
+        input.from !== undefined &&
+        (input.scopes.some((s) => s !== APP_STORAGE_PUBLISH_SCOPE) ||
+          input.buzzBudgetPerDay !== undefined ||
+          input.storageImports !== undefined)
+      ) {
+        const { SOURCE_PUBLISH_ONLY_MESSAGE } = await import(
+          '~/server/services/apps/storage-import-grant.service'
+        );
+        throw new TRPCError({ code: 'BAD_REQUEST', message: SOURCE_PUBLISH_ONLY_MESSAGE });
+      }
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
         select: { status: true, manifest: true, approvedScopes: true, version: true },
@@ -3497,6 +3597,23 @@ export const blocksRouter = router({
       if (!block) throw throwNotFoundError('App block not found');
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      if (input.from !== undefined) {
+        const { grantImportSourcePublish } = await import(
+          '~/server/services/apps/storage-import-grant.service'
+        );
+        const { source, revokedScopesAfterClear } = await grantImportSourcePublish({
+          userId: ctx.user!.id,
+          consumer: {
+            id: input.appBlockId,
+            manifest: block.manifest,
+            approvedScopes: block.approvedScopes,
+          },
+          from: input.from,
+          host: ctx.req?.headers?.host ?? '',
+        });
+        await afterPromptedGrant(ctx.user!.id, source.id, source.manifest, revokedScopesAfterClear);
+        return { ok: true, granted: [APP_STORAGE_PUBLISH_SCOPE], buzzBudgetPerDay: undefined };
       }
       // Ceiling = manifest.scopes ∩ approvedScopes, via the SHARED `effectiveBlockScopes`
       // helper — the same rule, from the same module, as `getInstallConfig`'s install-time
@@ -3564,12 +3681,55 @@ export const blocksRouter = router({
           })
         ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
+      // `apps:storage:import`: the consent covers exactly what the prompt DISPLAYED — each source
+      // app with its collections and access, one row per source. The client sends what it
+      // showed; it must equal the approved manifest's imports now, or nothing is recorded.
+      // Written BEFORE the scope ledger, so a refusal here (or a database without the table)
+      // refuses the whole consent rather than recording a scope no source is granted for.
+      if (toGrant.includes(APP_STORAGE_IMPORT_SCOPE)) {
+        if (input.storageImports === undefined) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `storageImports is required to grant ${APP_STORAGE_IMPORT_SCOPE}`,
+          });
+        }
+        const { canonicalImports, recordStorageImportGrants, resolveDeclaredImports } =
+          await import('~/server/services/apps/storage-import-grant.service');
+        const imports = await resolveDeclaredImports(block.manifest, {
+          host: ctx.req?.headers?.host ?? '',
+        });
+        if (canonicalImports(input.storageImports) !== canonicalImports(imports)) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message:
+              'What this app can reach in other apps changed while the prompt was open. Close it and try again.',
+          });
+        }
+        await recordStorageImportGrants({
+          userId: ctx.user!.id,
+          consumerAppBlockId: input.appBlockId,
+          keepUnshown: imports.flatMap((i) => (i.unshownAppBlockId ? [i.unshownAppBlockId] : [])),
+          grants: imports.flatMap((i) =>
+            i.source
+              ? [
+                  {
+                    sourceAppBlockId: i.source.appBlockId,
+                    collections: i.collections,
+                    access: i.access,
+                  },
+                ]
+              : []
+          ),
+        });
+      }
       const cleared = await recordScopeGrant({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
         version: block.version ?? '',
         scopes: toGrant,
-        // 🔴 THE PROMPTED PATH, AND THE ONLY CALLER THAT MAY PASS THIS. A user who just
+        // 🔴 A PROMPTED PATH: ONE OF THE ONLY TWO CALLERS THAT MAY PASS THIS. This one, and
+        // `grantImportSourcePublish` (reached from this mutation with `from`), which passes it
+        // for exactly `apps:storage:publish` in the SOURCE app the prompt named. A user who just
         // accepted a consent dialog naming these scopes is re-consenting to them, so any
         // prior per-scope revocation of exactly those scopes is lifted — and ONLY those
         // (the service computes `revoked_scopes ∖ scopes`; re-consenting to A must not
@@ -3587,57 +3747,12 @@ export const blocksRouter = router({
           ? { buzzBudgetPerDay: input.buzzBudgetPerDay }
           : {}),
       });
-      // ── RE-PUBLISH THE IN-FLIGHT SUPPRESSION MARKER, but only if this consent actually
-      // lifted something.
-      //
-      // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
-      // write did not touch revocations — an ordinary consent with nothing suppressed — and
-      // calling `publish` with an empty list there would DELETE a live marker, reopening in
-      // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
-      // suppression really was lifted, and the marker should go so the app stops being refused
-      // before the TTL elapses.
-      //
-      // ⚠️ A PRE-MIGRATION DATABASE HAS **THREE** OUTCOMES, AND BOTH EARLIER VERSIONS OF THIS
-      // COMMENT NAMED ONE. It first grouped "a database without the column" with `null`; round-5
-      // review pointed out the round-4 commit had falsified that, and the correction then listed
-      // only the two new cases — which over-corrected, as round 6 measured. All three:
-      //   * `revoked_at` was never set (the DOMINANT row) → `unrevokeData` takes its
-      //     `!wasWholeGrantRevoked` early return and never touches `clearedTo`, and
-      //     `revocationData` has nothing to subtract, so this line IS reached, with `null`.
-      //     The original sentence was right about this one.
-      //   * `revoked_at` set and the re-consent covers everything granted → `[]`, the honest
-      //     value: nothing is withheld afterwards, so a stale marker must go.
-      //   * `revoked_at` set and it does not → throws `PRECONDITION_FAILED`, so this line is
-      //     never reached refusing.
-      // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
-      // database before storage, so no marker can exist to delete — and in the one shape where
-      // one could (migration applied, revoke taken, migration rolled back) deleting it after a
-      // full re-consent is exactly right.
-      //
-      // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
-      // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
-      // token lifetime of refusals on a permission they just re-granted — annoying, and it
-      // self-heals when the marker expires. Failing to NARROW it (the revoke path) leaves a
-      // permission the user withdrew in force, which does not self-correct in any sense the
-      // user can see. So a failure here must not 500 a successful consent write.
-      if (cleared.revokedScopesAfterClear !== null) {
-        await ConsentRevocation.publish({
-          userId: ctx.user!.id,
-          appBlockId: input.appBlockId,
-          revokedScopes: cleared.revokedScopesAfterClear,
-        }).catch(() => {
-          /* see above — widening access is the direction that may safely fail */
-        });
-      }
-      if (
-        env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
-        (block.manifest as { auth?: unknown }).auth === 'oauth'
-      ) {
-        const { syncOauthConsentFromGrant } = await import(
-          '~/server/services/blocks/oauth-consent-sync.service'
-        );
-        await syncOauthConsentFromGrant({ userId: ctx.user!.id, appBlockId: input.appBlockId });
-      }
+      await afterPromptedGrant(
+        ctx.user!.id,
+        input.appBlockId,
+        block.manifest,
+        cleared.revokedScopesAfterClear
+      );
       return {
         ok: true,
         granted: toGrant,
@@ -3982,6 +4097,74 @@ export const blocksRouter = router({
         fullyRevoked: result.fullyRevoked,
         budgetCleared: result.budgetCleared,
       };
+    }),
+
+  /**
+   * CROSS-APP STORAGE IMPORTS — what an app reaches in other apps through `storage.imports`, for
+   * the consent modal (which names each source app and its collections) and the per-source
+   * revoke on the permissions surfaces. The approved manifest is the only input; `granted` is the
+   * VIEWER's own per-source grant.
+   */
+  getStorageImports: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true, manifest: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      const { importGrantCovers, listStorageImportGrants, resolveDeclaredImports } = await import(
+        '~/server/services/apps/storage-import-grant.service'
+      );
+      const [imports, granted] = await Promise.all([
+        block.status === 'approved'
+          ? resolveDeclaredImports(block.manifest, { host: ctx.req?.headers?.host ?? '' })
+          : Promise.resolve([]),
+        listStorageImportGrants({
+          userId: ctx.user!.id,
+          consumerAppBlockId: input.appBlockId,
+        }),
+      ]);
+      return {
+        imports: imports.map((i) => ({
+          from: i.from,
+          sourceAppBlockId: i.source?.appBlockId ?? null,
+          sourceName: i.source?.name ?? null,
+          collections: i.collections,
+          access: i.access,
+          granted: i.source ? importGrantCovers(granted.get(i.source.appBlockId), i) : false,
+          hasGrant: i.source ? granted.has(i.source.appBlockId) : false,
+          // The source exists but this host may not show it (its rating): offered nowhere here.
+          unavailable: i.unavailable ?? null,
+        })),
+      };
+    }),
+
+  /**
+   * Withdraw the viewer's grant for ONE source app. Takes effect on the next storage request (the
+   * route reads the grant on every import call); the next token mint then withholds
+   * `apps:storage:import`, so the host offers the consent again. No status gate: narrowing is
+   * always allowed.
+   */
+  revokeStorageImport: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        sourceAppBlockId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { revokeStorageImportGrant } = await import(
+        '~/server/services/apps/storage-import-grant.service'
+      );
+      const revoked = await revokeStorageImportGrant({
+        userId: ctx.user!.id,
+        consumerAppBlockId: input.appBlockId,
+        sourceAppBlockId: input.sourceAppBlockId,
+      });
+      return { ok: true, revoked };
     }),
 
   /**

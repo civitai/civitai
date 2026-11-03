@@ -224,6 +224,10 @@ const {
   async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
 );
 
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,

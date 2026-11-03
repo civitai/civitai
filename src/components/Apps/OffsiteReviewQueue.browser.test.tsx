@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import { page, userEvent } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -68,6 +69,14 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
 // which reads useCurrentUser — boundary-stub it (null user is fine).
+// The embedded listing card's creator is the shared `UserAvatar` (hover card), which reads user data
+// this suite's `trpc` stand-in does not serve. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here

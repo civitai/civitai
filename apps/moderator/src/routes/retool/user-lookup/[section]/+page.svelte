@@ -35,6 +35,8 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
+  import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import {
@@ -46,6 +48,7 @@
   import TrainingsPanel from '../TrainingsPanel.svelte';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
   import GenerationBanAction from '../GenerationBanAction.svelte';
+  import { workflowIdsParam } from '$lib/user-workflows-request';
 
   let { data }: { data: PageData } = $props();
 
@@ -63,6 +66,12 @@
   const links = $derived(
     browser && result && section === 'basic' ? fetchAccountLinks(result.identity.id, version) : null
   );
+
+  const showAllHref = $derived.by(() => {
+    const url = new URL(page.url);
+    url.searchParams.delete('workflows');
+    return url.pathname + url.search;
+  });
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
   // because it owns the promises. See form-state.svelte.ts.
@@ -90,6 +99,15 @@
       <!-- On the first screen because the enforcement history and the paying relationship are what it
            is read FOR; both were two clicks and a scroll away. -->
       <SubscriptionPanel subscription={result.subscription} />
+      {#if data.grants['user.membership.extend']}
+        <!-- `extendDays` / `extendReason` arrive on the assistant's proposal link; a person still
+             previews and confirms. -->
+        <MembershipExtendPanel
+          userId={result.identity.id}
+          initialDays={page.url.searchParams.get('extendDays') ?? ''}
+          initialReason={page.url.searchParams.get('extendReason') ?? ''}
+        />
+      {/if}
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
@@ -175,6 +193,8 @@
             title="Generated media"
             open
             canView={!!data.grants['user.generations.view']}
+            workflowIds={workflowIdsParam(page.url.searchParams)}
+            {showAllHref}
             headerAction={data.grants['user.ban'] && !result.identity.bannedAt
               ? banAccount
               : undefined}

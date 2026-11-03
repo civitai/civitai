@@ -3,6 +3,7 @@ import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
+import { AppStorageCard } from '~/components/Account/AppStorageCard';
 import { CatalogItemsCard } from '~/components/Account/CatalogItemsCard';
 import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
@@ -94,6 +95,8 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           {features.oauthApps && <OAuthAppsCard flat />}
           {features.oauthApps && <ConnectedAppsCard flat />}
           {features.oauthApps && <CatalogItemsCard flat />}
+          {/* Self-gates on the App Blocks flag and renders nothing without app data. */}
+          <AppStorageCard flat />
         </SettingsStack>
       );
 

@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const SEVERITY = { 1: 'warning', 2: 'error' };
@@ -213,9 +213,23 @@ const chunks = (list) => {
   return out;
 };
 
-function run(bin, args) {
+/**
+ * A package's CLI as `[node, script]`. `node_modules/.bin` holds shell scripts on Unix and
+ * `.cmd` files on Windows, so spawning one there fails with ENOENT on Windows; the package's own
+ * JS entry runs the same everywhere.
+ */
+/** Repo-relative paths with `/`, as the file lists and GitHub annotations use, on any OS. */
+const toPosix = (path) => path.split(sep).join('/');
+
+function localBin(pkg) {
+  const dir = resolve('node_modules', pkg);
+  const { bin } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+  return [process.execPath, join(dir, typeof bin === 'string' ? bin : bin[pkg])];
+}
+
+function run([bin, ...prefix], args) {
   return new Promise((done, fail) => {
-    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn(bin, [...prefix, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     const out = [];
     const err = [];
     p.stdout.on('data', (d) => out.push(d));
@@ -234,12 +248,12 @@ function run(bin, args) {
 async function collectEslint(files) {
   const results = [];
   for (const batch of chunks(files)) {
-    const r = await run(resolve('node_modules/.bin/eslint'), ['--format', 'json', ...batch]);
+    const r = await run(localBin('eslint'), ['--format', 'json', ...batch]);
     // 0 = clean, 1 = findings. Anything else (2 = config or internal error) means no verdict.
     if (r.code !== 0 && r.code !== 1) throw new Error(`eslint exited ${r.code}:\n${r.stderr}`);
     for (const res of JSON.parse(r.stdout))
       results.push({
-        filePath: relative(process.cwd(), res.filePath),
+        filePath: toPosix(relative(process.cwd(), res.filePath)),
         messages: res.messages.map(({ ruleId, severity, message, line, column }) => ({
           ruleId,
           severity,
@@ -257,10 +271,10 @@ async function collectPrettier(files) {
   let stderr = '';
   for (const batch of chunks(files)) {
     // 0 = all formatted, 1 = some not, 2 = a file failed to parse (named on stderr).
-    const r = await run(resolve('node_modules/.bin/prettier'), ['--list-different', ...batch]);
+    const r = await run(localBin('prettier'), ['--list-different', ...batch]);
     if (r.code !== 0 && r.code !== 1 && r.code !== 2)
       throw new Error(`prettier exited ${r.code}:\n${r.stderr}`);
-    unformatted.push(...r.stdout.split('\n').filter(Boolean));
+    unformatted.push(...r.stdout.split(/\r?\n/).filter(Boolean).map(toPosix));
     stderr += r.stderr;
   }
   return { unformatted, errors: prettierErrorFiles(stderr), stderr };

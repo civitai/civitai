@@ -22,7 +22,11 @@ import { HostCrucibleTile } from '~/components/HomeBlocks/HostCrucibleTile';
 import { layoutCrucibleRow, useGridSlots } from '~/components/HomeBlocks/useGridSlots';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
-import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
+import {
+  dedupeOrder,
+  useDedupedCappedItems,
+  useModelClaimKeys,
+} from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -267,11 +271,13 @@ function ModelFeedGrid({
     type: 'models',
     data: rotated,
   });
+  const keysFor = useModelClaimKeys();
   const visible = useDedupedCappedItems(useViewerEventDecorations(filtered, { entity: 'model' }), {
     order,
     entity: 'model',
     rows,
     maxPerUser,
+    keysFor,
   });
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;

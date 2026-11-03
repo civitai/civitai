@@ -1,5 +1,6 @@
 import { CREATE_APP, USE_OPEN_APP } from './app-tools';
 import { letStepCallsReachGate, type AssistantTool, type ToolGate, type ToolResult } from './tool';
+import type { SandboxFeatures } from './sandbox-tools';
 import { SUBMIT_FOR_REVIEW, createSubmitTool } from './submit';
 
 /** The sandbox MCP server's id; the chat offers each of its tools as `sandbox__<tool>`. */
@@ -11,7 +12,7 @@ const sandboxTool = (tool: string) => `${SANDBOX_SERVER_ID}__${tool}`;
  * request; Continue starts a new reply with a fresh count. Calls stand in for steps because a step's Buzz
  * cost is not visible to the page. A subagent's calls are not counted: the chat caps those per subagent.
  */
-export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 150;
+export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 300;
 
 export const REPORT_READY = 'report_ready';
 export const SET_CHECKLIST = 'set_checklist';
@@ -35,12 +36,14 @@ export const TURN_LIMIT_REFUSAL = `This reply made ${APP_ASSISTANT_TURN_TOOL_CAL
 /** What the user reads under the reply the limit ended. */
 export const TURN_LIMIT_MESSAGE = `App Assistant stopped this reply after ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make. Press Continue to let it carry on.`;
 
-// Every other sandbox tool clears the checks: write_file, edit_file and delete_path change files, and
-// dev_server_start/_restart run a command (the dev script, or one the assistant passes). A tool the
-// sandbox adds later clears them too until it is listed here.
+// Every other sandbox tool clears the checks: write_file, edit_file (one edit or `edits`) and
+// delete_path change files, and dev_server_start/_restart run a command (the dev script, or one the
+// assistant passes). A tool the sandbox adds later clears them too until it is listed here. run_checks
+// is the checks themselves (`verify`).
 const KEEPS_CHECKS = new Set(
   [
     'read_file',
+    'read_files',
     'list_dir',
     'dev_server_status',
     'dev_server_logs',
@@ -54,6 +57,8 @@ const KEEPS_CHECKS = new Set(
 const SANDBOX_PREFIX = sandboxTool('');
 const PREVIEW_CHECK = sandboxTool('preview_check');
 const RUN_COMMAND = sandboxTool('run_command');
+/** The tests, then the typecheck, in one call: a sandbox that lists it (`SandboxFeatures.runChecks`). */
+export const RUN_CHECKS = sandboxTool('run_checks');
 
 /**
  * Sandbox tools that cannot change the app: what a chat may call on an app open in it that it has not
@@ -63,7 +68,7 @@ const READS_APP = new Set([...KEEPS_CHECKS, PREVIEW_CHECK]);
 
 /** Whether a call can change the open app's files (a test or typecheck run cannot). */
 export function changesApp(name: string, input: unknown): boolean {
-  if (!name.startsWith(SANDBOX_PREFIX) || READS_APP.has(name)) return false;
+  if (!name.startsWith(SANDBOX_PREFIX) || READS_APP.has(name) || name === RUN_CHECKS) return false;
   return !(name === RUN_COMMAND && checkKindOf((input as { command?: unknown } | null)?.command));
 }
 
@@ -138,6 +143,30 @@ export function exitCodeOf(output: unknown): number | null {
   if (typeof output !== 'string') return null;
   const match = /^exit_code:\s*(-?\d+)/.exec(output);
   return match ? Number(match[1]) : null;
+}
+
+/** One check's summary line: `test: exit_code 0 (npm test, 3.1s)`, `..., timed out)` on a timeout. */
+const CHECK_SUMMARY_LINE = /^(test|typecheck): exit_code (-?\d+)(?=[ \t]|\(|$)/;
+
+/**
+ * Each check's exit code in a `sandbox__run_checks` result, as the sandbox MCP server's run_checks
+ * writes it: a first line
+ * `exit_code: <n>`, then one `<name>: exit_code <n> (<command>, <secs>s[, timed out])` line per check,
+ * then a blank line and each failed check's output. Only the lines before that first blank line are
+ * read, and the first line for a check wins, so a check's output can never stand in for its summary.
+ * Null when the first line is not there; a check whose line is missing is left out.
+ */
+export function checkExitCodesOf(output: unknown): Partial<Record<CheckKind, number>> | null {
+  if (typeof output !== 'string' || exitCodeOf(output) === null) return null;
+  const codes: Partial<Record<CheckKind, number>> = {};
+  for (const line of output.split('\n').slice(1)) {
+    if (!line.trim()) break;
+    const match = CHECK_SUMMARY_LINE.exec(line);
+    if (!match) continue;
+    const kind: CheckKind = match[1] === 'test' ? 'tests' : 'typecheck';
+    codes[kind] ??= Number(match[2]);
+  }
+  return codes;
 }
 
 /** `sandbox__preview_check`'s first line is `render: <verdict>`. */
@@ -234,6 +263,13 @@ export interface GateCoreOptions {
    * refused (`unjustifiedScopesRefusal`) while it names any.
    */
   unjustifiedScopes?: () => Promise<readonly string[]>;
+  /**
+   * The newer tools the open app's sandbox lists (`sandboxFeaturesOf`). With `runChecks`, the
+   * refusals and report_ready's description say to run sandbox__run_checks; unset (the page, which
+   * cannot see the sandbox's tool list) or without it, they name npm test and tsc. A run_checks
+   * result counts whatever this says.
+   */
+  sandboxFeatures?: () => SandboxFeatures | null;
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -287,7 +323,9 @@ export function createGateCore({
   checklistApp,
   openApp,
   unjustifiedScopes,
+  sandboxFeatures,
 }: GateCoreOptions = {}): GateCore {
+  const runChecks = () => sandboxFeatures?.()?.runChecks === true;
   let conversationId: string | null = null;
   // Keyed by conversation: the page's one gate serves every chat. Not cleared by reset: the page resets
   // as the new app opens, after create_app's result chose it.
@@ -335,26 +373,55 @@ export function createGateCore({
       out.push(
         `The last sandbox__preview_check said render: ${verification.preview}. Fix that, then run it again.`
       );
-    if (verification.tests === null)
-      out.push(
-        'Run the tests with sandbox__run_command as cd <blockId> && npm test, on its own and unpiped: they have not run since your last file change or other command.'
-      );
-    else if (!verification.tests)
-      out.push('The last test run failed. Fix it, then run cd <blockId> && npm test again.');
-    if (verification.typecheck === null)
-      out.push(
-        'Run the typecheck with sandbox__run_command as cd <blockId> && npx tsc --noEmit, on its own and unpiped: it has not run since your last file change or other command.'
-      );
-    else if (!verification.typecheck)
-      out.push(
-        'The last typecheck failed. Fix it, then run cd <blockId> && npx tsc --noEmit again.'
-      );
+    if (runChecks()) out.push(...checksProblems());
+    else {
+      if (verification.tests === null)
+        out.push(
+          'Run the tests with sandbox__run_command as cd <blockId> && npm test, on its own and unpiped: they have not run since your last file change or other command.'
+        );
+      else if (!verification.tests)
+        out.push('The last test run failed. Fix it, then run cd <blockId> && npm test again.');
+      if (verification.typecheck === null)
+        out.push(
+          'Run the typecheck with sandbox__run_command as cd <blockId> && npx tsc --noEmit, on its own and unpiped: it has not run since your last file change or other command.'
+        );
+      else if (!verification.typecheck)
+        out.push(
+          'The last typecheck failed. Fix it, then run cd <blockId> && npx tsc --noEmit again.'
+        );
+    }
     if (!checklist) out.push('Call set_checklist with the features the user asked for.');
     else {
       const open = checklist.filter((item) => !item.done).map((item) => item.label);
       if (open.length) out.push(`These checklist items are not done: ${open.join('; ')}.`);
     }
     out.push(...dataProblems(declared));
+    return out;
+  };
+
+  /** The tests' and the typecheck's part of a refusal, when the sandbox has run_checks. */
+  const checksProblems = (): string[] => {
+    const unrun = [
+      verification.tests === null ? 'the tests' : null,
+      verification.typecheck === null ? 'the typecheck' : null,
+    ].filter((kind): kind is string => kind !== null);
+    const failed = [
+      verification.tests === false ? 'test run' : null,
+      verification.typecheck === false ? 'typecheck' : null,
+    ].filter((kind): kind is string => kind !== null);
+    const out: string[] = [];
+    if (unrun.length)
+      out.push(
+        `Run ${RUN_CHECKS} with cwd <blockId>: ${unrun.join(' and ')} ${
+          unrun.length > 1 ? 'have' : 'has'
+        } not run since your last file change or other command.`
+      );
+    if (failed.length)
+      out.push(
+        `The last ${failed.join(' and the last ')} failed. Fix ${
+          failed.length > 1 ? 'them' : 'it'
+        }, then run ${RUN_CHECKS} with cwd <blockId> again.`
+      );
     return out;
   };
 
@@ -431,6 +498,13 @@ export function createGateCore({
     if (name === PREVIEW_CHECK) {
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
       verification.sampleLabel = !isError && showsSampleDataLabel(output);
+    } else if (name === RUN_CHECKS) {
+      // A result without its exit codes counts as neither check; it changed no files.
+      const codes = checkExitCodesOf(output);
+      for (const kind of ['tests', 'typecheck'] as const) {
+        const code = codes?.[kind];
+        if (code !== undefined) verification[kind] = !isError && code === 0;
+      }
     } else if (name === RUN_COMMAND) {
       const kind = checkKindOf((input as { command?: unknown } | null)?.command);
       // Any other command may have changed files (sed, a scaffold, npm install).
@@ -533,8 +607,9 @@ export function createGateCore({
   };
 
   const report_ready: AssistantTool = {
-    description:
-      "Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. data says where what the app shows comes from: 'civitai', 'sample' (made-up data, only once the user agreed through set_checklist and the app shows a visible \"Sample data\" label) or 'none'. When it is refused, do what it says; never tell the user the app is ready without it.",
+    get description() {
+      return reportReadyDescription(runChecks());
+    },
     activity: 'Checking the app is ready…',
     inputSchema: {
       properties: { data: { type: 'string', enum: [...DATA_SOURCES] } },
@@ -604,6 +679,14 @@ export function createGateCore({
       if (app !== null && !chosenLive.has(id)) chosenApps.set(id, app);
     },
   };
+}
+
+/** report_ready's description: the checks as the open app's sandbox runs them. */
+export function reportReadyDescription(runChecks: boolean): string {
+  const checks = runChecks
+    ? `${RUN_CHECKS} with cwd <blockId> said test: exit_code 0 and typecheck: exit_code 0`
+    : 'cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped)';
+  return `Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, ${checks}, and every set_checklist item is done. data says where what the app shows comes from: 'civitai', 'sample' (made-up data, only once the user agreed through set_checklist and the app shows a visible "Sample data" label) or 'none'. When it is refused, do what it says; never tell the user the app is ready without it.`;
 }
 
 /** A `create_app` call that opened an app other than `app`: the checks start over. */

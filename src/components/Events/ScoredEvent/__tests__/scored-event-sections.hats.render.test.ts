@@ -31,11 +31,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           teams: [],
           topCosmetics: [{ topicId: 'top1', points: 1 }],
           teamsTopicId: 'keyed-teams',
-          teamHats: {},
+          teamHats: [{ team: 'Pink', url: 'cap-pink' }],
         },
       }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1_234_567 }) },
+    'event.getMyShowcaseHatArt': { useQuery: () => ({ data: showcase.hat, isLoading: false }) },
   }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
@@ -75,7 +76,16 @@ vi.mock('~/hooks/useInView', () => ({
   useInView: () => ({ ref: { current: null }, inView: view.flags[view.call++ % 4] }),
 }));
 
-vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({ ScoredEventHero: () => null }));
+const showcase = vi.hoisted(() => ({
+  hat: null as { url: string; until: string } | null,
+  heroProps: undefined as Record<string, unknown> | undefined,
+}));
+vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
+  ScoredEventHero: (props: Record<string, unknown>) => {
+    showcase.heroProps = props;
+    return null;
+  },
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: () => null }));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () => null }));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
@@ -208,5 +218,39 @@ describe('ScoredEventSections: Your hats', () => {
     expect(live.teams.at(-1)).toEqual(['birthday2026', 'keyed-teams', false]);
     // The top hats freeze with them, though every section is in view.
     expect(live.topHats).toEqual(expect.objectContaining({ inView: false }));
+  });
+});
+
+// Justin (2026-11-03): where we say which team you're on, it is your showcase hat, not the team cap.
+describe('ScoredEventSections: your team panel hat', () => {
+  const heroHat = (hat: typeof showcase.hat) => {
+    showcase.hat = hat;
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const data = {
+      title: 'Birthday',
+      startDate: new Date(Date.now() - 60_000),
+      endDate: new Date(Date.now() + 60_000),
+    } as unknown as React.ComponentProps<typeof ScoredEventSections>['data'];
+    act(() =>
+      root!.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(ScoredEventSections, { event: 'birthday2026', data })
+        )
+      )
+    );
+    return showcase.heroProps?.myHat;
+  };
+  const until = new Date(Date.now() + 86_400_000).toISOString();
+
+  it('hands the hero the hat your avatar shows', () => {
+    expect(heroHat({ url: 'my-showcase', until })).toBe('my-showcase');
+  });
+
+  it("hands the hero your team's cap when no showcase hat is on show", () => {
+    expect(heroHat(null)).toBe('cap-pink');
   });
 });

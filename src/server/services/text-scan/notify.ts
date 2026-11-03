@@ -1,7 +1,14 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
+import { highestNsfwLevel } from '~/server/services/text-scan/evaluate';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const TEXT_SCAN_RATING_RAISED = 'text-scan-rating-raised';
+
+export function ratingRose(before: number, after: number) {
+  const droppedSfwBit = (before & sfwBrowsingLevelsFlag & ~after) !== 0;
+  return droppedSfwBit || highestNsfwLevel(after) > highestNsfwLevel(before);
+}
 
 export type NotifyTextScanRatingRaisedArgs = Parameters<typeof notifyTextScanRatingRaised>[0];
 

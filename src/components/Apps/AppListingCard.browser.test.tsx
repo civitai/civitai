@@ -726,17 +726,15 @@ describe('AppListingCard', () => {
     // viewer actions gone from this surface, the owner and a moderator are the ONLY
     // viewers who get a `⋮` (and therefore a wider action cluster) on a card every
     // other viewer sees without one.
-    //
-    // 🔴 THIS IS ALSO THE SUITE'S "a menu WITHOUT Edit" CASE. It used to be a signed-in
-    // shopper's; that viewer now has no menu at all, and a claim about what is inside a
-    // menu has to be made on a viewer who HAS one.
     mocks.currentUser = MODERATOR;
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await openCardMenu();
     await expect.element(page.getByTestId('apps-listing-mod-message-owner')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-listing-mod-manage')).toBeInTheDocument();
-    // …and still no Edit: they are not the owner.
-    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+    // A moderator may edit any listing, on the listing-keyed editor.
+    await expect
+      .element(page.getByTestId('apps-listing-owner-edit'))
+      .toHaveAttribute('href', '/apps/listing/l1/edit');
   });
 
   test('🔴 `preview` suppresses the whole menu, moderator included', async () => {
@@ -1333,16 +1331,25 @@ describe('AppListingCard — card A layout', () => {
     return header;
   }
 
-  test('🔴 the icon, the title and Open share ONE centre line', async () => {
+  test('🔴 the title and Open share ONE centre line, 10px below the icon centre, and Open clears the cover', async () => {
     const header = await renderCard();
     const icon = header.firstElementChild as HTMLElement;
     const title = page.getByText('My App', { exact: true }).element();
     const open = page.getByRole('link', { name: 'Open', exact: true }).element();
     expect(rect(icon).height).toBe(56);
-    expect(Math.abs(midY(title) - midY(icon)), 'title is off the icon centre').toBeLessThanOrEqual(
-      1
-    );
-    expect(Math.abs(midY(open) - midY(icon)), 'Open is off the icon centre').toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(midY(title) - (midY(icon) + 10)),
+      'title is off the dropped centre line'
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(midY(open) - (midY(icon) + 10)),
+      'Open is off the dropped centre line'
+    ).toBeLessThanOrEqual(1);
+    // The reported defect: Open's top edge touched the cover's bottom edge.
+    expect(
+      rect(open).top - rect(coverBox()).bottom,
+      'Open touches the cover'
+    ).toBeGreaterThanOrEqual(8);
     // Open is on the TITLE's row, to its right, not under it.
     expect(rect(open).left).toBeGreaterThanOrEqual(rect(title).right);
   });
@@ -1601,7 +1608,7 @@ describe('AppListingCard — the restricted-visibility badge', () => {
       );
     });
 
-    test('the grid card divider stays inside the padding (control for the bleed test)', async () => {
+    test('the grid card divider also runs edge to edge, past the footer on both sides', async () => {
       renderWithProviders(
         <div style={{ width: 340 }}>
           <AppListingCard card={base({ slug: 'grid' })} canOpenPage />
@@ -1609,8 +1616,12 @@ describe('AppListingCard — the restricted-visibility badge', () => {
       );
       await expect.element(page.getByTestId('apps-listing-card-divider')).toBeInTheDocument();
       const g = dividerAndFooter();
-      expect(Math.abs(g.divider.left - g.footer.left)).toBeLessThan(1);
-      expect(Math.abs(g.divider.right - g.footer.right)).toBeLessThan(1);
+      expect(g.divider.left, 'grid divider starts inside the padding').toBeLessThan(
+        g.footer.left - 1
+      );
+      expect(g.divider.right, 'grid divider ends inside the padding').toBeGreaterThan(
+        g.footer.right + 1
+      );
     });
 
     test('a cover badge is pinned over the cover, and only when one is given', async () => {
@@ -1631,7 +1642,7 @@ describe('AppListingCard — the restricted-visibility badge', () => {
       ).toBe(true);
     });
 
-    test('Open carries its glyph on the right, 4px from the label; the grid card keeps it on the left', async () => {
+    test('Open carries its glyph on the right on both cards; the embedded one keeps it 4px from the label', async () => {
       renderWithProviders(
         <div>
           <div data-testid="emb">
@@ -1650,7 +1661,7 @@ describe('AppListingCard — the restricted-visibility badge', () => {
           )
           ?.getAttribute('data-position');
       expect(section('emb'), 'embedded glyph is not on the right').toBe('right');
-      expect(section('grid'), 'control: the grid glyph must still be on the left').toBe('left');
+      expect(section('grid'), 'grid glyph is not on the right').toBe('right');
       const glyph = document.querySelector<HTMLElement>(
         '[data-testid="emb"] [data-testid="apps-listing-card-header"] .mantine-Button-section'
       )!;

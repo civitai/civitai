@@ -48,7 +48,9 @@ keeps today's layout.
     title has the row's width up to its buttons, so the longest workflow names fit at 360px.
   - It never fully hides, so the way back to the form is always on screen.
   - It drags only from its title row, never from the form body.
-  - After Generate it closes to its title row and the new batch appears at the top of the queue.
+  - After Generate it stays open, for the next tweak, and the queue keeps its scroll position.
+    While jobs run, a ring spins around the open form's down chevron and a badge counts them, so
+    the form shows that work is in flight; the chevron closes onto the queue.
 - **The form keeps today's fields, order and grouping.** Advanced holds exactly what it holds today
   (CFG, sampler, scheduler, steps, seed, CLIP skip, denoise, VAE and the rest).
 - **Footer:** quantity (a QTY button that opens a sheet of the tier's options) · Generate · Buzz button showing the cost. The cost moves off the
@@ -219,8 +221,8 @@ finds nothing outside test files, and the only layout decision is `useGeneratorL
   Close); the grid is today's Feed.
 - The form sheet: closed and open states, title-row drag, title row with the
   workflow name, Reset (phase 4) and collapse.
-- Generate closes the sheet and scrolls the queue to the new batch. Remix and "Generate with this
-  resource" open it pre-filled.
+- Generate leaves the sheet open, its chevron spinning while jobs run. Remix and "Generate with
+  this resource" open it pre-filled.
 - The footer docks to the visual viewport so the iOS keyboard does not cover it.
 - **Make the pull-up obvious.** Pulling the form up from the bottom is a new interaction, so the
   closed bar has to invite it:
@@ -273,7 +275,6 @@ Built (`src/components/ImageGeneration/MobileGenerator.tsx`):
 - The open sheet fills the screen below the status bar (the first-run swipe coach teaches the pull-up, so
   it no longer leaves a strip of header showing); the chevron, a drag down and Back close it. The
   generator pays its own top safe-area inset, being fixed.
-- `useMobileGeneratorStore.submittedAt` is what closes the sheet on Generate.
 - The header has desktop's `ChallengeIndicator`; presets (`PresetHeaderButton`, a sheet here) sit
   in the open form's title row beside Reset, both icons so they fit at 360px. The tour does not
   start, and moderator tools
@@ -315,9 +316,14 @@ Built:
 - Footer (`MobileFooterParts.tsx`): QTY opens a sheet of the tier's quantities in its steps, with
   the ones a membership unlocks shown locked; Reset, an icon, renders into the sheet's title row (the
   `titleActions` slot in `mobile-generator-slots.tsx`) and leaves the footer.
+- Generate, on every layout: after a submit it shows "Submitted" briefly, then "Generate again"
+  while the form is what was submitted (`formStateKey`), and "Generate" once anything changes. It sits beside the
+  close chevron, so it asks before resetting.
 - Cost picker (`CostPicker.tsx`), the Buzz button on every layout: a sheet on a phone, a popover on
   desktop. Total, creator and Civitai tip steppers (5% steps), Pay with and the balance after, and
-  `GenerationCostPopoverDetail` folded behind "How this is calculated". It replaces desktop's
+  `GenerationCostPopoverDetail` folded behind "How this is calculated". Modals opened from a
+  phone sheet (the cost explanation, licensing fees, Reset's confirmation) use
+  `overMobileSheetZIndex`, or they open behind the sheet. It replaces desktop's
   Pay-with menu and the Breakdown link beside the queue snackbar, and keeps the menu's glow until
   first opened. Training keeps `BuzzTypeSelector`.
 - Queue slots: a line of their own along the bottom of the mobile header (`QueueSlots fill`), one
@@ -326,8 +332,8 @@ Built:
   (`QueueLimitBanner`). The mobile generator provides `GenerationProvider` around its header and
   form, and the form's provider defers to it, so both read one queue state.
 - Queue cards: "Additional Details" is a Details button in the card header (`QueueItemDetails`),
-  a popover on desktop and a sheet on a phone. On a phone the card is its header and outputs, and
-  the prompt and resources move into Details; desktop keeps both inline (a product decision).
+  a popover on desktop and a sheet on a phone, holding the parameters. The prompt and every resource
+  show on the card on both layouts.
 - Remix and the other `setData` entries open the form in the mobile generator; on desktop
   `/generate` the form is always on screen, so they still leave the view alone there.
 - Every `MobileMenuDrawer` over the mobile generator closes on Back (the sort and filter sheets
