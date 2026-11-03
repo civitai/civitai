@@ -1,5 +1,8 @@
 import { env } from '$env/dynamic/private';
+import { MODERATOR_WORKFLOW_FILTER_MAX } from '@civitai/shared/moderator-paths';
 import { logToAxiom } from './axiom';
+import { mapBounded } from './bounded';
+import { parseWorkflowId } from './workflow-id';
 
 /**
  * One account's generation history, read straight from the orchestrator.
@@ -211,15 +214,32 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
 export const ORCHESTRATOR_TIMEOUT_MS = 90_000;
 const SLOW_CALL_MS = 30_000;
 
+function managerBase(): { base: string; token: string } {
+  const endpoint = env.ORCHESTRATOR_ENDPOINT;
+  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (!endpoint || !token) throw new Error('Orchestrator is not configured.');
+  return { base: endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint, token };
+}
+
+async function queryManagerWorkflows(
+  query: URLSearchParams,
+  timeoutMs: number
+): Promise<{ items: unknown[] | null; next: string | null }> {
+  const { base, token } = managerBase();
+  const res = await fetch(`${base}/v1/manager/workflows?${query}`, {
+    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`The orchestrator refused the query (${res.status}).`);
+  const body = (await res.json()) as { items?: unknown; next?: unknown };
+  return { items: Array.isArray(body.items) ? body.items : null, next: str(body.next) };
+}
+
 export async function getUserGeneratedWorkflows(
   userId: number,
   options: { take?: number; cursor?: string | null; source?: WorkflowSource } = {}
 ): Promise<GeneratedWorkflowPage> {
-  const endpoint = env.ORCHESTRATOR_ENDPOINT;
-  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
-  if (!endpoint || !token) throw new Error('Orchestrator is not configured.');
-
-  const base = endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
+  managerBase();
   const query = new URLSearchParams({
     UserId: String(userId),
     Take: String(Math.min(Math.max(options.take ?? 20, 1), 100)),
@@ -231,14 +251,9 @@ export async function getUserGeneratedWorkflows(
 
   const started = Date.now();
   let outcome = 'error';
-  let body: { items?: unknown; next?: unknown };
+  let body: { items: unknown[] | null; next: string | null };
   try {
-    const res = await fetch(`${base}/v1/manager/workflows?${query}`, {
-      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(ORCHESTRATOR_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`The orchestrator refused the query (${res.status}).`);
-    body = (await res.json()) as typeof body;
+    body = await queryManagerWorkflows(query, ORCHESTRATOR_TIMEOUT_MS);
     outcome = 'ok';
   } catch (e) {
     if (e instanceof Error && e.name === 'TimeoutError') outcome = 'timeout';
@@ -256,9 +271,95 @@ export async function getUserGeneratedWorkflows(
       }).catch(() => null);
     }
   }
-  const items = Array.isArray(body.items) ? body.items : [];
   return {
-    items: items.map(readWorkflow).filter((w): w is GeneratedWorkflow => w !== null),
-    nextCursor: str(body.next),
+    items: (body.items ?? []).map(readWorkflow).filter((w): w is GeneratedWorkflow => w !== null),
+    nextCursor: body.next,
   };
+}
+
+export const MAX_WORKFLOW_FILTER_IDS = MODERATOR_WORKFLOW_FILTER_MAX;
+const BY_ID_CONCURRENCY = 8;
+const BY_ID_CALL_TIMEOUT_MS = 20_000;
+// Under Cloudflare's 100 s cut, with room for the slowest in-flight call to land.
+const BY_ID_BUDGET_MS = 60_000;
+
+export type WorkflowsByIdResult = {
+  /** In the order they were asked for. */
+  items: GeneratedWorkflow[];
+  /** Not this account's, deleted, or past the orchestrator's retention. */
+  notFound: string[];
+  /** The orchestrator did not answer for these, so whether they exist is unknown. */
+  unchecked: string[];
+  /** Entries that are not workflow ids at all. */
+  invalid: number;
+  /** Valid ids past `cap`, not looked up. */
+  overCap: number;
+  cap: number;
+};
+
+/** Splits a `workflows=` value into distinct candidate ids, dropping empty entries. */
+export const splitWorkflowIds = (raw: string): string[] => [
+  ...new Set(
+    raw
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+  ),
+];
+
+/**
+ * Exactly the listed workflows of one account, read through the same per-user listing the panel pages
+ * — never the by-id GET, which reaches any workflow by id alone.
+ *
+ * The listing walks the account's ids newest-first starting AT `Cursor`, so `Take=1` from a workflow's
+ * own id answers with that workflow. 🔴 A cursor the orchestrator does not accept as this user's is
+ * ignored rather than refused, and the walk starts from the account's NEWEST workflow instead — so the
+ * returned id must equal the requested one, or a missing id would show some other generation.
+ */
+export async function getUserWorkflowsByIds(
+  userId: number,
+  rawIds: string
+): Promise<WorkflowsByIdResult> {
+  managerBase();
+  let invalid = 0;
+  const valid: string[] = [];
+  for (const id of splitWorkflowIds(rawIds)) {
+    if (parseWorkflowId(id)) valid.push(id);
+    else invalid += 1;
+  }
+  const wanted = valid.slice(0, MAX_WORKFLOW_FILTER_IDS);
+  const overCap = valid.length - wanted.length;
+  const own = wanted.filter((id) => parseWorkflowId(id)!.ownerId === userId);
+
+  const answers = await mapBounded(
+    own,
+    async (id) => {
+      const { items } = await queryManagerWorkflows(
+        new URLSearchParams({ UserId: String(userId), Take: '1', Cursor: id }),
+        BY_ID_CALL_TIMEOUT_MS
+      );
+      // A 2xx without a list is not an answer about the id, so it must not read as "not found".
+      if (!items) throw new Error('The orchestrator answered without a workflow list.');
+      const match = items.map(readWorkflow).find((w) => w?.id === id);
+      return match ?? null;
+    },
+    { concurrency: BY_ID_CONCURRENCY, budgetMs: BY_ID_BUDGET_MS }
+  );
+  const byId = new Map(own.map((id, i) => [id, answers[i]]));
+
+  const result: WorkflowsByIdResult = {
+    items: [],
+    notFound: [],
+    unchecked: [],
+    invalid,
+    overCap,
+    cap: MAX_WORKFLOW_FILTER_IDS,
+  };
+  for (const id of wanted) {
+    const answer = byId.get(id);
+    if (answer) result.items.push(answer);
+    else if (answer === undefined && byId.has(id)) result.unchecked.push(id);
+    else result.notFound.push(id);
+  }
+  return result;
 }

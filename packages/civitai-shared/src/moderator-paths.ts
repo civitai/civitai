@@ -19,10 +19,29 @@ const q = (value: string | number) => encodeURIComponent(String(value));
 
 /** `section` is a slug from the app's `user-lookup/sections.ts` (`reports`, `notes`, …). Without one the
  *  bare route redirects to the default section, so a link that means "their reports" has to say so. */
-export const moderatorUserLookupPath = (idOrUsername: string | number, section?: string) =>
-  section
-    ? `/retool/user-lookup/${section}?q=${q(idOrUsername)}`
+/** How many `workflows=` ids the generation section looks up; the rest are counted, not read. */
+export const MODERATOR_WORKFLOW_FILTER_MAX = 200;
+
+export const moderatorUserLookupPath = (
+  idOrUsername: string | number,
+  section?: string,
+  options: { workflows?: readonly string[] } = {}
+) => {
+  // An empty list would narrow the page to nothing, so it is omitted rather than sent as `workflows=`.
+  const workflows = options.workflows?.length ? options.workflows : null;
+  // The bare route redirects keeping only `q`, so a filter without a section would be lost.
+  const target = section ?? (workflows ? 'generation' : undefined);
+  const base = target
+    ? `/retool/user-lookup/${target}?q=${q(idOrUsername)}`
     : `/retool/user-lookup?q=${q(idOrUsername)}`;
+  // One past the cap keeps the URL bounded while the page can still say that some were left out.
+  return workflows
+    ? `${base}&workflows=${workflows
+        .slice(0, MODERATOR_WORKFLOW_FILTER_MAX + 1)
+        .map(q)
+        .join(',')}`
+    : base;
+};
 
 export const moderatorImageLookupPath = (imageId: number) => `/retool/image-lookup?q=${q(imageId)}`;
 
