@@ -143,10 +143,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
-import {
-  moderatorModelLookupPath,
-  moderatorTrainingAuditPath,
-} from '~/shared/constants/moderator-app';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
@@ -176,7 +173,6 @@ import {
   CosmeticEntity,
   ModelStatus,
   ModelType,
-  ModelUploadType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -205,6 +201,7 @@ import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
@@ -1273,13 +1270,11 @@ export default function ModelDetailsV2({
                                 >
                                   Lookup Model
                                 </ModeratorLookupMenuItem>
-                                {model.uploadType === ModelUploadType.Trained && (
-                                  <ModeratorLookupMenuItem
-                                    path={moderatorTrainingAuditPath(model.id)}
-                                  >
-                                    Training audit
-                                  </ModeratorLookupMenuItem>
-                                )}
+                                <TrainingAuditMenuItem
+                                  modelId={model.id}
+                                  uploadType={model.uploadType}
+                                  isModerator={isModerator}
+                                />
                                 {published && (
                                   <Menu.Item
                                     color="yellow"
