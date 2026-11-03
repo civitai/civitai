@@ -63,6 +63,7 @@ describe('what a Flux.2 Klein 9B version shows', () => {
 });
 
 describe('which non-commercial base models stop creator earnings', () => {
+  // Pins today's decision that the two rules match; narrow this deliberately if they diverge.
   it('every non-commercial base model, and no commercial one', () => {
     expect(nonCommercialBaseModels.filter((b) => stopsCreatorEarnings(b))).toEqual(
       nonCommercialBaseModels
