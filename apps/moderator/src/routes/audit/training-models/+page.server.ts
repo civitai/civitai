@@ -29,7 +29,7 @@ const dayStart = (value: string | undefined) => localDay(value, false);
 const dayEnd = (value: string | undefined) => localDay(value, true);
 
 const querySchema = z.object({
-  modelId: z.string().trim().max(20).catch(''),
+  modelId: z.string().trim().max(20).default('').catch('0'),
   username: z.string().trim().max(100).catch(''),
   workflowId: z.string().trim().max(100).catch(''),
   from: z

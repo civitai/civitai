@@ -1,7 +1,6 @@
 import { Menu } from '@mantine/core';
 import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
-// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenuItem';
 import { ModelUploadType } from '~/shared/utils/prisma/enums';

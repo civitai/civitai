@@ -60,10 +60,12 @@ beforeEach(async () => {
     INSERT INTO "User" ("id","username") VALUES (1,'alice'),(2,'bob');
     -- 10 and 11 are trained on site; 12 is an uploaded model with no training data at all.
     INSERT INTO "Model" ("id","userId","uploadType") VALUES (10,1,'Trained'),(11,2,'Trained'),(12,1,'Created');
-    INSERT INTO "ModelVersion" ("id","modelId") VALUES (100,10),(110,11),(120,12);
+    INSERT INTO "Model" ("id","userId","uploadType","deletedAt") VALUES (13,1,'Trained',now());
+    INSERT INTO "ModelVersion" ("id","modelId") VALUES (100,10),(110,11),(120,12),(130,13);
     INSERT INTO "ModelFile" ("id","modelVersionId","type","metadata") VALUES
       (1000,100,'Training Data','{"trainingResults":{"workflowId":"wf-a"}}'),
-      (1100,110,'Training Data','{"trainingResults":{"workflowId":"wf-b"}}');
+      (1100,110,'Training Data','{"trainingResults":{"workflowId":"wf-b"}}'),
+      (1300,130,'Training Data','{"trainingResults":{"workflowId":"wf-d"}}');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -90,6 +92,15 @@ describe('getTrainingModelsFeed modelId filter', () => {
 
   it('returns nothing for a model that was not trained on site', async () => {
     expect(await ids({ limit: 24, modelId: 12 })).toEqual([]);
+  });
+
+  it('returns nothing for a deleted model', async () => {
+    expect(await ids({ limit: 24, modelId: 13 })).toEqual([]);
+  });
+
+  it('keeps honouring the paging cursor', async () => {
+    expect(await ids({ limit: 24, modelId: 11, cursor: 11 })).toEqual([]);
+    expect(await ids({ limit: 24, modelId: 11, cursor: 12 })).toEqual([11]);
   });
 
   it('composes with the other filters instead of replacing them', async () => {
