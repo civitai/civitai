@@ -36,10 +36,14 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .selectFrom('KnightsVote as v')
     .innerJoin('NewOrderPlayer as p', 'p.userId', 'v.playerId')
     .innerJoin('User as u', 'u.id', 'p.userId')
+    .leftJoin('Image as pic', 'pic.id', 'u.profilePictureId')
     .select([
       'p.userId',
       sql<string>`coalesce(u."username", 'Knight')`.as('username'),
-      'u.image',
+      // The profile picture when it is rated PG, else the legacy `User.image`: what the main app's avatar lookups do.
+      sql<string | null>`coalesce(case when pic."nsfwLevel" = 1 then pic.url end, u.image)`.as(
+        'image'
+      ),
       'p.rankType',
       'p.exp',
       sql<string>`count(*)`.as('graded'),
@@ -52,7 +56,15 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .where('p.rankType', 'in', [...KNIGHTS_STAGE_RANKS])
     .where('u.bannedAt', 'is', null)
     .where('u.deletedAt', 'is', null)
-    .groupBy(['p.userId', 'u.username', 'u.image', 'p.rankType', 'p.exp'])
+    .groupBy([
+      'p.userId',
+      'u.username',
+      'u.image',
+      'pic.url',
+      'pic.nsfwLevel',
+      'p.rankType',
+      'p.exp',
+    ])
     .execute();
 
   const rows = grouped

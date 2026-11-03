@@ -56,7 +56,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","NewOrderPlayer","User","UserCosmetic","Cosmetic" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","NewOrderPlayer","User","Image","Post","UserCosmetic","Cosmetic" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -115,6 +115,22 @@ describe('queryBoard', () => {
     await member(5, 'Knight', 2);
 
     expect(await ids()).toEqual([3, 5, 7]);
+  });
+
+  it('shows the profile picture when it is rated PG, else the legacy image', async () => {
+    await member(1, 'Knight', 3);
+    await member(2, 'Knight', 2);
+    await member(3, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (50,'pic-ok',1),(51,'pic-nsfw',4)`
+    );
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=50 WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=51 WHERE "id"=2`);
+    await pg.exec(`UPDATE "User" SET "image"=NULL WHERE "id"=3`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual(['pic-ok', 'img-2', null]);
   });
 
   it('reads each rank badge cosmetic image from the Trophy cosmetics, and none for Paladin', async () => {

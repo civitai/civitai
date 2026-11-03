@@ -88,6 +88,7 @@ CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY,
   "username" TEXT,
   "image" TEXT,
+  "profilePictureId" INTEGER,
   "bannedAt" TIMESTAMP(3),
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false

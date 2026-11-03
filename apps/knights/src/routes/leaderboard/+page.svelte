@@ -80,7 +80,7 @@
         {#if you}<span class="tag">YOU</span>{/if}
       </span>
       <span class="sub">
-        {#if you}<span class="mine">You · </span>{/if}{entry.rankType} · <span class="lv"
+        {#if you}<span class="mine">You ·</span>{/if}{entry.rankType} · <span class="lv"
           >Level {entry.level}</span
         ><span class="lv-short">{entry.level}</span>
       </span>
@@ -422,6 +422,14 @@
   .body {
     display: flex;
     flex-direction: column;
+    min-width: 0;
+  }
+  .list,
+  .standing,
+  .entry {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
   }
   .list {
     order: 1;
@@ -476,6 +484,9 @@
   .who {
     display: flex;
     flex-direction: column;
+    min-width: 0;
+  }
+  .line > .name {
     min-width: 0;
   }
   .line {
@@ -587,6 +598,7 @@
     }
     .you .mine {
       display: inline;
+      margin-right: 0.3em;
       color: var(--io-gold);
     }
     .you .tag {
