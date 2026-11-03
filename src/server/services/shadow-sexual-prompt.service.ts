@@ -213,9 +213,19 @@ async function recordPrediction(args: {
     ))) s
     WHERE i.id = ${shadow.imageId}::int
   `;
-  if (rows.length === 0)
+  if (rows.length === 0) {
     logShadowSexualPromptError(new Error('image not found for prediction'), shadow.imageId);
-  else if (rows[0].status === 'rejected')
+    return;
+  }
+  // The positive witness: zero errors cannot tell an accepted submit from one never made.
+  logToAxiom({
+    type: 'info',
+    name: 'shadow-sexual-prompt',
+    message: 'prediction submitted',
+    status: rows[0].status,
+    workflowId: args.workflowId,
+  }).catch(() => undefined);
+  if (rows[0].status === 'rejected')
     logShadowSexualPromptError(
       new Error(`prediction rejected: ${rows[0].error ?? 'unknown'}`),
       shadow.imageId
