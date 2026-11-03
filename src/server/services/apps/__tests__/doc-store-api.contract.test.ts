@@ -172,6 +172,7 @@ import { DOC_STORE_BOUNDS } from '~/server/services/apps/doc-store.types';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
 import { resolveImportAccess, resolveStorageAccess } from '~/server/services/apps/doc-store-access';
 import {
+  grantImportSourcePublish,
   isImportScopeCovered,
   recordStorageImportGrants,
 } from '~/server/services/apps/storage-import-grant.service';
@@ -2897,7 +2898,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(prod.status).toBe(200);
   });
 
-  // ── The grant covers what the viewer was SHOWN (round-1 R1-1) ────────────────────────────
+  // ── The grant covers what the viewer was SHOWN ───────────────────────────────────────────
 
   /** A read through the import of S's `notes` — the collection every version below imports. */
   async function readNotes(C: AppRow, S: AppRow) {
@@ -2962,8 +2963,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [S.id])).toEqual([]);
   });
 
-  // Passes before the fix too (no grant was ever narrowed then): it pins that the fix does not
-  // over-refuse.
+  // Pins that a later version declaring less is not over-refused.
   it('INVARIANT GUARD: a later version that narrows is still allowed', async () => {
     const { S, C } = importApps();
     C.manifest = consumerManifest(S, ['notes', 'extra'], 'readwrite');
@@ -3001,7 +3001,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(r.body).toMatchObject(consentRequiredFor(S));
   });
 
-  // ── Writes to the source's SHARED collections need the source's own publish consent (Q1) ──
+  // ── Writes to the source's SHARED collections need the source's own publish consent ──────
 
   it("a shared write through a readwrite import needs the viewer's apps:storage:publish in the source", async () => {
     const { S, C } = importApps();
@@ -3053,7 +3053,55 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     });
   });
 
-  // ── Import calls are charged to the consumer's read bucket before resolution (R1-2) ──────
+  it("the host's publish prompt for the source records the grant the import's create then needs", async () => {
+    const { S, C } = importApps();
+    // What a moderator approved for the source: its manifest's scopes, publish included.
+    Object.assign(S, { approvedScopes: ['apps:storage', PUBLISH_SCOPE], version: '1.0.0' });
+    await grant(VIEWER_IDS.v1, C, S);
+    // The scope ledger's first write for (viewer, app), feeding the same reads the route makes.
+    dbMock.dbWrite.appUserScopeGrant.create.mockImplementation((async ({
+      data,
+    }: {
+      data: { userId: number; appBlockId: string; grantedScopes: string[] };
+    }) => {
+      if (data.grantedScopes.includes(PUBLISH_SCOPE)) {
+        grantPublishInSource(data.userId, { id: data.appBlockId } as AppRow);
+      }
+      return {};
+    }) as never);
+    const create = async () =>
+      call({
+        token: await as(C, VIEWER_IDS.v1),
+        method: 'POST',
+        path: '/board',
+        query: { from: S.blockId },
+        body: { data: { title: 'from the fork' } },
+      });
+    const before = await create();
+    expect(before.status).toBe(403);
+    expect(before.body).toMatchObject({
+      code: 'consent_required',
+      details: { scope: PUBLISH_SCOPE, from: S.blockId },
+    });
+
+    // Allow, in the prompt the consumer's block asked for (`blocks.grantScopes` with `from`).
+    await grantImportSourcePublish({
+      userId: VIEWER_IDS.v1,
+      consumer: { id: C.id, manifest: C.manifest },
+      from: S.blockId,
+      host: '',
+    });
+    expect(publishGrants.has(`${VIEWER_IDS.v1}|${S.id}`)).toBe(true);
+    expect(publishGrants.has(`${VIEWER_IDS.v1}|${C.id}`)).toBe(false);
+
+    const after = await create();
+    expect(after.status).toBe(201);
+    expect(
+      await harness.raw(`SELECT data FROM appdata.doc WHERE app_id = $1 AND coll = 'board'`, [S.id])
+    ).toEqual([{ data: { title: 'from the fork' } }]);
+  });
+
+  // ── Import calls are charged to the consumer's read bucket before resolution ────────────
 
   /** The consumer's own `read` bucket counter for a viewer. */
   const readBucket = (app: AppRow, uid: number) =>
@@ -3274,7 +3322,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(lookups).toHaveBeenCalled();
   });
 
-  // ── Writes through an import are validated against the SOURCE collection's schema (R1-4) ──
+  // ── Writes through an import are validated against the SOURCE collection's schema ───────
 
   it("a write through an import is checked against the source's schema, never the consumer's", async () => {
     seq += 1;

@@ -305,3 +305,73 @@ describe('BlockConsentModal — cross-app storage imports', () => {
     });
   });
 });
+
+/**
+ * `apps:storage:publish` IN A SOURCE APP: the consumer's block asked for it with
+ * `requestGrants({ scope, from })`. The grant is the viewer's own, for the SOURCE app, so the
+ * prompt names that app and what the consumer's writes do there; the source's name comes from the
+ * consumer's approved imports, never from the block.
+ */
+describe('BlockConsentModal — publish consent in a source app', () => {
+  const PUBLISH = 'apps:storage:publish';
+
+  test('names the source app and that what the consumer adds there is public, as the viewer', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="notes-app"
+        onGranted={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByRole('dialog'))
+      .toHaveTextContent('Notes Fork needs permission in Notes App');
+    const detail = page.getByTestId('block-consent-source-publish');
+    await expect.element(detail).toBeVisible();
+    await expect
+      .element(detail)
+      .toHaveTextContent(
+        'Entries, votes and counts that Notes Fork adds in Notes App appear publicly there under your account. You are giving this permission to Notes App, so Notes App can do the same.'
+      );
+  });
+
+  test('Allow records the grant against the source: the request carries from', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="notes-app"
+        onGranted={() => undefined}
+      />
+    );
+    await page.getByRole('button', { name: 'Allow' }).click();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'app-1',
+      scopes: [PUBLISH],
+      from: 'notes-app',
+    });
+  });
+
+  test('a source the app does not import with readwrite offers nothing to allow', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="words-app"
+        onGranted={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByTestId('block-consent-source-unavailable'))
+      .toHaveTextContent('Notes Fork does not change your data in words-app');
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
+    expect(page.getByTestId('block-consent-source-publish').elements()).toHaveLength(0);
+  });
+});
