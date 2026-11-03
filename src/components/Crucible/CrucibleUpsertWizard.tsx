@@ -245,8 +245,7 @@ export function CrucibleUpsertWizard(props: Props) {
   const maxClipSeconds = toVideoRule(values.maxClipSeconds);
   const minViewRangeError =
     minViewSeconds != null &&
-    (!Number.isInteger(minViewSeconds) ||
-      minViewSeconds < CRUCIBLE_MIN_VIEW_SECONDS_MIN ||
+    (minViewSeconds < CRUCIBLE_MIN_VIEW_SECONDS_MIN ||
       minViewSeconds > CRUCIBLE_MIN_VIEW_SECONDS_MAX)
       ? `Enter a whole number from ${CRUCIBLE_MIN_VIEW_SECONDS_MIN} to ${CRUCIBLE_MIN_VIEW_SECONDS_MAX} seconds, or leave empty for no minimum`
       : null;

@@ -843,7 +843,7 @@ describe('createCrucibleInputSchema — video settings', () => {
   it('accepts a video crucible carrying both settings', () => {
     const result = createCrucibleInputSchema.safeParse({
       ...videoInput,
-      minViewSeconds: 6,
+      minViewSeconds: 7,
       maxClipSeconds: 120,
     });
 
@@ -910,6 +910,8 @@ describe('createCrucibleInputSchema — video settings', () => {
 
   it.each([
     [20, true],
+    [3, true],
+    [30, true],
     [2, false],
     [31, false],
     [6.5, false],

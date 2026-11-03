@@ -1,4 +1,3 @@
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { describe, expect, test, vi } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -14,6 +13,7 @@ import {
   crucibleCreateDefaultValues,
   type CrucibleCreateFormValues,
 } from '~/components/Crucible/crucible-create-form';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -198,6 +198,8 @@ describe('CrucibleUpsertWizard — prizes', () => {
 });
 
 describe('CrucibleUpsertWizard — minimum view time', () => {
+  const nextButton = () =>
+    [...document.querySelectorAll('button')].find((button) => button.textContent === 'Next');
   const RANGE_ERROR = 'Enter a whole number from 3 to 30 seconds';
   const videoStep2 = (minViewSeconds?: number, maxClipSeconds?: number) =>
     valuesOnStep(2, { contentType: MediaType.video, minViewSeconds, maxClipSeconds });
@@ -213,6 +215,17 @@ describe('CrucibleUpsertWizard — minimum view time', () => {
     renderWithProviders(<Harness values={videoStep2(seconds)} />);
 
     await vi.waitFor(() => expect(document.body.textContent).toContain(RANGE_ERROR));
+  });
+
+  test.each([
+    [2, true],
+    [31, true],
+    [20, false],
+  ])('with %ss, Next is disabled=%s', async (seconds, disabled) => {
+    renderWithProviders(<Harness values={videoStep2(seconds)} />);
+
+    await vi.waitFor(() => expect(nextButton()).toBeTruthy());
+    expect(nextButton()!.disabled).toBe(disabled);
   });
 
   test('flags a minimum longer than the maximum clip length', async () => {
