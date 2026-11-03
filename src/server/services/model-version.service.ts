@@ -53,6 +53,12 @@ import {
   readDefaultModelVersionsViaKysely,
   readDefaultModelVersionsViaPrisma,
 } from '~/server/services/hot-reads-3.reads';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  donationGoalVersionFindArgs,
+  readDonationGoalVersionViaKysely,
+  readDonationGoalVersionViaPrisma,
+} from '~/server/services/hot-reads-8.reads';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
@@ -3031,20 +3037,14 @@ export const modelVersionDonationGoal = async ({
 
   // The caller MIGHT be privileged (owner or moderator) — resolve the version to learn the
   // owner and to 404 / fall back to the primary on replica lag.
-  const donationFindArgs = {
-    where: { id },
-    select: {
-      id: true,
-      modelId: true,
-      model: {
-        select: {
-          userId: true,
-        },
-      },
-    },
-  } as const;
-  const version = await dbRead.modelVersion
-    .findFirstOrThrow(donationFindArgs)
+  const donationFindArgs = donationGoalVersionFindArgs(id);
+  // `kysely-hot-reads-8` on: the replica read goes through Kysely, and a missing row rejects, as
+  // `findFirstOrThrow` does, so it reaches the same primary retry below.
+  const readReplica = async () =>
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
+      ? readDonationGoalVersionViaKysely((await loadKyselyDb()).kyselyRead, id)
+      : readDonationGoalVersionViaPrisma(dbRead, id);
+  const version = await readReplica()
     .catch(() => {
       // Replica miss (often replica lag) — retry against the primary before
       // deciding the record is truly gone.

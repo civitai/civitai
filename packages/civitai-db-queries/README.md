@@ -93,6 +93,13 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-7.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
 
+  `hot-reads-8.db.ts` holds three more (a page of posts' storyline chapters, with their storylines,
+  first chapters and posts; a user's cosmetics with each cosmetic; a model version with its model's
+  owner). They are served behind the default-off server Flipt flag `kysely-hot-reads-8` and read
+  base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-8.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs
