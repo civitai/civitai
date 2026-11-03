@@ -474,7 +474,7 @@
   .question {
     display: flex;
     flex: none;
-    align-items: center;
+    align-items: baseline;
     gap: 10px;
     min-width: 0;
     margin: 0;
@@ -491,8 +491,7 @@
     overflow: hidden;
     color: var(--io-parchment);
     font: 700 16px/1.25 var(--io-font-display);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* Wraps in full: a question must be read whole to be answered, and phones can't hover for the title. */
   }
   .banner {
     flex: none;
