@@ -450,13 +450,16 @@ describe('extendMembership: the flow', () => {
       stripeRef.current = f.stripe;
       const r = await extendMembership(input());
       expect(r.ok).toBe(false);
+      expect(r.written).toBe(false);
       expect(trackModActivity).not.toHaveBeenCalled();
       expect(axiomRecords().at(-1)?.type).toBe('rejected-by-stripe');
     }
     // Control: an error of unknown outcome (a timeout, a 5xx) still starts the cooldown.
     trackModActivity.mockClear();
     stripeRef.current = fakeStripe(liveSub(), { rejectUpdate: 'StripeAPIError' }).stripe;
-    expect((await extendMembership(input())).ok).toBe(false);
+    const unknown = await extendMembership(input());
+    expect(unknown.ok).toBe(false);
+    expect(unknown.written).toBeNull();
     expect(trackModActivity).toHaveBeenCalledTimes(1);
   });
 
@@ -504,6 +507,9 @@ describe('extendMembership: the flow', () => {
     stripeRef.current = f.stripe;
     const r = await extendMembership(input());
     expect(r.ok).toBe(false);
+    // The update landed though the re-read failed: `after` is null, `written` is not.
+    expect(r.after).toBeNull();
+    expect(r.written).toBe(true);
     expect(r.cancelRestored).toBe(true);
     expect(f.updates.map((u) => u[1])).toEqual([
       expect.objectContaining({ trial_end: T3 }),

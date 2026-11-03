@@ -1,6 +1,13 @@
 import { chunk } from 'lodash-es';
 import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
-import { eventSeasonKeys, hatField, TEAM_HOURS_CUT_FIELD } from '~/server/events/points/keys';
+import {
+  eventSeasonKeys,
+  hatField,
+  LIVE_BUCKET_MS,
+  TEAM_HOURS_CUT_FIELD,
+  utcDay,
+} from '~/server/events/points/keys';
+import { teamAwardsBy } from '~/server/events/scoring/team-awards';
 import type { dbRead, dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -18,6 +25,9 @@ export type ScoredEvent = {
 };
 
 type StandingsEvent = Pick<ScoredEvent, 'name' | 'teams' | 'startDate' | 'scoreFrom'>;
+// What the hourly job builds the snapshot from, including the window team awards count in.
+type SettledEvent = StandingsEvent &
+  Pick<ScoredEvent, 'endDate'> & { scoring?: Partial<EventScoring> };
 const scoreFromDay = (event: Pick<ScoredEvent, 'startDate' | 'scoreFrom'>) => {
   const from = event.scoreFrom ?? event.startDate;
   return new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
@@ -70,7 +80,7 @@ export function teamHourlySeries(
 ): TeamHourly | undefined {
   const cut = raw[TEAM_HOURS_CUT_FIELD] ? new Date(raw[TEAM_HOURS_CUT_FIELD]) : undefined;
   if (!cut || Number.isNaN(cut.getTime())) return undefined;
-  const from = fromDay.toISOString().slice(0, 10);
+  const from = utcDay(fromDay);
   const days = Object.keys(raw)
     .filter((day) => isoDayPattern.test(day) && day >= from)
     .sort();
@@ -87,7 +97,7 @@ export function teamHourlySeries(
       team,
       points: Array.from({ length: hours }, (_, i) => {
         const at = new Date(start.getTime() + i * HOUR_MS);
-        const day = parsed.get(at.toISOString().slice(0, 10));
+        const day = parsed.get(utcDay(at));
         return day ? day[team]?.[at.getUTCHours()] ?? 0 : null;
       }),
     })),
@@ -109,7 +119,7 @@ async function readTeamHourly(event: StandingsEvent, fromDay: Date) {
 // rankings). Their rows stay in the table, so a reversal restores them; per-cosmetic reads below are
 // not filtered. The hourly job passes the primary: it builds this right after writing the day, and
 // a lagging replica would freeze stale numbers into the snapshot for an hour.
-async function computeStandings(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
+async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof dbRead) {
   const fromDay = scoreFromDay(event);
   // The few hidden users, found once over the event's distinct users, so the three aggregates below
   // need no per-row join to "User".
@@ -131,15 +141,28 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
     GROUP BY team, day
     ORDER BY day
   `;
+  // Cut where the referee last settled, so the snapshot and the live base count the same awards.
+  const liveCut = Number((await sysRedis.get(eventSeasonKeys(event.name, 'live').cut)) ?? 0);
+  const awarded = teamAwardsBy(event, new Date(liveCut * LIVE_BUCKET_MS)).map(
+    ({ team, points, at }) => ({
+      team,
+      day: new Date(`${utcDay(at)}T00:00:00.000Z`),
+      points,
+    })
+  );
+  const days = [...teamDays, ...awarded].sort((a, b) => a.day.getTime() - b.day.getTime());
   const totals = new Map<string, number>();
   const history = event.teams.map((team) => ({
     team,
     scores: [] as { date: Date; score: number }[],
   }));
-  for (const { team, day, points } of teamDays) {
+  for (const { team, day, points } of days) {
     const total = (totals.get(team) ?? 0) + points;
     totals.set(team, total);
-    history.find((h) => h.team === team)?.scores.push({ date: day, score: total });
+    const scores = history.find((h) => h.team === team)?.scores;
+    const last = scores?.at(-1);
+    if (last?.date.getTime() === day.getTime()) last.score = total;
+    else scores?.push({ date: day, score: total });
   }
   const teams: TeamScore[] = event.teams.map((team) => ({
     team,
@@ -244,7 +267,7 @@ async function writeHatTotals(event: StandingsEvent, hats: CosmeticScore[]) {
 
 // Run by the hourly job right after the referee, from the primary: a lagging replica would freeze
 // stale numbers into the snapshot until the next run.
-export async function refreshStandings(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
+export async function refreshStandings(event: SettledEvent, db: typeof dbWrite | typeof dbRead) {
   const standings = await computeStandings(event, db);
   await writeHatTotals(event, await hatTotals(event, db));
   await sysRedis.packed.set(snapshotKeys(event).standings, standings);

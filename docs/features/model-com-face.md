@@ -4,6 +4,8 @@ One model, two faces. A creator can give a model a separate title, description a
 civitai.com, which shows no mature content, while civitai.red keeps the original listing. With
 nothing set, both sites show the same listing.
 
+The editor presents the two faces as the model's civitai.red card and its civitai.com card.
+
 ## Who sees which face
 
 The face follows the viewer's browsing level, not only the site:
@@ -11,7 +13,8 @@ The face follows the viewer's browsing level, not only the site:
 - A viewer whose browsing level has no mature levels sees the .com face: everyone on civitai.com,
   anyone signed out, and a civitai.red viewer who has mature content turned off.
 - Everyone else sees the .red listing.
-- The owner and moderators always get both, because the same response fills the model editor.
+- The owner and moderators see the same face as anyone else on the model page. The model editor
+  asks `model.getById` with `forEditor: true`, and only then do they get both.
 
 `showsSfwFace(browsingLevel)` in `src/shared/utils/model-sfw-face.ts` is the rule. A server caller
 with no viewer (no browsing level) keeps the .red face.

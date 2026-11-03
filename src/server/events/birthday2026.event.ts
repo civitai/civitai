@@ -140,6 +140,9 @@ export const birthday2026 = createEvent(name, {
     },
     newAccountDays: 7,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
+    // The Crucible seed: 1M per music-video Crucible, 50/30/20 to the teams of its top three, dated
+    // to the Crucible's end.
+    teamAwards: [],
   },
   turf: {
     mode: 'shadow',
