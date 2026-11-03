@@ -12,14 +12,16 @@ export function HatTurfDetailLayer({ imageId }: { imageId: number }) {
 }
 
 function Content({ imageId }: { imageId: number }) {
-  const { stickers } = useImageTurfStickers(imageId);
+  const { stickers, loadedExtra, loadMore, loading } = useImageTurfStickers(imageId);
   const utils = trpc.useUtils();
   return (
     <HatTurfLayer
       imageId={imageId}
       source="image-detail"
       stickers={stickers ?? []}
-      drawLimit={DRAW_LIMIT}
+      drawLimit={DRAW_LIMIT + loadedExtra}
+      onMore={loadMore}
+      moreLoading={loading}
       onPlaced={() => void utils.hatTurf.getImageStickers.invalidate()}
     />
   );

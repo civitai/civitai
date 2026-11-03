@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
     mode: string;
   },
   stickers: [] as unknown[],
+  nextCursor: null as { createdAt: string; id: string } | null,
+  fetchPage: vi.fn(),
   place: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -29,7 +31,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'hatTurf.getStock': { useQuery: () => ({ data: h.stock }) },
         'hatTurf.getImageStickers': {
           useQuery: () => ({
-            data: { stickers: h.stickers, mine: null },
+            data: { stickers: h.stickers, mine: null, nextCursor: h.nextCursor },
             refetch: async () => undefined,
           }),
         },
@@ -58,7 +60,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getStock: { invalidate: h.invalidate },
             getSummaries: { invalidate: h.invalidate },
             getStickersForImages: { invalidate: h.invalidate },
-            getImageStickers: { invalidate: h.invalidate },
+            getImageStickers: { invalidate: h.invalidate, fetch: h.fetchPage },
           },
         }),
       }
@@ -141,6 +143,8 @@ beforeEach(() => {
   ];
   h.user = { id: 1 };
   h.place.mockReset();
+  h.nextCursor = null;
+  h.fetchPage.mockReset();
   h.optIn.mockReset();
   localStorage.clear();
   useHatTurfStore.setState({ cosmeticId: null, showHats: true });
@@ -277,6 +281,34 @@ describe('Hat Turf on image detail', () => {
     });
     await vi.waitFor(() => expect(hats().length).toBe(12));
     expect(q('hat-turf-more')!.textContent).toContain('+8');
+  });
+
+  test('"+N more" loads the next page from the cursor and draws those hats too', async () => {
+    h.stickers = Array.from({ length: 12 }, (_, i) => sticker(i + 1, 'blue', 0.1 + i * 0.07, 0.5));
+    h.nextCursor = { createdAt: '2026-11-03T00:00:00.000Z', id: '100' };
+    h.fetchPage.mockResolvedValue({
+      stickers: Array.from({ length: 8 }, (_, i) => sticker(200 + i, 'pink', 0.1 + i * 0.1, 0.2)),
+      mine: null,
+      nextCursor: null,
+    });
+    render({
+      images: {
+        9: {
+          shown: { blue: 12, pink: 8 },
+          counted: { blue: 12, pink: 8 },
+          leader: 'blue',
+          leaderCosmeticId: 11,
+          hatted: false,
+        },
+      },
+    });
+    await vi.waitFor(() => expect(q('hat-turf-more')!.textContent).toContain('+8 more'));
+    click(q('hat-turf-more'));
+    await vi.waitFor(() => expect(hats().length).toBe(20));
+    expect(h.fetchPage).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: 9, before: h.nextCursor })
+    );
+    expect(q('hat-turf-more')).toBeNull();
   });
 
   test('Leave Hat Turf turns it off', async () => {
