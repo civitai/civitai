@@ -5777,6 +5777,36 @@ model EventCosmeticScoreDaily {
   @@index([event, day])
 }
 
+/// A Hat Turf sticker: one player's team mark on someone else's image, for an event. Free, never
+/// moved; a moderator removal is final (the unique key outlives it). Constraints and partial index
+/// live only in the migration.
+model EventTurfSticker {
+  id          BigInt    @id @default(autoincrement())
+  event       String
+  imageId     Int
+  userId      Int
+  team        String
+  cosmeticId  Int
+  data        Json      @default("{}")
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  removedAt   DateTime? @db.Timestamptz(3)
+  removedById Int?
+
+  @@unique([event, imageId, userId])
+  @@index([event, userId])
+}
+
+/// A player's Hat Turf sticker supply: a lazy token bucket, refilled on read from the event's
+/// supply schedule.
+model EventTurfStock {
+  event      String
+  userId     Int
+  stock      Float
+  refilledAt DateTime @db.Timestamptz(3)
+
+  @@id([event, userId])
+}
+
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
 model CreatorMilestone {
   key          String                 @id

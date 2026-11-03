@@ -3190,6 +3190,24 @@ export type EventCosmeticScoreDaily = {
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
 };
+export type EventTurfSticker = {
+  id: Generated<string>;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  removedAt: Timestamp | null;
+  removedById: number | null;
+};
+export type EventTurfStock = {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Timestamp;
+};
 export type EvidenceHeldUser = {
   userId: number;
   heldUntil: Timestamp | null;
@@ -6595,6 +6613,8 @@ export type DB = {
   EntityModeration: EntityModeration;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EventTurfSticker: EventTurfSticker;
+  EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
   EvidenceHoldImage: EvidenceHoldImage;
