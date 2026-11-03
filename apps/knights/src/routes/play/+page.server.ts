@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
@@ -38,10 +39,13 @@ import {
 import { apprenticePayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
+const BLOCK_REASON_TEXT = 'Choose a reason from the list when you block an image.';
+
 const REJECTION_TEXT: Record<RejectReason, string> = {
   'no-player': 'You have not joined the Order yet.',
   'not-eligible': 'You cannot judge this one yet.',
   'bad-answer': 'That answer is not on offer.',
+  'bad-block-reason': BLOCK_REASON_TEXT,
   'already-voted': 'You have already judged this one.',
   'not-open': 'This one has already been settled.',
   unavailable: 'This one is not open for judging.',
@@ -232,8 +236,17 @@ export const actions: Actions = {
     const form = await request.formData();
     const token = form.get('item');
     const answer = form.get('answer');
+    const reasonField = form.get('blockReason');
     if (typeof token !== 'string' || typeof answer !== 'string') {
       return fail(400, { message: 'Pick an answer.' });
+    }
+    if (reasonField !== null && typeof reasonField !== 'string') {
+      return fail(400, { message: BLOCK_REASON_TEXT });
+    }
+    // An empty field is no reason; the service pairs the reason with the answer (Blocked needs one, nothing else takes one).
+    const blockReason = reasonField === '' ? null : reasonField;
+    if (blockReason !== null && !isBlockReason(blockReason)) {
+      return fail(400, { message: BLOCK_REASON_TEXT });
     }
     let ref: ReturnType<typeof openItem>;
     try {
@@ -244,6 +257,9 @@ export const actions: Actions = {
     }
     if (!ref) return fail(400, { message: 'Pick an answer.' });
     const itemId = ref.id;
+    if (ref.kind === 'yesno' && blockReason !== null) {
+      return fail(400, { message: BLOCK_REASON_TEXT });
+    }
 
     try {
       const result =
@@ -254,6 +270,7 @@ export const actions: Actions = {
                 userId: locals.user.id,
                 referenceId: itemId,
                 answer,
+                blockReason,
                 isModerator: locals.user.isModerator,
               },
               queueDeps
@@ -266,7 +283,13 @@ export const actions: Actions = {
             )
           : await castVote(
               db,
-              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+              {
+                userId: locals.user.id,
+                itemId,
+                answer,
+                blockReason,
+                isModerator: locals.user.isModerator,
+              },
               queueDeps
             );
       if (result.status === 'limited') {
@@ -279,7 +302,9 @@ export const actions: Actions = {
         });
       }
       if (result.status === 'rejected') {
-        return fail(409, { message: REJECTION_TEXT[result.reason] });
+        return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
+          message: REJECTION_TEXT[result.reason],
+        });
       }
       return { success: true };
     } catch (error) {

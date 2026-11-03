@@ -144,7 +144,13 @@ export const isSevereUnderRating = (given: string, known: string, distance: numb
  */
 export async function answerHiddenCheck(
   db: Kysely<DB>,
-  input: { userId: number; referenceId: number; answer: string; isModerator?: boolean },
+  input: {
+    userId: number;
+    referenceId: number;
+    answer: string;
+    blockReason?: string | null;
+    isModerator?: boolean;
+  },
   deps: Pick<QueueDeps, 'now' | 'voteLimits'> & { mirrorXp?: XpMirror }
 ): Promise<HiddenCheckResult> {
   const now = deps.now();
@@ -162,7 +168,13 @@ export async function answerHiddenCheck(
     const itemId = hiddenItemId(ref.id);
     const vote = await insertVote(
       trx,
-      { userId: input.userId, answer: input.answer, now, lockPlayer: true },
+      {
+        userId: input.userId,
+        answer: input.answer,
+        blockReason: input.blockReason,
+        now,
+        lockPlayer: true,
+      },
       {
         itemId,
         questionKey: ref.questionKey,
