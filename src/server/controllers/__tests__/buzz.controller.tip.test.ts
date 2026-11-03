@@ -368,6 +368,7 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
     ['a Flux.2 Klein 4B model', ['Flux.2 Klein 4B']],
     ['a Flux.3 Klein model', ['Flux.3 Klein']],
     ['a model with a 9B and a 4B version', ['Flux.2 Klein 9B', 'Flux.2 Klein 4B']],
+    ['a model with no versions found', []],
   ])('still tips %s', async (_, baseModels) => {
     const ledger = installLedger();
     mockVersionFindMany.mockResolvedValue(baseModels.map((baseModel) => ({ baseModel })) as never);
