@@ -290,9 +290,10 @@ so, with the reason.
 ### The `checks` block — required, findings or not
 
 The one structured exception to "findings only": it records the method, so a reader can tell a lane that
-checked from one that skipped. One entry per new or changed assertion; `expected_failure` is what the run
-prints, or `passes` / `hangs` when it would not go red (that entry is then a finding). An empty list means
-the diff adds no assertions; never omit the key. When your invoker gives you a JSON result contract, put
+checked from one that skipped. **One entry per new or changed assertion** — not per test, and not per
+mutation tried — at the assertion's own line, with the mutation that should turn it red.
+`expected_failure` is what the run prints, or `passes` / `hangs` when it would not go red (that entry is
+then a finding). An empty list means the diff adds or changes no assertions; never omit the key. When your invoker gives you a JSON result contract, put
 this under `checks` in that result; otherwise end your report with it as a fenced `json` block:
 
 ```json

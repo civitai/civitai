@@ -184,9 +184,16 @@ hazard you confirmed is *not* a bug today but that the next edit would turn into
 ### The `checks` block — required, findings or not
 
 The one structured exception to "findings only": it records the method, so a reader can tell a lane that
-checked from one that skipped. `writes`: one entry per stamp, flag or key written, with `cleared_at` as
-`file:line` or `"none"`. `siblings`: one entry per capability granted or gated, with `paths` listing every
-other granting path as `file:line`. An empty list means nothing applied; never omit a key. It names paths,
+checked from one that skipped.
+
+- `writes`: **one entry per key written** (stamp, flag or metadata key), at the line that writes it,
+  with `cleared_at` as the `file:line` that clears or resets it, or `"none"`.
+- `siblings`: **one entry per capability granted or gated**, with `paths` listing **every other path
+  that grants it**, each as `file:line`, and `[]` if there is none. Listing a path does not say you
+  checked it — there is no field for that — so a path you did not check is a finding or a stated reason
+  in your report.
+
+An empty list means nothing applied; never omit a key. It names paths,
 not bypasses, so the write-up rules above still hold. When your invoker gives you a JSON result contract,
 put this under `checks` in that result; otherwise end your report with it as a fenced `json` block:
 

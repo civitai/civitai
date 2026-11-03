@@ -31,8 +31,13 @@ code is usually *correct* — just redundant, and destined to diverge.
 
 ## Search before you conclude anything is novel
 
-Do not reason about whether something probably exists. Grep. For each new function, component or hook
-in the diff, run the search **before** deciding:
+Do not reason about whether something probably exists. Grep. 🔴 **This is mandatory, not advice** — as
+advice it has missed real duplicates. For **each new function, component or hook** in the diff, run
+the search **before** deciding, and include at least one **same-shape** search: one that targets what
+it does (same inputs, same output, same behaviour), not what it is called. For a **server-side
+function, or anything that fetches data** (a data-loading hook included), that search must cover
+`src/server/services/`; a purely client-side UI helper does not need one there. Record every command in `checks.searches` (see Report). A same-shape hit is a
+finding, or a one-line reason it differs.
 
 ```bash
 git diff --stat main...HEAD -- src/
@@ -47,13 +52,6 @@ faster than grepping for a definition you can name.
 **Grep by concept, not by the new code's name.** The duplicate is never named the same thing — that is
 why it was missed. Search for the *table*, the *column*, the *URL shape*, the Mantine component being
 wrapped.
-
-🔴 **Mandatory for every new function in the diff, wherever it lives: search `src/server/services/` for
-one of the same *shape*** — same inputs, same output, same behaviour — whatever it is called. A name
-search alone does not count; at least one command per function must target the shape (the table it
-reads, the column it writes, the type it returns). This is the check that has missed real duplicates
-when it was advice, so record every command you run in `checks.searches` (see Report). A same-shape hit
-is a finding, or a one-line reason it differs.
 
 ## Where the existing thing usually lives
 
@@ -181,9 +179,11 @@ was *deliberate* and why, and an existing helper the segment should watch for on
 ### The `checks` block — required, findings or not
 
 The one structured exception to "findings only": it records the method, so a reader can tell a lane that
-searched from one that skipped. One entry per command run: the new function it was for, the command as
-run, and `hits`, the integer count of matching lines it returned. A new function with no entry was not
-checked. An empty list means the diff adds no functions; never omit the key. When your invoker gives you
+searched from one that skipped. **One entry per search command run**: `symbol` is the new function,
+component or hook it was for, `command` is the command as run, and `hits` is the integer count of
+matching lines it returned. **Every new symbol has at least one entry, and at least one of its entries
+is a same-shape search**; a symbol without one was not checked. An empty list means the diff adds no
+functions, components or hooks; never omit the key. When your invoker gives you
 a JSON result contract, put this under `checks` in that result; otherwise end your report with it as a
 fenced `json` block:
 
