@@ -42,9 +42,16 @@ describe('describeProviderError', () => {
   });
 
   it('strips image URLs and credential-looking strings', () => {
-    const body = `${providerBody} Authorization: Bearer abc.def.ghi key=sk-or-v1-0123456789abcdef data:image/png;base64,iVBORw0KGgo token=${'a1'.repeat(
-      24
-    )}`;
+    const body = JSON.stringify({
+      error: {
+        message: 'Provider returned error',
+        metadata: {
+          raw: `upstream: no healthy endpoint for model; fetch of https://image.example/abc/image.jpeg?sig=xyz failed. Authorization: Bearer abc.def.ghi key=sk-or-v1-0123456789abcdef data:image/png;base64,iVBORw0KGgo token=${'a1'.repeat(
+            24
+          )}`,
+        },
+      },
+    });
     const text = describeProviderError(chatErrorFrom(body));
     expect(text).not.toMatch(/https?:\/\//);
     expect(text).not.toContain('image.example');
@@ -97,7 +104,6 @@ describe('describeProviderError', () => {
     const cutOff = '{"error":{"message":"bad request","input":"a \\"quoted\\" PROMPT_TAIL and more';
     const text = describeProviderError(chatErrorFrom(cutOff));
     expect(text).not.toContain('PROMPT_TAIL');
-    expect(text).toContain('bad request');
   });
 
   // Python servers echo in their own formats, and a body can arrive double-encoded or with
@@ -105,6 +111,37 @@ describe('describeProviderError', () => {
   it.each([
     ['a Python repr', "{'input': 'PROMPT_TAIL', 'loc': ['body']}"],
     ['text that forges the redaction marker', "{'input': '[redacted] PROMPT_TAIL'}"],
+    [
+      "OpenRouter's moderation error",
+      JSON.stringify({
+        error: {
+          code: 403,
+          message: 'Your input was flagged',
+          metadata: { reasons: ['x'], flagged_input: 'PROMPT_TAIL', provider_name: 'OpenAI' },
+        },
+      }),
+    ],
+    ['a field name no list would hold', JSON.stringify({ error: { query: 'PROMPT_TAIL' } })],
+    ['a percent-encoded form body', 'bad body: messages%5B0%5D%5Bcontent%5D=PROMPT_TAIL'],
+    ['a backticked serde value', 'messages[0]: unknown variant `PROMPT_TAIL`, expected `user`'],
+    ['a Python repr under an unlisted name', "{'error': 'bad', 'query': 'PROMPT_TAIL'}"],
+    [
+      'a quoted value in a Google message',
+      JSON.stringify({
+        error: {
+          message: 'Provider returned error',
+          metadata: {
+            raw: JSON.stringify({
+              error: {
+                code: 400,
+                message:
+                  'Invalid value at \'contents[0].parts[0].text\' (TYPE_STRING), "PROMPT_TAIL"',
+              },
+            }),
+          },
+        },
+      }),
+    ],
     ['a system_prompt field', '{"error":"x","system_prompt":"PROMPT_TAIL'],
     ['a camelCase systemInstruction field', JSON.stringify({ systemInstruction: 'PROMPT_TAIL' })],
     ['an instructions field', "{'instructions': 'PROMPT_TAIL'}"],
@@ -150,9 +187,13 @@ describe('describeProviderError', () => {
     expect(describeProviderError(chatErrorFrom(body))).not.toContain('PROMPT_TAIL');
   });
 
-  it('stays fast on a long run of backslashes', () => {
+  it.each([
+    ['backslashes', '\\'],
+    ['repeated field names', 'input'],
+    ['quotes', '"\\'],
+  ])('stays fast on a long run of %s', (_label, unit) => {
     const started = performance.now();
-    describeProviderError(chatErrorFrom(`{"error":"${'\\'.repeat(200_000)}`));
+    describeProviderError(chatErrorFrom(`{"error":"${unit.repeat(200_000)}`));
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
@@ -165,6 +206,13 @@ describe('describeProviderError', () => {
     expect(text).not.toContain('dXNlcjpwYXNz');
     expect(text).not.toContain('AIzaSy');
     expect(text).toContain('failed');
+  });
+
+  it('describes a body nested past any sane depth without throwing', () => {
+    const body = `${'['.repeat(50_000)}"PROMPT_TAIL"${']'.repeat(50_000)}`;
+    const text = describeProviderError(chatErrorFrom(body));
+    expect(text).not.toContain('PROMPT_TAIL');
+    expect(text.length).toBeLessThanOrEqual(PROVIDER_ERROR_LOG_LIMIT);
   });
 
   it('caps the result at about 1 KB', () => {

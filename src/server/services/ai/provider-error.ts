@@ -46,49 +46,76 @@ function safeStringify(value: unknown): string {
   }
 }
 
-// OpenAI-compatible backends echo the offending request field in validation errors, and the
-// request carries the system prompt and the submitter's prompt, so those values never reach a log.
-const ECHOED_FIELD =
-  'input_value|inputs?|contents?|messages|prompt|text|instructions|system(?:_?instruction|_?prompt)?';
-const ECHOED_KEY = new RegExp(`^(?:${ECHOED_FIELD})$`, 'i');
-// Any key-shaped echo in any encoding: JSON at any escape depth, a Python repr ('input': ...), or
-// pydantic's `input_value=`. Anchored at the word so a run of backslashes cannot backtrack.
-const ECHO_ANYWHERE_PATTERN = new RegExp(`\\b(?:${ECHOED_FIELD})\\\\*["']?\\s*[:=]`, 'i');
+// Provider bodies echo the request, which carries the system prompt and the submitter's prompt,
+// under names no list can cover (OpenRouter's own moderation error uses `flagged_input`). So a
+// parsed body keeps the strings under these diagnostic keys only, and blanks every other one.
+const KEPT_STRING_KEYS = new Set([
+  'message',
+  'msg',
+  'error',
+  'code',
+  'type',
+  'param',
+  'status',
+  'name',
+  'provider_name',
+  'model_slug',
+  'reasons',
+  'raw',
+]);
+// For text that cannot be parsed: a key-shaped echo anywhere, in JSON at any escape depth, a
+// Python repr ('input': ...) or pydantic's `input_value=`, including inside a longer name.
+const ECHO_ANYWHERE_PATTERN =
+  /(?:input|content|messages|prompt|text|instructions|system)[\w[\].]{0,40}\\*["']?\s*(?:[:=>\uff1a]|->)/i;
+// Free text quotes what it echoes (Google quotes the rejected value; a Python repr quotes every
+// value, serde backticks it), so quoted runs go too, through to the end of the text when unclosed.
+const QUOTED_PATTERN = /"[^"]*(?:"|$)|`[^`]*(?:`|$)|(?<![A-Za-z])'[^']*(?:'|$)/g;
 // Bounds the regex work; far more than the log line keeps.
 const SCAN_LIMIT = 64 * 1024;
+const MAX_DEPTH = 32;
+const HTML_ENTITIES: Record<string, string> = { quot: '"', apos: "'", lt: '<', gt: '>', amp: '&' };
 
-function redactEchoedValue(value: unknown): unknown {
-  if (typeof value === 'string') return redactEchoedText(value);
-  if (Array.isArray(value)) return value.map(redactEchoedValue);
+function keepDiagnostics(value: unknown, key?: string, depth = 0): unknown {
+  if (depth > MAX_DEPTH) return '[redacted]';
+  if (typeof value === 'string')
+    return key !== undefined && KEPT_STRING_KEYS.has(key.toLowerCase())
+      ? redactFreeText(value)
+      : '[redacted]';
+  if (Array.isArray(value)) return value.map((item) => keepDiagnostics(item, key, depth + 1));
   if (value && typeof value === 'object')
     return Object.fromEntries(
-      // The renamed key is no longer key-shaped, so cutAtEcho leaves it alone; a value marker
-      // could be forged by the echoed text itself.
-      Object.entries(value).map(([key, item]) =>
-        ECHOED_KEY.test(key) ? [`${key} (redacted)`, true] : [key, redactEchoedValue(item)]
-      )
+      Object.entries(value).map(([k, item]) => [k, keepDiagnostics(item, k, depth + 1)])
     );
   return value;
 }
 
-// Parsed where possible, so a well-formed body keeps its context; describeProviderError cuts
-// whatever echo this cannot see.
-function redactEchoedText(text: string): string {
+function parseJson(text: string): unknown {
   const trimmed = text.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return text;
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
   try {
-    return JSON.stringify(redactEchoedValue(JSON.parse(trimmed)));
+    return JSON.parse(trimmed);
   } catch {
-    return text;
+    return undefined;
   }
+}
+
+// Every part, and every kept string, may itself be a JSON body: OpenRouter nests the provider's
+// own as `metadata.raw`.
+function redactFreeText(text: string): string {
+  const parsed = parseJson(text);
+  if (parsed !== undefined) return JSON.stringify(keepDiagnostics(parsed));
+  return cutAtEcho(text).replace(QUOTED_PATTERN, '[quoted]');
 }
 
 // The echoed text is user-written and arrives in formats no parser here knows, so the line ends at
 // the first sign of one rather than trying to find where the echo stops.
 function cutAtEcho(text: string): string {
-  const decoded = text.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
-    String.fromCharCode(parseInt(hex, 16))
-  );
+  const decoded = text
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d{1,6});/g, (_, dec: string) => String.fromCharCode(Number(dec) % 0x10000))
+    .replace(/&(quot|apos|lt|gt|amp);/g, (_, name: string) => HTML_ENTITIES[name])
+    .replace(/\\(["/])/g, '$1');
   const echo = ECHO_ANYWHERE_PATTERN.exec(decoded);
   return echo ? `${decoded.slice(0, echo.index)}[echoed request redacted]` : decoded;
 }
@@ -107,12 +134,13 @@ export const PROVIDER_ERROR_LOG_LIMIT = 1024;
  * URLs among them) and credential-looking strings removed, capped at ~1 KB.
  */
 export function describeProviderError(error: unknown, maxLength = PROVIDER_ERROR_LOG_LIMIT) {
-  const parts = [...new Set(errorTextParts(error))].map((part) => part.slice(0, SCAN_LIMIT));
-  const text = (parts.length ? parts : [safeStringify(error)]).map(redactEchoedText).join('\n');
-  // A provider's own error usually arrives as a JSON string inside OpenRouter's JSON envelope, so
-  // one level of escaping is undone first or the patterns below cannot see its URLs.
-  const redacted = cutAtEcho(text.replace(/\\(["/])/g, '$1'))
-    .replace(URL_PATTERN, '[url]')
-    .replace(TOKEN_PATTERN, '[redacted]');
-  return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
+  try {
+    const parts = [...new Set(errorTextParts(error))].map((part) => part.slice(0, SCAN_LIMIT));
+    const text = (parts.length ? parts : [safeStringify(error)]).map(redactFreeText).join('\n');
+    const redacted = text.replace(URL_PATTERN, '[url]').replace(TOKEN_PATTERN, '[redacted]');
+    return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
+  } catch {
+    // A log line must not take down the error path that wanted it.
+    return 'unreadable provider error';
+  }
 }
