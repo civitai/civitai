@@ -457,6 +457,17 @@ async function gateModeratorAssetEdit(listing: OwnedListing, user: SessionUser):
   return true;
 }
 
+/** The in-transaction re-check, run before the write, for a moderator on a revision. */
+async function assertModeratorMediaInTx(
+  tx: Prisma.TransactionClient,
+  listing: OwnedListing,
+  user: SessionUser,
+  moderator: boolean
+): Promise<void> {
+  if (!moderator || listing.revisionOfId == null) return;
+  await assertModeratorMayUseShadow(tx, { shadowId: listing.id, actorUserId: user.id });
+}
+
 async function recordModeratorMediaEditInTx(
   tx: Prisma.TransactionClient,
   listing: OwnedListing,
@@ -481,6 +492,7 @@ async function withModeratorMediaAudit<T>(
 ): Promise<T> {
   if (!moderator) return write(dbWrite);
   return dbWrite.$transaction(async (tx) => {
+    await assertModeratorMediaInTx(tx, listing, user, moderator);
     const result = await write(tx);
     await recordModeratorMediaEditInTx(tx, listing, user, moderator);
     return result;
@@ -1379,6 +1391,7 @@ export async function setListingIcon(
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   const raised = await dbWrite.$transaction(async (tx) => {
+    await assertModeratorMediaInTx(tx, listing, user, moderatorEdit);
     await tx.appListing.update({
       where: { id: listing.id },
       data: { iconId: validated.imageId },
@@ -1417,6 +1430,7 @@ export async function setListingCover(
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   const raised = await dbWrite.$transaction(async (tx) => {
+    await assertModeratorMediaInTx(tx, listing, user, moderatorEdit);
     await tx.appListing.update({
       where: { id: listing.id },
       data: { coverId: validated.imageId },
@@ -1477,6 +1491,7 @@ export async function addListingScreenshot(
   const nextOrder = existing.length > 0 ? existing[0].order + 1 : 0;
   const id = newAppListingScreenshotId();
   const raised = await dbWrite.$transaction(async (tx) => {
+    await assertModeratorMediaInTx(tx, listing, user, moderatorEdit);
     await tx.appListingScreenshot.create({
       data: {
         id,
@@ -1542,6 +1557,7 @@ export async function setListingRedMedia(
     scanPending = validated.scanPending;
   }
   const raised = await dbWrite.$transaction(async (tx) => {
+    await assertModeratorMediaInTx(tx, listing, user, moderatorEdit);
     // 🔴 On a revision, start from the live overrides first (a no-op when the revision already
     // carries them, as `beginListingRevision` normally arranges). Otherwise writing ONE slot
     // would create the revision's row with the OTHER slot empty, and approving would clear it.
@@ -1620,6 +1636,7 @@ export async function reorderListingScreenshots(
   // written AND threw — the worst of both. All-or-nothing is the property this guard
   // claims, so it has to be the property it has.
   await dbWrite.$transaction(async (tx) => {
+    await assertModeratorMediaInTx(tx, listing, user, moderatorEdit);
     for (let index = 0; index < orderedIds.length; index++) {
       const { count } = await tx.appListingScreenshot.updateMany({
         where: { id: orderedIds[index], appListingId: listing.id },

@@ -2503,6 +2503,35 @@ describe('moderator edits', () => {
     expect(auditEvents()).toEqual([]);
   });
 
+  it('an owner save that lands between the check and the write is still refused (the re-check runs in the transaction)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      shadowTagline = 'owner saved meanwhile';
+      return cb(mockWrite);
+    });
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { tagline: 'mod tagline' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a moderator cannot open a revision on its own; only a save opens one', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    await expect(
+      beginListingRevision({ listingId: 'apl_parent', userId: MOD, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
   it('the owner is not held back by the same in-progress revision', async () => {
     shadowTagline = 'owner draft';
     mockRead.appListing.findUnique.mockResolvedValue(approvedParent());

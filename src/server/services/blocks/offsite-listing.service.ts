@@ -1693,7 +1693,12 @@ export async function updateListing(opts: {
       const betaData = patchHasAnyField(betaPatch)
         ? buildListingPatchData(betaPatch, patchOpts)
         : null;
-      const { shadowId } = await beginListingRevision({ listingId, userId, isModerator });
+      const { shadowId } = await beginListingRevision({
+        listingId,
+        userId,
+        isModerator,
+        allowModeratorMint: true,
+      });
       // 🔴 BOTH WRITES IN ONE TRANSACTION, so a failure between them cannot leave the beta
       // half applied while the material half was never staged. The interactive (callback)
       // form rather than `$transaction([...])`: every transaction in this file is
@@ -1705,6 +1710,9 @@ export async function updateListing(opts: {
       // the transaction is gone: the moderator preview now reads beta from the parent, so
       // nothing depends on the shadow being minted after it.
       await dbWrite.$transaction(async (tx) => {
+        if (audit.moderator) {
+          await assertModeratorMayUseShadow(tx, { shadowId, actorUserId: userId });
+        }
         await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
         if (audit.moderator) {
@@ -1762,8 +1770,10 @@ export async function beginListingRevision(opts: {
   listingId: string;
   userId: number;
   isModerator?: boolean;
+  /** A moderator's revision is opened only by the write that needs it. */
+  allowModeratorMint?: boolean;
 }): Promise<BeginListingRevisionResult> {
-  const { listingId, userId, isModerator = false } = opts;
+  const { listingId, userId, isModerator = false, allowModeratorMint = false } = opts;
   const parent = await loadOwnedEditableListing(listingId, userId, isModerator);
 
   if (parent.revisionOfId != null) {
@@ -1786,6 +1796,12 @@ export async function beginListingRevision(opts: {
       await assertModeratorMayUseShadow(dbWrite, { shadowId: existing.id, actorUserId: userId });
     }
     return { shadowId: existing.id, created: false };
+  }
+  if (parent.callerRole === 'moderator' && !allowModeratorMint) {
+    throw new OffsiteRequestError(
+      'FORBIDDEN',
+      'a moderator’s revision is opened by saving an edit, not on its own'
+    );
   }
 
   // 🔴 RE-READ THE SOURCE REPO ON THE **PRIMARY**, not from `parent` (which came off the
@@ -2046,8 +2062,11 @@ export async function submitListingRevision(opts: {
       actorUserId: userId,
       surface: 'revision',
     },
-    (db) =>
-      db.appListingPublishRequest.create({
+    async (db) => {
+      if (callerRole === 'moderator') {
+        await assertModeratorMayUseShadow(db, { shadowId, actorUserId: userId });
+      }
+      return db.appListingPublishRequest.create({
         data: {
           id: publishRequestId,
           appListingId: shadowId,
@@ -2059,7 +2078,8 @@ export async function submitListingRevision(opts: {
           status: 'pending',
           changelog,
         },
-      })
+      });
+    }
   );
   // Catalog bust: DEFENCE IN DEPTH. Today this writes only a publish-request row against a
   // `draft` shadow, which the approved-only catalog query already excludes, so the bust is a
@@ -2762,13 +2782,15 @@ export async function getMyListingForApp(opts: {
   // rows (and their screenshot row ids) right after the shadow started diverging.
   let effectiveId = listing.id;
   let shadowId: string | null = null;
-  // A moderator's media edits apply to the live listing, never to someone's revision.
-  if (listing.status === 'approved' && listing.revisionOfId == null && callerRole !== 'moderator') {
+  if (listing.status === 'approved' && listing.revisionOfId == null) {
     const existing = await dbWrite.appListing.findFirst({
       where: { revisionOfId: listing.id },
       select: { id: true },
     });
     if (existing) {
+      if (callerRole === 'moderator') {
+        await assertModeratorMayUseShadow(dbWrite, { shadowId: existing.id, actorUserId: userId });
+      }
       shadowId = existing.id;
       effectiveId = existing.id;
     }
@@ -3048,6 +3070,9 @@ export async function updateRevisionDraft(opts: {
   // (Stated here rather than pointing at `updateListing` — the paragraph this used to
   // reference was deleted when that branch's transaction was restructured.)
   await dbWrite.$transaction(async (tx) => {
+    if (shadow.callerRole === 'moderator') {
+      await assertModeratorMayUseShadow(tx, { shadowId, actorUserId: userId });
+    }
     await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
     if (betaData) await tx.appListing.update({ where: { id: parentId }, data: betaData });
     if (shadow.callerRole === 'moderator') {

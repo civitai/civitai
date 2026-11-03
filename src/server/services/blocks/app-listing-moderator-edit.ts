@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash } from 'crypto';
 
@@ -51,7 +51,13 @@ async function listingContentFingerprint(db: ModeratorEditDb, listingId: string)
     orderBy: { order: 'asc' },
   });
   const red = await readListingRedSlots(db, listingId);
-  const repo = await readListingSourceRepoUrl(listingId, db);
+  // The column read catches a missing-column error, which would abort an open transaction,
+  // so its availability is probed on a separate connection first.
+  const repoProbe = await readListingSourceRepoUrl(listingId, dbWrite);
+  const repo =
+    repoProbe.available && db !== dbWrite
+      ? await readListingSourceRepoUrl(listingId, db)
+      : repoProbe;
   const json = JSON.stringify([
     row.name,
     row.tagline,
@@ -64,7 +70,8 @@ async function listingContentFingerprint(db: ModeratorEditDb, listingId: string)
     row.connectScopeJustifications,
     row.iconId,
     row.coverId,
-    shots.map((s) => [s.imageId, s.order, s.caption]),
+    // The sequence, not the `order` numbers: a removal re-packs those afterwards.
+    shots.map((s) => [s.imageId, s.caption]),
     red.redIconId,
     red.redCoverId,
     repo.value,
@@ -76,17 +83,30 @@ async function listingContentFingerprint(db: ModeratorEditDb, listingId: string)
  * A moderator may work on a shadow revision only while it holds nothing but their own
  * edits: it still matches its parent, or it is exactly what this moderator last saved
  * (the fingerprint on their latest `moderator-edit` event for it). Anything else is
- * someone else's unsubmitted work, and the moderator is refused.
+ * someone else's unsubmitted work, and the moderator is refused, as they are from any
+ * revision already awaiting review. Pass the write's transaction so the check holds until
+ * the write commits.
  */
 export async function assertModeratorMayUseShadow(
   db: ModeratorEditDb,
   args: { shadowId: string; actorUserId: number }
 ): Promise<void> {
+  // Inside the write's transaction, hold the shadow row so an owner save to it waits.
+  if (db !== dbWrite) {
+    await db.$queryRaw(
+      Prisma.sql`SELECT 1 FROM app_listings WHERE id = ${args.shadowId} FOR UPDATE`
+    );
+  }
   const shadow = await db.appListing.findUnique({
     where: { id: args.shadowId },
-    select: { revisionOfId: true, status: true },
+    select: { revisionOfId: true },
   });
   if (!shadow?.revisionOfId) return;
+  const inReview = await db.appListingPublishRequest.findFirst({
+    where: { appListingId: args.shadowId, status: 'pending' },
+    select: { id: true },
+  });
+  if (inReview) throw new TRPCError({ code: 'FORBIDDEN', message: REVISION_IN_REVIEW_MESSAGE });
   const [current, parent] = await Promise.all([
     listingContentFingerprint(db, args.shadowId),
     listingContentFingerprint(db, shadow.revisionOfId),
@@ -103,11 +123,7 @@ export async function assertModeratorMayUseShadow(
   });
   const lastFingerprint = (last?.after as { contentHash?: unknown } | null)?.contentHash;
   if (last?.actorUserId === args.actorUserId && lastFingerprint === current) return;
-  throw new TRPCError({
-    code: 'FORBIDDEN',
-    message:
-      shadow.status === 'draft' ? OWNER_REVISION_IN_PROGRESS_MESSAGE : REVISION_IN_REVIEW_MESSAGE,
-  });
+  throw new TRPCError({ code: 'FORBIDDEN', message: OWNER_REVISION_IN_PROGRESS_MESSAGE });
 }
 
 /**

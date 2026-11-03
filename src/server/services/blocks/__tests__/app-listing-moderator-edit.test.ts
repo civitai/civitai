@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
@@ -59,17 +59,16 @@ describe('assertModeratorMayUseShadow', () => {
   const OTHER_MOD = 8;
   const parentRow = { name: 'Cool App', tagline: 't', iconId: 1, coverId: 2 };
   let shadowRow: Record<string, unknown>;
-  let shadowStatus: string;
 
   beforeEach(() => {
     shadowRow = { ...parentRow };
-    shadowStatus = 'draft';
+    dbMock.dbWrite.appListingPublishRequest.findFirst.mockResolvedValue(null);
     findListing.mockImplementation(
       async (args: { where: { id: string }; select: Record<string, unknown> }) => {
         if ('revisionOfId' in args.select) {
           return args.where.id === 'apl_shadow'
-            ? { revisionOfId: 'apl_parent', status: shadowStatus }
-            : { revisionOfId: null, status: 'approved' };
+            ? { revisionOfId: 'apl_parent' }
+            : { revisionOfId: null };
         }
         if ('revisionOf' in args.select) {
           return {
@@ -132,9 +131,77 @@ describe('assertModeratorMayUseShadow', () => {
     await expect(check(MOD)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('says the revision is in review when it has been submitted', async () => {
-    shadowRow = { ...parentRow, tagline: 'owner draft' };
-    shadowStatus = 'pending';
+  it('refuses a revision awaiting review, even one that matches the live listing', async () => {
+    dbMock.dbWrite.appListingPublishRequest.findFirst.mockResolvedValue({ id: 'alpr_1' });
+    await expect(check()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: REVISION_IN_REVIEW_MESSAGE,
+    });
+  });
+
+  it('refuses even the moderator’s own revision once it is awaiting review', async () => {
+    shadowRow = { ...parentRow, tagline: 'mod edit' };
+    await moderatorSaves(MOD);
+    dbMock.dbWrite.appListingPublishRequest.findFirst.mockResolvedValue({ id: 'alpr_1' });
     await expect(check()).rejects.toMatchObject({ message: REVISION_IN_REVIEW_MESSAGE });
+  });
+
+  it('a re-packed screenshot order is not mistaken for someone else’s change', async () => {
+    shadowRow = { ...parentRow, tagline: 'mod edit' };
+    dbMock.dbWrite.appListingScreenshot.findMany.mockResolvedValue([
+      { imageId: 31, order: 1, caption: null },
+      { imageId: 32, order: 2, caption: null },
+    ]);
+    await moderatorSaves(MOD);
+    dbMock.dbWrite.appListingScreenshot.findMany.mockResolvedValue([
+      { imageId: 31, order: 0, caption: null },
+      { imageId: 32, order: 1, caption: null },
+    ]);
+    await expect(check()).resolves.toBeUndefined();
+  });
+
+  it('a reordered set of screenshots is a change', async () => {
+    shadowRow = { ...parentRow, tagline: 'mod edit' };
+    dbMock.dbWrite.appListingScreenshot.findMany.mockResolvedValue([
+      { imageId: 31, order: 0, caption: null },
+      { imageId: 32, order: 1, caption: null },
+    ]);
+    await moderatorSaves(MOD);
+    dbMock.dbWrite.appListingScreenshot.findMany.mockResolvedValue([
+      { imageId: 32, order: 0, caption: null },
+      { imageId: 31, order: 1, caption: null },
+    ]);
+    await expect(check()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('the audit fingerprint inside a transaction', () => {
+  it('does not read a missing source-repo column through the transaction', async () => {
+    const txFind = vi.fn(async (args: { select: Record<string, unknown> }) => {
+      if ('sourceRepoUrl' in args.select) throw new Error('would abort the transaction');
+      if ('revisionOf' in args.select) {
+        return {
+          id: 'apl_shadow',
+          slug: 'rev-01',
+          revisionOf: { id: 'apl_parent', slug: 'cool-app' },
+        };
+      }
+      return { name: 'n' };
+    });
+    const tx = {
+      appListing: { findUnique: txFind },
+      appListingScreenshot: { findMany: vi.fn(async () => []) },
+      appListingModerationEvent: { create: vi.fn(async () => ({})) },
+      $queryRaw: vi.fn(async () => []),
+    };
+    findListing.mockRejectedValue(Object.assign(new Error('missing column'), { code: 'P2022' }));
+    await recordModeratorListingEdit({
+      db: tx as never,
+      appListingId: 'apl_shadow',
+      actorUserId: 7,
+      surface: 'details',
+    });
+    expect(tx.appListingModerationEvent.create).toHaveBeenCalled();
+    expect(txFind.mock.calls.some(([a]) => 'sourceRepoUrl' in a.select)).toBe(false);
   });
 });
