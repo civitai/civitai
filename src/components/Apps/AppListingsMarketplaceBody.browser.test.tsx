@@ -256,14 +256,14 @@ describe('AppListingsMarketplaceBody', () => {
     // listbox, hence `.first()`: the input is the control under test.)
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Most popular' })).toBeInTheDocument();
-    // Kind filter is now inside the dropdown, defaulting to All.
+    // Kind filter is now inside the dropdown; nothing checked means all.
     await openFilters();
     await expect
       .element(page.getByRole('checkbox', { name: 'Embedded', exact: true }))
-      .toBeChecked();
+      .not.toBeChecked();
     await expect
       .element(page.getByRole('checkbox', { name: 'Standalone', exact: true }))
-      .toBeChecked();
+      .not.toBeChecked();
     // Query fired with kind=all default. `limit: 48` (was 24) — the column ladder now
     // reaches FIVE columns on a 2560 container, where 24 is under five rows; the page
     // size and its relationship to the server's `max(50)` cap are pinned in the blocking
@@ -277,14 +277,14 @@ describe('AppListingsMarketplaceBody', () => {
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
     renderWithProviders(<StoreWithControls />);
     await openFilters();
-    // Staged: turning Embedded off narrows to standalone, but nothing is written until Apply.
+    // Staged: checking Embedded narrows to embedded apps, but nothing is written until Apply.
     await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
     expect(router.replace).not.toHaveBeenCalled();
     await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
 
     expect(router.replace).toHaveBeenCalled();
     const [url, , options] = vi.mocked(router.replace).mock.calls.at(-1)!;
-    expect(url).toMatchObject({ query: { kind: 'offsite' } });
+    expect(url).toMatchObject({ query: { kind: 'onsite' } });
     // Shallow so the filter change doesn't re-run getServerSideProps, and
     // scroll:false so it doesn't jump the viewport mid-browse.
     expect(options).toMatchObject({ shallow: true, scroll: false });

@@ -2,7 +2,6 @@ import type { GroupProps } from '@mantine/core';
 import { Group } from '@mantine/core';
 import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
-import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import type { ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -24,13 +23,8 @@ export function AppsStoreFeedFilters(groupProps: GroupProps) {
   const { kind, category, sort } = filters;
 
   return (
-    <Group
-      className={classes.filtersWrapper}
-      gap={8}
-      wrap="nowrap"
-      data-testid="apps-store-feed-filters"
-      {...groupProps}
-    >
+    // No `filtersWrapper` (full width on mobile): it pushed the settings gear onto its own line.
+    <Group gap={8} wrap="nowrap" data-testid="apps-store-feed-filters" {...groupProps}>
       <SelectMenuV2
         label={SORT_OPTIONS.find((o) => o.value === sort)?.label ?? sort}
         value={sort}

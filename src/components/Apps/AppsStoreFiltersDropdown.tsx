@@ -2,6 +2,7 @@ import { Divider, Stack } from '@mantine/core';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { CategoryFilterChips, KindFilterChips } from '~/components/Apps/AppsStoreFilterChips';
 import { LISTING_FACET_LABELS } from '~/components/Apps/listingKindLabels';
 import {
@@ -19,8 +20,8 @@ import {
  * Kind and category are in; search and sort stay inline in the control row. The `Indicator` count
  * counts only the panel's own two controls — see `countActiveAppsStoreFilters`.
  *
- * There is no "All apps" or "All categories" chip: both kinds, and every category, are on until the
- * viewer narrows. The stored value is unchanged (`kind: 'all'`, `category: null`), so URLs, the
+ * There is no "All apps" or "All categories" chip: no chip is checked by default, and nothing
+ * checked shows everything. The stored value is unchanged (`kind: 'all'`, `category: null`), so URLs, the
  * query and the count behave as before.
  *
  * "Clear all filters" resets exactly the controls this panel owns, and does not touch the search
@@ -34,6 +35,7 @@ export interface AppsStoreFiltersDropdownProps {
 }
 
 export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFiltersDropdownProps) {
+  const mobile = useIsMobile();
   const {
     opened,
     toggle,
@@ -59,9 +61,19 @@ export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFilters
       opened={opened}
       onOpenedChange={(next) => (next ? toggle() : close())}
       data-testid="apps-store-filters-dropdown"
+      footer={
+        <StagedFiltersFooter
+          isDirty={isDirty}
+          onApply={apply}
+          onReset={reset}
+          filterLength={count}
+          onClear={clearAndClose}
+        />
+      }
     >
       <Stack gap={0} data-testid="apps-store-filters-panel">
-        <Stack gap="lg" p="md">
+        {/* The drawer's header already leaves room above, so the mobile panel starts flush. */}
+        <Stack gap="lg" p="md" pt={mobile ? 0 : 'md'}>
           <Stack gap="md">
             {/* `Divider label=` is the /models panel's section-header idiom: a labelled rule, not a
                 heading, so the panel doesn't inject h3s into the page's heading outline. */}
@@ -79,13 +91,6 @@ export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFilters
             />
           </Stack>
         </Stack>
-        <StagedFiltersFooter
-          isDirty={isDirty}
-          onApply={apply}
-          onReset={reset}
-          filterLength={count}
-          onClear={clearAndClose}
-        />
       </Stack>
     </AdaptiveFiltersDropdown>
   );

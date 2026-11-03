@@ -235,9 +235,9 @@ describe('the harness itself round-trips (guard on the guard)', () => {
     await openFilters();
     await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
     await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
-    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'offsite' }));
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'onsite' }));
     // …and the component re-renders FROM the URL.
-    await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'offsite' }));
+    await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'onsite' }));
   });
 });
 
@@ -352,7 +352,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await openFilters();
 
     // Staged: both edits are held in the panel and land in ONE write on Apply.
-    await userEvent.click(page.getByRole('checkbox', { name: 'Standalone', exact: true }));
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
     await userEvent.click(page.getByRole('checkbox', { name: 'Generation', exact: true }));
     await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
 
@@ -381,7 +381,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     await vi.waitFor(() => {
-      expect(currentQuery()).toMatchObject({ kind: 'offsite', sort: 'newest' });
+      expect(currentQuery()).toMatchObject({ kind: 'onsite', sort: 'newest' });
     });
   });
 

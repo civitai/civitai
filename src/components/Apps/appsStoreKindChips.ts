@@ -6,11 +6,11 @@ export type AppsStoreKindChip = 'onsite' | 'offsite';
 export const APPS_STORE_KIND_CHIPS: readonly AppsStoreKindChip[] = ['onsite', 'offsite'];
 
 /**
- * The kind chips that read as ON for a stored `kind`. `all` is both on, which is the default: there
- * is no separate "All apps" chip.
+ * The kind chips that read as ON for a stored `kind`. `all` is none on: with nothing picked every
+ * app shows, and there is no separate "All apps" chip.
  */
 export function kindChipsOn(kind: ListingKindFilter): AppsStoreKindChip[] {
-  return kind === 'all' ? [...APPS_STORE_KIND_CHIPS] : [kind];
+  return kind === 'all' ? [] : [kind];
 }
 
 /**

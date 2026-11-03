@@ -9,7 +9,7 @@ import type { AppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
  * Reset footer and Clear all filters.
  *
  * What's under test is the PANEL BEHAVIOUR: the chips really are inside the dropdown, edits are
- * STAGED (nothing is emitted until Apply), no "All" chip exists (everything starts on), the count
+ * STAGED (nothing is emitted until Apply), no "All" chip exists (nothing starts checked), the count
  * previews the pending edit, and the mobile drawer renders. The count ARITHMETIC is pinned in the
  * blocking node suite (`__tests__/appsStoreQueryParams.test.ts`) — this is the wiring.
  */
@@ -77,13 +77,13 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     expect(page.getByText('All categories').elements()).toHaveLength(0);
   });
 
-  test('with no filter set, every kind chip and every category chip is ON', async () => {
+  test('with no filter set, NO chip is checked (nothing checked shows everything)', async () => {
     setup({ kind: 'all', category: null });
     await userEvent.click(trigger());
-    await expect.element(chip('Embedded')).toBeChecked();
-    await expect.element(chip('Standalone')).toBeChecked();
-    await expect.element(chip('Generation')).toBeChecked();
-    await expect.element(chip('Games')).toBeChecked();
+    await expect.element(chip('Embedded')).not.toBeChecked();
+    await expect.element(chip('Standalone')).not.toBeChecked();
+    await expect.element(chip('Generation')).not.toBeChecked();
+    await expect.element(chip('Games')).not.toBeChecked();
   });
 
   test('a set filter shows only its own chips on', async () => {
@@ -103,7 +103,7 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     expect(onChange).not.toHaveBeenCalled();
     await userEvent.click(apply());
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith({ kind: 'offsite', category: 'generation' });
+    expect(onChange).toHaveBeenCalledWith({ kind: 'onsite', category: 'generation' });
   });
 
   test('Apply closes the panel', async () => {
@@ -114,12 +114,12 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     await vi.waitFor(() => expect(panel().elements()).toHaveLength(0));
   });
 
-  test('turning off the LAST kind chip puts both back (a filter matching nothing is never offered)', async () => {
+  test('turning off the LAST kind chip goes back to all (a filter matching nothing is never offered)', async () => {
     const { onChange } = setup({ kind: 'offsite', category: null });
     await userEvent.click(trigger());
     await userEvent.click(chip('Standalone'));
-    await expect.element(chip('Embedded')).toBeChecked();
-    await expect.element(chip('Standalone')).toBeChecked();
+    await expect.element(chip('Embedded')).not.toBeChecked();
+    await expect.element(chip('Standalone')).not.toBeChecked();
     await userEvent.click(apply());
     expect(onChange).toHaveBeenCalledWith({ kind: 'all', category: null });
   });
@@ -128,7 +128,8 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     const { onChange } = setup({ kind: 'all', category: 'generation' });
     await userEvent.click(trigger());
     await userEvent.click(chip('Generation'));
-    await expect.element(chip('Games')).toBeChecked();
+    await expect.element(chip('Generation')).not.toBeChecked();
+    await expect.element(chip('Games')).not.toBeChecked();
     await userEvent.click(apply());
     expect(onChange).toHaveBeenCalledWith({ kind: 'all', category: null });
   });
@@ -141,7 +142,7 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     await userEvent.click(chip('Generation'));
     await expect.element(apply()).toBeEnabled();
     await userEvent.click(resetBtn());
-    await expect.element(chip('Games')).toBeChecked();
+    await expect.element(chip('Generation')).not.toBeChecked();
     await expect.element(apply()).toBeDisabled();
     expect(onChange).not.toHaveBeenCalled();
   });

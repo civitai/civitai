@@ -19,7 +19,7 @@ const KIND_ICONS = { onsite: IconApps, offsite: IconExternalLink } as const;
 
 /**
  * The store's Type filter as chips, like the other feeds' filter panels: Embedded and Standalone,
- * both on by default (there is no "All apps" chip). Turning off the last one puts both back.
+ * both off by default: nothing picked, or both picked, shows every app.
  */
 export function KindFilterChips({
   value,
@@ -48,8 +48,8 @@ export function KindFilterChips({
 }
 
 /**
- * The store's Category filter as named chips with their icon. With none picked every category is
- * on (no "All categories" chip). The store query takes ONE category, so picking a chip narrows to
+ * The store's Category filter as named chips with their icon. With none picked every category
+ * shows (no "All categories" chip). The store query takes ONE category, so picking a chip narrows to
  * it and picking it again goes back to all.
  */
 export function CategoryFilterChips({
@@ -64,7 +64,7 @@ export function CategoryFilterChips({
       {MARKETPLACE_CATEGORIES.map((category) => {
         // A category with no icon yet falls back to a generic one rather than crashing the row.
         const Icon = CATEGORY_ICONS[category] ?? FALLBACK_CATEGORY_ICON;
-        const on = value === null || value === category;
+        const on = value === category;
         return (
           <FilterChip
             key={category}
