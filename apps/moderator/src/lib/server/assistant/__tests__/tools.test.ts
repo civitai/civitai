@@ -127,9 +127,21 @@ const previewMembershipExtension = vi.fn(async () => ({
 const extendMembership = vi.fn(async () => {
   throw new Error('the assistant must never extend');
 });
+const previewMembershipCancel = vi.fn();
+const previewMembershipResync = vi.fn();
+const mustNotWrite = (name: string) =>
+  vi.fn(async () => {
+    throw new Error(`the assistant must never call ${name}`);
+  });
+const setMembershipCancel = mustNotWrite('setMembershipCancel');
+const resyncMembership = mustNotWrite('resyncMembership');
 vi.mock('$lib/server/user-actions.service', () => ({
   previewMembershipExtension,
   extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
 }));
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
@@ -891,7 +903,7 @@ describe('membership extension: the assistant reads and proposes, a person exten
           cancelAt: null,
           latestInvoiceId: 'in_secret',
         },
-        problems: [],
+        problems: ['sub_secret is on a schedule'],
         expectedCurrentPeriodEnd: 1795314120,
         trialEndIso: '2026-11-25T02:22:00.000Z',
         mode: 'renewing',
@@ -910,7 +922,7 @@ describe('membership extension: the assistant reads and proposes, a person exten
         currentPeriodEnd: '2026-11-22T02:22:00.000Z',
         cancelAtPeriodEnd: false,
       },
-      problems: [],
+      problems: ['[Stripe id] is on a schedule'],
       newEnd: '2026-11-25T02:22:00.000Z',
       mode: 'renewing',
     });
@@ -922,5 +934,165 @@ describe('membership extension: the assistant reads and proposes, a person exten
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/\bextendMembership\b|callModEndpoint|user\/membership-extend\b/);
+  });
+});
+
+describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a person writes', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('the cancel tools need the cancel grant; the extend grant alone does not offer them', () => {
+    const cancel = ['preview_membership_cancel', 'propose_membership_cancel'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).toEqual(
+      expect.arrayContaining(cancel)
+    );
+    for (const name of cancel)
+      expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).not.toContain(name);
+  });
+
+  it('the re-sync tools need the extend grant', () => {
+    const resync = ['preview_membership_resync', 'propose_membership_resync'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).toEqual(
+      expect.arrayContaining(resync)
+    );
+    for (const name of resync)
+      expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).not.toContain(name);
+  });
+
+  it('proposing a cancel change returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_cancel',
+      { userId: 5, cancelAtPeriodEnd: false, reason: 'Ticket 123: wants to keep it' },
+      LOOKUP_PAGE,
+      ['user.membership.cancel']
+    )) as { data: { changed: boolean; confirmAt: string } };
+    expect(out.data.changed).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&cancelAtPeriodEnd=false&cancelReason=Ticket+123%3A+wants+to+keep+it#membership-cancel'
+    );
+    expect(setMembershipCancel).not.toHaveBeenCalled();
+  });
+
+  it('the re-sync preview hands the model the differing fields and the Buzz verdict, no ids', async () => {
+    previewMembershipResync.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        ours: null,
+        stripe: null,
+        changes: [
+          { field: 'id', ours: 'sub_old_secret', stripe: 'sub_new_secret' },
+          { field: 'status', ours: 'past_due', stripe: 'active' },
+        ],
+        endsBuzzMembership: {
+          id: 'buzz_secret',
+          status: 'active',
+          currentPeriodEnd: null,
+          confirm: 'buzz_secret|active|null',
+        },
+        problems: ['Stripe has no subscription sub_1Oldsecret'],
+      },
+    });
+    const out = (await run('preview_membership_resync', { userId: 5 }, LOOKUP_PAGE, [
+      'user.membership.extend',
+    ])) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      changes: [{ field: 'status', ours: 'past_due', stripe: 'active' }],
+      idOrPlanDiffers: true,
+      endsBuzzMembership: { status: 'active', currentPeriodEnd: null },
+      problems: ['Stripe has no subscription [Stripe id]'],
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/secret/);
+    expect(resyncMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the cancel or re-sync writes', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(
+      /\bsetMembershipCancel\b|\bresyncMembership\b|user\/membership-cancel\b|user\/membership-resync\b/
+    );
+  });
+
+  const cancelPreview = (over: Record<string, unknown>) => ({
+    ok: true,
+    preview: {
+      userId: 5,
+      cancelAtPeriodEnd: false,
+      subscription: {
+        id: 'sub_secret',
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        trialEnd: null,
+        cancelAtPeriodEnd: true,
+        cancelAt: null,
+        latestInvoiceId: 'in_secret',
+      },
+      problems: [],
+      changed: true,
+      ...over,
+    },
+  });
+  const previewCancelTool = async () =>
+    (await run('preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: false }, LOOKUP_PAGE, [
+      'user.membership.cancel',
+    ])) as { data: Record<string, unknown> };
+
+  it('the cancel preview tells "already so" apart from refused, and hides Stripe ids in problems', async () => {
+    previewMembershipCancel.mockResolvedValueOnce(cancelPreview({ changed: false }));
+    expect((await previewCancelTool()).data).toEqual({
+      cancelAtPeriodEnd: false,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: true,
+      },
+      problems: [],
+      alreadySo: true,
+    });
+
+    previewMembershipCancel.mockResolvedValueOnce(
+      cancelPreview({ changed: null, problems: ['Stripe returned sub_secret, not sub_other'] })
+    );
+    const refused = (await previewCancelTool()).data;
+    expect(refused).toMatchObject({
+      alreadySo: false,
+      problems: ['Stripe returned [Stripe id], not [Stripe id]'],
+    });
+    expect(JSON.stringify(refused)).not.toMatch(/secret|sub_other/);
+  });
+
+  it.each([
+    ['preview_membership_extension', { userId: 5, days: 3 }, 'user.membership.extend'],
+    ['preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: true }, 'user.membership.cancel'],
+    ['preview_membership_resync', { userId: 5 }, 'user.membership.extend'],
+  ])('%s hides Stripe ids in a failed preview too', async (name, args, grant) => {
+    const preview = (
+      {
+        preview_membership_extension: previewMembershipExtension,
+        preview_membership_cancel: previewMembershipCancel,
+        preview_membership_resync: previewMembershipResync,
+      } as Record<string, { mockResolvedValueOnce: (v: never) => unknown }>
+    )[name];
+    preview.mockResolvedValueOnce({
+      ok: false,
+      error: 'Stripe returned sub_1Secret for cus_1Secret',
+    } as never);
+    const out = (await run(name, args, LOOKUP_PAGE, [grant])) as { data: { error: string } };
+    expect(out.data.error).toBe('Stripe returned [Stripe id] for [Stripe id]');
+  });
+
+  it('proposing a re-sync returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_resync',
+      { userId: 5, reason: 'Ticket 123: webhook missed' },
+      LOOKUP_PAGE,
+      ['user.membership.extend']
+    )) as { data: { resynced: boolean; confirmAt: string } };
+    expect(out.data.resynced).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&resyncReason=Ticket+123%3A+webhook+missed#membership-resync'
+    );
   });
 });
