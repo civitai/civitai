@@ -1060,6 +1060,33 @@ describe('owner actions', () => {
       });
     });
 
+    it('pays nothing for accepting a team-waived submission', async () => {
+      placementFindUnique.mockResolvedValue({
+        ...pending,
+        free: true,
+        data: { ...pending.data, derivedFromHost: true, waiver: 'team' },
+      });
+      await expect(approve()).resolves.toMatchObject({ settled: true });
+      expect(rewardApply).not.toHaveBeenCalled();
+    });
+
+    // The pair for the test above: an ordinary free submission still earns the
+    // owner the accept reward, so the waiver check is on the marker, not on `free`.
+    it('still pays for accepting an ordinary free submission', async () => {
+      placementFindUnique.mockResolvedValue({
+        ...pending,
+        free: true,
+        data: { ...pending.data, derivedFromHost: true },
+      });
+      await approve();
+      expect(rewardApply).toHaveBeenCalledTimes(1);
+      expect(rewardApply).toHaveBeenCalledWith({
+        placementId: PLACEMENT,
+        ownerId: OWNER,
+        placerId: PLACER,
+      });
+    });
+
     it('pays nothing for a decline', async () => {
       await actOnRemixGallerySubmission({
         placementId: PLACEMENT,

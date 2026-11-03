@@ -17,6 +17,7 @@ import {
 import { countPlacements } from '@civitai/db-queries/placement';
 import {
   freePlacementsTodayWhere,
+  TEAM_WAIVER,
   teamWaivedWhere,
 } from '~/server/services/placement-count-predicates';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
@@ -713,7 +714,14 @@ export async function actOnRemixGallerySubmission({
   // Swallowed rather than rethrown, unlike the reward's own inline fail-soft: the
   // settle above already committed and paid out, so a throw here would report a
   // failure for an approval that happened and cannot be retried.
-  if (action === 'approve')
+  //
+  // Not for a team-waived row: the waiver covers the owner's price and nothing
+  // else, and it holds no free slot, so paying for its accept would open a Buzz
+  // path bounded only by the placer's daily waiver limit.
+  if (
+    action === 'approve' &&
+    !(isRemixGalleryPlacementData(placement.data) && placement.data.waiver === TEAM_WAIVER)
+  )
     await remixAcceptReward
       .apply({
         placementId: placement.id,
