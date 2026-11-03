@@ -48,6 +48,13 @@ faster than grepping for a definition you can name.
 why it was missed. Search for the *table*, the *column*, the *URL shape*, the Mantine component being
 wrapped.
 
+🔴 **Mandatory for every new function in the diff, wherever it lives: search `src/server/services/` for
+one of the same *shape*** — same inputs, same output, same behaviour — whatever it is called. A name
+search alone does not count; at least one command per function must target the shape (the table it
+reads, the column it writes, the type it returns). This is the check that has missed real duplicates
+when it was advice, so record every command you run in `checks.searches` (see Report). A same-shape hit
+is a finding, or a one-line reason it differs.
+
 ## Where the existing thing usually lives
 
 **Services** (`src/server/services/`, 195 files). The big ones hide the most:
@@ -170,6 +177,25 @@ need different work from the fixer.
 that is the bulk of a long report and none of it is actionable. Say plainly if the segment is clean —
 "nothing rebuilt" is a real and common outcome. Two exceptions, one line each: a duplicate you decided
 was *deliberate* and why, and an existing helper the segment should watch for on its next consumer.
+
+### The `checks` block — required, findings or not
+
+The one structured exception to "findings only": it records the method, so a reader can tell a lane that
+searched from one that skipped. One entry per command run: the new function it was for, the command as
+run, and `hits`, the integer count of matching lines it returned. A new function with no entry was not
+checked. An empty list means the diff adds no functions; never omit the key. When your invoker gives you
+a JSON result contract, put this under `checks` in that result; otherwise end your report with it as a
+fenced `json` block:
+
+```json
+{
+  "checks": {
+    "searches": [
+      { "symbol": "getThingsForUser", "command": "grep -rn 'thing.findMany' src/server/services/", "hits": 3 }
+    ]
+  }
+}
+```
 
 ## Delivering your report
 

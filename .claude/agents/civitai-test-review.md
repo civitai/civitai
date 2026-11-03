@@ -27,15 +27,18 @@ and request-fidelity have their own reviewers. **Stay in your lane.**
 regression is *legible* is a separate property, and it is the one that decides whether the test
 protects anything.
 
-So for each test in the diff, do this explicitly: **name a plausible mutation of the code under test,
-and state what the test would print.** Three outcomes:
+So for **each new or changed assertion** in the diff — not each test — do this explicitly: **name a
+plausible mutation of the code under test that turns *that assertion* red, and state what the run would
+print.** Per assertion, because a test whose first assertion is real can carry three that nothing
+reaches, and a per-test check passes all four. Three outcomes:
 
-- A named assertion failure with a useful message → the test is real.
+- A named assertion failure with a useful message → the assertion is real.
 - A 15-second timeout → weak, and possibly a race (see below).
-- **Nothing — it still passes, or it hangs** → the test is the finding.
+- **Nothing — it still passes, or it hangs** → the assertion is the finding.
 
-If you cannot name a mutation that turns the test red, the test does not test anything, however many
-assertions it contains. Say so and say which mutation you tried.
+If you cannot name a mutation that turns an assertion red, it does not test anything, whatever the
+assertions beside it do. Say so and say which mutation you tried. Each one goes in `checks.assertions`
+(see Report).
 
 For a bug fix, the first mutation to try is reverting the fix. If no test turns red, that is the
 finding: a fix gets a regression test at the layer the bug was visible, unless it is config-only.
@@ -274,8 +277,8 @@ Do not run `pnpm test` (Playwright) or the component suite as a check.
 
 ## Report
 
-`file:line`, what the test claims to cover, **the mutation you tried and what it printed**, and what to
-change. Rank by how much false confidence the test creates: a vacuous test guarding a money or auth path
+`file:line`, what the assertion claims to cover, **the mutation you tried and what it printed**, and what
+to change. Rank by how much false confidence the test creates: a vacuous test guarding a money or auth path
 outranks a brittle assertion on a formatter.
 
 Separate **"this test does not work"** from **"this behaviour is untested"** — they need different work.
@@ -283,6 +286,24 @@ Separate **"this test does not work"** from **"this behaviour is untested"** —
 **Findings only.** Do not inventory the tests you read and found sound. Say plainly if the segment's
 tests are solid; that is a real outcome. One exception, one line: a test you found weak but deliberately
 so, with the reason.
+
+### The `checks` block — required, findings or not
+
+The one structured exception to "findings only": it records the method, so a reader can tell a lane that
+checked from one that skipped. One entry per new or changed assertion; `expected_failure` is what the run
+prints, or `passes` / `hangs` when it would not go red (that entry is then a finding). An empty list means
+the diff adds no assertions; never omit the key. When your invoker gives you a JSON result contract, put
+this under `checks` in that result; otherwise end your report with it as a fenced `json` block:
+
+```json
+{
+  "checks": {
+    "assertions": [
+      { "file": "src/…/x.test.ts", "line": 42, "mutation": "…", "expected_failure": "…" }
+    ]
+  }
+}
+```
 
 ## Delivering your report
 
