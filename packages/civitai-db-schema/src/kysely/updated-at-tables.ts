@@ -62,6 +62,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'KnightsHarvestCursor',
   'KnightsQueueItem',
   'KnightsReferenceImage',
+  'KnightsYesNoReference',
   'LicensingRoot',
   'MembershipGift',
   'Model',

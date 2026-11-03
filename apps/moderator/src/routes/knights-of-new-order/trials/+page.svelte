@@ -3,6 +3,10 @@
   import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import {
+    ToggleGroup,
+    ToggleGroupItem,
+  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -11,6 +15,7 @@
   import CoreItemCard from './CoreItemCard.svelte';
   import LevelPicker from './LevelPicker.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
+  import YesNoReferenceCard from './YesNoReferenceCard.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -19,14 +24,24 @@
     { value: 'core', label: `Core set (${data.counts.core})`, href: '?tab=core' },
     { value: 'fresh', label: `Fresh (${data.counts.fresh})`, href: '?tab=fresh' },
     { value: 'spot-check', label: `Spot-check (${data.counts.spotCheck})`, href: '?tab=spot-check' },
+    { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
   ]);
   const empty = {
     core: 'The core set is empty. Add an image above, or promote one from the Fresh tab.',
     fresh: 'No fresh images are in Trials right now. They arrive with the next harvest of moderator rulings.',
     'spot-check': 'Nothing is waiting for a spot-check.',
+    'yes-no': 'No yes/no reference pairs yet. Add one above.',
   } as const;
 
   let level = $state<number | null>(null);
+  let answer = $state<'yes' | 'no' | null>(null);
+  const addYesNo = new FormState({
+    onSuccess: () => {
+      answer = null;
+      void invalidateAll();
+      toast.success('Pair added');
+    },
+  });
   const add = new FormState({
     onSuccess: () => {
       level = null;
@@ -74,7 +89,69 @@
   </section>
 {/if}
 
-{#if data.tab === 'spot-check'}
+{#if data.tab === 'yes-no'}
+  <section class="mb-6 rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <h2 class="mb-2 font-medium">Add a yes/no reference pair</h2>
+    <p class="mb-3 text-sm text-dark-2">
+      An image with a known answer to a yes/no question. Acolytes are graded against these; Knights
+      and above still decide yes/no questions by consensus.
+    </p>
+    {#if addYesNo.error}<ErrorAlert class="mb-2" message={addYesNo.error} />{/if}
+    <form method="POST" action="?/addYesNo" use:enhance={addYesNo.enhance} class="flex flex-col gap-2">
+      <label class="flex items-center gap-2 text-sm text-dark-2">
+        Image id or URL
+        <Input name="image" required class="w-80" placeholder="123 or https://civitai.com/images/123" />
+      </label>
+      <label class="flex items-center gap-2 text-sm text-dark-2">
+        Question
+        <select
+          name="questionKey"
+          required
+          class="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+        >
+          <option value="">Pick a question</option>
+          {#each data.yesNo.questions as q (q.key)}
+            <option value={q.key}>{q.prompt} ({q.key}{q.active ? '' : ', inactive'})</option>
+          {/each}
+        </select>
+      </label>
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-dark-2">Correct answer</span>
+        <input type="hidden" name="answer" value={answer ?? ''} />
+        <ToggleGroup
+          type="single"
+          size="sm"
+          variant="outline"
+          value={answer ?? ''}
+          onValueChange={(v) => (answer = v === 'yes' || v === 'no' ? v : null)}
+        >
+          <ToggleGroupItem value="yes">Yes</ToggleGroupItem>
+          <ToggleGroupItem value="no">No</ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <Textarea
+        name="explanation"
+        rows={2}
+        placeholder="Optional: why this is the answer, shown to Acolytes after they answer"
+      />
+      <div>
+        <Button type="submit" size="sm" disabled={addYesNo.submitting || answer === null}>Add</Button>
+      </div>
+    </form>
+  </section>
+  {#if data.yesNo.items.length === 0}
+    <p class="text-sm text-dark-2">{empty['yes-no']}</p>
+  {:else}
+    <div class="flex flex-col gap-3">
+      {#each data.yesNo.items as item (item.id)}
+        <YesNoReferenceCard {item} />
+      {/each}
+    </div>
+    {#if data.yesNo.items.length >= data.limit}
+      <p class="mt-3 text-xs text-dark-2">Showing the first {data.limit}.</p>
+    {/if}
+  {/if}
+{:else if data.tab === 'spot-check'}
   <p class="mb-3 text-sm text-dark-2">
     Rate each image without seeing the rating it was harvested with. A match lets it into Trials; a
     different rating keeps it out.

@@ -8035,6 +8035,7 @@ model KnightsQuestion {
   active         Boolean            @default(true)
   createdAt      DateTime           @default(now())
   items          KnightsQueueItem[]
+  yesNoReferences KnightsYesNoReference[]
 }
 
 /// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed; a yes/no item (question kind `bool`) is Open | Consensus | Closed and is never Resolved. Ruling is an Inquisitor's claim: resolvedBy holds it, nextAttemptAt is the lease end.
@@ -8181,6 +8182,23 @@ model KnightsReferenceImage {
 
   @@index([pool, status, source])
   @@index([modActivityId])
+}
+
+/// An image with a known yes/no answer to one yes/no question (kind `bool`), curated by moderators for grading Acolytes. Never touches Knight+ consensus. The imageId foreign key (cascade) lives in the migration only, like the other Knights tables.
+model KnightsYesNoReference {
+  id          Int             @id @default(autoincrement())
+  imageId     Int
+  questionKey String
+  question    KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
+  answer      Boolean
+  explanation String?
+  active      Boolean         @default(true)
+  createdBy   Int
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([imageId, questionKey])
+  @@index([active, questionKey])
 }
 
 /// One Acolyte attempt at a question module. `itemIds` is the order planned from `seed` when the run started.

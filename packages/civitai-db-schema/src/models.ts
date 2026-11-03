@@ -5067,6 +5067,7 @@ export interface KnightsQuestion {
   active: boolean;
   createdAt: Date;
   items?: KnightsQueueItem[];
+  yesNoReferences?: KnightsYesNoReference[];
 }
 
 export interface KnightsQueueItem {
@@ -5176,6 +5177,19 @@ export interface KnightsReferenceImage {
   createdAt: Date;
   updatedAt: Date;
   trialAnswers?: KnightsTrialAnswer[];
+}
+
+export interface KnightsYesNoReference {
+  id: number;
+  imageId: number;
+  questionKey: string;
+  question?: KnightsQuestion;
+  answer: boolean;
+  explanation: string | null;
+  active: boolean;
+  createdBy: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface KnightsTrialRun {
