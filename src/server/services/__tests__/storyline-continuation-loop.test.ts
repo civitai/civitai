@@ -21,10 +21,14 @@ import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
 const createMultiAccountBuzzTransaction = vi.fn();
 const createBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The Kysely reads the real space resolver makes, answered from the in-memory tables
+// (`db.placementReads`, wired in `beforeEach`).
+const placementReads = vi.hoisted(() => ({
+  getChapterPlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction,
   createBuzzTransaction,
@@ -167,6 +171,8 @@ beforeEach(() => {
 
   db = createFakeDb();
   db.install();
+  for (const [name, read] of Object.entries(db.placementReads))
+    placementReads[name as keyof typeof placementReads].mockImplementation(read);
   for (const [id, username] of [
     [OWNER, 'storyteller'],
     [STRANGER, 'stranger'],

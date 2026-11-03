@@ -3,19 +3,19 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads4 from '@civitai/db-queries/hot-reads-4';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Mocked for the invariant guard that no flag check remains on this read (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read-4 statement stubbed: their rows against Prisma's are compared in
+// Every hot-read-4 statement stubbed: their rows, against a real database, are pinned in
 // hot-reads-4.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/hot-reads-4', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads4>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
-// The lag decision, so a test can make it pick the primary and see both paths follow it.
+// The lag decision, so a test can make it pick the primary and see the read follow it.
 const { getDbWithoutLag, getKyselyWithoutLag } = vi.hoisted(() => ({
   getDbWithoutLag: vi.fn(),
   getKyselyWithoutLag: vi.fn(),
@@ -43,9 +43,9 @@ import { isFlipt } from '~/server/flipt/client';
 import { getVisibleCommentCount } from '~/server/services/comment.service';
 
 /**
- * `comment.getVisibleCountByModel` (`getVisibleCommentCount`) behind `kysely-hot-reads-4`: which
- * client each path reads, that it follows the same lag decision, and that the viewer filter reaches
- * the Kysely statement. Row parity against a real database is in hot-reads-4.kysely-parity.test.ts.
+ * `comment.getVisibleCountByModel` (`getVisibleCommentCount`): which client it reads, that it
+ * follows the lag decision, and that the viewer filter reaches the Kysely statement. Its rows,
+ * against a real database, are pinned in hot-reads-4.kysely-parity.test.ts.
  */
 
 const flag = vi.mocked(isFlipt);
@@ -77,31 +77,16 @@ beforeEach(() => {
   hidden.mockReset().mockResolvedValue([]);
   blockedBy.mockReset().mockResolvedValue([]);
   blocked.mockReset().mockResolvedValue([]);
-  dbMock.dbRead.comment.count.mockResolvedValue(COUNT);
   dbMock.dbRead.model.findUnique.mockResolvedValue(null);
   q.countTopLevelComments.mockResolvedValue(COUNT);
 });
 
-describe('getVisibleCommentCount behind kysely-hot-reads-4', () => {
+describe('getVisibleCommentCount', () => {
   it('control: the routing checks below can tell the two Kysely clients apart', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('evaluates kysely-hot-reads-4 by key, with no entity or context, once per call', async () => {
-    await count();
-    expect(flag.mock.calls).toEqual([['kysely-hot-reads-4']]);
-  });
-
-  it('OFF: counts through Prisma only, on the client the lag decision picked', async () => {
-    await expect(count()).resolves.toBe(COUNT);
-    expect(getDbWithoutLag).toHaveBeenCalledWith('commentModel', MODEL);
-    expect(dbMock.dbRead.comment.count).toHaveBeenCalledTimes(1);
-    expect(getKyselyWithoutLag).not.toHaveBeenCalled();
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-
-  it('ON: counts through Kysely only, on the replica, with the viewer filter', async () => {
-    flag.mockResolvedValue(true);
+  it('counts through Kysely only, on the replica, with the viewer filter (invariant: no flag check remains)', async () => {
     hidden.mockResolvedValue([{ id: HIDDEN_AUTHOR }]);
     await expect(count()).resolves.toBe(COUNT);
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('commentModel', MODEL);
@@ -123,17 +108,16 @@ describe('getVisibleCommentCount behind kysely-hot-reads-4', () => {
     expect(dbMock.dbRead.comment.count).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.comment.count).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: follows the lag decision to the primary, as the Prisma read does', async () => {
-    flag.mockResolvedValue(true);
+  it('follows the lag decision to the primary, as the Prisma read did', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     await count();
     expect(q.countTopLevelComments.mock.calls[0][0]).toBe(kyselyWrite);
   });
 
-  it('ON: the moderator hidden view reaches the statement', async () => {
-    flag.mockResolvedValue(true);
+  it('the moderator hidden view reaches the statement', async () => {
     await count(true, true);
     expect(q.countTopLevelComments.mock.calls).toEqual([
       [
@@ -150,8 +134,7 @@ describe('getVisibleCommentCount behind kysely-hot-reads-4', () => {
     ]);
   });
 
-  it('ON: the model owner with a blocker sums an unpinned and a pinned count, as Prisma does', async () => {
-    flag.mockResolvedValue(true);
+  it('the model owner with a blocker sums an unpinned and a pinned count, as Prisma did', async () => {
     blockedBy.mockResolvedValue([{ id: BLOCKER }]);
     dbMock.dbRead.model.findUnique.mockResolvedValue({ userId: VIEWER });
     q.countTopLevelComments.mockImplementation((async (

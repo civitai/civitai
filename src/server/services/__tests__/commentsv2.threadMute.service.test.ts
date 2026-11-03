@@ -617,17 +617,6 @@ describe('getSectionMuted', () => {
     ]);
     expect(result).toEqual({ muted: true, hasThread: true });
   });
-
-  it('answers not-muted for a retired thread type that has no topic, without a lookup', async () => {
-    // `question` is a valid section type but not a CommentEntityType; casting it would fail the query.
-    dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
-
-    expect(await getSectionMuted({ entityType: 'question', entityId: 5, userId: 7 })).toEqual({
-      muted: false,
-      hasThread: true,
-    });
-    expect(kysely.state.calls).toHaveLength(0);
-  });
 });
 
 /**

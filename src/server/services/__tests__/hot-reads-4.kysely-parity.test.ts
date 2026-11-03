@@ -6,6 +6,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ReviewSort } from '~/server/common/enums';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
 import {
   compiledRelations,
   declaredViews,
@@ -16,10 +17,7 @@ import {
 import { getAllCommentsWithCachedUserSelect } from '~/server/selectors/comment.selector';
 import {
   countTopLevelCommentsByHiddenViaKysely,
-  countTopLevelCommentsByHiddenViaPrisma,
   countTopLevelCommentsViaKysely,
-  countTopLevelCommentsViaPrisma,
-  findPinnedCommentsViaPrisma,
   findTopLevelCommentsViaPrisma,
   listPinnedCommentsViaKysely,
   listTopLevelCommentsViaKysely,
@@ -32,21 +30,26 @@ import {
 } from '~/server/services/hot-reads-4.reads';
 
 /**
- * Parity gate for the model page's comment reads behind `kysely-hot-reads-4`: the visible top-level
- * comment count (`comment.getVisibleCountByModel`) and the `comment.getAll` lists (the unpinned
- * first page and the pinned block). Both paths run against the same rows in the same database, from
- * the same `TopLevelCommentsFilter`, and must return the same value, `toStrictEqual`: timestamps as
- * UTC Dates, enums as strings, NULL as `null`, counts as numbers, and rows in the same order (every
- * fixture below keeps `createdAt` and `pinnedAt` distinct, so neither path is comparing a tie). The
- * reactions under each comment are the one unordered relation: Prisma's nested read has no
- * `orderBy`, so both sides are compared sorted by id.
+ * The model page's comment reads that replaced the Prisma ones behind the retired hot-reads-4 flag:
+ * the visible top-level comment count (`comment.getVisibleCountByModel`), both views' counts at once
+ * (`comment.getVisibleCountsByModel`) and the `comment.getAll` lists (the unpinned first page and
+ * the pinned block). Each must return, `toStrictEqual`, what the Prisma read returns for the same
+ * rows and the same `TopLevelCommentsFilter`: timestamps as UTC Dates, enums as strings, NULL as
+ * `null`, counts as numbers, and rows in the same order (every fixture below keeps `createdAt` and
+ * `pinnedAt` distinct, so no case compares a tie). The reactions under each comment are the one
+ * unordered relation: Prisma's nested read has no `orderBy`, so they are compared sorted by id.
+ *
+ * The unpinned list is compared with `findTopLevelCommentsViaPrisma` live: it still serves the
+ * pages Kysely does not (a cursor page or another sort). The counts and the pinned block are
+ * compared with fixtures/hot-reads-4-golden.json, printed by the deleted Prisma readers against these
+ * same fixture rows in CI. A change to the fixture rows needs the golden re-derived by hand.
  *
  * Every viewer-dependent branch of the filter is a case of its own, with literal fixtures: no
  * exclusions, hidden and blocked authors excluded, one author only (which wins over exclusions), the
  * moderator view (ToS violations included), the hidden view (a NULL `hidden` matching neither), and
  * no model filter at all.
  *
- * The Prisma side of each read is the reader the service runs (hot-reads-4.reads.ts).
+ * The Prisma side of each read was the reader the service ran (hot-reads-4.reads.ts).
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_4_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost, so the suite cannot skip itself
@@ -140,6 +143,8 @@ const PAGES: [string, KyselyCommentListPage][] = [
   ['oldest first, a skip of 0', { limit: 3, skip: 0, sort: ReviewSort.Oldest }],
 ];
 
+const golden = readTaggedGolden(resolve(here, 'fixtures/hot-reads-4-golden.json'));
+
 const byId = <T extends { id: number }>(rows: T[]) => [...rows].sort((a, b) => a.id - b.id);
 const sortReactions = (comments: CommentListItem[]) =>
   comments.map((comment) => ({ ...comment, reactions: byId(comment.reactions) }));
@@ -225,9 +230,8 @@ describe.skipIf(!parityUrl)('hot reads 4: Kysely returns exactly what Prisma ret
     );
 
     it.each(cases)('%s', async (_, filter, scope) => {
-      const viaPrisma = await countTopLevelCommentsViaPrisma(prisma, filter, scope);
       const viaKysely = await countTopLevelCommentsViaKysely(kysely, filter, scope);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`count:${_}`));
     });
 
     it('control: each filter branch counts the fixture rows expected', async () => {
@@ -355,13 +359,8 @@ describe.skipIf(!parityUrl)('hot reads 4: Kysely returns exactly what Prisma ret
 
   describe('the pinned block', () => {
     it.each(FILTERS)('%s', async (_, filter) => {
-      const viaPrisma = await findPinnedCommentsViaPrisma(
-        prisma,
-        filter,
-        getAllCommentsWithCachedUserSelect
-      );
       const viaKysely = await listPinnedCommentsViaKysely(kysely, filter);
-      expect(sortReactions(viaKysely)).toStrictEqual(sortReactions(viaPrisma));
+      expect(sortReactions(viaKysely)).toStrictEqual(golden.take(`pinned:${_}`));
     });
 
     it('control: pinned rows come back pinnedAt desc, filtered like the list', async () => {
@@ -397,13 +396,12 @@ describe.skipIf(!parityUrl)('hot reads 4: Kysely returns exactly what Prisma ret
     );
 
     it.each(cases)('%s', async (_, base, scope) => {
-      const viaPrisma = await countTopLevelCommentsByHiddenViaPrisma(prisma, base, scope);
       const viaKysely = await countTopLevelCommentsByHiddenViaKysely(kysely, base, scope);
-      expect(viaKysely).toStrictEqual(viaPrisma);
-      // ...and both equal the two single counts the old client made.
-      expect(viaPrisma).toStrictEqual({
-        visible: await countTopLevelCommentsViaPrisma(prisma, { ...base, hidden: false }, scope),
-        hidden: await countTopLevelCommentsViaPrisma(prisma, { ...base, hidden: true }, scope),
+      expect(viaKysely).toStrictEqual(golden.take(`by-hidden:${_}`));
+      // ...and it equals the two single counts the old client made (each pinned above).
+      expect(viaKysely).toStrictEqual({
+        visible: await countTopLevelCommentsViaKysely(kysely, { ...base, hidden: false }, scope),
+        hidden: await countTopLevelCommentsViaKysely(kysely, { ...base, hidden: true }, scope),
       });
     });
 
@@ -431,6 +429,11 @@ describe.skipIf(!parityUrl)('hot reads 4: Kysely returns exactly what Prisma ret
         hidden: 1,
       });
     });
+  });
+
+  // Last in the block: every captured case is still asserted above, so none can be dropped quietly.
+  it('every golden case is asserted', () => {
+    expect(golden.unused()).toEqual([]);
   });
 });
 
