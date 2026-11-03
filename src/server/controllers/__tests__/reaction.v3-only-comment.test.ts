@@ -3,22 +3,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
+import type * as ReactionService from '~/server/services/reaction.service';
+import type * as Rewards from '~/server/rewards';
 
 // A comment on a surface that writes CommentV3 directly (articles) has no CommentV2 row. The
 // reaction gate read only CommentV2, so every reaction on one answered "No comment with id".
 
 const { mockToggleReaction } = vi.hoisted(() => ({ mockToggleReaction: vi.fn() }));
 
-vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
-vi.mock('~/server/utils/metric-helpers', () => ({
-  updateEntityMetric: vi.fn(async () => undefined),
+vi.mock('~/server/services/reaction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReactionService>()),
+  toggleReaction: mockToggleReaction,
 }));
-vi.mock('~/server/rewards', () => ({
+vi.mock('~/server/rewards', async (importOriginal) => ({
+  ...(await importOriginal<typeof Rewards>()),
   encouragementReward: { apply: vi.fn(async () => undefined) },
   goodContentReward: { apply: vi.fn(async () => undefined) },
-}));
-vi.mock('~/server/services/metric-excluded-users.service', () => ({
-  getMetricExcludedUserIds: vi.fn(async () => []),
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
@@ -47,8 +47,8 @@ const v3Row = (over: Partial<StoredCommentV3> = {}): StoredCommentV3 => ({
 });
 
 function storeV3(row: StoredCommentV3 | undefined) {
-  dbMock.dbWrite.$queryRawUnsafe.mockImplementation((async (sql: string) =>
-    row && /FROM "CommentV3" WHERE id = \$1/.test(sql) ? [row] : []) as never);
+  dbMock.dbWrite.$queryRawUnsafe.mockImplementation((async (sql: string, id: unknown) =>
+    row && id === row.id && /FROM "CommentV3" WHERE id = \$1/.test(sql) ? [row] : []) as never);
 }
 
 const ctx = () =>
@@ -97,6 +97,12 @@ describe('isCommentGoneForMembers', () => {
     dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
     await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(false);
     dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: true } as never);
+    await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(true);
+  });
+
+  it('still answers gone for a detached CommentV2 comment', async () => {
+    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ detached: true }] as never);
     await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(true);
   });
 });
