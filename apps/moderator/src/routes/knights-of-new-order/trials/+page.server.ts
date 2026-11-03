@@ -37,7 +37,7 @@ const imageRef = z.preprocess((value) => {
   if (/^\d+$/.test(text)) return Number(text);
   const fromUrl = text.match(/\/images\/(\d+)(?:[/?#]|$)/);
   return fromUrl ? Number(fromUrl[1]) : NaN;
-}, int4Id);
+}, z.number({ error: 'Enter an image id or an image page URL.' }).pipe(int4Id));
 const yesNo = z.enum(['yes', 'no']).transform((value) => value === 'yes');
 
 const forms = {

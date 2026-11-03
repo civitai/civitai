@@ -81,6 +81,13 @@ describe('Knights of New Order yes/no reference actions', () => {
     expect(svc.add).not.toHaveBeenCalled();
   });
 
+  it('tells the moderator what to enter when the image field is unreadable', async () => {
+    const result = await actions.addYesNo(
+      formEvent({ image: 'abc', questionKey: 'q', answer: 'yes' })
+    );
+    expect(JSON.stringify(result)).toContain('Enter an image id or an image page URL.');
+  });
+
   it('surfaces a duplicate or invalid question as a conflict with the service message', async () => {
     svc.add.mockResolvedValueOnce({ ok: false, error: 'Image 1 already has a reference.' });
     const result = await actions.addYesNo(
