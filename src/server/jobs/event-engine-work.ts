@@ -1,6 +1,7 @@
 import { eventEngine } from '~/server/events';
 import { reconcileEventRosters } from '~/server/events/points/roster-sync';
 import { syncEventHats } from '~/server/events/points/sync';
+import { reconcileAllTurf } from '~/server/events/turf/turf.service';
 import { createJob } from '~/server/jobs/job';
 
 export const eventEngineDailyReset = createJob(
@@ -26,6 +27,12 @@ export const eventPointsHatReconcile = createJob(
 // right. A quarter past, after the referee's hourly run has settled.
 export const eventRosterReconcile = createJob('event-roster-reconcile', '15 * * * *', async () => {
   await reconcileEventRosters();
+});
+
+// The safety net under the turf write-through (events/turf): hides, bans, opt-outs, the credited
+// cap stepping up, and anything a placement's sync missed.
+export const eventTurfReconcile = createJob('event-turf-reconcile', '*/5 * * * *', async () => {
+  await reconcileAllTurf();
 });
 
 export const eventEngineLeaderboardUpdate = createJob(

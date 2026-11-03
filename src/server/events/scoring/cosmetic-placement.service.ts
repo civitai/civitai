@@ -1,4 +1,5 @@
 import { chunk } from 'lodash-es';
+import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import { hatField } from '~/server/events/points/keys';
 import type { dbRead, dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
@@ -104,6 +105,7 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
       sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
     WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
+      AND "claimKey" <> ${TURF_CLAIM_KEY}
     GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
     LIMIT ${TOP_COSMETICS}
@@ -150,6 +152,7 @@ async function hatTotals(event: StandingsEvent, db: typeof dbWrite | typeof dbRe
       sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
     WHERE event = ${event.name} AND day >= ${scoreFromDay(event)}::date
+      AND "claimKey" <> ${TURF_CLAIM_KEY}
     GROUP BY "userId", "cosmeticId", "claimKey"
   `;
 }

@@ -16,6 +16,8 @@
 //   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
 //   Both are read from Postgres "User" by the caller.
 // - Nobody earns from acting on their own hat.
+// - A turf row names the players it credits (`players`); each is credited as if their sticker were a
+//   hat on the image, under their own cap. A hat's row has none and credits its owner.
 // - Each person counts once per (type, entity) for the whole season, or once per UTC day for types
 //   listed in dailyTypes; the earliest surviving add is the one kept, with the hat it was on.
 // - Each kept action is worth its type's weight. Per (UTC day, owner, person), in time order, weights
@@ -36,7 +38,7 @@ WITH
       type, actorId, entityType, entityId,
       if(has({dailyTypes:Array(String)}, type), toDate(time), toDate(0)) AS onceKey,
       min(time) AS firstTime,
-      argMin((ownerId, cosmeticId, claimKey, team), time) AS hat
+      argMin((ownerId, cosmeticId, claimKey, team, players), time) AS firstHat
     FROM seasonRows
     WHERE op = 'add' AND time < {cut:DateTime64(3)}
       AND (sourceId = '' OR (type, actorId, sourceId) IN (
@@ -52,12 +54,21 @@ WITH
       AND actorId != ownerId
     GROUP BY type, actorId, entityType, entityId, onceKey
   ),
+  -- A turf first credits each player it names as if their sticker were a hat; a hat's first (no
+  -- players) credits its owner. Each credit is then capped like any hat owner's.
+  credits AS (
+    SELECT type, actorId, entityType, entityId, firstTime,
+      (creditee, firstHat.2, firstHat.3, firstHat.4) AS hat
+    FROM firsts
+    ARRAY JOIN if(empty(firstHat.5), [firstHat.1], firstHat.5) AS creditee
+    WHERE creditee NOT IN {restrictedUsers:Array(Int32)} AND actorId != creditee
+  ),
   weighted AS (
     SELECT
       type, actorId, entityType, entityId, firstTime, hat,
       toDate(firstTime) AS day,
       toInt64(transform(type, {types:Array(String)}, {weights:Array(UInt32)}, toUInt32(0))) AS weight
-    FROM firsts
+    FROM credits
     -- Days before recomputeFrom are final. The cap's window is per day, so dropping them here
     -- changes no recomputed day and spares the window function the whole season.
     WHERE day >= toDate({recomputeFrom:DateTime64(3)})
@@ -98,7 +109,8 @@ ORDER BY day, userId, cosmeticId, claimKey
 // Postgres. Bounded by the adds' cut: a removal only takes back an add, whose actor and owner are
 // already here.
 export const eventPointsRefereeUsersSql = /* sql */ `
-SELECT groupUniqArray(actorId) AS actors, groupUniqArray(ownerId) AS owners
+SELECT groupUniqArray(actorId) AS actors,
+  groupUniqArrayArray(if(empty(players), [ownerId], players)) AS owners
 FROM event_point_events
 WHERE event = {event:String}
   AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
