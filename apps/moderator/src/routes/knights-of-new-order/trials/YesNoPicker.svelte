@@ -18,11 +18,13 @@
   type="single"
   size="sm"
   variant="outline"
-  value={value ?? ''}
-  onValueChange={(v) => {
-    // Clicking the selected item clears the group; the answer is never unset.
-    if (v === 'yes' || v === 'no') onchange(v);
-  }}
+  bind:value={
+    () => value ?? '',
+    (v) => {
+      // Clicking the selected item clears the group; the getter hands the answer back so it stays shown.
+      if (v === 'yes' || v === 'no') onchange(v);
+    }
+  }
 >
   <ToggleGroupItem value="yes">Yes</ToggleGroupItem>
   <ToggleGroupItem value="no">No</ToggleGroupItem>
