@@ -1527,7 +1527,7 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByText('My App')).toBeInTheDocument();
     const browse = container.querySelector('[data-testid="apps-browse-all"]');
     expect(browse).not.toBeNull();
-    expect(browse?.getAttribute('href')).toBe('/apps');
+    expect(browse?.getAttribute('href')).toBe('/apps/store');
   });
 
   // ── Hero banner click-to-launch ────────────────────────────────────────────

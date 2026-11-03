@@ -2032,6 +2032,41 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * The CALLER's apps for the `/apps` "My apps" home — full-page apps they have granted,
+   * bought into or recently used, and off-site apps they have consented to. Derived from
+   * existing rows only; see `my-apps.logic.ts` for the membership rules.
+   *
+   * 🔴 NO INPUT, ON PURPOSE: the user is `ctx.user.id` and nothing else. Same store gates as
+   * `listAvailable` (scope + audience floor, so a listing appears only if this viewer could
+   * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
+   * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
+   */
+  listMyApps: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .query(async ({ ctx }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-my-apps');
+      if (scope === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { listMyApps } = await import('~/server/services/blocks/my-apps.service');
+      return listMyApps({
+        userId: ctx.user.id,
+        scope,
+        floor,
+        redCapable: isRedCapableRequest(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        canOpenPage: !!ctx.features?.appBlocksPages,
+      });
+    }),
+
+  /**
    * OWNER/EDITOR: set the per-listing VISIBILITY LEVEL on a listing they hold a role on.
    *
    * `appDeveloperProcedure` is the same gate `updateListing` uses, and like that proc the

@@ -221,7 +221,7 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
     // `-apps` spelling: it addresses the crumb by ROUTE, which has not moved.
     const appsLink = page.getByTestId('app-block-breadcrumb-apps').element();
     expect(appsLink.tagName.toLowerCase()).toBe('a');
-    expect(appsLink.getAttribute('href')).toBe('/apps');
+    expect(appsLink.getAttribute('href')).toBe('/apps/store');
     expect((appsLink.textContent ?? '').trim()).toBe('Marketplace');
     // The current app's (sanitized) name is the trailing crumb.
     const crumbName = page.getByTestId('app-block-breadcrumb-name').element();
@@ -264,7 +264,7 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
     // A REAL anchor with a real destination — the property keyboard / middle-click /
     // long-press all depend on, and the one a purely visual restyle must never cost.
     expect(appsLink.tagName).toBe('A');
-    expect(appsLink.getAttribute('href')).toBe('/apps');
+    expect(appsLink.getAttribute('href')).toBe('/apps/store');
 
     // 🔴 ASSERTED AS ATTRIBUTES, NOT COMPUTED COLOUR, AND NOT BY CHOICE. This env
     // injects only the `:root` custom properties parsed out of `globals.css` (see
@@ -345,7 +345,7 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
 
     // "Apps" link still routes to /apps (no regression to the breadcrumb).
     const appsLink = page.getByTestId('app-block-breadcrumb-apps').element();
-    expect(appsLink.getAttribute('href')).toBe('/apps');
+    expect(appsLink.getAttribute('href')).toBe('/apps/store');
   });
 
   test('model surface (model.sidebar_top) does NOT render the breadcrumb; badge name present once (no regression)', async () => {

@@ -13,7 +13,7 @@ const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
 ];
 
 /**
- * `/apps` sort + filters, rendered in the site sub-nav the way the images feed does
+ * `/apps/store` sort + filters, rendered in the site sub-nav the way the images feed does
  * (`ImageFeedFilters`): the `SelectMenuV2` sort button and the shared Filters dropdown.
  * State is the URL (`useAppsStoreQueryParams`), so the store body reads the same values
  * without any lifted state.

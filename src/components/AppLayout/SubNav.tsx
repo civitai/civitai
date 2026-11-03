@@ -30,7 +30,8 @@ const filterSections = [
   { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
   { pathname: '/tools/[slug]', component: <ToolImageFeedFilters ml="auto" /> },
   { pathname: '/comics', component: <ComicFeedFilters ml="auto" /> },
-  { pathname: '/apps', component: <AppsStoreFeedFilters ml="auto" /> },
+  // The store's filters belong to the store (`/apps/store`); `/apps` is the viewer's app home.
+  { pathname: '/apps/store', component: <AppsStoreFeedFilters ml="auto" /> },
   { pathname: '/storylines', component: <StorylineFeedFilters ml="auto" /> },
   // Matched on `router.pathname`, which is the ROUTE and not the URL, so this has
   // to carry the optional slug segment the hub route gained.

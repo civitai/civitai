@@ -5,7 +5,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
-import { isMatureContentRating } from '~/server/utils/server-domain';
+import { storeVisibleListingRowGate } from '~/server/services/blocks/app-listing-store-gate';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import type {
@@ -14,7 +14,6 @@ import type {
   RestrictedListingAudience,
 } from '~/shared/utils/app-listing-visibility';
 import {
-  listingVisibleInStore,
   restrictedAudienceForViewer,
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
   visibilitiesVisibleToForStatus,
@@ -25,6 +24,7 @@ import {
 import {
   noteDegradedVisibilityRead,
   readListingVisibility,
+  readListingVisibilityMany,
   readListingVisibilityManyForRender,
 } from '~/server/services/blocks/app-listing-visibility.service';
 import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
@@ -1876,6 +1876,83 @@ export async function getStoreVisibleListingSummary(
 }
 
 /**
+ * One listing resolved for the viewer's "My apps" home: its store card plus the raw inputs of
+ * {@link storeVisibleListingRowGate}. The gate is deliberately NOT applied here — the pure
+ * `buildMyApps` applies it, so the exclusion of delisted / unpublished / hidden listings is
+ * unit-testable against the real predicate.
+ */
+export type StoreListingCandidate = {
+  card: ListingCard;
+  appBlockId: string | null;
+  connectClientId: string | null;
+  gate: {
+    row: { status: string; kind: string; contentRating: string | null; revisionOfId: null };
+    visibility: AppListingVisibility | null;
+    deployedAt: Date | null;
+  };
+};
+
+/**
+ * Batch-load the TOP-LEVEL listings backing a set of App Blocks (on-site) and OAuth clients
+ * (off-site), for the viewer's "My apps" home.
+ *
+ * Bounded by the caller: both id lists come from per-user reads that carry their own `take`.
+ * `app_block_id` is UNIQUE (indexed); `connect_client_id` has no index of its own, so the
+ * off-site half is a filter over `app_listings` — the same lookup the post "Published with"
+ * chip already makes per page view (`postAppChipQuery`'s `connectListings`).
+ *
+ * The level is read with the PROPAGATING reader, because it feeds an admission decision: a
+ * missing column yields an empty map (every level unset → the pre-feature rule), exactly as
+ * the single-row detail path degrades; any other fault throws.
+ */
+export async function getStoreListingCandidates(
+  links: { appBlockIds: readonly string[]; connectClientIds: readonly string[] },
+  opts: { redCapable: boolean; viewerBrowsingLevel?: number | null }
+): Promise<StoreListingCandidate[]> {
+  const or: Prisma.AppListingWhereInput[] = [];
+  if (links.appBlockIds.length) or.push({ appBlockId: { in: [...links.appBlockIds] } });
+  if (links.connectClientIds.length) {
+    or.push({ connectClientId: { in: [...links.connectClientIds] }, kind: 'offsite' });
+  }
+  if (!or.length) return [];
+
+  const rows = await dbRead.appListing.findMany({
+    where: { revisionOfId: null, OR: or },
+    select: { ...listingHydrateSelect, status: true },
+  });
+  if (!rows.length) return [];
+
+  const ids = rows.map((r) => r.id);
+  const [levels, red] = await Promise.all([
+    readListingVisibilityMany(ids, dbRead),
+    opts.redCapable
+      ? readListingRedMediaManyForRender(dbRead, ids)
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+  ]);
+
+  return rows.map((row) => ({
+    // No beta label and no restricted-audience badge: a launcher tile renders neither.
+    card: projectListingCard(row, BETA_NOT_SET, null, {
+      kind: 'public',
+      audience: { redCapable: opts.redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
+      red: red.get(row.id) ?? null,
+    }),
+    appBlockId: row.appBlockId ?? null,
+    connectClientId: row.connectClientId ?? null,
+    gate: {
+      row: {
+        status: row.status,
+        kind: row.kind,
+        contentRating: row.contentRating ?? null,
+        revisionOfId: null,
+      },
+      visibility: levels.get(row.id)?.visibility ?? null,
+      deployedAt: row.appBlock?.currentVersionDeployedAt ?? null,
+    },
+  }));
+}
+
+/**
  * The image a listing's public page offers link unfurlers (`og:image`) on this host, or null —
  * `listingSocialImage` over the same row, under EXACTLY the gates of {@link getListingDetail}
  * (one shared loader), so a listing whose detail this request may not read yields no image
@@ -1955,25 +2032,24 @@ async function loadStoreVisibleListingRow(
   // earlier revision branched on `available` to reach the same answer; that branch is gone
   // because the two states genuinely coincide, and one route is easier to keep true than two.
   const level = await readListingVisibility(row.id, dbRead);
-  if (!listingVisibleInStore({ status: row.status, visibility: level.visibility, floor })) {
+  // The level gate, then the STORE-SCOPE kind gate (under `public-external` an ONSITE
+  // listing is indistinguishable from a missing one; gate on `kind`, never
+  // `connectClientId`), then the DEPLOY-GATE (an onsite listing whose block never
+  // deployed has no origin; `currentVersionDeployedAt` stays set while a new version
+  // rebuilds), then the maturity gate off a non-red host. Each returns null exactly like a
+  // missing row. They live in ONE pure predicate so the batch reader behind the viewer's
+  // "My apps" home (`getStoreListingCandidates` → `buildMyApps`) applies the identical rule.
+  if (
+    !storeVisibleListingRowGate({
+      row,
+      visibility: level.visibility,
+      scope,
+      floor,
+      redCapable,
+    })
+  ) {
     return null;
   }
-  // STORE-SCOPE kind gate (the public/onsite security boundary): under
-  // `public-external` an ONSITE listing is indistinguishable from a missing one —
-  // return null so no crafted id/slug can reach an onsite listing's detail. EVERY
-  // offsite listing remains visible, OAuth-connected or not (gate on `kind`,
-  // never `connectClientId`). `full` imposes no kind restriction (unchanged).
-  if (scope === 'public-external' && row.kind !== 'offsite') return null;
-  // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing
-  // AppBlock has NEVER successfully deployed is indistinguishable from a missing
-  // one — its `<slug>.<APPS_DOMAIN>` origin would 404. `currentVersionDeployedAt`
-  // is set only on a successful apply and stays set while a NEW version rebuilds,
-  // so a live app mid-re-deploy is still shown. OFFSITE listings have no
-  // AppBlock/deploy concept and are UNAFFECTED (discriminate on `kind`).
-  if (row.kind === 'onsite' && row.appBlock?.currentVersionDeployedAt == null) return null;
-  // Maturity gate off a non-red host: a mature listing is indistinguishable from
-  // a missing one (mirrors the AppBlock detail's red-only 404).
-  if (!redCapable && isMatureContentRating(row.contentRating)) return null;
   return { row, visibility: level.visibility };
 }
 

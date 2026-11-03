@@ -489,6 +489,13 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'deliberate, add it here WITH the reason; if it is not, add it to the chrome ' +
         '(the subnav is the source of truth, so the chrome follows).'
     ).toEqual([
+      // 🔴 `/apps` — the viewer's "My apps" HOME, added when the store moved to
+      // `/apps/store`. Excluded for a NAMING reason, not a scope one: the chrome already
+      // carries a "My apps" item for the author's app list (`/apps/build?view=apps`), and
+      // a second "My apps" with a different destination in the same menu would be worse
+      // than its absence. Which surface keeps the name is an open product decision; when
+      // it is made, this entry leaves the list by the home being added to the chrome.
+      '/apps',
       // Owner-management surfaces. Pre-existing exclusions: the chrome is navigation for
       // someone RUNNING an app, not managing one.
       //
@@ -511,7 +518,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // actionable, and it fails if the SHARED SET changes rather than just an icon.
     const nav = parsePlatformNav(code(read(CHROME)));
     expect(nav).toEqual([
-      { href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' },
+      { href: '/apps/store', label: 'Marketplace', icon: 'IconBuildingStore' },
       { href: '/apps/activity', label: 'App activity', icon: 'IconPlugConnected' },
       { href: '/apps/build?view=apps', label: 'My apps', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
@@ -527,10 +534,10 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // "Apps home" named a destination the store itself stopped calling that. This
     // one label must track the subnav.
     expect(
-      navByHref.get('/apps')?.label,
-      'the chrome and the subnav must call `/apps` the same thing'
-    ).toBe(subByHref.get('/apps')?.label);
-    expect(navByHref.get('/apps')?.label).toBe('Marketplace');
+      navByHref.get('/apps/store')?.label,
+      'the chrome and the subnav must call `/apps/store` the same thing'
+    ).toBe(subByHref.get('/apps/store')?.label);
+    expect(navByHref.get('/apps/store')?.label).toBe('Marketplace');
 
     // 🔴 THE OTHER THREE DELIBERATELY DIFFER, so this pins the chrome's own copy
     // rather than asserting equality. The subnav's tabs sit under an "Apps"
@@ -659,7 +666,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     //
     // SORTED, so a re-ORDER cannot report a route change that did not happen — this rule
     // is about the SET, and the platform-nav slice's own `toEqual` is what governs order
-    // there. DUPLICATES KEPT: `/apps` and `/apps/activity` each legitimately appear more
+    // there. DUPLICATES KEPT: `/apps/store` and `/apps/activity` each legitimately appear more
     // than once, and collapsing to a Set would hide an extra item hung on a listed route.
     expect(
       links.map((l) => l.href).sort(),
@@ -674,9 +681,6 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'excluding it; adding it ungated is not. Removing one deletes a door out of a ' +
         'running app. Update this list deliberately, WITH the reason.'
     ).toEqual([
-      '/apps', // Marketplace — platform nav
-      '/apps', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
-      '/apps', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
       // 🔴 REPOINTED TWICE, AND THE SORT POSITION MOVED BOTH TIMES — the list is
       // `.sort()`ed, so neither move is a second change to review. `/apps/mine` →
       // `/apps/build` (301) sorted it before `/apps/installed`; `/apps/installed` →
@@ -686,6 +690,11 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // `?view=apps`: bare `/apps/build` opens the App Assistant for an author who holds it.
       '/apps/build?view=apps', // My apps — platform nav; the store calls this row "Build"
       '/apps/review', // Review — platform nav, moderator-gated
+      // The three store doors, repointed from `/apps` when the store moved to `/apps/store`
+      // (`/apps` became the viewer's "My apps" home). The sort moved them to the end.
+      '/apps/store', // Marketplace — platform nav
+      '/apps/store', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
+      '/apps/store', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
     ]);
   });
 

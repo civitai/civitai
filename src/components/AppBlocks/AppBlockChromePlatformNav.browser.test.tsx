@@ -75,7 +75,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     await openPlatformNav();
 
     const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
-    expect(home.getAttribute('href')).toBe('/apps');
+    expect(home.getAttribute('href')).toBe('/apps/store');
 
     const installed = page.getByRole('menuitem', { name: 'App activity' }).element();
     expect(installed.getAttribute('href')).toBe('/apps/activity');

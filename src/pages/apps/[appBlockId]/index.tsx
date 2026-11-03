@@ -55,6 +55,7 @@ import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -301,7 +302,7 @@ export default function AppDetailPage() {
       />
       <Container size="md" py="md">
         <Stack gap="lg">
-          <Anchor component={Link} href="/apps" size="sm">
+          <Anchor component={Link} href={APPS_STORE_HREF} size="sm">
             <Group gap={4}>
               <IconArrowLeft size={14} />
               Back to marketplace

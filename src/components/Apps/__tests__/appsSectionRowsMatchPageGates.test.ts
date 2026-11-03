@@ -6,6 +6,7 @@ import {
   canAccessAppsBuild,
   hasAppsStoreAccess,
 } from '~/shared/utils/app-blocks-access';
+import { resolveAppsHomeAccess } from '~/components/Apps/resolveAppsHomeAccess';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
@@ -15,8 +16,9 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * GATE ON THE PAGE IT POINTS AT — plus a structural check that binds the whole table.
  *
  * 🔴 SCOPE, STATED EXACTLY, BECAUSE AN EARLIER REVISION OF THIS HEADER CLAIMED "EVERY
- * SUB-NAV ROW" AND MEANT ONE. Three rows are pinned against their page:
- *   • Marketplace → `/apps`          vs `resolveAppsPageAccess`   (flag ⟺ flag)
+ * SUB-NAV ROW" AND MEANT ONE. Four rows are pinned against their page:
+ *   • My apps     → `/apps`          vs `resolveAppsHomeAccess`   (flag ⟺ not-404)
+ *   • Marketplace → `/apps/store`    vs `resolveAppsPageAccess`   (flag ⟺ flag)
  *   • Build       → `/apps/build`    vs `resolveBuildPageAccess`  (flag ⟺ flag)
  *   • Activity    → `/apps/activity` vs `canAccessAppsActivity`   (see below)
  *
@@ -100,7 +102,7 @@ type Row = { href: string; label: string; visible: string };
  * trailing `,\n` that closes the property.
  *
  * `href` is DERIVED from `path`, mirroring `getAppsSectionHref`: the empty segment is the
- * marketplace index (`/apps`), anything else is `/apps/<path>`. Duplicated here rather
+ * `/apps` index (the "My apps" home), anything else is `/apps/<path>`. Duplicated here rather
  * than imported because this is a node-tier SOURCE scan and the registry pulls
  * `@tabler/icons-react`; the POSITIVE CONTROL below is the fixture that keeps the two
  * spellings honest.
@@ -244,10 +246,11 @@ describe('the extractor (validate the instrument before reading its verdict)', (
     ).toBe(true);
   });
 
-  it('the real table yields a plausible number of rows, Marketplace among them', () => {
+  it('the real table yields a plausible number of rows, My apps and Marketplace among them', () => {
     const rows = parseRows(code(read(SUBNAV)));
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows.map((r) => r.href)).toContain('/apps');
+    expect(rows.map((r) => r.href)).toContain('/apps/store');
   });
 });
 
@@ -266,8 +269,10 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
    * predicate that merely happened to be false for the one cohort someone hand-picked
    * would not survive it.
    */
-  it('Marketplace is visible exactly when /apps admits the viewer', () => {
-    const row = rows.find((r) => r.href === '/apps');
+  it('Marketplace is visible exactly when /apps/store admits the viewer', () => {
+    // The store moved from `/apps` to `/apps/store` and kept its gate (`store.tsx` resolves
+    // `resolveAppsPageAccess`), so this is the same check against the row's new href.
+    const row = rows.find((r) => r.href === '/apps/store');
     expect(row, 'the Marketplace row is missing from appsSections').toBeDefined();
 
     for (const summary of [NO_SUMMARY, ALL_SUMMARY])
@@ -285,10 +290,45 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
             expect(
               pageAdmits,
               `store=${store} author=${author} getStarted=${getStarted}: the Marketplace TAB ` +
-                `is ${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps\` ` +
+                `is ${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps/store\` ` +
                 `${pageAdmits ? 'admits' : 'answers notFound for'} this viewer. A tab into a ` +
                 `404 is the #3899 / #4668 defect class; an unreachable page with no tab is ` +
                 `its mirror.`
+            ).toBe(tabVisible);
+          }
+  });
+
+  /**
+   * THE "My apps" ROW (`/apps`, the viewer's app home). Its page answers `notFound` with the
+   * store gate and otherwise RENDERS or REDIRECTS to the store (signed out / old store link),
+   * so "admits" here is "does not 404" — a redirect is a working door, a `notFound` is the
+   * #3899 / #4668 class. Evaluated against the page's real resolver, for a signed-in viewer
+   * AND a signed-out one.
+   */
+  it('My apps is visible exactly when /apps does not answer notFound', () => {
+    const row = rows.find((r) => r.href === '/apps');
+    expect(row, 'the My apps row is missing from appsSections').toBeDefined();
+    expect(row!.label).toBe('My apps');
+
+    for (const summary of [NO_SUMMARY, ALL_SUMMARY])
+      for (const store of [false, true])
+        for (const author of [false, true])
+          for (const user of [null, { id: 1 }]) {
+            const tabVisible = evaluate(
+              row!.visible,
+              summary,
+              context({ store, author, getStarted: false })
+            );
+            const pageAnswers = resolveAppsHomeAccess({
+              features: { appListings: store },
+              user,
+              query: {},
+            });
+            expect(
+              !('notFound' in pageAnswers),
+              `store=${store} author=${author} signedIn=${!!user}: the My apps TAB is ` +
+                `${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps\` answers ` +
+                `${JSON.stringify(pageAnswers)}.`
             ).toBe(tabVisible);
           }
   });

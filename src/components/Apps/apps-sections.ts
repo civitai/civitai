@@ -1,5 +1,6 @@
 import type { Icon } from '@tabler/icons-react';
 import {
+  IconApps,
   IconBuildingStore,
   IconCode,
   IconCurrencyDollar,
@@ -126,8 +127,9 @@ export type AppsNavContext = {
    */
   canBuild: boolean;
   /**
-   * May load `/apps` → show "Marketplace". `hasAppsStoreAccess`, i.e. the SAME rule
-   * `resolveAppsPageAccess` enforces for that page.
+   * May load `/apps` and `/apps/store` → show "My apps" and "Marketplace".
+   * `hasAppsStoreAccess`, i.e. the SAME rule `resolveAppsPageAccess` enforces for both
+   * pages (`/apps` reaches it through `resolveAppsHomeAccess`).
    *
    * 🔴 THIS ENTRY USED TO BE UNCONDITIONAL (`visible: () => true`), AND THAT WAS A LIVE
    * 404 WAITING ON A FLIPT TOGGLE — documented as a known exposure on both
@@ -151,15 +153,20 @@ export const NO_APPS_NAV_CAPABILITIES: AppsNavContext = {
 /**
  * The rail's GROUP HEADINGS, in render order.
  *
- * 🔴 THE GROUPS ARE THE ORIGINAL TAB ORDER, GIVEN NAMES — not a new information
- * architecture. `SUB_NAV_LINKS` carried its ordering rule in prose ("discovery → manage
- * → revenue → build → moderate"); a vertical rail has room to say it out loud, so each
- * phase of that comment became a heading. `Yours` covers "manage" AND "revenue", which
- * are both the viewer's own holdings; nothing else merged and nothing reordered.
+ * The groups began as the original tab order, given names (`SUB_NAV_LINKS` carried its
+ * ordering rule in prose: "discovery → manage → revenue → build → moderate"). `Yours`
+ * covers "manage" AND "revenue", which are both the viewer's own holdings.
+ *
+ * 🔴 `Yours` NOW LEADS, and that is the one reorder. `/apps` became the viewer's app HOME
+ * ("My apps") and the marketplace moved to `/apps/store`, so the destination this nav
+ * asserts you came for is the launcher of apps you already have — which is itself one of
+ * your holdings, so it belongs in `Yours`, not in a heading of its own. A separate
+ * one-row "Home" group was the alternative; it would put a heading over a single entry
+ * that names the same thing. `Discover` (the store) follows.
  */
 export const appsSectionGroups = [
-  { id: 'discover', label: 'Discover' },
   { id: 'yours', label: 'Yours' },
+  { id: 'discover', label: 'Discover' },
   { id: 'build', label: 'Build' },
   { id: 'moderate', label: 'Moderate' },
 ] as const;
@@ -168,7 +175,7 @@ export type AppsSectionGroupId = (typeof appsSectionGroups)[number]['id'];
 
 export type AppsSection = {
   id: string;
-  /** URL segment under `/apps`. Empty string is the marketplace index. */
+  /** URL segment under `/apps`. Empty string is the `/apps` index (the "My apps" home). */
   path: string;
   label: string;
   icon: Icon;
@@ -178,7 +185,8 @@ export type AppsSection = {
 };
 
 /**
- * Section order = discovery → manage → revenue → build → moderate.
+ * Section order = home → manage → revenue → discovery → build → moderate (registry order is
+ * render order within each group; groups render in {@link appsSectionGroups} order).
  *
  * 🔴 `Build` SITS SECOND-TO-LAST (before `Review`), and the order is the claim. This
  * nav's leading entry is the one it asserts you came here for, and for the
@@ -229,16 +237,37 @@ export type AppsSection = {
  * outlier is still submit.tsx's body.
  *
  * The rail still hides itself entirely below two sections — a one-entry "navigation" is
- * chrome that navigates nowhere. 🔴 That floor IS reachable, by a live cohort: a
- * store-visible non-author with no installs and no `appBlocksGetStarted` qualifies for
- * Marketplace ALONE and gets no rail. Unchanged by the rail move — that viewer had
- * exactly the same one tab before it.
+ * chrome that navigates nowhere. ⚠️ The cohort that used to hit that floor with a store
+ * entry — a store-visible non-author with no installs, who qualified for Marketplace ALONE —
+ * no longer does: "My apps" is gated on the same store access, so every store-visible
+ * viewer has at least two entries. The floor now bites only a viewer with no store access,
+ * who has zero.
  */
 export const appsSections: AppsSection[] = [
   /**
+   * The viewer's app HOME (`/apps`). Gated on the SAME store access as Marketplace, because
+   * `/apps` answers `notFound` with exactly the store gate (`resolveAppsHomeAccess` →
+   * `resolveAppsPageAccess`). A signed-out viewer the store admits is redirected to the
+   * store by that page, so offering them this entry costs one redirect, never a 404.
+   *
+   * ⚠️ IT LIFTS THE `< 2` COLLAPSE FOR THE STORE-ONLY COHORT, deliberately. A store-visible
+   * viewer with nothing else used to qualify for Marketplace ALONE and get no rail; they now
+   * have two real destinations (their apps, the store), which is the floor the collapse
+   * exists to enforce, so the rail renders for them.
+   */
+  {
+    id: 'my-apps',
+    path: '',
+    label: 'My apps',
+    icon: IconApps,
+    group: 'yours',
+    visible: (_s, c) => c.canSeeStore,
+  },
+  /**
    * 🔴 GATED ON STORE ACCESS — it was `() => true`, and that unconditional predicate was
    * a KNOWN, DOCUMENTED 404 exposure (see the note on `AppsNavContext.canSeeStore`):
-   * `/apps` gates on `resolveAppsPageAccess`, so a viewer admitted to this nav by the
+   * the store (then `/apps`, now `/apps/store`) gates on `resolveAppsPageAccess`, so a
+   * viewer admitted to this nav by the
    * get-started term alone was offered an entry the page answers `notFound` for. It was
    * left open because closing it used to drop that viewer to ONE entry, where the `< 2`
    * collapse hides the nav entirely — deleting the only entry that cohort had. "Build"
@@ -247,7 +276,7 @@ export const appsSections: AppsSection[] = [
    */
   {
     id: 'marketplace',
-    path: '',
+    path: 'store',
     label: 'Marketplace',
     icon: IconBuildingStore,
     group: 'discover',
@@ -370,16 +399,19 @@ export const appsSections: AppsSection[] = [
   },
 ];
 
-/** The href a section links to. `/apps` for the index, `/apps/<path>` otherwise. */
+/** The href a section links to. `/apps` for the home, `/apps/<path>` otherwise. */
 export function getAppsSectionHref(section: AppsSection): string {
   return section.path ? `/apps/${section.path}` : '/apps';
 }
 
 /**
- * Returns true when `current` is on the `href` route. `/apps` (the
- * marketplace) must match EXACTLY so it isn't lit on every `/apps/*` child;
- * the sub-routes match on prefix so deep paths (e.g. `/apps/activity/<x>`
- * or `/apps/run/<slug>` under the parent) keep the right section active.
+ * Returns true when `current` is on the `href` route. `/apps` (the home) must match
+ * EXACTLY so it isn't lit on every `/apps/*` child; the sub-routes match on prefix so deep
+ * paths (e.g. `/apps/activity/<x>`) keep the right section active.
+ *
+ * The prefix is `href` PLUS `/`, which is what keeps `/apps/store` (Marketplace) from
+ * lighting on `/apps/store-preview/[slug]`: `'/apps/store-preview/x'.startsWith('/apps/store/')`
+ * is false. `current` is `router.pathname`, so it never carries a query string.
  */
 export function isActiveAppsRoute(href: string, current: string): boolean {
   if (href === '/apps') return current === '/apps';

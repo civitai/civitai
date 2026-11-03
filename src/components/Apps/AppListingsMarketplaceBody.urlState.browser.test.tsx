@@ -165,6 +165,9 @@ let forceRerender: (() => void) | null = null;
  */
 let replaceCalls = 0;
 
+/** The pathname of the most recent `router.replace` — the page a filter write targets. */
+let lastReplacePathname: string | undefined;
+
 /**
  * A router that behaves like the real one: `replace` applies the new query AFTER
  * a delay and then re-renders the subscribers, and it returns a promise.
@@ -183,6 +186,7 @@ function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
     const original = router.replace;
     router.replace = ((url: unknown) => {
       replaceCalls += 1;
+      lastReplacePathname = (url as { pathname?: string })?.pathname;
       const nextQuery = { ...((url as { query?: Record<string, unknown> })?.query ?? {}) };
       return new Promise<boolean>((resolve) => {
         setTimeout(() => {
@@ -215,6 +219,10 @@ const currentQuery = () => router.query as Record<string, string>;
 beforeEach(() => {
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
+  // The store lives at `/apps/store` (`/apps` became the viewer's "My apps" home), so every
+  // case here runs mounted where the page now is.
+  router.pathname = '/apps/store';
+  lastReplacePathname = undefined;
   router.query = {};
   forceRerender = null;
   replaceCalls = 0;
@@ -238,6 +246,9 @@ describe('the harness itself round-trips (guard on the guard)', () => {
     await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'onsite' }));
     // …and the component re-renders FROM the URL.
     await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'onsite' }));
+    // 🔴 …and the write targets the page the store is ON (`/apps/store`), never `/apps`,
+    // which is now the viewer's app home.
+    expect(lastReplacePathname).toBe('/apps/store');
   });
 });
 

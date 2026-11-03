@@ -264,7 +264,7 @@ describe('AppBlockChrome mobile shell', () => {
     expect(
       (back as HTMLElement).getAttribute('href'),
       `at ${PHONE[0]}px the back chevron must point at the Marketplace, exactly as the crumb did`
-    ).toBe('/apps');
+    ).toBe('/apps/store');
     expect(
       (back as HTMLElement).getAttribute('aria-label'),
       'the back chevron is icon-only, so its accessible name is the only thing naming it'
@@ -311,8 +311,8 @@ describe('AppBlockChrome mobile shell', () => {
     ).not.toBeNull();
     expect(
       q('[data-testid="app-block-breadcrumb-apps"]')?.getAttribute('href'),
-      `at ${DESKTOP[0]}px the leading crumb must still link to /apps`
-    ).toBe('/apps');
+      `at ${DESKTOP[0]}px the leading crumb must still link to the store`
+    ).toBe('/apps/store');
     expect(
       q('[data-testid="app-platform-nav-trigger"]'),
       `at ${DESKTOP[0]}px the platform-nav trigger must still be its own control`

@@ -665,8 +665,18 @@ export function AppBlockChrome({
           whereas these items stand alone over a running app and need the noun
           ("App activity"). "Marketplace" is the one label that is shared verbatim,
           because "Apps home" named a destination the store itself stopped calling
-          that. */}
-      <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore size={14} stroke={1.5} />}>
+          that.
+
+          🔴 THE STORE MOVED TO `/apps/store`, and `/apps` is now the viewer's "My apps"
+          home. That home is deliberately NOT an item here (yet): this menu already has a
+          "My apps" item — the author's app list on `/apps/build` — and two items with one
+          label and two destinations is worse than a missing one. Which surface keeps the
+          name is a product decision; the exclusion is pinned in
+          `chromeNavAlignsWithSubNav.test.ts` with that reason. */}
+      <ChromeSurfaceItem
+        href="/apps/store"
+        leftSection={<IconBuildingStore size={14} stroke={1.5} />}
+      >
         Marketplace
       </ChromeSurfaceItem>
       <ChromeSurfaceItem
@@ -848,15 +858,15 @@ export function AppBlockChrome({
               thing, and the thing it says ("up to the Marketplace") is exactly what a
               back chevron says in a third of the space. It is a real anchor
               (`NextLink`), so middle-click / long-press / keyboard all behave, and it
-              points at the SAME `/apps` the crumb did — the destination did not move,
-              only its rendering.
+              points at the SAME store the crumb does (`/apps/store`) — the two
+              renderings share one destination.
 
               `ActionIcon size="sm"` is not a style choice here: it is what keeps the
               row at its pinned 31px resting height (`CHROME_BAR_PX`), the same as the
               icon buttons the desktop bar has always used. */}
             <ActionIcon
               component={Link}
-              href="/apps"
+              href="/apps/store"
               variant="subtle"
               color="gray"
               size="sm"
@@ -1162,20 +1172,19 @@ function ChromeDesktopLeadingGroup({
                 and long-press all still behave. */}
             <Anchor
               component={Link}
-              href="/apps"
+              href="/apps/store"
               size="xs"
               underline="always"
               style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
-              {/* Reads "Marketplace", not "Apps" — the destination `/apps` is what the
-                  store's own nav calls its first entry (`appsSections[0].label`), and a
-                  crumb that names the page differently from the page's own tab makes the
-                  trail look like it leads somewhere else. The testid deliberately keeps
-                  its `-apps` spelling: it addresses the crumb by its ROUTE, which has not
-                  moved, so a future copy change does not churn every test that reaches
-                  for it. */}
+              {/* Reads "Marketplace", not "Apps" — the destination `/apps/store` is what
+                  the store's own nav calls that entry (the `marketplace` row of
+                  `appsSections`), and a crumb that names the page differently from the
+                  page's own tab makes the trail look like it leads somewhere else. The
+                  testid keeps its historical `-apps` spelling (the route was `/apps` until
+                  the store moved), so tests that reach for it do not churn. */}
               Marketplace
             </Anchor>
             <Text size="xs" c="dimmed" aria-hidden>
