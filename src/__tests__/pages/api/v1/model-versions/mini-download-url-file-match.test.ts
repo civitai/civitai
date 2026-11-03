@@ -944,6 +944,20 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
     }
   );
 
+  it.each([
+    ['own fee', OWN_FEE],
+    ['licensing-root fee', ROOT_FEE],
+  ])(
+    'a Flux.3 Klein version whose %s is not charged earns creator comp instead',
+    async (_, fee) => {
+      expect(await charged({ baseModel: 'Flux.3 Klein', ...fee })).toEqual({
+        fees: [],
+        payoutEnabled: true,
+        tipsEnabled: true,
+      });
+    }
+  );
+
   it('a Flux.3 Klein version without a fee keeps creator comp', async () => {
     expect(await charged({ baseModel: 'Flux.3 Klein' })).toEqual({
       fees: [],

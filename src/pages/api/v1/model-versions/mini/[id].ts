@@ -494,12 +494,13 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
-  // A version charging its own fee earns through that channel instead of creator comp. The
-  // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
+  // A version whose own fee is charged earns through that channel instead of creator comp; a fee
+  // that isn't charged (a non-commercial base) falls back to comp. The lineage fee (hasSourceRule)
+  // settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
     !earningsStopped &&
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
-    !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
+    !(isLicensingRoot || hasOwnFee);
   // Independent of the fee: a fee creator still gets their share of the creator tip.
   const tipsEnabled =
     !earningsStopped &&
