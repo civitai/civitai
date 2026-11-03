@@ -13,6 +13,12 @@
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
 }
 
+/* Control arm: taps fall through to the card. */
+.passive {
+  cursor: inherit;
+  pointer-events: none;
+}
+
 .ring {
   position: absolute;
   inset: 0;

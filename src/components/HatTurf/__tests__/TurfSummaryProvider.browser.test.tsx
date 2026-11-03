@@ -4,7 +4,7 @@ import type * as Trpc from '~/utils/trpc';
 const h = vi.hoisted(() => ({
   gate: { event: 'birthday2026', arm: 'control' } as {
     event: string;
-    arm: 'control' | 'count-button';
+    arm: 'control' | 'badge-popover';
   } | null,
   asked: [] as { proc: string; input: any }[],
   mark: vi.fn(),
@@ -138,9 +138,9 @@ describe('TurfSummaryProvider', () => {
   });
 
   test('hands the viewer’s arm to the cards', async () => {
-    h.gate = { event: 'birthday2026', arm: 'count-button' };
+    h.gate = { event: 'birthday2026', arm: 'badge-popover' };
     await mount(ids(3));
-    await vi.waitFor(() => expect(latest?.arm).toBe('count-button'));
+    await vi.waitFor(() => expect(latest?.arm).toBe('badge-popover'));
   });
 
   test('asks nothing, and offers no context, with Hat Turf off', async () => {

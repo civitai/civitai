@@ -151,10 +151,11 @@ const badge = () =>
   document.body.querySelector('[data-testid="hat-turf-badge"]') as HTMLElement | null;
 const feedWith = (
   images: TurfSummaries['images'],
-  team: string | null = 'blue'
+  team: string | null = 'blue',
+  arm: TurfSummaries['arm'] = 'control'
 ): TurfSummaries => ({
   event: 'birthday2026',
-  arm: 'control',
+  arm,
   team,
   images,
   open: {},
@@ -216,8 +217,22 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(mineDot()).toBeNull();
   });
 
-  test('tapping the badge opens every team’s count without opening the card', async () => {
+  test('control arm: tapping the badge opens the card, not the standings', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    expect(badge()!.tagName).toBe('DIV');
+    expect(getComputedStyle(badge()!).pointerEvents).toBe('none');
+    const { left, top, width, height } = badge()!.getBoundingClientRect();
+    const hit = document.elementFromPoint(left + width / 2, top + height / 2) as HTMLElement;
+    expect(badge()!.contains(hit)).toBe(false);
+    hit.click();
+    expect(onCardClick).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector('[data-testid="hat-turf-standings"]')).toBeNull();
+    expect(trackAction).not.toHaveBeenCalled();
+  });
+
+  test('badge-popover arm: tapping the badge opens every team’s count without opening the card', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, 'pink', 'badge-popover') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     badge()!.click();
     const standings = () =>
@@ -243,7 +258,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
   });
 
   test('a hat-protected image keeps its badge, with a lock, and says why in the popover', async () => {
-    renderCard({ feed: feedWith({ 1: standing({ hatted: true }) }, 'pink') });
+    renderCard({ feed: feedWith({ 1: standing({ hatted: true }) }, 'pink', 'badge-popover') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).not.toBeNull();
     expect(badge()!.getAttribute('aria-label')).toContain('A hat protects this image');

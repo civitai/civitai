@@ -32,13 +32,13 @@ describe('buildReadout', () => {
       'hatTurfFeedCard',
       [
         ...users('control', 1000, { placedFromFeed: 100 }),
-        ...users('count-button', 1000, { placedFromFeed: 150 }),
+        ...users('badge-popover', 1000, { placedFromFeed: 150 }),
       ],
       AFTER_READ
     );
     expect(r.arms.map((a) => [a.variant, a.users])).toEqual([
       ['control', 1000],
-      ['count-button', 1000],
+      ['badge-popover', 1000],
     ]);
     const primary = r.comparisons.find((c) => c.role === 'primary')!;
     expect(primary.metric).toBe('placedFromFeed');
@@ -52,7 +52,7 @@ describe('buildReadout', () => {
   it('splits α across secondary metrics', () => {
     const r = buildReadout('hatTurfFeedCard', [
       ...users('control', 10),
-      ...users('count-button', 10),
+      ...users('badge-popover', 10),
     ]);
     const secondary = r.comparisons.filter((c) => c.role === 'secondary');
     expect(secondary).toHaveLength(4);
@@ -91,7 +91,7 @@ describe('toExposedUsers', () => {
   const firstSeen = Date.UTC(2026, 10, 10, 23, 0, 0) / 1000;
   const row: ExposureRow = {
     userId: 9,
-    variant: 'count-button',
+    variant: 'badge-popover',
     firstSeen,
     nVariants: 1,
     joined: 1,

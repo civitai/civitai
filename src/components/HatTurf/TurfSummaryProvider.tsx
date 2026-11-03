@@ -61,7 +61,7 @@ export function TurfSummaryProvider({
   const feedGate = useHatTurfFeed();
   const gate = gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
-  const arm = gate?.arm ?? 'control';
+  const arm = (gateOverride === undefined ? feedGate?.arm : undefined) ?? 'control';
   const utils = trpc.useUtils();
 
   const chunks = useMemo(

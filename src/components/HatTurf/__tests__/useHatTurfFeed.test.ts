@@ -96,7 +96,7 @@ describe('useHatTurfFeed', () => {
 
   it('carries the viewer arm', () => {
     flag = true;
-    armVariant = 'count-button';
-    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'count-button' });
+    armVariant = 'badge-popover';
+    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'badge-popover' });
   });
 });

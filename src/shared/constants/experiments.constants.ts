@@ -19,7 +19,7 @@ export const experiments = {
   },
   hatTurfFeedCard: {
     fliptKey: 'exp-hat-turf-feed-card',
-    variants: ['control', 'count-button'],
+    variants: ['control', 'badge-popover'],
     defaultVariant: 'control',
   },
 } as const satisfies Record<string, ExperimentDef>;
@@ -69,7 +69,7 @@ export const HAT_TURF_FEED_SOURCE = 'feed';
 
 export const EXPERIMENT_PIN_SEGMENT_PREFIX = 'exp-pin-';
 
-/** Moderator-only preview: `civ-exp=hatTurfFeedCard:count-button,hatTurfImageDetail:control`. */
+/** Moderator-only preview: `civ-exp=hatTurfFeedCard:badge-popover,hatTurfImageDetail:control`. */
 export const EXPERIMENT_OVERRIDE_COOKIE = 'civ-exp';
 
 export function isExperimentVariant<K extends ExperimentKey>(
