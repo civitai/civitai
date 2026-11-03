@@ -1998,9 +1998,20 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     await driveToReady();
     await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
 
+    // The 2nd click is a DOM click on purpose: this test is about store dedupe, and a
+    // second `locator.click()` runs Playwright's actionability wait, which stalled in CI
+    // until the 15s test timeout. One real click keeps the pointer path covered.
     await page.getByTestId('block-consent-notice-review').click();
-    await page.getByTestId('block-consent-notice-review').click();
+    (page.getByTestId('block-consent-notice-review').element() as HTMLElement).click();
 
+    await expect.poll(() => useDialogStore.getState().dialogs.length).toBe(1);
+    let settled = 0;
+    await expect
+      .poll(() => {
+        if (useDialogStore.getState().dialogs.length !== 1) throw new Error('dialog count changed');
+        return ++settled;
+      })
+      .toBeGreaterThanOrEqual(5);
     expect(useDialogStore.getState().dialogs).toHaveLength(1);
   });
 
