@@ -276,6 +276,36 @@ describe('runPayout', () => {
       { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 2 },
     ]);
   });
+
+  it('pays no compensation for a version on a non-commercial base model', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 50, 11),
+      row('compensation', 'Yellow', 7, 12),
+      row('tip', 'Yellow', 6, 11),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      {
+        userId: CREATOR,
+        modelVersionIds: [11, 12],
+        baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B'],
+      },
+    ]);
+
+    await runPayout(START);
+
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => ({
+        externalTransactionId,
+        amount,
+      }))
+    ).toEqual(
+      expect.arrayContaining([
+        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
+        { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
+      ])
+    );
+    expect(sentTransactions()).toHaveLength(2);
+  });
 });
 
 describe('the daily job after a failed run', () => {
