@@ -42,3 +42,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
 | Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |
 | Semantic image search (image vectors in Qdrant, kept in sync by CDC) | [docs/features/semantic-image-search.md](semantic-image-search.md) |
+| Search engine comparison (OpenSearch vs Meilisearch for models search, by Flipt rollout) | [docs/features/search-engine-comparison.md](search-engine-comparison.md) |
