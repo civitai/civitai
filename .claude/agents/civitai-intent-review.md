@@ -142,9 +142,10 @@ report.
 
 ### Facts on every finding — required
 
-Your severity is advisory: the severity is computed from three facts you report on every finding. When
-your invoker gives you a JSON result contract, they are fields of each finding; otherwise end each
-finding with them as `impact / reach / evidence`.
+<!-- pr-review-gate:facts -->
+Still give your own best severity; the gate may recompute it from these facts. Report all three on
+every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
+otherwise end each finding with them as `impact / reach / evidence`.
 
 - `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
   user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
@@ -158,9 +159,19 @@ finding with them as `impact / reach / evidence`.
   `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
   `ref` is the `file:line` you reasoned from).
 
-Report the reach you can show, not the worst you can imagine. Example: a requirement silently dropped is
-`wrong-for-user` when users see the gap and `internal` when only we do; a dropped guard (a limit, a
-permission check) takes the impact of what it guarded.
+Report the reach you can show, not the worst you can imagine. The allowed values, for tools:
+
+```json
+{
+  "impact": ["money", "access", "data-loss", "privacy", "wrong-for-user", "internal", "maintainability"],
+  "reach": ["normal-use", "unusual-state", "theoretical"],
+  "evidence.kind": ["traced", "reproduced", "inferred"]
+}
+```
+<!-- /pr-review-gate:facts -->
+
+Example: a requirement silently dropped is `wrong-for-user` when users see the gap and `internal` when
+only we do; a dropped guard (a limit, a permission check) takes the impact of what it guarded.
 
 ## Delivering your report
 
