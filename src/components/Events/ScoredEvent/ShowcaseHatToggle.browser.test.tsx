@@ -32,6 +32,8 @@ vi.mock('~/shared/constants/showcase-hat.constants', async (importOriginal) => (
   isShowcaseLive: () => h.live,
 }));
 
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { ShowcaseHatButton } from './ShowcaseHatPicker';
 import { ShowcaseHatPickerToggle, ShowcaseHatSetting } from './ShowcaseHatToggle';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
@@ -87,5 +89,38 @@ describe('account settings gate', () => {
     renderWithProviders(<ShowcaseHatSetting />);
     await new Promise((r) => setTimeout(r, 300));
     expect(toggle()).toBeNull();
+  });
+});
+
+describe('picker Automatic tile', () => {
+  const openPicker = async () => {
+    renderWithProviders(
+      <>
+        <DialogProvider />
+        <ShowcaseHatButton event="birthday2026" />
+      </>
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="showcase-hat-button"]')).not.toBeNull()
+    );
+    (document.querySelector('[data-testid="showcase-hat-button"]') as HTMLElement).click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="showcase-hat-auto"]')).not.toBeNull()
+    );
+    return document.querySelector('[data-testid="showcase-hat-auto"]') as HTMLElement;
+  };
+
+  test('says so when the default shows no hat yet', async () => {
+    h.state = { pick: null, showing: null, off: false };
+    expect((await openPicker()).textContent).toContain('No hat until you place one');
+  });
+
+  test('says "Your top hat" when the default has one', async () => {
+    expect((await openPicker()).textContent).toContain('Your top hat');
+  });
+
+  test('is not marked selected while the hat is off', async () => {
+    h.state = { pick: null, showing: null, off: true };
+    expect((await openPicker()).getAttribute('aria-pressed')).toBe('false');
   });
 });
