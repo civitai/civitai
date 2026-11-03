@@ -484,6 +484,8 @@ export const trainingModelInfo: {
     air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
     baseModel: 'Ideogram 4.0',
     isNew: true,
+    // Not licensed for on-site training. Kept so existing LoRAs still resolve.
+    disabled: true,
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //

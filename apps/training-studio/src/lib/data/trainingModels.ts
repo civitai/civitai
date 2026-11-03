@@ -464,6 +464,7 @@ export const MODEL_CARDS: ModelCard[] = [
     label: 'caption',
     description: 'Design work: logos, signage, layered typography.',
     released: '2026-06-03',
+    retired: 'Not licensed for on-site training.',
     versions: [
       {
         key: 'ideogram4',
