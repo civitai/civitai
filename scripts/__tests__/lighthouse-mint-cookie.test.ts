@@ -45,7 +45,11 @@ describe('lighthouse-mint-cookie.cjs', () => {
     );
     const res = spawnSync(process.execPath, [SCRIPT], {
       cwd: dir,
-      env: { PATH: process.env.PATH, NEXTAUTH_SECRET: SECRET, BASE_URL: 'https://pr-1.example.test' },
+      env: {
+        PATH: process.env.PATH,
+        NEXTAUTH_SECRET: SECRET,
+        BASE_URL: 'https://pr-1.example.test',
+      },
       encoding: 'utf8',
     });
     expect(res.stderr).toBe('');
