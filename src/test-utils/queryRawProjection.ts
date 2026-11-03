@@ -101,7 +101,7 @@ export function projectOntoSelect<T extends Record<string, unknown>>(
  */
 export function respondWithRows<T extends Record<string, unknown>>(rows: T[]) {
   return async (query: TemplateStrings | Prisma.Sql) =>
-    projectOntoSelect(query instanceof Prisma.Sql ? query.strings : query, rows);
+    projectOntoSelect(isSql(query) ? query.strings : query, rows);
 }
 
 /**
@@ -112,6 +112,20 @@ export function respondWithRows<T extends Record<string, unknown>>(rows: T[]) {
  */
 export function statementOf(call: readonly unknown[]): Prisma.Sql {
   const [query, ...values] = call;
-  if (query instanceof Prisma.Sql) return query;
+  if (isSql(query)) return query;
   return Prisma.sql(query as readonly string[], ...(values as Prisma.Sql[]));
+}
+
+// Structural, not `instanceof Prisma.Sql`: the `Sql` class is not a runtime member of the `Prisma`
+// namespace the unit suite loads (it read as undefined there), while every `Prisma.sql` result
+// carries these fields. A template-strings array is an array, so it never matches.
+function isSql(query: unknown): query is Prisma.Sql {
+  return (
+    typeof query === 'object' &&
+    query !== null &&
+    !Array.isArray(query) &&
+    Array.isArray((query as Prisma.Sql).strings) &&
+    Array.isArray((query as Prisma.Sql).values) &&
+    typeof (query as Prisma.Sql).text === 'string'
+  );
 }
