@@ -283,7 +283,7 @@ export type ExposureRow = {
   hidAllHats: number;
 };
 
-async function main() {
+export async function main() {
   const exp = arg('exp') as ExperimentKey | undefined;
   if (!exp || !Object.hasOwn(experiments, exp)) {
     throw new Error(`--exp must be one of: ${Object.keys(experiments).join(', ')}`);
