@@ -7,17 +7,14 @@ import {
   Center,
   Divider,
   Group,
-  HoverCard,
-  Menu,
-  Popover,
   Progress,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconCirclePlus,

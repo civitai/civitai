@@ -1,4 +1,5 @@
-import { Anchor, Group, Text, Tooltip } from '@mantine/core';
+import { Anchor, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { numberWithCommas } from '~/utils/number-helpers';
 // 🔴 SHARED LADDER — do not re-inline this. `getRatingLabel` used to be a

@@ -12,8 +12,8 @@ import {
   TextInput,
   ThemeIcon,
   Modal,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {

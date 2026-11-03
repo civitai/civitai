@@ -11,10 +11,10 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';

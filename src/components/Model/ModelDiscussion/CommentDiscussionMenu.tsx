@@ -1,5 +1,6 @@
 import type { MenuProps } from '@mantine/core';
-import { Menu, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {

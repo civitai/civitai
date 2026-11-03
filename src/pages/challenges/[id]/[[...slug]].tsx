@@ -12,19 +12,17 @@ import {
   Indicator,
   Loader,
   type MantineSize,
-  Menu,
   ScrollArea,
   Spoiler,
   Stack,
   Text,
-  Popover,
   Progress,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';

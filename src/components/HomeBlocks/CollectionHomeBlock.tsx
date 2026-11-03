@@ -6,11 +6,11 @@ import {
   Text,
   ThemeIcon,
   Box,
-  Popover,
   Anchor,
   AspectRatio,
   Skeleton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useMemo } from 'react';
 import {
   IconArrowRight,

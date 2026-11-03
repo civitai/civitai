@@ -1,4 +1,5 @@
-import { Alert, Anchor, Badge, Loader, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';

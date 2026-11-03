@@ -2,10 +2,10 @@ import {
   Badge,
   getPrimaryShade,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,

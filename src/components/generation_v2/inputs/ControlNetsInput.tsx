@@ -25,8 +25,8 @@ import {
   SegmentedControl,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { SheetSelect } from './SheetSelect';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { IconEraser, IconPhoto, IconPlus, IconX } from '@tabler/icons-react';

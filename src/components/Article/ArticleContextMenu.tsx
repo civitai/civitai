@@ -1,5 +1,6 @@
 import type { ActionIconProps } from '@mantine/core';
-import { ActionIcon, Loader, Menu } from '@mantine/core';
+import { ActionIcon, Loader } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {

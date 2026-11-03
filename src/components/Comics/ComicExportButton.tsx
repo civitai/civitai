@@ -1,4 +1,5 @@
-import { ActionIcon, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconDownload, IconFileTypePdf, IconFileZip } from '@tabler/icons-react';
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

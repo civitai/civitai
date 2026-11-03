@@ -1,4 +1,5 @@
-import { Anchor, Menu, Text } from '@mantine/core';
+import { Anchor, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconArrowLeft, IconBook2, IconPhoto } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useMemo } from 'react';

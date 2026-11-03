@@ -1,4 +1,5 @@
-import { ActionIcon, Button, Text, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Text, TextInput } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { DateTimePicker } from '@mantine/dates';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { IconPencil, IconTrash } from '@tabler/icons-react';

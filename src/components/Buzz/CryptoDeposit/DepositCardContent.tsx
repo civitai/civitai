@@ -9,8 +9,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import {
   IconAlertTriangle,

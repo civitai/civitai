@@ -6,12 +6,11 @@ import {
   Container,
   Group,
   Loader,
-  Menu,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {

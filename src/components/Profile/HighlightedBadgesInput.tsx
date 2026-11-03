@@ -1,4 +1,5 @@
-import { Box, Group, Text, Tooltip } from '@mantine/core';
+import { Box, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 import type { KeyboardEvent } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

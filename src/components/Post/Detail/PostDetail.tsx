@@ -9,9 +9,9 @@ import {
   Title,
   Paper,
   Center,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   Availability,
   CollectionType,
