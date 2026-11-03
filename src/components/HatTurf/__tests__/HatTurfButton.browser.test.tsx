@@ -168,6 +168,7 @@ function renderCard(ctx: Ctx = {}, ownerId = 2, width = PHONE_CARD) {
     <TurfSummaryContext.Provider
       value={{
         event: 'birthday2026',
+        arm: 'control',
         team: 'blue',
         images: {},
         open: {},
@@ -493,6 +494,7 @@ describe('hats on a feed ImageCard', () => {
       <TurfSummaryContext.Provider
         value={{
           event: 'birthday2026',
+          arm: 'control',
           team: 'blue',
           images: {},
           open: {},
@@ -510,5 +512,62 @@ describe('hats on a feed ImageCard', () => {
     await vi.waitFor(() => expect(watch).toHaveBeenCalledWith(77));
     await view.unmount();
     expect(stop).toHaveBeenCalled();
+  });
+});
+
+describe('count-button arm on a feed ImageCard', () => {
+  // Viewer is blue; pink leads 3 to 2.
+  const standings = {
+    images: {
+      77: {
+        shown: { blue: 2, pink: 3 },
+        counted: { blue: 2, pink: 3 },
+        leader: 'pink',
+        leaderCosmeticId: 11,
+        hatted: false,
+      },
+    },
+  };
+
+  test('control keeps the corner badge and has no count chip', async () => {
+    renderCard(standings);
+    await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
+    expect(q('hat-turf-count-chip')).toBeNull();
+  });
+
+  test('the chip replaces the badge, shows the total and opens every team without opening the card', async () => {
+    renderCard({ ...standings, arm: 'count-button' });
+    await vi.waitFor(() => expect(q('hat-turf-count-chip')).not.toBeNull());
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(q('hat-turf-count-chip')!.textContent).toBe('5');
+    expect(q('hat-turf-button')).not.toBeNull();
+
+    q('hat-turf-count-chip')!.click();
+    await vi.waitFor(() => expect(q('hat-turf-count-popover')).not.toBeNull());
+    const rows = [...q('hat-turf-count-popover')!.querySelectorAll('[data-team]')].map((el) => [
+      (el as HTMLElement).dataset.team,
+      el.textContent,
+    ]);
+    expect(rows).toEqual([
+      ['pink', 'pink3'],
+      ['blue', 'blue · you2'],
+    ]);
+    expect(q('hat-turf-count-note')!.textContent).toBe(
+      'pink holds this image. blue needs 2 more to take it.'
+    );
+    expect(onCardClick).not.toHaveBeenCalled();
+    expect(actions()).toEqual(['hat_count_open']);
+
+    q('hat-turf-count-chip')!.click();
+    await vi.waitFor(() =>
+      expect(q('hat-turf-count-chip')!.getAttribute('aria-expanded')).toBe('false')
+    );
+    expect(actions()).toEqual(['hat_count_open']);
+  });
+
+  test('no chip when the image cannot take a hat', async () => {
+    renderCard({ ...standings, arm: 'count-button', open: { 77: false } });
+    await cardRendered();
+    expect(q('hat-turf-count-chip')).toBeNull();
   });
 });

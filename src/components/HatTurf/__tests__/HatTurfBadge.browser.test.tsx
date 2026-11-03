@@ -145,6 +145,7 @@ const feedWith = (
   team: string | null = 'blue'
 ): TurfSummaries => ({
   event: 'birthday2026',
+  arm: 'control',
   team,
   images,
   open: {},

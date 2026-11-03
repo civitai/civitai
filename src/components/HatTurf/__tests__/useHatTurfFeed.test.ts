@@ -24,11 +24,12 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 
 let armReady = true;
+let armVariant = 'control';
 vi.mock('~/components/Experiments/useExperiment', async (importOriginal) => ({
   ...(await importOriginal<typeof UseExperimentModule>()),
   useExperiment: () =>
     armReady
-      ? { ready: true, variant: 'control', assignment: 'rule' }
+      ? { ready: true, variant: armVariant, assignment: 'rule' }
       : { ready: false, variant: undefined, assignment: undefined },
 }));
 
@@ -60,6 +61,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 60 * 60 * 1000));
   askedWith = undefined;
   armReady = true;
+  armVariant = 'control';
 });
 
 function feed() {
@@ -82,7 +84,7 @@ describe('useHatTurfFeed', () => {
 
   it('returns the event with the flag on and the event open', () => {
     flag = true;
-    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT });
+    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'control' });
     expect(askedWith?.enabled).toBe(true);
   });
 
@@ -90,5 +92,11 @@ describe('useHatTurfFeed', () => {
     flag = true;
     armReady = false;
     expect(feed()).toBeNull();
+  });
+
+  it('carries the viewer arm', () => {
+    flag = true;
+    armVariant = 'count-button';
+    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'count-button' });
   });
 });

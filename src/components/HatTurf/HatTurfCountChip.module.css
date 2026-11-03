@@ -1,0 +1,87 @@
+.chip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px 0 5px;
+  border: 0;
+  border-radius: var(--mantine-radius-sm);
+  background-color: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1.5px var(--lead);
+  color: var(--mantine-color-white);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.open {
+  outline: 2px solid var(--mantine-color-white);
+}
+
+.dot {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: var(--lead);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 10px 78px 1fr 24px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mine {
+  font-weight: 800;
+}
+
+.you {
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.name {
+  white-space: nowrap;
+}
+
+.bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background-color: rgba(134, 142, 150, 0.25);
+
+  & i {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+  }
+}
+
+.count {
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(134, 142, 150, 0.25);
+  line-height: 1.35;
+}

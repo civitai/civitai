@@ -33,7 +33,7 @@ export function HatTurfBadge({ imageId }: { imageId: number }) {
     previous.current = shownCount;
   }, [shownCount]);
 
-  if (!summary) return null;
+  if (!summary || feed?.arm === 'count-button') return null;
   const arcs = ringArcs(summary.counted);
   const behind = viewerBehind(summary, feed?.team);
   const count = shownCount ?? 0;

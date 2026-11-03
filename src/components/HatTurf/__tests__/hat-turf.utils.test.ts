@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { eventTurfTopic } from '~/server/events/turf/turf-map';
 import {
+  teamStandings,
   HAT_DEFAULT_SCALE,
   RING_LENGTH,
   applyTurfPush,
@@ -172,5 +173,28 @@ describe('turf pushes', () => {
 describe('turfTopic', () => {
   it('is the topic the server pushes to', () => {
     expect(turfTopic('birthday2026', 42)).toBe(eventTurfTopic('birthday2026', 42));
+  });
+});
+
+describe('teamStandings', () => {
+  it('lists the viewer team with no hats, most hats first, and the total', () => {
+    const out = teamStandings({ counted: { blue: 2, pink: 5 }, leader: 'pink' }, 'yellow');
+    expect(out.rows).toEqual([
+      { team: 'pink', count: 5 },
+      { team: 'blue', count: 2 },
+      { team: 'yellow', count: 0 },
+    ]);
+    expect(out.total).toBe(7);
+    expect(out.toTake).toBe(6);
+  });
+
+  it('a tie is not a take: level with the leader still needs one more', () => {
+    expect(teamStandings({ counted: { blue: 3, pink: 3 }, leader: 'pink' }, 'blue').toTake).toBe(1);
+  });
+
+  it('nothing to take when the viewer leads, has no team, or nobody has hats', () => {
+    expect(teamStandings({ counted: { pink: 3 }, leader: 'pink' }, 'pink').toTake).toBeNull();
+    expect(teamStandings({ counted: { pink: 3 }, leader: 'pink' }, null).toTake).toBeNull();
+    expect(teamStandings({ counted: {}, leader: null }, 'blue').toTake).toBeNull();
   });
 });

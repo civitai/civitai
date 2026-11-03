@@ -75,6 +75,25 @@ export function standingsLabel(
   }`;
 }
 
+/**
+ * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
+ * viewer's team needs to lead outright: a tie stays with the current leader.
+ */
+export function teamStandings(
+  summary: Pick<TurfSummary, 'counted' | 'leader'>,
+  viewerTeam: string | null | undefined
+) {
+  const counted = { ...summary.counted };
+  if (viewerTeam && !(viewerTeam in counted)) counted[viewerTeam] = 0;
+  const rows = orderedTeams(counted)
+    .map((team) => ({ team, count: counted[team] }))
+    .sort((a, b) => b.count - a.count);
+  const lead = badgeLeader(summary);
+  const toTake =
+    lead && viewerTeam && viewerTeam !== lead ? counted[lead] - counted[viewerTeam] + 1 : null;
+  return { rows, total: rows.reduce((sum, row) => sum + row.count, 0), lead, toTake };
+}
+
 /** A placed hat's width as a fraction of the drawn image (the sticker system's own default). */
 export const HAT_DEFAULT_SCALE = 0.22;
 
