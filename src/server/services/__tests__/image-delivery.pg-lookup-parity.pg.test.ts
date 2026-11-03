@@ -317,13 +317,7 @@ async function request(
 }
 
 /** Off and on, compared on everything the caller (and the cache) can observe. */
-async function both(
-  query: Record<string, unknown>,
-  topology?: { read: Target; write: Target },
-  // The pg pool calls, when they are not the Prisma calls: a url the pg path refuses before it
-  // reaches a pool.
-  pgCalls?: [number, number]
-) {
+async function both(query: Record<string, unknown>, topology?: { read: Target; write: Target }) {
   const off = await request(false, query, topology);
   const on = await request(true, query, topology);
   const { used: offUsed, ...offSeen } = off;
@@ -332,7 +326,7 @@ async function both(
   // Each mode reached only its own driver, the same number of times.
   expect(offUsed.pg).toEqual([0, 0]);
   expect(onUsed.prisma).toEqual([0, 0]);
-  expect(onUsed.pg).toEqual(pgCalls ?? offUsed.prisma);
+  expect(onUsed.pg).toEqual(offUsed.prisma);
   expect(vi.mocked(pgDbReadLong.query)).not.toHaveBeenCalled();
   return { seen: offSeen, used: offUsed.prisma };
 }
@@ -507,23 +501,13 @@ describe.skipIf(!databaseUrl)(
         expect(used).toEqual([1, 1]);
       });
 
-      // Not UTF-8-encodable. Prisma errors on it (replica, then primary); node-pg alone would encode
-      // it as U+FFFD and answer not-found, which is why the pg path refuses it itself.
-      it.each<[string, string]>([
-        ['a lone high surrogate at the end', `${VISIBLE}\uD800`],
-        ['a lone low surrogate at the start', `\uDC00${VISIBLE}`],
-        ['a reversed pair', `parity/\uDE3A\uD83C.png`],
-      ])('%s: both fall back to the primary, then fail', async (_, id) => {
-        // pg refuses it before reaching either pool.
-        const { seen, used } = await both({ id }, undefined, [0, 0]);
-        expect(seen).toStrictEqual({
-          status: null,
-          body: undefined,
-          threw: true,
-          fallbacks: FALLBACK,
-          cacheWrites: [],
-        });
-        expect(used).toEqual([1, 1]);
+      // A lone surrogate is not expected to reach this route over HTTP (from this PR's review, not
+      // measured here): percent-decoding the path refuses it with a 400, and the query parsers turn
+      // it into U+FFFD. The form that does arrive, U+FFFD, must read the same on both drivers.
+      it('an id holding U+FFFD (what a lone surrogate arrives as): not found on both', async () => {
+        const { seen, used } = await both({ id: `${VISIBLE}\uFFFD` });
+        expect(seen).toStrictEqual(NOT_FOUND);
+        expect(used).toEqual([1, 0]);
       });
 
       it.each<[string, Record<string, unknown>]>([

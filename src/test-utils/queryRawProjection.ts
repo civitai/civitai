@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 /**
  * Select-aware projection for `$queryRaw` fakes.
  *
@@ -98,5 +100,18 @@ export function projectOntoSelect<T extends Record<string, unknown>>(
  *     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
  */
 export function respondWithRows<T extends Record<string, unknown>>(rows: T[]) {
-  return async (strings: TemplateStrings) => projectOntoSelect(strings, rows);
+  return async (query: TemplateStrings | Prisma.Sql) =>
+    projectOntoSelect(query instanceof Prisma.Sql ? query.strings : query, rows);
+}
+
+/**
+ * The statement a `$queryRaw` call sent, whichever way it was called: as a tagged template
+ * (`$queryRaw\`...\``, arguments `(strings, ...values)`) or with a prebuilt `Prisma.Sql`
+ * (`$queryRaw(statement)`). Nested `Prisma.Sql` fragments are flattened, so `.strings`, `.values`
+ * and `.text` are what the database receives.
+ */
+export function statementOf(call: readonly unknown[]): Prisma.Sql {
+  const [query, ...values] = call;
+  if (query instanceof Prisma.Sql) return query;
+  return Prisma.sql(query as readonly string[], ...(values as Prisma.Sql[]));
 }

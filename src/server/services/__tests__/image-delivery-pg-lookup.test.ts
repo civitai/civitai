@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { statementOf } from '~/test-utils/queryRawProjection';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -38,7 +38,6 @@ import { ensureFliptInitialized, isFliptSync } from '~/server/flipt/client';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import {
   getCachedImageDeliveryMetadata,
-  IMAGE_DELIVERY_METADATA_PG_SQL,
   resetImageDeliveryPgLookupGateForTests,
 } from '~/server/services/image-delivery.service';
 
@@ -90,7 +89,10 @@ describe('image-delivery lookup: driver routing', () => {
     expect(await getCachedImageDeliveryMetadata(URL)).toStrictEqual(PG_ROW);
     expect(pgRead).toHaveBeenCalledTimes(1);
     expect(pgRead.mock.contexts[0]).toBe(pgDbRead);
-    expect(pgRead).toHaveBeenCalledWith(IMAGE_DELIVERY_METADATA_PG_SQL, [URL, 'NotFound']);
+    expect(pgRead).toHaveBeenCalledWith(expect.stringContaining('WHERE url = $1'), [
+      URL,
+      'NotFound',
+    ]);
     expect(pgWrite).not.toHaveBeenCalled();
     expect(pgReadLong).not.toHaveBeenCalled();
     expect(prismaRead).not.toHaveBeenCalled();
@@ -103,7 +105,10 @@ describe('image-delivery lookup: driver routing', () => {
     expect(await getCachedImageDeliveryMetadata(URL)).toStrictEqual(PG_ROW);
     expect(pgWrite).toHaveBeenCalledTimes(1);
     expect(pgWrite.mock.contexts[0]).toBe(pgDbWrite);
-    expect(pgWrite).toHaveBeenCalledWith(IMAGE_DELIVERY_METADATA_PG_SQL, [URL, 'NotFound']);
+    expect(pgWrite).toHaveBeenCalledWith(expect.stringContaining('WHERE url = $1'), [
+      URL,
+      'NotFound',
+    ]);
     expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
       [{ entity: 'image', caller: 'imageDelivery' }],
     ]);
@@ -136,21 +141,6 @@ describe('image-delivery lookup: driver routing', () => {
     pgWrite.mockImplementation((() => Promise.reject(new Error('primary down'))) as never);
     await expect(getCachedImageDeliveryMetadata(URL)).rejects.toThrow('primary down');
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-  });
-
-  it('on, a url with a lone surrogate: refused on both pools without a query, as Prisma refuses it', async () => {
-    flag.value = true;
-    await expect(getCachedImageDeliveryMetadata(`${URL}\uD800`)).rejects.toThrow(
-      'not well-formed UTF-16'
-    );
-    expect(pgRead).not.toHaveBeenCalled();
-    expect(pgWrite).not.toHaveBeenCalled();
-    expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
-      [{ entity: 'image', caller: 'imageDelivery' }],
-    ]);
-    // A surrogate PAIR is well-formed and is looked up.
-    await getCachedImageDeliveryMetadata(`${URL}\u{1F3A8}`);
-    expect(pgRead).toHaveBeenCalledTimes(1);
   });
 
   it.each<[string, boolean | null, boolean]>([
@@ -196,43 +186,20 @@ describe('image-delivery lookup: the switch costs no per-request Flipt read', ()
   });
 });
 
-describe('image-delivery lookup: pg sends the statement Prisma sends', () => {
-  it('same text (whitespace aside) and the same parameters, in order', async () => {
+describe('image-delivery lookup: both drivers are handed one statement', () => {
+  it('pg receives the text and values of the Prisma.Sql that Prisma receives', async () => {
     flag.value = false;
     await getCachedImageDeliveryMetadata(URL);
-    const [strings, ...values] = prismaRead.mock.calls[0] as unknown as [
-      TemplateStringsArray,
-      ...unknown[]
-    ];
-    const prismaStatement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
-    const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
-
-    expect(squash(IMAGE_DELIVERY_METADATA_PG_SQL)).toBe(squash(prismaStatement.text));
-    expect(prismaStatement.values).toEqual([URL, 'NotFound']);
-
     flag.value = true;
     resetImageDeliveryPgLookupGateForTests();
     await getCachedImageDeliveryMetadata(URL);
-    expect(pgRead.mock.calls[0]).toEqual([IMAGE_DELIVERY_METADATA_PG_SQL, prismaStatement.values]);
-  });
 
-  it('the primary fallback statements match too', async () => {
-    flag.value = false;
-    prismaRead.mockImplementation(replicaDown as never);
-    await getCachedImageDeliveryMetadata(URL);
-    const [strings, ...values] = prismaWrite.mock.calls[0] as unknown as [
-      TemplateStringsArray,
-      ...unknown[]
-    ];
-    const prismaStatement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
-    const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
-    expect(squash(IMAGE_DELIVERY_METADATA_PG_SQL)).toBe(squash(prismaStatement.text));
+    const prismaStatement = statementOf(prismaRead.mock.calls[0]);
+    expect(pgRead.mock.calls[0]).toEqual([prismaStatement.text, prismaStatement.values]);
+    // Placeholders node-pg understands, values in placeholder order.
+    expect(prismaStatement.text).toMatch(
+      /url = \$1\s+AND NOT \(\s+ingestion = \$2::"ImageIngestionStatus"/
+    );
     expect(prismaStatement.values).toEqual([URL, 'NotFound']);
-  });
-
-  it('control: the comparison sees a changed statement', () => {
-    const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
-    const changed = Prisma.sql`SELECT id FROM "Image" WHERE url = ${URL}`;
-    expect(squash(IMAGE_DELIVERY_METADATA_PG_SQL)).not.toBe(squash(changed.text));
   });
 });

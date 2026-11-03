@@ -81,73 +81,39 @@ const deliverableSource = Prisma.sql`NOT (
   ingestion = ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus" AND NOT "hideMeta"
 )`;
 
-// The origin statement, as two interchangeable readers of the same rows: Prisma (switch off) and the
-// raw pg pools (switch on, IMAGE_DELIVERY_PG_LOOKUP). Each takes the url and resolves the raw rows, or
-// rejects on a database error. Several rows can share a url (a copied image keeps its source's url);
-// rows sharing a url resolve to the most restrictive setting, hence the ORDER BY.
+// The origin statement: one `Prisma.Sql`, sent unchanged by both drivers. Several rows can share a
+// url (a copied image keeps its source's url); rows sharing a url resolve to the most restrictive
+// setting, hence the ORDER BY. Its `.text` uses `$1`-style placeholders with `.values` in order
+// (the url, then the NotFound status `deliverableSource` binds), which is what node-pg takes.
+const imageDeliveryStatement = (url: string) => Prisma.sql`
+  SELECT
+    id,
+    url,
+    "hideMeta",
+    type,
+    "mimeType"
+  FROM "Image"
+  WHERE url = ${url}
+    AND ${deliverableSource}
+  ORDER BY "hideMeta" DESC
+  LIMIT 1
+`;
+
+// Two interchangeable readers of the same rows: Prisma (switch off) and the raw pg pools (switch on,
+// IMAGE_DELIVERY_PG_LOOKUP). Each takes the url and resolves the raw rows, or rejects on a database
+// error.
 type ImageDeliveryRowsReader = (url: string) => Promise<ImageDeliveryMetadataRow[]>;
 type ImageDeliveryReaders = { read: ImageDeliveryRowsReader; write: ImageDeliveryRowsReader };
 
 const prismaReaders: ImageDeliveryReaders = {
-  read: (url) => dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
-      SELECT
-        id,
-        url,
-        "hideMeta",
-        type,
-        "mimeType"
-      FROM "Image"
-      WHERE url = ${url}
-        AND ${deliverableSource}
-      ORDER BY "hideMeta" DESC
-      LIMIT 1
-    `,
-  write: (url) => dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>`
-        SELECT
-          id,
-          url,
-          "hideMeta",
-          type,
-          "mimeType"
-        FROM "Image"
-        WHERE url = ${url}
-          AND ${deliverableSource}
-        ORDER BY "hideMeta" DESC
-        LIMIT 1
-      `,
+  read: (url) => dbRead.$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url)),
+  write: (url) => dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url)),
 };
 
-// The statement Prisma sends for the template above (`Prisma.sql(...).text`, whitespace aside), with
-// the same two parameters in the same order: the url, then the NotFound ingestion status that
-// `deliverableSource` binds. `image-delivery-pg-lookup.test.ts` pins the two against each other.
-export const IMAGE_DELIVERY_METADATA_PG_SQL = `
-      SELECT
-        id,
-        url,
-        "hideMeta",
-        type,
-        "mimeType"
-      FROM "Image"
-      WHERE url = $1
-        AND NOT (
-  ingestion = $2::"ImageIngestionStatus" AND NOT "hideMeta"
-)
-      ORDER BY "hideMeta" DESC
-      LIMIT 1
-    `;
-
-// A url holding a lone UTF-16 surrogate cannot be encoded as UTF-8. Prisma refuses it with an error
-// (so the replica read fails, the primary read fails the same way, and the request errors); node-pg
-// would instead encode it as U+FFFD and quietly answer not-found. Refusing it here, on both pools,
-// keeps the pg path failing exactly where Prisma fails. Measured by the real-Postgres parity suite.
 const pgRows = (pool: AugmentedPool, url: string): Promise<ImageDeliveryMetadataRow[]> => {
-  if (!url.isWellFormed())
-    return Promise.reject(new Error('image-delivery lookup: url is not well-formed UTF-16'));
+  const statement = imageDeliveryStatement(url);
   return pool
-    .query<ImageDeliveryMetadataRow>(IMAGE_DELIVERY_METADATA_PG_SQL, [
-      url,
-      ImageIngestionStatus.NotFound,
-    ])
+    .query<ImageDeliveryMetadataRow>(statement.text, statement.values)
     .then((result) => result.rows);
 };
 
