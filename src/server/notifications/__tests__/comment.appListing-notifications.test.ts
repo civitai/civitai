@@ -158,6 +158,14 @@ describe('threadUrlMap — appListing resolves by slug', () => {
     });
   });
 
+  it('opens a comic comment on its chapter when the details carry its position', () => {
+    // Position 0 is the first chapter, and falsy: a truthiness check would drop it to the project.
+    for (const threadType of ['comicChapter', 'comicProject'])
+      expect(threadUrlMap(details({ threadType, comicChapterPosition: 0 }))).toBe(
+        `/comics/3310/comic/1?${QUERY}`
+      );
+  });
+
   it('REGRESSION: an appListing payload does not disturb a sibling type on the same details', () => {
     // A stale-binding mutant (reading `appListingSlug` unconditionally) would corrupt these.
     expect(threadUrlMap(details({ threadType: 'model', appListingSlug: SLUG }))).toBe(
@@ -435,7 +443,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article'])
+      'comicChapterPosition', cch.position,
+      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
       THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
@@ -553,7 +562,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article'])
+      'comicChapterPosition', cch.position,
+      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
       THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
@@ -614,7 +624,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article'])
+      'comicChapterPosition', cch.position,
+      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
       THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'

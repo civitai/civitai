@@ -94,7 +94,7 @@ import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
-import { keepOwnReactorIds } from '~/server/utils/reaction-identity';
+import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -6426,40 +6426,14 @@ export const comicsRouter = router({
 
   // ──── Phase 7: Chapter Comments ────
 
-  getChapterThread: comicPublicProcedure
-    .meta({ requiredScope: TokenScope.MediaRead })
-    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
-    .query(async ({ input, ctx }) => {
-      const thread = await dbRead.thread.findUnique({
-        where: {
-          comicProjectId_comicChapterPosition: {
-            comicProjectId: input.projectId,
-            comicChapterPosition: input.chapterPosition,
-          },
-        },
-        select: {
-          id: true,
-          locked: true,
-          commentCount: true,
-          comments: {
-            orderBy: { createdAt: 'asc' },
-            where: ctx.user?.isModerator ? {} : { hidden: false, tosViolation: false },
-            select: commentV2Select,
-          },
-        },
-      });
-
-      if (!ctx.user?.isModerator) keepOwnReactorIds(thread, ctx.user?.id);
-      return thread;
-    }),
-
+  // Not `commentv2.upsert`: a chapter's `Thread` is keyed by project and position, which it cannot
+  // address.
   createChapterComment: comicGuardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .use(rateLimit(commentRateLimits))
     .input(
       z.object({
-        projectId: z.number().int(),
-        chapterPosition: z.number().int().min(0),
+        chapterId: z.number().int(),
         // Sanitised like every other comment write. Without this the row reached both the
         // blocklist guard and the database as raw HTML, so an entity-escaped host
         // (`blocked&#46;example`) carried no literal dot for the link matcher to see and then
@@ -6477,17 +6451,34 @@ export const comicsRouter = router({
       // Before the thread upsert: a rejected comment must not leave a Thread row behind.
       await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator });
 
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: { id: input.chapterId },
+        select: {
+          projectId: true,
+          position: true,
+          name: true,
+          project: { select: { userId: true, name: true } },
+        },
+      });
+      if (!chapter) throw throwNotFoundError('Chapter not found');
+      await throwIfBlockedByOwners({
+        userId: ctx.user.id,
+        ownerIds: [chapter.project.userId],
+        isModerator: ctx.user.isModerator,
+      });
+      const { projectId, position } = chapter;
+
       // Find or create thread for this chapter (upsert avoids race condition)
       const thread = await dbWrite.thread.upsert({
         where: {
           comicProjectId_comicChapterPosition: {
-            comicProjectId: input.projectId,
-            comicChapterPosition: input.chapterPosition,
+            comicProjectId: projectId,
+            comicChapterPosition: position,
           },
         },
         create: {
-          comicProjectId: input.projectId,
-          comicChapterPosition: input.chapterPosition,
+          comicProjectId: projectId,
+          comicChapterPosition: position,
         },
         update: {},
         select: { id: true, locked: true },
@@ -6503,39 +6494,26 @@ export const comicsRouter = router({
           content: input.content,
           threadId: thread.id,
         },
+        select: commentV2Select,
       });
       queueScamScan({ entityType: 'CommentV2', entityId: comment.id });
 
       // Notify the comic project owner (if commenter is not the owner)
-      const project = await dbRead.comicProject.findUnique({
-        where: { id: input.projectId },
-        select: { userId: true, name: true },
-      });
-      const chapter = await dbRead.comicChapter.findUnique({
-        where: {
-          projectId_position: {
-            projectId: input.projectId,
-            position: input.chapterPosition,
-          },
-        },
-        select: { name: true },
-      });
-
-      if (project && project.userId !== ctx.user.id) {
+      if (chapter.project.userId !== ctx.user.id) {
         await createNotification({
           type: 'new-comic-comment',
-          key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
+          key: `new-comic-comment:${projectId}:${position}:${comment.id}`,
           category: NotificationCategory.Comment,
           // Same CommentV2 row is also swept by new-mention / new-thread-response; this shares their
           // dedupe key so the project owner gets one notification, not two.
           dedupeKey: `comment:v2:${comment.id}`,
-          userId: project.userId,
+          userId: chapter.project.userId,
           details: {
-            comicProjectId: String(input.projectId),
-            comicProjectName: project.name,
-            chapterName: chapter?.name ?? `Chapter ${input.chapterPosition + 1}`,
+            comicProjectId: String(projectId),
+            comicProjectName: chapter.project.name,
+            chapterName: chapter.name,
             commenterUsername: ctx.user.username ?? 'Someone',
-            chapterPosition: input.chapterPosition,
+            chapterPosition: position,
             commentId: comment.id,
           },
         }).catch((e) => console.error('Failed to send comic comment notification:', e));
