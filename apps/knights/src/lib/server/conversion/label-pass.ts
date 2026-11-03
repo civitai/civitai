@@ -7,6 +7,7 @@ import {
   hasUnlabelled,
   writeLabelBatch,
   type LabelCursor,
+  logSafely,
   type LabelLog,
 } from './labels';
 
@@ -21,10 +22,7 @@ export type LabelPassResult = {
 
 const DEFAULTS = { budgetMs: 30_000, batchSize: 200 };
 
-/**
- * Writes the labels of every graded vote and every given yes/no answer not yet labelled. Writes are keyed on the data (unlabelled votes), so a cut-short or repeated pass loses and duplicates nothing.
- * A pass that raises is logged at error level and raised again; refusals and give-ups are logged too (counts and hash prefixes only), so label loss shows up in Axiom rather than only in the tick's body.
- */
+/** Writes the labels of every graded vote and every given yes/no answer not yet labelled. Writes are keyed on the data (unlabelled votes), so a cut-short or repeated pass loses and duplicates nothing. */
 export async function runLabelPass(
   db: Kysely<DB>,
   args: {
@@ -128,15 +126,5 @@ async function logPassSummary(
     });
   } catch (error) {
     console.error('knights: could not log the label pass', error);
-  }
-}
-
-/** A log that fails must not change the pass's outcome. */
-async function logSafely(log: PassLog | undefined, event: Record<string, unknown>) {
-  if (!log) return;
-  try {
-    await log(event);
-  } catch (error) {
-    console.error('knights: could not log a label pass event', error);
   }
 }

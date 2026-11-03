@@ -48,7 +48,7 @@ export async function insertVote(
     answer: string;
     /** Why the voter blocked the image: required with Blocked on the rating question, refused with anything else. */
     blockReason?: string | null;
-    /** Server-measured time on the item (`msOnItem`), never a client-sent value; null when unknown. */
+    /** Server-measured, never client-sent. */
     msOnItem?: number | null;
     now: Date;
     lockPlayer?: boolean;

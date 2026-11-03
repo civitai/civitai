@@ -2,10 +2,10 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 
 export type ItemKind = 'queue' | 'hidden' | 'yesno';
 export type ItemRef = { kind: ItemKind; id: number };
-/** An opened token: the item and when the server issued it (null on a token sealed before the issue time was added). */
+/** `issuedAt` is null for a token sealed before issue times existed. */
 export type OpenedItem = ItemRef & { issuedAt: number | null };
 
-/** The longest time on an item that is believed; a page left open for longer says nothing about the judgment. */
+/** Cap on a believed time on an item; a longer gap is an abandoned page. */
 export const MAX_MS_ON_ITEM = 600_000;
 
 const KIND_BYTE: Record<ItemKind, string> = { queue: 'q', hidden: 'h', yesno: 'y' };
@@ -15,7 +15,7 @@ const keyOf = (secret: string) => createHash('sha256').update(`knights-feed:${se
 /**
  * Every feed item is addressed by one of these, hidden check or not, so nothing in the page tells them apart.
  * Encrypted, padded to a fixed size and bound to the player, so it can be neither read, forged nor passed on.
- * It also carries the server's issue time (epoch ms), which is what `msOnItem` measures from; the client cannot set or alter it.
+ * It also carries the issue time (epoch ms) that `msOnItem` measures from; it is inside the sealed token, so the client cannot alter it.
  */
 export function sealItem(
   secret: string,
@@ -51,7 +51,7 @@ export function openItem(secret: string, playerId: number, token: string): Opene
   }
 }
 
-/** Milliseconds from the token's issue to `now`, clamped to 0..`MAX_MS_ON_ITEM`; null when the token carried no issue time. */
+/** Null when the token has no issue time. */
 export function msOnItem(issuedAt: number | null, now: Date): number | null {
   if (issuedAt === null) return null;
   return Math.min(MAX_MS_ON_ITEM, Math.max(0, Math.round(now.getTime() - issuedAt)));

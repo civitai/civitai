@@ -19,6 +19,7 @@
   import { recapLines } from './recap-text';
   import { answerForKey, answerForKeyPress } from './keys';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
+  import { holdToken, itemKey, type HeldToken } from '$lib/item-token';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -37,12 +38,22 @@
   let levelHint = $derived(
     new Map(data.ratingGuide.map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`]))
   );
+  // The sealed token of the item on screen. Dismissing a notice re-runs `load` and reseals the same item; keeping the first token keeps its original issue time.
+  let held: HeldToken | null = null;
+  let itemToken = $derived.by(() => {
+    held = holdToken(
+      held,
+      data.item && data.question ? itemKey(data.item, data.question) : null,
+      data.item?.id ?? null
+    );
+    return held?.token ?? null;
+  });
   // The answer being sent, kept highlighted until the next item arrives.
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
-  let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
+  let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === itemToken);
   let reasonItem = $state<string | null>(null);
-  let choosingReason = $derived(!!data.item && reasonItem === data.item.id);
+  let choosingReason = $derived(!!data.item && reasonItem === itemToken);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
@@ -171,7 +182,7 @@
     onclick={asksReason && option.value === BLOCKED_ANSWER
       ? (event) => {
           event.preventDefault();
-          reasonItem = data.item?.id ?? null;
+          reasonItem = itemToken;
         }
       : undefined}
   >
@@ -342,8 +353,8 @@
         <span class="text">{data.question.prompt}</span>
       </p>
       <div class="stagewrap">
-        {#key data.item.id}
-          {@const itemId = data.item.id}
+        {#key itemToken}
+          {@const itemId = itemToken}
           <ImageStage
             src={data.item.src}
             width={data.item.width}
@@ -357,13 +368,13 @@
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
         <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
-          <input type="hidden" name="item" value={data.item.id} />
+          <input type="hidden" name="item" value={itemToken} />
           {#each data.question.options as option, index (option.value)}
             {@render pill(option, index, imageFailed, asksBlockReason(data.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
-          <input type="hidden" name="item" value={data.item.id} />
+          <input type="hidden" name="item" value={itemToken} />
           <button type="submit" class="quiet" disabled={submitting}>
             Skip<span class="space">&nbsp;·&nbsp;Space</span>
           </button>

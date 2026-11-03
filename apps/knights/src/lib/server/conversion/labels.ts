@@ -10,8 +10,20 @@ const MAX_REFUSALS = 5;
 /** A vote the store refused, or whose write raised, is not tried again for this long, so a short outage cannot use up its refusals. */
 const RETRY_AFTER_MINUTES = 10;
 
-/** Receives the pass's log events (Axiom in production). */
 export type LabelLog = (event: Record<string, unknown>) => unknown;
+
+/** A log that fails must not change the pass's outcome. */
+export async function logSafely(log: LabelLog | undefined, event: Record<string, unknown>) {
+  if (!log) return;
+  try {
+    await log(event);
+  } catch (error) {
+    console.error('knights: could not log a label pass event', error);
+  }
+}
+
+/** The first characters of the store's player hash, which is the last segment of a ref (a yes/no id may hold colons). */
+export const refPrefix = (ref: string) => ref.slice(ref.lastIndexOf(':') + 1).slice(0, 12);
 
 export type LabelCursor = { settledAt: Date; itemId: number; playerId: number };
 export type LabelBatch = {
@@ -65,7 +77,6 @@ type BatchArgs = {
   /** Restricts the batch to one vote (the row-by-row fallback). */
   only?: { itemId: number; playerId: number };
   kind?: LabelKind;
-  /** Told of each vote given up on. */
   log?: LabelLog;
 };
 
@@ -75,29 +86,36 @@ type Row = {
   settledAt: Date;
   written: boolean;
   done: boolean;
-  /** Done because the store refused it too often, not because it was labelled or has no image. */
+  /** Done by exhausting refusals, not by being labelled or having no image. */
   gaveUp: boolean;
   ref: string | null;
 };
 
-/** A give-up is logged by item and the first characters of the store's own player hash, never a user id. A log that fails never stops the pass. */
+/** The same keyed prefix the batch path logs; null when the store's hash cannot be read, which is likely why the vote raised. */
+async function keyedPrefix(db: Kysely<DB>, playerId: number): Promise<string | null> {
+  try {
+    const { rows } = await sql<{ prefix: string }>`
+      SELECT left(label_store.person_hash('labeller', ${playerId}::integer), 12) AS prefix
+    `.execute(db);
+    return rows[0]?.prefix ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Logs the store's player-hash prefix, never a user id (public log sink). */
 async function logGaveUp(
   log: LabelLog | undefined,
   kind: LabelKind,
   itemId: number,
-  refPrefix: string
+  prefix: string | null
 ) {
-  if (!log) return;
-  try {
-    await log({
-      type: 'error',
-      name: 'knights-label-given-up',
-      message: `A ${kind} vote was refused ${MAX_REFUSALS} times by the label store and will not be labelled`,
-      details: { kind, itemId, refPrefix },
-    });
-  } catch (error) {
-    console.error('knights: could not log a given-up label', error);
-  }
+  await logSafely(log, {
+    type: 'error',
+    name: 'knights-label-given-up',
+    message: `A ${kind} vote was refused ${MAX_REFUSALS} times by the label store and will not be labelled`,
+    details: { kind, itemId, refPrefix: prefix },
+  });
 }
 
 /** The SQL that differs between the two kinds of vote. */
@@ -213,8 +231,7 @@ async function runBatch(
     ORDER BY o."settledAt", o."itemId", o."playerId"
   `.execute(db);
   for (const r of rows) {
-    if (r.gaveUp)
-      await logGaveUp(log, kind, Number(r.itemId), String(r.ref).split(':')[2].slice(0, 12));
+    if (r.gaveUp) await logGaveUp(log, kind, Number(r.itemId), refPrefix(String(r.ref)));
   }
   return rows;
 }
@@ -283,15 +300,19 @@ async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatc
   for (const key of keys) {
     const only = { itemId: Number(key.itemId), playerId: Number(key.playerId) };
     const ref = raisedRef(only.itemId, only.playerId);
-    const { rows: counted } = await sql<{ n: number; prefix: string }>`
-      SELECT count(*)::int AS n, left(label_store.text_hash(${only.playerId}::text), 12) AS prefix
-      FROM label_store.record_failure f WHERE f."sourceRef" = ${ref}
+    const { rows: counted } = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM label_store.record_failure f WHERE f."sourceRef" = ${ref}
     `.execute(db);
     if (Number(counted[0].n) >= MAX_REFUSALS) {
       await sql`UPDATE "KnightsVote" SET "labelled" = true WHERE "itemId" = ${only.itemId} AND "playerId" = ${only.playerId}`.execute(
         db
       );
-      await logGaveUp(args.log, args.kind ?? 'rating', only.itemId, counted[0].prefix);
+      await logGaveUp(
+        args.log,
+        args.kind ?? 'rating',
+        only.itemId,
+        await keyedPrefix(db, only.playerId)
+      );
       continue;
     }
     const { rows: recent } = await sql<{ n: number }>`

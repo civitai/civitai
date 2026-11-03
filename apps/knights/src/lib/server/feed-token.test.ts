@@ -63,3 +63,16 @@ describe('time on item', () => {
     expect(msOnItem(null, at(1_000))).toBeNull();
   });
 });
+
+describe('the fixed token size', () => {
+  it('holds the worst-case payload: the largest player id, the smallest item id and a 13-digit time', () => {
+    const player = 2_147_483_647;
+    const worst = sealItem('s', player, { kind: 'hidden', id: -2_147_483_648 }, 9_999_999_999_999);
+    expect(openItem('s', player, worst)).toEqual({
+      kind: 'hidden',
+      id: -2_147_483_648,
+      issuedAt: 9_999_999_999_999,
+    });
+    expect(`h:${player}:${-2_147_483_648}:${9_999_999_999_999}`.length).toBeLessThanOrEqual(40);
+  });
+});
