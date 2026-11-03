@@ -26,6 +26,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
 import type { TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
+import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
@@ -241,7 +242,13 @@ export async function setTurfOptIn(eventName: string, userId: number, optedIn: b
 // #endregion
 
 // #region map
-type StickerRow = TurfStickerRow & { imageId: number };
+type StickerRow = TurfStickerRow & {
+  imageId: number;
+  id: bigint;
+  data: Prisma.JsonValue;
+  // The feed draws it: the placer is not banned or deleted (getTurfStickersForImages' rule).
+  drawable: boolean;
+};
 
 // The live stickers on images anyone may see (imageVisible), oldest first per image. The owner's opt-in only gates
 // new placements: an opt-out leaves what was placed counting. A placer earns with an account from
@@ -253,7 +260,8 @@ type StickerRow = TurfStickerRow & { imageId: number };
 // names the players credited when the action happened.
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
   return db.$queryRaw<StickerRow[]>`
-    SELECT s."imageId", s."userId", s.team, s."cosmeticId", s."createdAt",
+    SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
+      (u."bannedAt" IS NULL AND u."deletedAt" IS NULL) AS drawable,
       COALESCE(((u."createdAt" < ${event.startDate}
           OR CASE WHEN jsonb_typeof(u.meta -> 'scores' -> 'total') = 'number'
             THEN (u.meta -> 'scores' ->> 'total')::numeric ELSE 0 END >= (
@@ -294,13 +302,15 @@ function computeImages(
   }
   const entries = new Map<string, TurfEntry>();
   const counts = new Map<string, TurfCounts>();
+  const stickers = new Map<string, FeedSticker[]>();
   for (const [imageId, list] of byImage) {
     const key = `Image:${imageId}`;
     const result = computeImageTurf(list, credited, (team) => cosmetics.get(team));
     counts.set(key, result.counts);
+    stickers.set(key, pickFeedStickers(list));
     if (result.entry) entries.set(key, result.entry);
   }
-  return { entries, counts };
+  return { entries, counts, stickers };
 }
 
 // Hash first, then the log, as the hat map does: followers re-read the hash for each logged key.
@@ -331,7 +341,7 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
     Prisma.sql`s."imageId" = ANY(${imageIds}::int[])`,
     dbWrite
   );
-  const { entries, counts } = computeImages(event, rows, await teamCosmetics(event), now);
+  const { entries, counts, stickers } = computeImages(event, rows, await teamCosmetics(event), now);
   const keys = imageIds.map((id) => `Image:${id}`);
   const values = await sysRedis.hmGet(turfKeys(event.name).map, keys);
   const current: Record<string, string> = {};
@@ -349,7 +359,7 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
     if (value === before[i]) continue;
     if (value) await sysRedis.hSet(countsKey, k, value);
     else await sysRedis.hDel(countsKey, k);
-    changes.push({ imageId: imageIds[i], counts: c ?? null });
+    changes.push({ imageId: imageIds[i], counts: c ?? null, stickers: stickers.get(k) ?? [] });
   }
   await pushTurfCounts(event.name, changes);
 }
@@ -359,6 +369,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const cosmetics = await teamCosmetics(event);
   const entries = new Map<string, TurfEntry>();
   const counts = new Map<string, TurfCounts>();
+  const stickers = new Map<string, FeedSticker[]>();
   let after = 0;
   for (;;) {
     // Keyset over image ids through the live-sticker index, never a scan of Image.
@@ -377,6 +388,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     const part = computeImages(event, rows, cosmetics, now);
     part.entries.forEach((v, k) => entries.set(k, v));
     part.counts.forEach((v, k) => counts.set(k, v));
+    part.stickers.forEach((v, k) => stickers.set(k, v));
   }
   const { kept, dropped } = capTurfMap(entries, event.turf.mapMaxEntries);
   if (dropped)
@@ -400,8 +412,12 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     await Promise.all(part.map((k) => sysRedis.hDel(keys.counts, k)));
   const imageIdOf = (k: string) => Number(k.slice('Image:'.length));
   await pushTurfCounts(event.name, [
-    ...countDiff.set.map(([k]) => ({ imageId: imageIdOf(k), counts: counts.get(k) ?? null })),
-    ...countDiff.remove.map((k) => ({ imageId: imageIdOf(k), counts: null })),
+    ...countDiff.set.map(([k]) => ({
+      imageId: imageIdOf(k),
+      counts: counts.get(k) ?? null,
+      stickers: stickers.get(k) ?? [],
+    })),
+    ...countDiff.remove.map((k) => ({ imageId: imageIdOf(k), counts: null, stickers: [] })),
   ]);
   return { images: counts.size, turf: kept.size, dropped, ...written };
 }
@@ -514,6 +530,51 @@ export async function getTurfStickers(
       ? { createdAt: last.createdAt.toISOString(), id: last.id.toString() }
       : null;
   return { stickers, mine: mine[0] ?? null, nextCursor };
+}
+
+export type FeedSticker = {
+  id: string;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: Prisma.JsonValue;
+};
+
+/**
+ * getTurfStickersForImages' pick over one image's rows already read, so a push can carry what a feed
+ * card would read back: drawable only, ranked as that SQL ranks. Change both or neither.
+ */
+export function pickFeedStickers(
+  rows: readonly Pick<
+    StickerRow,
+    'id' | 'userId' | 'team' | 'cosmeticId' | 'data' | 'createdAt' | 'drawable'
+  >[],
+  perImage = TURF_FEED_STICKERS
+): FeedSticker[] {
+  const newestFirst = rows
+    .filter((r) => r.drawable)
+    .sort(
+      (a, b) =>
+        b.createdAt.getTime() - a.createdAt.getTime() || (b.id > a.id ? 1 : b.id < a.id ? -1 : 0)
+    );
+  const seen = new Map<string, number>();
+  const ranked = newestFirst.map((row) => {
+    const teamRank = (seen.get(row.team) ?? 0) + 1;
+    seen.set(row.team, teamRank);
+    return { row, teamRank };
+  });
+  // sort is stable, so within one teamRank the newest-first order above stands.
+  return ranked
+    .filter((r) => r.teamRank <= perImage)
+    .sort((a, b) => a.teamRank - b.teamRank)
+    .slice(0, perImage)
+    .map(({ row }) => ({
+      id: String(row.id),
+      userId: row.userId,
+      team: row.team,
+      cosmeticId: row.cosmeticId,
+      data: row.data,
+    }));
 }
 
 /**

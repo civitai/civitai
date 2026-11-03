@@ -7,7 +7,11 @@ const h = vi.hoisted(() => ({
   mark: vi.fn(),
   fetch: vi.fn(async () => ({} as Record<number, unknown[]>)),
   push: undefined as undefined | ((raw: unknown) => void),
+  // Every mounted provider's push handler: one per simulated viewer.
+  viewers: new Set<(raw: unknown) => void>(),
+  utils: undefined as unknown,
 }));
+h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
 
 const summary = (leader: string, hatted = false) => ({
   shown: { blue: 2, pink: 1 },
@@ -22,6 +26,7 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: (_message: string, cb: (raw: unknown) => void) => {
     h.push = cb;
+    h.viewers.add(cb);
   },
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -76,7 +81,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                   ),
           }));
         },
-        useUtils: () => ({ hatTurf: { getStickersForImages: { fetch: h.fetch } } }),
+        useUtils: () => h.utils,
       }
     ),
   };
@@ -111,6 +116,7 @@ beforeEach(() => {
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
+  h.viewers.clear();
   latest = null;
 });
 afterEach(() => cleanup());
@@ -199,5 +205,65 @@ describe('TurfSummaryProvider', () => {
     const last = h.mark.mock.calls.slice(-3).map(([arg]) => arg.imageIds.length);
     expect(last).toEqual([50, 50, 20]);
     stops.forEach((stop) => stop());
+  });
+});
+
+describe('one hot image: K viewers × P pushes', () => {
+  const K = 20;
+  const P = 10;
+  const HOT = 7;
+  const counts = { shown: { pink: 5 }, counted: { pink: 5 }, leader: 'pink', leaderCosmeticId: 12 };
+  const pushed = [{ id: '70', userId: 3, team: 'pink', cosmeticId: 12, data: { x: 0.2, y: 0.3 } }];
+
+  let probes: ReturnType<typeof useTurfFeed>[] = [];
+  function Viewer({ n }: { n: number }) {
+    probes[n] = useTurfFeed();
+    return null;
+  }
+  const mountViewers = () =>
+    renderWithProviders(
+      <>
+        {ids(K, 0).map((n) => (
+          <TurfSummaryProvider key={n} imageIds={[HOT]}>
+            <Viewer n={n} />
+          </TurfSummaryProvider>
+        ))}
+      </>
+    );
+  // Each push 1s after the last: past main's 800ms debounce, so main reads once per push per viewer.
+  const firePushes = async (extra: Record<string, unknown>) => {
+    for (let p = 0; p < P; p++) {
+      act(() =>
+        h.viewers.forEach((cb) => cb({ event: 'birthday2026', imageId: HOT, counts, ...extra }))
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    await vi.advanceTimersByTimeAsync(30_000);
+  };
+
+  beforeEach(() => {
+    probes = [];
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  // Before this fix every viewer read on every push: 200 reads here, K × P.
+  test('pushes that carry the stickers cost no reads, and every viewer draws them', async () => {
+    await mountViewers();
+    expect(h.viewers.size).toBe(K);
+    await firePushes({ stickers: pushed });
+    expect(h.fetch).toHaveBeenCalledTimes(0);
+    await vi.waitFor(() =>
+      expect(probes.map((v) => v!.stickers[HOT])).toEqual(Array(K).fill(pushed))
+    );
+  });
+
+  test('pushes without stickers (an older server) read at most once per 10s per viewer', async () => {
+    await mountViewers();
+    expect(h.viewers.size).toBe(K);
+    await firePushes({});
+    // P pushes over ~10s: the first read, then one trailing read after the 10s floor.
+    expect(h.fetch.mock.calls.length).toBeLessThanOrEqual(2 * K);
+    expect(h.fetch.mock.calls.length).toBeGreaterThanOrEqual(K);
   });
 });
