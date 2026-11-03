@@ -257,7 +257,7 @@ export const donateToGoal = async ({
     throw new Error('User cannot donate to their own goal');
   }
 
-  if (goal.entityType === 'ModelVersion') {
+  if (goal.entityType === 'ModelVersion' && goal.entityId != null) {
     const version = await dbRead.modelVersion.findUnique({
       where: { id: goal.entityId },
       select: { baseModel: true },

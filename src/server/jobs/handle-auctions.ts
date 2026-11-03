@@ -33,6 +33,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
 import { AuctionType, BuzzAccountType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import { stopsCreatorEarnings } from '~/server/common/constants';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
@@ -85,7 +86,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
     }
     if (steps.includes('3')) {
       log('Running step 3');
-      await createRecurringBids(now);
+      await _createRecurringBids(now);
       log('-----------');
     }
     if (steps.includes('4')) {
@@ -113,7 +114,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
       }
 
       if (currentStep <= 2) {
-        await createRecurringBids(now);
+        await _createRecurringBids(now);
         await dbKV.set(kvKey, 3);
         log('-----------');
       }
@@ -579,7 +580,7 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
   });
 };
 
-const createRecurringBids = async (now: Dayjs) => {
+export const _createRecurringBids = async (now: Dayjs) => {
   // Insert recurring bids today's auction
   const recurringBids = await dbWrite.bidRecurring.findMany({
     where: {
@@ -653,16 +654,20 @@ const createRecurringBids = async (now: Dayjs) => {
           continue;
         }
 
-        // If green accountType, re-validate safety before charging
-        if (
-          recurringBid.accountType === 'green' &&
-          recurringBid.auctionBase.type === AuctionType.Model
-        ) {
+        if (recurringBid.auctionBase.type === AuctionType.Model) {
           const mv = await dbWrite.modelVersion.findFirst({
             where: { id: recurringBid.entityId },
-            select: { model: { select: { nsfw: true, poi: true, minor: true } } },
+            select: { baseModel: true, model: { select: { nsfw: true, poi: true, minor: true } } },
           });
-          if (!mv || mv.model.nsfw || mv.model.poi || mv.model.minor) {
+          if (mv && stopsCreatorEarnings(mv.baseModel)) {
+            log(`Skipping recurring bid ${recurringBid.id}: not commercially available`);
+            continue;
+          }
+          // If green accountType, re-validate safety before charging
+          if (
+            recurringBid.accountType === 'green' &&
+            (!mv || mv.model.nsfw || mv.model.poi || mv.model.minor)
+          ) {
             log(`Skipping recurring bid ${recurringBid.id}: model not allowed on green`);
             continue;
           }
