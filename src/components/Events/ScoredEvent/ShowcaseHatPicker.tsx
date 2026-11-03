@@ -3,6 +3,7 @@ import { IconCheck, IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ShowcaseHatPickerToggle } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isShowcaseLive, SHOWCASE_EVENT } from '~/shared/constants/showcase-hat.constants';
@@ -67,6 +68,7 @@ function ShowcaseHatModal({ event, color }: { event: string; color?: string }) {
           It shows on your avatar on your profile, your creator card, your comments and the team
           roster until the event ends. It stays on your content too.
         </Text>
+        <ShowcaseHatPickerToggle />
         <SimpleGrid cols={{ base: 3, xs: 4 }} spacing="sm">
           <Tile
             selected={pick === null}
