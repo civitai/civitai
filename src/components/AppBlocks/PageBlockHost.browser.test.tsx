@@ -1989,7 +1989,7 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
-  test('🔴 Review is IDEMPOTENT — two clicks open ONE modal, not two', async () => {
+  test('🔴 Review is IDEMPOTENT — two clicks open ONE modal, not two', { repeats: 40 }, async () => {
     // `dialogStore.trigger` dedupes on `id` and nothing else; with none passed it
     // falls back to `Date.now()`, so two clicks in different milliseconds stacked
     // two consent modals. Latent while the only caller was a message handler —
