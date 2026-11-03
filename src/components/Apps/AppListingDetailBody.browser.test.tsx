@@ -754,8 +754,22 @@ describe('AppListingDetailBody', () => {
     );
   });
 
-  test('🔴 the category is a plain badge, NOT a link (the store has no category route)', async () => {
+  test('🔴 the header category badge LINKS to the store filtered to that category', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-category')).toBeInTheDocument();
+    const badge = container.querySelector('[data-testid="apps-listing-category"]') as HTMLElement;
+    // The exact URL the store's own category filter writes (`/apps?category=<stored value>`),
+    // a literal — not read back from the helper that builds it.
+    expect(badge.tagName).toBe('A');
+    expect(badge.getAttribute('href')).toBe('/apps?category=utility');
+    expect(badge.getAttribute('target')).toBeNull();
+    expect(badge.textContent).toBe('Utility');
+  });
+
+  test('a category the store cannot filter by stays a plain badge (no link to an unfiltered grid)', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'hats' })} />
+    );
     await expect.element(within.getByTestId('apps-listing-category')).toBeInTheDocument();
     const badge = container.querySelector('[data-testid="apps-listing-category"]') as HTMLElement;
     expect(badge.tagName).not.toBe('A');
@@ -896,6 +910,59 @@ describe('AppListingDetailBody', () => {
     );
     expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
   });
+
+  test('🔴 the Details CATEGORY row links to the store filtered to that category', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="category"]') as HTMLElement;
+    const link = row.querySelector('a') as HTMLAnchorElement | null;
+    expect(link, 'the category value must be a link').not.toBeNull();
+    expect(link!.getAttribute('href')).toBe('/apps?category=games');
+    // Same-site navigation: no new tab (that contract belongs to the outbound Source link).
+    expect(link!.getAttribute('target')).toBeNull();
+    expect(link!.textContent).toBe('Games');
+  });
+
+  test('the Details category row is NOT a link in the moderator preview', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} preview />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="category"]') as HTMLElement;
+    // Positive control: the row and its value ARE there.
+    expect(row.textContent).toContain('Games');
+    expect(row.querySelector('a')).toBeNull();
+  });
+
+  // 🔴 One pill per rung, each with its colour as a LITERAL — the site's browsing-level
+  // colours (PG green, PG-13 yellow, R orange, X red; G shares PG's ceiling). An
+  // out-of-ladder value must be gray, never the "safe" green. Read off the Badge's own
+  // `--badge-bg` variable, which Mantine writes inline (no CSS is loaded in this tier).
+  for (const [rating, label, color] of [
+    ['g', 'G', 'green'],
+    ['pg', 'PG', 'green'],
+    ['pg13', 'PG-13', 'yellow'],
+    ['r', 'R', 'orange'],
+    ['x', 'X', 'red'],
+    ['nc17', 'nc17', 'gray'],
+  ] as const) {
+    test(`🔴 the content rating "${rating}" renders as a ${color} pill`, async () => {
+      const { container, within } = await renderScoped(
+        <AppListingDetailBody detail={base({ contentRating: rating })} />
+      );
+      await expect
+        .element(within.getByTestId('apps-listing-details-accordion'))
+        .toBeInTheDocument();
+      const pill = container.querySelector(
+        '[data-listing-detail-row="rating"] [data-listing-detail-pill="rating"]'
+      ) as HTMLElement | null;
+      expect(pill, 'the rating must render as a pill').not.toBeNull();
+      expect(pill!.textContent).toBe(label);
+      expect(pill!.getAttribute('style') ?? '').toContain(`var(--mantine-color-${color}-filled)`);
+    });
+  }
 
   test('🔴 a null field omits its row (positive control paired)', async () => {
     // Control: with a contentRating the `rating` row exists (asserted above). Here it

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   APPS_STORE_DEFAULTS,
+  appsStoreCategoryHref,
   appsStoreFiltersToQuery,
   countActiveAppsStoreFilters,
   hasActiveAppsStoreFilters,
@@ -163,5 +164,31 @@ describe('hasActiveAppsStoreFilters — the empty state, DELIBERATELY broader', 
   test('a dropdown filter alone is enough', () => {
     expect(hasActiveAppsStoreFilters({ kind: 'offsite', category: null, query: '' })).toBe(true);
     expect(hasActiveAppsStoreFilters({ kind: 'all', category: 'other', query: '' })).toBe(true);
+  });
+});
+
+describe('appsStoreCategoryHref — the store filtered to one category', () => {
+  test('a known category → exactly `/apps?category=<value>` (literals, not re-derived)', () => {
+    expect(appsStoreCategoryHref('utility')).toBe('/apps?category=utility');
+    expect(appsStoreCategoryHref('games')).toBe('/apps?category=games');
+  });
+
+  test('the link READS BACK as that one filter and nothing else', () => {
+    // The relationship that makes it a working link: the store's own parser, fed the
+    // link's query string, lands on the category with every other filter at its default.
+    const href = appsStoreCategoryHref('generation')!;
+    const query = Object.fromEntries(new URL(href, 'https://x.invalid').searchParams);
+    expect(parseAppsStoreFilters(query)).toEqual({
+      ...APPS_STORE_DEFAULTS,
+      category: 'generation',
+    });
+  });
+
+  test('an unknown, empty or absent category → null (never a link to the unfiltered grid)', () => {
+    // Positive control above: a known value DOES produce an href.
+    expect(appsStoreCategoryHref('hats')).toBeNull();
+    expect(appsStoreCategoryHref('')).toBeNull();
+    expect(appsStoreCategoryHref(null)).toBeNull();
+    expect(appsStoreCategoryHref(undefined)).toBeNull();
   });
 });

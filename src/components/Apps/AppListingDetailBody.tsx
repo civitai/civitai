@@ -20,10 +20,8 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import {
-  IconAlertTriangle,
   IconApps,
   IconArrowLeft,
-  IconCheck,
   IconClock,
   IconDownload,
   IconEyeOff,
@@ -44,13 +42,10 @@ import {
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
-import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
-import {
-  SCOPE_DESCRIPTIONS,
-  SCOPE_PLAIN_TITLES,
-} from '~/server/services/blocks/scope-descriptions.constants';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
+import { ListingPermissionsDisclosure } from '~/components/Apps/ListingPermissionsDisclosure';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
@@ -638,66 +633,6 @@ function ScreenshotGallery({
   );
 }
 
-/**
- * The live page's permission disclosure, in plain language: one sentence per permission, a marker
- * on the sensitive ones, no scope ids. The moderator preview keeps the id-level `BlockScopeList`
- * (a moderator is approving the ids themselves).
- *
- * A scope with no plain title falls back to its description, then to the id, so a new scope is
- * never silently dropped from the disclosure.
- */
-function PermissionsCard({ scopes }: { scopes: string[] }) {
-  return (
-    <Card withBorder data-testid="apps-listing-permissions">
-      <Group gap="xs" mb="sm">
-        <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-          <IconShieldCheck size={14} />
-        </ThemeIcon>
-        <Title order={4}>This app can…</Title>
-      </Group>
-      <Stack gap="sm">
-        {scopes.map((scope) => {
-          const title = SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? scope;
-          const detailLine = SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined;
-          const sensitive = isSensitiveBlockScope(scope);
-          return (
-            <Group
-              key={scope}
-              gap="sm"
-              wrap="nowrap"
-              align="flex-start"
-              data-permission-row={scope}
-            >
-              <ThemeIcon
-                variant="light"
-                color={sensitive ? 'orange' : 'green'}
-                size="sm"
-                radius="xl"
-                mt={2}
-              >
-                {sensitive ? <IconAlertTriangle size={12} /> : <IconCheck size={12} />}
-              </ThemeIcon>
-              <Stack gap={2} style={{ minWidth: 0 }}>
-                <Group gap="xs" wrap="wrap">
-                  <Text size="sm" fw={500}>
-                    {title}
-                  </Text>
-                  {sensitive && <SensitiveScopeBadge size="sm" />}
-                </Group>
-                {detailLine && (
-                  <Text size="xs" c="dimmed">
-                    {detailLine}
-                  </Text>
-                )}
-              </Stack>
-            </Group>
-          );
-        })}
-      </Stack>
-    </Card>
-  );
-}
-
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
@@ -884,6 +819,30 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                   >
                     {row.value}
                   </Anchor>
+                ) : row.storeHref ? (
+                  // SAME-SITE store link (the category row → `/apps` filtered to it): a
+                  // client-side `Link`, no new tab. See `storeHref` in
+                  // `appListingDetailRows.ts` for why it is not `href`.
+                  <Anchor
+                    component={Link}
+                    size="sm"
+                    href={row.storeHref}
+                    underline="always"
+                    data-listing-detail-link={row.key}
+                  >
+                    {row.value}
+                  </Anchor>
+                ) : row.pillColor ? (
+                  // The content rating as a coloured pill, in the site's browsing-level
+                  // colours (`offsiteContentRatingColor`).
+                  <Badge
+                    size="sm"
+                    variant="filled"
+                    color={row.pillColor}
+                    data-listing-detail-pill={row.key}
+                  >
+                    {row.value}
+                  </Badge>
                 ) : (
                   <Text
                     size="sm"
@@ -1012,6 +971,7 @@ export function AppListingDetailBody({
       ? primaryAction.href
       : null;
   const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
+  const categoryHref = appsStoreCategoryHref(detail.category);
 
   return (
     <Stack gap="lg">
@@ -1171,13 +1131,29 @@ export function AppListingDetailBody({
                 {detail.category && (
                   <>
                     <Divider orientation="vertical" />
-                    {/* Plain badge, NOT a link. The model page links its category to
-                      `/tag/<name>`; the store has no category-filtered ROUTE — `/apps`
-                      holds its category filter in client state, not in the URL — so a
-                      link here would either 404 or land on an unfiltered grid. */}
-                    <Badge size="sm" color="blue" data-testid="apps-listing-category">
-                      {marketplaceCategoryLabel(detail.category)}
-                    </Badge>
+                    {/* A LINK to the store filtered to this category, the way the model
+                      page links its category to `/tag/<name>`. The store keeps its
+                      filters in the URL (`appsStoreQueryParams.ts`), and
+                      `appsStoreCategoryHref` builds exactly the URL the store's own
+                      category filter writes. A category the store cannot filter by gets
+                      no href and stays a plain badge — a link there would land on the
+                      unfiltered grid. */}
+                    {categoryHref ? (
+                      <Badge
+                        component={Link}
+                        href={categoryHref}
+                        size="sm"
+                        color="blue"
+                        style={{ cursor: 'pointer' }}
+                        data-testid="apps-listing-category"
+                      >
+                        {marketplaceCategoryLabel(detail.category)}
+                      </Badge>
+                    ) : (
+                      <Badge size="sm" color="blue" data-testid="apps-listing-category">
+                        {marketplaceCategoryLabel(detail.category)}
+                      </Badge>
+                    )}
                   </>
                 )}
               </>
@@ -1372,10 +1348,11 @@ export function AppListingDetailBody({
                 contradictory security claims stacked on one public page. The projection
                 now gates on the client's presence too; read its comment before
                 loosening either side.
-                🔴 It renders the SHARED `ConnectScopeRow`, so the sensitive-risk
-                emphasis reads identically here and on the moderator review surface. It
-                cannot render `connectScopeJustifications` — see its docblock; that is
-                structural, not a convention. */}
+                🔴 It renders through the SHARED `ListingPermissionsDisclosure`, the same
+                component as the on-site section below, so the two listing shapes group
+                and order their permissions identically. It cannot render
+                `connectScopeJustifications` — see its docblock; that is structural, not
+                a convention. */}
             {detail.connectScopes.length > 0 && (
               <ConnectScopesDisclosure scopes={detail.connectScopes} preview={preview} />
             )}
@@ -1449,7 +1426,17 @@ export function AppListingDetailBody({
                   <BlockScopeList scopes={detail.scopes} />
                 </Stack>
               ) : (
-                <PermissionsCard scopes={detail.scopes} />
+                // 🔴 THE SAME RENDERER AS THE CONNECT DISCLOSURE ABOVE. On-site and
+                // off-site permissions used to go through two components — this one a
+                // flat list in stored order, that one grouped with the sensitive scopes
+                // first — so app pages disagreed about how a permission list reads.
+                // Both now render through `ListingPermissionsDisclosure`, grouped and
+                // ordered by `groupListingPermissions`; do not reintroduce a flat path.
+                <ListingPermissionsDisclosure
+                  permissions={blockScopePermissions(detail.scopes)}
+                  title="This app can…"
+                  testId="apps-listing-permissions"
+                />
               ))}
           </Stack>
         </ContainerGrid2.Col>
