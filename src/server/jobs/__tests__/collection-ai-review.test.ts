@@ -1,3 +1,4 @@
+import { ChatError } from '@openrouter/sdk/models/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionReviewService from '~/server/services/ai/collection-review.service';
 import type * as CollectionService from '~/server/services/collection.service';
@@ -66,7 +67,7 @@ const ITEM_ID = 1001;
 
 const config: CollectionAiReviewSchema = {
   enabled: true,
-  model: 'xiaomi/mimo-v2.5',
+  model: 'xiaomi/mimo-v2.6-flash',
   prompt: 'review',
   allowedNsfwLevels: 3,
   escalationAction: 'reject',
@@ -156,6 +157,78 @@ describe('reviewCollection: a failed model call', () => {
       `system:collection-ai-review:attempts:${ITEM_ID}`,
       1
     );
+  });
+
+  it("logs which provider failed and how, which the SDK's message leaves out", async () => {
+    queuePending([pendingItem()]);
+    const body = JSON.stringify({
+      error: {
+        message: 'Provider returned error',
+        code: 502,
+        metadata: {
+          provider_name: 'ExampleProvider',
+          raw: '{"error":{"code":"no_healthy_upstream"}}',
+        },
+      },
+    });
+    reviewImage.mockRejectedValue(
+      new ChatError(
+        {
+          error: { message: 'Provider returned error', code: 502 },
+          request$: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response$: new Response(body, { status: 502 }),
+          body$: body,
+        } as never,
+        {
+          request: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response: new Response(body, { status: 502 }),
+          body,
+        }
+      )
+    );
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'job-error',
+        imageId: 5,
+        error: expect.stringMatching(/provider=ExampleProvider.*upstream_code=no_healthy_upstream/),
+      })
+    );
+  });
+
+  // The provider name is the one kept field that may hold spaces, so it stands in for any kept field
+  // a provider fills with the prompt.
+  it("keeps the submitter's prompt out of the log when a provider repeats it", async () => {
+    const prompt = 'a lighthouse at dusk painted in thick impasto strokes';
+    queuePending([pendingItem({ prompt })]);
+    const body = JSON.stringify({
+      error: { code: 400, metadata: { provider_name: prompt.slice(2, 32) } },
+    });
+    reviewImage.mockRejectedValue(
+      new ChatError(
+        {
+          error: { message: 'Provider returned error', code: 400 },
+          request$: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response$: new Response(body, { status: 400 }),
+          body$: body,
+        } as never,
+        {
+          request: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response: new Response(body, { status: 400 }),
+          body,
+        }
+      )
+    );
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    const logged = loggingMock.logToAxiom.mock.calls.map((call) => JSON.stringify(call[0]));
+    expect(logged.some((line) => line.includes('job-error'))).toBe(true);
+    expect(logged.join('\n')).not.toContain('lighthouse');
   });
 });
 
@@ -483,5 +556,46 @@ describe('reviewCollection: a minor-related escalation', () => {
     await reviewCollection(COLLECTION_ID, config);
 
     expect(minorFlagCalls()).toHaveLength(1);
+  });
+});
+
+describe('reviewCollection: a rating label the rules do not recognise', () => {
+  it('holds the item for a person even though escalations are configured to reject', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: 'mature' });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual([]);
+  });
+
+  it('still rejects a real violation reported alongside it', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: 'mature', sexualContent: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual(['REJECTED']);
+  });
+
+  it('holds the item for a person when the label is missing and nothing else was found', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: undefined });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual([]);
+  });
+
+  it.each([
+    ['real person likeness', { depictsRealPerson: true }],
+    ['photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
+  ])('still rejects %s escalated alongside a missing label', async (_label, observations) => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: undefined, ...observations });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual(['REJECTED']);
   });
 });
