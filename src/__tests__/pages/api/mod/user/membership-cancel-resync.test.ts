@@ -124,6 +124,7 @@ function fakeStripe(
   list: Stripe.Subscription[] = [],
   hooks: {
     updateError?: Error;
+    /** The first retrieve after the update fails. */
     retrieveErrorAfterUpdate?: Error;
     invoiceOnUpdate?: string;
     /** Stripe answers the update but the subscription stays as it was. */
@@ -138,6 +139,7 @@ function fakeStripe(
   const writes: string[] = [];
   const updates: Record<string, unknown>[] = [];
   let updated = false;
+  let retrieveFailed = false;
   const recorder = (path: string): unknown =>
     // A function target, so the proxy is callable at any depth.
     // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -155,7 +157,10 @@ function fakeStripe(
     });
   const subscriptions = {
     retrieve: vi.fn(async (id?: string) => {
-      if (updated && hooks.retrieveErrorAfterUpdate) throw hooks.retrieveErrorAfterUpdate;
+      if (updated && hooks.retrieveErrorAfterUpdate && !retrieveFailed) {
+        retrieveFailed = true;
+        throw hooks.retrieveErrorAfterUpdate;
+      }
       const listed = (list as { id?: string }[]).find((s) => s.id === id && id !== state.id);
       return structuredClone(listed ?? state);
     }),
@@ -170,7 +175,8 @@ function fakeStripe(
         state.metadata = { ...(state.metadata as object), ...(params.metadata as object) };
       if (hooks.ignoreUpdate || !('cancel_at_period_end' in params)) return structuredClone(state);
       state.cancel_at_period_end = params.cancel_at_period_end;
-      state.canceled_at = params.cancel_at_period_end ? NOW : null;
+      // Not NOW: the ban flow's mark must carry Stripe's canceled_at, not the clock.
+      state.canceled_at = params.cancel_at_period_end ? NOW - 5 : null;
       if (params.cancel_at_period_end) state.cancel_at = state.current_period_end;
       else if (!hooks.keepCancelAt) state.cancel_at = null;
       if (hooks.invoiceOnUpdate) state.latest_invoice = hooks.invoiceOnUpdate;
@@ -662,9 +668,10 @@ describe('cancel-at-period-end: after the write', () => {
   });
 
   it('control: an undo that applies cleanly comes back ok', async () => {
-    fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
+    const { updates } = fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
     const { body } = await setCancel(false);
     expect(body).toMatchObject({ ok: true, written: true, problems: [] });
+    expect(updates).toEqual([{ cancel_at_period_end: false }]);
   });
 
   it('a ban landing during an undo puts the cancel back, marked for reinstatement', async () => {
@@ -680,12 +687,44 @@ describe('cancel-at-period-end: after the write', () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: false, written: true });
     expect(body.problems).toContain(
-      'the member was banned or muted during the undo; the cancel was put back'
+      'the member was banned or muted during the undo; it is cancelling again'
     );
     expect(updates[0]).toEqual({ cancel_at_period_end: false });
     expect(updates[1]).toMatchObject({ cancel_at_period_end: true });
-    expect(updates[2]).toMatchObject({ metadata: { [MODERATION_CANCEL_MARK]: String(NOW) } });
+    expect(updates[2]).toMatchObject({ metadata: { [MODERATION_CANCEL_MARK]: String(NOW - 5) } });
     expect(body.after).toMatchObject({ cancelAtPeriodEnd: true });
+  });
+
+  it('a ban during an undo is still caught when the re-read after the update fails', async () => {
+    const restricted = { customerId: 'cus_case', isModerator: false, bannedAt: null, muted: false };
+    const findUser = dbMock.dbWrite.user.findUnique;
+    findUser.mockResolvedValue(restricted);
+    const { updates } = fakeStripe(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }),
+      [],
+      {
+        retrieveErrorAfterUpdate: new Error('socket hang up'),
+        afterUpdate: () => findUser.mockResolvedValue({ ...restricted, bannedAt: new Date() }),
+      }
+    );
+    const { body } = await setCancel(false);
+    expect(body).toMatchObject({ ok: false, written: true });
+    expect(updates[1]).toMatchObject({ cancel_at_period_end: true });
+    expect(body.after).toMatchObject({ cancelAtPeriodEnd: true });
+  });
+
+  it('an undo Stripe ignored, for a member banned meanwhile, says the state it found', async () => {
+    const restricted = { customerId: 'cus_case', isModerator: false, bannedAt: null, muted: false };
+    const findUser = dbMock.dbWrite.user.findUnique;
+    findUser.mockResolvedValue(restricted);
+    fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }), [], {
+      ignoreUpdate: true,
+      afterUpdate: () => findUser.mockResolvedValue({ ...restricted, bannedAt: new Date() }),
+    });
+    const { body } = await setCancel(false);
+    expect(body.problems).toContain(
+      'the member was banned or muted during the undo; it is cancelling again'
+    );
   });
 
   it('a new invoice after the update comes back ok: false, and is audited', async () => {

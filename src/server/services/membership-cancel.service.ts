@@ -193,22 +193,30 @@ export async function previewMembershipCancel({
  * marked, so lifting the restriction resumes it.
  */
 async function recancelIfRestricted(stripe: Stripe, result: MembershipCancelResult) {
-  const user = await dbWrite.user.findUnique({
-    where: { id: result.userId },
-    select: { bannedAt: true, muted: true },
-  });
-  if (!user?.bannedAt && !user?.muted) return [];
+  let failed: string | null = null;
   try {
+    const user = await dbWrite.user.findUnique({
+      where: { id: result.userId },
+      select: { bannedAt: true, muted: true },
+    });
+    if (!user?.bannedAt && !user?.muted) return [];
     await cancelSubscription({ subscriptionId: result.subscriptionId, atPeriodEnd: true });
-    result.after = snapshot(await stripe.subscriptions.retrieve(result.subscriptionId));
-    return ['the member was banned or muted during the undo; the cancel was put back'];
   } catch (e) {
-    return [
-      `the member was banned or muted during the undo, and putting the cancel back failed: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    ];
+    failed = e instanceof Error ? e.message : String(e);
   }
+  // Report what Stripe now holds: the ban flow may have re-cancelled already, or half-done it.
+  const now = await stripe.subscriptions.retrieve(result.subscriptionId).catch(() => null);
+  if (now) result.after = snapshot(now);
+  const state = !now
+    ? 'its state is unknown'
+    : now.cancel_at_period_end
+    ? 'it is cancelling again'
+    : 'it is still renewing';
+  return [
+    failed
+      ? `the ban or mute re-check after the undo failed (${failed}); ${state}`
+      : `the member was banned or muted during the undo; ${state}`,
+  ];
 }
 
 export type MembershipCancelResult = {
@@ -335,10 +343,14 @@ async function setLocked({
     response = await stripe.subscriptions.update(sub.id, {
       cancel_at_period_end: cancelAtPeriodEnd,
     });
-    const after = await stripe.subscriptions.retrieve(sub.id);
-    result.after = snapshot(after);
-    result.problems.push(...verifyCancelChange({ before: sub, after, cancelAtPeriodEnd }));
-    if (!cancelAtPeriodEnd) result.problems.push(...(await recancelIfRestricted(stripe, result)));
+    try {
+      const after = await stripe.subscriptions.retrieve(sub.id);
+      result.after = snapshot(after);
+      result.problems.push(...verifyCancelChange({ before: sub, after, cancelAtPeriodEnd }));
+    } finally {
+      // Even when the re-read failed: a restricted member must not be left renewing.
+      if (!cancelAtPeriodEnd) result.problems.push(...(await recancelIfRestricted(stripe, result)));
+    }
   } catch (e) {
     const type = (e as { type?: string }).type;
     rejected = !response && (type === 'StripeInvalidRequestError' || type === 'StripeCardError');
