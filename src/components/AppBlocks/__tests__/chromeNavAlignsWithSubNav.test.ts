@@ -749,7 +749,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     ).toEqual([]);
   });
 
-  it('the breadcrumb’s first crumb reads "Marketplace" and still links to /apps', () => {
+  it('the breadcrumb’s first crumb reads "Marketplace" and links to the store (/apps/store)', () => {
     const src = code(read(CHROME));
     const anchor = 'data-testid="app-block-breadcrumb-apps"';
     const at = src.indexOf(anchor);
@@ -769,12 +769,13 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const label = region.slice(region.indexOf('>') + 1).trim();
     expect(
       label,
-      'the leading breadcrumb crumb must name `/apps` the way the store does ("Marketplace"), ' +
+      'the leading breadcrumb crumb must name the store the way the store does ("Marketplace"), ' +
         'not "Apps" — a trail that names the page differently from the page’s own tab reads ' +
         'as leading somewhere else.'
     ).toBe('Marketplace');
 
     // …and it is still the LINK, not restyled into text.
-    expect(src.slice(Math.max(0, at - 400), at)).toContain('href="/apps"');
+    // (`/apps/store` since the store moved; `/apps` is now the viewer's "My apps" home.)
+    expect(src.slice(Math.max(0, at - 400), at)).toContain('href="/apps/store"');
   });
 });
