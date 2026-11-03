@@ -50,8 +50,6 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
 
   it.each([
     ['article', 'article'],
-    ['question', 'question'],
-    ['answer', 'answer'],
     ['bounty', 'bounty'],
     ['bountyEntry', 'bountyEntry'],
   ] as const)('resolves the %s owner', async (entityType, table) => {
@@ -389,8 +387,6 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     reviewId: { table: 'resourceReview', ownerKey: 'userId', whereKey: 'id' },
     bountyId: { table: 'bounty', ownerKey: 'userId', whereKey: 'id' },
     bountyEntryId: { table: 'bountyEntry', ownerKey: 'userId', whereKey: 'id' },
-    questionId: { table: 'question', ownerKey: 'userId', whereKey: 'id' },
-    answerId: { table: 'answer', ownerKey: 'userId', whereKey: 'id' },
     model3dId: { table: 'model3D', ownerKey: 'userId', whereKey: 'id' },
     model3dReviewId: { table: 'model3DReview', ownerKey: 'userId', whereKey: 'id' },
     comicProjectId: { table: 'comicProject', ownerKey: 'userId', whereKey: 'id' },

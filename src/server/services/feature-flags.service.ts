@@ -386,7 +386,6 @@ const featureFlags = createFeatureFlags({
   // the Anima ControlNet input (and strip controlNets server-side) without a
   // deploy if the orchestrator side misbehaves.
   animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
-  questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
     toggleable: true,

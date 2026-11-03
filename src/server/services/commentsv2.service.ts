@@ -63,7 +63,7 @@ import {
 } from '~/server/services/commentsv2.reply-threads';
 import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { CommentEntityType } from '~/shared/utils/prisma/enums';
+import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { onCommentCreated, onCommentsRemoved } from '~/server/events/points/hooks';
@@ -266,14 +266,6 @@ export async function getThreadEntityOwnerId({
         .executeTakeFirst();
       return row?.userId ?? null;
     }
-    case 'question':
-      return findUserId(
-        dbRead.question.findUnique({ where: { id: entityId }, select: { userId: true } })
-      );
-    case 'answer':
-      return findUserId(
-        dbRead.answer.findUnique({ where: { id: entityId }, select: { userId: true } })
-      );
     case 'challenge': {
       const row = await dbRead.challenge.findUnique({
         where: { id: entityId },
@@ -658,9 +650,6 @@ export async function toggleSectionMute({
   return { muted: true, threadId: thread.id, hasThread: true };
 }
 
-const isCommentEntityType = (type: string): type is CommentEntityType =>
-  (Object.values(CommentEntityType) as string[]).includes(type);
-
 export async function getSectionMuted({
   entityType,
   entityId,
@@ -679,8 +668,7 @@ export async function getSectionMuted({
 
   // Read what the suppression reads (`CommentTopicMute`), not the `ThreadMute` the toggle writes:
   // the mirror trigger keeps them in step, and if they drift the suppression is what the user
-  // experiences. A retired thread type (question, answer) has no topic.
-  if (!isCommentEntityType(entityType)) return { muted: false, hasThread: true };
+  // experiences.
   const mute = await kyselyRead
     .selectFrom('CommentTopicMute')
     .select('userId')
