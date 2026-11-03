@@ -5,6 +5,8 @@
 /** Mirrors `MEMBERSHIP_EXTEND_MAX_DAYS` in the main app; the endpoint enforces it again. */
 export const MEMBERSHIP_EXTEND_MAX_DAYS = 31;
 export const MEMBERSHIP_EXTEND_REASON_MIN = 10;
+/** Mirrors `MEMBERSHIP_EXTEND_COOLDOWN_DAYS` in the main app, for the panel's wording only. */
+export const MEMBERSHIP_EXTEND_COOLDOWN_DAYS = 25;
 
 export type MembershipExtensionSnapshot = {
   id: string;
@@ -38,4 +40,6 @@ export type MembershipExtensionResult = {
   after: MembershipExtensionSnapshot | null;
   newInvoiceId: string | null;
   problems: string[];
+  /** true: Stripe took the update. false: it refused it, nothing written. null: no answer. */
+  written: boolean | null;
 };

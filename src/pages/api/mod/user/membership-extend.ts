@@ -12,12 +12,12 @@ import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 export default defineModeratorEndpoint('user.membership-extend', {
   summary: 'Give a Stripe member free days: the next charge (or the cancel) moves out by N days.',
   returns:
-    '{ ok, userId, subscriptionId, days, trialEnd, mode, before, after, cancelRestored, newInvoiceId, problems }',
+    '{ ok, userId, subscriptionId, days, trialEnd, mode, before, after, cancelRestored, newInvoiceId, problems, written }',
   notes: [
     'Requires the moderator app permission `user.membership.extend`.',
     `Stripe monthly plans in active or trialing status only; 1 to ${MEMBERSHIP_EXTEND_MAX_DAYS} days; one extension per member in ${MEMBERSHIP_EXTEND_COOLDOWN_DAYS} days; never your own membership.`,
     'Preview first (`/api/mod/user/membership-extend-preview`) and pass its `expectedCurrentPeriodEnd`: a membership that changed since is refused with 409.',
-    '`ok: false` with a 200: the write or its check did not complete cleanly (see `problems`); Stripe may or may not have changed. Check the subscription in Stripe before anything else. Nothing is retried or undone automatically.',
+    '`ok: false` with a 200: the write or its check did not complete cleanly (see `problems`); `written` says whether Stripe took the update (null: unknown). Check the subscription in Stripe before anything else. Nothing is retried or undone automatically.',
   ],
   rateLimit: { max: 5, windowSeconds: 60 },
   input: z.object({

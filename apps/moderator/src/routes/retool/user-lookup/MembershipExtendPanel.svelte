@@ -7,6 +7,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { dateTime } from '$lib/format';
   import {
+    MEMBERSHIP_EXTEND_COOLDOWN_DAYS,
     MEMBERSHIP_EXTEND_MAX_DAYS,
     MEMBERSHIP_EXTEND_REASON_MIN,
     type MembershipExtensionPreview,
@@ -73,7 +74,7 @@
   <h3 class="mb-1 text-sm font-semibold text-white">Extend membership</h3>
   <p class="mb-3 text-xs text-dark-2">
     Gives a Stripe member free days: the next charge, or the cancel, moves out by that many days.
-    Monthly plans only, 1 to {MEMBERSHIP_EXTEND_MAX_DAYS} days, once per member in 25 days.
+    Monthly plans only, 1 to {MEMBERSHIP_EXTEND_MAX_DAYS} days, once per member in {MEMBERSHIP_EXTEND_COOLDOWN_DAYS} days.
   </p>
 
   {#if previewForm.error}
@@ -100,12 +101,15 @@
       </div>
     {:else}
       <div class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-        {#if r.after}
+        {#if r.written === true}
           Stripe was changed, but the check afterwards failed. Do not retry: open the subscription in
           Stripe first.
+        {:else if r.written === false}
+          Stripe refused the change; nothing was written. Preview again once the problem below is
+          resolved.
         {:else}
-          Stripe did not confirm the change; it may or may not have happened. Open the subscription in
-          Stripe before trying again.
+          Stripe did not answer; the change may or may not have happened. Open the subscription in
+          Stripe. A retry is refused for {MEMBERSHIP_EXTEND_COOLDOWN_DAYS} days either way.
         {/if}
         <ul class="mt-1 list-disc pl-5 text-xs">
           {#each r.problems as p (p)}<li>{p}</li>{/each}
