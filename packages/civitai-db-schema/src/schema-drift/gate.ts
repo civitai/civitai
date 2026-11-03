@@ -56,12 +56,11 @@ export interface BaselineFinding {
 /**
  * An ACCEPTED finding: the finding, plus why it was accepted and where that was decided.
  *
- * WHY A REASON IS REQUIRED. The baseline turns a finding into a pass. Before this field, the
- * only record of WHY a given finding passes was a PR description somewhere in the history of a
- * 112-entry JSON file — so "accepted for a reason" and "accepted because someone ran
- * `drift:baseline` to make the gate green" were the same line in the same file. The reason
- * lives on the entry now, the gate fails on an entry without a valid one (`reasonProblems`),
- * and the writer refuses to add one without being told (`acceptIntoBaseline`).
+ * WHY A REASON IS REQUIRED. The baseline turns a finding into a pass, so each entry carries why
+ * it was accepted: otherwise "accepted for a reason" and "accepted because someone ran
+ * `drift:baseline` to make the gate green" read as the same line. The gate fails on an entry
+ * without a valid reason (`reasonProblems`), and the writer refuses to add one without being
+ * told (`acceptIntoBaseline`).
  */
 export interface BaselineEntry extends BaselineFinding {
   /** Why this drift is accepted. See `validateReason` for what counts. */
@@ -566,9 +565,8 @@ export function formatGateResult(
 // ---------------------------------------------------------------------------
 
 /**
- * Shortest reason accepted, after trimming. Long enough that a reason has to say something —
- * "inert ON UPDATE on an id" is 23 — and short enough not to demand an essay for an obvious
- * case. A length floor alone is walkable by padding, which is why the word and placeholder
+ * Shortest reason accepted, after trimming. Long enough that a reason has to say something,
+ * short enough not to demand an essay for an obvious case. A length floor alone is walkable by padding, which is why the word and placeholder
  * checks below exist as well.
  */
 export const MIN_REASON_LENGTH = 20;
