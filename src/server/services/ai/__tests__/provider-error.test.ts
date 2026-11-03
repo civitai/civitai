@@ -72,6 +72,34 @@ describe('describeProviderError', () => {
     expect(text).toContain('Provider returned error');
   });
 
+  // The echoed text is a user's generation prompt, so it can hold any quote or bracket.
+  it.each([
+    ['a quote', 'a "quoted" PROMPT_TAIL'],
+    ['a closing bracket', 'weights [1.2] PROMPT_TAIL'],
+  ])('drops an echoed field whose text contains %s', (_label, prompt) => {
+    const body = JSON.stringify({
+      error: {
+        message: 'Provider returned error',
+        metadata: {
+          raw: JSON.stringify({
+            input: prompt,
+            messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+          }),
+        },
+      },
+    });
+    const text = describeProviderError(chatErrorFrom(body));
+    expect(text).not.toContain('PROMPT_TAIL');
+    expect(text).toContain('Provider returned error');
+  });
+
+  it('drops everything from the first echoed field of a body that will not parse', () => {
+    const cutOff = '{"error":{"message":"bad request","input":"a \\"quoted\\" PROMPT_TAIL and more';
+    const text = describeProviderError(chatErrorFrom(cutOff));
+    expect(text).not.toContain('PROMPT_TAIL');
+    expect(text).toContain('bad request');
+  });
+
   it('strips JSON-escaped and scheme-relative URLs, Basic auth and Google keys', () => {
     const body = String.raw`{"raw":"fetch https:\/\/image.example\/abc\/x.jpeg?sig=s1 and //cdn.example/x?token=t1 failed; Authorization: Basic dXNlcjpwYXNz key AIzaSyA1b2C3d4E5f6G7h8I9j0"}`;
     const text = describeProviderError(chatErrorFrom(body));

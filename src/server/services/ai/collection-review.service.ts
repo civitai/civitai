@@ -34,7 +34,6 @@ const GENERIC_REJECTION = "It doesn't meet this collection's guidelines.";
 // Anything at or above R means the image does not belong on an all-ages surface. 'R+' is what the
 // prompt asks for; the rest are the labels a model reaches for on its own.
 const ADULT_RATINGS = ['r+', 'r', 'x', 'xxx', 'nsfw', 'explicit'];
-// Only these read as safe; an unlisted label, or none, goes to a person rather than approve.
 const SAFE_RATINGS = ['g', 'pg', 'pg-13', 'pg13', 'sfw'];
 
 // The booleans the rules depend on are required: a response missing them is one we cannot read,

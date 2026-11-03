@@ -529,4 +529,13 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
 
     expect(statusWrites()).toEqual([]);
   });
+
+  it('still rejects a real violation reported alongside it', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ nsfwEstimate: 'mature', sexualContent: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(statusWrites()).toEqual(['REJECTED']);
+  });
 });

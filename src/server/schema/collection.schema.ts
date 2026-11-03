@@ -129,8 +129,8 @@ export const getAllUserCollectionsInputSchema = z
 export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.6-flash'] as const;
 type AiReviewModel = (typeof AI_REVIEW_MODELS)[number];
 
-// A stored config outlives the model it names (mimo-v2.5 lost every provider), and a config that
-// fails to parse is skipped by the review job, so an unlisted model reads as the default.
+// A stored config outlives the model it names, and the review job skips a config that fails to
+// parse, so an unlisted model reads as the default.
 const aiReviewModelSchema = z.preprocess(
   (value) => (AI_REVIEW_MODELS.includes(value as AiReviewModel) ? value : undefined),
   z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0])

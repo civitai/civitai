@@ -74,14 +74,21 @@ describe('decideFromObservations', () => {
   });
 
   // The prompt asks for 'R+', but models reach for the labels they know.
-  it.each(['R+', 'R', 'X', 'XXX', 'nsfw'])('treats nsfwEstimate %s as adult content', (rating) => {
-    const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
-    expect(result.violations).toContain('sexual/adult content');
-  });
+  it.each(['R+', 'R', 'X', 'XXX', 'nsfw', 'explicit'])(
+    'treats nsfwEstimate %s as adult content',
+    (rating) => {
+      const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
+      expect(result.decision).toBe('reject');
+      expect(result.violations).toContain('sexual/adult content');
+    }
+  );
 
-  it.each(['PG', 'PG-13'])('does not treat nsfwEstimate %s as adult content', (rating) => {
-    expect(decideFromObservations({ ...clean, nsfwEstimate: rating }).decision).toBe('approve');
-  });
+  it.each(['PG', 'PG-13', 'G', 'pg13', 'SFW'])(
+    'does not treat nsfwEstimate %s as adult content',
+    (rating) => {
+      expect(decideFromObservations({ ...clean, nsfwEstimate: rating }).decision).toBe('approve');
+    }
+  );
 
   it.each(['mature', 'teen', '', undefined])(
     'sends unrecognized nsfwEstimate %j to a human instead of approving',

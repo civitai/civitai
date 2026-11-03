@@ -47,10 +47,41 @@ function safeStringify(value: unknown): string {
 }
 
 // OpenAI-compatible backends echo the offending request field in validation errors, and the
-// request carries the system prompt, so the values of those keys never reach a log.
-const ECHOED_FIELD_PATTERN =
-  /"(input|content|messages|prompt|text|system)"\s*:\s*(?:"(?:[^"\\]|\\.)*"|\[[^\]]*\]?|\{[^}]*\}?)/gi;
-// Scheme, `data:` or scheme-relative; the body is JSON, so `\/` is unescaped first.
+// request carries the system prompt and the submitter's prompt, so those values never reach a log.
+const ECHOED_FIELDS = new Set(['input', 'content', 'messages', 'prompt', 'text', 'system']);
+const ECHOED_KEY_PATTERN = /"(input|content|messages|prompt|text|system)"\s*:/i;
+
+function redactEchoedValue(value: unknown): unknown {
+  if (typeof value === 'string') return redactEchoedText(value);
+  if (Array.isArray(value)) return value.map(redactEchoedValue);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        ECHOED_FIELDS.has(key.toLowerCase()) ? '[redacted]' : redactEchoedValue(item),
+      ])
+    );
+  return value;
+}
+
+// Parsed, not pattern-matched: the echoed text is user-written and can contain any quote or
+// bracket. A body that will not parse (cut off, not JSON) loses everything from the first echoed
+// key on.
+function redactEchoedText(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.stringify(redactEchoedValue(JSON.parse(trimmed)));
+    } catch {
+      // falls through to the truncation below
+    }
+  }
+  const unescaped = text.replace(/\\(["/])/g, '$1');
+  const echoed = ECHOED_KEY_PATTERN.exec(unescaped);
+  return echoed ? `${unescaped.slice(0, echoed.index)}"${echoed[1]}":[redacted]…` : unescaped;
+}
+
+// Scheme, `data:` or scheme-relative.
 const URL_PATTERN = /(?:\b(?:https?:|data:)|(?<![:\w])(?=\/\/[\w-]+\.))(?:\/\/)?[^\s"'<>]+/gi;
 // Bearer/Basic credentials, `sk-`-style and Google API keys, and any long opaque run (signatures,
 // JWT parts, base64).
@@ -64,12 +95,12 @@ export const PROVIDER_ERROR_LOG_LIMIT = 1024;
  * URLs among them) and credential-looking strings removed, capped at ~1 KB.
  */
 export function describeProviderError(error: unknown, maxLength = PROVIDER_ERROR_LOG_LIMIT) {
-  const text = [...new Set(errorTextParts(error))].join('\n') || safeStringify(error);
+  const parts = [...new Set(errorTextParts(error))];
+  const text = (parts.length ? parts : [safeStringify(error)]).map(redactEchoedText).join('\n');
   // A provider's own error usually arrives as a JSON string inside OpenRouter's JSON envelope, so
-  // one level of escaping is undone first or the patterns below cannot see its keys and URLs.
+  // one level of escaping is undone first or the patterns below cannot see its URLs.
   const redacted = text
     .replace(/\\(["/])/g, '$1')
-    .replace(ECHOED_FIELD_PATTERN, '"$1":"[redacted]"')
     .replace(URL_PATTERN, '[url]')
     .replace(TOKEN_PATTERN, '[redacted]');
   return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;

@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   collectionItemId  Int64,
   entityId          Int64,                  -- the reviewed image
   userId            Int32,                  -- always -1 (system); kept for Tracker parity
-  model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.5'
+  model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.6-flash'
   decision          LowCardinality(String), -- what the rules concluded
   appliedAction     LowCardinality(String), -- what was actually done: accept | reject | stamp | none
   violations        Array(LowCardinality(String)),
@@ -135,10 +135,11 @@ collection. Lifting that restriction means fixing the notification path first.
   rejected, and picked up on a later run.
 - **`allowedNsfwLevels`** is a bitmask of `NsfwLevel` flags. Anything outside it is rejected with no
   vision call.
-- **Our own uncertainty never rejects a submission.** A response the rules cannot parse, and a
-  subject whose age the model could not determine, are both left for a human regardless of
-  `escalationAction` — a provider outage must not reject submissions and tell the submitters they
-  broke a rule.
+- **Our own uncertainty never rejects a submission.** A response the rules cannot parse, a subject
+  whose age the model could not determine, and a rating label the rules do not recognize (or none)
+  are all left for a human regardless of `escalationAction` — a provider outage must not reject
+  submissions and tell the submitters they broke a rule. An unrecognized label alongside a real
+  violation still rejects; the label alone never does.
 - **`minorUncertain` alone does not escalate.** The prompt invites that hedge on exactly the
   stylized art these collections are made of, so on its own it would sweep up a large share of
   ordinary submissions. It escalates alongside a sexualized presentation, or when the image is
