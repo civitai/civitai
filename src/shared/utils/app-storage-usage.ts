@@ -1,0 +1,59 @@
+// A viewer's App Blocks document-store usage in one app, against the per-viewer ceiling
+// (`userBytes` / `userDocs`). The one place that decides "near the limit", shared by the
+// account-settings card and the running app's notice so the two cannot disagree.
+
+/** Stored usage, in the store's unit (bytes of the canonical JSON text) and documents. */
+export type StorageFigure = { bytes: number; docs: number };
+
+/**
+ * One viewer's figure in one app, split by what "Empty" does with each part. `private` (their
+ * private documents) always goes; `shared` (the visible posts they authored) goes when they ask
+ * for it; `hidden` (their posts moderation hid) and `counters` (counter documents their increment
+ * created) stay. The parts sum to the figure.
+ */
+export type StorageHoldings = {
+  private: StorageFigure;
+  shared: StorageFigure;
+  hidden: StorageFigure;
+  counters: StorageFigure;
+};
+
+/** The documents an Empty can remove (the shared ones only when asked for). */
+export function clearableDocs(h: StorageHoldings): number {
+  return h.private.docs + h.shared.docs;
+}
+
+/** What no Empty removes, in words, or null when an Empty can remove everything. */
+export function keptStorageNote(h: StorageHoldings): string | null {
+  const kept = h.counters.docs + h.hidden.docs;
+  if (kept === 0) return null;
+  const what = [
+    h.counters.docs > 0 ? 'counters you started' : null,
+    h.hidden.docs > 0 ? 'posts hidden by moderation' : null,
+  ]
+    .filter(Boolean)
+    .join(' and ');
+  return `${kept} ${kept === 1 ? 'item stays' : 'items stay'}: ${what}.`;
+}
+
+/** The per-viewer ceilings of one (app, namespace, user). */
+export type ViewerStorageLimits = { userBytes: number; userDocs: number };
+
+/** From this fraction of either ceiling, the viewer is told they are close to it. */
+export const APP_STORAGE_NEAR_LIMIT_RATIO = 0.8;
+
+/** The fuller of the two ceilings, as a fraction (can exceed 1 after a ceiling was lowered). */
+export function storageUsageRatio(usage: StorageFigure, limits: ViewerStorageLimits): number {
+  const of = (used: number, limit: number) => (limit > 0 ? used / limit : 0);
+  return Math.max(of(usage.bytes, limits.userBytes), of(usage.docs, limits.userDocs));
+}
+
+export function isNearStorageLimit(usage: StorageFigure, limits: ViewerStorageLimits): boolean {
+  return storageUsageRatio(usage, limits) >= APP_STORAGE_NEAR_LIMIT_RATIO;
+}
+
+/** A whole percentage for a bar, clamped to 0–100. */
+export function storagePercent(used: number, limit: number): number {
+  if (limit <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
+}

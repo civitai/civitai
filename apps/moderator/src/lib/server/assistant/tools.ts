@@ -42,9 +42,11 @@ import {
 } from './reads';
 import { getRegistrationEmails, normalizeEmail, redactEmails } from './email';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
+import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 
-// The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
-// rules on a report or messages anyone. The two writes touch only the assistant's own tables.
+// The assistant's tools. Every one but `propose_playbook` and `request_tool` is a READ: no tool bans,
+// mutes, strikes, removes, extends a membership, rules on a report or messages anyone. Those two
+// writes touch only the assistant's own tables.
 //
 // A moderator is offered only the tools whose `requires` pages they hold, so the assistant is never a
 // way round a page grant. Addresses are shown only to a moderator who could read them in User Lookup.
@@ -76,6 +78,8 @@ type Tool<S extends z.ZodType> = {
   input: S;
   /** Any one of these pages opens the data. `null`: every assistant user. */
   requires: string[] | null;
+  /** A permission the moderator must also hold for the tool to be offered at all. */
+  grant?: PermissionId;
   run: (args: z.output<S>, ctx: ToolContext) => Promise<ToolResult>;
   timeoutMs?: number;
   onTimeout?: (args: z.output<S>) => Record<string, unknown>;
@@ -870,6 +874,66 @@ export const TOOLS = [
     },
   }),
 
+  // Membership extension: read the verdict and prefill the panel, nothing more. Do not add a tool that
+  // calls the extend endpoint: it is a money write, and text in a member's profile or a report could
+  // talk the model into one. A person previews and confirms it on the panel.
+  tool({
+    name: 'preview_membership_extension',
+    description: `What extending one account's Stripe membership by N free days (1-${MEMBERSHIP_EXTEND_MAX_DAYS}) would do: the subscription's status and period end, the new end, and every reason it would be refused. Read-only.`,
+    input: z.object({ userId, days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS) }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    // The preview request itself may take 60 s; the loop's default would give up first.
+    timeoutMs: 65_000,
+    run: async ({ userId: id, days }) => {
+      // Lazy: user-actions.service needs the request context (`$app/server`), which a tool module
+      // loaded outside SvelteKit (the pglite suites) does not have.
+      const { previewMembershipExtension } = await import('../user-actions.service');
+      const r = await previewMembershipExtension({ userId: id, days });
+      if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
+      // Status, dates and the verdict only: no Stripe ids for the model provider.
+      const { subscription: sub, problems, trialEndIso, mode } = r.preview;
+      const data = {
+        days,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        newEnd: trialEndIso,
+        mode,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_extension',
+    description:
+      "Hand the moderator a link to this account's Extend membership panel with the days and reason filled in. Nothing is extended: the moderator previews and confirms it there. Only when the moderator asked for an extension.",
+    input: z.object({
+      userId,
+      days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS),
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    run: async ({ userId: id, days, reason }) => {
+      const params = new URLSearchParams({ extendDays: String(days), extendReason: reason });
+      return {
+        data: {
+          proposed: true,
+          extended: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-extend`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
   tool({
     name: 'request_tool',
     description:
@@ -902,8 +966,12 @@ export const TOOLS = [
 
 export type ToolName = (typeof TOOLS)[number]['name'];
 
-export const toolsFor = (ctx: Pick<ToolContext, 'canAccess'>) =>
-  TOOLS.filter((t) => !t.requires || t.requires.some((path) => ctx.canAccess(path)));
+export const toolsFor = (ctx: Pick<ToolContext, 'canAccess' | 'hasGrant'>) =>
+  TOOLS.filter(
+    (t) =>
+      (!t.requires || t.requires.some((path) => ctx.canAccess(path))) &&
+      (!t.grant || ctx.hasGrant(t.grant))
+  );
 
 /**
  * Every tool a playbook may name, with its inputs and the pages that unlock it, for the playbook editor.

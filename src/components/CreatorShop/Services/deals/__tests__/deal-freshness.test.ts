@@ -62,7 +62,12 @@ async function settled(client: QueryClient) {
   for (let i = 0; i < 500; i++) {
     await act(() => new Promise((r) => setTimeout(r, 10)));
     const queries = client.getQueryCache().getAll();
-    if (client.isFetching() === 0 && queries.every((q) => q.state.data !== undefined)) return;
+    if (client.isFetching() === 0 && queries.every((q) => q.state.data !== undefined)) {
+      // The cache holds the data before the component sees it: React Query tells observers on a
+      // `setTimeout(0)` of its own. One more tick, inside `act`, lets that render land.
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+      return;
+    }
   }
   throw new Error('queries did not settle within 5s');
 }

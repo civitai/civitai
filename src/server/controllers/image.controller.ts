@@ -17,7 +17,7 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import {
-  isImageInQueue,
+  leaveQueuesAfterModeratorRating,
   updatePendingImageRatings,
 } from '~/server/services/games/new-order.service';
 import {
@@ -76,7 +76,6 @@ import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
   EntityType,
-  NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -1149,11 +1148,7 @@ export async function handleUpdateImageNsfwLevel({
     if (isModerator) {
       // Update knights of new order pending votes and remove it from new order queue
       await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
-      const valueInQueue = await isImageInQueue({
-        imageId: input.id,
-        rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
-      });
-      if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
+      await leaveQueuesAfterModeratorRating(input.id);
     }
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };

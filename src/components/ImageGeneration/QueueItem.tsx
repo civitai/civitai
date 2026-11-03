@@ -108,6 +108,9 @@ import {
 import Model3DLightbox from '~/components/ImageGeneration/Model3DLightbox';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { workflowConfigs } from '~/shared/generation/config/workflows';
+import { polygenVersionOptions } from '~/shared/form-graph/generation/model3d/polygen.graph';
+import { tripoVersionOptions } from '~/shared/form-graph/generation/model3d/tripo.graph';
+import { migrateModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -115,6 +118,10 @@ const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
 ];
 
 /** 3D ecosystem key → user-facing model name shown on the queue card. */
+const POLYGEN_VERSION_LABELS = new Map<string, string>(
+  [...polygenVersionOptions, ...tripoVersionOptions].map((o) => [o.value, o.label])
+);
+
 const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
   PolyGen: 'Meshy',
   Tripo: 'Tripo',
@@ -283,8 +290,16 @@ export function QueueItem({
   // The model (Meshy/Tripo/Hunyuan3D) that generated the mesh. Derived from the
   // ecosystem carried in the params snapshot; legacy items predate the model
   // selector, so any 3D item without an ecosystem is Meshy (PolyGen).
+  const polyGenModelVersion = isPolyGen
+    ? (migrateModel3dParams(params as Record<string, unknown>).version as string | undefined)
+    : undefined;
   const polyGenModelLabel = isPolyGen
-    ? POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy'
+    ? [
+        POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy',
+        POLYGEN_VERSION_LABELS.get(polyGenModelVersion ?? ''),
+      ]
+        .filter(Boolean)
+        .join(' ')
     : null;
 
   const engine = params.engine as string | undefined;
@@ -299,7 +314,7 @@ export function QueueItem({
   const stepDisplay = workflowDefinition?.stepDisplay ?? 'inline';
 
   return (
-    <Card ref={ref} withBorder px="xs" id={id}>
+    <Card ref={ref} withBorder padding="xs" pb={0} id={id}>
       {inView && (
         <Card.Section py={4} inheritPadding withBorder>
           <div className="flex justify-between">
@@ -414,14 +429,7 @@ export function QueueItem({
                   </LegacyActionIcon>
                 </ButtonTooltip>
               )}
-              {(!hideDetails || (compact && resources.length > 0)) && (
-                <QueueItemDetails
-                  prompt={compact && !hideDetails ? prompt : undefined}
-                  params={hideDetails ? undefined : details}
-                  resources={compact ? resources : []}
-                  downloadsByVersion={downloadsByVersion}
-                />
-              )}
+              {!hideDetails && <QueueItemDetails params={details} />}
               <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
             </div>
           </div>
@@ -430,7 +438,7 @@ export function QueueItem({
 
       {inView && isPolyGen && (
         <div className="flex flex-col gap-3 py-3 @container">
-          {prompt && !compact && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+          {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
           {failureReason && <Alert color="red">{failureReason}</Alert>}
           <Model3DQueueCardOutputs
             request={request}
@@ -445,9 +453,9 @@ export function QueueItem({
       {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {prompt && !hideDetails && !compact && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+            {prompt && !hideDetails && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
-            {resources.length > 0 && !compact && (
+            {resources.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {resources.map((resource) => (
                   <ResourceRow
@@ -512,21 +520,8 @@ export function QueueItem({
   );
 }
 
-/**
- * The card's details: its parameters, and in the mobile generator also the prompt and resources,
- * which the desktop card shows inline. A popover on desktop, a sheet on a phone.
- */
-export function QueueItemDetails({
-  prompt,
-  params,
-  resources,
-  downloadsByVersion,
-}: {
-  prompt?: string;
-  params?: Record<string, unknown>;
-  resources: GenerationResourceValue[];
-  downloadsByVersion: Map<number, DownloadRow>;
-}) {
+/** The card's parameters: a popover on desktop, a sheet on a phone. */
+export function QueueItemDetails({ params }: { params: Record<string, unknown> }) {
   const [opened, setOpened] = useState(false);
 
   return (
@@ -537,36 +532,20 @@ export function QueueItemDetails({
       popoverProps={{ position: 'bottom-end', width: 380 }}
       dropdownProps={{ className: 'max-h-[60vh] overflow-y-auto' }}
       target={
-        <LegacyActionIcon
-          size="md"
-          p={4}
-          radius={0}
-          aria-label="Details"
-          onClick={() => setOpened((value) => !value)}
-        >
-          <IconListDetails />
-        </LegacyActionIcon>
+        <ButtonTooltip {...tooltipProps} label="Details" disabled={opened}>
+          <LegacyActionIcon
+            size="md"
+            p={4}
+            radius={0}
+            aria-label="Details"
+            onClick={() => setOpened((value) => !value)}
+          >
+            <IconListDetails />
+          </LegacyActionIcon>
+        </ButtonTooltip>
       }
     >
-      <div className="flex flex-col gap-3">
-        {prompt && (
-          <Text size="sm" className="whitespace-pre-wrap break-words">
-            {prompt}
-          </Text>
-        )}
-        {resources.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {resources.map((resource) => (
-              <ResourceRow
-                key={resource.id}
-                resource={resource}
-                download={downloadsByVersion.get(resource.id)}
-              />
-            ))}
-          </div>
-        )}
-        {params && <GenerationDetailsTable params={params} labelWidth={150} />}
-      </div>
+      <GenerationDetailsTable params={params} labelWidth={150} />
     </PopoverOrSheet>
   );
 }

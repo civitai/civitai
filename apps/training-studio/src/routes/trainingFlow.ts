@@ -688,6 +688,19 @@ function num(value: NumericInput, fallback: number): number {
  *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
  *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. An
  *  edit LoRA passes its pairs as path-placed `items` (`pairItems`), which replace the image list. */
+/** One confirm covers every run of a sweep: they train on the same dataset. */
+export function stampMature(
+  runs: TrainingRunPayload[],
+  matureAck: boolean,
+  matureCount: number
+): TrainingRunPayload[] {
+  return runs.map((run) => ({
+    ...run,
+    ...(matureAck ? { matureAck: true } : {}),
+    meta: { ...run.meta, matureCount },
+  }));
+}
+
 export function buildTrainingRuns(
   selection: Selection,
   images: Img[],

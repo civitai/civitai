@@ -43,6 +43,8 @@ export function toPosixPath(p) {
 export const TESTS_DIR_SEGMENT = '/__tests__/';
 export const NODE_MODULES_SEGMENT = '/node_modules/';
 
+const TEST_FILE_SUFFIX_RE = /\.test\.tsx?$/;
+
 /**
  * Does this `--listFilesOnly` line name a file the positive control should
  * count? Both halves normalise — the `node_modules` exclusion was built from
@@ -50,13 +52,15 @@ export const NODE_MODULES_SEGMENT = '/node_modules/';
  * by counting vendored test files.
  */
 export function isTestFileLine(line) {
-  const p = toPosixPath(line);
-  return p.includes(TESTS_DIR_SEGMENT) && !p.includes(NODE_MODULES_SEGMENT);
+  const p = toPosixPath(line).trim();
+  return (
+    (p.includes(TESTS_DIR_SEGMENT) || TEST_FILE_SUFFIX_RE.test(p)) && !p.includes(NODE_MODULES_SEGMENT)
+  );
 }
 
 /**
- * The positive control's measurement: how many files under a `__tests__`
- * directory the program actually contains, given raw `--listFilesOnly` output.
+ * The positive control's measurement: how many test files (a `__tests__`
+ * directory or a `*.test.ts(x)` name) the program actually contains, given raw `--listFilesOnly` output.
  *
  * It lives here, in the pure module, rather than inline in the gate, because the
  * gate is only reachable by spawning a process and this is the exact computation
@@ -70,16 +74,35 @@ export function countTestFilesInProgram(output) {
 }
 
 /**
- * The root `tsconfig.json` excludes exactly `src/ ** /__tests__/ ** `, anchored at
- * the repo-root `src`. So the population this gate owns is files under a
- * `__tests__/` directory BELOW `src/` — and nothing else.
+ * The entries the root `tsconfig.json` adds to `exclude` to keep tests out of
+ * `pnpm typecheck`, and that `tsconfig.tests.json` leaves out. This gate is the
+ * only typecheck those files get.
  *
- * This deliberately does NOT match `packages/ * /src/ ** /__tests__/`: those 68
- * files are in BOTH programs, `pnpm typecheck` already reports them, and claiming
- * them here would demand a baseline entry for an error the root check already
- * blocks on. A naive `f.includes('/__tests__/')` predicate does exactly that.
+ * `scripts/` is deliberately absent: its tests belong to `typecheck-scripts-gate`,
+ * whose program re-includes `scripts/__tests__/**`. A bare `** /*.test.ts` here
+ * would exclude them from that program too.
  */
-export const TESTS_PATH_RE = /^src\/(?:.*\/)?__tests__\//;
+export const TEST_EXCLUDES = [
+  'src/**/__tests__/**',
+  'src/**/*.test.ts',
+  'src/**/*.test.tsx',
+  'src/tests/**',
+  'src/test-utils/**',
+  'packages/*/src/**/__tests__/**',
+  'packages/*/src/**/*.test.ts',
+  'packages/*/src/**/*.test.tsx',
+  'tests/**',
+  'test/**',
+];
+
+/**
+ * The repo-relative paths `TEST_EXCLUDES` covers, as one predicate. It must match
+ * exactly that population: claiming a file the root check still sees would
+ * demand a baseline entry for an error `pnpm typecheck` already blocks on, and
+ * missing one would let its errors through unreported.
+ */
+export const TESTS_PATH_RE =
+  /^(?:(?:src|packages\/[^/]+\/src)\/(?:.*\/)?(?:__tests__\/|[^/]+\.test\.tsx?$)|src\/tests\/|src\/test-utils\/|tests\/|test\/)/;
 
 /** Is this diagnostic path one this gate is responsible for? */
 export function isGatedTestFile(file) {
@@ -151,8 +174,8 @@ export function parseDiagnostics(output) {
     // regex is anchored on `/`. Splitting on the host separator made a Windows
     // run's keys and a Linux run's keys equal only by the accident of tsc
     // emitting one shape — and left a backslash key, if one ever arrived, both
-    // unmatchable against the baseline and silently discarded as "outside
-    // src/**/__tests__/".
+    // unmatchable against the baseline and silently discarded as outside the
+    // test files.
     const file = toPosixPath(m[1]).replace(/^\.\//, '');
     counts.set(file, (counts.get(file) || 0) + 1);
   }
@@ -170,9 +193,8 @@ export function parseDiagnostics(output) {
  *
  * The rule is a truth table over (exit status, parsed diagnostics), not a search
  * for a marker string. A marker is SPELLED: it only fires on the one code path
- * that remembers to print it, and `scripts/typecheck.mjs` has three failure
- * exits that print none (a rejected TYPECHECK_HEAP_MB, an unresolvable
- * `typescript`, and a spawn error). The status is structural.
+ * that remembers to print it (the old `scripts/typecheck.mjs` wrapper had three
+ * failure exits that printed none). The status is structural.
  *
  *   signal        -> cannot-measure    (killed; says nothing about the code)
  *   status != 0, parsed  > 0 -> ok     (the ordinary "you have type errors" run)
@@ -180,9 +202,9 @@ export function parseDiagnostics(output) {
  *   status == 0, parsed  > 0 -> cannot-measure  (tsc contradicting itself)
  *   status == 0, parsed == 0 -> ok, total 0     (genuinely clean — see plausibility)
  *
- * `crashMarker` is still honoured when present, purely so the wrapper's own,
- * better-worded diagnosis wins the message. It is no longer what makes a crash
- * fail: delete every marker and this function still refuses to call it clean.
+ * `crashMarker` is honoured when a test-seam compiler prints `TYPECHECK CRASHED`;
+ * the real compiler never does. It is not what makes a crash fail: delete every
+ * marker and this function still refuses to call it clean.
  */
 export function classifyRun({ status, signal, parsed, crashMarker = false }) {
   if (signal) {
@@ -197,7 +219,7 @@ export function classifyRun({ status, signal, parsed, crashMarker = false }) {
     return {
       ok: false,
       reason:
-        'the underlying typecheck reported a CRASH — see the wrapper output above. ' +
+        'the underlying typecheck reported a CRASH — see the output above. ' +
         'Do not read the absence of errors as a pass.',
     };
   }
@@ -206,7 +228,7 @@ export function classifyRun({ status, signal, parsed, crashMarker = false }) {
       ok: false,
       reason:
         `the typecheck exited ${status} and produced 0 parseable diagnostics. A non-zero ` +
-        `exit with no diagnostics is a FAILURE TO RUN (bad TYPECHECK_HEAP_MB -> 2, missing ` +
+        `exit with no diagnostics is a FAILURE TO RUN (bad argument -> 2, missing ` +
         `binary -> 127, V8 abort -> 134, ...), not a clean tree` +
         (parsed.sawAnyErrorTs
           ? `. ${parsed.sawAnyErrorTs} line(s) DO contain "error TS" but none parsed — the ` +
@@ -224,13 +246,12 @@ export function classifyRun({ status, signal, parsed, crashMarker = false }) {
   }
   // The parse-accounting control. This used to fire ONLY when the parser
   // understood literally nothing (`total === 0`), which made it a cliff at
-  // exactly zero: a run in which the parser understood 5 of 801 marker-carrying
-  // lines was accepted, and then printed "136 file(s) now clean" — a 99%
-  // undercount reported as an improvement. The invariant is not "did it parse
+  // exactly zero: a run in which the parser understood a handful of hundreds of
+  // marker-carrying lines was accepted, and then reported most files "now clean"
+  // — an undercount reported as an improvement. The invariant is not "did it parse
   // SOMETHING", it is "did it parse EVERYTHING that claims to be a diagnostic".
   //
-  // Measured on this repository (801 diagnostics, 1451 output lines, 650 of them
-  // message-continuation lines): unparsed === 0 exactly. The continuation lines
+  // On a healthy run unparsed === 0 exactly: message-continuation lines
   // do not carry the `error TS` marker, so they are never counted. The divergent
   // cases that DO exist in tsc are the FILELESS diagnostics — TS18003 "No inputs
   // were found in config file", TS6053 "File not found" — which carry the marker
@@ -280,7 +301,7 @@ export function checkPlausibility({ currentTotal, baselineTotal, allowEmpty = fa
     };
   }
   // The zero above is the extreme of a spectrum, not a category of its own. A
-  // run that reports 5 against a baseline of 801 is the same failure with one
+  // run that reports a handful against a baseline of hundreds is the same failure with one
   // digit changed, and it PASSES the ratchet (everything scores `improved` or
   // `fixed`) while printing a congratulatory "N file(s) now clean".
   //
@@ -319,8 +340,8 @@ export function checkPlausibility({ currentTotal, baselineTotal, allowEmpty = fa
  * The hatch shipped as `TYPECHECK_TESTS_ALLOW_EMPTY=1`, honoured on every path.
  * That is one environment variable in one job definition away from reinstating
  * the exact failure this gate exists to eliminate: with it set, a wrapper that
- * measures nothing produced `0 error(s) across 0 file(s) (baseline: 801 across
- * 141)` -> `141 file(s) now clean` -> `PASS`, exit 0, with nothing anywhere in
+ * measures nothing produced `0 error(s) across 0 file(s) (baseline: N across
+ * M)` -> `M file(s) now clean` -> `PASS`, exit 0, with nothing anywhere in
  * the output recording that a control had been switched off.
  *
  * Three properties fix that, and the first is the one that matters:
@@ -523,8 +544,8 @@ export function validateBaseline(baseline, expectedConfig) {
     // `totalErrors` is written by --write-baseline and read by nobody, which is
     // exactly what makes it dangerous: it is the number a human skims in review
     // and the number a hand-edit changes, and until now nothing compared it to
-    // the entries it claims to summarise. A baseline whose header says 801 while
-    // its body sums to 5 is not a cosmetic defect — it is a baseline that has
+    // the entries it claims to summarise. A baseline whose header says hundreds while
+    // its body sums to a handful is not a cosmetic defect — it is a baseline that has
     // been edited by something other than the generator, and the entries are the
     // half that decides what merges.
     if (summable && baseline.totalErrors !== undefined) {
@@ -622,19 +643,23 @@ export function detectRenames(newlyDirty, fixed) {
 
 /**
  * Assert that `tsconfig.tests.json`'s exclude list is the base config's list
- * minus exactly one entry.
+ * minus exactly the `expectedRemoved` entries.
  *
  * The two lists are written out verbatim, so a future addition to
  * `tsconfig.json`'s exclude silently fails to apply to the measurement program
  * and NOTHING notices — the two programs quietly stop being the same program
- * minus one line, which is the only property that makes the 801 trustworthy.
+ * plus the tests, which is the only property that makes the count trustworthy.
  */
 export function diffExcludes(baseExclude, testsExclude, expectedRemoved) {
+  const expected = [expectedRemoved].flat();
   const base = [...(baseExclude ?? [])];
   const tests = [...(testsExclude ?? [])];
   const removed = base.filter((e) => !tests.includes(e));
   const added = tests.filter((e) => !base.includes(e));
-  const ok = added.length === 0 && removed.length === 1 && removed[0] === expectedRemoved;
+  const ok =
+    added.length === 0 &&
+    removed.length === expected.length &&
+    expected.every((e) => removed.includes(e));
   return { ok, removed, added };
 }
 

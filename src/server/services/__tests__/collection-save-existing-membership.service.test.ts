@@ -14,6 +14,10 @@ const mockDbWrite = dbMock.dbWrite;
 // creator whose models were in the Krea 2 event collection: adding one to their own collection 400'd with
 // "Collection is not accepting submissions at this time".
 
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },

@@ -51,9 +51,9 @@ export type RosterRedis = Pick<
 >;
 
 // One hat a member holds, as the card shows it: whether it is on their content now, and its shop
-// price (null for the free join hat) for the card to rank by. A hat list is in shelf order: worn
-// first, then dearest, then newest.
-export type RosterHat = { id: number; worn: boolean; price: number | null };
+// price (null for the free join hat) for the card to rank by, and whether it is the member's showcase
+// pick (events/showcase-hat.ts). A hat list is in shelf order: worn first, then dearest, then newest.
+export type RosterHat = { id: number; worn: boolean; price: number | null; picked?: boolean };
 
 export type RosterRow = {
   userId: number;
@@ -80,13 +80,14 @@ function parseHats(value: string | null | undefined): RosterHat[] {
     const hats = JSON.parse(value) as unknown;
     if (!Array.isArray(hats)) return [];
     return hats.flatMap((h) => {
-      const { id, worn, price } = (h ?? {}) as Record<string, unknown>;
+      const { id, worn, price, picked } = (h ?? {}) as Record<string, unknown>;
       if (!Number.isInteger(id)) return [];
       return [
         {
           id: id as number,
           worn: worn === true,
           price: typeof price === 'number' && Number.isFinite(price) ? price : null,
+          ...(picked === true && { picked: true }),
         },
       ];
     });

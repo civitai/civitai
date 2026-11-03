@@ -18,6 +18,7 @@ import type {
 } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import type { TrainingServiceStatus } from '$lib/service-status-core';
+import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -29,6 +30,18 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
     // non-JSON body
   }
   return fallback;
+}
+
+/** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
+ *  so the caller can show the confirm. */
+async function startFailure(res: Response, fallback: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as {
+    message?: string;
+    matureCount?: unknown;
+  } | null;
+  if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
+    return new MatureAckRequiredError(body.matureCount);
+  return new Error(body?.message || fallback);
 }
 
 /** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
@@ -128,7 +141,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runs }),
     });
-    if (!res.ok) throw new Error(await messageOf(res, `Training could not start (${res.status})`));
+    if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
     const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
     return { workflowIds, failure };
   },
@@ -141,7 +154,8 @@ export const shellBackend: StudioBackend = {
       )
     ).items,
 
-  editImageQuote: () => quoteFrom('/api/edit-image'),
+  editImageQuote: (imageUrl) =>
+    quoteFrom(`/api/edit-image?imageUrl=${encodeURIComponent(imageUrl)}`),
 
   editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
 
@@ -198,16 +212,16 @@ export const shellBackend: StudioBackend = {
     for (const currency of currencies) params.append('currencies', currency);
     const res = await fetch(`/api/continue-training?${params}`);
     if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
-    return (await res.json()) as { cost: number | null; steps?: number };
+    return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
   },
 
-  continueRun: async (workflowId, fromEpoch, addEpochs, currencies) => {
+  continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
     const res = await fetch('/api/continue-training', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies }),
+      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies, matureAck }),
     });
-    if (!res.ok) throw new Error(await messageOf(res, 'Could not start training.'));
+    if (!res.ok) throw await startFailure(res, 'Could not start training.');
     return ((await res.json()) as { workflowId: string }).workflowId;
   },
 

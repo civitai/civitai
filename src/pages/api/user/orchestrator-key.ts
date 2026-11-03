@@ -1,5 +1,6 @@
 import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
-import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
+import { deleteApiKeys, mintApiKey } from '~/server/services/api-key.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
@@ -16,11 +17,10 @@ export default AuthedEndpoint(
       await assertAccountNotRestricted(user.id);
       await deleteApiKeys({ userId: user.id, type: 'System', name });
 
-      const key = await addApiKey({
-        name,
-        type: 'System',
-        userId: user.id,
-      });
+      const key = await mintApiKey(
+        { name, type: 'System', userId: user.id },
+        { refusalMessage: RESTRICTED_ACCOUNT_MESSAGE }
+      );
 
       return res.status(200).json({ key });
     } catch (e) {
