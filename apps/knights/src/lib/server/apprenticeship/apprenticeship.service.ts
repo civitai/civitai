@@ -39,7 +39,7 @@ export type ApprenticeItem = {
   height: number | null;
 };
 
-type NextItem = ApprenticeItem & { correctAnswer: string };
+type NextItem = ApprenticeItem & { correctAnswer: string; imageId: number };
 
 export type ApprenticeProgress = {
   /** Answers since the player's last career reset. */
@@ -52,7 +52,8 @@ export type ApprenticeProgress = {
 
 export type CheckpointMiss = {
   kind: ItemKind;
-  referenceId: number;
+  /** The answer's own id: its reference may have been deleted since. */
+  answerId: number;
   /** Null when the image is no longer one the feeds would serve. */
   imageKey: string | null;
   width: number | null;
@@ -125,10 +126,19 @@ async function checkpointPending(db: Executor, playerId: number, answered: numbe
   return !!last && last.checkpointSeenAt === null;
 }
 
-const seenBy = (playerId: number, column: 'referenceId' | 'yesNoReferenceId', idRef: string) =>
-  sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId} AND s.${sql.ref(
-    column
-  )} = ${sql.ref(idRef)})`;
+/**
+ * Keyed on the image and question, not the reference row: a deleted and re-added reference must not re-serve an
+ * answered image. The reference-id arm covers answers stored before the snapshot columns existed.
+ */
+const seenBy = (
+  playerId: number,
+  column: 'referenceId' | 'yesNoReferenceId',
+  refs: { id: string; imageId: string; questionKey: string }
+) =>
+  sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId} AND (
+    (s."imageId" = ${sql.ref(refs.imageId)} AND s."questionKey" = ${sql.ref(refs.questionKey)})
+    OR s.${sql.ref(column)} = ${sql.ref(refs.id)}
+  ))`;
 
 /** A stable per-player order, so reloading shows the same item and different players get different orders. */
 const shuffled = (playerId: number, idRef: string) =>
@@ -147,8 +157,14 @@ async function nextRating(db: Executor, playerId: number, core: boolean): Promis
   const row = await servableReferences(db, REFERENCE_POOL.trials)
     .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
-    .where(seenBy(playerId, 'referenceId', 'r.id'))
-    .select(['r.id', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
+    .where(
+      seenBy(playerId, 'referenceId', {
+        id: 'r.id',
+        imageId: 'r.imageId',
+        questionKey: 'r.questionKey',
+      })
+    )
+    .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
     .orderBy(shuffled(playerId, 'r.id'))
     .limit(1)
     .executeTakeFirst();
@@ -156,6 +172,7 @@ async function nextRating(db: Executor, playerId: number, core: boolean): Promis
   return {
     kind: 'rating',
     referenceId: row.id,
+    imageId: row.imageId,
     questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
     ...(await ratingOptions(db)),
     imageKey: row.imageKey,
@@ -175,9 +192,16 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
     .where('q.active', '=', true)
     .where('q.kind', '=', 'bool')
     .where(servableImage)
-    .where(seenBy(playerId, 'yesNoReferenceId', 'y.id'))
+    .where(
+      seenBy(playerId, 'yesNoReferenceId', {
+        id: 'y.id',
+        imageId: 'y.imageId',
+        questionKey: 'y.questionKey',
+      })
+    )
     .select([
       'y.id',
+      'y.imageId',
       'y.answer',
       'y.questionKey',
       'q.prompt',
@@ -192,6 +216,7 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
   return {
     kind: 'yesno',
     referenceId: row.id,
+    imageId: row.imageId,
     questionKey: row.questionKey,
     prompt: row.prompt,
     options: YESNO_ANSWERS.map((answer) => ({ ...answer })),
@@ -238,13 +263,13 @@ async function buildCheckpoint(
     .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
     .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
     .leftJoin('Image as img', (join) =>
-      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('r.imageId', 'y.imageId')))
+      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('a.imageId', 'r.imageId', 'y.imageId')))
     )
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .select((eb) => [
       'a.id',
       'a.referenceId',
-      'a.yesNoReferenceId',
+      sql<string>`COALESCE(a."questionKey", r."questionKey", y."questionKey")`.as('questionKey'),
       'a.answer',
       'a.correctAnswer',
       'a.correct',
@@ -262,11 +287,11 @@ async function buildCheckpoint(
     .filter((row) => !row.correct)
     .reverse()
     .map((row): CheckpointMiss => {
-      const rating = row.referenceId !== null;
+      const rating = row.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
       const labels = rating ? options : YESNO_ANSWERS.map((a) => ({ ...a }));
       return {
         kind: rating ? 'rating' : 'yesno',
-        referenceId: (rating ? row.referenceId : row.yesNoReferenceId) as number,
+        answerId: row.id,
         imageKey: row.servable ? row.imageKey : null,
         width: row.width,
         height: row.height,
@@ -301,7 +326,7 @@ export async function getApprentice(db: Kysely<DB>, playerId: number): Promise<A
   }
   const next = await findNext(db, playerId);
   if (!next) return { kind: 'exhausted', progress };
-  const { correctAnswer: _hidden, ...item } = next;
+  const { correctAnswer: _hidden, imageId: _image, ...item } = next;
   return { kind: 'question', item, progress };
 }
 
@@ -342,6 +367,8 @@ export async function answerApprentice(
       .insertInto('KnightsApprenticeAnswer')
       .values({
         playerId: userId,
+        imageId: current.imageId,
+        questionKey: current.questionKey,
         referenceId: kind === 'rating' ? referenceId : null,
         yesNoReferenceId: kind === 'yesno' ? referenceId : null,
         answer,

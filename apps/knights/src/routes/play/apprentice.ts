@@ -43,7 +43,7 @@ export function apprenticePayload(view: Exclude<ApprenticeView, { kind: 'not-aco
         right: view.checkpoint.right,
         coach: view.checkpoint.coach,
         missed: view.checkpoint.missed.map((miss) => ({
-          key: `${miss.kind}:${miss.referenceId}`,
+          key: `${miss.kind}:${miss.answerId}`,
           src: miss.imageKey ? imageUrl(miss.imageKey) : null,
           width: miss.width,
           height: miss.height,

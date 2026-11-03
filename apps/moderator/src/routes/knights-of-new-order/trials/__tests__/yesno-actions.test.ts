@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const svc = vi.hoisted(() => ({
   add: vi.fn(),
   setActive: vi.fn(),
+  update: vi.fn(),
   remove: vi.fn(),
 }));
 
 vi.mock('$lib/server/knights/yesno-reference.service', () => ({
   addYesNoReference: svc.add,
   setYesNoReferenceActive: svc.setActive,
+  updateYesNoReference: svc.update,
   deleteYesNoReference: svc.remove,
   getYesNoReferences: vi.fn(),
   getYesNoQuestions: vi.fn(),
@@ -119,6 +121,26 @@ describe('Knights of New Order yes/no reference actions', () => {
     expect(await actions.deleteYesNo(formEvent({ id: '5' }))).toMatchObject({ success: true });
     expect(svc.remove).toHaveBeenCalledWith(5);
     expect(await actions.deleteYesNo(formEvent({ id: 'abc' }))).toMatchObject({ status: 400 });
+  });
+
+  it('saves an edited answer and explanation by id, and rejects an unknown answer', async () => {
+    svc.update.mockResolvedValueOnce({ ok: true });
+    expect(
+      await actions.updateYesNo(formEvent({ id: '5', answer: 'no', explanation: 'Why' }))
+    ).toMatchObject({ success: true });
+    expect(svc.update).toHaveBeenCalledWith(5, { answer: false, explanation: 'Why' });
+    expect(await actions.updateYesNo(formEvent({ id: '5', answer: 'maybe' }))).toMatchObject({
+      status: 400,
+    });
+    expect(svc.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the service refusal when a pair with answers is deleted', async () => {
+    svc.remove.mockResolvedValueOnce({ ok: false, error: 'Deactivate it instead.' });
+    expect(await actions.deleteYesNo(formEvent({ id: '5' }))).toMatchObject({
+      status: 409,
+      data: { error: 'Deactivate it instead.' },
+    });
   });
 
   it('turns a thrown service error into a 500 that changed nothing', async () => {

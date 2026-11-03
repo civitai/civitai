@@ -5197,6 +5197,8 @@ export interface KnightsApprenticeAnswer {
   playerId: number;
   referenceId: number | null;
   yesNoReferenceId: number | null;
+  imageId: number | null;
+  questionKey: string | null;
   answer: string;
   correctAnswer: string;
   correct: boolean;

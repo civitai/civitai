@@ -15,6 +15,8 @@ export type YesNoReferenceItem = {
   answer: boolean;
   explanation: string | null;
   active: boolean;
+  /** Acolyte answers that name this pair. While there are any, the pair can be deactivated but not deleted. */
+  answers: number;
   createdAt: Date;
 };
 
@@ -44,6 +46,9 @@ export async function getYesNoReferences(limit = CORESET.listLimit): Promise<Yes
       'r.explanation',
       'r.active',
       'r.createdAt',
+      sql<number>`(SELECT count(*)::int FROM "KnightsApprenticeAnswer" a WHERE a."yesNoReferenceId" = r."id")`.as(
+        'answers'
+      ),
       'i.url as imageKey',
       'i.name as imageName',
       'q.prompt as questionPrompt',
@@ -100,7 +105,7 @@ export async function addYesNoReference(input: {
     ? { ok: true }
     : {
         ok: false,
-        error: `Image ${input.imageId} already has a reference for this question. Delete or edit that one instead.`,
+        error: `Image ${input.imageId} already has a reference for this question. Edit or deactivate that one instead.`,
       };
 }
 
@@ -113,10 +118,48 @@ export async function setYesNoReferenceActive(id: number, active: boolean): Prom
   return Number(updated.numUpdatedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
 }
 
+export async function updateYesNoReference(
+  id: number,
+  input: { answer: boolean; explanation: string }
+): Promise<Outcome> {
+  const updated = await dbWrite
+    .updateTable('KnightsYesNoReference')
+    .set({
+      answer: input.answer,
+      explanation: input.explanation.trim() || null,
+      updatedAt: utc(new Date()),
+    })
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return Number(updated.numUpdatedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
+}
+
+/** A pair with answers is only deactivated, so the recap and history keep the explanation they were graded against. */
 export async function deleteYesNoReference(id: number): Promise<Outcome> {
   const deleted = await dbWrite
     .deleteFrom('KnightsYesNoReference')
     .where('id', '=', id)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('KnightsApprenticeAnswer')
+            .select('id')
+            .whereRef('yesNoReferenceId', '=', 'KnightsYesNoReference.id')
+        )
+      )
+    )
     .executeTakeFirst();
-  return Number(deleted.numDeletedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
+  if (Number(deleted.numDeletedRows) > 0) return { ok: true };
+  const remaining = await dbWrite
+    .selectFrom('KnightsYesNoReference')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return remaining
+    ? {
+        ok: false,
+        error: 'Acolytes have answered this pair, so it cannot be deleted. Deactivate it instead.',
+      }
+    : { ok: false, error: GONE };
 }

@@ -123,16 +123,18 @@ export async function listJudgments(
     .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
     .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
     .innerJoin('KnightsQuestion as q', (join) =>
-      join.on((eb) => eb('q.key', '=', eb.fn.coalesce('r.questionKey', 'y.questionKey')))
+      join.on((eb) =>
+        eb('q.key', '=', eb.fn.coalesce('a.questionKey', 'r.questionKey', 'y.questionKey'))
+      )
     )
     .leftJoin('Image as img', (join) =>
-      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('r.imageId', 'y.imageId')))
+      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('a.imageId', 'r.imageId', 'y.imageId')))
     )
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .select((eb) => [
       sql<string>`'practice'`.as('kind'),
       'a.id as itemId',
-      sql<number>`COALESCE(r."imageId", y."imageId")`.as('imageId'),
+      sql<number>`COALESCE(a."imageId", r."imageId", y."imageId")`.as('imageId'),
       'a.answer',
       sql<string>`CASE WHEN a.correct THEN 'correct' ELSE 'failed' END`.as('verdict'),
       'a.createdAt as settledAt',
@@ -144,7 +146,7 @@ export async function listJudgments(
       sql<string | null>`NULL`.as('itemPrompt'),
       sql<
         typeof YES_NO_OPTIONS
-      >`CASE WHEN a."yesNoReferenceId" IS NULL THEN q."options" ELSE ${JSON.stringify(
+      >`CASE WHEN q."kind" <> 'bool' THEN q."options" ELSE ${JSON.stringify(
         YES_NO_OPTIONS
       )}::jsonb END`.as('options'),
       'a.correctAnswer as resolved',

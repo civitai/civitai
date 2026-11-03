@@ -460,9 +460,8 @@ describe('checkpoints', () => {
     expect(view.checkpoint.total).toBe(20);
     expect(view.checkpoint.right).toBe(17);
     expect(view.checkpoint.missed).toHaveLength(3);
-    expect(view.checkpoint.missed.map((m) => m.referenceId)).toEqual(
-      [3, 8, 15].map((n) => served[n - 1].referenceId)
-    );
+    // Answer ids follow the order given (the identity sequence restarts per test).
+    expect(view.checkpoint.missed.map((m) => m.answerId)).toEqual([3, 8, 15]);
     expect(view.checkpoint.missed[0]).toMatchObject({
       kind: 'rating',
       answerLabel: expect.any(String),
@@ -532,5 +531,74 @@ describe('checkpoints', () => {
     await play(1, 20, (n) => n % 2 === 0);
     const later = await getApprentice(db, 1);
     expect(later.kind === 'checkpoint' && later.checkpoint.coach).toBe(true);
+  });
+});
+
+describe('answers outlive their reference', () => {
+  const answerRows = async () =>
+    (
+      await pg.query<{
+        referenceId: number | null;
+        yesNoReferenceId: number | null;
+        imageId: number | null;
+        questionKey: string | null;
+      }>(
+        `SELECT "referenceId","yesNoReferenceId","imageId","questionKey" FROM "KnightsApprenticeAnswer" ORDER BY "id"`
+      )
+    ).rows;
+
+  it('records the image and question each answer was given for', async () => {
+    await player(1);
+    await rating(1, { source: 'core' });
+    await yesNo(2);
+    await play(1, 2);
+    const stored = await answerRows();
+    expect(stored.map((r) => [r.imageId, r.questionKey])).toEqual([
+      [1, 'knights.image.nsfwLevel'],
+      [2, YESNO_Q],
+    ]);
+  });
+
+  it('keeps counting, and never re-serves, an answer whose yes/no pair was deleted', async () => {
+    await player(1);
+    const pair = await yesNo(1);
+    await rating(2);
+    await play(1, 2);
+    await pg.query(`DELETE FROM "KnightsYesNoReference" WHERE "id"=$1`, [pair]);
+    // The same pair added again gets a new id; the image was already answered.
+    await pg.query(
+      `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","createdBy") VALUES (1,$1,true,1)`,
+      [YESNO_Q]
+    );
+    await rating(3);
+
+    expect((await answerRows()).map((r) => r.yesNoReferenceId)).toEqual([null, null]);
+    const view = question(await getApprentice(db, 1));
+    expect(view.progress).toMatchObject({ answered: 2, graded: 2 });
+    expect(view.item.kind).toBe('rating');
+    expect(view.item.referenceId).not.toBe(pair);
+    await answerNext(1);
+    expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
+  it('keeps the answer when the image of a yes/no pair is deleted, and the checkpoint does not move', async () => {
+    await player(1);
+    for (let i = 0; i < 10; i++) await yesNo(i + 1, { explanation: `why ${i + 1}` });
+    for (let i = 0; i < 20; i++) await rating(100 + i, { answer: '2' });
+    const served = await play(1, 20, (n) => n !== 4);
+    const yesNoServed = served.filter((s) => s.kind === 'yesno').length;
+    expect(yesNoServed).toBeGreaterThan(0);
+
+    await pg.query(`DELETE FROM "Image" WHERE "id" <= 10`);
+
+    expect((await answerRows()).filter((r) => r.imageId !== null && r.imageId <= 10)).toHaveLength(
+      yesNoServed
+    );
+    const view = await getApprentice(db, 1);
+    if (view.kind !== 'checkpoint') throw new Error('expected a checkpoint');
+    expect(view.progress.answered).toBe(20);
+    expect(view.checkpoint).toMatchObject({ total: 20, right: 19 });
+    const gone = view.checkpoint.missed.filter((m) => m.imageKey === null);
+    expect(gone.length).toBe(served[4].kind === 'yesno' ? 1 : 0);
   });
 });

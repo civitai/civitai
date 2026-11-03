@@ -27,6 +27,7 @@ const {
   getYesNoReferenceCount,
   getYesNoReferences,
   setYesNoReferenceActive,
+  updateYesNoReference,
 } = await import('../yesno-reference.service');
 
 const MIGRATIONS = path.resolve(
@@ -78,7 +79,10 @@ beforeAll(async () => {
     );`);
   for (const name of [
     '20261210120000_knights_v2_queue',
+    '20261212120000_knights_v2_trials',
     '20261224120000_knights_v2_yesno_reference',
+    '20261225120000_knights_v2_apprenticeship',
+    '20261229120000_knights_v2_answer_snapshot',
   ]) {
     await db.exec(readFileSync(path.join(MIGRATIONS, name, 'migration.sql'), 'utf8'));
   }
@@ -91,7 +95,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.exec(
-    `TRUNCATE "KnightsYesNoReference","KnightsQueueItem","KnightsQuestion","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsApprenticeAnswer","KnightsYesNoReference","KnightsQueueItem","KnightsQuestion","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -202,6 +206,71 @@ describe('deleteYesNoReference', () => {
     await addYesNoReference(pair);
     await db.query(`DELETE FROM "Image" WHERE "id"=1`);
     expect(await rows()).toEqual([]);
+  });
+});
+
+describe('a pair that has answers', () => {
+  const answer = async (pairId: number, playerId = 5) =>
+    db.query(
+      `INSERT INTO "KnightsApprenticeAnswer" ("playerId","yesNoReferenceId","imageId","questionKey","answer","correctAnswer","correct")
+       VALUES ($1,$2,1,'q.safe','yes','yes',true)`,
+      [playerId, pairId]
+    );
+  const answerCount = async () =>
+    Number(
+      (await db.query<{ n: string }>(`SELECT count(*) AS n FROM "KnightsApprenticeAnswer"`)).rows[0]
+        .n
+    );
+
+  beforeEach(async () => {
+    await seedImage(1);
+    await seedQuestion('q.safe');
+    await addYesNoReference(pair);
+  });
+
+  it('cannot be deleted, only deactivated, and keeps its answers', async () => {
+    await answer(1);
+    expect(await deleteYesNoReference(1)).toEqual({
+      ok: false,
+      error: expect.stringContaining('Deactivate'),
+    });
+    expect(await rows()).toHaveLength(1);
+    expect(await answerCount()).toBe(1);
+    expect(await setYesNoReferenceActive(1, false)).toEqual({ ok: true });
+  });
+
+  it('keeps the answer, with the image and question it was given for, when its image is deleted', async () => {
+    await answer(1);
+    await db.query(`DELETE FROM "Image" WHERE "id"=1`);
+    const kept = await db.query(
+      `SELECT "yesNoReferenceId","imageId","questionKey" FROM "KnightsApprenticeAnswer"`
+    );
+    expect(kept.rows).toEqual([{ yesNoReferenceId: null, imageId: 1, questionKey: 'q.safe' }]);
+  });
+});
+
+describe('updateYesNoReference', () => {
+  beforeEach(async () => {
+    await seedImage(1);
+    await seedQuestion('q.safe');
+    await addYesNoReference(pair);
+  });
+
+  it('changes the answer and the trimmed explanation, leaving the rest alone', async () => {
+    expect(await updateYesNoReference(1, { answer: false, explanation: '  Weapon.  ' })).toEqual({
+      ok: true,
+    });
+    expect(await rows()).toEqual([
+      expect.objectContaining({ imageId: 1, active: true, answer: false, explanation: 'Weapon.' }),
+    ]);
+    await updateYesNoReference(1, { answer: false, explanation: '  ' });
+    expect((await rows())[0].explanation).toBeNull();
+  });
+
+  it('reports a pair that is gone', async () => {
+    expect(await updateYesNoReference(99, { answer: true, explanation: '' })).toMatchObject({
+      ok: false,
+    });
   });
 });
 
