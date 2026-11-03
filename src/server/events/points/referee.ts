@@ -67,7 +67,7 @@ export type RefereeRow = {
   hours: Record<number, number>;
 };
 
-const startOfUtcDay = (time: Date) =>
+export const startOfUtcDay = (time: Date) =>
   new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate()));
 
 // The season's window: the cut-off adds settle to (a bucket boundary at least SETTLE_LAG_MS in the

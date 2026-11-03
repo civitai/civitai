@@ -29,6 +29,7 @@ import {
   removeEventPoints,
 } from './award';
 import { isEventPointsEnabledSync } from './enabled';
+import { startOfUtcDay } from './referee';
 import type { EventPointAction, EventPointEntityType, EventPointType } from './types';
 
 const POINT_ENTITY_TYPES: ReadonlySet<string> = new Set<EventPointEntityType>([
@@ -316,6 +317,12 @@ const IMAGE_TARGET: PlacementTargetType = 'image';
 
 type PlacementLike = { surface: string; targetType: string; targetId: number; placerId: number };
 
+const placementSourceId = (
+  type: Extract<EventPointType, 'sticker' | 'remix'>,
+  imageId: number,
+  placerId: number
+) => `Placement:${type}:${imageId}:${placerId}`;
+
 const placementAction = (
   { surface, targetType, targetId, placerId }: PlacementLike,
   time: Date
@@ -328,7 +335,7 @@ const placementAction = (
     entityType: 'Image' as const,
     entityId: targetId,
     time,
-    sourceId: `Placement:${type}:${targetId}:${placerId}`,
+    sourceId: placementSourceId(type, targetId, placerId),
   };
 };
 
@@ -389,7 +396,7 @@ const remixAction = (actorId: number, imageId: number, time: Date) => ({
   entityType: 'Image' as const,
   entityId: imageId,
   time,
-  sourceId: `Placement:remix:${imageId}:${actorId}`,
+  sourceId: placementSourceId('remix', imageId, actorId),
 });
 
 type LiveSparkedStory = { storylineId: number; actorId: number; imageId: number };
@@ -440,9 +447,6 @@ async function storySparksPerDay() {
   return caps.length ? Math.min(...caps) : 0;
 }
 
-const utcDayStart = (time: Date) =>
-  new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate()));
-
 /**
  * Chapter 1 of a storyline was just written (or the storyline came back up). Call after the
  * write commits. Scores the spark if the story is live and its owner has not used up the day's
@@ -456,7 +460,7 @@ export async function onStorySparked(storylineId: number): Promise<void> {
     const [story] = await liveSparkedStories(Prisma.sql`st.id = ${storylineId}`);
     if (!story || !isHattedEntity('Image', story.imageId)) return;
     const today = await liveSparkedStories(Prisma.sql`st."userId" = ${story.actorId}
-      AND st.id <> ${storylineId} AND rc."createdAt" >= ${utcDayStart(time)}`);
+      AND st.id <> ${storylineId} AND rc."createdAt" >= ${startOfUtcDay(time)}`);
     const scored = new Set(
       today
         .map((s) => s.imageId)
