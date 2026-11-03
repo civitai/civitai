@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BIRTHDAY_2026_EVENT,
@@ -15,7 +14,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * provider and card tests mock or inject it.
  */
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let flag = false;
