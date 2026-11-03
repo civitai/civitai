@@ -2277,8 +2277,9 @@ describe('moderator edits', () => {
   }
   beforeEach(() => {
     shadowTagline = 'the tagline';
-    mockWrite.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) =>
-      args.where.id === 'apl_parent'
+    mockWrite.appListing.findUnique.mockImplementation(async (...a: unknown[]) => {
+      const args = a[0] as { where: { id: string } };
+      return args.where.id === 'apl_parent'
         ? {
             id: 'apl_parent',
             slug: 'cool-app',
@@ -2294,8 +2295,8 @@ describe('moderator edits', () => {
             status: 'draft',
             revisionOf: { id: 'apl_parent', slug: 'cool-app' },
             tagline: shadowTagline,
-          }
-    );
+          };
+    });
   });
 
   it('a moderator edits a draft they do not own, and the edit is recorded with them as actor', async () => {
@@ -2341,7 +2342,9 @@ describe('moderator edits', () => {
     });
     const updateCalls = mockWrite.appListing.update.mock.calls.map((c) => c[0]);
     expect(
-      updateCalls.every((c) => (c as { where: { id: string } }).where.id !== 'apl_parent')
+      updateCalls.every(
+        (c) => (c as unknown as { where: { id: string } }).where.id !== 'apl_parent'
+      )
     ).toBe(true);
     expect(auditEvents()).toEqual([
       expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD }),

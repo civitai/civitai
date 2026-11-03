@@ -853,8 +853,8 @@ describe('screenshot CRUD', () => {
         return { count: 1 };
       }),
     };
-    mockDb.$transaction.mockImplementationOnce(async (cb: unknown) =>
-      (cb as (t: unknown) => Promise<unknown>)(tx)
+    mockDb.$transaction.mockImplementationOnce(
+      async (cb: unknown) => (cb as (t: unknown) => Promise<unknown>)(tx) as Promise<unknown[]>
     );
     recordModeratorEdit.mockClear().mockRejectedValueOnce(new Error('check constraint'));
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
