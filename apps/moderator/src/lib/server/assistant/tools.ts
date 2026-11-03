@@ -42,7 +42,6 @@ import {
 } from './reads';
 import { getRegistrationEmails, normalizeEmail, redactEmails } from './email';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
-import { previewMembershipExtension } from '../user-actions.service';
 import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 
 // The assistant's tools. Every one but `propose_playbook` and `request_tool` is a READ: no tool bans,
@@ -887,6 +886,9 @@ export const TOOLS = [
     // The preview request itself may take 60 s; the loop's default would give up first.
     timeoutMs: 65_000,
     run: async ({ userId: id, days }) => {
+      // Lazy: user-actions.service needs the request context (`$app/server`), which a tool module
+      // loaded outside SvelteKit (the pglite suites) does not have.
+      const { previewMembershipExtension } = await import('../user-actions.service');
       const r = await previewMembershipExtension({ userId: id, days });
       if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
       // Status, dates and the verdict only: no Stripe ids for the model provider.
