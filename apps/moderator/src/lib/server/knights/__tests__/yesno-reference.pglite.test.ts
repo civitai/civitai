@@ -239,6 +239,15 @@ describe('a pair that has answers', () => {
     expect(await setYesNoReferenceActive(1, false)).toEqual({ ok: true });
   });
 
+  it('cannot be edited, since the recap grades against the answer as it stood', async () => {
+    await answer(1);
+    expect(await updateYesNoReference(1, { answer: false, explanation: 'Changed' })).toEqual({
+      ok: false,
+      error: expect.stringContaining('Deactivate'),
+    });
+    expect(await rows()).toEqual([expect.objectContaining({ answer: true })]);
+  });
+
   it('keeps the answer, with the image and question it was given for, when its image is deleted', async () => {
     await answer(1);
     await db.query(`DELETE FROM "Image" WHERE "id"=1`);

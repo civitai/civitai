@@ -9,6 +9,7 @@ import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
 import { YESNO_ANSWERS } from '../yesno/keys';
+import { answerImageJoin, answerQuestionKey } from './answer-snapshot';
 import { APPRENTICE } from './config';
 import {
   accuracyOf,
@@ -262,14 +263,11 @@ async function buildCheckpoint(
   const rows = await answersOf(db, playerId)
     .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
     .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
-    .leftJoin('Image as img', (join) =>
-      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('a.imageId', 'r.imageId', 'y.imageId')))
-    )
+    .leftJoin('Image as img', (join) => join.on(answerImageJoin))
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .select((eb) => [
       'a.id',
-      'a.referenceId',
-      sql<string>`COALESCE(a."questionKey", r."questionKey", y."questionKey")`.as('questionKey'),
+      answerQuestionKey.as('questionKey'),
       'a.answer',
       'a.correctAnswer',
       'a.correct',

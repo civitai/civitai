@@ -5,15 +5,12 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import {
-    ToggleGroup,
-    ToggleGroupItem,
-  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import YesNoPicker from './YesNoPicker.svelte';
   import type { YesNoReferenceItem } from '$lib/server/knights/yesno-reference.service';
 
   let { item }: { item: YesNoReferenceItem } = $props();
@@ -60,34 +57,32 @@
     </div>
     <p class="text-sm">{item.questionPrompt}</p>
     <p class="text-xs text-dark-2">{item.questionKey}</p>
-    {#if save.error}<ErrorAlert message={save.error} />{/if}
-    <form method="POST" action="?/updateYesNo" use:enhance={save.enhance} class="flex flex-col gap-2">
-      <input type="hidden" name="id" value={item.id} />
-      <input type="hidden" name="answer" value={chosen} />
-      <div class="flex items-center gap-2">
-        <span class="text-sm text-dark-2">Answer</span>
-        <ToggleGroup
-          type="single"
-          size="sm"
-          variant="outline"
-          value={chosen}
-          onValueChange={(v) => (answer = v === 'yes' || v === 'no' ? v : null)}
-        >
-          <ToggleGroupItem value="yes">Yes</ToggleGroupItem>
-          <ToggleGroupItem value="no">No</ToggleGroupItem>
-        </ToggleGroup>
-      </div>
-      <Textarea
-        name="explanation"
-        rows={2}
-        placeholder="Why this is the answer, shown to Acolytes after they answer"
-        value={why ?? item.explanation ?? ''}
-        oninput={(e) => (why = e.currentTarget.value)}
-      />
-      <div>
-        <Button type="submit" size="sm" disabled={save.submitting}>Save</Button>
-      </div>
-    </form>
+    {#if item.answers > 0}
+      {#if item.explanation}<p class="text-sm text-dark-2">{item.explanation}</p>{/if}
+      <p class="text-xs text-dark-2">
+        Acolytes have answered this pair, so it can't be edited or deleted. Deactivate it to stop serving it.
+      </p>
+    {:else}
+      {#if save.error}<ErrorAlert message={save.error} />{/if}
+      <form method="POST" action="?/updateYesNo" use:enhance={save.enhance} class="flex flex-col gap-2">
+        <input type="hidden" name="id" value={item.id} />
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-dark-2">Answer</span>
+          <YesNoPicker value={chosen} onchange={(v) => (answer = v)} />
+        </div>
+        <Textarea
+          name="explanation"
+          rows={2}
+          placeholder="Why this is the answer, shown to Acolytes after they answer"
+          value={why ?? item.explanation ?? ''}
+          oninput={(e) => (why = e.currentTarget.value)}
+        />
+        <div>
+          <Button type="submit" size="sm" disabled={save.submitting}>Save</Button>
+        </div>
+      </form>
+
+    {/if}
 
     {#if toggle.error}<ErrorAlert message={toggle.error} />{/if}
     {#if remove.error}<ErrorAlert message={remove.error} />{/if}
@@ -111,7 +106,6 @@
           size="sm"
           variant="outline"
           disabled={remove.submitting || item.answers > 0}
-          title={item.answers > 0 ? 'Acolytes have answered this pair; deactivate it instead.' : undefined}
           onclick={() => (open = true)}>Delete</Button
         >
       </form>

@@ -1,6 +1,12 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { servableImage } from '@civitai/db/knights';
+import {
+  answerImageId,
+  answerImageJoin,
+  answerQuestionKey,
+} from '../apprenticeship/answer-snapshot';
 
 export const JUDGMENTS_PAGE_SIZE = 20;
 
@@ -123,18 +129,14 @@ export async function listJudgments(
     .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
     .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
     .innerJoin('KnightsQuestion as q', (join) =>
-      join.on((eb) =>
-        eb('q.key', '=', eb.fn.coalesce('a.questionKey', 'r.questionKey', 'y.questionKey'))
-      )
+      join.on(sql<SqlBool>`q."key" = ${answerQuestionKey}`)
     )
-    .leftJoin('Image as img', (join) =>
-      join.on((eb) => eb('img.id', '=', eb.fn.coalesce('a.imageId', 'r.imageId', 'y.imageId')))
-    )
+    .leftJoin('Image as img', (join) => join.on(answerImageJoin))
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .select((eb) => [
       sql<string>`'practice'`.as('kind'),
       'a.id as itemId',
-      sql<number>`COALESCE(a."imageId", r."imageId", y."imageId")`.as('imageId'),
+      answerImageId.as('imageId'),
       'a.answer',
       sql<string>`CASE WHEN a.correct THEN 'correct' ELSE 'failed' END`.as('verdict'),
       'a.createdAt as settledAt',
@@ -146,7 +148,7 @@ export async function listJudgments(
       sql<string | null>`NULL`.as('itemPrompt'),
       sql<
         typeof YES_NO_OPTIONS
-      >`CASE WHEN q."kind" <> 'bool' THEN q."options" ELSE ${JSON.stringify(
+      >`CASE WHEN q."key" = ${KNIGHTS_NSFW_LEVEL_QUESTION} THEN q."options" ELSE ${JSON.stringify(
         YES_NO_OPTIONS
       )}::jsonb END`.as('options'),
       'a.correctAnswer as resolved',

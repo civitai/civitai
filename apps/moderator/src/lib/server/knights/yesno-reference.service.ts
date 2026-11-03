@@ -1,3 +1,5 @@
+import type { ExpressionBuilder } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { dbWrite } from '../db';
 import { CORESET } from './coreset.config';
@@ -15,7 +17,7 @@ export type YesNoReferenceItem = {
   answer: boolean;
   explanation: string | null;
   active: boolean;
-  /** Acolyte answers that name this pair. While there are any, the pair can be deactivated but not deleted. */
+  /** Acolyte answers that name this pair (see `hasNoAnswers`). While there are any, the pair can only be deactivated. */
   answers: number;
   createdAt: Date;
 };
@@ -105,7 +107,7 @@ export async function addYesNoReference(input: {
     ? { ok: true }
     : {
         ok: false,
-        error: `Image ${input.imageId} already has a reference for this question. Edit or deactivate that one instead.`,
+        error: `Image ${input.imageId} already has a reference for this question. Change that one instead.`,
       };
 }
 
@@ -118,6 +120,36 @@ export async function setYesNoReferenceActive(id: number, active: boolean): Prom
   return Number(updated.numUpdatedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
 }
 
+/**
+ * Keys on `yesNoReferenceId` deliberately: "this pair has live answers". The Acolyte no-repeat rule keys on the
+ * image + question snapshot instead, which outlives the pair.
+ */
+const hasNoAnswers = (eb: ExpressionBuilder<DB, 'KnightsYesNoReference'>) =>
+  eb.not(
+    eb.exists(
+      eb
+        .selectFrom('KnightsApprenticeAnswer')
+        .select('id')
+        .whereRef('yesNoReferenceId', '=', 'KnightsYesNoReference.id')
+    )
+  );
+
+/** After a guarded write touched nothing: the pair is either gone or frozen by its answers. */
+async function whyUntouched(id: number, verb: string): Promise<Outcome> {
+  const remaining = await dbWrite
+    .selectFrom('KnightsYesNoReference')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return remaining
+    ? {
+        ok: false,
+        error: `Acolytes have answered this pair, so it cannot be ${verb}. Deactivate it instead.`,
+      }
+    : { ok: false, error: GONE };
+}
+
+/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, so an edit would contradict it. */
 export async function updateYesNoReference(
   id: number,
   input: { answer: boolean; explanation: string }
@@ -130,36 +162,16 @@ export async function updateYesNoReference(
       updatedAt: utc(new Date()),
     })
     .where('id', '=', id)
+    .where(hasNoAnswers)
     .executeTakeFirst();
-  return Number(updated.numUpdatedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
+  return Number(updated.numUpdatedRows) > 0 ? { ok: true } : whyUntouched(id, 'edited');
 }
 
-/** A pair with answers is only deactivated, so the recap and history keep the explanation they were graded against. */
 export async function deleteYesNoReference(id: number): Promise<Outcome> {
   const deleted = await dbWrite
     .deleteFrom('KnightsYesNoReference')
     .where('id', '=', id)
-    .where((eb) =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('KnightsApprenticeAnswer')
-            .select('id')
-            .whereRef('yesNoReferenceId', '=', 'KnightsYesNoReference.id')
-        )
-      )
-    )
+    .where(hasNoAnswers)
     .executeTakeFirst();
-  if (Number(deleted.numDeletedRows) > 0) return { ok: true };
-  const remaining = await dbWrite
-    .selectFrom('KnightsYesNoReference')
-    .select('id')
-    .where('id', '=', id)
-    .executeTakeFirst();
-  return remaining
-    ? {
-        ok: false,
-        error: 'Acolytes have answered this pair, so it cannot be deleted. Deactivate it instead.',
-      }
-    : { ok: false, error: GONE };
+  return Number(deleted.numDeletedRows) > 0 ? { ok: true } : whyUntouched(id, 'deleted');
 }
