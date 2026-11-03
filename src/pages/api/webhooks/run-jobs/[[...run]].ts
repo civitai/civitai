@@ -141,6 +141,10 @@ import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
+import {
+  opensearchModelsBuildJob,
+  opensearchModelsRollbackJob,
+} from '~/server/jobs/opensearch-index-build';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
@@ -216,6 +220,8 @@ export const jobs: Job[] = [
   commentV3ParityJob,
   ...metricJobs,
   ...searchIndexJobs,
+  opensearchModelsBuildJob,
+  opensearchModelsRollbackJob,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
