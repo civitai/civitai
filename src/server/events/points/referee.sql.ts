@@ -7,6 +7,9 @@
 // because whether an action is a first depends on the whole season.
 //
 // Rules, in the order the query applies them:
+// - Only rows of a type in the event's scoring config are read. A type the ledger holds but the
+//   config does not (a shadow type recorded for testers) never scores and writes no snapshot row,
+//   whatever its weight in the live weights hash.
 // - Adds count only in [seasonStart, cut). Removals are read on to removeCut, past the season's end
 //   through the finalize window, so a late takedown still nets out its add.
 // - A sourceId names one (kind, entity, person), e.g. one person's reactions on one image. Its adds
@@ -29,6 +32,7 @@ WITH
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
+      AND has({types:Array(String)}, type)
       AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
   ),
   firsts AS (
@@ -102,5 +106,6 @@ SELECT groupUniqArray(actorId) AS actors, groupUniqArray(ownerId) AS owners
 FROM event_point_events
 WHERE event = {event:String}
   AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
+  AND has({types:Array(String)}, type)
   AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
 `;

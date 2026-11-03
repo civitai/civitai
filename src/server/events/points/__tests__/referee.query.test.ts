@@ -40,3 +40,15 @@ describe('referee ClickHouse queries', () => {
     expect(REFEREE_QUERY_MAX_SECONDS).toBeLessThan(300);
   });
 });
+
+// Shadow point types (recorded for testers, scoring for nobody) share the ledger with real ones. Live
+// weights apply to the whole season, so a type the config does not list must never be read: without
+// this filter it writes zero-point snapshot rows, and once given a weight it would score retroactively.
+describe('referee reads only the scored types', () => {
+  it.each([
+    ['referee', eventPointsRefereeSql],
+    ['users', eventPointsRefereeUsersSql],
+  ])('%s query filters ledger rows on the scoring config types', (_, sql) => {
+    expect(sql).toContain('has({types:Array(String)}, type)');
+  });
+});
