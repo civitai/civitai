@@ -167,9 +167,11 @@ export type SubmitVersionResult = {
    */
   listing: SubmitListingReadiness | null;
   /**
-   * App Storage schema-migration notes for this submission: declared migration ops (or
-   * `retiredCollections` entries) that cover no breaking change since the previous approved
-   * version, and so will not run. Empty when there is nothing to say. A breaking change that
+   * App Storage schema-migration notes for this submission: declared migration ops that cover
+   * no breaking change since the previous approved version (they will not run), collections no
+   * longer declared (their documents are kept), and optional properties newly declared on an open
+   * schema (stored documents may hold them with another type). Empty when there is nothing to
+   * say. A breaking change that
    * nothing covers is not a warning: the submit is refused (`StorageMigrationRefusal`).
    */
   storageMigrationWarnings?: string[];

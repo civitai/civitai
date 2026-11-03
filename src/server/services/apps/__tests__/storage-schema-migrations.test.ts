@@ -140,11 +140,10 @@ describe('diffCollectionSchemas — every narrowing keyword is breaking', () => 
     ]);
   });
 
-  it('a schema added to a collection that had none is diffed against accept-anything', () => {
+  it('a schema added to a collection that had none: each constraint is its own change (the root is always an object)', () => {
     expect(
       diff(undefined, obj({ title: { type: 'string', maxLength: 60 } }, { required: ['title'] }))
     ).toEqual([
-      ['', 'type'],
       ['/title', 'required'],
       ['/title', 'type'],
       ['/title', 'maxLength'],
@@ -272,7 +271,7 @@ describe('checkStorageMigrations — coverage', () => {
     expect(() => assertStorageMigrationsCover(check)).not.toThrow();
   });
 
-  it('rename covers a removed property at `from`; acknowledge without a keyword covers everything under its path', () => {
+  it('rename covers a removed property at `from`; acknowledge covers its one (path, keyword)', () => {
     const check = checkStorageMigrations(
       manifest({ cards: cards(V1) }),
       manifest({
@@ -283,13 +282,28 @@ describe('checkStorageMigrations — coverage', () => {
           ),
           [
             { op: 'rename', from: '/legacy', to: '/old' },
-            { op: 'acknowledge', path: '' },
+            { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
           ]
         ),
       })
     );
     expect(check.uncovered).toEqual([]);
     expect([...check.plans]).toEqual([['cards', [{ op: 'rename', from: '/legacy', to: '/old' }]]]);
+  });
+
+  it('🔴 an acknowledge covers nothing but its exact path: not a parent, not a child', () => {
+    const prev = manifest({ cards: cards(obj({ meta: obj({ n: { maximum: 10 } }) })) });
+    const narrowed = obj({ meta: obj({ n: { maximum: 5 } }) });
+    for (const path of ['/meta', '/meta/n/x']) {
+      const check = checkStorageMigrations(
+        prev,
+        manifest({ cards: cards(narrowed, [{ op: 'acknowledge', path, keyword: 'maximum' }]) })
+      );
+      expect({ path, uncovered: check.uncovered.map(at) }).toEqual({
+        path,
+        uncovered: [['/meta/n', 'maximum']],
+      });
+    }
   });
 
   it('a keyword-scoped acknowledge does not cover another keyword at the same path', () => {
@@ -329,35 +343,40 @@ describe('checkStorageMigrations — coverage', () => {
     expect(check.uncovered.map(at)).toEqual([['/n', 'maximum']]);
   });
 
-  it('a removed collection is refused unless retired', () => {
-    const prev = manifest({ cards: cards(undefined), notes: cards(undefined) });
-    const dropped = checkStorageMigrations(prev, manifest({ cards: cards(undefined) }));
-    expect(dropped.uncovered).toEqual([
-      { collection: 'notes', pointer: '', keyword: 'collection', old: 'declared', new: 'removed' },
-    ]);
-    const retired = checkStorageMigrations(
-      prev,
-      manifest({ cards: cards(undefined) }, { retiredCollections: ['notes'] })
+  it('a removed collection is not refused: it is a warning, and its documents are kept', () => {
+    const check = checkStorageMigrations(
+      manifest({ cards: cards(undefined), notes: cards(undefined) }),
+      manifest({ cards: cards(undefined) })
     );
-    expect(retired.uncovered).toEqual([]);
+    expect(check.uncovered).toEqual([]);
+    expect(check.warnings).toEqual([
+      'storage: collection notes is no longer declared; its stored documents are kept and become reachable again if it is re-declared',
+    ]);
   });
 
-  it('a schema newly added to a collection that had none is refused until covered', () => {
-    const next = obj({ title: { type: 'string' } }, { required: ['title'] });
+  it('a schema newly added to a collection that had none: refused until each constraint is covered, one by one', () => {
+    const next = obj({ title: { type: 'string', maxLength: 60 } }, { required: ['title'] });
     const prev = manifest({ cards: cards(undefined) });
     expect(
       checkStorageMigrations(prev, manifest({ cards: cards(next) })).uncovered.map(at)
     ).toEqual([
-      ['', 'type'],
       ['/title', 'required'],
       ['/title', 'type'],
+      ['/title', 'maxLength'],
     ]);
-    expect(
-      checkStorageMigrations(
-        prev,
-        manifest({ cards: cards(next, [{ op: 'acknowledge', path: '' }]) })
-      ).uncovered
-    ).toEqual([]);
+    // The required field needs a default; the narrowings are acknowledged by (path, keyword).
+    const covered = checkStorageMigrations(
+      prev,
+      manifest({
+        cards: cards(next, [
+          { op: 'default', path: '/title', value: '' },
+          { op: 'acknowledge', path: '/title', keyword: 'type' },
+          { op: 'acknowledge', path: '/title', keyword: 'maxLength' },
+        ]),
+      })
+    );
+    expect([covered.uncovered, covered.errors, covered.warnings]).toEqual([[], [], []]);
+    expect([...covered.plans]).toEqual([['cards', [{ op: 'default', path: '/title', value: '' }]]]);
   });
 
   it('a first version has nothing to break', () => {
@@ -386,15 +405,25 @@ describe('checkStorageMigrations — stale blocks, warnings and op errors', () =
     ]);
   });
 
-  it('a retired name the previous version never declared is a warning', () => {
+  it('🔴 a newly declared optional property on an open schema is not refused, but is a warning naming it', () => {
     const check = checkStorageMigrations(
-      manifest({ cards: cards(undefined) }),
-      manifest({ cards: cards(undefined) }, { retiredCollections: ['ghost'] })
+      manifest({ cards: cards(obj({ a: {} })) }),
+      manifest({ cards: cards(obj({ a: {}, b: { type: 'string' } })) })
     );
     expect(check.uncovered).toEqual([]);
     expect(check.warnings).toEqual([
-      'storage.retiredCollections lists "ghost", which the previous approved version does not declare — remove it from the manifest',
+      'storage.collections.cards: "/b" is newly declared on a schema that left undeclared properties open — stored documents may already hold this key with another type, and those are refused on their next write',
     ]);
+  });
+
+  it('a property newly declared where additionalProperties was false is not a warning (nothing could hold it)', () => {
+    const check = checkStorageMigrations(
+      manifest({ cards: cards(obj({ a: {} }, { additionalProperties: false })) }),
+      manifest({
+        cards: cards(obj({ a: {}, b: { type: 'string' } }, { additionalProperties: false })),
+      })
+    );
+    expect([check.uncovered, check.warnings]).toEqual([[], []]);
   });
 
   it('a default value must match the new schema at its path', () => {
@@ -403,7 +432,8 @@ describe('checkStorageMigrations — stale blocks, warnings and op errors', () =
       manifest({
         cards: cards(V2, [
           { op: 'default', path: '/status', value: 'archived' },
-          { op: 'acknowledge', path: '' },
+          { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
+          { op: 'remove', path: '/legacy' },
         ]),
       })
     );
@@ -442,7 +472,7 @@ describe('StorageMigrationRefusal — the structured list and the message', () =
       { collection: 'cards', pointer: '/n', keyword: 'maximum', old: 10, new: 5 },
     ]);
     expect(err.message).toBe(
-      'storage: 1 breaking schema change(s) since the previous approved version can leave documents already stored unwritable, and no migration covers them: cards "/n" maximum: 10 → 5. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" to accept that stored documents are refused on their next write until reshaped — or list a removed collection in storage.retiredCollections'
+      'storage: 1 breaking schema change(s) since the previous approved version can leave documents already stored unwritable, and no migration covers them: cards "/n" maximum: 10 → 5. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" with the change\'s exact path and keyword to accept that stored documents violating it are refused on their next write until reshaped (a newly required field needs a "default")'
     );
   });
 });
@@ -461,7 +491,6 @@ describe('parseManifestStorage — migrations', () => {
       { op: 'rename', from: '/name', to: '/title' },
       { op: 'remove', path: '/legacy' },
       { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
-      { op: 'acknowledge', path: '' },
     ];
     const parsed = parseManifestStorage(
       manifest({ cards: { visibility: 'private', migrations: ops } })
@@ -509,7 +538,27 @@ describe('parseManifestStorage — migrations', () => {
     [
       'unknown acknowledge keyword',
       [{ op: 'acknowledge', path: '/a', keyword: 'format' }],
-      'storage.collections.cards.migrations[0].keyword must be one of type, const, enum, minimum, maximum, minLength, maxLength, minItems, maxItems, pattern, required, additionalProperties, properties (or omit it to acknowledge every breaking change at or under path)',
+      'storage.collections.cards.migrations[0].keyword is required and must be one of type, const, enum, minimum, maximum, minLength, maxLength, minItems, maxItems, pattern, additionalProperties, properties — an acknowledge covers exactly one breaking change, named by its path and keyword',
+    ],
+    [
+      'acknowledge without a keyword',
+      [{ op: 'acknowledge', path: '/a' }],
+      'storage.collections.cards.migrations[0].keyword is required and must be one of type, const, enum, minimum, maximum, minLength, maxLength, minItems, maxItems, pattern, additionalProperties, properties — an acknowledge covers exactly one breaking change, named by its path and keyword',
+    ],
+    [
+      '🔴 acknowledge of a newly required field',
+      [{ op: 'acknowledge', path: '/status', keyword: 'required' }],
+      'storage.collections.cards.migrations[0] acknowledges a newly required field, which cannot be waived — documents already stored without it could never be written again; cover it with { "op": "default", "path": "/status", "value": … } instead',
+    ],
+    [
+      'acknowledge of the document root',
+      [{ op: 'acknowledge', path: '', keyword: 'additionalProperties' }],
+      'storage.collections.cards.migrations[0].path must be a JSON pointer to one field of the document\'s data: 1 to 15 non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most 512 characters',
+    ],
+    [
+      'acknowledge through a "*" segment',
+      [{ op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' }],
+      'storage.collections.cards.migrations[0].path must be a JSON pointer to one field of the document\'s data: 1 to 15 non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most 512 characters',
     ],
     [
       'two mutation ops on one field',
@@ -562,13 +611,13 @@ describe('parseManifestStorage — migrations', () => {
     ]);
   });
 
-  it('refuses a retired collection that is still declared', () => {
+  it('storage.retiredCollections is not a key (a removed collection is only a warning)', () => {
     expect(
       parseManifestStorage(
-        manifest({ cards: { visibility: 'private' } }, { retiredCollections: ['cards'] })
+        manifest({ cards: { visibility: 'private' } }, { retiredCollections: ['old'] })
       ).errors
     ).toEqual([
-      'storage.retiredCollections lists "cards", which storage.collections still declares — a retired collection is one this version removes',
+      'storage.retiredCollections is not allowed (storage takes only collections and imports)',
     ]);
   });
 });

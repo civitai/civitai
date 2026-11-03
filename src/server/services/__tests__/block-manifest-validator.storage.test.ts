@@ -364,7 +364,7 @@ describe('manifest storage — shape rules', () => {
     ).toEqual(
       refused(
         // `imports` is the second key storage takes (cross-app imports), so the message names it.
-        'storage.quota is not allowed (storage takes only collections, imports and retiredCollections)',
+        'storage.quota is not allowed (storage takes only collections and imports)',
         'storage.collections.prefs.visibility is required and must be one of private, shared'
       )
     );

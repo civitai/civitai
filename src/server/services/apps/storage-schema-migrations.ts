@@ -15,9 +15,13 @@
 //   - `minimum`, `minLength`, `minItems` added or raised; `maximum`, `maxLength`, `maxItems`
 //     added or lowered; `pattern` added or changed;
 //   - any of these inside `properties`, `items` or an `additionalProperties` schema (recursing);
-//   - a whole collection removed (unless listed in `storage.retiredCollections`);
 //   - a schema added to a collection that had none: "no schema" accepts anything, so the new
-//     schema is diffed against `{}` and every constraint it adds is a breaking change.
+//     schema is diffed against `{}` and every constraint it adds is its own breaking change, at
+//     its own (pointer, keyword) — each acknowledged one by one, each newly required field
+//     filled by a `default`. The document root is always an object, so a root `type: "object"`
+//     narrows nothing.
+// A collection REMOVED from the manifest is not breaking: its documents are kept, unreachable, and
+// reachable again if it is declared again. It is a submit WARNING.
 // A keyword is only compared where the OLD schema let that type through (a `maxLength` on a field
 // the old schema already held to numbers narrows nothing).
 //
@@ -26,7 +30,8 @@
 // `additionalProperties` open — the author's previous schema did not describe the field, so the
 // diff takes it that stored documents do not carry it. If the new schema also REQUIRES it, that
 // is still a breaking `required` change. This exemption does not apply when the collection had
-// no schema at all (above).
+// no schema at all (above). It is reported as a submit WARNING naming the property, because stored
+// documents may already hold that key with another type.
 //
 // Pointers in a breaking change are JSON Pointers into a document's `data`; the segment `*`
 // stands for every array element (`items`) or every undeclared property (an
@@ -48,12 +53,12 @@ import {
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
 
-export type BreakingChangeKeyword = AppStorageBreakingKeyword | 'collection';
+export type BreakingChangeKeyword = AppStorageBreakingKeyword;
 
 /** One breaking change: where, which keyword, and its old and new values (null when absent). */
 export type BreakingChange = {
   collection: string;
-  /** JSON Pointer into a document's `data`; `""` is the document (or, for `collection`, all of it). */
+  /** JSON Pointer into a document's `data`; `""` is the document itself. */
   pointer: string;
   keyword: BreakingChangeKeyword;
   old: unknown;
@@ -66,11 +71,14 @@ export type MigrationMutationOp = Exclude<StorageMigrationOp, { op: 'acknowledge
 export type StorageMigrationCheck = {
   /** Every breaking change of this transition, covered or not. */
   breaking: BreakingChange[];
-  /** The breaking changes no op (or `retiredCollections` entry) covers: submit refuses these. */
+  /** The breaking changes no op covers: submit refuses these. */
   uncovered: BreakingChange[];
   /** Declared ops that are wrong for the new schema (a `default` that does not match it): refused. */
   errors: string[];
-  /** Ops and retirements that cover nothing in this transition: reported, never run. */
+  /**
+   * Reported, never refused: ops that cover nothing in this transition (they never run), a
+   * collection no longer declared, and a newly declared optional property on an open schema.
+   */
   warnings: string[];
   /**
    * Collection → the mutation ops that cover at least one breaking change, in declared order:
@@ -132,13 +140,16 @@ function oldPropertySchema(
   return hadSchema ? 'undescribed' : ANY;
 }
 
-function diffNode(
-  old: Node,
-  next: Node,
-  pointer: string,
-  hadSchema: boolean,
-  push: (pointer: string, keyword: AppStorageBreakingKeyword, old: unknown, next: unknown) => void
-): void {
+type DiffSink = {
+  /** Whether the collection had a schema before (see the exemption in the header). */
+  hadSchema: boolean;
+  push: (pointer: string, keyword: AppStorageBreakingKeyword, old: unknown, next: unknown) => void;
+  /** A property newly declared on an open schema: exempt, but reported. */
+  undescribed: (pointer: string) => void;
+};
+
+function diffNode(old: Node, next: Node, pointer: string, cx: DiffSink): void {
+  const { hadSchema, push } = cx;
   const oldTypes = typesOf(old);
   const newTypes = typesOf(next);
   if (oldTypes.some((t) => !admits(newTypes, t))) {
@@ -204,8 +215,7 @@ function diffNode(
         isObj(old.items) ? old.items : ANY,
         next.items,
         `${pointer}/${APP_STORAGE_MIGRATION_ANY_SEGMENT}`,
-        hadSchema,
-        push
+        cx
       );
     }
   }
@@ -225,26 +235,59 @@ function diffNode(
   }
   for (const key of Object.keys(newProps)) {
     const before = oldPropertySchema(old, key, hadSchema);
+    if (before === 'undescribed') cx.undescribed(child(pointer, key));
     if (before === 'disallowed' || before === 'undescribed') continue;
-    diffNode(before, newProps[key] as Node, child(pointer, key), hadSchema, push);
+    diffNode(before, newProps[key] as Node, child(pointer, key), cx);
   }
   for (const key of Object.keys(oldProps)) {
     if (Object.hasOwn(newProps, key)) continue;
     // A declared property the new schema no longer declares: refused outright, or held to the
     // new `additionalProperties` schema.
     if (newAp === false) push(child(pointer, key), 'properties', 'declared', 'removed');
-    else if (isObj(newAp))
-      diffNode(oldProps[key] as Node, newAp, child(pointer, key), hadSchema, push);
+    else if (isObj(newAp)) diffNode(oldProps[key] as Node, newAp, child(pointer, key), cx);
   }
   if (isObj(newAp) && oldAp !== false) {
     diffNode(
       isObj(oldAp) ? oldAp : ANY,
       newAp,
       `${pointer}/${APP_STORAGE_MIGRATION_ANY_SEGMENT}`,
-      hadSchema,
-      push
+      cx
     );
   }
+}
+
+/** What one collection's schema change does: the breaking changes, and the exempt new properties. */
+export type CollectionSchemaDiff = {
+  breaking: BreakingChange[];
+  /** Pointers of properties newly declared (optional) on a schema that left undeclared keys open. */
+  undescribed: string[];
+};
+
+/** The breaking changes between two collection schemas (`undefined` = no schema), with notes. */
+export function diffCollectionSchemasWithNotes(
+  collection: string,
+  oldSchema: AppStorageCollectionSchema | undefined,
+  newSchema: AppStorageCollectionSchema | undefined
+): CollectionSchemaDiff {
+  const out: CollectionSchemaDiff = { breaking: [], undescribed: [] };
+  if (!newSchema) return out;
+  // A stored document is always a JSON object (the store refuses anything else), so at the root
+  // the old schema held objects only, whatever it declared: a root `type: "object"` narrows
+  // nothing, and no non-object keyword at the root can either.
+  const root = { ...((oldSchema ?? ANY) as Node), type: 'object' };
+  diffNode(root, newSchema as Node, '', {
+    hadSchema: oldSchema !== undefined,
+    push: (pointer, keyword, old, next) =>
+      out.breaking.push({
+        collection,
+        pointer,
+        keyword,
+        old: pointer === '' && keyword === 'type' ? oldSchema?.type ?? null : old,
+        new: next,
+      }),
+    undescribed: (pointer) => out.undescribed.push(pointer),
+  });
+  return out;
 }
 
 /** The breaking changes between two collection schemas (`undefined` = no schema). */
@@ -253,16 +296,7 @@ export function diffCollectionSchemas(
   oldSchema: AppStorageCollectionSchema | undefined,
   newSchema: AppStorageCollectionSchema | undefined
 ): BreakingChange[] {
-  if (!newSchema) return [];
-  const out: BreakingChange[] = [];
-  diffNode(
-    (oldSchema ?? ANY) as Node,
-    newSchema as Node,
-    '',
-    oldSchema !== undefined,
-    (pointer, keyword, old, next) => out.push({ collection, pointer, keyword, old, new: next })
-  );
-  return out;
+  return diffCollectionSchemasWithNotes(collection, oldSchema, newSchema).breaking;
 }
 
 /**
@@ -296,9 +330,9 @@ function requiredIn(schema: Node | undefined, path: string): boolean {
 }
 
 /**
- * THE coverage rule: whether `op` covers `change` (both in the same collection; a collection
- * removal is covered only by `retiredCollections`).
- *   - `acknowledge` — at the change's pointer with its keyword, or (no keyword) at or above it.
+ * THE coverage rule: whether `op` covers `change` (both in the same collection).
+ *   - `acknowledge` — exactly the change at its `path` with its `keyword` (never `required`: the
+ *     parser refuses that, and a newly required field is covered only by a `default`).
  *   - `default` — a newly `required` property, at exactly its pointer.
  *   - `rename` — a declared property removed under `additionalProperties: false`, at `from`.
  *   - `remove` — any change at or under the removed field, unless the new schema requires the
@@ -309,12 +343,11 @@ export function migrationOpCovers(
   change: BreakingChange,
   newSchema: AppStorageCollectionSchema | undefined
 ): boolean {
-  if (change.keyword === 'collection') return false;
   switch (op.op) {
     case 'acknowledge':
-      return op.keyword === undefined
-        ? jsonPointerCovers(op.path, change.pointer)
-        : op.keyword === change.keyword && op.path === change.pointer;
+      return (
+        change.keyword !== 'required' && op.keyword === change.keyword && op.path === change.pointer
+      );
     case 'default':
       return change.keyword === 'required' && op.path === change.pointer;
     case 'rename':
@@ -322,32 +355,6 @@ export function migrationOpCovers(
     case 'remove':
       return jsonPointerCovers(op.path, change.pointer) && !requiredIn(newSchema as Node, op.path);
   }
-}
-
-/**
- * The breaking changes between two declarations. A removed collection is reported whether or not
- * it is retired; {@link checkStorageMigrations} decides which are covered.
- */
-export function diffDeclaredStorage(
-  prev: ReadonlyMap<string, DeclaredStorageCollection>,
-  next: ReadonlyMap<string, DeclaredStorageCollection>
-): BreakingChange[] {
-  const out: BreakingChange[] = [];
-  for (const [name, before] of prev) {
-    const after = next.get(name);
-    if (!after) {
-      out.push({
-        collection: name,
-        pointer: '',
-        keyword: 'collection',
-        old: 'declared',
-        new: 'removed',
-      });
-      continue;
-    }
-    out.push(...diffCollectionSchemas(name, before.schema, after.schema));
-  }
-  return out;
 }
 
 function opLabel(name: string, index: number): string {
@@ -377,15 +384,30 @@ export function checkStorageMigrations(prev: unknown, next: unknown): StorageMig
       'storage: the previous approved version declares storage that no longer parses, so its collection schemas were not compared with this version'
     );
   }
-  const prevCollections = before && before.errors.length === 0 ? before.collections : new Map();
+  const prevCollections: ReadonlyMap<string, DeclaredStorageCollection> =
+    before && before.errors.length === 0 ? before.collections : new Map();
 
-  check.breaking = diffDeclaredStorage(prevCollections, after.collections);
-  const used = new Map<string, Set<number>>();
-  for (const change of check.breaking) {
-    if (change.keyword === 'collection') {
-      if (!after.retiredCollections.has(change.collection)) check.uncovered.push(change);
+  for (const [name, was] of prevCollections) {
+    const now = after.collections.get(name);
+    if (!now) {
+      check.warnings.push(
+        `storage: collection ${name} is no longer declared; its stored documents are kept and become reachable again if it is re-declared`
+      );
       continue;
     }
+    const diff = diffCollectionSchemasWithNotes(name, was.schema, now.schema);
+    check.breaking.push(...diff.breaking);
+    for (const pointer of diff.undescribed) {
+      check.warnings.push(
+        `storage.collections.${name}: ${JSON.stringify(
+          pointer
+        )} is newly declared on a schema that left undeclared properties open — stored documents may already hold this key with another type, and those are refused on their next write`
+      );
+    }
+  }
+
+  const used = new Map<string, Set<number>>();
+  for (const change of check.breaking) {
     const collection = after.collections.get(change.collection);
     const ops = collection?.migrations ?? [];
     let covered = false;
@@ -422,17 +444,16 @@ export function checkStorageMigrations(prev: unknown, next: unknown): StorageMig
     ops.forEach((op, i) => {
       if (op.op === 'default') {
         const target = fieldSchema(schema, jsonPointerSegments(op.path));
-        const failure =
-          target === 'disallowed'
-            ? null
-            : firstSchemaFailure(target as AppStorageCollectionSchema, op.value);
         if (target === 'disallowed') {
           check.errors.push(
             `${opLabel(name, i)}.path ${JSON.stringify(
               op.path
             )} is a field the new schema does not allow, so the default would make every document it fills invalid`
           );
-        } else if (failure) {
+          return;
+        }
+        const failure = firstSchemaFailure(target as AppStorageCollectionSchema, op.value);
+        if (failure) {
           check.errors.push(
             `${opLabel(name, i)}.value does not match the new schema at ${JSON.stringify(
               op.path + failure.pointer
@@ -450,16 +471,6 @@ export function checkStorageMigrations(prev: unknown, next: unknown): StorageMig
       }
     });
   }
-
-  for (const name of after.retiredCollections) {
-    if (!prevCollections.has(name)) {
-      check.warnings.push(
-        `storage.retiredCollections lists ${JSON.stringify(
-          name
-        )}, which the previous approved version does not declare — remove it from the manifest`
-      );
-    }
-  }
   return check;
 }
 
@@ -473,7 +484,6 @@ const shown = (v: unknown) => {
 /** One breaking change as a line of the refusal. */
 export function describeBreakingChange(c: BreakingChange): string {
   const where = c.pointer === '' ? '(the document root)' : JSON.stringify(c.pointer);
-  if (c.keyword === 'collection') return `collection ${c.collection} removed`;
   return `${c.collection} ${where} ${c.keyword}: ${shown(c.old)} → ${shown(c.new)}`;
 }
 
@@ -496,7 +506,7 @@ export class StorageMigrationRefusal extends Error {
           check.uncovered.length
         } breaking schema change(s) since the previous approved version can leave documents already stored unwritable, and no migration covers them: ${listed.join(
           '; '
-        )}. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" to accept that stored documents are refused on their next write until reshaped — or list a removed collection in storage.retiredCollections`
+        )}. For each, declare an op under storage.collections.<name>.migrations — "default" for a newly required field, "rename" or "remove" for a removed one, or "acknowledge" with the change's exact path and keyword to accept that stored documents violating it are refused on their next write until reshaped (a newly required field needs a "default")`
       );
     }
     parts.push(...check.errors.slice(0, MAX_LISTED));

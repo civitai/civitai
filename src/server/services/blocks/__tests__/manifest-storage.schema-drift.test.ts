@@ -3,7 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  APP_STORAGE_BREAKING_KEYWORDS,
+  APP_STORAGE_ACKNOWLEDGEABLE_KEYWORDS,
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
   APP_STORAGE_ENABLED_FEATURES,
@@ -22,8 +22,6 @@ import {
   APP_STORAGE_MAX_MARKS,
   APP_STORAGE_MAX_MIGRATION_OPS,
   APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
-  APP_STORAGE_MAX_RETIRED_COLLECTIONS,
-  APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
   APP_STORAGE_MIGRATION_OPS,
   APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
   APP_STORAGE_MIGRATION_PATH_PATTERN,
@@ -191,8 +189,7 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
         { op: 'rename', from: '/name', to: '/title' },
         { op: 'remove', path: '/legacy' },
         { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
-        { op: 'acknowledge', path: '' },
-        { op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' },
+        { op: 'acknowledge', path: '/tags', keyword: 'maxItems' },
       ],
     }),
     true,
@@ -206,8 +203,6 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['15-segment path', priv({ migrations: [{ op: 'remove', path: '/a'.repeat(15) }] }), true],
   ['32 ops', priv({ migrations: names(32, '/p').map((path) => ({ op: 'remove', path })) }), true],
   ['migrations on shared own', shared({ migrations: [{ op: 'remove', path: '/x' }] }), true],
-  ['retiredCollections beside collections', { ...priv(), retiredCollections: ['old_notes'] }, true],
-  ['retiredCollections only', { retiredCollections: ['old_notes'] }, true],
   // accept, but phased
   ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true, true],
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true, true],
@@ -375,10 +370,24 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     shared({ write: 'none', counters: ['plays'], migrations: [{ op: 'remove', path: '/x' }] }),
     false,
   ],
-  ['retiredCollections empty', { ...priv(), retiredCollections: [] }, false],
-  ['retiredCollections with a bad name', { ...priv(), retiredCollections: ['Old'] }, false],
-  ['retiredCollections duplicated', { ...priv(), retiredCollections: ['a', 'a'] }, false],
-  ['17 retiredCollections', { ...priv(), retiredCollections: names(17, 'r') }, false],
+  // `acknowledge` is itemised: one field and one keyword, never `required`.
+  ['acknowledge without keyword', priv({ migrations: [{ op: 'acknowledge', path: '/a' }] }), false],
+  [
+    'acknowledge of a required field',
+    priv({ migrations: [{ op: 'acknowledge', path: '/a', keyword: 'required' }] }),
+    false,
+  ],
+  [
+    'acknowledge of the document root',
+    priv({ migrations: [{ op: 'acknowledge', path: '', keyword: 'type' }] }),
+    false,
+  ],
+  [
+    'acknowledge through a "*" segment',
+    priv({ migrations: [{ op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' }] }),
+    false,
+  ],
+  ['retiredCollections (no such key)', { ...priv(), retiredCollections: ['old_notes'] }, false],
   // reject — ownedModelVersions
   ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
   ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
@@ -486,10 +495,6 @@ const PARSER_ONLY: Array<[string, unknown]> = [
     'a default value over 4096 bytes',
     priv({ migrations: [{ op: 'default', path: '/a', value: 'v'.repeat(4096) }] }),
   ],
-  [
-    'a retired collection still declared',
-    { collections: { c: { visibility: 'private' } }, retiredCollections: ['c'] },
-  ],
 ];
 
 describe('app-block v1 schema ⇄ storage parser drift guard', () => {
@@ -499,11 +504,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(storageSchema.additionalProperties).toBe(false);
     // At least one of the two: an app may only import, and declare no collection of its own.
     expect(storageSchema.required).toBeUndefined();
-    expect(storageSchema.anyOf).toEqual([
-      { required: ['collections'] },
-      { required: ['imports'] },
-      { required: ['retiredCollections'] },
-    ]);
+    expect(storageSchema.anyOf).toEqual([{ required: ['collections'] }, { required: ['imports'] }]);
   });
 
   it('pins every imports bound to the exported constants', () => {
@@ -617,14 +618,6 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
 
   it('pins the schema-migration declaration to the exported constants', () => {
     const storageProps = storageSchema.properties as Record<string, SchemaObject>;
-    const retired = storageProps.retiredCollections;
-    expect([retired.type, retired.minItems, retired.maxItems, retired.uniqueItems]).toEqual([
-      'array',
-      1,
-      APP_STORAGE_MAX_RETIRED_COLLECTIONS,
-      true,
-    ]);
-    expect((retired.items as SchemaObject).pattern).toBe(APP_STORAGE_COLLECTION_NAME_RE.source);
 
     const collection = Object.values(
       (storageProps.collections as SchemaObject).patternProperties as Record<string, SchemaObject>
@@ -646,12 +639,12 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     const opOf = (v: SchemaObject) =>
       ((v.properties as Record<string, SchemaObject>).op as SchemaObject).const;
     expect(variants.map(opOf)).toEqual([...APP_STORAGE_MIGRATION_OPS]);
-    const ack = variants[variants.length - 1].properties as Record<string, SchemaObject>;
-    expect([ack.path.pattern, ack.path.maxLength]).toEqual([
-      APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
-      APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
-    ]);
-    expect(ack.keyword.enum).toEqual([...APP_STORAGE_BREAKING_KEYWORDS]);
+    const ackVariant = variants[variants.length - 1];
+    expect(ackVariant.required).toEqual(['op', 'path', 'keyword']);
+    const ack = ackVariant.properties as Record<string, SchemaObject>;
+    expect(ack.path.$ref).toBe('#/$defs/storageMigrationPath');
+    expect(ack.keyword.enum).toEqual([...APP_STORAGE_ACKNOWLEDGEABLE_KEYWORDS]);
+    expect(ack.keyword.enum).not.toContain('required');
   });
 
   it('the evaluator resolves a local $ref and refuses one it cannot resolve', () => {
