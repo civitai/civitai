@@ -236,17 +236,21 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
     const draft = q('hat-turf-draft')!;
     const layer = q('hat-turf-layer')!;
-    const media = layer.parentElement!.querySelector('img')!.getBoundingClientRect();
-    draft.dispatchEvent(
-      new PointerEvent('pointermove', {
-        bubbles: true,
-        buttons: 1,
-        pointerType: 'mouse',
-        clientX: media.left + media.width * 0.25,
-        clientY: media.top + media.height * 0.3,
-      })
-    );
-    await vi.waitFor(() => expect(q('hat-turf-draft')!.style.left).toBe('25%'));
+    const img = layer.parentElement!.querySelector('img')!;
+    // The layer re-measures after layout; a move sent before that re-render maps against the old box.
+    await vi.waitFor(() => {
+      const media = img.getBoundingClientRect();
+      draft.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          buttons: 1,
+          pointerType: 'mouse',
+          clientX: media.left + media.width * 0.25,
+          clientY: media.top + media.height * 0.3,
+        })
+      );
+      expect(q('hat-turf-draft')!.style.left).toBe('25%');
+    });
     (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
     expect(h.mutate).toHaveBeenCalledTimes(1);
     const [input, options] = h.mutate.mock.calls[0];
