@@ -135,6 +135,7 @@ describe('App Assistant’s tools on the runner', () => {
       ])
     );
     expect(tools.hostTools?.sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -817,6 +818,7 @@ describe('the runner’s prompt', () => {
   const KNOWN = [
     'create_app',
     'use_open_app',
+    'app_activity',
     'set_checklist',
     'report_ready',
     'submit_for_review',

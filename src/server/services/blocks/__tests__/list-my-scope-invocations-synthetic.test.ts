@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { listMyScopeInvocations } from '~/server/services/blocks/user-app-surface.service';
 
 /**
  * REGRESSION: a pre-approval dev app's calls (`ephemeral-<slug>`) are written with
@@ -7,23 +9,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `listMyScopeInvocations({ syntheticAppId })` reads exactly that app's rows, for that user only.
  */
 
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    blockScopeInvocation: { findMany: vi.fn<(...args: any[]) => Promise<any>>() },
-  },
-}));
+// The canonical db mock (registered in src/__tests__/setup.ts).
+const findMany = dbMock.dbRead.blockScopeInvocation.findMany;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
-import { listMyScopeInvocations } from '~/server/services/blocks/user-app-surface.service';
-
-const whereOf = () => mockDbRead.blockScopeInvocation.findMany.mock.calls[0]![0].where;
+const whereOf = () => findMany.mock.calls[0]![0].where;
 
 describe('listMyScopeInvocations — one pre-approval dev app', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([]);
+    findMany.mockReset();
+    findMany.mockResolvedValue([]);
   });
 
   it('filters on the synthetic app id, for the caller only', async () => {
@@ -49,7 +43,7 @@ describe('listMyScopeInvocations — one pre-approval dev app', () => {
   });
 
   it('returns a synthetic row with no app id', async () => {
-    mockDbRead.blockScopeInvocation.findMany.mockResolvedValueOnce([
+    findMany.mockResolvedValueOnce([
       {
         id: 7n,
         invokedAt: new Date('2026-10-30T11:59:00Z'),

@@ -7,6 +7,7 @@ export * from './submit';
 export * from './instructions';
 export * from './subagents';
 export * from './preview';
+export * from './app-activity';
 export * from './sdk-floor';
 export * from './models';
 export * from './cover';
