@@ -16,15 +16,11 @@ import {
  * The store detail page's permission list — ONE row model and ONE grouping/ordering rule for
  * both listing shapes (pure, React-free; rendered by `ListingPermissionsDisclosure`).
  *
- * 🔴 WHY THIS EXISTS: the page used to carry two renderers. An OFF-SITE connect listing's
- * `connectScopes` (TokenScope keys) went through a component that split them into a
- * "Sensitive permissions" group ahead of the rest and sorted each group by scope bit, while an
- * ON-SITE app's `scopes` (block scope ids) went through a flat card that printed them in stored
- * order — so one app page read grouped and the next read as an unsorted list. Both shapes now
- * become the same `ListingPermission` rows here and are grouped and ordered by
- * {@link groupListingPermissions}, so there is no second rule left to drift.
+ * An OFF-SITE connect listing's `connectScopes` (TokenScope keys) and an ON-SITE app's `scopes`
+ * (block scope ids) both become `ListingPermission` rows here and are grouped and ordered by
+ * {@link groupListingPermissions}, so the two lists cannot drift apart.
  *
- * The ORDER is the one the grouped renderer already used, not a new one: sensitive first, then
+ * The ORDER: sensitive first, then
  * ascending OAuth scope bit. A block scope reaches that scale through the canonical
  * `BLOCK_SCOPE_TO_OAUTH_BIT` map; a block scope with no bit (`SKIP_OAUTH_CHECK` — storage,
  * collections, …) sorts after every bit-backed one in its group, in the order it was stored.

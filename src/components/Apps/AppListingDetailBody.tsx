@@ -1427,12 +1427,7 @@ export function AppListingDetailBody({
                   <BlockScopeList scopes={detail.scopes} />
                 </Stack>
               ) : (
-                // 🔴 THE SAME RENDERER AS THE CONNECT DISCLOSURE ABOVE. On-site and
-                // off-site permissions used to go through two components — this one a
-                // flat list in stored order, that one grouped with the sensitive scopes
-                // first — so app pages disagreed about how a permission list reads.
-                // Both now render through `ListingPermissionsDisclosure`, grouped and
-                // ordered by `groupListingPermissions`; do not reintroduce a flat path.
+                // Same renderer as the connect disclosure; do not reintroduce a flat path.
                 <ListingPermissionsDisclosure
                   permissions={blockScopePermissions(detail.scopes)}
                   title="This app can…"

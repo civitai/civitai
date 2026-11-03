@@ -260,19 +260,8 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
 });
 
 /**
- * 🔴 THE REGRESSION: ONE PERMISSION LIST, GROUPED AND ORDERED, FOR BOTH LISTING SHAPES.
- *
- * An off-site connect listing's permissions rendered grouped ("Sensitive permissions" first,
- * each group in scope-bit order) while an on-site app's rendered as a FLAT list in stored
- * order, because the page had two renderers. Both now go through one component.
- *
- * Asserted on the rendered TEXT ORDER of the section, not on any test id or component name,
- * so the same assertion means the same thing before and after the consolidation:
- *   - the ON-SITE arm is RED on the pre-change code — the flat card printed the scopes in the
- *     stored order below (plain ones first) with no group headings;
- *   - the CONNECT arm was already grouped and ordered before the change, so it is an
- *     INVARIANT GUARD (green before and after), there to prove the shared component did not
- *     lose what that shape already had.
+ * One grouped, ordered permission list for both listing shapes, asserted on the rendered TEXT
+ * ORDER of the section (not on a test id or component name).
  *
  * Fixtures are stored in an order the grouping must CHANGE (plain scopes first, sensitive
  * scopes in descending bit order), span both groups with two rows each, and include an

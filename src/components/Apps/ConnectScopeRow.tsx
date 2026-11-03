@@ -8,12 +8,6 @@ import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
  * surface (`ConnectScopesPanel`): the TokenScope key, its label, and the
  * `SensitiveScopeBadge`.
  *
- * ⚠️ The PUBLIC store page no longer renders this row. Its connect disclosure
- * (`ConnectScopesDisclosure`) now goes through `ListingPermissionsDisclosure`, the
- * one plain-language renderer every listing shape shares, so the store page reads
- * the same for an on-site and an off-site app. The `SensitiveScopeBadge` is still
- * the same badge on both surfaces.
- *
  * 🔴 THE JUSTIFICATION IS A `children` SLOT, NOT A PROP, AND THAT IS THE POINT.
  * `connectScopeJustifications` is free text authored by the app owner; disclosing
  * it publicly is a SEPARATE exposure decision that has not been made (clawgate

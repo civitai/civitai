@@ -6,9 +6,10 @@ import { connectScopePermissions } from '~/components/Apps/listingPermissions';
  * permissions an OAuth-connect off-site listing is APPROVED TO ASK FOR, shown
  * BEFORE the viewer clicks Connect.
  *
- * 🔴 A CEILING, NOT A PROMISE. See the "MAY request" comment on the heading below
- * for why every string here is deliberately hedged; the short version is that
- * `connectRequestedScopes` is review-only and does not gate token issuance.
+ * 🔴 WHAT A MODERATOR REVIEWED — NEITHER A PROMISE NOR A CEILING. See the "MAY
+ * request" comment on the heading below for why every string here is deliberately
+ * hedged; the short version is that `connectRequestedScopes` is review-only and does
+ * not gate token issuance.
  *
  * 🔴 WHY THIS EXISTS: the store page already tells a viewer that an off-site app
  * "can connect to your Civitai account", and then said nothing about what it
@@ -24,9 +25,8 @@ import { connectScopePermissions } from '~/components/Apps/listingPermissions';
  * This file is only the connect ADAPTER: it turns TokenScope keys into rows
  * (`connectScopePermissions`) and supplies the hedged heading below. The grouping,
  * the order and the row look are the same component an on-site app's permissions
- * render through, so the two listing shapes cannot read differently again — they
- * did, and a viewer saw one app page grouped by importance and the next as a flat
- * unordered list. The `SensitiveScopeBadge` emphasis is still the same badge the
+ * render through, so the two listing shapes cannot read differently. The
+ * `SensitiveScopeBadge` emphasis is still the same badge the
  * moderator review surface (`ConnectScopesPanel`) renders.
  *
  * 🔴 IT CANNOT DISCLOSE `connectScopeJustifications`, BY CONSTRUCTION. That text
@@ -66,30 +66,13 @@ export function ConnectScopesDisclosure({
   preview?: boolean;
 }) {
   const permissions = connectScopePermissions(scopes);
-  // 🔴 "MAY request", NOT "will request", AND NOT "these permissions" — the
-  // weaker wording is the CORRECT one and an earlier draft of this component
-  // had it wrong in the confident direction.
-  // `connectRequestedScopes` is DISCLOSURE/REVIEW-ONLY: `offsite-listing.service.ts`
-  // says in as many words that it "does NOT gate OAuth token issuance (the
-  // client's `allowedScopes` remains the runtime ceiling via the existing consent
-  // flow)". What the consent screen actually lists is the `?scope=` the client
-  // asks for at authorize time, validated against `allowedScopes` — so the real
-  // ask is usually a SUBSET of this, and can even be a SUPERSET if the client's
-  // ceiling is widened after moderator approval, because nothing re-publishes
-  // this snapshot.
-  // So this list is WHAT A MODERATOR REVIEWED, not a promise about any particular
-  // sign-in screen. Saying "will request … approve these permissions … review
-  // them again" asserted an identity that does not hold, on a surface whose whole
-  // job is to be trustworthy about permissions. Do not tighten it back.
-  // 🔴 AND DO NOT CALL IT A CEILING EITHER — a SECOND draft said "the most this
-  // app is approved to ask for", and that is false in the other direction. The
-  // stored value is the client's `allowedScopes` snapshotted at submit/edit, and
-  // an owner can WIDEN `allowedScopes` afterwards via `oauth-client.router.ts`'s
-  // update — unmoderated, re-snapshotting nothing. The runtime set can therefore
-  // EXCEED this list, so an upper-bound claim is the same over-claim wearing the
-  // opposite sign. Two drafts, two directions: the honest framings are what a
-  // moderator reviewed, and "check the sign-in screen", which is the surface that
-  // actually binds.
+  // 🔴 "MAY request" — not "will request", and not a ceiling. `connectRequestedScopes`
+  // is a review-time snapshot of the client's `allowedScopes` that does NOT gate token
+  // issuance (`offsite-listing.service.ts`). The consent screen lists the `?scope=` asked
+  // for at authorize time, usually a SUBSET of this; and an owner can widen
+  // `allowedScopes` afterwards (`oauth-client.router.ts` update, unmoderated) without
+  // re-snapshotting, so the runtime set can also EXCEED it. This list is what a moderator
+  // reviewed; the sign-in screen is what binds. Do not tighten the wording either way.
   return (
     <ListingPermissionsDisclosure
       permissions={permissions}
