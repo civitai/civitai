@@ -35,14 +35,14 @@ export async function notifyPostFloorRaises(
     const labels = post.triggeredLabels;
     if (labels.includes('poi') || labels.includes('minor')) continue;
     if (post.moderatorNsfwLevel != null || !post.userId || !post.workflowId) continue;
-    const level = highestNsfwLevel(risen.get(post.id)?.after);
-    // Images that reach the level on their own raised the post, not the text.
-    if (highestNsfwLevel(post.images) >= level) continue;
+    const change = risen.get(post.id);
+    // A level the images give on their own was raised by the images, not the text.
+    if (!change || change.after === (post.images ?? 0)) continue;
     await notifyTextScanRatingRaised({
       entityType: 'Post',
       entityId: post.id,
       userId: post.userId,
-      level,
+      level: highestNsfwLevel(change.after),
       title: post.title,
       url: `/posts/${post.id}`,
       workflowId: post.workflowId,

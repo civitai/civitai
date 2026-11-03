@@ -43,6 +43,7 @@ const { createNotification } = await import('~/server/services/notification.serv
 const POST_ID = 7;
 const OWNER = 5;
 const FLOOR = 8;
+const OTHER_ID = 9;
 
 registerTextScanProfile({
   entityType: 'Post',
@@ -84,8 +85,13 @@ type Verdict = {
   triggeredLabels: string[];
   result: unknown;
 };
-let post: { images: number; level: number; moderatorNsfwLevel: number | null };
+type PostState = { images: number; level: number; moderatorNsfwLevel: number | null };
+let post: PostState;
 let verdict: Verdict | null;
+// A second post in the same batch, with its own verdict, for the tests that need one.
+let other: (PostState & { verdict: Verdict | null }) | null;
+const stateOf = (id: number) =>
+  id === POST_ID ? { ...post, verdict } : id === OTHER_ID && other ? other : null;
 const raisedVerdict = (triggeredLabels = ['nsfw']): Verdict => ({
   workflowId: 'wf-1',
   nsfwLevel: FLOOR,
@@ -94,45 +100,55 @@ const raisedVerdict = (triggeredLabels = ['nsfw']): Verdict => ({
 });
 
 // scanFloorText and raiseNsfwLevelText in packages/civitai-shared/src/rated-entity-sql.ts.
-const derivedLevel = () => {
-  const usable = verdict && (verdict.result as { version?: number } | null)?.version != null;
-  const f = usable && (verdict?.nsfwLevel ?? 0) >= 2 ? verdict!.nsfwLevel! : 0;
-  const l = post.images;
+const derivedLevel = (p: PostState, v: Verdict | null) => {
+  const usable = v && (v.result as { version?: number } | null)?.version != null;
+  const f = usable && (v?.nsfwLevel ?? 0) >= 2 ? v!.nsfwLevel! : 0;
+  const l = p.images;
   const raised = l === 0 || f === 0 ? l : (l & ~(f - 1)) === 0 ? f : l & ~(f - 1);
-  return post.moderatorNsfwLevel ?? raised;
+  return p.moderatorNsfwLevel ?? raised;
+};
+const setLevel = (id: number, level: number) => {
+  if (id === POST_ID) post.level = level;
+  else if (other) other.level = level;
 };
 
 // A fake for the two raw statements this path sends; anything else fails the test.
 const fakeRaw = async (query: Prisma.Sql) => {
   const sql = query.text.replace(/\s+/g, ' ').trim();
+  const ids = query.values as number[];
   if (sql.startsWith('WITH next AS') && sql.includes('UPDATE "Post" p')) {
-    const before = post.level;
-    const after = derivedLevel();
-    if (after === before) return [];
-    post.level = after;
-    return sql.includes('RETURNING p.id, next."before", p."nsfwLevel" "after"')
-      ? [{ id: POST_ID, before, after }]
-      : [];
+    // Without these the statement either fails in Postgres or returns unchanged posts too.
+    expect(sql).toContain('p."nsfwLevel" "before"');
+    expect(sql).toContain('WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"');
+    const changed = ids.flatMap((id) => {
+      const state = stateOf(id);
+      if (!state) return [];
+      const before = state.level;
+      const after = derivedLevel(state, state.verdict);
+      if (after === before) return [];
+      setLevel(id, after);
+      return [{ id, before, after }];
+    });
+    return sql.includes('RETURNING p.id, next."before", p."nsfwLevel" "after"') ? changed : [];
   }
   if (sql.includes('FROM "Post" p JOIN "EntityModeration" em')) {
-    expect(query.values).toEqual([POST_ID]);
-    if (!verdict) return [];
-    if (
-      sql.includes(`'nsfw' = ANY(em."triggeredLabels")`) &&
-      !verdict.triggeredLabels.includes('nsfw')
-    )
-      return [];
-    return [
-      {
-        id: POST_ID,
-        userId: OWNER,
-        title: 'T',
-        moderatorNsfwLevel: post.moderatorNsfwLevel,
-        workflowId: verdict.workflowId,
-        triggeredLabels: verdict.triggeredLabels,
-        images: post.images,
-      },
-    ];
+    const nsfwOnly = sql.includes(`'nsfw' = ANY(em."triggeredLabels")`);
+    return ids.flatMap((id) => {
+      const state = stateOf(id);
+      const v = state?.verdict;
+      if (!state || !v || (nsfwOnly && !v.triggeredLabels.includes('nsfw'))) return [];
+      return [
+        {
+          id,
+          userId: OWNER,
+          title: 'T',
+          moderatorNsfwLevel: state.moderatorNsfwLevel,
+          workflowId: v.workflowId,
+          triggeredLabels: v.triggeredLabels,
+          images: state.images,
+        },
+      ];
+    });
   }
   throw new Error(`unexpected raw query: ${sql}`);
 };
@@ -141,10 +157,10 @@ const ratingNotices = () =>
   vi.mocked(createNotification).mock.calls.filter(([n]) => n.type === 'text-scan-rating-raised');
 
 // What the UpdateNsfwLevel job runs once an image's level changes.
-const imageRated = async (imageLevel: number) => {
+const imageRated = async (imageLevel: number, postIds = [POST_ID]) => {
   post.images |= imageLevel;
   await updateNsfwLevels({
-    postIds: [POST_ID],
+    postIds,
     articleIds: [],
     bountyIds: [],
     bountyEntryIds: [],
@@ -158,6 +174,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   post = { images: 0, level: 0, moderatorNsfwLevel: null };
   verdict = null;
+  other = null;
   vi.mocked(getModerationAdapter).mockReturnValue(postTextScanAdapter);
   dbMock.dbWrite.post.findUnique.mockImplementation((async () => ({
     nsfwLevel: post.level,
@@ -203,12 +220,14 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     });
   });
 
-  it('sends no second notice after the callback notified', async () => {
+  it('sends nothing on a later recompute once the callback notified, under the same key', async () => {
     post.images = 1;
     post.level = 1;
     vi.mocked(getWorkflow).mockResolvedValue(raisedWorkflow as never);
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(ratingNotices()).toHaveLength(1);
+    // The key the recompute sends in the first test, so an overlap of the two paths is one row.
+    expect(ratingNotices()[0][0].key).toBe(`text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`);
 
     await imageRated(2);
 
@@ -235,6 +254,34 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
 
     expect(post.level).toBe(FLOOR);
     expect(ratingNotices()).toHaveLength(0);
+  });
+
+  it('notifies when the floor only takes the post out of safe browsing', async () => {
+    verdict = { ...raisedVerdict(), nsfwLevel: 4 };
+    post.images = 1 | 4;
+
+    await imageRated(0);
+
+    expect(post.level).toBe(4);
+    expect(ratingNotices()).toHaveLength(1);
+    expect(ratingNotices()[0][0]).toMatchObject({ details: { level: 4 } });
+  });
+
+  it('notifies each risen post in a batch at its own level', async () => {
+    verdict = raisedVerdict();
+    other = {
+      images: 1,
+      level: 0,
+      moderatorNsfwLevel: null,
+      verdict: { ...raisedVerdict(), workflowId: 'wf-9', nsfwLevel: 4 },
+    };
+
+    await imageRated(1, [POST_ID, OTHER_ID]);
+
+    expect(ratingNotices().map(([n]) => n.key)).toEqual([
+      `text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`,
+      `text-scan-rating-raised-Post-${OTHER_ID}-4-wf-9`,
+    ]);
   });
 
   it('does not notify a post with a moderator rating', async () => {
@@ -265,7 +312,7 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     expect(ratingNotices()).toHaveLength(0);
   });
 
-  it('still applies the level when the notice lookup fails', async () => {
+  it('keeps the applied level when the notice lookup fails', async () => {
     verdict = raisedVerdict();
     dbMock.dbWrite.$queryRaw.mockImplementation((async (query: Prisma.Sql) => {
       if (query.text.includes('JOIN "EntityModeration" em')) throw new Error('read failed');
