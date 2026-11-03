@@ -371,7 +371,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     // Close the panel and change sort immediately.
-    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     await vi.waitFor(() => {
       expect(currentQuery()).toMatchObject({ kind: 'offsite', sort: 'newest' });
@@ -386,7 +386,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await vi.waitFor(() => expect(replaceCalls).toBeGreaterThanOrEqual(1));
     expect(currentQuery()).not.toHaveProperty('query');
 
-    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
 
     await vi.waitFor(

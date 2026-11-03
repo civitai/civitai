@@ -212,7 +212,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
 
     // If the filters were deferred behind `useIsClient()`, this would be the
-    // DEFAULT `{kind:'all', category:undefined, sort:'top-rated'}` on the first
+    // DEFAULT `{kind:'all', category:undefined, sort:'popular'}` on the first
     // render and only become the seeded value after mount — a visible flash and a
     // wasted round-trip on every shared link.
     expect(mocks.lastArgs).toMatchObject({
@@ -227,7 +227,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     mocks.isClient = false;
     renderWithProviders(<StoreWithControls />);
 
-    // The sort control renders the seeded sort, not the default "Top rated".
+    // The sort control renders the seeded sort, not the default "Most popular".
     await expect.element(page.getByRole('button', { name: 'Newest' })).toBeInTheDocument();
     // The search box is seeded from `?query=` on its very first render.
     await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
@@ -293,8 +293,8 @@ describe('/apps store — no client-only source leaks into the first render', ()
     router.query = { kind: 'sideways', category: 'hats', sort: 'chaos' };
     mocks.isClient = false;
     renderWithProviders(<StoreWithControls />);
-    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
-    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated' });
+    await expect.element(page.getByRole('button', { name: 'Most popular' })).toBeInTheDocument();
+    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'popular' });
     expect(mocks.lastArgs?.category).toBeUndefined();
     // …and the grid still renders — never an empty result set.
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();

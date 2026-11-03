@@ -48,7 +48,10 @@ import {
 export const APPS_STORE_DEFAULTS = {
   kind: 'all',
   category: null,
-  sort: 'top-rated',
+  // `popular`, not `top-rated`, until listings carry reviews: with no thumbs to rank
+  // on, `top-rated` falls through to install count anyway, and a "Top rated" label
+  // over an install-ordered grid claims a judgement nobody has made yet.
+  sort: 'popular',
   query: '',
 } as const satisfies AppsStoreFilters;
 
