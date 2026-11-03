@@ -6,6 +6,7 @@ import {
   type ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
+  isMarketplaceCategory,
   MARKETPLACE_CATEGORIES,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
@@ -179,4 +180,21 @@ export function hasActiveAppsStoreFilters(
   filters: Pick<AppsStoreFilters, 'kind' | 'category' | 'query'>
 ): boolean {
   return countActiveAppsStoreFilters(filters) > 0 || filters.query.trim().length > 0;
+}
+
+/**
+ * The `/apps` store URL filtered to ONE category — what a listing's category links to.
+ *
+ * Built through {@link appsStoreFiltersToQuery}, the same serialiser the store writes its own
+ * URL with, so the link is byte-for-byte the URL a viewer gets by picking that category in the
+ * Filters dropdown, and {@link parseAppsStoreFilters} reads it back as exactly that filter.
+ *
+ * `null` for a value outside `MARKETPLACE_CATEGORIES`: the store's schema degrades an unknown
+ * `category` to "no category", so a link there would land on the UNFILTERED grid while reading
+ * as a filter. The caller renders the category as plain text instead.
+ */
+export function appsStoreCategoryHref(category: string | null | undefined): string | null {
+  if (!isMarketplaceCategory(category)) return null;
+  const { category: param } = appsStoreFiltersToQuery({ category });
+  return param ? `/apps?${new URLSearchParams({ category: param }).toString()}` : null;
 }
