@@ -30,6 +30,10 @@ describe('imageReveal', () => {
   });
 });
 
+const A = 1;
+const B = 2;
+const KEY_A = 'moderator.csam-holds.reveal-images:1';
+
 describe('imageReveal across reloads', () => {
   const memoryStorage = (initial: Record<string, string> = {}) => {
     const data = new Map(Object.entries(initial));
@@ -49,17 +53,20 @@ describe('imageReveal across reloads', () => {
   it('a reveal survives a reload once restored', async () => {
     const storage = memoryStorage();
     const before = await reload(storage);
+    before.restore(A);
     before.toggle();
     const after = await reload(storage);
     expect(after.on).toBe(false); // blurred until mount, as the server rendered it
-    after.restore();
+    after.restore(A);
     expect(after.on).toBe(true);
   });
 
   it('stores the choice under its key', async () => {
     const storage = memoryStorage();
-    (await reload(storage)).toggle();
-    expect(storage.data.get('moderator.csam-holds.reveal-images')).toBe('1');
+    const reveal = await reload(storage);
+    reveal.restore(A);
+    reveal.toggle();
+    expect(storage.data.get(KEY_A)).toBe('1');
   });
 
   it('coming back to the page keeps the choice made since, whatever storage says', async () => {
@@ -72,36 +79,76 @@ describe('imageReveal across reloads', () => {
       },
     };
     const reveal = await reload(broken);
-    reveal.restore();
+    reveal.restore(A);
     reveal.toggle();
-    reveal.restore(); // the page remounted after a client navigation
+    reveal.restore(A); // the page remounted after a client navigation
     expect(reveal.on).toBe(true);
 
     // A write that failed must not let an older stored reveal come back.
-    const stale = memoryStorage({ 'moderator.csam-holds.reveal-images': '1' });
+    const stale = memoryStorage({ [KEY_A]: '1' });
     const again = await reload({ getItem: stale.getItem, setItem: broken.setItem });
-    again.restore();
+    again.restore(A);
     again.toggle();
-    again.restore();
+    again.restore(A);
     expect(again.on).toBe(false);
+  });
+
+  it('is one moderator’s choice: the next moderator in this browser starts blurred', async () => {
+    const storage = memoryStorage();
+    const first = await reload(storage);
+    first.restore(A);
+    first.toggle();
+    const next = await reload(storage);
+    next.restore(B);
+    expect(next.on).toBe(false);
+    // And B's own choice does not leak back to A.
+    next.toggle();
+    const back = await reload(storage);
+    back.restore(A);
+    expect(back.on).toBe(true);
+    next.toggle();
+    back.restore(A);
+    expect(back.on).toBe(true);
+  });
+
+  it('switching moderators without a reload applies the new one’s choice', async () => {
+    const storage = memoryStorage({ [KEY_A]: '1' });
+    const reveal = await reload(storage);
+    reveal.restore(A);
+    expect(reveal.on).toBe(true);
+    reveal.restore(B);
+    expect(reveal.on).toBe(false);
+  });
+
+  it('ignores the per-browser entry earlier builds stored', async () => {
+    const reveal = await reload(memoryStorage({ 'moderator.csam-holds.reveal-images': '1' }));
+    reveal.restore(A);
+    expect(reveal.on).toBe(false);
+  });
+
+  it('stores nothing for a toggle before anyone is known', async () => {
+    const storage = memoryStorage();
+    (await reload(storage)).toggle();
+    expect(storage.data.size).toBe(0);
   });
 
   it('switching back to blurred survives a reload too', async () => {
     const storage = memoryStorage();
     const first = await reload(storage);
+    first.restore(A);
     first.toggle();
     first.toggle();
     const after = await reload(storage);
-    after.restore();
+    after.restore(A);
     expect(after.on).toBe(false);
   });
 
   it.each([
     ['never chosen', memoryStorage()],
-    ['an unreadable value', memoryStorage({ 'moderator.csam-holds.reveal-images': 'true' })],
+    ['an unreadable value', memoryStorage({ [KEY_A]: 'true' })],
   ])('stays blurred for %s', async (_label, storage) => {
     const reveal = await reload(storage);
-    reveal.restore();
+    reveal.restore(A);
     expect(reveal.on).toBe(false);
   });
 
@@ -115,7 +162,7 @@ describe('imageReveal across reloads', () => {
       },
     };
     const reveal = await reload(broken);
-    reveal.restore();
+    reveal.restore(A);
     expect(reveal.on).toBe(false);
     reveal.toggle();
     expect(reveal.on).toBe(true);

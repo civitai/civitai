@@ -137,7 +137,7 @@ describe('emitMintAuditToStdout', () => {
    *
    * `JSON.stringify` throws on exactly two inputs — a BigInt and a circular structure —
    * and `MintAuditFields` makes both unrepresentable. These are COMPILE-time assertions:
-   * `@ts-expect-error` fails `pnpm typecheck` if the error does NOT occur, so if someone
+   * `@ts-expect-error` fails `pnpm run typecheck:tests` if the error does NOT occur, so if someone
    * widens the field type back to `unknown` this block goes red rather than silently
    * becoming decoration. The runtime `expect` below each is incidental — the type error
    * is the assertion.

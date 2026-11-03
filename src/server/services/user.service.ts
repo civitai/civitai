@@ -81,6 +81,10 @@ import {
   readModelVersionEngagementsViaKysely,
   readModelVersionEngagementsViaPrisma,
 } from '~/server/services/hot-reads-6.reads';
+import {
+  readUserCosmeticsViaKysely,
+  readUserCosmeticsViaPrisma,
+} from '~/server/services/hot-reads-8.reads';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -204,7 +208,6 @@ import {
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
 import type {
   ToggleUserArticleEngagementsInput,
@@ -2290,40 +2293,13 @@ async function wipeAccountFromDocStore(userId: number): Promise<string | null> {
   }
 }
 
-export const getUserCosmetics = ({
+export const getUserCosmetics = async ({
   userId,
   equipped,
-}: GetUserCosmeticsSchema & { userId: number }) => {
-  return dbRead.user.findUnique({
-    where: { id: userId },
-    select: {
-      cosmetics: {
-        where: equipped ? { equippedAt: { not: null } } : undefined,
-        select: {
-          obtainedAt: true,
-          equippedAt: true,
-          equippedToId: true,
-          equippedToType: true,
-          forId: true,
-          forType: true,
-          claimKey: true,
-          data: true,
-          cosmetic: {
-            // Spread rather than hand-listed, so a field added to the shared
-            // selector reaches this read too — it is the one the whole cosmetics
-            // UI runs on, and a divergence here surfaces as one surface missing a
-            // field nobody thinks to check.
-            //
-            // `createdById` is extra: a scalar on the row already being selected,
-            // so no join and no extra round trip, and it is what lets the sticker
-            // tray filter to your own without asking a second procedure.
-            select: { ...simpleCosmeticSelect, createdById: true, flags: true },
-          },
-        },
-      },
-    },
-  });
-};
+}: GetUserCosmeticsSchema & { userId: number }) =>
+  (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
+    ? readUserCosmeticsViaKysely(kyselyRead, { userId, equipped })
+    : readUserCosmeticsViaPrisma(dbRead, { userId, equipped });
 
 export async function getBasicDataForUsers(userIds: number[]) {
   return await userBasicCache.fetch(userIds);

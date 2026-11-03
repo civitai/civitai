@@ -44,6 +44,11 @@ vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { resolvePageBlockBySlug: mockResolvePageBlockBySlug },
 }));
 
+// The launch's ClickHouse event, which the page sends without awaiting.
+vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
+  recordAppListingOpen: vi.fn(async () => undefined),
+}));
+
 /**
  * 🔴 THE CANONICAL `dbMock`, NOT A PER-FILE MOCK OF THE DB CLIENT MODULE. A per-file mock of
  * a shared module freezes THIS file's mock shape into every later file in the same worker
