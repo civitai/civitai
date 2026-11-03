@@ -165,9 +165,9 @@ describe('hero headline (A2)', () => {
 
 describe('hero team block (A6)', () => {
   it("shows the viewer's team, its hat, rank, team points and their own points", () => {
-    const el = hero({ team: 'Blue', rank: 2, teamPoints: 10512, points: 140 });
+    const el = hero({ team: 'Blue', myHat: 'my-hat', rank: 2, teamPoints: 10512, points: 140 });
     const block = el.querySelector('[data-testid="hero-team"]') as HTMLElement;
-    expect(srcs(block)).toEqual(['hat-blue']);
+    expect(srcs(block)).toEqual(['my-hat']);
     expect(block.textContent).toBe("You're onTeam BlueRank#2Team points10,512Your hats140");
     expect(el.textContent).not.toContain('Join and get your free hat');
   });

@@ -71,6 +71,7 @@ import {
 } from '~/server/services/user.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
+  getShowcaseHatForUser,
   refreshShowcaseHats,
   resolveShowcaseHatIds,
   SHOWCASE_EVENT,
@@ -1055,6 +1056,13 @@ export async function getMyShowcaseHat({
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
+}
+
+// The hat the caller's avatar shows now, from the cache, for their own "You're on Team X" panels: the
+// homepage block is one of them, so no primary read. Null when it is not on show.
+export async function getMyShowcaseHatArt({ event, user }: EventInput & { user: { id: number } }) {
+  if (event !== SHOWCASE_EVENT.name) return null;
+  return getShowcaseHatForUser(user.id);
 }
 
 // Picks (or, with null, clears) the hat the caller's avatar shows during the event. Only a hat of
