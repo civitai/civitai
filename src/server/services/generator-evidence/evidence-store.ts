@@ -38,6 +38,7 @@ export function sha256Hex(bytes: Uint8Array) {
 export function csamEvidenceStore(): EvidenceStore {
   const { client, Bucket } = evidenceBucket();
   return {
+    read: async (key: string) => (await readEvidenceObject(key)).bytes,
     async upload(key: string, body: Readable, contentType: string) {
       await new Upload({
         client,

@@ -2,7 +2,8 @@ import { dbWrite } from '~/server/db/client';
 
 export const evidenceViewActivity = (blobId: string) => `generatorEvidence:view:${blobId}` as const;
 
-/** Each file's moderator views on a report, by blob id, from the primary so a fresh view counts. */
+/** Each file's moderator views on a report, by blob id, from the primary so a fresh view counts.
+ *  Read before the CyberTip is opened, so a view recorded during the send does not count. */
 export async function getViewedEvidence(reportId: number, blobIds: string[]) {
   const viewed = new Map<string, number[]>();
   if (!blobIds.length) return viewed;
@@ -11,7 +12,6 @@ export async function getViewedEvidence(reportId: number, blobIds: string[]) {
       entityType: 'csamReport',
       entityId: reportId,
       activity: { in: blobIds.map(evidenceViewActivity) },
-      createdAt: { lt: new Date() },
     },
     select: { activity: true, userId: true },
   });

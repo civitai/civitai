@@ -23,6 +23,7 @@ function memoryStore(override?: Partial<EvidenceStore>) {
   const objects = new Map<string, Buffer>();
   const store: EvidenceStore & { objects: Map<string, Buffer> } = {
     objects,
+    read: async (key: string) => new Uint8Array(objects.get(key) ?? Buffer.alloc(0)),
     upload: vi.fn(async (key: string, body: Readable) => {
       const chunks: Buffer[] = [];
       for await (const chunk of body) chunks.push(Buffer.from(chunk));

@@ -141,12 +141,14 @@ export const preserveGeneratorEvidenceSchema = generatorEvidenceUserSchema
       .max(200)
       .default([]),
     priorCTReports: priorCTReportsSchema,
+    manifestKey: z.string().min(1).max(300).optional(),
   })
-  .refine((input) => input.workflowIds.length + input.triggers.length > 0, {
-    message: 'Pick at least one workflow or trigger.',
+  .refine((input) => input.workflowIds.length + input.triggers.length > 0 || !!input.manifestKey, {
+    message: 'Pick at least one workflow or trigger, or name a manifest.',
   });
 
 export const approveGeneratorEvidenceSchema = generatorEvidenceUserSchema.extend({
   reportId: z.number().int().positive(),
+  version: z.string().min(1).max(64),
   priorCTReports: priorCTReportsSchema,
 });

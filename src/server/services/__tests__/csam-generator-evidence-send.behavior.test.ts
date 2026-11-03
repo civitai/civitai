@@ -211,9 +211,28 @@ beforeEach(() => {
   readEvidenceObject
     .mockReset()
     .mockImplementation(async () => ({ bytes: new Uint8Array(stored) }));
+  // A view of the output on THIS report; views of the input on another report or entity, which must not count.
+  const views = [
+    { entityType: 'csamReport', onThisReport: true, activity: `generatorEvidence:view:${OUTPUT}` },
+    { entityType: 'csamReport', onThisReport: false, activity: `generatorEvidence:view:${INPUT}` },
+    { entityType: 'image', onThisReport: true, activity: `generatorEvidence:view:${INPUT}` },
+  ];
   dbMock.dbWrite.modActivity.findMany
     .mockReset()
-    .mockResolvedValue([{ activity: `generatorEvidence:view:${OUTPUT}`, userId: 10 }]);
+    .mockImplementation((async ({
+      where,
+    }: {
+      where: { entityType: string; entityId: number; activity: { in: string[] } };
+    }) =>
+      views
+        .filter(
+          (v) =>
+            v.entityType === where.entityType &&
+            v.onThisReport &&
+            where.entityId > 0 &&
+            where.activity.in.includes(v.activity)
+        )
+        .map((v) => ({ activity: v.activity, userId: 10 }))) as never);
   finishReport.mockReset();
   cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
@@ -350,6 +369,7 @@ describe('sending a report of preserved generator evidence', () => {
     for (const blobId of [INPUT, OUTPUT])
       expect(detailsFor(blobId).details).toEqual([
         {
+          type: 'EXIF',
           valuePair: [
             { name: 'prompt', value: 'the prompt text' },
             { name: 'negativePrompt', value: 'the negative text' },
@@ -370,10 +390,15 @@ describe('sending a report of preserved generator evidence', () => {
     expect(submitReport.mock.calls[0][0].personOrUserReported.priorCTReports).toEqual([4242]);
   });
 
-  it('reports a file as viewed only when a moderator view of it is recorded', async () => {
-    await sendEvidenceReport(evidenceDetails());
+  it('reports a file as viewed only when a moderator view of it on this report is recorded', async () => {
+    const id = await sendEvidenceReport(evidenceDetails());
 
     expect(detailsFor(OUTPUT).fileViewedByEsp).toBe(true);
     expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
+    const [{ where }] = dbMock.dbWrite.modActivity.findMany.mock.calls[0] as [
+      { where: { entityId: number } }
+    ];
+    expect(where.entityId).toBe(id);
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { isGeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
+import {
+  EVIDENCE_MEDIA_TYPES,
+  isGeneratorEvidenceDetails,
+} from '~/server/services/generator-evidence/evidence-meta';
 import { readVerifiedEvidence } from '~/server/services/generator-evidence/evidence-payload';
 import { readEvidenceObject, sha256Hex } from '~/server/services/generator-evidence/evidence-store';
 import { evidenceViewActivity } from '~/server/services/generator-evidence/evidence-views';
@@ -17,7 +20,8 @@ const query = z.object({
   blobId: z.string().min(1).max(200),
 });
 
-const SERVABLE = /^(image|video)\//i;
+/** Larger files are not loaded into a web process to be shown; they are still sent. */
+const MAX_VIEW_BYTES = 64 * 1024 * 1024;
 
 /**
  * One preserved file of a generator evidence report, from the evidence copy. The browser names the
@@ -43,12 +47,17 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     .flatMap((job) => job.blobs)
     .find((b) => b.blobId === blobId && b.status === 'preserved');
   if (!blob) return void res.status(404).json({ error: 'Not found' });
-  const contentType = blob.contentType ?? '';
-  if (!SERVABLE.test(contentType))
+  const contentType = blob.contentType?.toLowerCase() ?? '';
+  if (!EVIDENCE_MEDIA_TYPES.has(contentType))
     return void res.status(415).json({ error: 'This file cannot be shown here' });
+  if ((blob.bytes ?? 0) > MAX_VIEW_BYTES)
+    return void res.status(413).json({ error: 'This file is too large to show here' });
 
   const read = await readVerifiedEvidence(blob, readEvidenceObject, sha256Hex);
-  if (!read.ok) return void res.status(502).json({ error: read.reason });
+  if (!read.ok) {
+    console.error('[generator-evidence-file] read refused', read.reason);
+    return void res.status(502).json({ error: 'The preserved copy could not be read' });
+  }
 
   await trackModActivity(user.id, {
     entityType: 'csamReport',
@@ -61,9 +70,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     'content-length': String(read.bytes.length),
     'content-disposition': 'inline',
     'x-content-type-options': 'nosniff',
+    'content-security-policy': "sandbox; default-src 'none'",
     'cache-control': 'private, no-store',
   });
-  res.end(Buffer.from(read.bytes));
+  res.end(Buffer.from(read.bytes.buffer, read.bytes.byteOffset, read.bytes.byteLength));
 }
 
 export default ModEndpoint(handler);

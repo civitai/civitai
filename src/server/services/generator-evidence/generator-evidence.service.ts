@@ -25,8 +25,12 @@ import { CsamReportType } from '~/shared/utils/prisma/enums';
 import type {
   GeneratorEvidenceDetails,
   StoredEvidenceJob,
+  TriggerRef,
 } from '~/server/services/generator-evidence/evidence-meta';
+import type { AdoptableCopy } from '~/server/services/generator-evidence/evidence-manifest';
+import { adoptCopy, parseManifest } from '~/server/services/generator-evidence/evidence-manifest';
 import {
+  evidenceVersion,
   GENERATOR_EVIDENCE_VERSION,
   generatorEvidenceReportWhere,
   isGeneratorEvidenceDetails,
@@ -43,8 +47,6 @@ type TriggerRow = {
 };
 
 const str = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined);
-
-export type TriggerRef = { restrictionId: number; index: number };
 
 function triggerJob(
   restrictionId: number,
@@ -124,6 +126,8 @@ export type PreserveInput = {
   workflowIds: string[];
   triggers: TriggerRef[];
   priorCTReports?: number[];
+  /** A preserve run's manifest: its workflows and triggers are added, and its copies adopted. */
+  manifestKey?: string;
 };
 
 export type PreserveDeps = { config: OrchestratorConfig; store: EvidenceStore; now?: () => Date };
@@ -132,20 +136,24 @@ async function loadJobs(deps: PreserveDeps, input: PreserveInput) {
   const jobs: EvidenceJob[] = [];
   const refused: { ref: string; reason: string }[] = [];
 
-  for (const workflowId of new Set(input.workflowIds)) {
-    // The id is the orchestrator's and begins with its submitter; a posted id for anyone else is refused.
-    if (workflowOwnerId(workflowId) !== input.userId) {
-      refused.push({ ref: workflowId, reason: 'not a workflow of this user' });
-      continue;
-    }
-    const workflow = await getManagerWorkflow(deps.config, workflowId);
-    const job = workflow ? collectWorkflowEvidence(workflow, deps.config.origin) : null;
-    if (!job || job.jobId !== workflowId) {
-      refused.push({ ref: workflowId, reason: 'not found at the orchestrator' });
-      continue;
-    }
-    jobs.push(job);
-  }
+  const limit = plimit(4);
+  const read = await Promise.all(
+    [...new Set(input.workflowIds)].map((workflowId) =>
+      limit(async (): Promise<{ workflowId: string; job?: EvidenceJob; reason?: string }> => {
+        // The id is the orchestrator's and begins with its submitter; a posted id for anyone else is refused.
+        if (workflowOwnerId(workflowId) !== input.userId)
+          return { workflowId, reason: 'not a workflow of this user' };
+        const workflow = await getManagerWorkflow(deps.config, workflowId);
+        const job = workflow ? collectWorkflowEvidence(workflow, deps.config.origin) : null;
+        if (!job || job.jobId !== workflowId)
+          return { workflowId, reason: 'not found at the orchestrator' };
+        return { workflowId, job };
+      })
+    )
+  );
+  for (const result of read)
+    if (result.job) jobs.push(result.job);
+    else refused.push({ ref: result.workflowId, reason: result.reason ?? 'not read' });
 
   const restrictionIds = [...new Set(input.triggers.map((t) => t.restrictionId))];
   const restrictions = restrictionIds.length
@@ -183,12 +191,27 @@ export async function preserveGeneratorEvidence(
   input: PreserveInput,
   deps: PreserveDeps = { config: orchestratorEvidenceConfig(), store: csamEvidenceStore() }
 ) {
+  let copies = new Map<string, AdoptableCopy>();
+  if (input.manifestKey) {
+    const manifest = parseManifest(
+      new TextDecoder().decode(await deps.store.read(input.manifestKey)),
+      input.manifestKey,
+      input.userId
+    );
+    copies = manifest.copies;
+    input = {
+      ...input,
+      workflowIds: [...input.workflowIds, ...manifest.workflowIds],
+      triggers: [...input.triggers, ...manifest.triggers],
+    };
+  }
   const { jobs, refused } = await loadJobs(deps, input);
   if (!jobs.length) return { reportId: null, refused, counts: {} as Record<string, number> };
 
   const pending = await dbWrite.csamReport.findFirst({
     where: generatorEvidenceReportWhere(input.userId),
     select: { details: true },
+    orderBy: { id: 'asc' },
   });
   const kept = new Map<string, StoredEvidenceBlob>();
   if (isGeneratorEvidenceDetails(pending?.details))
@@ -206,6 +229,17 @@ export async function preserveGeneratorEvidence(
     const { refs: _refs, ...rest } = job;
     stored.push({ ...rest, blobs });
 
+    async function adoptFromManifest(ref: EvidenceRef & { kind: 'blob' }) {
+      const copy = copies.get(ref.blobId);
+      if (!copy) return null;
+      const base = {
+        blobId: ref.blobId,
+        role: ref.role,
+        ...(ref.stepName && { stepName: ref.stepName }),
+      };
+      return adoptCopy(deps.store, copy, base, input.moderatorId, deps.now?.() ?? new Date());
+    }
+
     async function storedBlobFor(ref: EvidenceRef) {
       let blob: StoredEvidenceBlob;
       if (ref.kind === 'external')
@@ -219,6 +253,7 @@ export async function preserveGeneratorEvidence(
       else
         blob =
           kept.get(ref.blobId) ??
+          (await adoptFromManifest(ref)) ??
           (await preserveBlob(deps, {
             userId: input.userId,
             jobKey: jobKeyFor(job),
@@ -275,7 +310,8 @@ export async function preserveGeneratorEvidence(
 
 /** The user's pending evidence report as the review page shows it: records only, never a file. */
 export async function getGeneratorEvidenceReport(userId: number, viewerId: number) {
-  const report = await dbRead.csamReport.findFirst({
+  // The primary: the approval this page leads to must name the files as they are now.
+  const report = await dbWrite.csamReport.findFirst({
     where: generatorEvidenceReportWhere(userId),
     select: { id: true, createdAt: true, details: true, reportedById: true },
     orderBy: { id: 'asc' },
@@ -288,6 +324,7 @@ export async function getGeneratorEvidenceReport(userId: number, viewerId: numbe
   return {
     id: report.id,
     createdAt: report.createdAt,
+    version: evidenceVersion(report.details),
     meta: report.details.generatorEvidence,
     jobs: report.details.generatedImages.map((job) => ({
       jobId: job.jobId,
@@ -314,11 +351,13 @@ export async function getGeneratorEvidenceReport(userId: number, viewerId: numbe
   };
 }
 
-/** Releases the report to the send job. A report folded into since it was read is not approved. */
+/** Releases the report to the send job, only as the moderator saw it: a report whose files changed
+ *  since the page was read is not approved. */
 export async function approveGeneratorEvidenceReport(input: {
   reportId: number;
   userId: number;
   moderatorId: number;
+  version: string;
   priorCTReports?: number[];
 }) {
   return dbWrite.$transaction(async (tx) => {
@@ -329,6 +368,11 @@ export async function approveGeneratorEvidenceReport(input: {
       FOR UPDATE`;
     if (!locked || !isGeneratorEvidenceDetails(locked.details))
       throw new TRPCError({ code: 'CONFLICT', message: 'This report can no longer be approved.' });
+    if (evidenceVersion(locked.details) !== input.version)
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'Files were added to this report since you loaded it. Reload and review them.',
+      });
     const preserved = locked.details.generatedImages.some((job) =>
       job.blobs.some((blob) => blob.status === 'preserved')
     );
@@ -341,7 +385,14 @@ export async function approveGeneratorEvidenceReport(input: {
       ...locked.details,
       generatorEvidence: {
         ...locked.details.generatorEvidence,
-        ...(input.priorCTReports && { priorCTReports: input.priorCTReports }),
+        ...(input.priorCTReports && {
+          priorCTReports: [
+            ...new Set([
+              ...(locked.details.generatorEvidence.priorCTReports ?? []),
+              ...input.priorCTReports,
+            ]),
+          ],
+        }),
         approvedAt: new Date().toISOString(),
         approvedById: input.moderatorId,
       },

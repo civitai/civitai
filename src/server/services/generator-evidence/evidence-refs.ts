@@ -24,17 +24,21 @@ export type EvidenceJob = {
   refs: EvidenceRef[];
 };
 
-const BLOB_PATH = '/v2/consumer/blobs/';
 const AIR_BLOB = /^urn:air:[^:]+:[^:]+:orchestrator:blob@([^\s?#]+)$/i;
 // Keys are opaque, but a path segment or a urn version never carries these.
 const BLOB_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 const MEDIA_PATH = /\.(jpe?g|png|webp|gif|avif|mp4|webm|mov)$/i;
 
+const CIVITAI_HOST = /(^|\.)civitai\.com$/;
+const BLOB_PATHS = ['/v2/consumer/blobs/', '/v1/consumer/blobs/'];
+const RESERVED_SEGMENTS = new Set(['content', 'blocked', 'archive', 'upload', 'ingest']);
+
 /**
- * The orchestrator blob key a step input or trigger names: a `/v2/consumer/blobs/{key}` URL or an
- * orchestrator AIR. `content/` and `blocked/` URLs carry a delivery token, not a key.
+ * The orchestrator blob key a step input or trigger names: an orchestrator AIR, or a consumer blob
+ * URL on the orchestrator's origin or a civitai.com host. Only the key is used, and it is read from
+ * our own orchestrator; the URL is never fetched.
  */
-export function parseOrchestratorBlobKey(value: string) {
+export function parseOrchestratorBlobKey(value: string, orchestratorOrigin: string) {
   const air = AIR_BLOB.exec(value.trim());
   if (air) return BLOB_KEY.test(air[1]) ? air[1] : null;
   let url: URL;
@@ -43,12 +47,20 @@ export function parseOrchestratorBlobKey(value: string) {
   } catch {
     return null;
   }
-  // Any host: the key is read back from our own orchestrator, never from the URL it came in.
-  if (!url.pathname.toLowerCase().startsWith(BLOB_PATH)) return null;
-  const rest = url.pathname.slice(BLOB_PATH.length);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (url.origin !== orchestratorOrigin && !CIVITAI_HOST.test(url.hostname)) return null;
+  const path = url.pathname.toLowerCase();
+  const prefix = BLOB_PATHS.find((p) => path.startsWith(p));
+  if (!prefix) return null;
+  const rest = url.pathname.slice(prefix.length);
   if (!rest || rest.includes('/')) return null;
-  const key = decodeURIComponent(rest);
-  return BLOB_KEY.test(key) ? key : null;
+  let key: string;
+  try {
+    key = decodeURIComponent(rest);
+  } catch {
+    return null;
+  }
+  return BLOB_KEY.test(key) && !RESERVED_SEGMENTS.has(key.toLowerCase()) ? key : null;
 }
 
 function asHttpUrl(value: string) {
@@ -67,7 +79,7 @@ export function refForSource(
   stepName: string | undefined,
   orchestratorOrigin: string
 ): EvidenceRef | null {
-  const blobId = parseOrchestratorBlobKey(value);
+  const blobId = parseOrchestratorBlobKey(value, orchestratorOrigin);
   if (blobId) return { kind: 'blob', blobId, role, stepName };
   const url = asHttpUrl(value);
   if (!url || url.origin === orchestratorOrigin || !MEDIA_PATH.test(url.pathname)) return null;

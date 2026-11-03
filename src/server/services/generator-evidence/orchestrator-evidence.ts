@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
 
 export type OrchestratorConfig = { base: string; origin: string; token: string };
 
@@ -48,8 +49,7 @@ export type BlobProbe =
   | { kind: 'unavailable'; status: number; reason: string };
 
 /**
- * Where a blob resolves, read by KEY with no cap and no workflow, so neither an owner's NSFW limit nor
- * a workflow's mature-content state applies. Only a redirect to the orchestrator's own content route is
+ * Where a blob resolves, asked by key alone. Only a redirect to the orchestrator's own content route is
  * readable; a redirect to its blocked route is the placeholder and is never followed.
  */
 export async function probeBlob(config: OrchestratorConfig, blobId: string): Promise<BlobProbe> {
@@ -74,8 +74,6 @@ export async function probeBlob(config: OrchestratorConfig, blobId: string): Pro
   return { kind: 'content', url: target.href };
 }
 
-const PRESERVABLE_TYPE = /^(image|video)\//i;
-
 export type BlobContent =
   | { ok: true; body: ReadableStream<Uint8Array>; contentType: string; contentLength?: number }
   | { ok: false; reason: string; blocked?: boolean };
@@ -99,7 +97,8 @@ export async function fetchBlobContent(
   if (res.headers.get(BLOCKED_REASON_HEADER)) return refuse('withheld by the orchestrator', true);
   if (res.status !== 200 || !res.body) return refuse(`content read answered ${res.status}`);
   const contentType = res.headers.get('content-type')?.split(';')[0].trim() ?? '';
-  if (!PRESERVABLE_TYPE.test(contentType)) return refuse(`not media (${contentType || 'none'})`);
+  if (!EVIDENCE_MEDIA_TYPES.has(contentType.toLowerCase()))
+    return refuse(`not media (${contentType || 'none'})`);
   const length = Number(res.headers.get('content-length'));
   return {
     ok: true,

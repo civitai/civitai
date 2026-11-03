@@ -27,8 +27,12 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   softDeleteUser,
 }));
 
-import { preserveGeneratorEvidence } from '~/server/services/generator-evidence/generator-evidence.service';
+import {
+  approveGeneratorEvidenceReport,
+  preserveGeneratorEvidence,
+} from '~/server/services/generator-evidence/generator-evidence.service';
 import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
+import { evidenceVersion } from '~/server/services/generator-evidence/evidence-meta';
 
 const config = {
   base: 'https://orchestrator.example.invalid',
@@ -57,9 +61,14 @@ const workflow = {
   ],
 };
 
-function memoryStore(): EvidenceStore {
-  const objects = new Map<string, Buffer>();
-  return {
+function memoryStore(seed: Record<string, Buffer> = {}) {
+  const objects = new Map<string, Buffer>(Object.entries(seed));
+  const store: EvidenceStore = {
+    read: async (key) => {
+      const object = objects.get(key);
+      if (!object) throw new Error('no such object');
+      return new Uint8Array(object);
+    },
     upload: vi.fn(async (key: string, body: Readable) => {
       const chunks: Buffer[] = [];
       for await (const chunk of body) chunks.push(Buffer.from(chunk));
@@ -71,17 +80,21 @@ function memoryStore(): EvidenceStore {
         .update(objects.get(key) ?? Buffer.alloc(0))
         .digest('hex'),
   };
+  return store;
 }
 
 const fetched: string[] = [];
+const fetchedUrls: string[] = [];
 beforeEach(() => {
   fetched.length = 0;
+  fetchedUrls.length = 0;
   createCsamReport.mockReset().mockResolvedValue({ id: 55 });
   reviewConsumerStrikes.mockReset();
   softDeleteUser.mockReset();
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = new URL(String(input));
     fetched.push(url.pathname);
+    fetchedUrls.push(url.href);
     if (url.pathname === `/v1/manager/workflows/${WORKFLOW}`)
       return new Response(JSON.stringify(workflow), { status: 200 });
     if (url.pathname.startsWith('/v2/consumer/blobs/content/'))
@@ -135,6 +148,14 @@ describe('preserveGeneratorEvidence', () => {
     });
     expect(reviewConsumerStrikes).not.toHaveBeenCalled();
     expect(softDeleteUser).not.toHaveBeenCalled();
+    for (const write of [
+      dbMock.dbWrite.user.update,
+      dbMock.dbWrite.user.updateMany,
+      dbMock.dbWrite.userRestriction.update,
+      dbMock.dbWrite.userRestriction.updateMany,
+      dbMock.dbWrite.$executeRaw,
+    ])
+      expect(write).not.toHaveBeenCalled();
   });
 
   it("preserves a trigger's input images by key and keeps its prompt, reading only this user's restriction", async () => {
@@ -145,7 +166,7 @@ describe('preserveGeneratorEvidence', () => {
           {
             prompt: 'trigger prompt',
             time: '2026-10-26T12:00:00Z',
-            inputImages: [`https://cdn.example.invalid/v2/consumer/blobs/${INPUT}?sig=x`],
+            inputImages: [`https://orchestration.civitai.com/v2/consumer/blobs/${INPUT}?sig=x`],
           },
         ],
       },
@@ -169,7 +190,7 @@ describe('preserveGeneratorEvidence', () => {
     expect(job.blobs).toEqual([
       expect.objectContaining({ blobId: INPUT, role: 'input', status: 'preserved' }),
     ]);
-    expect(fetched).not.toContain(`/v2/consumer/blobs/${INPUT}?sig=x`);
+    expect(fetchedUrls.filter((u) => u.includes('orchestration.civitai.com'))).toEqual([]);
   });
 
   it('keeps a withheld output by id without reading its bytes', async () => {
@@ -210,5 +231,159 @@ describe('preserveGeneratorEvidence', () => {
     const [job] = createCsamReport.mock.calls[0][0].details.generatedImages;
     expect(job.blobs[0]).toMatchObject({ blobId: OUTPUT, status: 'blocked-unreadable' });
     expect(fetched.filter((p) => p.includes('/blocked/'))).toEqual([]);
+  });
+
+  describe("adopting a preserve run's manifest", () => {
+    const MANIFEST = `case-a/${USER}/manifest-20261103T000000Z.jsonl`;
+    const COPY = `case-a/${USER}/${WORKFLOW}/${OUTPUT}`;
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const row = (over: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        case: 'case-a',
+        userId: USER,
+        kind: 'output',
+        imageId: OUTPUT,
+        workflowId: WORKFLOW,
+        status: 'copied',
+        objectKey: COPY,
+        sha256: sha,
+        bytes: bytes.length,
+        contentType: 'image/png',
+        ...over,
+      });
+
+    it('adopts a copy that reads back as recorded instead of copying it again', async () => {
+      const store = memoryStore({ [MANIFEST]: Buffer.from(row() + '\n'), [COPY]: bytes });
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: MANIFEST },
+        { config, store }
+      );
+
+      const blobs = createCsamReport.mock.calls[0][0].details.generatedImages[0].blobs;
+      expect(blobs[0]).toMatchObject({ blobId: OUTPUT, status: 'preserved', evidenceKey: COPY });
+      expect(store.upload).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(store.upload).mock.calls[0][0]).not.toBe(COPY);
+    });
+
+    it('copies afresh when the recorded copy no longer matches its sha256', async () => {
+      const store = memoryStore({
+        [MANIFEST]: Buffer.from(row() + '\n'),
+        [COPY]: Buffer.from('other bytes!!!'),
+      });
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: MANIFEST },
+        { config, store }
+      );
+
+      const blobs = createCsamReport.mock.calls[0][0].details.generatedImages[0].blobs;
+      expect(blobs[0].evidenceKey).not.toBe(COPY);
+      expect(blobs[0].status).toBe('preserved');
+    });
+
+    it("ignores a row whose copy sits outside the manifest's folder", async () => {
+      const outside = `case-a/${USER + 1}/${WORKFLOW}/${OUTPUT}`;
+      const store = memoryStore({
+        [MANIFEST]: Buffer.from(row({ objectKey: outside }) + '\n'),
+        [outside]: bytes,
+      });
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: MANIFEST },
+        { config, store }
+      );
+
+      const blobs = createCsamReport.mock.calls[0][0].details.generatedImages[0].blobs;
+      expect(blobs[0].evidenceKey).not.toBe(outside);
+    });
+
+    it("refuses another user's manifest", async () => {
+      const other = `case-a/${USER + 1}/manifest-20261103T000000Z.jsonl`;
+      const store = memoryStore({ [other]: Buffer.from(row({ userId: USER + 1 }) + '\n') });
+
+      await expect(
+        preserveGeneratorEvidence(
+          { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: other },
+          { config, store }
+        )
+      ).rejects.toThrow(/not one of this user/);
+      expect(createCsamReport).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('approving a report', () => {
+    const preservedDetails = {
+      generatorEvidence: { version: 1 },
+      generatedImages: [
+        { jobId: WORKFLOW, blobs: [{ blobId: OUTPUT, role: 'output', status: 'preserved' }] },
+      ],
+    };
+
+    it("refuses a report that is sent, claimed, or not this user's (the locked read finds none)", async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
+      await expect(
+        approveGeneratorEvidenceReport({
+          reportId: 3,
+          userId: USER,
+          moderatorId: 1,
+          version: evidenceVersion(preservedDetails as never),
+        })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      const [sql, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+      expect(sql.join('?')).toMatch(/"reportSentAt" IS NULL AND "sendClaimId" IS NULL/);
+      expect(values).toEqual([3, USER]);
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a report with no preserved file', async () => {
+      const nothingPreserved = {
+        ...preservedDetails,
+        generatedImages: [{ jobId: WORKFLOW, blobs: [{ blobId: OUTPUT, status: 'gone' }] }],
+      };
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: nothingPreserved }] as never);
+      await expect(
+        approveGeneratorEvidenceReport({
+          reportId: 3,
+          userId: USER,
+          moderatorId: 1,
+          version: evidenceVersion(nothingPreserved as never),
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an approval of the report as it was before files were added', async () => {
+      const seen = evidenceVersion(preservedDetails as never);
+      const grown = {
+        ...preservedDetails,
+        generatedImages: [
+          ...preservedDetails.generatedImages,
+          { jobId: 'later', blobs: [{ blobId: 'LATER', role: 'output', status: 'preserved' }] },
+        ],
+      };
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: grown }] as never);
+      await expect(
+        approveGeneratorEvidenceReport({ reportId: 3, userId: USER, moderatorId: 1, version: seen })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('records who approved it, and when', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: preservedDetails }] as never);
+      await approveGeneratorEvidenceReport({
+        reportId: 3,
+        userId: USER,
+        moderatorId: 1,
+        version: evidenceVersion(preservedDetails as never),
+      });
+      const { where, data } = dbMock.dbWrite.csamReport.update.mock.calls[0][0] as {
+        where: unknown;
+        data: { details: { generatorEvidence: { approvedAt: string; approvedById: number } } };
+      };
+      expect(where).toEqual({ id: 3 });
+      expect(data.details.generatorEvidence.approvedById).toBe(1);
+      expect(Date.parse(data.details.generatorEvidence.approvedAt)).not.toBeNaN();
+    });
   });
 });

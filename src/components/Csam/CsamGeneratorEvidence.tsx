@@ -229,6 +229,7 @@ function PendingReport({ userId }: { userId: number }) {
                 approve.mutate({
                   userId,
                   reportId: report.id,
+                  version: report.version,
                   priorCTReports: parsedTips?.length ? parsedTips : undefined,
                 })
               }
@@ -254,6 +255,7 @@ function AddEvidence({
   const [pickedTriggers, setPickedTriggers] = useState<Set<string> | null>(null);
   const [pickedWorkflows, setPickedWorkflows] = useState<Set<string>>(new Set());
   const [tips, setTips] = useState('');
+  const [manifestKey, setManifestKey] = useState('');
   const preserve = trpc.csam.preserveGeneratorEvidence.useMutation({
     onSuccess: () => {
       setPickedWorkflows(new Set());
@@ -279,6 +281,7 @@ function AddEvidence({
     return next;
   };
   const parsedTips = tips.trim() ? parseCyberTips(tips) : [];
+  const manifest = manifestKey.trim();
   const count = triggers.size + pickedWorkflows.size;
 
   return (
@@ -345,6 +348,12 @@ function AddEvidence({
         )}
 
         <TextInput
+          label="Preserve run manifest (optional)"
+          description="The key of a manifest an earlier preserve run wrote for this user. Its workflows and triggers are added, and its copies used once they read back as recorded."
+          value={manifestKey}
+          onChange={(e) => setManifestKey(e.currentTarget.value)}
+        />
+        <TextInput
           label="Prior CyberTip number(s)"
           description="Optional. A report already filed on this user."
           value={tips}
@@ -365,9 +374,11 @@ function AddEvidence({
           </Alert>
         )}
         <ConfirmButton
-          label={`Preserve and add ${count} item(s) to the report`}
-          confirmLabel={`Confirm: preserve ${count} item(s)`}
-          disabled={count === 0 || parsedTips === null}
+          label={`Preserve and add ${count} item(s)${
+            manifest ? ' and the manifest' : ''
+          } to the report`}
+          confirmLabel={`Confirm: preserve ${count} item(s)${manifest ? ' and the manifest' : ''}`}
+          disabled={(count === 0 && !manifest) || parsedTips === null}
           loading={preserve.isPending}
           onConfirm={() =>
             preserve.mutate({
@@ -378,6 +389,7 @@ function AddEvidence({
                 return { restrictionId, index };
               }),
               priorCTReports: parsedTips?.length ? parsedTips : undefined,
+              manifestKey: manifest || undefined,
             })
           }
         />

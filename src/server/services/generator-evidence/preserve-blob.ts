@@ -38,12 +38,13 @@ export type StoredEvidenceBlob = {
 };
 
 export type EvidenceStore = {
+  read(key: string): Promise<Uint8Array>;
   upload(key: string, body: Readable, contentType: string): Promise<void>;
   head(key: string): Promise<{ bytes: number } | null>;
   sha256(key: string): Promise<string>;
 };
 
-export const MAX_EVIDENCE_BYTES = 512 * 1024 * 1024;
+export const MAX_EVIDENCE_BYTES = 256 * 1024 * 1024;
 
 export const evidenceKeyFor = (userId: number, jobKey: string, blobId: string) =>
   `generator-evidence/${userId}/${jobKey}/${blobId}`;
@@ -124,6 +125,7 @@ export async function preserveBlob(
   try {
     const source = Readable.fromWeb(content.body as NodeReadableStream<Uint8Array>);
     source.on('error', (e) => hasher.stream.destroy(e));
+    hasher.stream.on('error', (e) => source.destroy(e));
     await deps.store.upload(evidenceKey, source.pipe(hasher.stream), content.contentType);
   } catch (e) {
     return { ...base, status: 'unavailable', reason: `copy failed: ${(e as Error).message}` };

@@ -4,10 +4,12 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** Who may preserve and approve generator evidence. Ids are invented. */
 
-const { preserveGeneratorEvidence, approveGeneratorEvidenceReport } = vi.hoisted(() => ({
-  preserveGeneratorEvidence: vi.fn(async () => ({ reportId: 1, refused: [], counts: {} })),
-  approveGeneratorEvidenceReport: vi.fn(async () => ({ approved: true })),
-}));
+const { preserveGeneratorEvidence, approveGeneratorEvidenceReport, getEvidenceTriggers } =
+  vi.hoisted(() => ({
+    preserveGeneratorEvidence: vi.fn(async () => ({ reportId: 1, refused: [], counts: {} })),
+    approveGeneratorEvidenceReport: vi.fn(async () => ({ approved: true })),
+    getEvidenceTriggers: vi.fn(async () => []),
+  }));
 vi.mock(
   '~/server/services/generator-evidence/generator-evidence.service',
   async (importOriginal) => ({
@@ -33,7 +35,7 @@ const caller = (user: Record<string, unknown> | undefined, csamReports: boolean)
   } as never);
 
 const preserve = { userId: 7, workflowIds: ['7-20261101000000000000'], triggers: [] };
-const approve = { userId: 7, reportId: 3 };
+const approve = { userId: 7, reportId: 3, version: 'v' };
 const codeOf = (call: Promise<unknown>) =>
   call.then(
     () => 'ok',
@@ -51,6 +53,18 @@ describe('generator evidence procedures', () => {
     expect(approveGeneratorEvidenceReport).not.toHaveBeenCalled();
   });
 
+  it('refuse every read to a member, and to a moderator without CSAM reporting access', async () => {
+    for (const refused of [
+      caller({ id: 5, isModerator: false }, true),
+      caller({ id: 5, isModerator: true }, false),
+    ]) {
+      expect(await codeOf(refused.getGeneratorEvidenceTriggers({ userId: 7 }))).toBe('FORBIDDEN');
+      expect(await codeOf(refused.getGeneratorEvidenceWorkflows({ userId: 7 }))).toBe('FORBIDDEN');
+      expect(await codeOf(refused.getGeneratorEvidenceReport({ userId: 7 }))).toBe('FORBIDDEN');
+    }
+    expect(getEvidenceTriggers).not.toHaveBeenCalled();
+  });
+
   it('refuse a moderator without CSAM reporting access', async () => {
     const moderator = caller({ id: 5, isModerator: true }, false);
     expect(await codeOf(moderator.preserveGeneratorEvidence(preserve))).toBe('FORBIDDEN');
@@ -64,5 +78,6 @@ describe('generator evidence procedures', () => {
     expect(preserveGeneratorEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 7, moderatorId: 5 })
     );
+    expect(await codeOf(moderator.getGeneratorEvidenceTriggers({ userId: 7 }))).toBe('ok');
   });
 });

@@ -235,6 +235,7 @@ export async function createCsamReport({
             OR: [{ sendClaimId: null }, { sendClaimedAt: { lt: cutoff } }],
           },
           select: { id: true },
+          orderBy: { id: 'asc' },
         });
         const fileSeparately = async (claimedId?: number) => {
           const created = await tx.csamReport.create({ data });

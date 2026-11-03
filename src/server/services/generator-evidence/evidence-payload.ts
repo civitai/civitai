@@ -1,4 +1,5 @@
 import type { SubmitFileDetails } from '@civitai/cybertipline-tools';
+import { FileDetailType } from '@civitai/cybertipline-tools';
 import type {
   GeneratorEvidenceDetails,
   StoredEvidenceJob,
@@ -55,7 +56,7 @@ export function evidenceFileDetails(
     fileViewedByEsp: viewedByEsp,
     publiclyAvailable: false,
     fileAnnotations: { generativeAi: blob.role === 'output' },
-    ...(valuePair.length && { details: [{ valuePair }] }),
+    ...(valuePair.length && { details: [{ type: FileDetailType.EXIF, valuePair }] }),
     additionalInfo: [describe(file)],
   };
 }
