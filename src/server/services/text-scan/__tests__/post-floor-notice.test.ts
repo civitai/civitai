@@ -268,7 +268,6 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
 
     await imageRated(1, [POST_ID, OTHER_ID]);
 
-    // The first call is the one that threw; the second must still be made.
     expect(ratingNotices().map(([n]) => n.key)).toEqual([
       `text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`,
       `text-scan-rating-raised-Post-${OTHER_ID}-4-wf-9`,

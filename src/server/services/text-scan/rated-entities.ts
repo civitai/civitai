@@ -31,7 +31,6 @@ const ratedEntities: Record<
   {
     recompute: (ids: number[]) => Promise<unknown>;
     read: (id: number) => Promise<RatedEntitySnapshot | null>;
-    /** What the images alone give, for a stored level of 0 the job has not recomputed yet. */
     imageLevel?: (id: number) => Promise<number>;
   }
 > = {
@@ -125,8 +124,7 @@ async function raiseToFloor(
     return NOTHING_DEFERRED;
   const after = await entity.read(entityId);
   if (!after) return NOTHING_DEFERRED;
-  // A stored 0 may only mean the job has not recomputed the post yet: judge against its images,
-  // or the text is credited for a rating the images set.
+  // A stored 0 may only mean the job has not recomputed the post yet; judge against its images.
   const shown =
     before.nsfwLevel === 0 && entity.imageLevel
       ? await entity.imageLevel(entityId)

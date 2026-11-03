@@ -36,7 +36,7 @@ export async function notifyPostFloorRaises(
     if (labels.includes('poi') || labels.includes('minor')) continue;
     if (post.moderatorNsfwLevel != null || !post.userId || !post.workflowId) continue;
     const change = firstRated.get(post.id);
-    // change.before is 0 here; compare against the images alone, as the callback does.
+    // change.before is 0 here; compare against the images alone, as raiseToFloor does.
     if (!change || !ratingRose(post.images ?? 0, change.after)) continue;
     // One failed notice must not drop the rest of the batch.
     try {
