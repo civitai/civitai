@@ -151,15 +151,14 @@ describe('the stickers a turf push carries', () => {
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     const [, pushed] = pushTurfCounts.mock.calls[0] as unknown as [
       string,
-      { imageId: number; stickers: { id: string }[]; readAt: number }[]
+      { imageId: number; stickers: { id: string }[] }[]
     ];
     expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
-    expect(pushed[0].readAt).toBe(NOW.getTime());
   });
 });
 
 describe('reconcileTurf', () => {
-  it('carries stickers for changed images, and none it did not pick (watchers read those back)', async () => {
+  it('carries stickers for changed images, and null for any it did not pick', async () => {
     const event = (await getTurfEvent('e', NOW))!;
     pushTurfCounts.mockClear();
     const a = { ...sticker(900, 5, 'Blue'), eligible: true };
@@ -178,12 +177,12 @@ describe('reconcileTurf', () => {
 
     const [, pushed] = pushTurfCounts.mock.calls[0] as unknown as [
       string,
-      { imageId: number; stickers?: { id: string }[] }[]
+      { imageId: number; stickers: { id: string }[] | null }[]
     ];
     const byId = Object.fromEntries(pushed.map((p) => [p.imageId, p]));
     expect(byId[900].stickers?.map((s) => s.id)).toEqual(['5']);
-    // Never [] here: that would draw an image that has hats as having none.
+    // null, never []: [] would draw an image that has hats as having none.
     expect(byId[901]).toBeDefined();
-    expect(byId[901].stickers).toBeUndefined();
+    expect(byId[901].stickers).toBeNull();
   });
 });

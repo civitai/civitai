@@ -25,9 +25,6 @@ const WATCH_REFRESH_MS = 30_000;
 // each reads at most this often per image, spread so they do not arrive together.
 const STICKER_REREAD_MIN_MS = 10_000;
 const STICKER_REREAD_JITTER_MS = 750;
-// The feed read is edge and browser cached (60s, plus 30s stale-while-revalidate), so a page read
-// that lands this soon after a push may predate it, and must not undo it.
-const STICKER_READ_MAX_AGE_MS = 90_000;
 
 export type TurfSummaries = {
   event: string;
@@ -121,7 +118,6 @@ export function TurfSummaryProvider({
 
   const refreshTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const lastReread = useRef(new Map<number, number>());
-  const pushReadAt = useRef(new Map<number, number>());
   const refresh = useCallback(
     (imageId: number) => {
       if (!event || refreshTimers.current.has(imageId)) return;
@@ -160,11 +156,10 @@ export function TurfSummaryProvider({
       const push = event ? readTurfPush(raw, event) : null;
       if (!push) return;
       const at = Date.now();
-      const { imageId, stickers, readAt } = push;
+      const { imageId, stickers } = push;
       setPushed((current) => ({ ...current, [imageId]: { ...push, at } }));
-      if (!stickers || readAt === null) return refresh(imageId);
-      if (readAt < (pushReadAt.current.get(imageId) ?? -Infinity)) return;
-      pushReadAt.current.set(imageId, readAt);
+      if (stickers === undefined) return refresh(imageId);
+      if (stickers === null) return;
       clearTimeout(refreshTimers.current.get(imageId));
       refreshTimers.current.delete(imageId);
       setReread((current) => ({ ...current, [imageId]: { at, stickers } }));
@@ -195,8 +190,7 @@ export function TurfSummaryProvider({
         images = applyTurfPush(images, push.imageId, push.counts);
     const stickers = { ...baseStickers };
     for (const [id, read] of Object.entries(reread))
-      if (read.at + STICKER_READ_MAX_AGE_MS > stampOf(stickerQueries, Number(id)))
-        stickers[Number(id)] = read.stickers;
+      if (read.at > stampOf(stickerQueries, Number(id))) stickers[Number(id)] = read.stickers;
     return { event, team: base.team, images, open: base.open, stickers, watch };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);

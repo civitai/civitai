@@ -365,7 +365,6 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
       imageId: imageIds[i],
       counts: c ?? null,
       stickers: stickers.get(k) ?? [],
-      readAt: now.getTime(),
     });
   }
   await pushTurfCounts(event.name, changes);
@@ -377,8 +376,8 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const entries = new Map<string, TurfEntry>();
   const counts = new Map<string, TurfCounts>();
   const stickers = new Map<string, FeedSticker[]>();
-  // A snapshot only to choose which images to pick for; the diff below decides what is pushed, and
-  // an image changed since the snapshot is pushed without stickers, so its watchers read them back.
+  // A snapshot only to choose which images to pick for; the diff below decides what is pushed. An
+  // image that moved since the snapshot did so by a sync, which pushed its stickers itself.
   const before = (await sysRedis.hGetAll(turfKeys(event.name).counts)) ?? {};
   const changed = (key: string, c: TurfCounts) => JSON.stringify(c) !== before[key];
   let after = 0;
@@ -426,14 +425,12 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     ...countDiff.set.map(([k]) => ({
       imageId: imageIdOf(k),
       counts: counts.get(k) ?? null,
-      stickers: stickers.get(k),
-      readAt: now.getTime(),
+      stickers: stickers.get(k) ?? null,
     })),
     ...countDiff.remove.map((k) => ({
       imageId: imageIdOf(k),
       counts: null,
       stickers: [],
-      readAt: now.getTime(),
     })),
   ]);
   return { images: counts.size, turf: kept.size, dropped, ...written };

@@ -10,8 +10,6 @@ const h = vi.hoisted(() => ({
   // Every mounted provider's push handler: one per simulated viewer.
   viewers: new Set<(raw: unknown) => void>(),
   utils: undefined as unknown,
-  // Added to every page read's dataUpdatedAt: moves the page reads later.
-  stamp: 0,
 }));
 h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
 
@@ -55,7 +53,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           const asked = build(t);
           h.asked.push(...asked);
           return asked.map(({ proc, input }, i) => ({
-            dataUpdatedAt: h.stamp + 1 + i,
+            dataUpdatedAt: 1 + i,
             data:
               proc === 'getSummaries'
                 ? {
@@ -119,7 +117,6 @@ beforeEach(() => {
   h.mark.mockClear();
   h.fetch.mockClear();
   h.viewers.clear();
-  h.stamp = 0;
   latest = null;
 });
 afterEach(() => cleanup());
@@ -254,7 +251,7 @@ describe('one hot image: K viewers × P pushes', () => {
   test('pushes that carry the stickers cost no reads, and every viewer draws them', async () => {
     await mountViewers();
     expect(h.viewers.size).toBe(K);
-    await firePushes((p) => ({ stickers: pushed, readAt: p }));
+    await firePushes(() => ({ stickers: pushed }));
     expect(h.fetch).toHaveBeenCalledTimes(0);
     await vi.waitFor(() =>
       expect(probes.map((v) => v!.stickers[HOT])).toEqual(Array(K).fill(pushed))
@@ -273,31 +270,28 @@ describe('one hot image: K viewers × P pushes', () => {
 
 describe('stickers a push carries', () => {
   const counts = { shown: { pink: 5 }, counted: { pink: 5 }, leader: 'pink', leaderCosmeticId: 12 };
-  const hat = (id: string) => [{ id, userId: 3, team: 'pink', cosmeticId: 12, data: {} }];
-  const push = (readAt: number, id: string) =>
-    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts, readAt, stickers: hat(id) }));
+  const hat = [{ id: '1', userId: 3, team: 'pink', cosmeticId: 12, data: {} }];
+  const send = (extra: Record<string, unknown>) =>
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts, ...extra }));
 
-  test('an older push arriving last does not undo a newer one', async () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test('a push whose stickers are null keeps what is drawn, and reads nothing', async () => {
     await mount([1]);
-    push(2_000, 'newer');
-    push(1_000, 'older');
-    await new Promise((r) => setTimeout(r, 50));
-    expect(latest!.stickers[1]).toEqual(hat('newer'));
+    send({ stickers: hat });
+    send({ stickers: null });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(latest!.stickers[1]).toEqual(hat);
     expect(h.fetch).not.toHaveBeenCalled();
   });
 
-  test('a page read soon after a push, possibly cached from before it, does not undo it', async () => {
-    const view = await mount([1]);
-    push(1, 'pushed');
-    await vi.waitFor(() => expect(latest!.stickers[1]).toEqual(hat('pushed')));
-    h.stamp = Date.now() + 1_000;
-    await view.rerender(tree([1]));
-    expect(latest!.stickers[1]).toEqual(hat('pushed'));
-    // Past the cache window the page read is newer than the push, and is what is drawn.
-    h.stamp = Date.now() + 100_000;
-    await view.rerender(tree([1]));
-    await vi.waitFor(() =>
-      expect(latest!.stickers[1]).toEqual([expect.objectContaining({ id: 10 })])
-    );
+  test('a push with stickers cancels a read an older push scheduled', async () => {
+    await mount([1]);
+    send({}); // an older server's push: schedules a read
+    send({ stickers: hat });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(latest!.stickers[1]).toEqual(hat);
   });
 });
