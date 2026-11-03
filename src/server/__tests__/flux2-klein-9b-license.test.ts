@@ -63,12 +63,21 @@ describe('what a Flux.2 Klein 9B version shows', () => {
 });
 
 describe('which non-commercial base models stop creator earnings', () => {
-  it('only the Flux.2 Klein 9B models; the other non-commercial ones still pay comp and tips', () => {
-    expect(nonCommercialBaseModels.filter((b) => stopsCreatorEarnings(b)).sort()).toEqual(
-      klein9bRecords.map((r) => r.name).sort()
+  it('every non-commercial base model, and no commercial one', () => {
+    expect(nonCommercialBaseModels.filter((b) => stopsCreatorEarnings(b))).toEqual(
+      nonCommercialBaseModels
     );
     expect(nonCommercialBaseModels).toEqual(
-      expect.arrayContaining(['Flux.3 Klein', 'Ideogram 4.0'])
+      expect.arrayContaining([
+        'Flux.2 Klein 9B',
+        'Flux.2 Klein 9B-base',
+        'Flux.3 Klein',
+        'Flux.3 Klein-base',
+        'Ideogram 4.0',
+        'Qwen 2.1',
+      ])
     );
+    for (const commercial of ['Flux.2 Klein 4B', 'Flux.2 Klein 4B-base', 'SDXL 1.0'])
+      expect(stopsCreatorEarnings(commercial)).toBe(false);
   });
 });

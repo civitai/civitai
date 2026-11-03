@@ -897,6 +897,14 @@ describe('payoutEnabled and tipsEnabled', () => {
 });
 
 describe('non-commercial base models: no fee, no comp, no tips', () => {
+  const NON_COMMERCIAL = [
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+  ];
   type Fee = { role: string; amount: number; recipientModelVersionId: number };
   const charged = async (overrides: Partial<typeof versionRow>) => {
     const { body } = await run([SAFETENSOR], {}, overrides);
@@ -922,7 +930,7 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
     'lineage fee': { ...SOURCE_FEE, sourceBaseModel: 'SDXL 1.0' as never },
   };
   it.each(
-    ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'].flatMap((baseModel) =>
+    NON_COMMERCIAL.flatMap((baseModel) =>
       Object.entries(VARIANTS).map(([variant, fee]) => [baseModel, variant, fee] as const)
     )
   )('a %s version with %s sends no fee and turns comp and tips off', async (baseModel, _, fee) => {
@@ -932,31 +940,6 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
       tipsEnabled: false,
     });
   });
-
-  // Other non-commercial licenses refuse fees but still pay creator comp and tips.
-  it.each(Object.entries(VARIANTS))(
-    'a Flux.3 Klein version with %s sends no fee and keeps tips',
-    async (_, fee) => {
-      expect(await charged({ baseModel: 'Flux.3 Klein', ...fee })).toMatchObject({
-        fees: [],
-        tipsEnabled: true,
-      });
-    }
-  );
-
-  it.each([
-    ['own fee', OWN_FEE],
-    ['licensing-root fee', ROOT_FEE],
-  ])(
-    'a Flux.3 Klein version whose %s is not charged earns creator comp instead',
-    async (_, fee) => {
-      expect(await charged({ baseModel: 'Flux.3 Klein', ...fee })).toEqual({
-        fees: [],
-        payoutEnabled: true,
-        tipsEnabled: true,
-      });
-    }
-  );
 
   it('a commercial licensing root that charges its fee still opts out of creator comp', async () => {
     expect(await charged({ baseModel: 'SDXL 1.0', ...ROOT_FEE })).toEqual({
@@ -972,8 +955,8 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
     });
   });
 
-  it('a Flux.3 Klein version without a fee keeps creator comp', async () => {
-    expect(await charged({ baseModel: 'Flux.3 Klein' })).toEqual({
+  it('a commercial version without a fee keeps creator comp and tips', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0' })).toEqual({
       fees: [],
       payoutEnabled: true,
       tipsEnabled: true,

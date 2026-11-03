@@ -494,9 +494,9 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
-  // A version whose own fee is charged earns through that channel instead of creator comp; a fee
-  // that isn't charged (a non-commercial base) falls back to comp. The lineage fee (hasSourceRule)
-  // settles to a different creator, so it doesn't opt THIS one out.
+  // Only a fee that is actually charged opts a version out of creator comp; a stored fee that isn't
+  // charged must not also cost the creator comp. The lineage fee (hasSourceRule) settles to a
+  // different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
     !earningsStopped &&
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&

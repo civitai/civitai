@@ -88,25 +88,29 @@ describe('createBid on a model auction', () => {
     } as never);
   });
 
-  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
-    'refuses a bid on a %s version before reading the bidder balance',
-    async (baseModel) => {
-      dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
-      await expect(bid()).rejects.toThrow(
-        `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`
-      );
-      expect(getUserBuzzAccount).not.toHaveBeenCalled();
-      expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.modelVersion.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: VERSION_ID },
-          select: expect.objectContaining({ baseModel: true }),
-        })
-      );
-    }
-  );
+  it.each([
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+  ])('refuses a bid on a %s version before reading the bidder balance', async (baseModel) => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
+    await expect(bid()).rejects.toThrow(
+      `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`
+    );
+    expect(getUserBuzzAccount).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelVersion.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: VERSION_ID },
+        select: expect.objectContaining({ baseModel: true }),
+      })
+    );
+  });
 
-  it.each(['Flux.2 Klein 4B', 'Flux.3 Klein'])(
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
     'a %s version passes the gate and reaches the balance check',
     async (baseModel) => {
       dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
@@ -134,22 +138,26 @@ describe('the daily recurring-bid charge', () => {
     dbMock.dbWrite.bid.findFirst.mockResolvedValue(null as never);
   });
 
-  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
-    'does not charge a recurring bid on a %s version',
-    async (baseModel) => {
-      dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
-      await _createRecurringBids(dayjs());
-      expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.modelVersion.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: VERSION_ID },
-          select: expect.objectContaining({ baseModel: true }),
-        })
-      );
-    }
-  );
+  it.each([
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+  ])('does not charge a recurring bid on a %s version', async (baseModel) => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
+    await _createRecurringBids(dayjs());
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelVersion.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: VERSION_ID },
+        select: expect.objectContaining({ baseModel: true }),
+      })
+    );
+  });
 
-  it.each(['Flux.2 Klein 4B', 'Flux.3 Klein'])(
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
     'still charges a recurring bid on a %s version',
     async (baseModel) => {
       dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
@@ -163,17 +171,20 @@ describe('the daily recurring-bid charge', () => {
 });
 
 describe('which bids can win when an auction settles', () => {
-  it('disqualifies an unpublished version and a Flux.2 Klein 9B version, so their bids are refunded', async () => {
+  it('disqualifies an unpublished version and any non-commercial version, so their bids are refunded', async () => {
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
       { id: 1, status: 'Published', baseModel: 'Flux.2 Klein 4B' },
       { id: 2, status: 'Published', baseModel: 'Flux.2 Klein 9B' },
       { id: 3, status: 'Published', baseModel: 'Flux.2 Klein 9B-base' },
       { id: 4, status: 'Unpublished', baseModel: 'SDXL 1.0' },
       { id: 5, status: 'Published', baseModel: 'Flux.3 Klein' },
+      { id: 6, status: 'Published', baseModel: 'SDXL 1.0' },
     ] as never);
-    expect([...(await _ineligibleModelVersionIds([1, 2, 3, 4, 5]))].sort()).toEqual([2, 3, 4]);
+    expect([...(await _ineligibleModelVersionIds([1, 2, 3, 4, 5, 6]))].sort()).toEqual([
+      2, 3, 4, 5,
+    ]);
     expect(dbMock.dbWrite.modelVersion.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [1, 2, 3, 4, 5] } },
+      where: { id: { in: [1, 2, 3, 4, 5, 6] } },
       select: { id: true, status: true, baseModel: true },
     });
   });
