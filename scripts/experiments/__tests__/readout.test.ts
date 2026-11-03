@@ -42,8 +42,8 @@ describe('buildReadout', () => {
     ]);
     const primary = r.comparisons.find((c) => c.role === 'primary')!;
     expect(primary.metric).toBe('placedFromFeed');
-    expect(primary.result.diff).toBeCloseTo(0.05, 10);
-    expect(primary.result.p).toBeLessThan(0.01);
+    expect(primary.result!.diff).toBeCloseTo(0.05, 10);
+    expect(primary.result!.p).toBeLessThan(0.01);
     expect(primary.alpha).toBe(0.05);
     expect(r.srm.mismatch).toBe(false);
     expect(r.interim).toBe(false);
