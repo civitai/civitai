@@ -45,7 +45,7 @@
         onerror={() => (failed[entry.userId] = true)}
       />
     {:else}
-      <span class="initial" aria-hidden="true">{entry.username[0].toUpperCase()}</span>
+      <span class="initial" aria-hidden="true">{(entry.username[0] ?? 'K').toUpperCase()}</span>
     {/if}
     <span class="bdg">
       {#if entry.badgeUrl && !badgeFailed[entry.rankType]}
