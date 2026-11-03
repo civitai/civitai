@@ -3,7 +3,9 @@ import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civit
 import { guard } from '$lib/server/auth';
 import { accessFor } from '$lib/server/access';
 import { closedPageHtml } from '$lib/server/closed-page';
+import { db } from '$lib/server/db';
 import { JOB_PATHS } from '$lib/server/jobs-auth';
+import { getStanding } from '$lib/server/standing';
 import { safeNext, signedOutLocation, WELCOME_PATH } from '$lib/welcome';
 
 const PUBLIC_PATHS = new Set([
@@ -15,11 +17,14 @@ const PUBLIC_PATHS = new Set([
 
 const FORBIDDEN_REDIRECT = 'https://civitai.com';
 
-const closedPage = (user: { username?: string }) =>
-  new Response(closedPageHtml({ username: user.username, civitaiUrl: FORBIDDEN_REDIRECT }), {
-    status: 403,
-    headers: { 'content-type': 'text/html; charset=utf-8' },
-  });
+const closedPage = (user: { username?: string }, reason: 'closed' | 'banned' = 'closed') =>
+  new Response(
+    closedPageHtml({ username: user.username, civitaiUrl: FORBIDDEN_REDIRECT, reason }),
+    {
+      status: 403,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    }
+  );
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname) || JOB_PATHS.has(event.url.pathname)) {
@@ -47,7 +52,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   if (result.status === 'login') {
-    const location = signedOutLocation({ url: event.url, navigation, loginRedirect: result.redirect });
+    const location = signedOutLocation({
+      url: event.url,
+      navigation,
+      loginRedirect: result.redirect,
+    });
     return new Response(null, { status: 302, headers: { location } });
   }
   if (result.status === 'reauth') return spokeReauthResponse(result.authorize);
@@ -57,6 +66,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   if ((await accessFor(result.user)) === 'closed') {
     return withSetCookies(closedPage(result.user), result.setCookies);
+  }
+
+  // Read from the database, not the session: a ban lands at once. Moderators are not exempt.
+  if ((await getStanding(db, result.user.id)).banned) {
+    return withSetCookies(closedPage(result.user, 'banned'), result.setCookies);
   }
 
   event.locals.user = result.user;

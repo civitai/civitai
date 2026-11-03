@@ -291,6 +291,13 @@
         </section>
       </div>
     {/if}
+  {:else if data.mode === 'queue' && data.muted}
+    <div class="panel">
+      <section class="lockout" role="status" aria-label="Judging unavailable">
+        <h2>Judging is closed to you</h2>
+        <p>Your account is muted, so you can't judge right now. You can still view your record and your gold.</p>
+      </section>
+    </div>
   {:else if data.mode === 'queue' && data.lockoutSeconds}
     <div class="panel">
       {@render levelToast(false)}

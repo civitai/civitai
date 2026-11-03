@@ -6,6 +6,7 @@ import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
+import { getStanding, mutedFailure } from '$lib/server/standing';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -49,6 +50,8 @@ export const actions = {
     redirect(303, '/play');
   },
   restart: async ({ request, locals }) => {
+    // Restarting clears smites, so it counts as judging.
+    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure({ restartFailed: true });
     const form = await request.formData();
     if (form.get('confirmed') !== 'yes') {
       return fail(400, {

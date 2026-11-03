@@ -4,7 +4,14 @@ const castVote = vi.hoisted(() => vi.fn());
 const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/skip-runtime', () => ({ skipStore: { add: vi.fn(), list: vi.fn(async () => []) } }));
+const getStanding = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
+vi.mock('$lib/server/skip-runtime', () => ({
+  skipStore: { add: vi.fn(), list: vi.fn(async () => []) },
+}));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
@@ -41,6 +48,8 @@ const submit = (fields: Record<string, string>, user: Record<string, unknown> = 
 };
 
 beforeEach(() => {
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   castVote.mockReset();
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
@@ -201,5 +210,35 @@ describe('vote action', () => {
       status: 409,
       data: { message: expect.stringMatching(/reset/i) },
     });
+  });
+});
+
+describe('vote action for a muted player', () => {
+  beforeEach(() => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+  });
+
+  it.each([
+    ['rating', queueItem(3), '4'],
+    ['hidden check', hiddenItem(5), '8'],
+    ['yes/no', sealItem('secret', 7, { kind: 'yesno', id: 41 }), 'yes'],
+  ])('refuses a %s vote with a friendly 403 and records nothing', async (_kind, item, answer) => {
+    expect(await submit({ item, answer })).toMatchObject({
+      status: 403,
+      data: { message: expect.stringMatching(/muted/i) },
+    });
+    expect(castVote).not.toHaveBeenCalled();
+    expect(answerHiddenCheck).not.toHaveBeenCalled();
+    expect(castYesNoVote).not.toHaveBeenCalled();
+  });
+
+  it('refuses before it even reads the form', async () => {
+    expect(await submit({})).toMatchObject({ status: 403 });
+  });
+
+  it('still counts the vote of a player who is not muted', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: false });
+    castVote.mockResolvedValue({ status: 'recorded' });
+    expect(await submit({ item: queueItem(3), answer: '4' })).toEqual({ success: true });
   });
 });

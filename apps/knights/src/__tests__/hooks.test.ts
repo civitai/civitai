@@ -8,6 +8,11 @@ const { accessFor } = vi.hoisted(() => ({
   accessFor: vi.fn(async (..._: unknown[]) => 'closed' as 'allow' | 'closed'),
 }));
 vi.mock('$lib/server/access', () => ({ accessFor }));
+vi.mock('$lib/server/db', () => ({ db: {} }));
+const { getStanding } = vi.hoisted(() => ({
+  getStanding: vi.fn(async (..._: unknown[]) => ({ banned: false, muted: false })),
+}));
+vi.mock('$lib/server/standing', () => ({ getStanding }));
 
 const { handle } = await import('../hooks.server');
 
@@ -28,6 +33,7 @@ const signedIn = (user: object) => ({ status: 'ok', user, setCookies: [] });
 beforeEach(() => {
   guardCheck.mockReset();
   accessFor.mockReset().mockResolvedValue('closed');
+  getStanding.mockReset().mockResolvedValue({ banned: false, muted: false });
 });
 
 describe('knights access gate', () => {
@@ -129,5 +135,56 @@ describe('welcome screen', () => {
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toBe('/');
     expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+describe('banned and muted accounts', () => {
+  beforeEach(() => accessFor.mockResolvedValue('allow'));
+
+  it.each(['/play', '/gold', '/judgments', '/ranks', '/rules', '/', '/api/anything'])(
+    'shuts a banned user out of %s with the closed page',
+    async (path) => {
+      getStanding.mockResolvedValue({ banned: true, muted: false });
+      guardCheck.mockResolvedValue(signedIn({ id: 7, username: 'sir' }));
+      const { response, resolve } = await run(path);
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain("Your account can't enter the Order.");
+      expect(resolve).not.toHaveBeenCalled();
+      expect(getStanding).toHaveBeenCalledWith(expect.anything(), 7);
+    }
+  );
+
+  it('keeps a banned moderator out too', async () => {
+    getStanding.mockResolvedValue({ banned: true, muted: false });
+    guardCheck.mockResolvedValue(signedIn({ id: 7, isModerator: true }));
+    const { response, resolve } = await run('/play');
+    expect(response.status).toBe(403);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('lets a muted user in: muting only stops judging', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    guardCheck.mockResolvedValue(signedIn({ id: 7 }));
+    const { resolve } = await run('/play');
+    expect(resolve).toHaveBeenCalled();
+  });
+
+  it('lets a user in good standing through', async () => {
+    guardCheck.mockResolvedValue(signedIn({ id: 7 }));
+    const { resolve } = await run('/gold');
+    expect(resolve).toHaveBeenCalled();
+  });
+
+  it('does not look the user up on a job route', async () => {
+    await run('/api/jobs/tick');
+    expect(getStanding).not.toHaveBeenCalled();
+  });
+
+  it('does not look up a user the rollout already closed out', async () => {
+    accessFor.mockResolvedValue('closed');
+    guardCheck.mockResolvedValue(signedIn({ id: 7 }));
+    const { response } = await run('/play');
+    expect(await response.text()).toContain('not yet open');
+    expect(getStanding).not.toHaveBeenCalled();
   });
 });

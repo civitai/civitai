@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const restartCareer = vi.hoisted(() => vi.fn());
 const forgetLegacyCounters = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
+const getStanding = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
 vi.mock('$lib/server/join.service', () => ({ joinOrder: vi.fn() }));
 vi.mock('$lib/server/career/restart.service', () => ({ restartCareer }));
 vi.mock('$lib/server/career/runtime', () => ({ forgetLegacyCounters }));
@@ -22,6 +27,8 @@ const submit = (fields: Record<string, string>) => {
 };
 
 beforeEach(() => {
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   restartCareer.mockReset();
   forgetLegacyCounters.mockReset();
   forgetLegacyCounters.mockResolvedValue(undefined);
@@ -75,6 +82,18 @@ describe('restart action', () => {
       status: 303,
       location: '/',
     });
+    expect(forgetLegacyCounters).not.toHaveBeenCalled();
+  });
+});
+
+describe('restart action for a muted player', () => {
+  it('refuses with a friendly 403 so a mute cannot be used to clear smites', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    expect(await submit({ confirmed: 'yes' })).toMatchObject({
+      status: 403,
+      data: { message: expect.stringMatching(/muted/i), restartFailed: true },
+    });
+    expect(restartCareer).not.toHaveBeenCalled();
     expect(forgetLegacyCounters).not.toHaveBeenCalled();
   });
 });

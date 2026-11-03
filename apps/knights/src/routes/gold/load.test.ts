@@ -19,10 +19,18 @@ vi.mock('$lib/server/conversion/runtime', () => ({
   conversionEnabled,
 }));
 
+const getStanding = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
+
 const { load, actions } = await import('./+page.server');
 const locals = { user: { id: 7 } };
 
 beforeEach(() => {
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   getGoldBalance.mockReset();
   listRecentConversions.mockReset();
   listRecentConversions.mockResolvedValue([]);
@@ -140,5 +148,23 @@ describe('gold page', () => {
     convertGold.mockRejectedValue(new Error('db down'));
 
     expect(await actions.convert({ locals } as never)).toMatchObject({ status: 500 });
+  });
+});
+
+describe('gold page for a muted player', () => {
+  beforeEach(() => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+  });
+
+  it('still loads the record and the balance', async () => {
+    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
+    getGoldBalance.mockResolvedValue({ convertible: 5000, frozen: 0 });
+    expect(await load({ locals } as never)).toMatchObject({ balance: { convertible: 5000 } });
+  });
+
+  it('still converts: a mute does not touch gold', async () => {
+    convertGold.mockResolvedValue({ status: 'converted', gold: 6000, buzz: 6, transactionId: 't' });
+    expect(await actions.convert({ locals } as never)).toMatchObject({ converted: 6 });
+    expect(convertGold).toHaveBeenCalled();
   });
 });

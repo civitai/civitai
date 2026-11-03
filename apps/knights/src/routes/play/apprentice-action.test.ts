@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const answerApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
+const getStanding = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
   queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
@@ -38,6 +43,8 @@ const post = (fields: Record<string, string>) => {
 const valid = { kind: 'rating', referenceId: '5', answer: '4' };
 
 beforeEach(() => {
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   answerApprentice.mockReset();
   acknowledgeCheckpoint.mockReset();
 });
@@ -87,5 +94,26 @@ describe('apprentice action', () => {
     acknowledgeCheckpoint.mockRejectedValueOnce(new Error('down'));
     const result = await actions.continueCheckpoint({ locals: { user: { id: 7 } } } as never);
     expect(result).toMatchObject({ status: 500 });
+  });
+});
+
+describe('apprentice action for a muted player', () => {
+  it('refuses with a friendly 403 and records no answer', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    expect(await post(valid)).toMatchObject({
+      status: 403,
+      data: { message: expect.stringMatching(/muted/i) },
+    });
+    expect(answerApprentice).not.toHaveBeenCalled();
+  });
+
+  it('lets a player who is not muted answer', async () => {
+    answerApprentice.mockResolvedValue({
+      status: 'recorded',
+      correct: true,
+      xp: 1,
+      promoted: false,
+    });
+    expect(await post(valid)).toMatchObject({ success: true });
   });
 });

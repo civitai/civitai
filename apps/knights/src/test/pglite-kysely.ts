@@ -71,7 +71,9 @@ CREATE TABLE "NewOrderPlayer" (
 );
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY,
-  "bannedAt" TIMESTAMP(3)
+  "bannedAt" TIMESTAMP(3),
+  "deletedAt" TIMESTAMP(3),
+  "muted" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY,
