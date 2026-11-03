@@ -194,7 +194,7 @@ describe('getTurfStickers paging', () => {
 
   it('a later page asks only for stickers older than the cursor, and not for mine', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
-    const before = { createdAt: '2026-11-05T11:00:00.123Z', id: 4242n };
+    const before = { createdAt: '2026-11-05T11:00:00.123Z', id: BigInt(4242) };
     const { mine } = await getTurfStickers('e', 900, PLACER, before);
     expect(mine).toBeNull();
     const [page, ...rest] = queries();
@@ -202,6 +202,6 @@ describe('getTurfStickers paging', () => {
     // Without this bound every page repeats the first one.
     expect(page.text).toMatch(/\(s\."createdAt", s\.id\) < \(\$\d+::timestamptz, \$\d+::bigint\)/);
     expect(page.values).toContainEqual(new Date(before.createdAt));
-    expect(page.values).toContain(4242n);
+    expect(page.values).toContain(BigInt(4242));
   });
 });
