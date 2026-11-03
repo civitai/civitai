@@ -15,4 +15,5 @@ export { membershipGiftSentEmail } from './membershipGiftSent.email';
 export { emailVerificationEmail } from './emailVerification.email';
 export type { Email } from './base.email';
 export { bankingChangeNoticeEmail } from './bankingChangeNotice.email';
+export { klein9bNoticeEmail } from './klein9bNotice.email';
 export { notificationEmail } from './notification.email';
