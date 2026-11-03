@@ -3604,7 +3604,11 @@ export const blocksRouter = router({
         );
         const { source, revokedScopesAfterClear } = await grantImportSourcePublish({
           userId: ctx.user!.id,
-          consumer: { id: input.appBlockId, manifest: block.manifest },
+          consumer: {
+            id: input.appBlockId,
+            manifest: block.manifest,
+            approvedScopes: block.approvedScopes,
+          },
           from: input.from,
           host: ctx.req?.headers?.host ?? '',
         });
@@ -3723,7 +3727,9 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
         version: block.version ?? '',
         scopes: toGrant,
-        // 🔴 THE PROMPTED PATH, AND THE ONLY CALLER THAT MAY PASS THIS. A user who just
+        // 🔴 A PROMPTED PATH: ONE OF THE ONLY TWO CALLERS THAT MAY PASS THIS. This one, and
+        // `grantImportSourcePublish` (reached from this mutation with `from`), which passes it
+        // for exactly `apps:storage:publish` in the SOURCE app the prompt named. A user who just
         // accepted a consent dialog naming these scopes is re-consenting to them, so any
         // prior per-scope revocation of exactly those scopes is lifted — and ONLY those
         // (the service computes `revoked_scopes ∖ scopes`; re-consenting to A must not

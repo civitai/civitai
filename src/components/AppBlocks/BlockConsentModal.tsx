@@ -123,7 +123,9 @@ export default function BlockConsentModal({
         (i) => i.from === from && i.access === 'readwrite' && i.sourceAppBlockId !== null
       )
     : undefined;
-  const sourceName = source?.sourceName ?? from;
+  // `from` is the block's own text: until the server's imports name the source, say "another app"
+  // rather than show it.
+  const sourceName = source ? source.sourceName ?? source.from : 'another app';
   const appLabel = blockName ?? 'This app';
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
@@ -186,8 +188,7 @@ export default function BlockConsentModal({
                 {forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
                   <SourcePublishConsentDetail
                     consumerName={appLabel}
-                    sourceName={sourceName ?? ''}
-                    from={from}
+                    sourceName={sourceName}
                     available={source !== undefined}
                     loading={imports.isLoading}
                   />
@@ -357,13 +358,11 @@ export function StorageImportConsentDetail({
 export function SourcePublishConsentDetail({
   consumerName,
   sourceName,
-  from,
   available,
   loading,
 }: {
   consumerName: string;
   sourceName: string;
-  from: string | undefined;
   available: boolean;
   loading: boolean;
 }) {
@@ -377,7 +376,7 @@ export function SourcePublishConsentDetail({
   if (!available) {
     return (
       <Text size="xs" c="red" mt={4} data-testid="block-consent-source-unavailable">
-        {consumerName} does not change your data in {from}, so it cannot ask for this permission
+        {consumerName} does not change your data in that app, so it cannot ask for this permission
         there.
       </Text>
     );

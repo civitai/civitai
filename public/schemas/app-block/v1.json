@@ -405,7 +405,7 @@
               },
               "access": {
                 "type": "string",
-                "description": "\"read\": reads only; every write is refused. \"readwrite\": reads and writes, under the source collection's own write policy. A create, update, counter or mark in one of the source's SHARED collections also needs the viewer's own `apps:storage:publish` grant in the source app, which the app asks the host to prompt for; a delete, and any write to a private collection, needs only the import grant.",
+                "description": "\"read\": reads only; every write is refused. \"readwrite\": reads and writes, under the source collection's own write policy. A create, update, counter, mark or unmark in one of the source's SHARED collections also needs the viewer's own `apps:storage:publish` grant in the source app, which the app asks the host to prompt for; a document delete, and any write to a private collection, needs only the import grant.",
                 "enum": ["read", "readwrite"]
               }
             }

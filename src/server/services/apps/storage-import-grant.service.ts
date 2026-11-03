@@ -21,6 +21,7 @@ import {
   APP_STORAGE_ENABLED_FEATURES,
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
+  isCollectionExportable,
   parseManifestStorage,
   type AppStorageFeature,
   type AppStorageImportAccess,
@@ -303,15 +304,19 @@ export const SOURCE_PUBLISH_ONLY_MESSAGE = `With from, the only scope that can b
  * `resolveImportAccess` reads for an authoring write through the import). The consumer's block
  * names `from`, so the source must be one the consumer's APPROVED manifest imports with
  * `readwrite`, an approved app this host may show, and one whose own approved manifest asks for
- * the scope; anything else is refused before any write. The grant is the source's, so it also
- * lets the source app itself publish as this viewer, which the prompt says.
+ * the scope; anything else is refused before any write. It is also refused when the grant could
+ * never be used: the consumer's own ceiling lacks `apps:storage:import`, or none of the
+ * collections it imports `readwrite` is exportable and shared in the source (only those writes
+ * read the grant). The viewer's import grant is NOT required, so the block may ask for this first.
+ * The grant is the source's, so it also lets the source app itself publish as this viewer, which
+ * the prompt says.
  *
  * `consumer` is the consumer's approved row as the caller read it. Returns the source and what
  * `recordScopeGrant` returns, for the caller's revocation-marker and OAuth follow-ups.
  */
 export async function grantImportSourcePublish(opts: {
   userId: number;
-  consumer: { id: string; manifest: unknown };
+  consumer: { id: string; manifest: unknown; approvedScopes: unknown };
   from: string;
   host: string;
 }): Promise<{
@@ -319,6 +324,19 @@ export async function grantImportSourcePublish(opts: {
   revokedScopesAfterClear: string[] | null;
 }> {
   const { from } = opts;
+  // The consumer's ceiling, by the same rule: without the import scope it reaches no source.
+  if (
+    !effectiveBlockScopes(
+      opts.consumer.manifest as { scopes?: unknown },
+      opts.consumer.approvedScopes
+    ).includes(APP_STORAGE_IMPORT_SCOPE)
+  ) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        'This app was not approved to reach your data in other apps, so it cannot ask for this permission there.',
+    });
+  }
   const imports = await resolveDeclaredImports(opts.consumer.manifest, { host: opts.host });
   const declared = imports.find((i) => i.from === from);
   if (!declared || declared.access !== 'readwrite') {
@@ -349,6 +367,19 @@ export async function grantImportSourcePublish(opts: {
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: `${from} does not ask for ${APP_STORAGE_PUBLISH_SCOPE}`,
+    });
+  }
+  // Publish consent is read only for a write to an exportable SHARED source collection
+  // (`resolveImportAccess`), so a source where the import names none has nothing it would gate.
+  const sourceCollections = parseManifestStorage(source.manifest, ALL_FEATURES).collections;
+  const gated = declared.collections.some((name) => {
+    const c = sourceCollections.get(name);
+    return c !== undefined && isCollectionExportable(c) && c.visibility === 'shared';
+  });
+  if (!gated) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: `This app adds nothing public in ${from}, so it does not need this permission there.`,
     });
   }
   const { revokedScopesAfterClear } = await recordScopeGrant({

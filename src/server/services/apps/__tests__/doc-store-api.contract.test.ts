@@ -3087,7 +3087,8 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     // Allow, in the prompt the consumer's block asked for (`blocks.grantScopes` with `from`).
     await grantImportSourcePublish({
       userId: VIEWER_IDS.v1,
-      consumer: { id: C.id, manifest: C.manifest },
+      // What a moderator approved for the consumer: its manifest's scopes, the import included.
+      consumer: { id: C.id, manifest: C.manifest, approvedScopes: CONSUMER_SCOPES },
       from: S.blockId,
       host: '',
     });
