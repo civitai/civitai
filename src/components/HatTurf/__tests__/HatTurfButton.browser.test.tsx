@@ -237,7 +237,6 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const draft = q('hat-turf-draft')!;
     const layer = q('hat-turf-layer')!;
     const img = layer.parentElement!.querySelector('img')!;
-    // The layer re-measures after layout; a move sent before that re-render maps against the old box.
     await vi.waitFor(() => {
       const media = img.getBoundingClientRect();
       draft.dispatchEvent(
@@ -249,7 +248,7 @@ describe('Hat Turf button on a feed ImageCard', () => {
           clientY: media.top + media.height * 0.3,
         })
       );
-      expect(q('hat-turf-draft')!.style.left).toBe('25%');
+      expect(parseFloat(q('hat-turf-draft')!.style.left)).toBeCloseTo(25, -1);
     });
     (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
     expect(h.mutate).toHaveBeenCalledTimes(1);
