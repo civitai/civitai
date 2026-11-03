@@ -13,6 +13,10 @@ const { fetchDocumentsAbortableMock, fetchFeedPrimary, primaryOn } = vi.hoisted(
   primaryOn: vi.fn(() => false),
 }));
 
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
   ...(await importOriginal<typeof MeilisearchClient>()),
   metricsSearchClient: {},

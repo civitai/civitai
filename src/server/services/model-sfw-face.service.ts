@@ -2,16 +2,36 @@ import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readSfwModelNamesViaKysely,
+  readSfwModelNamesViaPrisma,
+} from '~/server/services/hot-reads-7.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { previewTextScanNsfw } from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { truncateModelName } from '~/shared/constants/model-name.constants';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
 const SFW_FACE_CHECK_WAIT_SECONDS = 10;
+
+/**
+ * The .com titles of the given models that have a face on, for a viewer `showsSfwFace` admits.
+ * Read at request time because the rows that name these models (image resources, notifications)
+ * are cached or stored per image and per recipient, where a face change can't reach them.
+ */
+export async function getSfwModelNames(modelIds: number[], showSfwFace: boolean) {
+  const ids = [...new Set(modelIds)];
+  if (!showSfwFace || !ids.length) return new Map<number, string>();
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
+    return readSfwModelNamesViaKysely((await loadKyselyDb()).kyselyRead, ids);
+  return readSfwModelNamesViaPrisma(dbRead, ids);
+}
 
 export type SfwFaceVerdict =
   | { status: 'clean' }
@@ -179,7 +199,7 @@ export async function draftSfwFace({
     ).catch(() => draft);
 
   return {
-    sfwName: draft.title.trim().slice(0, 255),
+    sfwName: truncateModelName(draft.title.trim()),
     sfwDescription: sanitizeHtml(draft.description),
   };
 }

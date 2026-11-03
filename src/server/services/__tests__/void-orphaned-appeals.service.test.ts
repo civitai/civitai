@@ -10,7 +10,8 @@ import { isSafeToRetry } from '@civitai/buzz';
 /**
  * An appeal whose entity has been deleted can never be reviewed from the entity queue. The sweep
  * sorts each one: deleted by its owner -> closed, refunded and told; removed any other way -> kept
- * open for review and told; defensive closes are silent.
+ * open for review and told; a deleted account's close is silent. What else is on the owner's
+ * account never changes what they are told.
  */
 
 const { mockRefundMultiAccountTransaction, mockRefundTransaction, mockCreateNotification, ch } =
@@ -70,7 +71,7 @@ const orphan = (o: Partial<Orphan> & Pick<Orphan, 'id' | 'userId' | 'entityId'>)
 });
 
 // 1: owner deleted it after appealing, paid a fee. 2: moderation removal, paid a fee.
-// 3: model removed, legacy fee id. 4: defensive close (image), paid a fee. 5: account deleted.
+// 3: model removed, legacy fee id. 4: like 2, on an image the appeal flow excludes. 5: account deleted.
 const ownerDeleted = orphan({
   id: 1,
   userId: 10,
@@ -90,7 +91,7 @@ const removedModel = orphan({
   entityId: 300,
   buzzTransactionId: 'legacy-txn-id',
 });
-const defensive = orphan({
+const flagged = orphan({
   id: 4,
   userId: 40,
   entityId: 400,
@@ -99,8 +100,9 @@ const defensive = orphan({
 const deletedUser = orphan({ id: 5, userId: 50, entityId: 500, userDeleted: true });
 
 let orphans: Orphan[];
-let defensiveImageIds: number[];
-let defensiveUserIds: number[];
+// What the appeal-exclusion lookup would flag, were it asked.
+let excludedImageIds: number[];
+let excludedUserIds: number[];
 // ClickHouse hands 64-bit columns back as strings.
 let imageDeletes: { entityId: string; userId: string; t: string }[];
 let modelDeletes: { entityId: string; userId: string; t: string }[];
@@ -120,7 +122,9 @@ const rawCalls = () =>
   }));
 const pick = () => rawCalls().find(({ sql }) => /FROM "Appeal" a/.test(sql))!;
 const updates = () => rawCalls().filter(({ sql }) => /UPDATE "Appeal"/.test(sql));
-const voidUpdates = () => updates().filter(({ sql }) => /'Void'::"AppealStatus"/.test(sql));
+// Every claim but the review-deadline close, which picks its own rows.
+const claims = () => updates().filter(({ sql }) => !/"entityRemovedAt" <= now\(\)/.test(sql));
+const voidUpdates = () => claims().filter(({ sql }) => /'Void'::"AppealStatus"/.test(sql));
 const removedUpdate = () => updates().find(({ sql }) => /"entityRemovedAt" = now\(\)/.test(sql));
 const idsIn = (values: unknown[]) => values.find((v) => Array.isArray(v)) as number[] | undefined;
 const closeContaining = (id: number) =>
@@ -141,9 +145,9 @@ function claim(values: unknown[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  orphans = [ownerDeleted, removed, removedModel, defensive, deletedUser];
-  defensiveImageIds = [400];
-  defensiveUserIds = [];
+  orphans = [ownerDeleted, removed, removedModel, flagged, deletedUser];
+  excludedImageIds = [400];
+  excludedUserIds = [];
   resolvedMeanwhile = [];
   imageDeletes = [
     ev(100, 10, afterAppeal),
@@ -160,11 +164,11 @@ beforeEach(() => {
     if (/FROM "Appeal" a/.test(sql)) return Promise.resolve(orphans);
     if (/jsonb_array_elements/.test(sql))
       return Promise.resolve(
-        (idsIn(values) ?? []).filter((id) => defensiveImageIds.includes(id)).map((id) => ({ id }))
+        (idsIn(values) ?? []).filter((id) => excludedImageIds.includes(id)).map((id) => ({ id }))
       );
     if (/"UserReport"/.test(sql))
       return Promise.resolve(
-        (idsIn(values) ?? []).filter((id) => defensiveUserIds.includes(id)).map((id) => ({ id }))
+        (idsIn(values) ?? []).filter((id) => excludedUserIds.includes(id)).map((id) => ({ id }))
       );
     if (/UPDATE "Appeal"/.test(sql)) return Promise.resolve(claim(values));
     return Promise.resolve([]);
@@ -213,8 +217,8 @@ describe('voidOrphanedAppeals', () => {
   it('claims every group by id and only while still Pending and unstamped', async () => {
     await voidOrphanedAppeals();
 
-    expect(updates()).toHaveLength(3);
-    for (const { sql, values } of updates()) {
+    expect(claims()).toHaveLength(3);
+    for (const { sql, values } of claims()) {
       expect(sql).toMatch(/WHERE id = ANY\(\?\)/);
       expect(sql).toMatch(/status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL/);
       expect(sql).toMatch(/RETURNING/);
@@ -228,7 +232,7 @@ describe('voidOrphanedAppeals', () => {
     const stamp = removedUpdate();
     expect(stamp).toBeDefined();
     expect(stamp!.sql).not.toMatch(/'Void'/);
-    expect(idsIn(stamp!.values)).toEqual([removed.id]);
+    expect(idsIn(stamp!.values)).toEqual([removed.id, flagged.id]);
 
     // Never voided, and the fee stays held for the moderator's decision.
     for (const { values } of voidUpdates()) expect(idsIn(values)).not.toContain(removed.id);
@@ -242,6 +246,7 @@ describe('voidOrphanedAppeals', () => {
       expect.objectContaining({
         type: 'entity-appeal-content-removed',
         key: `entity-appeal-content-removed:${removed.id}:under-review`,
+        category: 'Moderation',
         details: {
           entityType: EntityType.Image,
           entityId: removed.entityId,
@@ -250,7 +255,7 @@ describe('voidOrphanedAppeals', () => {
         },
       }),
     ]);
-    expect(result).toMatchObject({ routedForReview: 1 });
+    expect(result).toMatchObject({ routedForReview: 2 });
   });
 
   it('closes a deleted model appeal quietly instead of routing it, whoever deleted the model', async () => {
@@ -335,7 +340,7 @@ describe('voidOrphanedAppeals', () => {
     }));
     const images = queries.find(({ sql }) => /FROM images/.test(sql))!;
     expect(images.sql).toMatch(/type = 'Delete' AND imageId IN \(\?\)/);
-    expect(images.values).toEqual([[ownerDeleted.entityId, removed.entityId]]);
+    expect(images.values).toEqual([[ownerDeleted.entityId, removed.entityId, flagged.entityId]]);
     const models = queries.find(({ sql }) => /FROM modelEvents/.test(sql))!;
     expect(models.sql).toMatch(/type IN \('Delete', 'PermanentDelete'\) AND modelId IN \(\?\)/);
     expect(models.values).toEqual([[removedModel.entityId]]);
@@ -355,42 +360,41 @@ describe('voidOrphanedAppeals', () => {
     expect(idsIn(closeContaining(modelSameId.id)!.values)).toEqual([modelSameId.id]);
   });
 
-  it('closes the defensive-close group quietly, refunding but not notifying', async () => {
+  // The owner sees the same thing whatever the appeal flow knows about them. Fixture 4 (an image the
+  // flow excludes) and fixture 2 differ only in that.
+  it('routes an appeal the appeal flow excludes exactly as any other', async () => {
     const result = await voidOrphanedAppeals();
 
-    const quiet = closeContaining(defensive.id);
-    expect(idsIn(quiet!.values)?.sort()).toEqual([removedModel.id, defensive.id, deletedUser.id]);
-    expect(quiet!.values).toContain(null);
-    expect(refundedPrefixes()).toContain(defensive.buzzTransactionId);
-    expect(notified(defensive.userId)).toEqual([]);
+    const asSeenBy = (o: Orphan) =>
+      notified(o.userId).map((n) => ({ ...n, key: n.key.replace(`:${o.id}:`, ':#:') }));
+    const normal = asSeenBy(removed).map((n) => ({
+      ...n,
+      userId: flagged.userId,
+      details: { ...n.details, entityId: flagged.entityId },
+    }));
+    expect(normal).toHaveLength(1);
+    expect(asSeenBy(flagged)).toEqual(normal);
+    expect(refundedPrefixes()).not.toContain(flagged.buzzTransactionId);
+    expect(closeContaining(flagged.id)).toBeUndefined();
+
+    // Only a deleted account (and the deleted model) closes quietly.
+    const quiet = closeContaining(deletedUser.id);
+    expect(idsIn(quiet!.values)?.sort()).toEqual([removedModel.id, deletedUser.id]);
     expect(notified(deletedUser.userId)).toEqual([]);
-    expect(result).toMatchObject({ closedQuietly: 3, refunded: 3, refundFailed: 0 });
+    expect(result).toMatchObject({ closedQuietly: 2, routedForReview: 2 });
   });
 
-  it('looks up only image appeals by image id', async () => {
-    // A model sharing the reported image's id is not that image.
-    const modelSameId = orphan({ id: 6, userId: 60, entityType: EntityType.Model, entityId: 400 });
-    orphans = [defensive, modelSameId];
+  it('closes an owner-deleted appeal the same way when the appellant is one the flow excludes', async () => {
+    excludedImageIds = [];
+    excludedUserIds = [ownerDeleted.userId, removed.userId];
 
     await voidOrphanedAppeals();
 
-    const imageQuery = rawCalls().find(({ sql }) => /jsonb_array_elements/.test(sql))!;
-    expect(idsIn(imageQuery.values)).toEqual([defensive.entityId]);
-    expect(removedUpdate()).toBeUndefined();
-    expect(closeContaining(modelSameId.id)?.values).toContain(null);
-  });
-
-  it('closes quietly when the appellant is the one reported', async () => {
-    defensiveImageIds = [];
-    defensiveUserIds = [removed.userId];
-
-    await voidOrphanedAppeals();
-
-    const userQuery = rawCalls().find(({ sql }) => /"UserReport"/.test(sql))!;
-    expect(userQuery.sql).toMatch(/cr\."userId" = c\.id/);
-    expect(userQuery.sql).toMatch(/ur\."userId" = c\.id/);
-    expect(closeContaining(removed.id)?.values).toContain(null);
-    expect(notified(removed.userId)).toEqual([]);
+    expect(closeContaining(ownerDeleted.id)?.values).toContain('deleted-by-owner');
+    expect(notified(ownerDeleted.userId).map((n) => n.details.outcome)).toEqual([
+      'closed-owner-deleted',
+    ]);
+    expect(notified(removed.userId).map((n) => n.details.outcome)).toEqual(['under-review']);
   });
 
   it('routes everything not quietly closed for review when ClickHouse is unavailable', async () => {
@@ -398,7 +402,11 @@ describe('voidOrphanedAppeals', () => {
 
     await voidOrphanedAppeals();
 
-    expect(idsIn(removedUpdate()!.values)?.sort()).toEqual([ownerDeleted.id, removed.id]);
+    expect(idsIn(removedUpdate()!.values)?.sort()).toEqual([
+      ownerDeleted.id,
+      removed.id,
+      flagged.id,
+    ]);
     expect(closeContaining(removedModel.id)?.values).toContain(null);
     expect(notified(ownerDeleted.userId)[0]?.details.outcome).toBe('under-review');
   });
@@ -416,7 +424,7 @@ describe('voidOrphanedAppeals', () => {
 
   it('refunds and notifies only rows its own statement claimed', async () => {
     // A moderator resolved these after the pick: no claim statement hands them back.
-    resolvedMeanwhile = [ownerDeleted.id, removed.id, defensive.id];
+    resolvedMeanwhile = [ownerDeleted.id, removed.id, flagged.id];
 
     const result = await voidOrphanedAppeals();
 
@@ -436,7 +444,7 @@ describe('voidOrphanedAppeals', () => {
       expect.objectContaining({ appealId: ownerDeleted.id })
     );
     expect(notified(ownerDeleted.userId)[0]?.details).toMatchObject({ refunded: false });
-    expect(result).toMatchObject({ refundFailed: 2 });
+    expect(result).toMatchObject({ refundFailed: 1 });
   });
 
   it('does nothing when there are no orphans', async () => {
@@ -444,7 +452,7 @@ describe('voidOrphanedAppeals', () => {
 
     const result = await voidOrphanedAppeals();
 
-    expect(updates()).toEqual([]);
+    expect(claims()).toEqual([]);
     expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(result).toMatchObject({ closedOwnerDeleted: 0, routedForReview: 0 });
   });
@@ -572,34 +580,36 @@ describe('closeAppealsDeletedByOwner', () => {
   });
 });
 
-describe('closeAppealsDeletedByOwner when the defensive-close lookup fails', () => {
-  // The claim has committed: the refund must not depend on a later query, or the appeal is Void,
-  // unrefunded, and never swept again.
-  it('still refunds every claimed appeal, notifies no one, and logs the appeal ids', async () => {
+describe('closeAppealsDeletedByOwner for an owner the appeal flow excludes', () => {
+  it('refunds and notifies them as it does anyone else', async () => {
+    excludedImageIds = [ownerDeleted.entityId];
+    excludedUserIds = [ownerDeleted.userId];
     const realFake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
     dbMock.dbWrite.$queryRaw.mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]
-    ) => {
-      const sql = strings.join('?');
-      if (/UPDATE "Appeal"/.test(sql)) return Promise.resolve(claim([[ownerDeleted.id]]));
-      if (/"CsamReport"/.test(sql)) return Promise.reject(new Error('lookup down'));
-      return realFake(strings, ...values);
-    }) as never);
+    ) =>
+      /UPDATE "Appeal"/.test(strings.join('?'))
+        ? Promise.resolve(claim([[ownerDeleted.id]]))
+        : realFake(strings, ...values)) as never);
 
     await closeAppealsDeletedByOwner({
       entityType: EntityType.Image,
-      entityIds: [100],
-      ownerId: 10,
+      entityIds: [ownerDeleted.entityId],
+      ownerId: ownerDeleted.userId,
     });
 
     expect(refundedPrefixes()).toEqual([ownerDeleted.buzzTransactionId]);
-    expect(mockCreateNotification).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+    expect(notified(ownerDeleted.userId)).toEqual([
       expect.objectContaining({
-        name: 'close-appeals-deleted-by-owner',
-        appealIds: [ownerDeleted.id],
-      })
-    );
+        key: `entity-appeal-content-removed:${ownerDeleted.id}:closed-owner-deleted`,
+        details: {
+          entityType: EntityType.Image,
+          entityId: ownerDeleted.entityId,
+          outcome: 'closed-owner-deleted',
+          refunded: true,
+        },
+      }),
+    ]);
   });
 });

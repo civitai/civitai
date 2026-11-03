@@ -16,6 +16,8 @@ import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import {
   getListingCta,
@@ -225,12 +227,25 @@ export interface AppListingCardProps {
    * `appListingDetailModActions.detailListingStatus`.
    */
   preview?: boolean;
+  /**
+   * The card as a sidebar panel (the post and image detail pages), not a store grid cell: the
+   * divider runs edge to edge, the footer is tighter, and the creator is a `UserAvatar` (hover card) like everywhere else on the site.
+   * The grid never sets it, so the skeleton's geometry (`appListingCardGeometry`) still holds there.
+   */
+  embedded?: boolean;
+  /** A label pinned over the cover's top-left corner, opposite the `⋮` menu. */
+  coverBadge?: ReactNode;
 }
+
+/** An embedded card's CTA keeps its glyph 4px from the label (Mantine's default is 10). */
+const EMBEDDED_CTA_STYLES = { section: { marginInlineStart: 4 } };
 
 export function AppListingCard({
   card,
   canOpenPage = false,
   preview = false,
+  embedded = false,
+  coverBadge,
 }: AppListingCardProps) {
   const currentUser = useCurrentUser();
   const cta = getListingCta(card, { canOpenPage });
@@ -323,7 +338,15 @@ export function AppListingCard({
           stopPropagation
         />
       </div>
-      <Stack gap="xs" h="100%" px="md" pb="sm">
+      {coverBadge && (
+        <div
+          className="pointer-events-none absolute left-2 top-2 z-10 max-w-[70%]"
+          data-testid="apps-listing-card-cover-badge"
+        >
+          {coverBadge}
+        </div>
+      )}
+      <Stack gap="xs" h="100%" px="md" pb={embedded ? 'xs' : 'sm'}>
         {/* HEADER ROW: icon (overlapping the cover), title, Open. The icon is pulled up over the
             cover by `LISTING_CARD_ICON_OVERLAP_PX`; the title and the button are centred on the
             ICON's centre, not the row's, which is why they carry their own top margin. */}
@@ -409,7 +432,7 @@ export function AppListingCard({
               target="_blank"
               rel="noopener noreferrer"
               size="compact-sm"
-              variant="light"
+              variant="filled"
               className="relative z-10"
               style={{
                 flexShrink: 0,
@@ -418,6 +441,7 @@ export function AppListingCard({
                 }px)`,
               }}
               rightSection={<CtaGlyph size={14} />}
+              styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
               // "Opened" = actually opened. An OFF-SITE app is opened the moment this Visit CTA is
               // followed — there is no on-platform route afterwards that could record it (the
               // on-site path is recorded by `/apps/run/<slug>` itself). Recording on a detail
@@ -434,7 +458,7 @@ export function AppListingCard({
               component={Link}
               href={cta.href}
               size="compact-sm"
-              variant={cta.action === 'open' ? 'filled' : 'light'}
+              variant="filled"
               className="relative z-10"
               style={{
                 flexShrink: 0,
@@ -442,7 +466,9 @@ export function AppListingCard({
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
-              leftSection={<CtaGlyph size={14} />}
+              // The CTA is right-aligned, so the glyph trails the label — the same as Visit.
+              rightSection={<CtaGlyph size={14} />}
+              styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
             >
               {cta.label}
             </Button>
@@ -533,12 +559,17 @@ export function AppListingCard({
             🔴 `wrap="nowrap"` is load-bearing: a wrapped footer is a second line, i.e. a card
             taller than its skeleton on every card in that grid row. The rollup and the creator
             name truncate (`minWidth: 0`); the play count is short and `flexShrink: 0`. */}
-        <Divider mt="auto" />
+        {/* Full-bleed: the divider runs edge to edge while the content keeps its padding. */}
+        <Divider
+          mt="auto"
+          style={{ marginInline: 'calc(var(--mantine-spacing-md) * -1)' }}
+          data-testid="apps-listing-card-divider"
+        />
         <Group
-          gap="sm"
+          gap={embedded ? 'xs' : 'sm'}
           wrap="nowrap"
           justify="space-between"
-          mih={LISTING_CARD_FOOTER_HEIGHT_PX}
+          mih={embedded ? undefined : LISTING_CARD_FOOTER_HEIGHT_PX}
           data-testid="apps-listing-card-footer"
         >
           <Group
@@ -577,28 +608,22 @@ export function AppListingCard({
             )}
           </Group>
           {creator?.username && (
-            <Anchor
-              component={Link}
-              href={`/user/${encodeURIComponent(creator.username)}`}
-              underline="hover"
-              c="dimmed"
-              className="relative z-10"
-              style={{ minWidth: 0, flexShrink: 1 }}
+            // The embedded card fill is dark in both themes and Paper takes its text colour from
+            // the root scheme, so there the name states its own light colour.
+            <div
+              className="relative z-10 min-w-0 shrink"
+              style={embedded ? { color: 'var(--mantine-color-dark-0)' } : undefined}
               data-testid="apps-listing-card-creator"
             >
-              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }} justify="flex-end">
-                <Avatar
-                  src={creator.image ?? undefined}
-                  alt=""
-                  size={LISTING_CARD_CREATOR_AVATAR_PX}
-                  radius="xl"
-                  style={{ flexShrink: 0 }}
-                />
-                <Text size="xs" c="dimmed" truncate>
-                  {creator.username}
-                </Text>
-              </Group>
-            </Anchor>
+              <UserAvatar
+                user={{ id: creator.id, username: creator.username, image: creator.image }}
+                withUsername
+                linkToProfile
+                size="xs"
+                avatarSize={LISTING_CARD_CREATOR_AVATAR_PX}
+                textSize="xs"
+              />
+            </div>
           )}
         </Group>
       </Stack>

@@ -1,4 +1,6 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { MAX_EDGE_WIDTH, videoStillEdgeOptions } from '~/client-utils/edge-url';
+import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -58,6 +60,8 @@ const UNVERDICTED_INGESTION = new Set<string>([
   ImageIngestionStatus.PendingManualAssignment,
 ]);
 
+const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+
 const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
 
 /**
@@ -73,10 +77,12 @@ const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
  * in place of the verdict we do not have.
  */
 export function getEngineRefusal(image: RemixSourceImage): string | undefined {
+  const noun = image.type === 'video' ? 'video' : 'image';
+  const plural = `${noun}s`;
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor)
-    return 'This image was blocked, so it cannot be remixed.';
-  if (image.minor) return 'Images that may depict a minor cannot be remixed.';
-  if (image.poi) return 'Images of real people cannot be remixed.';
+    return `This ${noun} was blocked, so it cannot be remixed.`;
+  if (image.minor) return `${capitalize(plural)} that may depict a minor cannot be remixed.`;
+  if (image.poi) return `${capitalize(plural)} of real people cannot be remixed.`;
   // Rated mature by a human before the classifiers ran. `minor`/`poi` are NOT
   // NULL columns defaulting to false, so the checks above cannot tell that state
   // apart from a scanned-and-clean one — `ingestion` is the only discriminator.
@@ -94,7 +100,7 @@ export function getEngineRefusal(image: RemixSourceImage): string | undefined {
     image.ingestion != null &&
     UNVERDICTED_INGESTION.has(image.ingestion)
   )
-    return 'This image is still being reviewed. Try again once it finishes scanning.';
+    return `This ${noun} is still being reviewed. Try again once it finishes scanning.`;
   return undefined;
 }
 
@@ -109,7 +115,50 @@ export function isReuseRefused(image: RemixSourceImage): boolean {
 
 /** Remix kinds that need only the image itself. */
 export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
-  return image.type === 'image' ? ['edit', 'video'] : [];
+  if (image.type === 'image') return ['edit', 'video'];
+  if (image.type === 'video') return ['video'];
+  return [];
+}
+
+/**
+ * The still the engine receives. A video's stored file is an mp4, and `original: true` returns it
+ * untouched whatever else is asked, so frame 0 needs a capped width instead.
+ */
+export function getRemixSourceUrl(image: RemixSourceImage) {
+  return image.type === 'video'
+    ? getEdgeUrl(image.url, {
+        ...videoStillEdgeOptions,
+        width: Math.min(image.width ?? MAX_EDGE_WIDTH, MAX_EDGE_WIDTH),
+      })
+    : getEdgeUrl(image.url, { original: true });
+}
+
+/** One thing the Remix button can do for this viewer: a remix kind, or prompt reuse. */
+export type RemixOptionKey = RemixKind | 'reuse';
+
+/**
+ * The options the Remix menu actually offers this viewer, in menu order. This is
+ * the menu's own list — it renders from it — so the count it is judged by cannot
+ * drift from what is on screen. An engine refusal removes the kinds, a refused
+ * reuse removes that; nothing here names a media type, so a new kind added to
+ * `getRemixKinds` changes the count by itself.
+ */
+export function getRemixOptions(image: RemixSourceImage): RemixOptionKey[] {
+  const options: RemixOptionKey[] = getEngineRefusal(image) ? [] : [...getRemixKinds(image)];
+  if (canReusePrompt(image) && !isReuseRefused(image)) options.push('reuse');
+  return options;
+}
+
+/**
+ * The option a click on the Remix button should run without opening a menu, if
+ * there is exactly one. Undefined with several (pick one) or none. An image that
+ * carries a refusal keeps its menu even with one option left, because the menu is
+ * where the viewer is told why the others are missing.
+ */
+export function getSoleRemixOption(image: RemixSourceImage): RemixOptionKey | undefined {
+  if (getEngineRefusal(image)) return undefined;
+  const options = getRemixOptions(image);
+  return options.length === 1 ? options[0] : undefined;
 }
 
 /**
@@ -162,7 +211,7 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   const engine = getRemixEngine(kind, image);
   generationGraphPanel.open(undefined, { preserveEntryAction: true });
 
-  const sourceUrl = getEdgeUrl(image.url, { original: true });
+  const sourceUrl = getRemixSourceUrl(image);
   const { result, superseded } = await withExternalFetch(() =>
     Promise.all([
       resolveDimensions(image, sourceUrl),
@@ -195,6 +244,9 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   // `setData` for the same reason the panel opens before the awaits: the form
   // can start resolving the moment the data lands.
   if (provenance) remixProvenanceStore.setToken(sourceUrl, provenance);
+  // The form can switch to an engine that gates on the source's rating, and an on-site url has
+  // no other way to be rated there.
+  recordGallerySourceRating(sourceUrl, image.nsfwLevel);
 
   generationGraphStore.setData({
     params: {

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
@@ -12,11 +13,12 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
-import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   return dbRead.apiKey.findFirst({
@@ -59,10 +61,10 @@ export async function addApiKey(
     userId,
     maxAge,
     type,
-  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType },
+    key = generateKey(),
+  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType; key?: string },
   date = new Date()
 ) {
-  const key = generateKey();
   const secret = generateSecretHash(key);
   const expiresAt = maxAge ? new Date(date.getTime() + maxAge * 1000) : undefined;
 
@@ -135,11 +137,60 @@ export async function setApiKeyBuzzLimit({
   return updated;
 }
 
-export async function getTemporaryUserApiKey(
-  args: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }
+const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
+
+type MintApiKeyArgs = AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType };
+
+/** Read from the primary: a ban must stop the next mint, not the one after the session cache expires. */
+export async function assertAccountOpenForMint(userId: number, refusalMessage?: string) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, deletedAt: true },
+  });
+  // Default wording is not the session-facing one: a moderator acting on another account reaches this too.
+  const refuse = (message: string) =>
+    new TRPCError({ code: 'FORBIDDEN', message: refusalMessage ?? message });
+  if (!user) throw refuse('This account does not exist');
+  if (user.bannedAt) throw refuse('This account has been banned');
+  if (user.deletedAt) throw refuse('This account has been deleted');
+}
+
+/**
+ * The one way to create an API key for a user account: refuses a banned, deleted or missing account
+ * from the primary, and checks again after the insert, expiring the user's keys if a ban or deletion
+ * committed in between (its own revocation may not have seen the new row).
+ */
+export async function mintApiKey(
+  args: MintApiKeyArgs,
+  {
+    refusalMessage,
+    logName = 'mint-closed-account-expire',
+    date = new Date(),
+  }: { refusalMessage?: string; logName?: string; date?: Date } = {}
 ) {
-  const date = new Date();
+  await assertAccountOpenForMint(args.userId, refusalMessage);
   const key = await addApiKey(args, date);
+  try {
+    await assertAccountOpenForMint(args.userId, refusalMessage);
+  } catch (refusal) {
+    if (!(refusal instanceof TRPCError)) throw refusal;
+    // A failure here leaves the key for the ban's own revocation and its job to expire.
+    await expireUserApiKeys(args.userId).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: logName,
+        userId: args.userId,
+        error: safeError(error),
+      }).catch(() => null)
+    );
+    throw refusal;
+  }
+  return key;
+}
+
+export async function getTemporaryUserApiKey(args: MintApiKeyArgs) {
+  const date = new Date();
+  const key = await mintApiKey(args, { logName: 'mint-banned-account-expire', date });
 
   if (args.maxAge) {
     const { userId, type, name } = args;
@@ -203,12 +254,20 @@ export async function expireUserApiKeys(userId: number) {
 /**
  * Drops the user's cached generation token, which holds a key just expired: left for its hour, it
  * would be handed to the orchestrator after an unban or restore and refused. The next generation
- * call mints a fresh one.
+ * call mints a fresh one. Never throws.
  */
-async function forgetGenerationToken(userId: number) {
+export async function forgetGenerationToken(userId: number) {
   try {
     // Raced like a read: a half-open sysRedis must not stall the ban.
-    await withSysReadDeadline(sysRedis.hDel(REDIS_KEYS.GENERATION.TOKENS_OWNED, userId.toString()));
+    const field = userId.toString();
+    await withSysReadDeadline(
+      Promise.all([
+        sysRedis.hDel(REDIS_KEYS.GENERATION.TOKENS_OWNED, field),
+        // The training studio's own cache, and the older shared key it still reads.
+        sysRedis.hDel(REDIS_SYS_KEYS.GENERATION.ORCHESTRATOR_TOKENS, field),
+        sysRedis.hDel(REDIS_SYS_KEYS.GENERATION.TOKENS, field),
+      ])
+    );
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -217,6 +276,36 @@ async function forgetGenerationToken(userId: number) {
       message: (error as Error).message,
     }).catch(() => null);
   }
+}
+
+/**
+ * Expires the user's generation credentials: every System key and every app token carrying an
+ * AI Services scope. Other app tokens, personal keys and the site session are left alone. The next
+ * generation call that is allowed mints afresh.
+ */
+export async function expireGenerationCredentials(userId: number) {
+  const now = new Date();
+  const rows = await dbWrite.apiKey.findMany({
+    where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
+    select: { id: true, key: true, type: true, tokenScope: true, expiresAt: true },
+  });
+  const matched = rows.filter(
+    (row) =>
+      row.type === 'System' ||
+      ((row.type === 'Access' || row.type === 'Refresh') &&
+        (row.tokenScope & AI_SERVICES_SCOPES) !== 0)
+  );
+  const live = matched.filter((row) => !row.expiresAt || row.expiresAt > now);
+  if (live.length) {
+    await dbWrite.apiKey.updateMany({
+      where: { id: { in: live.map((row) => row.id) } },
+      data: { expiresAt: now },
+    });
+  }
+  // Every matched key, not only the live ones: a repeat call retries an eviction an earlier one missed.
+  if (matched.length) await evictCachedApiKeys(matched.map((row) => row.key));
+  await forgetGenerationToken(userId);
+  return { expired: live.length };
 }
 
 export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {

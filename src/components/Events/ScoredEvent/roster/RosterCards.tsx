@@ -15,11 +15,13 @@ import {
   hatTier,
   isNewMember,
   podiumHero,
+  showcaseHat,
   slotPlan,
 } from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
 import { EVENT_CARD_SURFACE } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { isShowcaseLive } from '~/shared/constants/showcase-hat.constants';
 import { useInView } from '~/hooks/useInView';
 import type { RouterOutput } from '~/types/router';
 
@@ -36,6 +38,8 @@ export type RosterCardContext = {
   sort: RosterSort;
   prices: number[];
   now: Date;
+  /** When the event opened: earlier joiners show as joining then. */
+  startDate?: Date;
   onVisible: (topicId: string, inView: boolean) => void;
 };
 
@@ -191,7 +195,7 @@ function Stats({
   /** Counts roll only on screen (AnimatedCount's cost is per element). */
   inView: boolean;
 }) {
-  const days = daysOnTeam(item.joinedAt, ctx.now);
+  const days = daysOnTeam(item.joinedAt, ctx.now, ctx.startDate);
   return (
     <div
       className="grid grid-cols-3 rounded-md bg-gray-1 dark:bg-dark-8"
@@ -358,8 +362,9 @@ export const RosterShelfCard = memo(function RosterShelfCard({
 }) {
   const { ref, inView } = useLiveWhileVisible(item.topicId, ctx.onVisible);
   const hats = cardHats(item);
-  const worn = hats.find((h) => h.worn);
-  const isNew = isNewMember(item.joinedAt, ctx.now);
+  // During the showcase the avatar wears the member's showcase hat; otherwise the one they placed.
+  const avatarHat = isShowcaseLive(ctx.now) ? showcaseHat(hats) : hats.find((h) => h.worn);
+  const isNew = isNewMember(item.joinedAt, ctx.now, ctx.startDate);
 
   return (
     <Paper
@@ -380,7 +385,7 @@ export const RosterShelfCard = memo(function RosterShelfCard({
       <RankChip rank={rank} className="absolute right-3 top-3" />
       <div className="-mt-7 flex flex-col gap-3 px-3 pb-3">
         <div className="flex items-end gap-3">
-          <WearingAvatar item={item} size={56} hatUrl={worn?.url} />
+          <WearingAvatar item={item} size={56} hatUrl={avatarHat?.url} />
           <Username item={item} ctx={ctx} extra={isNew && <NewBadge />} />
         </div>
         {/* The score sits at the same height on every card; the shelf below varies. */}
@@ -431,8 +436,8 @@ export const RosterPodiumCard = memo(function RosterPodiumCard({
   className?: string;
 }) {
   const { ref, inView } = useLiveWhileVisible(item.topicId, ctx.onVisible);
-  const { hero, label, rest } = podiumHero(cardHats(item));
-  const isNew = isNewMember(item.joinedAt, ctx.now);
+  const { hero, label, rest } = podiumHero(cardHats(item), isShowcaseLive(ctx.now));
+  const isNew = isNewMember(item.joinedAt, ctx.now, ctx.startDate);
 
   return (
     <div
@@ -461,7 +466,9 @@ export const RosterPodiumCard = memo(function RosterPodiumCard({
           className="absolute bottom-2 left-1/2 max-w-[calc(100%-16px)] -translate-x-1/2 rounded-full bg-black/60 px-3 py-0.5 text-white"
           data-testid="roster-hero-label"
         >
-          {label === 'wearing'
+          {label === 'showcase'
+            ? `Showcasing · ${hero?.name}`
+            : label === 'wearing'
             ? `Wearing · ${hero?.name}`
             : label === 'top'
             ? `Top hat · ${hero?.name}`

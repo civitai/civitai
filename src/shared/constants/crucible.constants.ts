@@ -136,10 +136,12 @@ export const CRUCIBLE_MAX_SEEDED_PRIZE_POOL = 10_000_000;
 export const CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS = [10, 15, 30, 60, 120, 240] as const;
 
 /**
- * The only values a crucible's `minViewSeconds` may take. A judge is asked to watch BOTH clips
- * before either vote unlocks, so the wait a setting buys is twice its value.
+ * Inclusive whole-second bounds on a crucible's `minViewSeconds`; absent means no minimum. A judge
+ * is asked to watch BOTH clips before either vote unlocks, so the wait a setting buys is twice its
+ * value.
  */
-export const CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS = [3, 6, 10, 15, 30] as const;
+export const CRUCIBLE_MIN_VIEW_SECONDS_MIN = 3;
+export const CRUCIBLE_MIN_VIEW_SECONDS_MAX = 30;
 
 /**
  * Both video settings are meaningless on an image crucible, and NULL is the only value that reads
@@ -202,3 +204,11 @@ export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
 
 // Candidate pool for getJudgingSuggestions; the caught-up filter runs after the SQL LIMIT, so keep it above the open-crucible count.
 export const CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES = 50;
+
+/**
+ * What a moderator takedown does with the creator's setup fee and seeded prize pool. Entrants are
+ * always refunded. 'hold' moves nothing until a moderator re-runs the takedown with
+ * `releaseCreatorFunds`.
+ */
+export const CRUCIBLE_TAKEDOWN_CREATOR_FUNDS: 'forfeit' | 'refund' | 'hold' = 'forfeit';
+export const CRUCIBLE_TAKEDOWN_REASON_LENGTH = { min: 10, max: 1_000 } as const;

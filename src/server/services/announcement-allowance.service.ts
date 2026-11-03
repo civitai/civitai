@@ -63,7 +63,6 @@ export type AnnouncementAllowance = {
 async function getConfig() {
   let value: Record<string, unknown> = {};
   try {
-    // `kysely-hot-reads-5` on: the same row through Kysely, on the same replica.
     const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
       ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, ANNOUNCEMENTS_CONFIG_KEY)
       : await readKeyValueViaPrisma(dbRead, ANNOUNCEMENTS_CONFIG_KEY);

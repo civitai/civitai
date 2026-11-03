@@ -1,3 +1,5 @@
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type {
@@ -11,6 +13,7 @@ import {
 } from '~/server/services/bounty-entry-file-check.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import {
+  checkEntityImageKeys,
   createEntityImages,
   invalidateManyImageExistence,
   updateEntityImages,
@@ -24,7 +27,12 @@ import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
-import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import {
+  isPayoutOverdue,
+  isPayoutPending,
+  lockBountyForPayout,
+  nextPayoutRecordedAt,
+} from '~/server/services/bounty-payout-lock';
 import { settleBountyPayout, refundUnpayableBountyAward } from '~/server/services/bounty.service';
 import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
@@ -118,6 +126,7 @@ export const upsertBountyEntry = async ({
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const result = await dbWrite.$transaction(async (tx) => {
     if (id) {
@@ -145,6 +154,7 @@ export const upsertBountyEntry = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
@@ -175,6 +185,7 @@ export const upsertBountyEntry = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
@@ -231,7 +242,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       // A refund that claimed the bounty first holds this lock until it commits, and
       // then reads complete here.
       const bounty = await lockBountyForPayout(tx, entry.bountyId);
-      if (!bounty || bounty.complete || bounty.refunded) {
+      if (!bounty || bounty.complete || bounty.refunded || isPayoutOverdue(bounty)) {
         log('error', 'Bounty already complete', { refunded: bounty?.refunded });
         throw throwBadRequestError('Bounty is already complete.');
       }
@@ -249,27 +260,30 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
       });
-      if (benefactor.awardedToId) {
+      // `awardedAt` outlives the awarded entry: an award stands after its entry is deleted.
+      if (benefactor.awardedToId || benefactor.awardedAt) {
         log('error', 'Benefactor already awarded an entry', {
           previouslyAwardedEntryId: benefactor.awardedToId,
         });
         throw throwBadRequestError('Supporters have already awarded an entry.');
       }
 
+      // One stamp for both, after the last settlement: settlement tells awards it already paid by it.
+      const recordedAt = nextPayoutRecordedAt(bounty);
       const updatedBenefactor = await tx.bountyBenefactor.update({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
-        data: { awardedToId: entry.id, awardedAt: new Date() },
+        data: { awardedToId: entry.id, awardedAt: recordedAt },
       });
 
       const unawardedBountyBenefactors = await tx.bountyBenefactor.findFirst({
         select: { userId: true },
-        where: { awardedToId: null, bountyId: entry.bountyId },
+        where: { awardedToId: null, awardedAt: null, bountyId: entry.bountyId },
       });
       // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
       await tx.bounty.update({
         where: { id: entry.bountyId },
         data: {
-          payoutRecordedAt: new Date(),
+          payoutRecordedAt: recordedAt,
           payoutWinnerUserId: entry.userId,
           ...(unawardedBountyBenefactors ? {} : { complete: true }),
         },
@@ -442,6 +456,14 @@ export const deleteBountyEntry = async ({
 const PAYOUT_PENDING = Symbol('payout-pending');
 
 async function deleteEntryRows(tx: Prisma.TransactionClient, id: number) {
+  const entryImageIds = Prisma.sql`SELECT ic."imageId" FROM "ImageConnection" ic
+    WHERE ic."entityId" = ${id} AND ic."entityType" = 'BountyEntry'`;
+  await tx.$executeRaw(
+    detachHeldThreadsSql(
+      { bountyEntryId: Prisma.sql`SELECT ${id}::int`, imageId: entryImageIds },
+      await holdMarkerViewExists()
+    )
+  );
   const entry = await tx.bountyEntry.delete({ where: { id } });
   if (!entry) return null;
 

@@ -1,6 +1,6 @@
 import type { IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
 import { MeiliSearchTimeOutError } from 'meilisearch';
-import { searchClient, metricsSearchClient } from '~/server/meilisearch/client';
+import { searchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
@@ -10,7 +10,6 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
-  METRICS_IMAGES_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
@@ -241,9 +240,8 @@ export const processUserContentRemovalQueue = async () => {
     { name: COMICS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
   ];
 
-  const metricsIndexConfigs = [
-    { name: METRICS_IMAGES_SEARCH_INDEX, filter: `userId IN [${userIdList}]` },
-  ];
+  // METRICS_IMAGES_SEARCH_INDEX (the feeds index) is omitted: it is retired with the feeds
+  // Meilisearch, and its readers answer without it (see search-index/retired-index-read.ts).
 
   const processIndex = async (indexName: string, filter: string, client: MeiliSearch | null) => {
     if (!client) return;
@@ -271,9 +269,6 @@ export const processUserContentRemovalQueue = async () => {
 
   await Promise.allSettled([
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
-    ...metricsIndexConfigs.map(({ name, filter }) =>
-      processIndex(name, filter, metricsSearchClient)
-    ),
   ]);
 
   await logToAxiom({

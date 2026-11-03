@@ -53,6 +53,7 @@ import * as imageService from '~/server/services/image.service';
 import {
   accountHeldBlockedImagesSql,
   blockedQueueBatchSql,
+  reviewHeldBlockedImagesSql,
   blockedQueueExpiredAmongSql,
   purgeHoldGuard,
 } from '~/server/jobs/image-ingestion';
@@ -164,6 +165,12 @@ const BASE_SCHEMA = `
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
+    -- The image's comment threads, which an image delete detaches when a held author is in one.
+    CREATE TABLE "Thread" (
+      id serial PRIMARY KEY, "imageId" int, "parentThreadId" int, "rootThreadId" int,
+      "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
@@ -241,10 +248,12 @@ beforeEach(async () => {
   vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
-    strings: TemplateStringsArray,
+    strings: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
   ) => {
-    const flat = Prisma.sql(strings, ...(values as never[]));
+    const flat = Array.isArray(strings)
+      ? Prisma.sql(strings as TemplateStringsArray, ...(values as never[]))
+      : (strings as Prisma.Sql);
     if (!flat.text.includes('DELETE FROM "Image"') && !flat.text.includes('"EvidenceHoldImage"'))
       return [];
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
@@ -1184,18 +1193,28 @@ describe('purgeHoldGuard holds every image of an account under any account hold'
   it.each([
     ['a review flag other than CSAM', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = ${C}`],
     [
-      'a CSAM block a sent report naming them lists, past the hold',
-      `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${C};
-       INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
-       VALUES (${OWNER}, now() - interval '2 years', now(), '[{"id": ${C}}]')`,
-    ],
-    [
       'an image listed on a report that no longer holds',
       `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
        VALUES (${OTHER_SUBJECT}, now() - interval '2 years', now(), '[{"id": ${C}}]')`,
     ],
   ])('deletes all of them with only %s', async (_, state) => {
     await holder.db.exec(state);
+
+    expect(await purge()).toEqual([]);
+  });
+
+  it('keeps a CSAM-blocked image itself past the hold, the batch read having missed it', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${C};
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+      VALUES (${OWNER}, now() - interval '2 years', now(), '[{"id": ${C}}]');
+    `);
+
+    expect(await purge()).toEqual([C]);
+  });
+
+  it('still deletes an image blocked for any other reason', async () => {
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated' WHERE id = ${C}`);
 
     expect(await purge()).toEqual([]);
   });
@@ -1250,6 +1269,24 @@ describe('accountHeldBlockedImagesSql, the batch exclusion', () => {
 
     // FLAGGED (12) is the base fixture's flagged image; its owner is held the same way.
     expect(await read()).toEqual([FLAGGED, 91, 93, 94, 98]);
+  });
+});
+
+describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
+  it('returns every Blocked image under a pending review or a CSAM block, and nothing else', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor") VALUES
+        (110, ${PLAIN_USER}, 'Blocked', NULL, 'CSAM'),
+        (111, ${PLAIN_USER}, 'Blocked', NULL, 'moderated'),
+        (112, ${PLAIN_USER}, 'Scanned', NULL, 'CSAM');
+    `);
+
+    const { rows } = await holder.db.query<{ id: number }>(
+      reviewHeldBlockedImagesSql.text,
+      reviewHeldBlockedImagesSql.values as unknown[]
+    );
+
+    expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 110]));
   });
 });
 

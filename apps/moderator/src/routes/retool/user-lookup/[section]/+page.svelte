@@ -35,6 +35,8 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
+  import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import {
@@ -90,6 +92,15 @@
       <!-- On the first screen because the enforcement history and the paying relationship are what it
            is read FOR; both were two clicks and a scroll away. -->
       <SubscriptionPanel subscription={result.subscription} />
+      {#if data.grants['user.membership.extend']}
+        <!-- `extendDays` / `extendReason` arrive on the assistant's proposal link; a person still
+             previews and confirms. -->
+        <MembershipExtendPanel
+          userId={result.identity.id}
+          initialDays={page.url.searchParams.get('extendDays') ?? ''}
+          initialReason={page.url.searchParams.get('extendReason') ?? ''}
+        />
+      {/if}
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}

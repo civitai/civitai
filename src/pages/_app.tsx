@@ -478,6 +478,13 @@ function MyApp(props: CustomAppProps) {
 //   };
 // };
 MyApp.getInitialProps = async (appContext: AppContext) => {
+  // 🔴 First, before anything can render or redirect: a page render that Next already gave a
+  // static-asset rule's public `Cache-Control` (a missing `/images/<file>.<ext>`, a case variant of
+  // a real one, their data requests) must not leave with it. See `~/server/utils/static-asset-cache`.
+  if (typeof window === 'undefined') {
+    const { privatizeStaticAssetPageRender } = await import('~/server/utils/static-asset-cache');
+    privatizeStaticAssetPageRender(appContext.ctx.res);
+  }
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
   if (!request) return initialProps;
@@ -762,6 +769,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // jose decode per request. Deleting safely needs the endpoint to signal a degraded
     // lookup distinctly from "no session".
     hasAuthCookie = false;
+  }
+
+  // Skipped when degraded: the viewer is unknown, so the cookie must stay as it is.
+  if (typeof window === 'undefined') {
+    const { res } = appContext.ctx;
+    if (res && !settingsDegraded) {
+      const { syncTrpcPoolCookie } = await import('~/server/trpc/trpc-pool-cookie');
+      syncTrpcPoolCookie(request, res, !!session?.user && flags.trpcPoolRoute === true);
+    }
   }
 
   // Auth route guards, moved off the edge middleware (the thin hub civ-token can't resolve the full user in the

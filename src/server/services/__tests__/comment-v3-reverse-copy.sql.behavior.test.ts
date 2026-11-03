@@ -112,6 +112,7 @@ beforeAll(async () => {
   await db.pg.exec(PRE_EXISTING);
   await db.pg.exec(migration('20261110120000_comment_v3_schema'));
   await db.pg.exec(migration('20261120120000_comment_v3_mirror'));
+  await db.pg.exec(migration('20261217120000_comment_v3_removed_by_author'));
   await copyTopics(db.pg, ALL);
   await copyV2Comments(db.pg, ALL);
   await copyV1Comments(db.pg, ALL);
@@ -475,5 +476,57 @@ describe('comment v3 reverse copy', () => {
       await db.pg.exec(`SELECT setval('"Thread_id_seq"', (SELECT max(id) FROM "Thread"), true)`);
     }
     expect(await reverseRootThreads(db.pg, ALL, SCOPE)).toEqual({ created: 1, relocked: 0 });
+  });
+
+  it('a v1-shaped model comment goes back without a root thread', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 3);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt") VALUES (64, 'model', 3, 5, 'v3 model root', '2025-02-01');
+    `);
+    expect(await reverseRootThreads(db.pg, ALL, SCOPE)).toEqual({ created: 0, relocked: 0 });
+    await reverseComments(db.pg, ALL, SCOPE);
+    expect(await count('FROM "Comment" WHERE id = 64 AND "modelId" = 3')).toBe(1);
+    expect(await count('FROM "Thread" WHERE "modelId" = 3')).toBe(0);
+  });
+
+  // A tombstone with no old row (deleted after the flip) leaves its reply nothing to attach to;
+  // without the fix the reply stays pending forever.
+  it('a reply under a tombstone with no old row goes back on a reply thread with no parent', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 15);
+      INSERT INTO "Thread"("imageId") VALUES (15);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "deletedAt", "createdAt") VALUES (90, 'image', 15, 5, '', now(), '2025-02-01');
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES (91, 'image', 15, 90, 6, 'under a tombstone', '2025-02-02');
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES (92, 'image', 15, 91, 7, 'under that', '2025-02-03');
+    `);
+    for (let pass = 0; pass < 3; pass++) await reverseComments(db.pg, ALL, SCOPE);
+    expect(await reverseDryCount(db.pg, 'reverseComments', ALL, SCOPE)).toBe(0);
+    const orphan = await one<{ commentId: number | null; root: number }>(
+      `SELECT t."commentId", t."rootThreadId" AS root FROM "CommentV2" c JOIN "Thread" t ON t.id = c."threadId" WHERE c.id = 91`
+    );
+    const root = await thread(`"imageId" = 15`);
+    expect(orphan).toEqual({ commentId: null, root: root.id });
+    expect(await old(92)).toMatchObject({ content: 'under that' });
+    expect(await count('FROM "CommentV2" WHERE id = 90')).toBe(0);
+  });
+  // The old ToS restore skips only marked rows: unmarked, it would republish the author's removal.
+  it('an author removal a hold kept goes back marked, as a new row and on an existing one', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 16);
+      INSERT INTO "Thread"("imageId") VALUES (16);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "removedByAuthor", "createdAt")
+        VALUES (95, 'image', 16, 5, 'kept for a hold', true, true, '2025-02-01');
+    `);
+    for (let pass = 0; pass < 2; pass++) await reverseComments(db.pg, ALL, SCOPE);
+    const marked = () =>
+      one(`SELECT metadata ->> 'removedByAuthor' AS marked FROM "CommentV2" WHERE id = 95`);
+    expect(await marked()).toEqual({ marked: 'true' });
+
+    await db.pg.exec(`ALTER TABLE "CommentV2" DISABLE TRIGGER commentv3_mirror`);
+    await db.pg.exec(`UPDATE "CommentV2" SET metadata = NULL WHERE id = 95`);
+    await db.pg.exec(`ALTER TABLE "CommentV2" ENABLE TRIGGER commentv3_mirror`);
+    await db.pg.exec(`UPDATE "CommentV3" SET "updatedAt" = now() WHERE id = 95`);
+    await reverseUpdates(db.pg, ALL);
+    expect(await marked()).toEqual({ marked: 'true' });
   });
 });

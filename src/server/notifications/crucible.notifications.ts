@@ -40,15 +40,17 @@ export const crucibleNotifications = createNotificationProcessor({
       };
     },
   },
-  // Sent to the entrant when a moderator removes their entry
+  // Sent to the entrant when a moderator, or the crucible's owner (with a reason), removes their entry
   'crucible-entry-removed': {
     displayName: 'Crucible Entry Removed',
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `A moderator removed your entry from the crucible${quotedName(
-        details.crucibleName
-      )}.${
+      message: `${
+        details.removedBy === 'owner' ? "The crucible's owner" : 'A moderator'
+      } removed your entry from the crucible${quotedName(details.crucibleName)}.${
+        details.reason ? ` Reason: ${details.reason}.` : ''
+      }${
         details.refundedAmount
           ? ` Your ${numberWithCommas(details.refundedAmount)} Buzz entry fee was refunded.`
           : ''
@@ -68,6 +70,44 @@ export const crucibleNotifications = createNotificationProcessor({
           : 'Any entry fees you paid have been refunded.'
       }`,
       url: `/crucibles/${details.crucibleId}`,
+    }),
+  },
+  // Sent to the creator when a moderator takes their crucible down
+  'crucible-taken-down': {
+    displayName: 'Crucible Removed by Moderators',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      const funds: Record<string, string> = {
+        refunded: ' The Buzz you paid to create it was refunded.',
+        pending: ' The Buzz you paid to create it is being refunded.',
+        held: ' The Buzz you paid to create it is held pending review.',
+        forfeited: ' The Buzz you paid to create it was not refunded.',
+      };
+      return {
+        message: `Your crucible${quotedName(details.crucibleName)} was removed by moderators.${
+          details.reason ? ` Reason: ${details.reason}` : ''
+        }${funds[details.creatorFunds] ?? ''}`,
+        url: `/crucibles/${details.crucibleId}`,
+      };
+    },
+  },
+  // Sent to each entrant when a moderator takes down a crucible they entered; never the reason
+  'crucible-removed': {
+    displayName: 'Crucible Removed',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(
+        details.crucibleName
+      )} you entered was removed by moderators.${
+        details.refunded === false
+          ? ''
+          : details.refundPending
+          ? ' Your entry fee refund is being processed.'
+          : ' Any entry fees you paid have been refunded.'
+      }`,
+      url: '/crucibles',
     }),
   },
   // Sent to all participants when crucible finalizes with their position

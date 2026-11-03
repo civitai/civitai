@@ -350,6 +350,12 @@ describe('moveStorylineChapter refusals', () => {
     await refuses(() => move(3, 5), notInOneLine);
   });
 
+  it('refuses moving a removed chapter, or moving past one', async () => {
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 4`);
+    await refuses(() => move(4, 2), notInOneLine);
+    await refuses(() => move(5, 2), notInOneLine);
+  });
+
   it("refuses moving a contributor's chapter", async () => {
     await forkAfterRun();
     await refuses(() => move(9, 3), notInOneLine);

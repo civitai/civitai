@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 
 import type * as MeiliClientModule from '~/server/meilisearch/client';
 import type * as MeiliUtilModule from '~/server/meilisearch/util';
@@ -72,6 +73,7 @@ const setupProbe = vi.hoisted(() => {
       updateRankingRules: record('updateRankingRules'),
       updateFilterableAttributes: record('updateFilterableAttributes'),
       updateTypoTolerance: record('updateTypoTolerance'),
+      updateFaceting: record('updateFaceting'),
     },
   };
 });
@@ -870,7 +872,7 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
     return setupProbe.received;
   }
 
-  it('writes exactly these six settings, and nothing else', async () => {
+  it('writes exactly these seven settings, and nothing else', async () => {
     // 🔴 THE NON-VACUITY ASSERTION THE REST OF THIS DESCRIBE RESTS ON. A stub that is never called
     // records nothing, and `received.find(...) === undefined` would then read as a clean absence in
     // every case below rather than as a broken probe. Pinned as its own case so the failure names
@@ -886,12 +888,31 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
       "onIndexSetup's write set moved — an EMPTY received list means the client/index mocks are not reaching it, a DIFFERENT list means a settings write was added or removed"
     ).toEqual([
       'updateDisplayedAttributes',
+      'updateFaceting',
       'updateFilterableAttributes',
       'updateRankingRules',
       'updateSearchableAttributes',
       'updateSortableAttributes',
       'updateTypoTolerance',
     ]);
+  });
+
+  it('raises the facet cap to SEARCH_FACET_LIMIT, and leaves it alone once it matches', async () => {
+    // Meili's default cap is 100 values per facet, returned alphabetically, so a base-model list
+    // longer than the cap silently drops its tail from "Filter by Base Model".
+    const first = await runSetup();
+    expect(first.find((r) => r.method === 'updateFaceting')?.arg).toEqual({
+      maxValuesPerFacet: SEARCH_FACET_LIMIT,
+    });
+
+    // Negative control: an index already at the limit gets no faceting write.
+    setupProbe.received.length = 0;
+    vi.spyOn(setupProbe.index, 'getSettings').mockResolvedValue({
+      faceting: { maxValuesPerFacet: SEARCH_FACET_LIMIT },
+    } as never);
+    const second = await runSetup();
+    expect(second.length, 'the other settings writes still fire').toBeGreaterThan(0);
+    expect(second.map((r) => r.method)).not.toContain('updateFaceting');
   });
 
   it('🔴 gives the searchable write the frozen export ITSELF, with no `*` in it', async () => {

@@ -422,6 +422,13 @@ describe('upsertModel — licensing lineage on a model type change', () => {
         {},
         {
           get(_t, model: string) {
+            if (model.startsWith('$'))
+              return (...args: unknown[]) => {
+                calledOnTx.push(model);
+                return (mockDbWrite as unknown as Record<string, (...a: unknown[]) => unknown>)[
+                  model
+                ](...args);
+              };
             return new Proxy(
               {},
               {

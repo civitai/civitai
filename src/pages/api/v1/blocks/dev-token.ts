@@ -19,6 +19,7 @@ import {
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -422,11 +423,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // rejected. The runtime spend belt re-checks the author capability against the
   // token SUBJECT; we keep the MINT author-gated too (scope doc §4 / §6 R2).
   if (user.bannedAt) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
 
@@ -832,7 +833,16 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // a usable, safely-clamped token. This bearer path is UNCHANGED by the
   // extraction (a parity test locks it).
   // ENTITLEMENT — unchanged: the bearer credential's AIServicesWrite bit.
-  const spendEntitled = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
+  // A restricted account still mints, for reads; from the primary, as the session may lag.
+  const subjectRow = await dbWrite.user.findUnique({
+    where: { id: user.id },
+    select: { muted: true, bannedAt: true },
+  });
+  const spendEntitled =
+    Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite) &&
+    subjectRow != null &&
+    !subjectRow.muted &&
+    !subjectRow.bannedAt;
   // INTENT — did the caller ask to spend on THIS mint?
   //
   // 🔴 `?? true` IS THE STEP-1 NON-BREAKING DEFAULT AND MUST STAY. A client that

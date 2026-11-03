@@ -2,8 +2,6 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
-  '/api/admin/temp/creator-shop-label-backfill': () =>
-    import('~/pages/api/admin/temp/creator-shop-label-backfill'),
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
@@ -13,6 +11,9 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/bounty-entry-file/reblock-check': () =>
     import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
+  '/api/mod/bounty-unpaid-award/resolve': () =>
+    import('~/pages/api/mod/bounty-unpaid-award/resolve'),
+  '/api/mod/collection/set-item-tag': () => import('~/pages/api/mod/collection/set-item-tag'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
   '/api/mod/comment/restore-from-tos': () => import('~/pages/api/mod/comment/restore-from-tos'),
@@ -67,6 +68,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/model/unpublish': () => import('~/pages/api/mod/model/unpublish'),
   '/api/mod/poi-flag/confirm': () => import('~/pages/api/mod/poi-flag/confirm'),
   '/api/mod/poi-flag/dismiss': () => import('~/pages/api/mod/poi-flag/dismiss'),
+  '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
@@ -91,6 +93,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/creator-score-grant-revoke': () =>
     import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
+  '/api/mod/user/expire-generation-credentials': () =>
+    import('~/pages/api/mod/user/expire-generation-credentials'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/legal-hold': () => import('~/pages/api/mod/user/legal-hold'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),

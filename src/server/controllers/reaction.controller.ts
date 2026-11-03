@@ -31,6 +31,7 @@ import {
 } from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { assertCommentActionable } from '~/server/controllers/commentv2.controller';
 
 /**
  * The exact payload `Tracker.reaction` accepts.
@@ -63,7 +64,6 @@ async function getTrackerEvent(
   const action = result === 'created' ? 'Create' : 'Delete';
   switch (input.entityType) {
     case 'image':
-      // `kysely-hot-reads-5` on: the same two columns through Kysely, on the same replica.
       const image = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
         ? await readImageNsfwLevelAndOwnerViaKysely(
             (
@@ -137,10 +137,18 @@ async function getTrackerEvent(
       }
       break;
     case 'comment':
-      const commentV2 = await dbRead.commentV2.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
+      // A comment on a surface that writes CommentV3 may have no CommentV2 row. The event type stays
+      // `CommentV2_*` either way: the id is the same in both tables.
+      const commentV2 =
+        (await dbRead.commentV2.findFirst({
+          where: { id: input.entityId },
+          select: { userId: true },
+        })) ??
+        (
+          await dbRead.$queryRaw<{ userId: number }[]>`
+            SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
+          `
+        )[0];
       if (commentV2) {
         return {
           type: `CommentV2_${action}`,
@@ -274,6 +282,8 @@ export const toggleReactionHandler = async ({
       );
     }
 
+    if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
+
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
@@ -299,8 +309,7 @@ export const toggleReactionHandler = async ({
     // the door for private models.
     const checkAccess = ['image', 'post'];
     if (checkAccess.includes(input.entityType)) {
-      // `kysely-hot-reads-5` on: the image's `postId` alone through Kysely, on the same replica.
-      // A missing image then runs the Prisma read, so its not-found throw is unchanged.
+      // A missing image runs the Prisma read, so its not-found throw is unchanged.
       const readImagePostId = async (imageId: number) => {
         if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)) {
           const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);

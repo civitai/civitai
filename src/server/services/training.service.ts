@@ -503,9 +503,8 @@ export async function updateTrainingWorkflowRecords(
   // Read, never derived: createTrainingWorkflow stamps this at submit, and this runs again on any
   // re-sync of a finished run. Deriving it here would renumber one — and generation binds an epoch
   // by value, where getTrainingFileEpochNumberDetails answers a miss with the newest epoch rather
-  // than an error, so those bindings would silently move to other weights. Not enforced, though:
-  // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
-  // offset on their own run.
+  // than an error, so those bindings would silently move to other weights. modelFile writes drop
+  // client `trainingResults`, but a file saved before that may carry any offset.
   const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;

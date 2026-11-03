@@ -10,10 +10,16 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 interface Props {
   children: ReactNode;
   features: FeatureAccess;
+  /**
+   * The fallback clears when this changes. Only on a change, so a page that
+   * throws again on the new route shows the fallback once rather than looping.
+   */
+  resetKey?: string;
 }
 
 interface State {
   hasError: boolean;
+  resetKey?: string;
   error?: Error;
   stack?: string;
 }
@@ -21,6 +27,7 @@ interface State {
 class UserErrorBoundary extends Component<Props, State> {
   state: State = {
     hasError: false,
+    resetKey: this.props.resetKey,
   };
 
   // Defaults, not the viewer's saved layout: this renders after something already threw, and a
@@ -33,6 +40,13 @@ class UserErrorBoundary extends Component<Props, State> {
     });
     return [...bar, ...more];
   })();
+
+  // In render rather than componentDidUpdate, so the new route renders in the
+  // same pass instead of committing the old fallback first and resetting after.
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    if (props.resetKey === state.resetKey) return null;
+    return { resetKey: props.resetKey, hasError: false, error: undefined, stack: undefined };
+  }
 
   static getDerivedStateFromError(error: Error) {
     // Update state so the next render will show the fallback UI
@@ -60,9 +74,17 @@ class UserErrorBoundary extends Component<Props, State> {
         <ul className="mt-1 flex flex-wrap gap-2">
           {this.options.map(({ key, url }, i) => (
             <Fragment key={key}>
-              <Anchor component="a" href={url} className="capitalize leading-none">
-                {key}
-              </Anchor>
+              {/* A client navigation to the page already showing changes no key,
+                  so that one link reloads instead. */}
+              {typeof window !== 'undefined' && url === window.location.pathname ? (
+                <Anchor component="a" href={url} className="capitalize leading-none">
+                  {key}
+                </Anchor>
+              ) : (
+                <Anchor component={NextLink} href={url} className="capitalize leading-none">
+                  {key}
+                </Anchor>
+              )}
               {i !== this.options.length - 1 && <Divider orientation="vertical" />}
             </Fragment>
           ))}

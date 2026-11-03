@@ -5,9 +5,10 @@ import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thres
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
-import { REPORT_ENTITIES, reportEntity } from './report-entities';
+import { REPORT_ENTITIES, reportEntity, reportLinkFilter } from './report-entities';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
+import { ENQUEUE_SOURCE } from './unpublished-version-posts';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -108,6 +109,13 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       WHERE cv.id = ${entityId}
     )`,
 
+  // The main app's comment permalink resolves a live `CommentV3` row to its thread; a deleted one
+  // gets no link rather than a dead one.
+  commentV3: (entityId) =>
+    sql<string | null>`(
+      SELECT '/comments/' || c.id FROM "CommentV3" c WHERE c.id = ${entityId} AND c."deletedAt" IS NULL
+    )`,
+
   // A bounty entry lives under its bounty, and the id is only on the entry's own row.
   bountyEntry: (entityId) =>
     sql<string | null>`(
@@ -172,7 +180,8 @@ export async function reportReachability(
   try {
     const { rows } = await sql<{ reachable: boolean; url: string | null }>`
       SELECT EXISTS (
-               SELECT 1 FROM ${sql.table(join.reportTable)} WHERE "reportId" = ${reportId}
+               SELECT 1 FROM ${sql.table(join.reportTable)} er
+               WHERE er."reportId" = ${reportId} AND ${reportLinkFilter(join, 'er.reportId')}
              ) AS reachable,
              ${
                entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
@@ -205,6 +214,8 @@ export type GetReportsParams = {
   /** Every report about one item — the account or model a queue page has open, which lists them all
    *  rather than the ones that happen to sit on the current page of the queue. */
   entityId?: number;
+  /** Only the reports `unpublished-version-posts` filed for this unpublish reason. */
+  unpublishedReason?: string;
 };
 
 /**
@@ -219,6 +230,7 @@ function reportQueueBase({
   to,
   reportId,
   entityId,
+  unpublishedReason,
 }: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>) {
   const join = reportEntity(type);
   const entityExists =
@@ -236,14 +248,33 @@ function reportQueueBase({
     // Who RESOLVED it, aliased so it does not collide with the reporter join above. Retool's report
     // table showed this column; without it a moderator cannot tell whether to re-open a closed report.
     .leftJoin('User as resolver', 'resolver.id', 'Report.statusSetBy')
-    .where(entityExists);
+    .where(entityExists)
+    .where(reportLinkFilter(join, 'Report.id'));
 
   if (reasons !== 'all') base = base.where('Report.reason', 'in', reasons);
   if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
   if (from) base = base.where('Report.createdAt', '>=', from);
   if (to) base = base.where('Report.createdAt', '<', to);
   if (reportId) base = base.where('Report.id', '=', reportId);
+  if (unpublishedReason)
+    base = base
+      .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
+      .where(sql<string>`"Report".details ->> 'unpublishedReason'`, '=', unpublishedReason);
   return base;
+}
+
+/** Open reports `unpublished-version-posts` filed, per unpublish reason, for the post queue's chips. */
+export async function getUnpublishedSourceCounts(): Promise<Record<string, number>> {
+  const reason = sql<string>`"Report".details ->> 'unpublishedReason'`;
+  const rows = await dbRead
+    .selectFrom('Report')
+    .where('Report.status', 'in', DEFAULT_REPORT_STATUSES)
+    .where('Report.userId', '=', SYSTEM_USER_ID)
+    .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
+    .select([reason.as('reason'), (eb) => eb.fn.countAll<number>().as('count')])
+    .groupBy(reason)
+    .execute();
+  return Object.fromEntries(rows.filter((r) => r.reason).map((r) => [r.reason, Number(r.count)]));
 }
 
 /**
@@ -278,6 +309,7 @@ export async function getReports({
   to,
   reportId,
   entityId: forEntity,
+  unpublishedReason,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -300,6 +332,7 @@ export async function getReports({
     to,
     reportId,
     entityId: forEntity,
+    unpublishedReason,
   });
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
 
@@ -388,6 +421,7 @@ export async function getReportHistory(
         join.reportTable
       )} er where er."reportId" = "Report"."id")`
     )
+    .where(reportLinkFilter(join, 'Report.id'))
     .where('Report.statusSetAt', 'is not', null)
     // The daily Clavata expiry closes reports as the system user; nobody worked those.
     .where('Report.statusSetBy', 'is distinct from', SYSTEM_USER_ID)
@@ -464,12 +498,13 @@ export type QueueWorker = { by: string | null; at: string; count: number };
  * entry is that queue's last-actioned badge. A report counts for whoever set its status last.
  */
 export async function getReportQueueWorkers(type: ReportEntity): Promise<QueueWorker[]> {
-  const { reportTable } = reportEntity(type);
+  const join = reportEntity(type);
   const { rows } = await sql<{ by: number; at: Date; count: number }>`
     select r."statusSetBy" as "by", max(r."statusSetAt") as "at", count(*)::int as "count"
     from "Report" r
-    join ${sql.table(reportTable)} er on er."reportId" = r."id"
-    where r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+    join ${sql.table(join.reportTable)} er on er."reportId" = r."id"
+    where ${reportLinkFilter(join, 'er.reportId')}
+      and r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
       and r."statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
       and r."status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})
     group by r."statusSetBy"
@@ -508,9 +543,10 @@ async function perReportType<V>(
   value: RawBuilder<V>
 ): Promise<[string, V][]> {
   const branches = REPORT_ENTITIES.map(
-    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, ${value} as value
-      from ${sql.table(reportTable)} er
-      join matched r on r."id" = er."reportId"`
+    (e) => sql`select ${sql.lit(e.type)} as type, ${value} as value
+      from ${sql.table(e.reportTable)} er
+      join matched r on r."id" = er."reportId"
+      where ${reportLinkFilter(e, 'er.reportId')}`
   );
   const { rows } = await sql<{ type: string; value: V }>`with matched as materialized (${reports})
     ${sql.join(branches, sql` union all `)}`.execute(dbRead);
@@ -801,7 +837,7 @@ async function fetchMostReported({
   const entityId = (type: ReportEntity) => {
     const join = reportEntity(type);
     return sql<number | null>`(SELECT er.${sql.ref(join.fk)} FROM ${sql.table(join.reportTable)} er
-                WHERE er."reportId" = top.id LIMIT 1)`;
+                WHERE er."reportId" = top.id AND ${reportLinkFilter(join, 'er.reportId')} LIMIT 1)`;
   };
 
   const { rows } = await sql<
@@ -899,7 +935,7 @@ export async function getReportedEntityId(
   // The primary, not the replica: the moderator is acting on a row they just opened.
   const { rows } = await sql<{ id: number }>`
     SELECT er.${sql.ref(join.fk)} AS id FROM ${sql.table(join.reportTable)} er
-    WHERE er."reportId" = ${reportId} LIMIT 1
+    WHERE er."reportId" = ${reportId} AND ${reportLinkFilter(join, 'er.reportId')} LIMIT 1
   `.execute(dbWrite);
   return rows[0]?.id ?? null;
 }
@@ -933,6 +969,8 @@ export type ReportedModelState = {
   unpublishedReason: string | null;
   unpublishedAt: string | null;
   takenDownAt: string | null;
+  /** Kept when its owner's content was removed, in the violation status without a take-down. */
+  removedWithOwner: boolean;
 };
 
 const metaString = (meta: unknown, key: string): string | null => {
@@ -964,6 +1002,10 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
     unpublishedReason: metaString(meta, 'unpublishedReason'),
     unpublishedAt: metaString(meta, 'unpublishedAt'),
     takenDownAt: metaString(meta, 'takenDownAt'),
+    removedWithOwner:
+      !!meta &&
+      typeof meta === 'object' &&
+      (meta as Record<string, unknown>).removedWithOwner === true,
   }));
 }
 

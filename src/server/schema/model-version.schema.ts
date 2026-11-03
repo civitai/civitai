@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
@@ -33,6 +32,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isAir } from '~/utils/string-helpers';
 import {
+  aiToolkitLrSchedulerTypes,
+  aiToolkitOptimizerTypes,
   engineTypes,
   loraTypes,
   lrSchedulerTypes,
@@ -49,7 +50,7 @@ export const recipeModelSchema = z.object({
 
 export type RecipeInput = z.infer<typeof recipeSchema>;
 export const recipeSchema = z.object({
-  id: z.string().default(uuidv4()),
+  id: z.string().default(() => crypto.randomUUID()),
   type: z.enum(['sum', 'diff']),
   modelA: recipeModelSchema,
   modelB: recipeModelSchema,
@@ -212,19 +213,8 @@ const aiToolkitTrainingDetailsParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),

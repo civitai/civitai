@@ -10,18 +10,24 @@ export type FilterButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
     icon?: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
     active?: boolean;
     onClick?: MouseEventHandler<HTMLButtonElement>;
+    /** Only the icon, for a tight row; `children` becomes the accessible name. */
+    iconOnly?: boolean;
   };
 
 // This is a temporary component. Since this is only used for dropdown filters, I plan on making a more reusable dropdown/popover component later. - Briant
 export const FilterButton = forwardRef<HTMLButtonElement, FilterButtonProps>(
-  ({ icon: Icon, children, className, active, size = 'sm', variant, ...props }, ref) => {
+  ({ icon: Icon, children, className, active, size = 'sm', variant, iconOnly, ...props }, ref) => {
     return (
       <button
         ref={ref}
         suppressHydrationWarning
         className={clsx(
           'flex items-center gap-1 rounded-3xl border-none text-sm font-semibold text-gray-8 dark:text-white',
-          size === 'sm' ? 'h-8 px-2' : 'h-9 pl-4 pr-3',
+          iconOnly
+            ? 'size-[34px] justify-center px-0'
+            : size === 'sm'
+            ? 'h-8 px-2'
+            : 'h-9 pl-4 pr-3',
           !variant
             ? clsx(
                 active ? 'bg-gray-2 dark:bg-dark-4' : 'bg-transparent',
@@ -36,17 +42,22 @@ export const FilterButton = forwardRef<HTMLButtonElement, FilterButtonProps>(
 
           className
         )}
+        aria-label={iconOnly && typeof children === 'string' ? children : undefined}
         {...props}
       >
-        {Icon && <Icon size={16} />}
-        <span suppressHydrationWarning>{children}</span>
-        <IconChevronDown
-          className={clsx(
-            'ml-1 transition-transform',
-            active ? 'rotate-180' : 'group-data-[expanded=true]:rotate-180'
-          )}
-          size={16}
-        />
+        {Icon && <Icon size={iconOnly ? 20 : 16} />}
+        {!iconOnly && (
+          <>
+            <span suppressHydrationWarning>{children}</span>
+            <IconChevronDown
+              className={clsx(
+                'ml-1 transition-transform',
+                active ? 'rotate-180' : 'group-data-[expanded=true]:rotate-180'
+              )}
+              size={16}
+            />
+          </>
+        )}
       </button>
     );
   }

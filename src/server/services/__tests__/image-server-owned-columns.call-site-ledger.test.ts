@@ -10,6 +10,7 @@ import {
   createCrucibleInputBaseSchema,
   updateCrucibleSchema,
 } from '~/server/schema/crucible.schema';
+import { updateStorylineSchema } from '~/server/schema/storyline.schema';
 
 /**
  * Seam guard for the server-owned `Image` columns `id`, `postId` and `index`.
@@ -80,6 +81,8 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
+  // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
+  'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
   // collection.upsert cover (a reference any collection manager may set; see
   // CONNECT_EXISTING_LEDGER) and collection.addSimpleImagePost (no id).
   'src/server/schema/collection.schema.ts': { imageInputSchema: 2, imageReferenceInputSchema: 2 },
@@ -139,12 +142,11 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
         ' if (owned !== new Set(linkIds).size) throw throwAuthorizationError();',
     ],
   },
-  // `where` looks up an existing cover by id, which any collection manager may set (unchanged
-  // from main); the `create` branch writes client columns only.
+  // An existing cover is connected by id; the `create` branch writes client columns only.
   'src/server/services/collection.service.ts#upsertCollection': {
     sites: 1,
     spreads: ['pickClientImageColumns(image)'],
-    serverColumns: ['id: image.id ?? -1', 'id: undefined'],
+    serverColumns: ['id: undefined'],
     guards: [COLLECTION_MANAGE_GUARD],
   },
   // Only reached when the client sent no `id`, so `where` is always `-1`.
@@ -314,6 +316,11 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
     calls: 2,
     decision: 'input-has-no-id',
   },
+  // The storyline cover and banner upload schemas have no `id`.
+  'src/server/services/storyline.service.ts#updateStoryline': {
+    calls: 2,
+    decision: 'input-has-no-id',
+  },
 };
 
 /**
@@ -407,6 +414,12 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   string,
   { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
 > = {
+  // A team hat sticker on someone's image: any visible image in a published post is a target by
+  // design, and placeTurfSticker checks that before the write.
+  'src/server/events/turf/turf.service.ts#placeTurfSticker': {
+    writes: ['imageId'],
+    decision: 'subject',
+  },
   // Called from the daily-challenge jobs, and from upsertUserChallenge with its resolved cover.
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeRecord': {
     writes: ['coverImageId: input.coverImageId'],
@@ -415,6 +428,13 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeWinner': {
     writes: ['imageId: input.imageId'],
     decision: 'server-derived',
+  },
+  // The New Order final-ratings settle SQL: a ClickHouse JOIN condition, not an assignment.
+  'src/server/games/new-order/final-ratings-sql.ts#<module>': {
+    writes: [
+      'new.imageId = orig.imageId WHERE orig.latestCreatedAt <= new.createdAt + INTERVAL ${SETTLE_CLOCK_MARGIN_SECONDS} SECOND`',
+    ],
+    decision: 'not-a-write',
   },
   'src/server/jobs/daily-challenge-processing.ts#createChallengeFromSelection': {
     writes: ['imageId: coverImageId'],
@@ -595,12 +615,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId: null'],
     decision: 'clears',
   },
-  'src/server/services/games/new-order.service.ts#processFinalRatings': {
-    writes: [
-      "new.imageId = orig.imageId WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte'",
-    ],
-    decision: 'not-a-write',
-  },
   'src/server/services/image.service.ts#createEntityImages': {
     writes: ['imageId: image.id'],
     decision: 'server-derived',
@@ -647,12 +661,14 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'owner-checked',
     guards: { imageId: 'if (image.post.userId !== userId)' },
   },
-  // The owner's cover and banner picks: from this storyline's own chapters by the owner or an
-  // endorsed collaborator, refused otherwise. A pick sent back unchanged is not judged again.
+  // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
+  // collaborator, or an image this request uploaded, refused otherwise. A pick sent back unchanged
+  // is not judged again. `imageId` records an upload: only ids `resolveCoverImageId` just returned.
   'src/server/services/storyline.service.ts#updateStoryline': {
-    writes: ['coverImageId', 'heroImageId'],
+    writes: ['imageId', 'coverImageId', 'heroImageId'],
     decision: 'owner-checked',
     guards: {
+      imageId: 'await assertStorylinePicks(dbWrite, {',
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
@@ -1094,12 +1110,15 @@ describe('existing-image references', () => {
     ).toEqual([
       'src/server/services/crucible.service.ts',
       'src/server/services/crucible.service.ts',
+      'src/server/services/storyline.service.ts',
     ]);
     for (const [name, schema] of [
       ['create coverImage', createCrucibleInputBaseSchema.shape.coverImage],
       ['create heroImage', createCrucibleInputBaseSchema.shape.heroImage],
       ['update coverImage', updateCrucibleSchema.shape.coverImage],
       ['update heroImage', updateCrucibleSchema.shape.heroImage],
+      ['storyline coverUpload', updateStorylineSchema.shape.coverUpload],
+      ['storyline heroUpload', updateStorylineSchema.shape.heroUpload],
     ] as const) {
       const parsed = (schema as z.ZodType).parse({ url: URL_UUID, width: 1, height: 2, id: 7 });
       expect(parsed, name).not.toHaveProperty('id');

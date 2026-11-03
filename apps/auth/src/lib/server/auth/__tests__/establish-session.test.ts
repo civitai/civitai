@@ -84,7 +84,7 @@ describe('establishSession 2nd-account detection', () => {
 
     await establishSession(cookies, user(200));
 
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100);
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, expect.anything());
   });
 
   it('passes undefined existingUserId on an ordinary login with no prior cookie', async () => {
@@ -93,7 +93,7 @@ describe('establishSession 2nd-account detection', () => {
     await establishSession(cookies, user(200));
 
     expect(h.verifyToken).not.toHaveBeenCalled();
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, undefined);
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, undefined, expect.anything());
   });
 
   it('passes undefined when the prior cookie fails verification (expired/invalid)', async () => {
@@ -102,7 +102,7 @@ describe('establishSession 2nd-account detection', () => {
 
     await establishSession(cookies, user(200));
 
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, undefined);
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, undefined, expect.anything());
   });
 
   it('reads the prior session BEFORE overwriting the cookie (re-login as same user passes own id)', async () => {
@@ -113,7 +113,7 @@ describe('establishSession 2nd-account detection', () => {
 
     await establishSession(cookies, user(200));
 
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 200);
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 200, expect.anything());
     // The new token was queued (cookie set) — confirms we still establish the session.
     expect(cookies._store.get('civ-token')).toBe('minted-token');
   });

@@ -75,6 +75,8 @@ export async function resolveOwnedApprovedTrainingCheckpoint({
 
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
+    // Someone else's run, e.g. a moderator publishing it: the owner's restriction is not theirs.
+    allowRestricted: callerId !== ownerId,
   });
   let workflow: Workflow | undefined;
   try {

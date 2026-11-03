@@ -8,6 +8,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
 // production evaluates.
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -21,6 +25,7 @@ vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => {
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier: async () => null,
+  getCapTierViaKysely: async () => null,
 }));
 // Stubbed rather than spread, as in remix-gallery-visibility-owner.test.ts: each pulls the buzz
 // service and its import graph, and nothing here reaches them.

@@ -45,7 +45,7 @@ vi.mock('~/components/Cosmetics/EventDecoration/WornHatPopover', () => ({
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 
 const { DrawnMediaHat } = await import('~/components/Cosmetics/EventDecoration/DrawnMediaHat');
-const { getHatLayout, getHatRoom, HAT_PLAIN_CARD_NUDGE } = await import(
+const { getHatLayout, getHatRoom, HAT_ALLOWANCE, HAT_PLAIN_CARD_NUDGE } = await import(
   '~/components/Cosmetics/EventDecoration/event-decoration-placement'
 );
 const { MEDIA_OVERLAY_ATTR } = await import('~/components/EdgeMedia/useDrawnMediaBox');
@@ -56,10 +56,7 @@ let container: HTMLDivElement;
 let layer: HTMLDivElement;
 let root: Root;
 
-async function render(
-  decoration: unknown,
-  props: { layer?: HTMLElement | null; hidden?: boolean } = {}
-) {
+async function render(decoration: unknown, props: { layer?: HTMLElement | null } = {}) {
   await act(async () => {
     root.render(
       React.createElement(
@@ -69,7 +66,6 @@ async function render(
           imageId: 7,
           decoration: decoration as never,
           layer: props.layer === undefined ? layer : props.layer,
-          hidden: props.hidden,
         })
       )
     );
@@ -84,6 +80,8 @@ beforeEach(() => {
   h.hostRef = { current: null };
   container = document.createElement('div');
   layer = document.createElement('div');
+  // happy-dom has no layout: the layer is 800px wide, so a picture 12px in is in view.
+  layer.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600);
   document.body.append(container, layer);
   root = createRoot(container);
 });
@@ -119,8 +117,8 @@ describe('the image detail hat sits on the drawn picture', () => {
     expect(h.activeCalls.at(-1)).toBe(true);
   });
 
-  it('reaches past the picture by what the slot and the header leave free', async () => {
-    // 12px of slot left of the box, 30px above it (and 12px of free header space above that).
+  it('reaches past the picture by what the slot leaves free beside it, and a feed-card reach above', async () => {
+    // 12px of slot left of the box, 30px above it.
     await render(hat);
     const button = hatButton()!;
     // Rendered box offsets (about 4px and -18px here); tucked inside the picture they would be
@@ -129,18 +127,20 @@ describe('the image detail hat sits on the drawn picture', () => {
     expect(parseFloat(button.style.top)).toBeLessThan(-10);
   });
 
-  it('on a picture flush with the slot, reaches only into the header gap, not the window', async () => {
+  it('on a picture flush with the slot, reaches the feed-card room above, not past the window left', async () => {
     h.box = { width: 160, height: 80, left: 0, top: 0 };
     await render(hat);
     const layout = getHatLayout(
       'corner',
       undefined,
-      { left: getHatRoom(0), top: getHatRoom(12) },
+      { left: getHatRoom(0), top: HAT_ALLOWANCE.corner },
       HAT_PLAIN_CARD_NUDGE,
       160
     );
     expect(layout.reach.left).toBeCloseTo(2, 6);
-    expect(layout.reach.top).toBeCloseTo(-10, 6);
+    // Room above no longer binds: the hat sits where an unlimited one would.
+    const free = getHatLayout('corner', undefined, Infinity, HAT_PLAIN_CARD_NUDGE, 160);
+    expect(layout.reach.top).toBeCloseTo(free.reach.top, 6);
     expect(parseFloat(hatButton()!.style.top)).toBeCloseTo(layout.top, 3);
   });
 
@@ -150,9 +150,7 @@ describe('the image detail hat sits on the drawn picture', () => {
     expect(hatButton()).toBeNull();
   });
 
-  it('no hat while the slide is moving, and none without a layer', async () => {
-    await render(hat, { hidden: true });
-    expect(hatButton()).toBeNull();
+  it('no hat without a layer', async () => {
     await render(hat, { layer: null });
     expect(hatButton()).toBeNull();
     expect(container.querySelector('[data-testid="drawn-media-hat"]')).toBeNull();

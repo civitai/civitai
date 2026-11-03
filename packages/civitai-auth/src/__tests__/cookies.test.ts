@@ -4,6 +4,7 @@ import {
   sessionCookieName,
   legacySessionCookieName,
   isSecureCookie,
+  readCookie,
 } from '../cookies';
 
 describe('cookies', () => {
@@ -20,6 +21,14 @@ describe('cookies', () => {
   it('builds the legacy next-auth cookie name with the same dev/prod secure logic', () => {
     expect(legacySessionCookieName(true)).toBe('__Secure-civitai-token');
     expect(legacySessionCookieName(false)).toBe('civitai-token');
+  });
+});
+
+describe('readCookie', () => {
+  it('reads cookies whose names match built-in object properties', () => {
+    expect(readCookie('constructor=a; toString=b', 'constructor')).toBe('a');
+    expect(readCookie('toString=b', 'toString')).toBe('b');
+    expect(readCookie('other=1', 'hasOwnProperty')).toBeUndefined();
   });
 });
 

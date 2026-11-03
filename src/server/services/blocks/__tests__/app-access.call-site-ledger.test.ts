@@ -49,11 +49,11 @@ import { CAPABILITIES_BY_KIND } from '~/shared/constants/app-capabilities.consta
  * because silently "fixing" any of them is a behaviour change that deserves its own
  * decision, not a side effect of a collaborators PR:
  *
- *   D1. MOD BYPASS IS INCONSISTENT. `app-listing-assets::loadOwnedListing` bypasses for
- *       moderators; `offsite-listing::loadOwnedEditableListing` and
- *       `offsite-moderation::loadOwnedListingInTx` deliberately do NOT ("no mod
- *       override on the author edit path"); the four `blocks.router` gates also do not.
- *       Three sibling gates on the same objects, two answers.
+ *   D1. MOD BYPASS. `app-listing-assets::loadOwnedListing` and the
+ *       `offsite-listing` content-edit gates admit a moderator (as role `moderator`,
+ *       audited as a `moderator-edit` event); `offsite-moderation::loadOwnedListingInTx`
+ *       (owner publishing controls) and the four `blocks.router` gates (manifest, repo)
+ *       deliberately do NOT.
  *   D2. BAN CHECKS WERE ASYMMETRIC. `getMyAppRepo`, `updateManifest` and
  *       `getMyForgejoCloneInfo` each carried an explicit `bannedAt` re-check;
  *       `getMyAppManifest` did not. FIXED in this change (added, matching its siblings)
@@ -136,7 +136,8 @@ const GATE_LEDGER: Record<string, string> = {
     'loadOwnedEditableListing, getMyListingForApp and submitListingRevision are owner | ' +
     'ACCEPTED collaborator, all three via the one resolveListingRole helper (a thin read ' +
     'of resolveListingAccess) — the owner half included, so a stale denormalized column ' +
-    'cannot invert them (D5). Still NO mod bypass (D1). submitListingRevision needed the ' +
+    'cannot invert them (D5). A moderator holding no seat is admitted as role `moderator` ' +
+    'and the content writes record a moderator-edit event in the write transaction (D1). submitListingRevision needed the ' +
     'seat check specifically because beginListingRevision clones the shadow with the ' +
     'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
     'clone is a copy of a copy, which is why reading it directly was doubly wrong.',
@@ -286,7 +287,8 @@ const GATE_LEDGER: Record<string, string> = {
     'which returns EMPTY for a collaborator (submitted nothing), for a transfer ' +
     'recipient and for a moderator-claimed owner, on an app they can plainly edit. ' +
     'Refuses FORBIDDEN rather than returning [], because an empty list reads to the UI ' +
-    'as "this app has no history", which is a lie a stranger should not be told either.',
+    'as "this app has no history", which is a lie a stranger should not be told either. ' +
+    'Admits a moderator too, because the editor they open shows this tab (D1).',
   'src/server/services/blocks/app-moderator-message.service.ts':
     'NOT a caller-identity gate — the caller is a MODERATOR and the mod boundary is the ' +
     'router (`moderatorProcedure` + the inner isModerator recheck), exactly as on ' +
@@ -332,11 +334,11 @@ const GATE_LEDGER: Record<string, string> = {
   'src/server/services/blocks/publish-request.service.ts':
     'NOT a caller-identity gate: both sites STAMP the owner (the approve path minting ' +
     'the listing via mapAppBlockToListing, and the backfill attributing a synthetic ' +
-    'request). 🔴 KNOWN GAP recorded here rather than fixed in this PR: submitVersion’s ' +
-    'SUBSEQUENT-version branch never checks that the submitter owns the existing app — ' +
-    'it is masked today because both HTTP callers require isModerator. If that is ever ' +
-    'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
-    'owner (or collaborator) check.',
+    'request). Its one caller-identity gate is not open-coded here: submitVersion refuses ' +
+    'a version of an EXISTING app unless the submitter is a moderator or ' +
+    'app-access.service’s mayShipAppVersion (resolveAppAccess: owner or ACCEPTED editor) ' +
+    'says yes, before the pending-conflict check — the session submit route admits ' +
+    'non-moderator authors, so this closes the slug-hijack the gap left open.',
   'src/server/services/blocks/publisher-ban-revocation.service.ts':
     'NOT a caller-identity gate, and DELIBERATELY NOT WIDENED — the inverse direction ' +
     'from every other entry here. `app: { userId }` selects the BANNED PUBLISHER’s own ' +

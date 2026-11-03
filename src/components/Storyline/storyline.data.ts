@@ -1,7 +1,9 @@
 import type { StorylineSubmitOutcome } from '~/components/Storyline/continue/StorylineContinueForm';
 import type { StorylineSpaceSettings } from '~/components/Storyline/manage/StorylineSettingsForm';
 import type { StorylineQueueRow } from '~/components/Storyline/queue/StorylineQueueList';
-import { useMemo } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
+import { chunk } from 'lodash-es';
+import { useMemo, useState } from 'react';
 import type { StorylineClosedReason } from '~/components/Storyline/storyline-ui';
 import {
   STORYLINE_CONTINUE_POST_LIMIT,
@@ -11,6 +13,7 @@ import {
 import { isPublished } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostSort } from '~/server/common/enums';
+import { STORYLINE_FOR_POSTS_MAX } from '~/server/schema/storyline.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
@@ -131,19 +134,23 @@ export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => vo
   isPending: boolean;
   error: string | null;
   mutate: (input: { parentChapterId: number; postId: number }) => void;
+  /** After the main path's last chapter as the server finds it when adding, not as last read. */
+  mutateAtEnd: (input: { storylineId: number; postId: number }) => void;
 } {
   const utils = trpc.useUtils();
   const mutation = trpc.storyline.addChapter.useMutation();
+  const atEnd = trpc.storyline.addChapterAtEnd.useMutation();
+  const options = {
+    onSuccess: () => {
+      void utils.storyline.invalidate();
+      onSuccess();
+    },
+  };
   return {
-    isPending: mutation.isPending,
-    error: mutation.error?.message ?? null,
-    mutate: (input) =>
-      mutation.mutate(input, {
-        onSuccess: () => {
-          void utils.storyline.invalidate();
-          onSuccess();
-        },
-      }),
+    isPending: mutation.isPending || atEnd.isPending,
+    error: mutation.error?.message ?? atEnd.error?.message ?? null,
+    mutate: (input) => mutation.mutate(input, options),
+    mutateAtEnd: (input) => atEnd.mutate(input, options),
   };
 }
 
@@ -187,10 +194,33 @@ export function useMoveStorylineChapter(): {
   };
 }
 
+/** The server has the last word (a continuation waiting, a payment settling) and its refusal is shown as is. */
+export function useRemoveStorylineChapter({ onSuccess }: { onSuccess?: () => void } = {}): {
+  isPending: boolean;
+  mutate: (chapterId: number) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.removeChapter.useMutation({
+    onSuccess: async () => {
+      onSuccess?.();
+      await utils.storyline.invalidate();
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: "Couldn't remove the chapter",
+        error: new Error(error.message),
+      }),
+  });
+  return {
+    isPending: mutation.isPending,
+    mutate: (chapterId) => mutation.mutate({ chapterId }),
+  };
+}
+
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
-  mutate: (input: { parentChapterId: number; chapterId: number }) => void;
+  mutate: (input: { parentChapterId: number; chapterId: number; atEnd?: boolean }) => void;
 } {
   const utils = trpc.useUtils();
   const mutation = trpc.storyline.linkChapter.useMutation();
@@ -203,8 +233,22 @@ export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }
           void utils.storyline.invalidate();
           onSuccess();
         },
+        // A refused at-end join means the card read an old end: refetch so it shows the new one.
+        onError: () => void utils.storyline.invalidate(),
       }),
   };
+}
+
+export function useSetStorylineMainPath(): {
+  isPending: boolean;
+  mutate: (input: { chapterId: number; parentChapterId: number }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.setCanon.useMutation({
+    onSuccess: () => void utils.storyline.invalidate(),
+    onError: showError("Couldn't change the main path"),
+  });
+  return { isPending: mutation.isPending, mutate: mutation.mutate };
 }
 
 export function useStorylineQueue({ enabled }: { enabled: boolean }): {
@@ -266,7 +310,19 @@ export function useStorylineChapterLevels(storylineId: number, { enabled }: { en
   return query.data ?? null;
 }
 
-/** The viewer's newest posts that are not chapters yet, for a chapter picker. */
+/** Search and paging for a chapter picker's posts. */
+export type StorylinePostPaging = {
+  search: string;
+  onSearchChange: (search: string) => void;
+  hasMore: boolean;
+  loadMore: () => void;
+  loadingMore: boolean;
+};
+
+/**
+ * The viewer's posts that are not chapters yet, newest first, for a chapter picker: a page at a time,
+ * narrowed by a title search.
+ */
 export function useOwnStorylinePosts({
   enabled,
   excludePostId,
@@ -282,6 +338,8 @@ export function useOwnStorylinePosts({
 }) {
   const viewer = useCurrentUser();
   const currentUser = author ?? viewer;
+  const [search, setSearch] = useState('');
+  const [query] = useDebouncedValue(search.trim(), 300);
   // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
   // Newest, all time: the default sort lists only posts that already have reactions, which leaves
   // out the post just made to continue the story.
@@ -289,6 +347,9 @@ export function useOwnStorylinePosts({
     data: postPages,
     isLoading: postsLoading,
     isError: postsError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
   } = trpc.post.getInfinite.useInfiniteQuery(
     {
       username: currentUser?.username,
@@ -296,37 +357,58 @@ export function useOwnStorylinePosts({
       limit: STORYLINE_CONTINUE_POST_LIMIT,
       sort: PostSort.Newest,
       period: MetricTimeframe.AllTime,
+      query: query || undefined,
     },
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
-  const firstPage = postPages?.pages[0];
+  const loaded = useMemo(() => postPages?.pages.flatMap((page) => page.items), [postPages]);
   const ownPosts = useMemo(
     () =>
       currentUser
-        ? storylineContinuePostOptions(firstPage?.items ?? [], {
+        ? storylineContinuePostOptions(loaded ?? [], {
             viewerId: currentUser.id,
             parentPostId: excludePostId ?? 0,
           }).filter((post) => !publishedOnly || isPublished(post))
         : [],
-    [currentUser, firstPage, excludePostId, publishedOnly]
+    [currentUser, loaded, excludePostId, publishedOnly]
   );
-  // Which of them are already chapters; the author is told whatever the post's level.
-  const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
-  const { data: ownChapters, isLoading: ownChaptersLoading } = trpc.storyline.getForPosts.useQuery(
-    { postIds: ownPostIds, browsingLevel: allBrowsingLevelsFlag },
-    // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
-    { enabled: enabled && ownPostIds.length > 0, placeholderData: (previous) => previous }
+  // Which of them are already chapters; the author is told whatever the post's level. In chunks of
+  // `getStorylinesForPostsSchema`'s cap, since older pages keep adding ids.
+  const idChunks = useMemo(
+    () =>
+      chunk(
+        ownPosts.map((post) => post.id),
+        STORYLINE_FOR_POSTS_MAX
+      ),
+    [ownPosts]
+  );
+  const chapterQueries = trpc.useQueries((t) =>
+    idChunks.map((postIds) =>
+      t.storyline.getForPosts(
+        { postIds, browsingLevel: allBrowsingLevelsFlag },
+        // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
+        { enabled, placeholderData: (previous) => previous }
+      )
+    )
   );
   const { posts, alreadyChapters } = storylineWithoutChapters(
     ownPosts,
-    new Set(Object.keys(ownChapters ?? {}).map(Number))
+    new Set(chapterQueries.flatMap((query) => Object.keys(query.data ?? {}).map(Number)))
   );
   return {
     posts,
     alreadyChapters,
-    postsLoading: postsLoading || (ownPostIds.length > 0 && ownChaptersLoading),
-    // A failed refetch keeps the posts already shown.
-    postsError: postsError && !firstPage,
-    morePosts: !!firstPage?.nextCursor,
+    postsLoading: postsLoading || chapterQueries.some((query) => query.isLoading),
+    // A failed refetch keeps what is already shown. Without the chapter answer, a post that is
+    // already a chapter would be offered.
+    postsError:
+      (postsError && !loaded) || chapterQueries.some((query) => query.isError && !query.data),
+    paging: {
+      search,
+      onSearchChange: setSearch,
+      hasMore: !!hasNextPage,
+      loadMore: () => void fetchNextPage(),
+      loadingMore: isFetchingNextPage,
+    } satisfies StorylinePostPaging,
   };
 }

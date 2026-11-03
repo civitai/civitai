@@ -35,6 +35,20 @@ async function insertToken(opts: {
   return token;
 }
 
+const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
+
+/** A restricted account gets no AI Services token from any grant, issue or refresh; other scopes still issue. */
+async function assertScopeAllowedForAccount(userId: number, scope: number) {
+  if ((scope & AI_SERVICES_SCOPES) === 0) return;
+  const user = await db
+    .selectFrom('User')
+    .select(['muted', 'bannedAt'])
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  if (!user || user.muted || user.bannedAt)
+    error(403, 'This account cannot be granted AI Services access.');
+}
+
 /**
  * Create an OAuth access + refresh token pair stored as ApiKey rows.
  * Used by both the OAuth model (saveToken) and the device authorization flow.
@@ -50,6 +64,7 @@ export async function createOAuthTokenPair(
 ): Promise<TokenPair> {
   if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
     error(403, 'This account cannot sign in.');
+  await assertScopeAllowedForAccount(userId, scope);
   const now = new Date();
 
   // UserRead is a mandatory baseline on every OAuth token: an app acting on a user's behalf must always
@@ -85,6 +100,7 @@ export async function createAppAccessToken(
   scope: number,
   ttlSeconds: number
 ): Promise<{ accessToken: string; expiresAt: Date }> {
+  await assertScopeAllowedForAccount(userId, scope);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
   const accessToken = await insertToken({
     userId,

@@ -320,7 +320,10 @@ describe('publishModelById with a taken-down version in the list', () => {
   it('locks every listed version, not only the taken-down ones', async () => {
     await publish(true).catch(() => undefined);
 
-    const [strings, ...values] = mockTx.$queryRaw.mock.calls[0] as [string[], ...never[]];
+    const versionLock = mockTx.$queryRaw.mock.calls.find((call) =>
+      (call[0] as string[]).join('').includes('"ModelVersion"')
+    );
+    const [strings, ...values] = versionLock as [string[], ...never[]];
     const { text } = Prisma.sql(strings, ...values);
     // The whole WHERE, so any added predicate fails it, however it is written.
     expect(text).toMatch(

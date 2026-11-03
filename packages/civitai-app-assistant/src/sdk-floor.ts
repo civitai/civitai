@@ -11,7 +11,7 @@ export const CIVITAI_SDK = '@civitai/sdk';
  * runner's `sdk-floor.test.ts` fails while the two disagree. It only reaches the runner with a runner
  * release.
  */
-export const CIVITAI_SDK_FLOOR = '0.21.0';
+export const CIVITAI_SDK_FLOOR = '0.22.0';
 
 /** What an app's `package.json` declares for `@civitai/sdk`, as `checkSdkPin` judges it. */
 export type SdkPinCheck =

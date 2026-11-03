@@ -80,11 +80,18 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     { error: 'Please pass a valid item type.' }
   );
 
+export const BULK_SAVE_MAX_IMAGES = 100;
 export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
 export const bulkSaveCollectionItemsInput = z
   .object({
     collectionId: z.coerce.number(),
-    imageIds: z.coerce.number().array().optional(),
+    imageIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_IMAGES, {
+        error: `You can add up to ${BULK_SAVE_MAX_IMAGES} images at a time`,
+      })
+      .optional(),
     articleIds: z.coerce.number().array().optional(),
     postIds: z.coerce.number().array().optional(),
     modelIds: z.coerce.number().array().optional(),

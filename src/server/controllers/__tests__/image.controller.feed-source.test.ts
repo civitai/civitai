@@ -15,6 +15,8 @@ const { getAllImagesMock, getAllImagesIndexMock } = vi.hoisted(() => ({
   getAllImagesIndexMock: vi.fn(),
 }));
 
+// Not a held-gallery test: no model is held.
+vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: async () => undefined }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages: getAllImagesMock,
@@ -61,7 +63,7 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(result.source).toBe('db');
   });
 
-  it('serves the viewer\'s hidden images from the database', async () => {
+  it("serves the viewer's hidden images from the database", async () => {
     const input = { limit: 10, browsingLevel: 1, include: [], hidden: true } as never;
     const result = await getInfiniteImagesHandler({ input, ctx });
 

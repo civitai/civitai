@@ -221,13 +221,16 @@ export function getPathImagesPaging({
 
 /**
  * A chapter's name: its post's title, else its number (and author, where nothing else shows it); a
- * tombstone reads as its reason.
+ * tombstone reads as its reason, or `inSentence` as its number, since the reason is a sentence.
  */
 export function getStorylineChapterName(
   chapter: Pick<StorylinePathChapter, 'depth' | 'post' | 'tombstone'>,
-  { withAuthor = false }: { withAuthor?: boolean } = {}
+  { withAuthor = false, inSentence = false }: { withAuthor?: boolean; inSentence?: boolean } = {}
 ) {
-  if (!chapter.post) return getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
+  if (!chapter.post)
+    return inSentence
+      ? `Chapter ${chapter.depth + 1}`
+      : getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
   const number = `Chapter ${chapter.depth + 1}`;
   const author = withAuthor && chapter.post.username ? ` by ${chapter.post.username}` : '';
   return chapter.post.title || `${number}${author}`;

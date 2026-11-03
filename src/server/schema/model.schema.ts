@@ -38,6 +38,12 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import {
+  SFW_DESCRIPTION_MAX_LENGTH,
+  SFW_DESCRIPTION_TOO_LONG_MESSAGE,
+  SFW_NAME_TOO_LONG_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -55,6 +61,8 @@ export type GetModelByIdSchema = z.infer<typeof getModelByIdSchema>;
 export const getModelByIdSchema = z.object({
   id: z.number(),
   excludeTrainingData: z.boolean().optional(),
+  /** The editor's read: owners and mods get the stored .red name/description, not the .com face. */
+  forEditor: z.boolean().optional(),
 });
 
 export const getAllModelsSchema = z.object({
@@ -220,15 +228,16 @@ export const modelGallerySettingsInput = z.object({
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const checkSfwFaceSchema = z.object({
-  sfwName: z.string().max(255).optional(),
-  sfwDescription: z.string().max(50000).optional(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH).optional(),
+  sfwDescription: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).optional(),
   modelId: z.number().optional(),
 });
 export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
 
 export const draftSfwFaceSchema = z.object({
+  // The .red name, which may predate its own cap.
   name: z.string().trim().min(1).max(255),
-  description: z.string().max(50000).nullish(),
+  description: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).nullish(),
   modelId: z.number().optional(),
 });
 
@@ -237,8 +246,10 @@ export const modelUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
-  sfwName: z.string().trim().max(255).nullish(),
-  sfwDescription: getSanitizedStringSchema().nullish(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH, SFW_NAME_TOO_LONG_MESSAGE).nullish(),
+  sfwDescription: getSanitizedStringSchema()
+    .pipe(z.string().max(SFW_DESCRIPTION_MAX_LENGTH, SFW_DESCRIPTION_TOO_LONG_MESSAGE))
+    .nullish(),
   coverImageId: z.number().int().positive().nullish(),
   sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
@@ -359,11 +370,15 @@ export type MinorFlagSnapshot = {
   confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
+  /** Absent on snapshots written before it was kept. */
+  prevMinor?: boolean;
   prevNsfw?: boolean;
   prevSfwOnly?: boolean;
   prevGalleryLevel?: number | null;
   prevLockedProperties?: string[];
   prevMinorImageIds?: number[];
+  /** When a lift ended this flag or a moderator ruled on the rating: a later lift restores nothing from it. */
+  supersededAt?: string;
 };
 
 /** Written when the hash match applies the real-person flag, so a revert can restore what it changed. */
@@ -396,6 +411,10 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
+  /** Written by a content wipe on a model it kept and hid; see model-removed-with-owner.service. */
+  removedWithOwner: boolean;
+  statusBeforeRemoval: string;
+  versionsUnpublishedByRemoval: { id: number; status: string }[];
   bountyId: number;
   unpublishedBy: number;
   declinedReason: string;
@@ -425,6 +444,16 @@ export type ModelMeta = Partial<{
     scannedAt: string;
   };
   minorFlagSnapshot: MinorFlagSnapshot;
+  /** What an owner's minor/POI declaration replaced when it cleared a locked nsfw. */
+  ownerFlagOverride: {
+    at: string;
+    flags: ('minor' | 'poi')[];
+    prevNsfw: boolean;
+    prevSfwOnly: boolean;
+    prevLockedProperties: string[];
+    /** Absent on records written before it was kept. */
+    prevGalleryLevel?: number | null;
+  };
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
@@ -433,6 +462,8 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
+  systemNsfwLock: { source: string; at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

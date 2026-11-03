@@ -5,7 +5,7 @@ import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { StickerBookSectionPage } from '~/components/StickerBook/StickerBookSectionPage';
 import { StickerBookView } from '~/components/StickerBook/StickerBookView';
 import { isStickerBookSide } from '~/components/StickerBook/sticker-book.util';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -18,7 +18,7 @@ export const getServerSideProps = createServerSideProps({
     // anyone who typed it.
     if (!features?.stickerBook)
       return { redirect: { destination: `/user/${username}`, permanent: false } };
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
 
     if (user?.bannedAt)
       return {

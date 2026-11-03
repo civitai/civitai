@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { IconBolt, IconCheck, IconStar, IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
@@ -8,6 +8,7 @@ import {
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { storylineLevelAllowed } from '~/shared/utils/storyline';
+import { isStorylineVerdictLevel, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { formatDate, recentOrDate } from '~/utils/date-helpers';
 
 export type StorylineQueueRow = {
@@ -31,6 +32,8 @@ export type StorylineQueueRow = {
    * holds the row: it cannot be answered until the storyline's takedown lifts.
    */
   storyline: { id: number; title: string; maxNsfwLevel?: number; takenDown?: boolean };
+  /** Its chapter already has a main-path chapter after it, so accepting it starts a branch. */
+  startsBranch?: boolean;
 };
 
 export type StorylineQueueAction = 'accept' | 'endorse' | 'decline';
@@ -77,9 +80,11 @@ export function StorylineQueueList({
 
       {rows.map((row) => {
         const ceiling = row.storyline.maxNsfwLevel;
+        const unusable = isStorylineVerdictLevel(row.post.nsfwLevel);
         const overCeiling =
           ceiling != null &&
           !!row.post.nsfwLevel &&
+          !unusable &&
           !storylineLevelAllowed({
             postLevel: row.post.nsfwLevel,
             maxNsfwLevel: ceiling,
@@ -139,9 +144,11 @@ export function StorylineQueueList({
                       size="sm"
                       radius="xl"
                       variant="light"
-                      color={overCeiling ? 'red' : 'gray'}
+                      color={overCeiling || unusable ? 'red' : 'gray'}
                     >
-                      {row.post.nsfwLevel
+                      {unusable
+                        ? "Can't be used"
+                        : row.post.nsfwLevel
                         ? getBrowsingLevelLabel(row.post.nsfwLevel)
                         : 'Not rated yet'}
                     </Badge>
@@ -160,10 +167,26 @@ export function StorylineQueueList({
                         {storylinePriceLabel(row.amount)}
                       </Badge>
                     )}
+                    {row.startsBranch !== undefined && (
+                      <Badge
+                        size="sm"
+                        radius="xl"
+                        variant="light"
+                        color={row.startsBranch ? 'orange' : 'violet'}
+                        data-testid={`storyline-queue-path-${row.id}`}
+                      >
+                        {row.startsBranch ? 'Starts a branch' : 'Joins the main path'}
+                      </Badge>
+                    )}
                   </Group>
                   {held && (
                     <Text size="xs" c="red" data-testid={`storyline-queue-held-${row.id}`}>
                       This storyline is taken down. You can answer this once the takedown is lifted.
+                    </Text>
+                  )}
+                  {unusable && (
+                    <Text size="xs" c="red">
+                      {STORYLINE_REFUSALS.cannotSubmit}.
                     </Text>
                   )}
                   {overCeiling && (
@@ -184,22 +207,29 @@ export function StorylineQueueList({
                   fullWidth
                   leftSection={<IconCheck size={14} />}
                   loading={isBusy('accept')}
-                  disabled={!!busy || held || overCeiling}
+                  disabled={!!busy || held || overCeiling || unusable}
                   onClick={() => onAct(row, 'accept')}
                 >
                   Accept
                 </Button>
-                <Button
-                  size="compact-sm"
-                  fullWidth
-                  variant="light"
-                  leftSection={<IconStar size={14} />}
-                  loading={isBusy('endorse')}
-                  disabled={!!busy || held || overCeiling || !row.placer}
-                  onClick={() => onAct(row, 'endorse')}
+                <Tooltip
+                  label="Approves this chapter and invites its author as a collaborator; they show once they accept"
+                  multiline
+                  w={260}
+                  withinPortal
                 >
-                  Endorse
-                </Button>
+                  <Button
+                    size="compact-sm"
+                    fullWidth
+                    variant="light"
+                    leftSection={<IconStar size={14} />}
+                    loading={isBusy('endorse')}
+                    disabled={!!busy || held || overCeiling || unusable || !row.placer}
+                    onClick={() => onAct(row, 'endorse')}
+                  >
+                    Approve + invite
+                  </Button>
+                </Tooltip>
                 <Button
                   size="compact-sm"
                   fullWidth

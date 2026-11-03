@@ -11,10 +11,17 @@ import type * as SessionClient from '~/server/auth/session-client';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as UserLinkService from '~/server/services/user-link.service';
 import type * as UserService from '~/server/services/user.service';
+import type * as UserCreatorReads from '~/server/services/user-creator.reads';
 
-const { purgeCache, invalidateHub } = vi.hoisted(() => ({
+const { purgeCache, invalidateHub, readCreator } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
   invalidateHub: vi.fn(),
+  readCreator: vi.fn(),
+}));
+// The creator card's database read (the user and its published-model count, one Kysely read).
+vi.mock('~/server/services/user-creator.reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserCreatorReads>()),
+  readUserCreatorViaKysely: readCreator,
 }));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
@@ -86,8 +93,9 @@ const rowFor = (id: number) => ({
 let usernames: Record<number, string>;
 let modelCounts: Record<number, number>;
 
-const userReads = () => dbMock.dbRead.user.findFirst.mock.calls.length;
-const countReads = () => dbMock.dbRead.model.count.mock.calls.length;
+// One read returns the user and the count together, so both counters are that read's calls.
+const userReads = () => readCreator.mock.calls.length;
+const countReads = () => readCreator.mock.calls.length;
 const entryKey = (id: number) => `${REDIS_KEYS.CACHES.USER_CREATOR}:${id}`;
 let store: ReturnType<typeof installFakeCacheRedis>;
 
@@ -100,24 +108,19 @@ beforeEach(() => {
   store = installFakeCacheRedis();
   invalidateHub.mockResolvedValue(undefined);
   purgeCache.mockResolvedValue(undefined);
-  dbMock.dbRead.user.findFirst.mockImplementation((async ({
-    where,
-  }: {
-    where: { id?: number; username?: string };
-  }) => {
-    const id =
-      where.id ?? Number(Object.entries(usernames).find(([, n]) => n === where.username)?.[0]);
-    if (!usernames[id]) return null;
-    return { ...rowFor(id), username: usernames[id] };
-  }) as never);
+  readCreator.mockImplementation(
+    async (_db: unknown, where: { id?: number; username?: string }) => {
+      const id =
+        where.id ?? Number(Object.entries(usernames).find(([, n]) => n === where.username)?.[0]);
+      if (!usernames[id]) return null;
+      return { user: { ...rowFor(id), username: usernames[id] }, modelCount: modelCounts[id] };
+    }
+  );
   dbMock.dbWrite.user.findMany.mockImplementation((async ({
     where,
   }: {
     where: { id: { in: number[] } };
   }) => where.id.in.map((id) => ({ username: usernames[id] }))) as never);
-  dbMock.dbRead.model.count.mockImplementation(
-    (async ({ where }: { where: { userId: number } }) => modelCounts[where.userId]) as never
-  );
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -353,6 +356,8 @@ describe('creator card invalidation ledger', () => {
       'src/server/controllers/user.controller.ts': 1,
       'src/server/services/creator-milestone-grant.service.ts': 1,
       'src/server/services/creator-shop.service.ts': 1,
+      // A showcase hat pick: the card carries it beside the cached entry, so only the edge copy is stale.
+      'src/server/services/event.service.ts': 1,
     });
   });
 

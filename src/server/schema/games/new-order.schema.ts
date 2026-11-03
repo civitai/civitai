@@ -4,6 +4,7 @@ import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/se
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { coerceUtcDate } from '~/utils/zod-helpers';
 
 export type GetImagesQueueSchema = z.input<typeof getImagesQueueSchema>;
 export const getImagesQueueSchema = z.object({
@@ -77,17 +78,10 @@ export const getHistorySchema = z.object({
   limit: z.number().optional().default(DEFAULT_PAGE_SIZE),
   cursor: z
     .object({
-      // ClickHouse (JSONEachRow) serializes this DateTime as a bare
-      // "YYYY-MM-DD HH:MM:SS" with no zone; coercing that with `new Date()` would
-      // parse it as POD-LOCAL time. Force UTC so the keyset boundary is exact
-      // regardless of pod TZ (pods are UTC today — don't silently depend on it).
-      // An ISO/Z string or a Date instance passes through unchanged; anything
-      // unparseable fails z.coerce.date() → .catch() below → page 1.
-      createdAt: z.preprocess(
-        (v) =>
-          typeof v === 'string' && !/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? `${v.replace(' ', 'T')}Z` : v,
-        z.coerce.date()
-      ),
+      // ClickHouse (JSONEachRow) serializes this DateTime as a bare "YYYY-MM-DD HH:MM:SS";
+      // read as UTC so the keyset boundary is exact regardless of pod TZ. Anything
+      // unparseable fails the coercion → .catch() below → page 1.
+      createdAt: coerceUtcDate(),
       imageId: z.number(),
     })
     .optional()
@@ -118,4 +112,3 @@ export const manageSanityChecksSchema = z.object({
   add: z.array(z.number()).optional(),
   remove: z.array(z.number()).optional(),
 });
-

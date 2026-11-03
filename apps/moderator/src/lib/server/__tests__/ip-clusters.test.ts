@@ -17,6 +17,7 @@ describe('ipCluster', () => {
     ['2001:db8:abc:0:1:2:3:4', '2001:db8:abc::/64'],
     ['fe80::1', 'fe80::/64'],
     ['1.2.3.4', '1.2.3.4'],
+    ['10.0.0.1', '10.0.0.1'],
   ])('%s groups as ClickHouse groups it (%s)', (ip, cluster) => {
     expect(ipCluster(ip)).toBe(cluster);
   });

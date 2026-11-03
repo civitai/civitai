@@ -31,6 +31,17 @@ describe('storyline cover and banner picks', () => {
     expect(updateStorylineSchema.safeParse({ id: 10, heroImagePosition }).success).toBe(ok);
     expect(createStorylineSchema.safeParse({ ...create, heroImagePosition }).success).toBe(ok);
   });
+
+  // An upload is always a new image, so it can never name an existing one.
+  it('drops an image id and post id sent with an upload', () => {
+    const sent = { url: '00000000-0000-4000-8000-000000000001', id: 5, postId: 7 };
+    const parsed = updateStorylineSchema.parse({ id: 10, coverUpload: sent, heroUpload: sent });
+    for (const upload of [parsed.coverUpload, parsed.heroUpload]) {
+      expect(upload).toMatchObject({ url: sent.url });
+      expect(upload).not.toHaveProperty('id');
+      expect(upload).not.toHaveProperty('postId');
+    }
+  });
 });
 
 describe('the way in to a reading path', () => {

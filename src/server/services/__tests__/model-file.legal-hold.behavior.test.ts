@@ -12,6 +12,8 @@ import {
   failDeletesFrom,
   fileIds,
   fileOf,
+  FORMER_CLEAN,
+  ownedBefore,
   routeToDb,
   seedModelHoldDb,
   versionOf,
@@ -102,6 +104,26 @@ describe('deleteFile', () => {
     expect(await fileIds(db)).toContain(fileOf(versionOf(owner)));
     expect(mockDeleteObject).not.toHaveBeenCalled();
     expect(mockDeregister).not.toHaveBeenCalled();
+  });
+
+  // Its owner is unheld, but an earlier one is not.
+  it('keeps the file of a model a held account owned before, and deletes no bytes', async () => {
+    stubFile();
+    await ownedBefore(db, CLEAN, REPORTED);
+
+    await expect(remove(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+
+    expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('deletes the file of a model only unheld accounts owned (control)', async () => {
+    stubFile();
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+
+    await remove(CLEAN);
+
+    expect(await fileIds(db)).not.toContain(fileOf(versionOf(CLEAN)));
   });
 
   it('tells a moderator why', async () => {
@@ -195,6 +217,26 @@ describe('a new upload replacing a file', () => {
     expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
     expect(mockDeleteObject).not.toHaveBeenCalled();
     expect(mockDeregister).not.toHaveBeenCalled();
+  });
+
+  it('keeps the file of a model a held account owned before, and creates no replacement', async () => {
+    stubFile(CLEAN);
+    await ownedBefore(db, CLEAN, MARKED);
+
+    await expect(replace(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+
+    expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
+    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('replaces the file of a model only unheld accounts owned (control)', async () => {
+    stubFile(CLEAN);
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+
+    await replace(CLEAN);
+
+    expect(await fileIds(db)).not.toContain(fileOf(versionOf(CLEAN)));
   });
 
   it('tells a moderator why', async () => {

@@ -1,4 +1,6 @@
 import { env } from '~/env/server';
+import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
@@ -291,9 +293,14 @@ export function feedPrimaryAvailable() {
 /**
  * FEED_SERVICE_MEILI_OFF for this viewer: the image feed never reads Meilisearch. Only with a feed
  * service configured, since without one there is nothing else to answer from.
+ *
+ * Once the feeds index is retired this is true without reading the flag: a flag read that fails
+ * returns false, and false would send the request to an index nothing writes any more. Without a
+ * feed service the readers of that index answer empty instead (see refuseRetiredIndexRead).
  */
 export async function isMeiliOff(input: { currentUserId?: number; isModerator?: boolean }) {
   if (!feedPrimaryAvailable()) return false;
+  if (isRetiredSearchIndex(METRICS_IMAGES_SEARCH_INDEX)) return true;
   return withSpan('image:flipt:meiliOff', () =>
     getFliptBoolean(
       FLIPT_FEATURE_FLAGS.FEED_SERVICE_MEILI_OFF,

@@ -33,6 +33,8 @@ import {
   csamReportDetails,
 } from '~/server/schema/csam.schema';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { RouterOutput } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -44,12 +46,15 @@ export function CsamDetailsForm({
   userId,
   type,
   defaultValues,
+  supplementalOf,
 }: {
   onPrevious?: () => void;
   onSuccess?: () => void;
   userId: number;
   type: CsamReportType;
   defaultValues?: CsamReportFormInput;
+  /** The sent report this one supplements. */
+  supplementalOf?: number;
 }) {
   const form = useForm({
     schema,
@@ -57,14 +62,24 @@ export function CsamDetailsForm({
     defaultValues,
   });
 
+  const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
+  const supplemental = trpc.csam.getSupplementalPreview.useQuery(
+    { userId, imageIds, supplementalOf: supplementalOf ?? 0 },
+    { enabled: !!supplementalOf, retry: false, refetchOnMount: 'always' }
+  );
+
   const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
     onSuccess: () => {
       closeModal('csam-confirm');
       onSuccess?.();
     },
+    onError: (error) => {
+      closeModal('csam-confirm');
+      showErrorNotification({ error, title: 'Filing the report failed', autoClose: false });
+      // Views recorded at submit can change what a supplemental report may attach.
+      if (supplementalOf) supplemental.refetch();
+    },
   });
-
-  const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     openConfirmModal({
@@ -82,6 +97,7 @@ export function CsamDetailsForm({
           imageIds: type === 'Image' ? useCsamImageSelectStore.getState().getSelected(userId) : [],
           userId,
           details: data,
+          supplementalOf,
         });
       },
     });
@@ -96,6 +112,15 @@ export function CsamDetailsForm({
         <Card>
           <Form id="csamForm" form={form} onSubmit={handleSubmit}>
             <Stack gap="xl">
+              {supplementalOf && (
+                <SupplementalPreview
+                  data={supplemental.data}
+                  isLoading={supplemental.isLoading}
+                  error={supplemental.error}
+                  onRetry={() => supplemental.refetch()}
+                  isRefetching={supplemental.isFetching}
+                />
+              )}
               <InputRadioGroup name="minorDepiction" label="Minor depiction">
                 <Radio value="real" label="Real" />
                 <Radio value="non-real" label="Non-real" />
@@ -139,7 +164,11 @@ export function CsamDetailsForm({
                     Previous
                   </Button>
                 )}
-                <Button type="submit" loading={isLoading}>
+                <Button
+                  type="submit"
+                  loading={isLoading}
+                  disabled={!!supplementalOf && !supplemental.data}
+                >
                   Submit
                 </Button>
               </Group>
@@ -226,3 +255,48 @@ function ModelVersionSelectList({
 }
 
 const InputModelVersionSelect = withController(ModelVersionSelectList);
+
+function SupplementalPreview({
+  data,
+  isLoading,
+  error,
+  onRetry,
+  isRefetching,
+}: {
+  data?: RouterOutput['csam']['getSupplementalPreview'];
+  isLoading: boolean;
+  error?: { message: string } | null;
+  onRetry: () => void;
+  isRefetching: boolean;
+}) {
+  if (isLoading)
+    return (
+      <Center>
+        <Loader size="sm" />
+      </Center>
+    );
+  if (!data)
+    return (
+      <Alert color="red" title="This supplemental report cannot be filed">
+        <Stack gap="xs" align="flex-start">
+          <Text size="sm">{error?.message}</Text>
+          <Button size="xs" variant="default" onClick={onRetry} loading={isRefetching}>
+            Check again
+          </Button>
+        </Stack>
+      </Alert>
+    );
+  const { priorReportNumbers, text } = data;
+  return (
+    <Alert color="blue" title="Supplemental report">
+      <Stack gap="xs">
+        <Text size="sm">
+          Refers to CyberTip {priorReportNumbers.map((n) => `#${n}`).join(', ')}. NCMEC receives:
+        </Text>
+        <Text size="sm" fs="italic">
+          {text}
+        </Text>
+      </Stack>
+    </Alert>
+  );
+}

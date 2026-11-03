@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import client from 'prom-client';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { getClient } from '~/server/db/db-helpers';
+import { allowConnection } from '~/__tests__/network-guard';
 
 // Literal: dashboards query this name.
 const PG_POOL_ACQUIRE_HISTOGRAM_NAME = 'node_postgres_pool_acquire_duration_seconds';
 
 async function failAcquire(load: typeof getClient) {
   // Port 1 refuses immediately, so the acquire resolves as an error without a database.
+  allowConnection('127.0.0.1', 1);
   const pool = load({
     instance: 'primaryRead',
     replicaUrl: 'postgres://user:pass@127.0.0.1:1/db',

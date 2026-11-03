@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
-import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
+import { OWNED_REPORT_ENTITIES, chatReportSubject, reportLinkFilter } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
@@ -840,7 +840,8 @@ export type ReportedContent = { label: string; count: number };
 
 export async function getReportedContent(userId: number): Promise<ReportedContent[]> {
   return Promise.all(
-    OWNED_REPORT_ENTITIES.map(async ({ label, table, reportTable, fk, ownerColumn }) => {
+    OWNED_REPORT_ENTITIES.map(async (e) => {
+      const { label, table, reportTable, fk, ownerColumn } = e;
       const r = await dbRead
         .selectFrom(table as 'Image')
         .innerJoin(
@@ -855,6 +856,7 @@ export async function getReportedContent(userId: number): Promise<ReportedConten
             .as('count')
         )
         .where(`${table}.${ownerColumn}` as 'Image.userId', '=', userId)
+        .where(reportLinkFilter(e, `${reportTable}.reportId`))
         .executeTakeFirst();
       return { label, count: Number(r?.count ?? 0) };
     })

@@ -6,6 +6,8 @@ import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
@@ -84,13 +86,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: {
-    cosmetic: {
-      getStickerBalances: { useQuery: () => ({ data: [] }) },
-      getStickerRecentUse: { useQuery: () => ({ data: [] }) },
-      getStickerOffers: { useQuery: () => ({ data: [] }) },
-    },
-  },
+  trpc: makeTrpcProxy({
+    'cosmetic.getStickerBalances': { useQuery: () => ({ data: [] }) },
+    'cosmetic.getStickerRecentUse': { useQuery: () => ({ data: [] }) },
+    'cosmetic.getStickerOffers': { useQuery: () => ({ data: [] }) },
+  }),
 }));
 
 const renderTray = async () => {
@@ -99,7 +99,7 @@ const renderTray = async () => {
       <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
     </IsClientProvider>
   );
-  await expect.element(page.getByText('Drag a sticker onto the image.')).toBeInTheDocument();
+  await expect.element(page.getByText('Tap or drag a sticker onto the image.')).toBeInTheDocument();
 };
 
 describe('sticker placement tray overflow', () => {
@@ -156,5 +156,24 @@ describe('sticker placement tray overflow', () => {
       'the row is back to `wrap="nowrap"`, which is the one-long-line layout the tray was ' +
         'moved off — 83 stickers then run 6452px wide instead of wrapping into rows'
     ).not.toBe('nowrap');
+  });
+});
+
+describe('sticker placement tray on a phone', () => {
+  // The iOS callout setting cannot be read back in Chromium, so it is not asserted.
+  test('sticker tiles leave vertical swipes to the shelf and select no text', async () => {
+    await renderTray();
+    const tile = document.querySelector('img[alt=":letter-0:"]')?.closest('button');
+    expect(tile).not.toBeNull();
+    const style = getComputedStyle(tile as HTMLElement);
+
+    expect(style.touchAction).toBe('pan-y');
+    expect(style.userSelect).toBe('none');
+  });
+
+  test("a swipe on the tray is the tray's, not the image carousel's", async () => {
+    await renderTray();
+    const tile = document.querySelector('img[alt=":letter-0:"]') as HTMLElement;
+    expect(tile.closest(`[${STICKER_EDITOR_ATTR}]`)).not.toBeNull();
   });
 });

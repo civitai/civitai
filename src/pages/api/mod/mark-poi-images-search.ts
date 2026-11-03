@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { IMAGES_SEARCH_INDEX, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { metricsSearchClient, searchClient, updateDocs } from '~/server/meilisearch/client';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -79,26 +80,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     const updateTasks: Task[] = [];
     for (const batch of batches) {
       updateTasks.push(async () => {
-        await updateDocs({
-          documents: batch.map((id) => ({
-            id,
-            poi: true,
-          })),
-          indexName: IMAGES_SEARCH_INDEX,
-          client: searchClient,
-          batchSize: 10000,
-        });
-
-        await updateDocs({
-          documents: batch.map((id) => ({
-            id,
-            poi: true,
-          })),
-          indexName: METRICS_IMAGES_SEARCH_INDEX,
-          client: metricsSearchClient,
-          batchSize: 10000,
-        });
-
+        // The database first: it is the record moderation reads, and an index write that throws
+        // (a retired index's server is shut down) must not stop it.
         await dbWrite.image.updateMany({
           where: {
             id: { in: batch },
@@ -107,6 +90,22 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             poi: true,
           },
         });
+
+        for (const [indexName, client] of [
+          [IMAGES_SEARCH_INDEX, searchClient],
+          [METRICS_IMAGES_SEARCH_INDEX, metricsSearchClient],
+        ] as const) {
+          if (isRetiredSearchIndex(indexName)) continue;
+          await updateDocs({
+            documents: batch.map((id) => ({
+              id,
+              poi: true,
+            })),
+            indexName,
+            client,
+            batchSize: 10000,
+          });
+        }
       });
     }
 

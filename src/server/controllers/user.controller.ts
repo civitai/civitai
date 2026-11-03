@@ -5,6 +5,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -661,6 +665,7 @@ export const updateUserHandler = async ({
       id,
       select: {
         username: true,
+        image: true,
         profilePictureId: true,
         profilePicture: { select: { userId: true } },
       },
@@ -673,6 +678,9 @@ export const updateUserHandler = async ({
       profilePicture && profilePicture.id !== user.profilePictureId
         ? { ...profilePicture, id: undefined }
         : undefined;
+    const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
+    await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
+    await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -896,7 +904,6 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  // `kysely-hot-reads-5` on: the same ids through Kysely, on the same replica.
   const versions = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     ? await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id)
     : await readModelVersionIdsViaPrisma(dbRead, input.id);

@@ -44,14 +44,14 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
 /**
  * "Let your agent build it" — the copyable onboarding prompt for `/apps/build`.
  *
- * Mounted in all THREE of `AppsBuildBody`'s states: it leads the public pitch (inside
- * {@link GetStartedBody}) and the first-app state, and sits first inside the workbench's
- * collapsed "Developer resources" strip.
+ * Mounted in TWO of `AppsBuildBody`'s states, both author-only: it leads the first-app state
+ * and sits first inside the workbench's collapsed "Developer resources" strip. It is NOT in
+ * the public pitch ({@link GetStartedBody}): a viewer there has no builder access yet, and
+ * the prompt is only useful with it.
  *
  * Pure presentational — props-only, no tRPC, no tracker import; the funnel event arrives as
- * `onCopy` from `AppsBuildBody`, the one call site with a tracker, which is what keeps
- * `GetStartedBody` provider-free as its own header promises. ⚠️ One asterisk on that header's
- * "no network": the ANIMATED tree renders `LazyMotion`, which fetches a same-origin runtime
+ * `onCopy` from `AppsBuildBody`, the one call site with a tracker. ⚠️ One asterisk on "no
+ * network": the ANIMATED tree renders `LazyMotion`, which fetches a same-origin runtime
  * chunk. Nothing is sent, and the static tree fetches nothing.
  *
  * The prompt is deliberately not upstream's — see `./cliCommands`'s {@link AGENT_BUILD_PROMPT}.
@@ -138,7 +138,7 @@ export function AgentOnboardingCard({
    * stays cheap. This is the same code path reduced motion takes, not a second one.
    */
   animated?: boolean;
-  /** Density. `prominent` leads the pitch and first-app states; `inline` is the workbench strip. */
+  /** Density. `prominent` leads the first-app state; `inline` is the workbench strip. */
   tone?: 'prominent' | 'inline';
 }) {
   const reduceMotion = useReducedMotion(true);

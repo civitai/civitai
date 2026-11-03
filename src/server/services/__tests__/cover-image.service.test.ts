@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The module under test imports the (very large) image service, the db client and the s3
 // helpers only to build its production deps. The behaviour under test is injected, so stub
@@ -27,6 +27,8 @@ import {
 } from '../cover-image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 const dbWriteMock = dbMock.dbWrite;
 const logToAxiomMock = loggingMock.logToAxiom;
 
@@ -36,6 +38,7 @@ function makeDeps(overrides: Partial<CoverImageDeps> = {}): CoverImageDeps {
   return {
     findReusableImageId: vi.fn().mockResolvedValue(null),
     objectExists: vi.fn().mockResolvedValue(true),
+    assertUrlUsable: vi.fn().mockResolvedValue(undefined),
     createImage: vi.fn().mockResolvedValue({ id: 999 }),
     logExistenceUnknown: vi.fn(),
     ...overrides,
@@ -112,6 +115,24 @@ describe('resolveCoverImageId — no id (a raw upload key)', () => {
     expect(error.code).toBe('BAD_REQUEST');
     expect(error.message).toBe(COVER_IMAGE_UNAVAILABLE_MESSAGE);
     // The row that would have 404'd for every reader is never created.
+    expect(deps.createImage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a url the caller may not use exactly as it refuses a missing object', async () => {
+    const refusal = new TRPCError({
+      code: 'BAD_REQUEST',
+      message: COVER_IMAGE_UNAVAILABLE_MESSAGE,
+    });
+    const deps = makeDeps({
+      assertUrlUsable: vi.fn(async () => {
+        throw refusal;
+      }),
+    });
+
+    const error = await resolveCoverImageId({ coverImage, userId: 7 }, deps).catch((e) => e);
+
+    expect(error).toBe(refusal);
+    expect(deps.assertUrlUsable).toHaveBeenCalledWith({ url: coverImage.url, userId: 7 });
     expect(deps.createImage).not.toHaveBeenCalled();
   });
 
@@ -322,4 +343,60 @@ describe('productionCoverImageDeps.logExistenceUnknown', () => {
   // promise, the same assertion fails the moment the `.catch()` is deleted. Since this file's
   // other tests need `logToAxiom` to be a `vi.fn()` to assert on payloads, and `vi.mock` is
   // per-file, the falsifiable version lives in its own file.
+});
+
+describe('resolveCoverImageId with its production deps', () => {
+  const OTHER = 8;
+  beforeEach(() => {
+    getImageUploadBackendMock.mockResolvedValue({ s3: { send: vi.fn() }, bucket: 'uploads' });
+    checkFileExistsMock.mockResolvedValue(true);
+    createImageMock.mockResolvedValue({ id: 31 });
+  });
+  afterEach(() => dbWriteMock.$queryRaw.mockReset());
+
+  it('refuses a url owned by another user, and creates the row for one the caller owns', async () => {
+    dbWriteMock.$queryRaw.mockImplementation(
+      imageUrlOwnersFake([{ url: coverImage.url, userId: OTHER }])
+    );
+
+    await expect(resolveCoverImageId({ coverImage, userId: 7 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: COVER_IMAGE_UNAVAILABLE_MESSAGE,
+    });
+    expect(createImageMock).not.toHaveBeenCalled();
+
+    await expect(resolveCoverImageId({ coverImage, userId: OTHER })).resolves.toBe(31);
+  });
+
+  describe('a key issued to another user', () => {
+    const MODERATOR = 9;
+    beforeEach(() => {
+      dbWriteMock.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
+      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+    });
+    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+
+    it('is refused before a row is created', async () => {
+      await expect(resolveCoverImageId({ coverImage, userId: 7 })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: COVER_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      expect(createImageMock).not.toHaveBeenCalled();
+    });
+
+    it('is refused when someone else uploaded it for the owner', async () => {
+      await expect(
+        resolveCoverImageId({ coverImage, userId: 7, uploaderId: MODERATOR })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(createImageMock).not.toHaveBeenCalled();
+    });
+
+    it('is accepted when that user uploaded it for the owner', async () => {
+      redisMock.sysRedis.mGet.mockResolvedValue([String(MODERATOR)] as never);
+
+      await expect(
+        resolveCoverImageId({ coverImage, userId: 7, uploaderId: MODERATOR })
+      ).resolves.toBe(31);
+    });
+  });
 });

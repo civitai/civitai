@@ -13,6 +13,10 @@ import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
  */
 
 const createMultiAccountBuzzTransaction = vi.fn();
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction,
   createBuzzTransaction: vi.fn(),
@@ -182,7 +186,11 @@ beforeEach(() => {
     userId: OWNER,
     depth: 0,
   });
-  db.insert('storylineCollaborator', { storylineId: STORY, userId: COLLABORATOR });
+  db.insert('storylineCollaborator', {
+    storylineId: STORY,
+    userId: COLLABORATOR,
+    acceptedAt: new Date(),
+  });
 });
 
 afterEach(() => vi.useRealTimers());
@@ -269,6 +277,7 @@ describe("the owner's chapter 1", () => {
     await expect(publish(OWNER)).resolves.toMatchObject({
       status: 'waiting',
       reason: 'aboveRating',
+      rating: { postLevel: R, maxNsfwLevel: PG },
     });
     expect(db.row('storyline', { id: EMPTY_STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
@@ -382,9 +391,21 @@ describe('the owner continuing their own story', () => {
   it('leaves a continuation rated above the ceiling waiting, and raises nothing', async () => {
     draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R });
 
-    await expect(publish(OWNER)).resolves.toMatchObject({ reason: 'aboveRating' });
+    await expect(publish(OWNER)).resolves.toMatchObject({
+      reason: 'aboveRating',
+      rating: { postLevel: R, maxNsfwLevel: PG },
+    });
     expect(db.row('storyline', { id: STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
+  });
+
+  // Blocked is a moderation verdict, not a rating: naming it would tell the author the verdict.
+  it('refuses a Blocked-level continuation as unusable, not by its rating', async () => {
+    draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R | 32 });
+
+    const outcome = await publish(OWNER);
+    expect(outcome).toMatchObject({ status: 'waiting', reason: 'cannotSubmit' });
+    expect(outcome).not.toHaveProperty('rating', expect.anything());
   });
 
   it.each([

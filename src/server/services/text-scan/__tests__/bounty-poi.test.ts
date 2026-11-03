@@ -1,3 +1,5 @@
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as SearchIndexUpdateModule from '~/server/search-index/SearchIndexUpdate';
@@ -160,7 +162,7 @@ describe('resolveBountyPoiAppeal', () => {
     const text = sqlOf(call);
     expect(text).toContain('poi = FALSE');
     expect(text).toContain(
-      `availability = COALESCE((b.meta->?->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability")`
+      `THEN COALESCE((b.meta->?->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability")`
     );
     expect(text).toContain(`ARRAY['poi']::text[]`);
     expect(text).toContain(`'appealGranted'`);
@@ -176,6 +178,34 @@ describe('resolveBountyPoiAppeal', () => {
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ ids: [9], entityType: 'Bounty', status: 'Approved', userId: 3 })
     );
+  });
+
+  // Runs the real UPDATE on PGlite; the tests above only match SQL text.
+  it.each([
+    ['keeps a bounty a content wipe kept hidden', { removedWithOwner: true }, 'Private'],
+    ['restores any other (control)', {}, 'Unsearchable'],
+  ])('overturn %s, and records the grant', async (_, record, availability) => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE DOMAIN "Availability" AS text;
+      CREATE TABLE "Bounty" (
+        id int PRIMARY KEY, poi boolean, availability "Availability", "lockedProperties" text[], meta jsonb
+      );
+    `);
+    await db.query(`INSERT INTO "Bounty" VALUES (9, true, 'Private', '{}', $1)`, [
+      { textScanFlags: { poi: poiEntry }, ...record },
+    ]);
+    dbMock.dbWrite.$executeRaw.mockImplementation((async (...args: unknown[]) => {
+      const sql = Prisma.sql(args[0] as TemplateStringsArray, ...(args.slice(1) as never[]));
+      return (await db.query(sql.text, sql.values)).affectedRows ?? 0;
+    }) as never);
+
+    await resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 });
+
+    const { rows } = await db.query<{ availability: string; poi: boolean; granted: boolean }>(
+      `SELECT availability, poi, meta->'textScanFlags'->'poi' ? 'appealGranted' AS granted FROM "Bounty"`
+    );
+    expect(rows).toEqual([{ availability, poi: false, granted: true }]);
   });
 
   it("uphold stamps the decision and rejects the appeal with the moderator's reason", async () => {

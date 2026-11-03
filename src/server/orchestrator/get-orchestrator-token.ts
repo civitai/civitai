@@ -1,4 +1,6 @@
+import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { env } from '~/env/server';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
@@ -11,6 +13,7 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
+import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -20,6 +23,11 @@ type Context = {
   req: NextApiRequest;
   res: NextApiResponse;
 };
+
+// While sysRedis takes reads but refuses writes, the hash never fills and every call would mint, so the
+// per-pod cache is served for this long after a failed writeback, as during a read outage.
+const WRITE_DEGRADED_WINDOW_MS = 60_000;
+let writeDegradedUntil = 0;
 
 type GetOrchestratorTokenOptions = {
   /**
@@ -39,6 +47,12 @@ type GetOrchestratorTokenOptions = {
    * self-call. Only the per-pod cache is skipped.
    */
   bypassCache?: boolean;
+  /**
+   * Issue the token even when the account is muted (never when banned). Only for server-side calls that never hand
+   * the token to a client and never submit work: reading, deleting or cancelling the account's own
+   * workflows, or a moderator acting on them (which may stamp workflow metadata). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
+   */
+  allowRestricted?: boolean;
 };
 
 export async function getOrchestratorToken(
@@ -46,10 +60,21 @@ export async function getOrchestratorToken(
   ctx?: Context,
   options: GetOrchestratorTokenOptions = {}
 ) {
+  // Before any cache: a token cached before a restriction must not be served after it. The standing
+  // read is cached and falls back to the primary; when neither answers, it refuses. `allowRestricted`
+  // admits a muted account only, never a banned or missing one.
+  const standing = await getAccountStanding(userId).catch(() => null);
+  // Not the session-facing wording for a ban: a moderator acting on another account reaches this too.
+  if (standing?.banned)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
+  if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
+    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
   // fallback path below by setting token=null on error.
   let token: string | null;
+  let sysRedisFailed = false;
   try {
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // ~11min on every authenticated generation call. A fast DOWN already
@@ -81,39 +106,38 @@ export async function getOrchestratorToken(
       action: 'minting-fresh-token',
     });
     token = null;
+    sysRedisFailed = true;
   }
 
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
-    // Per-pod LRU + in-flight coalescing in front of the DB cold-mint.
-    // Caps the "sysRedis-unavailable" amplification documented at the
-    // token-mint-amplification fail-open subtype: without this, 80 pods
-    // × ~1k RPS × every auth'd request would translate to ~80k inserts/s
-    // + ~160k deleteMany/s on ApiKey during a sysRedis outage. With a
-    // 60s TTL the worst-case DB rate is bounded by (active-users / 60s)
-    // per pod, regardless of request volume. See
-    // orchestrator-token-cache.ts for the full rationale.
+    // Per-pod LRU + in-flight coalescing in front of the DB cold-mint, which caps DB load while
+    // sysRedis is down. See orchestrator-token-cache.ts for the full rationale.
     //
-    // KNOWN BEHAVIOR: see orchestrator-token-cache.ts docstring — this
-    // cache is NOT invalidated by ban / logout / API-key-rotation. A
-    // revoked user keeps minting/using a valid orchestrator token for
-    // up to ORCHESTRATOR_TOKEN_CACHE_TTL_MS per pod across all ~220
-    // pods (api + jobs + ssr). The 401 handlers in
-    // src/server/services/orchestrator/{workflows,imageUpload,
-    // consumerBlobUpload,videoEnhancement}.ts only `throw` — they do
-    // not invalidate this cache or the sysRedis hash. Future
-    // moderation features must NOT assume cache-coherent revocation.
-    const mint = () =>
-      getTemporaryUserApiKey({
+    // A healthy miss means the cross-pod entry expired or was dropped (a ban drops it), so a
+    // per-pod entry is stale by definition: serve one only when sysRedis could not answer.
+    let minted = false;
+    const mint = async () => {
+      const fresh = await getTemporaryUserApiKey({
         name: generationServiceCookie.name,
         // make the db token live just slightly longer than the cached one
         maxAge: generationServiceCookie.maxAge + 5,
         type: 'System',
         userId,
       });
+      minted = true;
+      return fresh;
+    };
     // Cross-user mints (moderator path) must NOT populate the per-pod
     // cache — Round-5 audit H2. See GetOrchestratorTokenOptions.bypassCache.
-    token = options.bypassCache ? await mint() : await getOrMintCachedToken(userId, mint);
+    token = options.bypassCache
+      ? await mint()
+      : await getOrMintCachedToken(userId, mint, {
+          readCache: sysRedisFailed || Date.now() < writeDegradedUntil,
+        });
+    // Only a token minted here is written back. A per-pod hit may hold a revoked key, and a caller
+    // that joined another request's in-flight mint leaves the write to that request.
+    if (!minted) return token;
     // Cache populate is best-effort: if sysRedis is down we still return
     // the freshly-minted token. Without this catch, the writeback would
     // 500 every call during a sysRedis outage — defeating the read-side
@@ -140,6 +164,7 @@ export async function getOrchestratorToken(
       encodeOwnedToken(userId, token),
       generationServiceCookie.maxAge * 1000
     ).catch((err) => {
+      writeDegradedUntil = Date.now() + WRITE_DEGRADED_WINDOW_MS;
       logSysRedisFailOpen('write-degraded', 'getOrchestratorToken cache writeback', err, {
         userId,
       });

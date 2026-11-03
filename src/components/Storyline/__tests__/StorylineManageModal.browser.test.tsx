@@ -8,7 +8,6 @@ import StorylineManageModal from '~/components/Storyline/manage/StorylineManageM
 
 const mocks = vi.hoisted(() => ({
   update: vi.fn(),
-  remove: vi.fn(),
   close: vi.fn(),
   chapterCount: 0,
   tosViolation: false,
@@ -53,7 +52,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         }),
       },
       'storyline.update': mutation(mocks.update),
-      'storyline.delete': mutation(mocks.remove),
     }),
   };
 });
@@ -82,7 +80,7 @@ vi.mock('~/components/Storyline/manage/StorylineCollaboratorsPanel', () => ({
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
 
 beforeEach(() => {
-  for (const fn of [mocks.update, mocks.remove, mocks.close]) fn.mockReset();
+  for (const fn of [mocks.update, mocks.close]) fn.mockReset();
   vi.mocked(useRouter().push).mockClear();
   mocks.chapterCount = 0;
   mocks.tosViolation = false;
@@ -105,25 +103,6 @@ describe('managing a storyline', () => {
     await userEvent.type(input, '  The Long Road  ');
     await save.click();
     expect(mocks.update).toHaveBeenCalledWith({ id: 2, title: 'The Long Road' });
-  });
-
-  test('deletes an empty storyline after a confirm, then goes to the storylines feed', async () => {
-    renderWithProviders(<StorylineManageModal storylineId={2} />);
-    await page.getByRole('button', { name: 'Delete storyline' }).click();
-    expect(mocks.remove).not.toHaveBeenCalled();
-    await expect.element(page.getByText('This cannot be undone', { exact: false })).toBeVisible();
-
-    await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    expect(mocks.remove).toHaveBeenCalledWith({ id: 2 });
-    await expect.poll(() => vi.mocked(useRouter().push).mock.calls).toEqual([['/storylines']]);
-    expect(mocks.close).toHaveBeenCalled();
-  });
-
-  test('a storyline with a chapter offers no delete', async () => {
-    mocks.chapterCount = 1;
-    renderWithProviders(<StorylineManageModal storylineId={2} />);
-    await expect.element(page.getByRole('textbox', { name: 'Title' })).toBeVisible();
-    expect(page.getByRole('button', { name: 'Delete storyline' }).query()).toBeNull();
   });
 
   test("lets a moderator edit someone else's storyline, but not delete it or answer its queue", async () => {
@@ -154,12 +133,5 @@ describe('managing a storyline', () => {
       .element(page.getByText("Only the storyline's creator can manage it."))
       .toBeVisible();
     expect(page.getByRole('textbox', { name: 'Title' }).query()).toBeNull();
-  });
-
-  test('a taken-down storyline offers no delete, which the server would refuse', async () => {
-    mocks.tosViolation = true;
-    renderWithProviders(<StorylineManageModal storylineId={2} />);
-    await expect.element(page.getByRole('textbox', { name: 'Title' })).toBeVisible();
-    expect(page.getByRole('button', { name: 'Delete storyline' }).query()).toBeNull();
   });
 });

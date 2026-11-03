@@ -16,6 +16,7 @@ import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
@@ -47,6 +48,8 @@ import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
+import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
+import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
@@ -64,6 +67,7 @@ import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
+import { purgeReleasedHeldCopiesJob } from '~/server/jobs/purge-released-held-copies';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -81,6 +85,7 @@ import {
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
 } from '~/server/jobs/event-engine-work';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
@@ -128,6 +133,7 @@ import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-che
 import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
+import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nudge';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
@@ -148,6 +154,7 @@ import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
+import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
@@ -181,6 +188,7 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
+  birthday2026IdleHatNudge,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
@@ -203,6 +211,7 @@ export const jobs: Job[] = [
   cleanImageResources,
   deleteOldTrainingData,
   purgeReplacedFilesJob,
+  purgeReleasedHeldCopiesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
@@ -220,6 +229,7 @@ export const jobs: Job[] = [
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -254,6 +264,7 @@ export const jobs: Job[] = [
   settleBlockAuthorFeesJob,
   confirmMutes,
   botAccountDetection,
+  linkedAccountReview,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
   creatorProgramCounterpartyReview,
@@ -265,6 +276,8 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
+  reapDeletedAppStorageJob,
+  removeDeletedAccountAppDataJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
@@ -304,6 +317,7 @@ export const jobs: Job[] = [
   textScanChatWindowsJob,
   textScanNewUsersJob,
   articleIngestionReconcile,
+  articleContentLinkHold,
   expireStrikesJob,
   processTimedUnmutesJob,
   reconcileNowpaymentsJob,

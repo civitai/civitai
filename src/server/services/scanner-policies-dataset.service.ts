@@ -1,5 +1,4 @@
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { v4 as uuid } from 'uuid';
 import { dbRead } from '~/server/db/client';
 import { env } from '~/env/server';
 import {
@@ -224,7 +223,7 @@ export async function buildDatasetExport(
   };
 
   // 6. Build workbook + upload to S3.
-  const datasetId = uuid();
+  const datasetId = crypto.randomUUID();
   const now = new Date();
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   const safeLabel = label.replace(/[^A-Za-z0-9-]+/g, '_');

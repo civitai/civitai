@@ -14,6 +14,13 @@ describe('redactAddresses', () => {
     ).toBe('on [address] and [address], also [address] and [address].');
   });
 
+  // The assistant may quote an address as the moderator typed it, padding and all.
+  it('replaces a zero-padded IPv4 address too', () => {
+    expect(redactAddresses('seen on 203.0.113.07 and 010.1.1.1')).toBe(
+      'seen on [address] and [address]'
+    );
+  });
+
   it('leaves times, ids, versions and citations alone', () => {
     const text = 'At 12:30:45 [user:123] posted v1.2.3 (report 1234), 999.1.1.1 is no address.';
     expect(redactAddresses(text)).toBe(text);

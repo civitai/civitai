@@ -2,15 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Off, so `getPlacementConfig`'s own KeyValue read (`kysely-hot-reads-5`) stays on its Prisma mock.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
 // Every placement query stubbed: their SQL is pinned in packages/civitai-db-queries/src/
-// placement.db.test.ts; their rows against Prisma's are compared in the opt-in (not in CI)
-// placement-reads.kysely-parity.test.ts.
+// placement.db.test.ts; their rows, against a real database, in placement-reads.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
   const actual = await importOriginal<typeof PlacementQueries>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
@@ -19,13 +17,13 @@ vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
 import * as queries from '@civitai/db-queries/placement';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { isFlipt } from '~/server/flipt/client';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import {
   getPendingPlacementCounts,
   placementPriceRange,
 } from '~/server/services/placement.service';
-import { getCapTier } from '~/server/services/subscriptions.service';
+import { getCapTier, getCapTierViaKysely } from '~/server/services/subscriptions.service';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const flag = vi.mocked(isFlipt);
@@ -75,28 +73,8 @@ const goldSubscription = (overrides: { status?: string; metadata?: object } = {}
 
 const USER_SPACE = { entityType: 'user', mode: 'review', price: 900, freeSlots: 5, settings: {} };
 
-/** The same facts, armed on both paths, so a difference in the answer is the port's. */
-function givenBothPaths({
-  subscriptions = [goldSubscription()],
-  score = SCORE as number | null,
-} = {}) {
-  // Prisma (flag off)
-  dbMock.dbWrite.image.findUnique.mockResolvedValue({
-    id: IMAGE,
-    userId: OWNER,
-    postId: POST,
-    type: 'video',
-    user: { username: 'creator' },
-  });
-  dbMock.dbWrite.model.findUnique.mockResolvedValue({
-    userId: OWNER,
-    user: { username: 'creator' },
-  });
-  dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([USER_SPACE]);
-  dbMock.dbRead.placement.count.mockResolvedValue(RESERVED);
-  dbMock.dbRead.$queryRaw.mockResolvedValue([{ score }]);
-  dbMock.dbWrite.customerSubscription.findMany.mockResolvedValue(subscriptions);
-  // Kysely (flag on)
+/** The rows each Kysely read returns. */
+function givenRows({ subscriptions = [goldSubscription()], score = SCORE as number | null } = {}) {
   q.getImagePlacementTarget.mockResolvedValue({
     id: IMAGE,
     userId: OWNER,
@@ -109,20 +87,12 @@ function givenBothPaths({
   q.countPlacements.mockResolvedValue(RESERVED);
   q.getUserPlacementScore.mockResolvedValue([{ score }] as never);
   q.listUserSubscriptionRows.mockResolvedValue(subscriptions as never);
+  // getCapTier's Prisma read, which only a non-placement caller makes (the getCapTier cases).
+  dbMock.dbWrite.customerSubscription.findMany.mockResolvedValue(subscriptions);
 }
 
 const givenChapter = ({ removed = false, status = 'Ongoing' } = {}) => {
   const removedAt = removed ? new Date('2026-10-02T00:00:00Z') : null;
-  dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({
-    removedAt,
-    storyline: {
-      id: STORYLINE,
-      userId: OWNER,
-      status,
-      tosViolation: false,
-      user: { username: 'creator' },
-    },
-  });
   q.getChapterPlacementTarget.mockResolvedValue({
     removedAt,
     storylineId: STORYLINE,
@@ -133,7 +103,7 @@ const givenChapter = ({ removed = false, status = 'Ongoing' } = {}) => {
   } as never);
 };
 
-/** Every Prisma read the family makes, so an ON run can be shown to make none of them. */
+/** Every Prisma read the family used to make, so a run can be shown to make none of them. */
 const prismaReads = () => [
   dbMock.dbWrite.image.findUnique,
   dbMock.dbWrite.model.findUnique,
@@ -148,9 +118,6 @@ const kyselyReads = () => Object.values(q).filter((fn) => vi.isMockFunction(fn))
 
 const expectNoPrismaRead = () => {
   for (const read of prismaReads()) expect(read).not.toHaveBeenCalled();
-};
-const expectNoKyselyRead = () => {
-  for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
 };
 
 beforeEach(() => {
@@ -167,26 +134,19 @@ describe('resolvePlacementSpaceFor', () => {
   const imageSpace = () =>
     resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: IMAGE });
 
-  it('evaluates the flag by key, with no entity or context', async () => {
-    givenBothPaths();
+  it('invariant: no placement flag check remains; every evaluation is `getPlacementConfig`s, by key alone', async () => {
+    givenRows();
     await imageSpace();
-    expect(flag).toHaveBeenCalledWith(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS);
-    // Every evaluation is by key alone, and of a key this path is known to read: the placement
-    // reads' own flag, and `kysely-hot-reads-5`, which `getPlacementConfig` evaluates for its
-    // KeyValue read. Any other key, or any entity/context argument, fails here.
-    const KNOWN_KEYS = ['kysely-placement-reads', 'kysely-hot-reads-5'];
-    for (const call of flag.mock.calls) {
-      expect(call).toHaveLength(1);
-      expect(KNOWN_KEYS).toContain(call[0]);
-    }
+    expect(flag).toHaveBeenCalledWith('kysely-hot-reads-5');
+    for (const call of flag.mock.calls) expect(call).toEqual(['kysely-hot-reads-5']);
   });
 
-  it('OFF: resolves an image space through Prisma only', async () => {
-    givenBothPaths();
-    const space = await imageSpace();
-    expect(space).toMatchObject({
+  it('resolves an image space through Kysely only, each read on its own database', async () => {
+    givenRows();
+    await expect(imageSpace()).resolves.toMatchObject({
       ownerId: OWNER,
       ownerUsername: 'creator',
+      mode: 'review',
       setPrice: 900,
       price: 900,
       cap: 2500,
@@ -194,23 +154,10 @@ describe('resolvePlacementSpaceFor', () => {
       freeSlots: 5,
       freeSlotsRemaining: 5 - RESERVED,
     });
-    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.placement.count).toHaveBeenCalledTimes(1);
-    expectNoKyselyRead();
-  });
-
-  it('ON: resolves the same image space through Kysely only, each read on its own database', async () => {
-    givenBothPaths();
-    const off = await imageSpace();
-    const prismaReservedWhere = dbMock.dbRead.placement.count.mock.calls[0][0].where;
-    vi.clearAllMocks();
-    flag.mockResolvedValue(true);
-
-    await expect(imageSpace()).resolves.toEqual(off);
     expectNoPrismaRead();
 
     // The owner lookup, the space rows and the cap tier decide what a placement may charge, so
-    // they read the primary as the Prisma path does; the reserved count is display-only.
+    // they read the primary; the reserved count is display-only.
     expect(q.getImagePlacementTarget).toHaveBeenCalledWith(kyselyWrite, IMAGE);
     expect(q.getImagePlacementTarget.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.listPlacementSpacesFor.mock.calls[0][0]).toBe(kyselyWrite);
@@ -225,11 +172,8 @@ describe('resolvePlacementSpaceFor', () => {
     expect(q.listUserSubscriptionRows.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.getUserPlacementScore.mock.calls[0][0]).toBe(kyselyRead);
     expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
-    // The reserved count's twin guard: the Kysely count gets the very predicate the Prisma count
-    // got, and that predicate is the reserved-slot one (pinned literally, so neither side can
-    // drift with the other).
-    expect(q.countPlacements.mock.calls[0][1]).toEqual(prismaReservedWhere);
-    expect(prismaReservedWhere).toEqual({
+    // The reserved-slot predicate, the one the claim's in-lock count takes.
+    expect(q.countPlacements.mock.calls[0][1]).toEqual({
       surface: 'sticker',
       targetType: 'image',
       targetId: IMAGE,
@@ -238,46 +182,54 @@ describe('resolvePlacementSpaceFor', () => {
     });
   });
 
-  it('ON: a missing image is refused exactly as on Prisma', async () => {
-    givenBothPaths();
-    dbMock.dbWrite.image.findUnique.mockResolvedValue(null);
+  it('a missing image is refused', async () => {
+    givenRows();
     q.getImagePlacementTarget.mockResolvedValue(undefined);
-    await expect(imageSpace()).rejects.toThrow(/that image no longer exists/);
-    flag.mockResolvedValue(true);
     await expect(imageSpace()).rejects.toThrow(/that image no longer exists/);
   });
 
-  it('ON: resolves a model space to the same answer, on the primary', async () => {
-    givenBothPaths();
-    const modelSpace = () =>
+  it('resolves a model space on the primary', async () => {
+    givenRows();
+    await expect(
       resolvePlacementSpaceFor({
         surface: 'galleryPromotion',
         targetType: 'model',
         targetId: MODEL,
-      });
-    const off = await modelSpace();
-    expect(off).toMatchObject({ ownerId: OWNER, ownerUsername: 'creator' });
-    flag.mockResolvedValue(true);
-
-    await expect(modelSpace()).resolves.toEqual(off);
+      })
+    ).resolves.toMatchObject({ ownerId: OWNER, ownerUsername: 'creator' });
     expect(q.getModelPlacementTarget.mock.calls[0]).toEqual([kyselyWrite, MODEL]);
     expect(q.getModelPlacementTarget.mock.calls[0][0]).toBe(kyselyWrite);
+    expectNoPrismaRead();
   });
 
-  it('ON: resolves a storyline chapter to its storyline creator and closes a completed one, as Prisma does', async () => {
-    givenBothPaths();
-    givenChapter({ status: 'Complete' });
-    const chapterSpace = () =>
+  it('a missing model is refused', async () => {
+    givenRows();
+    q.getModelPlacementTarget.mockResolvedValue(undefined);
+    await expect(
       resolvePlacementSpaceFor({
-        surface: 'storyline',
-        targetType: 'post',
-        targetId: CHAPTER_POST,
-      });
-    const off = await chapterSpace();
-    expect(off).toMatchObject({ ownerId: OWNER, storylineId: STORYLINE, mode: 'off' });
-    flag.mockResolvedValue(true);
+        surface: 'galleryPromotion',
+        targetType: 'model',
+        targetId: MODEL,
+      })
+    ).rejects.toThrow(/that model no longer exists/);
+  });
 
-    await expect(chapterSpace()).resolves.toEqual(off);
+  const chapterSpace = () =>
+    resolvePlacementSpaceFor({
+      surface: 'storyline',
+      targetType: 'post',
+      targetId: CHAPTER_POST,
+    });
+
+  it('resolves a storyline chapter to its storyline creator and closes a completed one', async () => {
+    givenRows();
+    givenChapter({ status: 'Complete' });
+    await expect(chapterSpace()).resolves.toMatchObject({
+      ownerId: OWNER,
+      ownerUsername: 'creator',
+      storylineId: STORYLINE,
+      mode: 'off',
+    });
     expect(q.getChapterPlacementTarget.mock.calls[0]).toEqual([kyselyWrite, CHAPTER_POST]);
     expect(q.getChapterPlacementTarget.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.listPlacementSpacesFor.mock.calls[0][1]).toEqual({
@@ -287,79 +239,74 @@ describe('resolvePlacementSpaceFor', () => {
         { entityType: 'user', entityId: OWNER },
       ],
     });
+    expectNoPrismaRead();
   });
 
-  it('ON: an ongoing chapter stays open, so the Complete case above is not the mapping hardcoding off', async () => {
-    givenBothPaths();
+  it('an ongoing chapter stays open, so the Complete case above is not the mapping hardcoding off', async () => {
+    givenRows();
     givenChapter({ status: 'Ongoing' });
-    flag.mockResolvedValue(true);
-    const space = await resolvePlacementSpaceFor({
-      surface: 'storyline',
-      targetType: 'post',
-      targetId: CHAPTER_POST,
-    });
+    const space = await chapterSpace();
     expect(space.mode).not.toBe('off');
   });
 
-  it('ON: a removed chapter is refused as not a chapter, as on Prisma', async () => {
-    givenBothPaths();
+  it('a removed chapter is refused as not a chapter', async () => {
+    givenRows();
     givenChapter({ removed: true });
-    const chapterSpace = () =>
-      resolvePlacementSpaceFor({
-        surface: 'storyline',
-        targetType: 'post',
-        targetId: CHAPTER_POST,
-      });
     await expect(chapterSpace()).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
-    flag.mockResolvedValue(true);
+  });
+
+  it('a post that is not a chapter is refused as not a chapter', async () => {
+    givenRows();
+    q.getChapterPlacementTarget.mockResolvedValue(undefined);
     await expect(chapterSpace()).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
   });
 });
 
 describe('placementPriceRange', () => {
-  it('ON: prices from the same score and tier as Prisma, score on the replica', async () => {
-    givenBothPaths();
-    const off = await placementPriceRange(OWNER, 'sticker');
-    expect(off).toMatchObject({ max: 2500, freeSlotCap: 8, score: SCORE, tier: 'gold' });
-    vi.clearAllMocks();
-    flag.mockResolvedValue(true);
-
-    await expect(placementPriceRange(OWNER, 'sticker')).resolves.toEqual(off);
+  it('prices from the Kysely score (on the replica) and tier (on the primary)', async () => {
+    givenRows();
+    await expect(placementPriceRange(OWNER, 'sticker')).resolves.toMatchObject({
+      max: 2500,
+      freeSlotCap: 8,
+      score: SCORE,
+      tier: 'gold',
+    });
     expect(q.getUserPlacementScore.mock.calls[0]).toEqual([kyselyRead, OWNER]);
     expect(q.getUserPlacementScore.mock.calls[0][0]).toBe(kyselyRead);
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(q.listUserSubscriptionRows.mock.calls[0][0]).toBe(kyselyWrite);
+    expectNoPrismaRead();
   });
 
-  it('ON: an unknown user (no row) and a user with no score both price at score 0, as on Prisma', async () => {
+  it('an unknown user (no row) and a user with no score both price at score 0', async () => {
     for (const rows of [[], [{ score: null }]]) {
-      givenBothPaths({ subscriptions: [] });
-      dbMock.dbRead.$queryRaw.mockResolvedValue(rows);
+      givenRows({ subscriptions: [] });
       q.getUserPlacementScore.mockResolvedValue(rows as never);
-      flag.mockResolvedValue(false);
-      const off = await placementPriceRange(OWNER, 'sticker');
-      flag.mockResolvedValue(true);
-      await expect(placementPriceRange(OWNER, 'sticker')).resolves.toEqual(off);
-      expect(off).toMatchObject({ score: 0, tier: 'free', max: 100 });
+      await expect(placementPriceRange(OWNER, 'sticker')).resolves.toMatchObject({
+        score: 0,
+        tier: 'free',
+        max: 100,
+      });
     }
   });
 });
 
-describe('getCapTier', () => {
-  it('useKysely: reads the subscriptions from the primary and keeps every filter the Prisma path applies', async () => {
-    const rows = [
-      goldSubscription({ status: 'past_due' }), // bad state: buys no cap
-      goldSubscription({ metadata: { renewalEmailSent: true } }), // no longer counts
-      {
-        ...goldSubscription(),
-        id: 'sub-bronze',
-        product: { ...goldSubscription().product, metadata: { tier: 'bronze' } },
-      },
-    ];
-    givenBothPaths({ subscriptions: rows });
-    const off = await getCapTier(OWNER);
-    expect(off).toBe('bronze');
+describe('getCapTierViaKysely (the placement path) and getCapTier', () => {
+  const rows = () => [
+    goldSubscription({ status: 'past_due' }), // bad state: buys no cap
+    goldSubscription({ metadata: { renewalEmailSent: true } }), // no longer counts
+    {
+      ...goldSubscription(),
+      id: 'sub-bronze',
+      product: { ...goldSubscription().product, metadata: { tier: 'bronze' } },
+    },
+  ];
 
-    await expect(getCapTier(OWNER, { useKysely: true })).resolves.toBe(off);
+  it('reads the subscriptions from the primary and keeps every filter getCapTier applies', async () => {
+    givenRows({ subscriptions: rows() });
+    await expect(getCapTier(OWNER)).resolves.toBe('bronze');
+    expect(q.listUserSubscriptionRows).not.toHaveBeenCalled();
+
+    await expect(getCapTierViaKysely(OWNER)).resolves.toBe('bronze');
     expect(q.listUserSubscriptionRows.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.listUserSubscriptionRows.mock.calls[0][1]).toEqual({
       userId: OWNER,
@@ -367,27 +314,14 @@ describe('getCapTier', () => {
     });
   });
 
-  it('useKysely: a good-standing gold subscription is gold, so the case above is not the port answering bronze', async () => {
-    givenBothPaths();
-    await expect(getCapTier(OWNER, { useKysely: true })).resolves.toBe('gold');
+  it('a good-standing gold subscription is gold, so the case above is not the port answering bronze', async () => {
+    givenRows();
+    await expect(getCapTierViaKysely(OWNER)).resolves.toBe('gold');
   });
 });
 
 describe('getPendingPlacementCounts', () => {
-  it('OFF: counts from the Prisma groupBy only', async () => {
-    dbMock.dbRead.placement.groupBy.mockResolvedValue([
-      { surface: 'sticker', _count: { _all: 3 } },
-      { surface: 'remixGallery', _count: { _all: 4 } },
-    ]);
-    await expect(getPendingPlacementCounts({ ownerId: OWNER })).resolves.toEqual({
-      sticker: 3,
-      remix: 4,
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the same badge counts from Kysely on the replica', async () => {
-    flag.mockResolvedValue(true);
+  it('the badge counts from Kysely on the replica', async () => {
     q.countPendingPlacementsBySurface.mockResolvedValue([
       { surface: 'sticker', count: 3 },
       { surface: 'remixGallery', count: 4 },
@@ -399,10 +333,10 @@ describe('getPendingPlacementCounts', () => {
     expect(q.countPendingPlacementsBySurface.mock.calls[0]).toEqual([kyselyRead, OWNER]);
     expect(q.countPendingPlacementsBySurface.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.placement.groupBy).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: a surface with no pending rows reads 0', async () => {
-    flag.mockResolvedValue(true);
+  it('a surface with no pending rows reads 0', async () => {
     q.countPendingPlacementsBySurface.mockResolvedValue([{ surface: 'remixGallery', count: 4 }]);
     await expect(getPendingPlacementCounts({ ownerId: OWNER })).resolves.toEqual({
       sticker: 0,

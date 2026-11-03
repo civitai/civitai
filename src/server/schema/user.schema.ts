@@ -211,6 +211,8 @@ export const deleteUserSchema = z.object({
   username: usernameSchema.optional(),
   removeModels: z.boolean().optional(),
   removeImages: z.boolean().optional(),
+  /** Also delete the account's App Blocks document-store data (`remove-deleted-account-app-data`). */
+  removeAppData: z.boolean().optional(),
 });
 
 export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
@@ -379,6 +381,7 @@ export const userSettingsSchema = z.object({
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
   // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
   // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
@@ -389,6 +392,12 @@ export const userSettingsSchema = z.object({
   // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
   // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
   eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Opt-in, per event name: accept team hat stickers (events/turf). Placing needs it, and only images
+  // of owners who have it are turf. Written only by hatTurf.setOptIn.
+  eventTurfOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
+  // or absent means the default. Written only by event.setShowcaseHat.
+  eventShowcaseHat: z.record(z.string(), z.number().int().nullable()).optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -465,6 +474,7 @@ export const setUserSettingsInput = z.object({
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
   hideFromReactionLists: z.boolean().optional(),
   showPreLaunchReactions: z.boolean().optional(),
@@ -570,6 +580,8 @@ export const userMeta = z.object({
   muteReason: z.string().optional(),
   mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Read by `remove-deleted-account-app-data`.
+  appDataRemoval: z.literal('requested').optional(),
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),

@@ -186,6 +186,10 @@ const FULL_CREDENTIAL = 'full credential';
 const OUTSIDE_WRAPPERS: Record<string, string> = {
   'media/ingest/[mediaId]': FULL_CREDENTIAL,
   'testing/model3d-seed': FULL_CREDENTIAL,
+  'blocks/submit-version':
+    'App Blocks author submit: moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
+  'v1/blocks/submit-version':
+    'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
@@ -193,6 +197,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
+  'training-studio/check-text':
+    'passed to the edit-prompt audit, the same flag the generator gives auditPromptServer',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
@@ -502,11 +508,19 @@ describe('namesIdentifier and callsImported', () => {
  * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
  */
 const FULL_SCOPE_SESSION_ROUTES = [
+  // App Assistant's preview strip and page tool: the caller's own app's recent activity.
+  'apps/assistant/activity',
   'apps/assistant/preview',
   'apps/assistant/run-grant',
   'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
+  // The /apps/dev page's Retry: a freshly signed dev-tunnel entry URL.
+  'apps/dev/entry-url',
+  // The dev-tunnel host's errors from the caller's own live preview, for App Assistant.
+  'apps/dev/preview-errors',
   'auth/freshdesk',
+  // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
+  'blocks/submit-version',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',

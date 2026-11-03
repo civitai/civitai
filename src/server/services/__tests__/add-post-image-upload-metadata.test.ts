@@ -142,6 +142,37 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     expect(mocks.getMetadata).not.toHaveBeenCalled();
   });
 
+  it('creates the image as a client url', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user } as never).catch(() => null);
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: KEY, userId: 5, clientUrl: true })
+    );
+  });
+
+  it('creates a server-minted url without the client url flag', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({
+      url: KEY,
+      type: 'image',
+      postId: 1,
+      user,
+      serverMintedUrl: true,
+    } as never).catch(() => null);
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(createImage).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.clientUrl).toBeUndefined();
+    expect(args).not.toHaveProperty('serverMintedUrl');
+  });
+
   it('still proceeds when the upload cannot be read', async () => {
     mocks.readImageUploadObjectHead.mockRejectedValue(new Error('NoSuchKey'));
 

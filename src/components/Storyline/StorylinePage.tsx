@@ -26,6 +26,7 @@ import { openStorylineFirstChapterModal } from '~/components/Storyline/openStory
 import {
   StorylineClosedChip,
   StorylineRoleChip,
+  StorylineRootHiddenChip,
   StorylineStat,
   StorylineStatusChip,
   storylineCardClass,
@@ -33,6 +34,10 @@ import {
 import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
+import {
+  StorylineInviteAlert,
+  StorylineLeaveCollaboration,
+} from '~/components/Storyline/StorylineInviteAlert';
 import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
 import { storylineChapterLink } from '~/components/Storyline/storyline-mode.utils';
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
@@ -91,6 +96,15 @@ export function StorylinePage({ id }: { id: number }) {
           lastPostId={lastPost?.id ?? null}
           terms={shownTerms}
         />
+        {storyline.viewerRole === 'collaborator' && (
+          <StorylineLeaveCollaboration storylineId={storyline.id} />
+        )}
+        {storyline.viewerInvited && (
+          <StorylineInviteAlert
+            storylineId={storyline.id}
+            ownerUsername={storyline.user.username}
+          />
+        )}
         {storyline.titleAppealable && (
           <FlagAppealAlert
             entityType={EntityType.Storyline}
@@ -163,6 +177,9 @@ function StorylineHeader({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap gap-1.5">
             <StorylineStatusChip status={storyline.status} />
+            {storyline.rootHiddenReason && (
+              <StorylineRootHiddenChip reason={storyline.rootHiddenReason} />
+            )}
             <StorylineClosedNotice storyline={storyline} terms={terms} />
           </div>
           <Title order={1} fw={800} lh={1.05} className="break-words text-[26px] sm:text-[40px]">
@@ -248,10 +265,7 @@ function StorylineHeader({
               <IconSettings size={20} />
             </ActionIcon>
           )}
-          <StorylineContextMenu
-            storylineId={storyline.id}
-            isOwner={storyline.viewerRole === 'owner'}
-          />
+          <StorylineContextMenu storyline={storyline} isOwner={storyline.viewerRole === 'owner'} />
         </div>
       </div>
     </header>

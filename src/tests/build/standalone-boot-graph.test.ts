@@ -148,6 +148,74 @@ describe('scripts/ci/assert-standalone-boot-graph.mjs', () => {
     expect(run(empty).status).toBe(2);
   });
 
+  // The image also passes the standalone tRPC server's files, which live in a subdirectory and
+  // require Next internals by deep path plus a sibling by relative path.
+  describe('with extra entrypoints', () => {
+    function makeSubdirEntry(root: string, { traceDeepFile }: { traceDeepFile: boolean }) {
+      makeTree(root, { traceModuleSync: true });
+      const lib = join(root, 'node_modules', 'deep-pkg', 'dist', 'internal');
+      mkdirSync(lib, { recursive: true });
+      writeFileSync(
+        join(root, 'node_modules', 'deep-pkg', 'package.json'),
+        JSON.stringify({ name: 'deep-pkg', version: '1.0.0' })
+      );
+      if (traceDeepFile) writeFileSync(join(lib, 'helper.js'), 'exports.h = 1;\n');
+      mkdirSync(join(root, 'sub'), { recursive: true });
+      writeFileSync(join(root, 'sub', 'sibling.cjs'), 'exports.s = 1;\n');
+      writeFileSync(
+        join(root, 'sub', 'entry.cjs'),
+        [
+          "const fs = require('node:fs')",
+          "require('deep-pkg/dist/internal/helper')",
+          "const s = require('./sibling.cjs')",
+          'function lazy() {',
+          "  require('not-loaded-at-module-scope')",
+          '}',
+        ].join('\n')
+      );
+    }
+
+    it('is red when a deep-path require of an extra entry was not traced', () => {
+      const root = join(dir, 'extra-broken');
+      makeSubdirEntry(root, { traceDeepFile: false });
+
+      const res = run(root, 'server.js', 'sub/entry.cjs');
+
+      expect(res.status).toBe(1);
+      expect(`${res.stdout}${res.stderr}`).toContain('MODULE_NOT_FOUND');
+      expect(`${res.stdout}${res.stderr}`).toContain('deep-pkg/dist/internal/helper');
+    });
+
+    it('is green once traced, resolving relative requires from the entry itself', () => {
+      const root = join(dir, 'extra-fixed');
+      makeSubdirEntry(root, { traceDeepFile: true });
+
+      const res = run(root, 'server.js', 'sub/entry.cjs');
+
+      expect(res.stderr).toBe('');
+      expect(res.status).toBe(0);
+      // Positive control: each specifier really loaded, and the indented one was not attempted.
+      expect(res.stdout).toContain('ok  condition-split  (server.js)');
+      // Separator-agnostic, as above: the entry label is a platform path.
+      expect(res.stdout).toMatch(
+        /ok {2}deep-pkg\/dist\/internal\/helper {2}\(sub[\\/]entry\.cjs\)/
+      );
+      expect(res.stdout).toMatch(/ok {2}\.\/sibling\.cjs {2}\(sub[\\/]entry\.cjs\)/);
+      expect(res.stdout).not.toContain('not-loaded-at-module-scope');
+      expect(res.stdout).toContain('OK: all 3 entrypoint module(s) load');
+    });
+
+    it('exits 2 when a named entry does not exist', () => {
+      const root = join(dir, 'extra-missing');
+      makeTree(root, { traceModuleSync: true });
+
+      const res = run(root, 'server.js', 'sub/entry.cjs');
+
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain('cannot observe input');
+    });
+  });
+
   it('exits 2 when nothing was traced into the tree at all', () => {
     const root = join(dir, 'no-node-modules');
     mkdirSync(root, { recursive: true });

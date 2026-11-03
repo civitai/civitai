@@ -52,6 +52,8 @@ describe('a CosmeticShop home block', () => {
   beforeEach(() => {
     vi.useRealTimers();
     getHomeBlockCached.mockReset();
+    isFliptPublic.mockReset();
+    getShopSectionsWithItems.mockReset();
   });
 
   it('without `random` is served exactly as the cache holds it', async () => {
@@ -144,10 +146,39 @@ describe('a CosmeticShop home block', () => {
       });
 
       expect(isFliptPublic).toHaveBeenCalledWith('creator-shop');
-      expect(getShopSectionsWithItems).toHaveBeenLastCalledWith({
-        sectionId: 9,
-        creatorShopEnabled: isPublic,
-      });
+      expect(getShopSectionsWithItems).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sectionId: 9, creatorShopEnabled: isPublic })
+      );
     }
   );
+
+  it.each([
+    [true, [1, 2]],
+    [false, [1]],
+  ])('shows sticker items only while stickers is public (%s)', async (isPublic, expected) => {
+    isFliptPublic.mockImplementation(async (flag: string) => flag === 'stickers' && isPublic);
+    // Stands in for the shop service's sticker filter, which its own suite pins.
+    getShopSectionsWithItems.mockImplementation(
+      async ({ stickersEnabled }: { stickersEnabled?: boolean }) => [
+        {
+          id: 9,
+          items: [
+            { shopItem: { id: 1, cosmetic: { type: 'Badge' } } },
+            { shopItem: { id: 2, cosmetic: { type: 'Sticker' } } },
+          ].filter((i) => stickersEnabled || i.shopItem.cosmetic.type !== 'Sticker'),
+        },
+      ]
+    );
+
+    const block = await getHomeBlockData({
+      homeBlock: {
+        id: 40,
+        type: HomeBlockType.CosmeticShop,
+        metadata: { cosmeticShopSection: { id: 9 } },
+      },
+      input: {},
+    });
+
+    expect(ids(block as ShopBlock)).toEqual(expected);
+  });
 });

@@ -7,30 +7,34 @@ import { Kysely, PostgresDialect, type CompiledQuery } from 'kysely';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
-import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
 import {
   readModelWithDetailsViaKysely,
   type ModelWithDetails,
 } from '~/server/services/model-details.reads';
 import {
   readUserCreatorViaKysely,
-  readUserCreatorViaPrisma,
   type UserCreatorRead,
   type UserCreatorWhere,
 } from '~/server/services/user-creator.reads';
 import { getImageThread } from '@civitai/db-queries/hot-reads';
-import { readImageTagsViaKysely, readImageTagsViaPrisma } from '~/server/redis/image-tags.reads';
+import {
+  readImageTagsViaKysely,
+  type ImageTagsForImagesRow,
+} from '~/server/redis/image-tags.reads';
 
 /**
- * Parity gate for the reads behind `kysely-hot-reads-2`: the model page's `modelWithDetailsSelect`
- * read, the creator card, the image tags behind `imageTagsCache` and an image's comment thread. Both paths run against the same rows in the same database and must
- * return the same value, `toStrictEqual`: timestamps as UTC Dates, `licensingFee` as a
+ * The Kysely reads that replaced the Prisma ones behind the retired `kysely-hot-reads-2` flag: the
+ * model page's `modelWithDetailsSelect` read, the creator card, the image tags behind
+ * `imageTagsCache` and an image's comment thread. Each must return, `toStrictEqual`, the value the
+ * Prisma read returned for the same rows: timestamps as UTC Dates, `licensingFee` as a
  * `Prisma.Decimal`, enums as strings, JSON decoded, a missing to-one relation as `null`, an empty
  * to-many as `[]`.
  *
- * The creator card's Prisma side is `readUserCreatorViaPrisma`, the function the service runs. The
- * model's Prisma side is `getModel`'s own `findFirst` with the same imported select (getModel itself
- * picks its client through the lag helpers).
+ * Those values are fixtures/hot-reads-2-golden.json, printed by the Prisma reads (the model's
+ * `findFirst` with `modelWithDetailsSelect`, `readUserCreatorViaPrisma`, the image tags'
+ * `imageTag.findMany` and the thread's `findUnique`) against these same fixture rows in CI, before
+ * they were deleted. A change to the fixture rows needs the golden re-derived by hand.
  *
  * Relations no Prisma read orders (licenses, links, cosmetics, files, hashes, recommended
  * resources) are compared after sorting by key: neither path promises their order. The versions
@@ -121,6 +125,10 @@ const IMAGE_UNTAGGED = 2103;
 const THREAD_LOCKED = 9301;
 const THREAD_OPEN = 9302;
 const THREAD_OF_MODEL = 9303;
+
+const golden = readTaggedGolden(
+  resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/hot-reads-2-golden.json')
+);
 
 describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma returned', () => {
   const prisma = new PrismaClient({ datasourceUrl: parityUrl && withSchema(parityUrl) });
@@ -339,9 +347,6 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     await db.destroy();
   });
 
-  const prismaModel = (id: number) =>
-    prisma.model.findFirst({ where: { id }, select: modelWithDetailsSelect });
-
   describe('the model page (modelWithDetailsSelect)', () => {
     it.each([
       ['a model with every relation filled', MODEL],
@@ -349,13 +354,12 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       ['a model whose creator is deleted', MODEL_OF_DELETED],
       ['a missing model', MISSING],
     ])('%s', async (_, id) => {
-      const viaPrisma = await prismaModel(id);
       const viaKysely = await readModelWithDetailsViaKysely(kysely, id);
-      expect(sortModel(viaKysely)).toStrictEqual(sortModel(viaPrisma));
+      expect(sortModel(viaKysely)).toStrictEqual(golden.take(`model:${id}`));
     });
 
     it('control: the full model exercises every relation, so its equality is not vacuous', async () => {
-      const model = await prismaModel(MODEL);
+      const model = golden.peek<ModelWithDetails>(`model:${MODEL}`);
       expect(model?.licenses).toHaveLength(2);
       expect(model?.reportStats).toEqual({ ownershipProcessing: 2 });
       expect(model?.user.rank).toEqual({ leaderboardRank: 9 });
@@ -373,7 +377,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       const empty = model?.modelVersions.find((v) => v.id === V_EMPTY);
       expect(empty?.generationCoverage).toBeNull();
       expect(full?.metrics).toHaveLength(1);
-      const bare = await prismaModel(MODEL_BARE);
+      const bare = golden.peek<ModelWithDetails>(`model:${MODEL_BARE}`);
       expect(bare?.user.rank).toBeNull();
       expect(bare?.reportStats).toBeNull();
       expect(bare?.modelVersions).toEqual([]);
@@ -394,13 +398,12 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       ['a missing user', { id: MISSING }],
       ['an explicitly undefined username', { id: BARE, username: undefined }],
     ])('%s', async (_, where) => {
-      const viaPrisma = await readUserCreatorViaPrisma(prisma, where);
       const viaKysely = await readUserCreatorViaKysely(kysely, where);
-      expect(sortCreator(viaKysely)).toStrictEqual(sortCreator(viaPrisma));
+      expect(sortCreator(viaKysely)).toStrictEqual(golden.take(`creator:${_}`));
     });
 
     it('control: the full card exercises every relation, so its equality is not vacuous', async () => {
-      const read = await readUserCreatorViaPrisma(prisma, { id: CREATOR });
+      const read = golden.peek<UserCreatorRead>('creator:by id, every relation filled');
       expect(read?.modelCount).toBe(1);
       expect(read?.user.links).toHaveLength(2);
       expect(read?.user.cosmetics.map((c) => c.cosmetic.id).sort()).toEqual([
@@ -419,7 +422,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(read?.user.rank).not.toBeNull();
       expect(read?.user.profilePicture?.id).toBe(PICTURE);
       expect(read?.user.bannedAt).toBeInstanceOf(Date);
-      const bare = await readUserCreatorViaPrisma(prisma, { id: BARE });
+      const bare = golden.peek<UserCreatorRead>('creator:a user with no relations');
       expect(bare).toMatchObject({ modelCount: 0 });
       expect(bare?.user).toMatchObject({ stats: null, rank: null, profilePicture: null });
     });
@@ -431,15 +434,18 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       ['an untagged image', [IMAGE_UNTAGGED]],
       ['no images', []],
     ])('%s, in the same order', async (_, ids) => {
-      const viaPrisma = await readImageTagsViaPrisma(prisma, ids);
       const viaKysely = await readImageTagsViaKysely(kysely, ids);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`tags:${_}`));
     });
 
     it('control: the order is score desc, then tagId asc, and the rows carry Dates', async () => {
-      const rows = await readImageTagsViaPrisma(prisma, [PICTURE, IMAGE_TWO]);
+      const rows = await readImageTagsViaKysely(kysely, [PICTURE, IMAGE_TWO]);
       expect(rows.map((row) => row.tagId)).toEqual([9811, 9812, 9814, 9813]);
       expect(rows[0].lastUpvote).toBeInstanceOf(Date);
+      // The same rows the golden case holds, so the order above is the captured one.
+      expect(golden.peek<ImageTagsForImagesRow[]>('tags:several images, one untagged')).toEqual(
+        rows
+      );
     });
   });
 
@@ -449,17 +455,18 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       ['an open thread', IMAGE_TWO],
       ['no thread', IMAGE_UNTAGGED],
     ])('%s', async (_, imageId) => {
-      const viaPrisma = await prisma.thread.findUnique({
-        where: { imageId },
-        select: { id: true, locked: true },
-      });
       const viaKysely = (await getImageThread(kysely, imageId)) ?? null;
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`thread:${_}`));
     });
 
     it('control: the fixture threads are found', async () => {
       expect(await getImageThread(kysely, PICTURE)).toEqual({ id: THREAD_LOCKED, locked: true });
     });
+  });
+
+  // Last in the file: every captured case is still asserted above, so none can be dropped quietly.
+  it('every golden case is asserted', () => {
+    expect(golden.unused()).toEqual([]);
   });
 });
 

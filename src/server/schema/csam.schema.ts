@@ -49,6 +49,15 @@ export const createCsamReportSchema = z.object({
   imageIds: z.number().array().optional(),
   details: csamReportDetails.optional(),
   type: z.enum(CsamReportType),
+  /** A sent image report on the same user that this one supplements. */
+  supplementalOf: z.number().int().positive().optional(),
+});
+
+export type GetCsamSupplementalPreviewSchema = z.infer<typeof getCsamSupplementalPreviewSchema>;
+export const getCsamSupplementalPreviewSchema = z.object({
+  userId: z.number().int().positive(),
+  imageIds: z.number().int().positive().array().max(1000),
+  supplementalOf: z.number().int().positive(),
 });
 
 // #endregion

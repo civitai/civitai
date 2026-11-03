@@ -30,20 +30,28 @@
  * what ships — NOT against the builder, whose complete `node_modules` sits above `.next/standalone`
  * on the resolution path and can satisfy a require the shipped image cannot.
  *
+ * MORE THAN ONE ENTRYPOINT. Usage: `assert-standalone-boot-graph.mjs <root> [entry ...]`. With no
+ * entry it checks `server.js`. Each named entry (a path relative to `<root>`) is scanned the same
+ * way and its specifiers are resolved FROM THAT FILE (`createRequire`), so an entry in a
+ * subdirectory resolves its relative requires and walks the same `node_modules` the running
+ * process will. The image passes `server.js` plus the standalone tRPC server's files
+ * (`trpc-server/*.cjs`), which require Next internals by deep path that nothing else checks.
+ *
  * Exit codes: 0 pass, 1 a required module could not be loaded, 2 the check could not observe its
- * input (no root, no `node_modules`, no specifiers found) — a scan that sees nothing must not
- * report health.
+ * input (no root, no `node_modules`, a named entry missing, an entry with no specifiers) — a scan
+ * that sees nothing must not report health.
  */
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 const CHILD_TIMEOUT_MS = 180_000;
 
 const root = resolve(process.argv[2] ?? '.next/standalone');
-const entry = join(root, 'server.js');
+const entryArgs = process.argv.slice(3);
+const entries = (entryArgs.length > 0 ? entryArgs : ['server.js']).map((e) => join(root, e));
 
 /** Node builtins are always resolvable and prove nothing about the trace. */
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
@@ -54,11 +62,11 @@ function fail2(message) {
 }
 
 if (!existsSync(root)) fail2(`standalone root ${root} does not exist`);
-if (!existsSync(entry)) fail2(`${entry} does not exist — this is not a standalone output tree`);
+for (const entry of entries) {
+  if (!existsSync(entry)) fail2(`${entry} does not exist — this is not a standalone output tree`);
+}
 if (!existsSync(join(root, 'node_modules')))
   fail2(`${join(root, 'node_modules')} does not exist — nothing was traced into this tree`);
-
-const source = readFileSync(entry, 'utf8');
 
 // Only UNINDENTED lines. The generated server.js is flat, so column 0 is module scope — which
 // keeps two things out: a lazily-required module inside a function body (requiring it eagerly
@@ -66,33 +74,52 @@ const source = readFileSync(entry, 'utf8');
 // worse than no gate), and any `require('…')` that happens to sit inside the inlined
 // `const nextConfig = {…}` JSON on its own line. Specifiers never contain whitespace or a
 // scheme; anything that does is text, not a module.
-const specifiers = [
-  ...new Set(
-    source
-      .split('\n')
-      .filter((line) => /^\S/.test(line))
-      .flatMap((line) =>
-        [...line.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1])
-      )
-      .filter((s) => !BUILTINS.has(s) && !/\s|:\/\//.test(s))
-  ),
-];
-
-if (specifiers.length === 0)
-  fail2(
-    `found no non-builtin require() specifier in ${entry}. Either Next changed how it emits the ` +
-      'standalone entrypoint or this file is not the entrypoint; either way this check proved nothing.'
-  );
+function moduleScopeSpecifiers(file) {
+  return [
+    ...new Set(
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => /^\S/.test(line))
+        .flatMap((line) =>
+          [...line.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1])
+        )
+        .filter((s) => !BUILTINS.has(s) && !/\s|:\/\//.test(s))
+    ),
+  ];
+}
 
 console.log(`standalone root : ${root}`);
-console.log(`entrypoint      : ${entry}`);
-console.log(`specifiers      : ${specifiers.join(', ')}`);
+const plan = [];
+for (const entry of entries) {
+  const specifiers = moduleScopeSpecifiers(entry);
+  if (specifiers.length === 0)
+    fail2(
+      `found no non-builtin require() specifier in ${entry}. Either Next changed how it emits the ` +
+        'standalone entrypoint or this file is not the entrypoint; either way this check proved nothing.'
+    );
+  console.log(`entrypoint      : ${entry}`);
+  console.log(`specifiers      : ${specifiers.join(', ')}`);
+  plan.push({ entry, specifiers });
+}
 
-// Load them the way the real process does: a child rooted at the shipped tree, so resolution
-// walks the shipped node_modules and nothing above it.
-const probe = specifiers
-  .map((s) => `require(${JSON.stringify(s)}); console.log('  ok  ' + ${JSON.stringify(s)});`)
-  .join('\n');
+// Load them the way the real process does: a child rooted at the shipped tree, each specifier
+// resolved from the file that requires it, so resolution walks the shipped node_modules and
+// nothing above it.
+const probe = [
+  "const { createRequire } = require('node:module');",
+  ...plan.flatMap(({ entry, specifiers }) => [
+    `{ const r = createRequire(${JSON.stringify(entry)});`,
+    ...specifiers.map(
+      (s) =>
+        `r(${JSON.stringify(s)}); console.log('  ok  ' + ${JSON.stringify(
+          `${s}  (${relative(root, entry)})`
+        )});`
+    ),
+    '}',
+  ]),
+].join('\n');
+
+const total = plan.reduce((n, p) => n + p.specifiers.length, 0);
 
 const child = spawnSync(process.execPath, ['-e', probe], {
   cwd: root,
@@ -104,7 +131,7 @@ const child = spawnSync(process.execPath, ['-e', probe], {
 if (child.stdout) process.stdout.write(child.stdout);
 
 if (child.status === 0) {
-  console.log(`\nOK: all ${specifiers.length} entrypoint module(s) load from the shipped tree.`);
+  console.log(`\nOK: all ${total} entrypoint module(s) load from the shipped tree.`);
   process.exit(0);
 }
 

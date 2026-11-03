@@ -672,6 +672,12 @@ export const CsamReportType = {
   ExternalLink: 'ExternalLink',
 } as const;
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];
+export const CsamQueueSetAsideOutcome = {
+  AfterReport: 'AfterReport',
+  Dismissed: 'Dismissed',
+} as const;
+export type CsamQueueSetAsideOutcome =
+  (typeof CsamQueueSetAsideOutcome)[keyof typeof CsamQueueSetAsideOutcome];
 export const Availability = {
   Public: 'Public',
   Unsearchable: 'Unsearchable',

@@ -10,6 +10,20 @@ vi.mock('~/server/services/comment.service', async (importOriginal) => ({
   ...svc,
 }));
 
+// The showcase hat has its own cache and tests (events/showcase-hat.ts); here it only has to reach
+// the right author.
+const SHOWCASE_HAT = { cosmeticId: 5, url: 'hat.png', until: '2026-12-01T00:00:00.000Z' };
+const showcase = vi.hoisted(() => ({
+  getShowcaseHatsForUsers: vi.fn(
+    async (_ids: number[]): Promise<Record<number, typeof SHOWCASE_HAT>> => ({})
+  ),
+}));
+vi.mock('~/server/events/showcase-hat', () => ({ ...showcase, getShowcaseHatForUser: vi.fn() }));
+const hatFor = (...owners: number[]) =>
+  showcase.getShowcaseHatsForUsers.mockImplementation(async (ids: number[]) =>
+    Object.fromEntries(ids.filter((id) => owners.includes(id)).map((id) => [id, SHOWCASE_HAT]))
+  );
+
 const { getCommentsInfiniteHandler } = await import('~/server/controllers/comment.controller');
 
 /**
@@ -71,6 +85,7 @@ describe('comment.getAll authors', () => {
   });
 
   it('carries each author picture and worn cosmetics from cache, read in one batch', async () => {
+    hatFor(AUTHOR);
     const { comments } = await getAll();
 
     const badge = {
@@ -78,9 +93,9 @@ describe('comment.getAll authors', () => {
       cosmetic: { id: 1, data: { url: 'b.png' }, type: 'Badge', source: 'Event', name: 'Badge' },
     };
     expect(comments.map((c) => [c.id, c.user])).toStrictEqual([
-      [3, { ...user(PINNER), profilePicture: null, cosmetics: [badge] }],
-      [1, { ...user(AUTHOR), profilePicture: picture, cosmetics: [] }],
-      [2, { ...user(PINNER), profilePicture: null, cosmetics: [badge] }],
+      [3, { ...user(PINNER), profilePicture: null, showcaseHat: null, cosmetics: [badge] }],
+      [1, { ...user(AUTHOR), profilePicture: picture, showcaseHat: SHOWCASE_HAT, cosmetics: [] }],
+      [2, { ...user(PINNER), profilePicture: null, showcaseHat: null, cosmetics: [badge] }],
     ]);
     expect(dbMock.dbRead.userCosmetic.findMany).toHaveBeenCalledTimes(1);
   });

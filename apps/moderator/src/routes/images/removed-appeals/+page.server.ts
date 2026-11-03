@@ -1,9 +1,10 @@
 import { fail } from '@sveltejs/kit';
-import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { parseForm } from '$lib/server/query';
-import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
-import { getRemovedAppeals, resolveRemovedAppeal } from '$lib/server/removed-appeals.service';
+import {
+  getRemovedAppeals,
+  parseRemovedAppealRuling,
+  resolveRemovedAppeal,
+} from '$lib/server/removed-appeals.service';
 
 const LIMIT = 100;
 
@@ -24,21 +25,15 @@ export const actions: Actions = {
     const form = await request.formData();
     const appealId = appealIdOf(form);
     if (!appealId) return fail(400, { error: 'Missing appeal id.' });
-    const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
-    const resolvedMessage =
-      String(form.get('resolvedMessage') ?? '')
-        .trim()
-        .slice(0, 1000) || undefined;
-    const input = parseForm(z.object(resolutionReasonFields), form);
-    const reason =
-      typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
-    if (typeof reason === 'string') return fail(400, { error: reason, appealId });
+    const ruling = parseRemovedAppealRuling(form);
+    if (typeof ruling === 'string') return fail(400, { error: ruling, appealId });
 
     const closed = await resolveRemovedAppeal({
       appealId,
-      decision: status,
-      resolvedMessage,
-      ...reason,
+      decision: ruling.status,
+      resolvedMessage: ruling.resolvedMessage,
+      resolvedReason: ruling.resolvedReason,
+      internalNotes: ruling.internalNotes,
       moderatorId: locals.user.id,
     });
     if (!closed) return fail(409, { error: ALREADY_DECIDED, appealId });

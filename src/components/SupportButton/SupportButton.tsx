@@ -9,6 +9,7 @@ import {
   createPolymorphicComponent,
   UnstyledButton,
 } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps, Icon } from '@tabler/icons-react';
 import {
@@ -206,19 +207,33 @@ export const SupportButtonPolymorphic = createPolymorphicComponent<
   SupportButtonBaseProps
 >(SupportButtonBase);
 
-/** The same pill as `SupportButton`, small enough to sit beside a name. */
+/**
+ * The membership offer as a pill small enough to sit under a name. A span with a link role, not an
+ * anchor: the user menu renders it inside the profile link.
+ */
 export function SupportChip({ onClick }: { onClick?: () => void }) {
-  const { href, text, icon: Icon, variant } = useSupportOption();
+  const { href, icon: Icon, variant } = useSupportOption();
+  const router = useRouter();
+  const open = (event: React.SyntheticEvent, newTab = false) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick?.();
+    if (newTab) window.open(href, '_blank', 'noopener');
+    else void router.push(href);
+  };
   return (
-    <Link
-      href={href}
-      onClick={onClick}
+    <span
+      role="link"
+      tabIndex={0}
+      onClick={(event) => open(event, event.metaKey || event.ctrlKey)}
+      onAuxClick={(event) => event.button === 1 && open(event, true)}
+      onKeyDown={(event) => event.key === 'Enter' && open(event, event.metaKey || event.ctrlKey)}
       className={clsx(classes.supportButton, classes.supportChip, getVariantStyles(variant))}
     >
       <Text component="span" size="xs" fw={700} className={classes.supportButtonText}>
-        {text}
+        Become a member
       </Text>
       <Icon size={14} className={classes.supportButtonIcon} />
-    </Link>
+    </span>
   );
 }

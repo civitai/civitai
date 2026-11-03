@@ -21,6 +21,11 @@ import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
+import {
+  getPlacementParties,
+  placementIdOf,
+  type PlacementParties,
+} from './placement-flows.service';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -1092,12 +1097,10 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .selectFrom('ReToolActions')
     .select(['id', 'Event as at', 'User as moderator', 'App as app', 'ActionType as action'])
     // 🔴 The id must follow a SUBJECT LABEL, not merely be a standalone number. `ActionType` is free
-    // text and 56% of rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
+    // text and many rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
     // `Banned 47 accounts` — so a bare word-boundary match attributed every image COUNT and strike
-    // number to whichever account shares that value. Measured against the moderator database: id 1
-    // matched 22,130 unrelated rows, id 2 matched 7,289, id 5 matched 2,331 (2,204 of them
-    // `ToS 5 images…`), and 101 accounts have an id under 100. Anchoring costs nothing — on real
-    // 6-7 digit subject ids both forms return identical rows.
+    // number to whichever account shares that value: a low id matched thousands of unrelated rows.
+    // Anchoring costs nothing — on real subject ids both forms return identical rows.
     //
     // `from ` requires digits immediately after, which is what excludes `ToS N images from modelId
     // <id>` — that number is a MODEL id, not this account.
@@ -1263,7 +1266,8 @@ export type TrainingRun = {
 
 export async function getTrainingRuns(
   userId: number,
-  limit = 25
+  limit = 25,
+  { charges = true }: { charges?: boolean } = {}
 ): Promise<{ runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null }> {
   const rows = await dbRead
     .selectFrom('Model as m')
@@ -1364,7 +1368,7 @@ export async function getTrainingRuns(
     params: r.params,
   }));
 
-  return { runs, truncated, charges: await getTrainingCharges(userId, runs) };
+  return { runs, truncated, charges: charges ? await getTrainingCharges(userId, runs) : null };
 }
 
 export type TrainingChargeRow = {
@@ -1448,9 +1452,12 @@ async function getTrainingCharges(
         JSONExtractString(details, 'workflowId') AS workflowId
       FROM buzzTransactions
       WHERE type = 'training' AND fromAccountId = ${Math.trunc(userId)}
-      ORDER BY date DESC
     `);
     if (!rows.length) return null;
+    // Sorted here, not in the query: `ORDER BY date DESC` on this 1.5B-row table measured 13-30s+
+    // against 0.4-0.55s without it. There was no LIMIT, so only the order moves.
+    const at = (date: string) => utcMs(date) || 0;
+    rows.sort((a, b) => at(b.date) - at(a.date));
 
     // A retrain reuses the version, so one run can account for several charges — every `Submitted` in
     // its history is one. `submittedAt` covers the ~8% of files with no history array.
@@ -1579,6 +1586,21 @@ const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) =
   ORDER BY type
 `;
 
+const placementOf = (
+  p: PlacementParties | undefined,
+  users: Map<number, { username: string | null }>
+): BuzzTransaction['placement'] =>
+  p
+    ? {
+        id: p.placementId,
+        surface: p.surface,
+        placerId: p.placerId,
+        placerName: users.get(p.placerId)?.username ?? null,
+        ownerId: p.ownerId,
+        ownerName: users.get(p.ownerId)?.username ?? null,
+      }
+    : null;
+
 /**
  * ONE side of the ledger — payments (money out) or receipts (money in).
  *
@@ -1623,11 +1645,26 @@ export async function getBuzzLedgerSide(
   const page = rows.slice(0, limit);
 
   // A counterparty id is only a USER id when the counterparty is a user-held account. Other account
-  // types reuse the same integer space: `creatorProgramBank` transacts as account 202607/202608, and
-  // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
-  // creator as the counterparty of every Creator Program transfer.
+  // types reuse the same integer space: `creatorProgramBank`'s account ids are also real, unrelated
+  // user ids — resolving them would name an innocent creator as the counterparty of every Creator
+  // Program transfer.
   const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
-  const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
+  // A placement's legs run through the escrow account, so the counterparty on the row is account 0;
+  // the placement itself names who paid and who was paid. Only escrow rows are read as legs, so no
+  // other row's reference can borrow a placement's parties.
+  const escrowRef = (r: BuzzRow) =>
+    Number(r.counterpartyId) === 0 ? r.externalTransactionId : null;
+  // The labels are extra: if this read fails the rows still show, without them.
+  const placements = await getPlacementParties(page.map(escrowRef)).catch((e) => {
+    console.error('[user-lookup] placement parties unavailable', e);
+    return new Map<number, PlacementParties>();
+  });
+  const ids = [
+    ...new Set([
+      ...resolvable.map((r) => Number(r.counterpartyId)),
+      ...[...placements.values()].flatMap((p) => [p.placerId, p.ownerId]),
+    ]),
+  ].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
   const mapped: BuzzTransaction[] = page.map((r) => {
@@ -1648,6 +1685,7 @@ export async function getBuzzLedgerSide(
       counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
       counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
       externalTransactionId: r.externalTransactionId || null,
+      placement: placementOf(placements.get(placementIdOf(escrowRef(r)) ?? 0), byId),
     };
   });
 

@@ -23,6 +23,7 @@ const TOPICS = [
   'postgres.CollectionItem',
   'postgres.Comment',
   'postgres.CommentV2',
+  'postgres.CommentV3',
   'postgres.ImageReaction',
   'postgres.ImageResourceNew',
   'postgres.Outbox',
@@ -42,9 +43,7 @@ const TOPICS = [
 const TOPIC_CONFIG = {
   numPartitions: 1,
   replicationFactor: 1,
-  configEntries: [
-    { name: 'min.insync.replicas', value: '1' }
-  ]
+  configEntries: [{ name: 'min.insync.replicas', value: '1' }],
 };
 
 async function createKafkaTopics(topicsToSetup: string[] = TOPICS) {
@@ -78,7 +77,7 @@ async function createKafkaTopics(topicsToSetup: string[] = TOPICS) {
       } else {
         topicsToCreate.push({
           topic: topicName,
-          ...TOPIC_CONFIG
+          ...TOPIC_CONFIG,
         });
         console.log(`   ➕ Will create topic "${topicName}"`);
       }
@@ -89,13 +88,13 @@ async function createKafkaTopics(topicsToSetup: string[] = TOPICS) {
       console.log(`\n🔨 Creating ${topicsToCreate.length} topics...`);
       await admin.createTopics({
         topics: topicsToCreate,
-        waitForLeaders: true
+        waitForLeaders: true,
       });
       console.log(`✅ Successfully created ${topicsToCreate.length} Kafka topics`);
 
       // List created topics
       console.log('\n📋 Created topics:');
-      topicsToCreate.forEach(topic => {
+      topicsToCreate.forEach((topic) => {
         console.log(`   - ${topic.topic}`);
       });
     } else {
@@ -108,7 +107,6 @@ async function createKafkaTopics(topicsToSetup: string[] = TOPICS) {
       const status = existingTopics.includes(topicName) ? '✓' : '✗';
       console.log(`   ${status} ${topicName}`);
     }
-
   } catch (error) {
     console.error('❌ Failed to create Kafka topics:', error);
     process.exit(1);

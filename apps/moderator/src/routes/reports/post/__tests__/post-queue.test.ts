@@ -16,6 +16,7 @@ const setReportStatus = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
   getReportStatusCounts: vi.fn(async () => ({})),
+  getUnpublishedSourceCounts: vi.fn(async () => ({})),
   setReportStatus,
 }));
 const getPostLookup = vi.fn(async (id: number) => ({
@@ -24,12 +25,16 @@ const getPostLookup = vi.fn(async (id: number) => ({
   truncated: false,
   total: 0,
 }));
+const getRecentImagesOutsidePost = vi.fn(async () => [{ id: 9 }]);
 vi.mock('$lib/server/image-lookup.service', () => ({
   getPostLookup,
+  getRecentImagesOutsidePost,
   postsByIds: vi.fn(async () => new Map()),
 }));
 const loadAccountHistory = vi.fn(async () => ({ strikes: [] }));
 vi.mock('$lib/server/account-history', () => ({ loadAccountHistory }));
+const getPostStorylineChapter = vi.fn(async () => null as unknown);
+vi.mock('$lib/server/storyline-takedown.service', () => ({ getPostStorylineChapter }));
 const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/report-actions', () => ({ reportModerationActions: () => ({}) }));
@@ -80,6 +85,19 @@ describe('the queue layout', () => {
     expect(touched).toContain('status');
     expect(touched).not.toContain('imgPage');
   });
+
+  it('narrows to one unpublish reason, and ignores one it does not know', async () => {
+    await layoutLoad({ url: url('/reports/post?unpublished=nudify'), locals } as never);
+    expect(getReports).toHaveBeenCalledWith(
+      expect.objectContaining({ unpublishedReason: 'nudify' })
+    );
+
+    getReports.mockClear();
+    await layoutLoad({ url: url('/reports/post?unpublished=banana'), locals } as never);
+    expect(getReports).toHaveBeenCalledWith(
+      expect.objectContaining({ unpublishedReason: undefined })
+    );
+  });
 });
 
 describe('the post pages', () => {
@@ -92,6 +110,21 @@ describe('the post pages', () => {
     });
     const data = (await indexLoad({ parent, locals } as never)) as Item;
     expect(data.item).toMatchObject({ postId: 40, tab: 'images' });
+  });
+
+  it('carries the storyline a chapter post belongs to', async () => {
+    const chapter = {
+      storylineId: 3,
+      title: 'A story',
+      number: 2,
+      removed: false,
+      tosViolation: false,
+      minorByScan: true,
+    };
+    getPostStorylineChapter.mockResolvedValueOnce(chapter);
+    const { item } = await runPost({ postId: '40' });
+    expect(getPostStorylineChapter).toHaveBeenCalledWith(40);
+    expect((item as { storylineChapter?: unknown }).storylineChapter).toEqual(chapter);
   });
 
   it("loads the post's own open reports, by the post", async () => {
@@ -109,6 +142,11 @@ describe('the post pages', () => {
     const owner = await runPost({ postId: '40', tab: 'owner' });
     expect(loadAccountHistory).toHaveBeenCalledWith(31, 'mod');
     expect(owner.item?.accountHistory).not.toBeNull();
+  });
+
+  it("shows the owner's other images beside the post's, excluding the post itself", async () => {
+    await runPost({ postId: '40' });
+    expect(getRecentImagesOutsidePost).toHaveBeenCalledWith(31, 40);
   });
 
   it('a path that is not a post id is a 404', async () => {

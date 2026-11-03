@@ -1,5 +1,5 @@
 import { IconInfoCircle } from '@tabler/icons-react';
-import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -16,6 +16,7 @@ import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacement
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
+import clsx from 'clsx';
 
 export function ImageCard({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
@@ -53,7 +54,7 @@ export function ImageCard({ data }: Props) {
         </div>
       }
       footer={({ safe }) => (
-        <div className="flex w-full flex-col gap-2">
+        <div className={clsx(cardClasses.footer, 'flex w-full flex-col gap-2')}>
           {/* In the footer, not over the media: this card's footer is painted on
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
@@ -66,36 +67,60 @@ export function ImageCard({ data }: Props) {
               namePillPlate: cardClasses.creatorPillPlate,
             }}
           />
-          <div className="flex flex-wrap justify-between gap-1">
-            <Reactions
-              className={cardClasses.reactions}
-              entityId={data.id}
-              entityType="image"
-              reactions={data.reactions}
-              metricsUnknown={data.stats?.statsUnknown}
-              metrics={{
-                likeCount: data.stats?.likeCountAllTime,
-                dislikeCount: data.stats?.dislikeCountAllTime,
-                heartCount: data.stats?.heartCountAllTime,
-                laughCount: data.stats?.laughCountAllTime,
-                cryCount: data.stats?.cryCountAllTime,
-                tippedAmountCount: data.stats?.tippedAmountCountAllTime,
-              }}
-              targetUserId={data.user.id}
-              disableBuzzTip={data.poi}
-            />
-            {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
-            {features.imageCardInfoButton && data.hasMeta && (
-              <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                <ThemeIcon className={cardClasses.infoChip} variant="light">
-                  <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                </ThemeIcon>
-              </ImageMetaPopover2>
-            )}
-          </div>
+          <ImageCardActionRow data={data} />
         </div>
       )}
     />
+  );
+}
+
+function ImageCardActionRow({ data }: Props) {
+  const features = useFeatureFlags();
+  const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
+
+  return (
+    <div className={cardClasses.actions}>
+      <div className={cardClasses.actionRow}>
+        <Reactions
+          className={cardClasses.reactions}
+          entityId={data.id}
+          entityType="image"
+          reactions={data.reactions}
+          metricsUnknown={data.stats?.statsUnknown}
+          metrics={{
+            likeCount: data.stats?.likeCountAllTime,
+            dislikeCount: data.stats?.dislikeCountAllTime,
+            heartCount: data.stats?.heartCountAllTime,
+            laughCount: data.stats?.laughCountAllTime,
+            cryCount: data.stats?.cryCountAllTime,
+          }}
+          targetUserId={data.user.id}
+          abbreviate
+          disableBuzzTip
+        />
+      </div>
+      <div className={cardClasses.tipRow}>
+        {!data.poi && (
+          <ImageBuzzTip
+            entityId={data.id}
+            targetUserId={data.user.id}
+            tippedAmountCount={data.stats?.tippedAmountCountAllTime}
+            metricsUnknown={data.stats?.statsUnknown}
+            className={clsx(cardClasses.reactions, 'flex items-center pl-0.5')}
+          />
+        )}
+        <div className={cardClasses.tipEnd}>
+          {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
+          {hasMetaButton && (
+            <ImageMetaPopover2 imageId={data.id} type={data.type}>
+              <ThemeIcon className={cardClasses.infoChip} variant="light">
+                <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+              </ThemeIcon>
+            </ImageMetaPopover2>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

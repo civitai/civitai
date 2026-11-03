@@ -174,8 +174,7 @@ export const getEntityCollaborators = async ({
       // checks). A bare `findUnique` fetched every Post column, which on this
       // read path meant three `new Date()` and a `JSON.parse` of `metadata`
       // per call, all discarded.
-      // `kysely-hot-reads-5` on: the owner and the collaborator rows in one statement, on the
-      // same replica (a post's collaborators' users still read through Prisma, same select).
+      // ON, the collaborators' users still read through Prisma, with the same select.
       const read = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
         ? await readPostCollaboratorsViaKysely((await loadKyselyDb()).kyselyRead, dbRead, entityId)
         : await readPostCollaboratorsViaPrisma(dbRead, entityId);

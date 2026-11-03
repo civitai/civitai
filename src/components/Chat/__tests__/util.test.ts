@@ -1,8 +1,14 @@
+import { MantineProvider } from '@mantine/core';
+import { find as findLinks } from 'linkifyjs';
+import Linkify from 'linkify-react';
 import type { ReactElement } from 'react';
+import { createElement, isValidElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   chatPreviewText,
   getLinkHref,
+  linkifyOptions,
   MODERATOR_BADGE_COSMETIC_ID,
   renderLink,
   showsChatModeratorMark,
@@ -101,6 +107,47 @@ describe('renderLink', () => {
     } as never) as ReactElement<{ href: string; target: string }>;
     expect(el.props.href).toBe('https://civitai.red/models/123');
     expect(el.props.target).toBe('_blank');
+  });
+
+  it('renders an off-allowlist href as its text, still an element linkify-react can key', () => {
+    const el = renderLink({
+      attributes: { href: 'https://example.com/x' },
+      content: 'https://example.com/x',
+    } as never);
+    expect(isValidElement(el)).toBe(true);
+    expect(renderToStaticMarkup(el)).toBe('https://example.com/x');
+  });
+});
+
+// Rendered the way ExistingChat renders a message body.
+const renderMessage = (text: string) =>
+  renderToStaticMarkup(
+    createElement(MantineProvider, null, createElement(Linkify, { options: linkifyOptions }, text))
+  );
+
+describe('a chat message through Linkify', () => {
+  it.each([
+    'mail me at someone@example.com please',
+    'see https://example.com/x',
+    'see https://civitai.red.evil.com/x',
+  ])('renders %s as plain text without throwing', (text) => {
+    const html = renderMessage(text);
+    expect(html).not.toContain('<a');
+    expect(html).toContain(text);
+  });
+
+  it('still links allowlisted URLs', () => {
+    const html = renderMessage('https://civitai.com/models/123 and https://github.com/civitai');
+    expect(html).toContain('href="/models/123"');
+    expect(html).toContain('href="https://github.com/civitai"');
+  });
+
+  it('hands only allowlisted URLs to the server-side unfurl', () => {
+    const links = findLinks(
+      'someone@example.com https://example.com/x https://civitai.red.evil.com/x https://github.com/civitai',
+      linkifyOptions
+    );
+    expect(links.map((l) => l.href)).toEqual(['https://github.com/civitai']);
   });
 });
 

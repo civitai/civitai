@@ -46,7 +46,7 @@ describe('elementBackend trigger word check', () => {
     ],
     [
       'continueRun',
-      (b: ReturnType<typeof elementBackend>) => b.continueRun('wf', 1, 1, []),
+      (b: ReturnType<typeof elementBackend>) => b.continueRun('wf', 1, 1, [], false),
       core.continueTraining,
     ],
   ] as const)(
@@ -100,5 +100,28 @@ describe('elementBackend auto-label payer', () => {
     });
     expect(autoLabelSubmit).toHaveBeenCalledWith(items, 'tag', 'image');
     expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('elementBackend modelLive', () => {
+  it("answers with the host's check", async () => {
+    const modelLive = vi.fn(async () => false);
+    await expect(elementBackend({ ...host(), modelLive }).modelLive(77)).resolves.toBe(false);
+    expect(modelLive).toHaveBeenCalledWith(77);
+  });
+
+  it('keeps the link on a host without the hook', async () => {
+    await expect(elementBackend(host()).modelLive(77)).resolves.toBe(true);
+  });
+});
+
+describe('elementBackend mature confirm', () => {
+  beforeEach(() => {
+    core.continueTraining.mockReset().mockResolvedValue('wf');
+  });
+
+  it.each([true, false])('hands the core the ack the panel gave (%s)', async (ack) => {
+    await elementBackend(host(async () => ({ ok: true }))).continueRun('wf', 1, 1, ['blue'], ack);
+    expect(core.continueTraining.mock.calls[0][1]).toMatchObject({ workflowId: 'wf', matureAck: ack });
   });
 });

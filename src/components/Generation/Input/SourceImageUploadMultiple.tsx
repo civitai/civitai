@@ -51,6 +51,7 @@ import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { transferSourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import { recentSourceImagesStore, sourceImageKey } from '~/store/recent-source-images.store';
 import { isConsumerBlobUrl } from '~/shared/orchestrator/blob-url';
 import {
@@ -2308,7 +2309,10 @@ export async function uploadOrchestratorImage(
         : typeof metadataSource === 'string'
         ? metadataSource
         : undefined;
-    if (provenanceFrom && uploadedUrl) remixProvenanceStore.transfer(provenanceFrom, uploadedUrl);
+    if (provenanceFrom && uploadedUrl) {
+      remixProvenanceStore.transfer(provenanceFrom, uploadedUrl);
+      transferSourceRating(provenanceFrom, uploadedUrl);
+    }
 
     // Cached before the url reaches the value, so the dimension check does not download it again.
     if (uploadedUrl) sourceMetadataStore.setMetadata(uploadedUrl, resizedSize);

@@ -1,11 +1,12 @@
-import { Anchor, Badge, Stack, Text } from '@mantine/core';
-import { IconCheck } from '@tabler/icons-react';
+import { Anchor, Badge, Button, Stack, Text, TextInput } from '@mantine/core';
+import { IconCheck, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useId } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
-import { STORYLINE_CONTINUE_POST_LIMIT } from '~/components/Storyline/storyline-ui';
+import type { StorylinePostPaging } from '~/components/Storyline/storyline.data';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import { isStorylineVerdictLevel } from '~/shared/utils/storyline-placement';
 import { formatDate } from '~/utils/date-helpers';
 
 export type StorylineContinuePost = {
@@ -27,7 +28,7 @@ export function StorylinePostPicker({
   postsError,
   alreadyChapters = 0,
   allChaptersText,
-  morePosts,
+  paging,
   postId,
   onPostChange,
   ceiling,
@@ -40,8 +41,7 @@ export function StorylinePostPicker({
   alreadyChapters?: number;
   /** Shown when every post was left out for being a chapter already. */
   allChaptersText: string;
-  /** Only the most recent posts are offered. */
-  morePosts?: boolean;
+  paging?: StorylinePostPaging;
   postId: number | null;
   onPostChange: (postId: number | null) => void;
   /** The storyline's ceiling, as a label. */
@@ -55,6 +55,16 @@ export function StorylinePostPicker({
       <Text size="sm" fw={500} id={pickerLabelId}>
         Your post
       </Text>
+      {paging && (
+        <TextInput
+          size="sm"
+          placeholder="Search by the start of a title"
+          aria-label="Search by the start of a title"
+          leftSection={<IconSearch size={16} />}
+          value={paging.search}
+          onChange={(event) => paging.onSearchChange(event.currentTarget.value)}
+        />
+      )}
       {postsLoading ? (
         <div className="grid grid-cols-3 gap-2">
           {Array.from({ length: 6 }, (_, i) => (
@@ -64,6 +74,10 @@ export function StorylinePostPicker({
       ) : postsError ? (
         <Text size="sm" c="red">
           Couldn&apos;t load your posts.
+        </Text>
+      ) : !posts.length && paging?.search.trim() && !alreadyChapters && !paging.hasMore ? (
+        <Text size="sm" c="dimmed">
+          None of your posts has a title starting with “{paging.search.trim()}”.
         </Text>
       ) : !posts.length ? (
         <Text size="sm" c="dimmed">
@@ -97,10 +111,16 @@ export function StorylinePostPicker({
             : `${alreadyChapters} of your posts are already chapters, so they aren’t listed.`}
         </Text>
       )}
-      {morePosts && (
-        <Text size="xs" c="dimmed">
-          Your {STORYLINE_CONTINUE_POST_LIMIT} most recent published posts.
-        </Text>
+      {paging?.hasMore && !postsLoading && (
+        <Button
+          variant="default"
+          size="xs"
+          onClick={paging.loadMore}
+          loading={paging.loadingMore}
+          className="self-center"
+        >
+          Show older posts
+        </Button>
       )}
     </Stack>
   );
@@ -120,7 +140,12 @@ function StorylinePostTile({
   onSelect: () => void;
 }) {
   const name = post.title || (post.publishedAt ? formatDate(post.publishedAt) : `Post ${post.id}`);
-  const rating = post.nsfwLevel ? getBrowsingLevelLabel(post.nsfwLevel) : 'Not rated yet';
+  const unusable = isStorylineVerdictLevel(post.nsfwLevel);
+  const rating = !post.nsfwLevel
+    ? 'Not rated yet'
+    : unusable
+    ? "Can't be used"
+    : getBrowsingLevelLabel(post.nsfwLevel);
 
   return (
     <button
@@ -130,7 +155,9 @@ function StorylinePostTile({
       aria-label={
         aboveCeiling
           ? `${name}, above this storyline's ${ceiling} limit`
-          : `${name}, ${post.nsfwLevel ? `rated ${rating}` : 'not rated yet'}`
+          : `${name}, ${
+              !post.nsfwLevel ? 'not rated yet' : unusable ? "can't be used" : `rated ${rating}`
+            }`
       }
       onClick={onSelect}
       className={clsx(

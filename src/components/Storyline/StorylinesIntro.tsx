@@ -18,16 +18,21 @@ import {
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
+import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { StartStorylineButton } from '~/components/Storyline/StartStorylineButton';
 
 export const STORYLINES_INTRO_DISMISSED_KEY = 'storylines-intro-dismissed';
 
 /**
  * The film that explains Storylines, played from the welcome's hero. It is an edge-hosted video's
- * id, as the birthday event's `heroVideo` is. Empty until the film is published: the hero then
- * shows its art with no play button.
+ * id, as the birthday event's `heroVideo` is. Set to null, the hero shows its art with no play
+ * button.
  */
-export const STORYLINES_INTRO_VIDEO: { id: string; title: string } | null = null;
+export const STORYLINES_INTRO_VIDEO: { id: string; title: string; duration?: number } | null = {
+  id: '1083c3b4-8ccb-4081-973e-c846f334c1c5',
+  title: 'Storylines',
+  duration: 75.947,
+};
 
 /** Chapter 2 of the demo story: CivBot and CivChan at rival podiums. An edge image id, like a post's. */
 const HERO_ART = 'c86ab790-e9ae-4f8b-9460-bfa77aca52ab';
@@ -74,13 +79,13 @@ function StorylinesIntroHero({ video }: { video: typeof STORYLINES_INTRO_VIDEO }
         <UnstyledButton
           onClick={() => openIntroVideo(video)}
           aria-label={`Watch the ${video.title} video`}
-          className="group absolute inset-0 flex flex-col items-center justify-end gap-1.5 pb-4"
+          className="group absolute inset-0 flex flex-col items-center justify-center gap-2"
         >
-          <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
-            <IconPlayerPlayFilled size={22} />
+          <span className="flex size-20 items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110 group-focus-visible:scale-110">
+            <IconPlayerPlayFilled size={32} />
           </span>
-          <span className="rounded-full bg-dark-9/40 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-md">
-            Watch
+          <span className="rounded-full bg-dark-9/70 px-3 py-1 text-sm font-semibold text-white backdrop-blur-sm">
+            {video.duration ? `Watch · ${filmLength(video.duration)}` : 'Watch'}
           </span>
         </UnstyledButton>
       )}
@@ -130,6 +135,20 @@ export function StorylinesIntro({
             Stories told in images, one chapter at a time, by more than one creator. Read one from
             the start, or pick it up where it ends and write what happens next.
           </Text>
+          {STORYLINES_INTRO_VIDEO && (
+            <Button
+              variant="light"
+              color="violet"
+              radius="xl"
+              size="xs"
+              mb="md"
+              className="md:hidden"
+              leftSection={<IconPlayerPlayFilled size={14} />}
+              onClick={() => openIntroVideo(STORYLINES_INTRO_VIDEO)}
+            >
+              Watch the video
+            </Button>
+          )}
 
           {/* Compact rows on a phone, so the first storylines start on the first screen. */}
           <div className="grid grid-cols-1 gap-1 sm:grid-cols-3 sm:gap-4">

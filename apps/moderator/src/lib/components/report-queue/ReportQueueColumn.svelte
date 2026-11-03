@@ -30,6 +30,8 @@
     dates = false,
     onNavigate,
     toolbar,
+    compactFilters = false,
+    extraFilters,
   }: {
     /** The bare queue, e.g. `/reports/model`. */
     basePath: string;
@@ -46,6 +48,9 @@
     onNavigate?: () => void;
     /** Queue-wide actions under the filters — the post queue's sweep. Not shown in a single-report view. */
     toolbar?: Snippet;
+    /** `ReportFilters`' compact layout, with the queue's own filters (`extraFilters`) under Reason. */
+    compactFilters?: boolean;
+    extraFilters?: Snippet;
   } = $props();
 
   const totalPages = $derived(Math.max(1, Math.ceil(queue.totalItems / queue.limit)));
@@ -95,6 +100,8 @@
       statusCounts={queue.statusCounts}
       dates={dates ? { from: queue.reportedFrom, to: queue.reportedTo } : undefined}
       {navigate}
+      compact={compactFilters}
+      extra={extraFilters}
     />
     {#if toolbar}{@render toolbar()}{/if}
   {/if}

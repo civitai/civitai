@@ -318,7 +318,20 @@ export const ActionType = [
   // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
   // tracker restart in migrations/README.md); the item, group and section ride in `details`.
   'UserMenu_Click',
+  // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
+  // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
+  'Push_Prompt',
+  // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
+  'Experiment_Exposure',
+  'HatTurf_Action',
 ] as const;
+
+// Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
+// experiment readouts that need only the user id.
+const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+  'Experiment_Exposure',
+  'HatTurf_Action',
+]);
 export type ActionType = (typeof ActionType)[number];
 
 // No deviceId here. The browser fingerprint that populated the ClickHouse `deviceId`
@@ -776,6 +789,7 @@ export class Tracker {
   // not what a reversible, private product control should leave behind.
   public action(values: { type: ActionType; details?: any }, options?: { skipActorMeta: boolean }) {
     const { details, ...rest } = values;
+    if (ACTOR_META_FREE_ACTION_TYPES.has(values.type)) options = { skipActorMeta: true };
     return this.track(
       'actions',
       {
@@ -795,8 +809,19 @@ export class Tracker {
     return this.track('bugReports', values);
   }
 
-  public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
-    return this.track('modelEvents', { ...values, ...this.provenance });
+  /** `userId` names the actor when the request has none, as a moderator's transfer. */
+  public modelEvent(values: {
+    type: ModelActivty;
+    modelId: number;
+    nsfw: boolean;
+    userId?: number;
+    time?: Date;
+  }) {
+    return this.track('modelEvents', {
+      ...values,
+      ...this.provenance,
+      time: values.time ?? new Date(),
+    });
   }
 
   public redeemableCode(activity: string, details: { quantity?: number; code?: string }) {
@@ -830,8 +855,11 @@ export class Tracker {
     targetUserId: number;
     source?: string;
     landingPage?: string;
+    time?: Date;
   }) {
-    return this.track('userActivities', values);
+    // Replicated inserts dedupe identical blocks: with a server-filled time, the same action on
+    // the same target by the same actor (ban, unban, ban) repeats an earlier row and is dropped.
+    return this.track('userActivities', { ...values, time: values.time ?? new Date() });
   }
 
   public resourceReview(values: {
@@ -1019,6 +1047,18 @@ export class Tracker {
     );
   }
 
+  // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
+  // none): migrations/2026-10-28-image-upload-requests.sql.
+  /** `userId` names who the key was issued to when the request has no session, as in a job. */
+  public imageUploadRequest(key: string, userId?: number) {
+    return this.send('imageUploadRequests', ({ actor }) => ({
+      userId: userId ?? actor.userId,
+      ip: actor.ip,
+      key,
+      time: new Date(),
+    }));
+  }
+
   public search(values: { query: string; index: string; filters?: any }) {
     const { filters, ...rest } = values;
     return this.track('search', {
@@ -1142,7 +1182,7 @@ export class Tracker {
   public retoolAudit(values: {
     action: string;
     privileged: boolean;
-    outcome: 'ok' | 'error';
+    outcome: 'ok' | 'error' | 'warning';
     errorMsg?: string;
     payload: Record<string, unknown>;
     affected?: Record<string, unknown>;
@@ -1154,6 +1194,9 @@ export class Tracker {
       errorMsg: values.errorMsg ?? '',
       payload: JSON.stringify(values.payload),
       affected: values.affected ? JSON.stringify(values.affected) : '',
+      // Replicated inserts dedupe identical blocks; a repeated call with a server-filled
+      // createdAt is byte-identical and silently dropped.
+      createdAt: new Date(),
     });
   }
 

@@ -1,0 +1,498 @@
+{
+  "image:201": {
+    "ownerId": 101,
+    "postId": 301,
+    "type": "video",
+    "ownerUsername": "alice"
+  },
+  "image:202": {
+    "ownerId": 102,
+    "postId": null,
+    "type": "image",
+    "ownerUsername": null
+  },
+  "model:401": {
+    "ownerId": 101,
+    "ownerUsername": "alice"
+  },
+  "chapter:601": {
+    "removedAt": null,
+    "storyline": {
+      "id": 501,
+      "userId": 101,
+      "status": "Ongoing",
+      "tosViolation": false,
+      "user": {
+        "username": "alice"
+      }
+    }
+  },
+  "chapter:602": {
+    "removedAt": {
+      "$date": "2026-10-20T13:14:15.678Z"
+    },
+    "storyline": {
+      "id": 501,
+      "userId": 101,
+      "status": "Ongoing",
+      "tosViolation": false,
+      "user": {
+        "username": "alice"
+      }
+    }
+  },
+  "chapter:603": {
+    "removedAt": null,
+    "storyline": {
+      "id": 502,
+      "userId": 102,
+      "status": "Complete",
+      "tosViolation": false,
+      "user": {
+        "username": null
+      }
+    }
+  },
+  "chapter:604": {
+    "removedAt": null,
+    "storyline": {
+      "id": 503,
+      "userId": 101,
+      "status": "Ongoing",
+      "tosViolation": true,
+      "user": {
+        "username": "alice"
+      }
+    }
+  },
+  "spaces:every level set, JSON settings including a JSON null": [
+    {
+      "entityType": "image",
+      "mode": "off",
+      "price": 120,
+      "freeSlots": 0,
+      "settings": null
+    },
+    {
+      "entityType": "post",
+      "mode": "auto",
+      "price": null,
+      "freeSlots": null,
+      "settings": {}
+    },
+    {
+      "entityType": "user",
+      "mode": "review",
+      "price": 900,
+      "freeSlots": 5,
+      "settings": {
+        "nested": {
+          "a": [1, null]
+        },
+        "mediaTypes": ["image"]
+      }
+    }
+  ],
+  "spaces:another surface on the same account": [
+    {
+      "entityType": "user",
+      "mode": "review",
+      "price": 77,
+      "freeSlots": 2,
+      "settings": {}
+    }
+  ],
+  "spaces:levels with no row": [],
+  "subscriptions:101": [
+    {
+      "id": "sub-active",
+      "status": "active",
+      "cancelAtPeriodEnd": false,
+      "cancelAt": null,
+      "canceledAt": null,
+      "currentPeriodStart": {
+        "$date": "2026-10-01T00:00:00.000Z"
+      },
+      "currentPeriodEnd": {
+        "$date": "2026-11-01T00:00:00.000Z"
+      },
+      "createdAt": {
+        "$date": "2026-09-30T12:34:56.789Z"
+      },
+      "endedAt": null,
+      "metadata": {},
+      "buzzType": "yellow",
+      "product": {
+        "id": "prod-gold",
+        "name": "Gold",
+        "description": null,
+        "metadata": {
+          "tier": "gold",
+          "monthlyBuzz": 5000
+        },
+        "provider": "Civitai",
+        "active": true
+      },
+      "price": {
+        "id": "price-gold",
+        "unitAmount": 5000,
+        "interval": "month",
+        "intervalCount": 1,
+        "currency": "usd",
+        "active": true
+      }
+    },
+    {
+      "id": "sub-incomplete",
+      "status": "incomplete",
+      "cancelAtPeriodEnd": true,
+      "cancelAt": {
+        "$date": "2026-11-01T00:00:00.000Z"
+      },
+      "canceledAt": {
+        "$date": "2026-10-05T00:00:00.000Z"
+      },
+      "currentPeriodStart": {
+        "$date": "2026-10-01T00:00:00.000Z"
+      },
+      "currentPeriodEnd": {
+        "$date": "2026-11-01T00:00:00.000Z"
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:00.000Z"
+      },
+      "endedAt": null,
+      "metadata": {
+        "renewalEmailSent": true
+      },
+      "buzzType": "green",
+      "product": {
+        "id": "prod-bronze",
+        "name": "Bronze",
+        "description": "old",
+        "metadata": {
+          "tier": "bronze"
+        },
+        "provider": "Paddle",
+        "active": false
+      },
+      "price": {
+        "id": "price-bronze",
+        "unitAmount": null,
+        "interval": null,
+        "intervalCount": null,
+        "currency": "usd",
+        "active": true
+      }
+    }
+  ],
+  "subscriptions:103": [
+    {
+      "id": "sub-other-user",
+      "status": "active",
+      "cancelAtPeriodEnd": false,
+      "cancelAt": null,
+      "canceledAt": null,
+      "currentPeriodStart": {
+        "$date": "2026-10-01T00:00:00.000Z"
+      },
+      "currentPeriodEnd": {
+        "$date": "2026-11-01T00:00:00.000Z"
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:00.000Z"
+      },
+      "endedAt": null,
+      "metadata": {},
+      "buzzType": "yellow",
+      "product": {
+        "id": "prod-gold",
+        "name": "Gold",
+        "description": null,
+        "metadata": {
+          "tier": "gold",
+          "monthlyBuzz": 5000
+        },
+        "provider": "Civitai",
+        "active": true
+      },
+      "price": {
+        "id": "price-gold",
+        "unitAmount": 5000,
+        "interval": "month",
+        "intervalCount": 1,
+        "currency": "usd",
+        "active": true
+      }
+    }
+  ],
+  "stickers:the placer": [
+    {
+      "id": 5,
+      "targetId": 702,
+      "placerId": 103,
+      "ownerId": 105,
+      "status": "approved",
+      "amount": 450,
+      "free": false,
+      "data": {
+        "cosmeticId": 15
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:01.000Z"
+      }
+    },
+    {
+      "id": 1,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 300,
+      "free": false,
+      "data": {
+        "x": 0.5,
+        "cosmeticId": 11
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:05.000Z"
+      }
+    },
+    {
+      "id": 6,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 0,
+      "free": true,
+      "data": null,
+      "createdAt": {
+        "$date": "2026-10-02T00:00:00.000Z"
+      }
+    },
+    {
+      "id": 2,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "pending",
+      "amount": 0,
+      "free": true,
+      "data": {
+        "cosmeticId": 12
+      },
+      "createdAt": {
+        "$date": "2026-10-22T23:59:59.999Z"
+      }
+    }
+  ],
+  "stickers:the owner": [
+    {
+      "id": 5,
+      "targetId": 702,
+      "placerId": 103,
+      "ownerId": 105,
+      "status": "approved",
+      "amount": 450,
+      "free": false,
+      "data": {
+        "cosmeticId": 15
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:01.000Z"
+      }
+    },
+    {
+      "id": 1,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 300,
+      "free": false,
+      "data": {
+        "x": 0.5,
+        "cosmeticId": 11
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:05.000Z"
+      }
+    },
+    {
+      "id": 6,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 0,
+      "free": true,
+      "data": null,
+      "createdAt": {
+        "$date": "2026-10-02T00:00:00.000Z"
+      }
+    },
+    {
+      "id": 8,
+      "targetId": 701,
+      "placerId": 104,
+      "ownerId": 105,
+      "status": "pending",
+      "amount": 80,
+      "free": false,
+      "data": {
+        "cosmeticId": 18
+      },
+      "createdAt": {
+        "$date": "2026-10-03T00:00:00.000Z"
+      }
+    },
+    {
+      "id": 2,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "pending",
+      "amount": 0,
+      "free": true,
+      "data": {
+        "cosmeticId": 12
+      },
+      "createdAt": {
+        "$date": "2026-10-22T23:59:59.999Z"
+      }
+    },
+    {
+      "id": 3,
+      "targetId": 701,
+      "placerId": 105,
+      "ownerId": 104,
+      "status": "pending",
+      "amount": 0,
+      "free": true,
+      "data": {
+        "cosmeticId": 13
+      },
+      "createdAt": {
+        "$date": "2026-10-23T00:00:00.000Z"
+      }
+    }
+  ],
+  "stickers:a stranger to the pending rows": [
+    {
+      "id": 5,
+      "targetId": 702,
+      "placerId": 103,
+      "ownerId": 105,
+      "status": "approved",
+      "amount": 450,
+      "free": false,
+      "data": {
+        "cosmeticId": 15
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:01.000Z"
+      }
+    },
+    {
+      "id": 1,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 300,
+      "free": false,
+      "data": {
+        "x": 0.5,
+        "cosmeticId": 11
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:05.000Z"
+      }
+    },
+    {
+      "id": 6,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 0,
+      "free": true,
+      "data": null,
+      "createdAt": {
+        "$date": "2026-10-02T00:00:00.000Z"
+      }
+    }
+  ],
+  "stickers:signed out": [
+    {
+      "id": 5,
+      "targetId": 702,
+      "placerId": 103,
+      "ownerId": 105,
+      "status": "approved",
+      "amount": 450,
+      "free": false,
+      "data": {
+        "cosmeticId": 15
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:01.000Z"
+      }
+    },
+    {
+      "id": 1,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 300,
+      "free": false,
+      "data": {
+        "x": 0.5,
+        "cosmeticId": 11
+      },
+      "createdAt": {
+        "$date": "2026-10-01T00:00:05.000Z"
+      }
+    },
+    {
+      "id": 6,
+      "targetId": 701,
+      "placerId": 103,
+      "ownerId": 104,
+      "status": "approved",
+      "amount": 0,
+      "free": true,
+      "data": null,
+      "createdAt": {
+        "$date": "2026-10-02T00:00:00.000Z"
+      }
+    }
+  ],
+  "approved": [
+    {
+      "id": 1,
+      "targetId": 701,
+      "status": "approved",
+      "data": {
+        "x": 0.5,
+        "cosmeticId": 11
+      }
+    },
+    {
+      "id": 5,
+      "targetId": 702,
+      "status": "approved",
+      "data": {
+        "cosmeticId": 15
+      }
+    },
+    {
+      "id": 6,
+      "targetId": 701,
+      "status": "approved",
+      "data": null
+    }
+  ]
+}

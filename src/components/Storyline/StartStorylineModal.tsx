@@ -17,6 +17,7 @@ import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NsfwLevel } from '~/server/common/enums';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
+import { isStorylineVerdictLevel, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -65,9 +66,15 @@ export function StartStorylineModal({ post }: { post?: StorylineSourcePost }) {
   const trimmed = title.trim();
 
   const form = !canStart ? (
-    <Alert color="yellow" icon={<IconAlertTriangle />}>
-      This post hasn&apos;t been rated yet. Try again once its images have been scanned.
-    </Alert>
+    post && isStorylineVerdictLevel(post.nsfwLevel) ? (
+      <Alert color="red" icon={<IconAlertTriangle />}>
+        {STORYLINE_REFUSALS.cannotSubmit}.
+      </Alert>
+    ) : (
+      <Alert color="yellow" icon={<IconAlertTriangle />}>
+        This post hasn&apos;t been rated yet. Try again once its images have been scanned.
+      </Alert>
+    )
   ) : (
     <Stack gap="md">
       <Text size="sm" c="dimmed">

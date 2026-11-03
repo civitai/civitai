@@ -5,6 +5,7 @@ import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attemp
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import {
   canonicalOwnerWhereBranches,
+  listingEditorRole,
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
 
@@ -249,12 +250,13 @@ function isAuthorFailure(row: { status: string; deployState: string | null }): b
 export async function listListingHistory(opts: {
   appListingId: string;
   userId: number;
+  isModerator?: boolean;
   limit?: number;
 }): Promise<ListingHistoryEntry[]> {
   const limit = Math.min(Math.max(opts.limit ?? LISTING_HISTORY_LIMIT, 1), LISTING_HISTORY_LIMIT);
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
-  if (!access.role) {
+  if (!listingEditorRole(access.role, opts.isModerator)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this app' });
   }
   // `resolveListingAccess` walks a shadow id to its parent, so this is always the PARENT.

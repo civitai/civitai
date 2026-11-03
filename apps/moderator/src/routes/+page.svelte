@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
   import { navCount, navHref, navPartial } from '$lib/nav-links';
@@ -40,6 +40,13 @@
     queueSeverityClass,
   } from '$lib/queue-thresholds';
   import { needsAttention, type AttentionItem } from '$lib/needs-attention';
+  import {
+    DASHBOARD_VIEW_KEY,
+    initialDashboardView,
+    ownedInNav,
+    navOwnedBy,
+    type DashboardView,
+  } from '$lib/queue-owners';
   import { minuteClock } from '$lib/minute-clock.svelte';
   import ShortAge from '$lib/components/ShortAge.svelte';
   import NeedsAttentionPanel from './NeedsAttentionPanel.svelte';
@@ -273,7 +280,37 @@
   const onSweep = new FormState({ onSuccess: () => (boardVersion += 1) });
 
 
+  // My tasks / Everything. Offered only to an owner of something: without ownership there is no My
+  // tasks to show. The choice is remembered per browser; SSR renders the default and the stored one is
+  // applied on mount, since the server cannot see it.
+  // Only the owned queues this viewer can open: one they cannot, or a renamed path, offers nothing.
+  const visibleOwned = $derived(ownedInNav(data.nav, data.ownedQueues));
+  const ownsQueues = $derived(!!visibleOwned?.length);
+  let view = $state<DashboardView>(untrack(() => initialDashboardView(visibleOwned, null)));
+  onMount(() => {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(DASHBOARD_VIEW_KEY);
+    } catch {
+      // Storage blocked: the default stands.
+    }
+    view = initialDashboardView(visibleOwned, stored);
+  });
+  function pickView(next: DashboardView) {
+    view = next;
+    try {
+      localStorage.setItem(DASHBOARD_VIEW_KEY, next);
+    } catch {
+      // Storage blocked: the choice lasts until reload.
+    }
+  }
+  const mine = $derived(view === 'mine' && ownsQueues);
+  const attentionNav = $derived(
+    mine ? navOwnedBy(data.nav, new Set(visibleOwned)) : data.nav
+  );
+
   // Every queue the viewer can open, as one list: a tabs group counts as one queue, as in the sidebar.
+  // In My tasks, only the queues they own.
   const attentionItems = $derived.by((): AttentionItem[] => {
     const countFor = (key: string | undefined) => (key ? (counts.value?.[key] ?? null) : null);
     const toItem = (link: (typeof data.nav)[number], section: string): AttentionItem => ({
@@ -285,9 +322,9 @@
       countKey: link.countKey,
       partial: navPartial(link, (key) => counts.unavailable.includes(key)),
     });
-    return data.nav.flatMap((link) =>
+    return attentionNav.flatMap((link) =>
       link.children
-        ? link.children.filter((c) => c.path && !c.external).map((c) => toItem(c, link.label))
+        ? link.children.filter((c) => c.path && !c.external && !c.shortcut).map((c) => toItem(c, link.label))
         : link.path && link.path !== '/'
           ? [toItem(link, 'Pages')]
           : []
@@ -391,9 +428,28 @@
   </a>
 {/if}
 
+{#snippet viewToggle()}
+  <div class="inline-flex rounded-md border border-dark-4 p-0.5" role="group" aria-label="Which queues">
+    {#each [{ value: 'mine', label: 'My tasks' }, { value: 'all', label: 'Everything' }] as const as option (option.value)}
+      <Button
+        size="sm"
+        variant={view === option.value ? 'secondary' : 'ghost'}
+        class="h-6 px-2 text-xs"
+        aria-pressed={view === option.value}
+        onclick={() => pickView(option.value)}
+      >
+        {option.label}
+      </Button>
+    {/each}
+  </div>
+{/snippet}
+
 <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
   <NeedsAttentionPanel
     rows={attention}
+    {mine}
+    toggle={ownsQueues ? viewToggle : undefined}
+    onShowAll={() => pickView('all')}
     lastActioned={lastActioned.value}
     {oldest}
     now={clock.now}

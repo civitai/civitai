@@ -31,7 +31,7 @@ import { trpc } from '~/utils/trpc';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 interface UserListContentProps {
@@ -137,7 +137,7 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const username = ctx.query.username as string;
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
 
     if (user?.bannedAt)
       return {

@@ -41,7 +41,7 @@ export async function moveImagesToPost({
 }: MoveImagesToPostInput & { userId: number }) {
   const imageIds = uniq(inputImageIds);
 
-  await assertAccountNotUnderLegalHold(userId).catch(() => {
+  await assertAccountNotUnderLegalHold(userId, 'Image move refused').catch(() => {
     throw throwBadRequestError(IMAGES_NOT_MOVABLE);
   });
 

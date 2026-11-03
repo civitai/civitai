@@ -7,16 +7,19 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
+  import EditDataStep from './EditDataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
+    stampMature,
     defaultRunParams,
     isTrainable,
     labelOptions,
     labelString,
     runCard,
     runParamsKey,
+    runTrainsPairs,
     seedPrompts,
     type DatasetFilter,
     type Img,
@@ -26,7 +29,8 @@
     type Selection,
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
-  import type { ReuseItem } from '$lib/reuse';
+  import { isPairDataset, type ReuseItem } from '$lib/reuse';
+  import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
 
   let {
     prices,
@@ -46,6 +50,9 @@
   // Dataset + trigger + label mode are owned here so they survive Back/Continue between steps. `labelMode`
   // defaults to the chosen model's default label and is only user-changeable for a `bothLabels` model.
   let images = $state<Img[]>([]);
+  // An edit LoRA's dataset: before/after pairs instead of `images`. Kept apart so switching model
+  // type on Select never mixes the two.
+  let pairs = $state<EditPair[]>([]);
   let trigger = $state('');
   let labelMode = $state<LabelType>('tag');
   // Auto-label behavior, owned here like labelMode/trigger so it survives Back/Continue:
@@ -69,21 +76,36 @@
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
   // DataStep materializes these once a model is picked (the label type depends on the selection).
   let reuseItems = $state<ReuseItem[]>([]);
+  // An edit run's hand-off: EditDataStep turns it into pairs once, then empties it.
+  let reusePairItems = $state<ReuseItem[]>([]);
   onMount(() => {
     try {
       const raw = sessionStorage.getItem('ts:reuse-dataset');
       if (raw) {
-        reuseItems = JSON.parse(raw);
+        const items: ReuseItem[] = JSON.parse(raw);
+        if (isPairDataset(items)) reusePairItems = items;
+        else reuseItems = items;
         sessionStorage.removeItem('ts:reuse-dataset');
       }
     } catch {
       // Malformed hand-off — ignore and start empty.
     }
   });
+  const trainsPairs = $derived(!!selection && runTrainsPairs(selection.runs[0]!));
+  const readyPairs = $derived(pairs.filter(isPairReady));
+  // The plain Data step's trigger word, unless this is an edit run: that step never shows one, so a word
+  // typed before switching to an edit model must not ride along.
+  const runTrigger = $derived(trainsPairs ? '' : trigger);
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
-  const trainableCount = $derived(images.filter(isTrainable).length);
+  const trainableCount = $derived(
+    trainsPairs ? readyPairs.length : images.filter(isTrainable).length
+  );
   const matureCount = $derived(
-    images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+    trainsPairs
+      ? readyPairs.filter(
+          (p) => isMatureNsfwLevel(p.before.nsfwLevel) || isMatureNsfwLevel(p.after?.nsfwLevel)
+        ).length
+      : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
   );
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
@@ -103,6 +125,10 @@
   $effect(() => () => {
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
     images = [];
+    for (const pair of pairs)
+      for (const img of pairImgs(pair))
+        if (img.previewUrl.startsWith('blob:')) URL.revokeObjectURL(img.previewUrl);
+    pairs = [];
   });
 
   // Leaving Data drops its filter; only Review's "see which" hands one across a step change.
@@ -118,17 +144,20 @@
 
   function enterReview() {
     if (!selection) return;
-    const t = trigger.trim();
+    const t = runTrigger.trim();
     if (reviewNameSeed === null || reviewName === reviewNameSeed) {
       reviewName = t;
       reviewNameSeed = t;
     }
     // The seed key covers the trigger too: an unedited prompt list follows a trigger change, so the
     // samples always carry the word the run is being taught.
-    const labels = JSON.stringify([t, ...datasetLabels]);
+    const labels = trainsPairs
+      ? JSON.stringify(readyPairs.map((p) => [p.id, p.instruction]))
+      : JSON.stringify([t, ...datasetLabels]);
     const untouched = promptsSeed !== null && JSON.stringify(samplePrompts) === promptsSeed.prompts;
     if (samplePrompts.length === 0 || (untouched && labels !== promptsSeed!.labels)) {
-      samplePrompts = seedPrompts(datasetLabels, t);
+      const seeded = trainsPairs ? seedEditPrompts(readyPairs) : [];
+      samplePrompts = seeded.length ? seeded : seedPrompts(datasetLabels, t);
       promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
     }
     runParams = Object.fromEntries(
@@ -154,20 +183,27 @@
     launched: LaunchedRun[],
     prompts: SamplePrompt[],
     name: string,
-    currencies: string[]
+    currencies: string[],
+    matureAck: boolean,
+    reviewedMature: number
   ) {
     if (!selection) return;
+    // An edit run's pairs go as blobs placed by path — each image was uploaded and scanned on its own.
+    const edit = trainsPairs ? { items: pairItems(pairs), pairs: readyPairs.length } : undefined;
     const runs = buildTrainingRuns(
       selection,
       images,
-      trigger,
+      runTrigger,
       name,
       launched,
       prompts,
       currencies,
-      labelMode
+      labelMode,
+      edit
     );
-    const { workflowIds: ids, failure } = await backend().submitTraining(runs);
+    const { workflowIds: ids, failure } = await backend().submitTraining(
+      stampMature(runs, matureAck, reviewedMature)
+    );
     if (failure)
       submitNotice.set(
         `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
@@ -224,6 +260,7 @@
       {prices}
       {enabledModelFlags}
       initial={selection}
+      startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
@@ -234,6 +271,16 @@
         const card = runCard(sel.runs[0]!);
         if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
         step = 2;
+      }}
+    />
+  {:else if step === 2 && selection && trainsPairs}
+    <EditDataStep
+      bind:pairs
+      bind:reuseItems={reusePairItems}
+      onContinue={enterReview}
+      onBack={() => {
+        leaveData();
+        step = 1;
       }}
     />
   {:else if step === 2 && selection}
@@ -256,13 +303,14 @@
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
-      {trigger}
+      trigger={runTrigger}
       {labelMode}
       bind:name={reviewName}
       bind:prompts={samplePrompts}
       bind:params={runParams}
       bind:presetType
       imageCount={trainableCount}
+      {trainsPairs}
       {matureCount}
       onStart={start}
       onBack={() => (step = 2)}

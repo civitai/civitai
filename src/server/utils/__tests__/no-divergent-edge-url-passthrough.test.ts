@@ -48,10 +48,13 @@ import { describe, expect, it } from 'vitest';
  */
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
-/** Every file allowed to make this decision, and each must import the shared predicate. */
+/**
+ * Every file allowed to make this decision, and each must import the shared predicate.
+ * `cf-images-utils.ts` left the set when `useEdgeUrl` became a delegate of `resolveEdgeUrl` (in
+ * `edge-url.ts`): it no longer decides passthrough at all.
+ */
 const DECLARED_CONSUMERS = [
   'src/client-utils/edge-url.ts',
-  'src/client-utils/cf-images-utils.ts',
   'src/server/utils/image-scan-url.ts',
 ] as const;
 

@@ -1,10 +1,14 @@
-import type { InputWrapperProps, NumberInputProps, SliderProps } from '@mantine/core';
-import { Group, Input, NumberInput, Slider, Text } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
-import { isValidElement, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { InputWrapperProps, NumberInputProps } from '@mantine/core';
+import { Group, Input, NumberInput, Text } from '@mantine/core';
+import { IconAlertTriangle, IconMinus, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { sliderZone, sliderZoneStyles } from '~/components/generation_v2/inputs/slider-zone';
+import { isValidElement, useEffect, useRef, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { TouchSlider } from '~/components/generation_v2/inputs/TouchSlider';
+import { snapToStep } from '~/components/generation_v2/inputs/touch-slider.utils';
+import { useHoldRepeat } from '~/hooks/useHoldRepeat';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import classes from './SliderInput.module.scss';
 
 // =============================================================================
 // Types
@@ -22,14 +26,16 @@ export interface SliderInputProps extends Omit<InputWrapperProps, 'children' | '
   max: number;
   step?: number;
   precision?: number;
-  sliderProps?: Omit<SliderProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
+  /** The accessible name, where there is no visible text label. */
+  ariaLabel?: string;
   numberProps?: Omit<NumberInputProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
-  reverse?: boolean;
   presets?: PresetOption[];
   disabled?: boolean;
   warning?: string;
   /** An advisory band painted on the track in place of the filled bar, so the thumb is a position, not an amount. */
   recommended?: { min: number; max: number };
+  /** In the mobile generator: − and + buttons either side of the track, for fine values. */
+  steppers?: boolean;
 }
 
 // =============================================================================
@@ -66,17 +72,24 @@ function PresetOptions({ options, value, onChange, disabled }: PresetOptionsProp
   );
 }
 
+// The visible `label` sits on the wrapper and can't be associated with the inner controls, so
+// they reuse its text as their accessible name. Handles a plain string and `<ControllerLabel />`.
+function accessibleNameOf(label: ReactNode) {
+  if (typeof label === 'string') return label;
+  if (isValidElement(label) && typeof (label.props as { label?: unknown })?.label === 'string')
+    return (label.props as { label: string }).label;
+  return undefined;
+}
+
 // =============================================================================
 // Component
 // =============================================================================
 
-type State = {
-  focused: boolean;
-  value?: number;
-  changeEndValue?: number;
-  computedWidth?: string;
-};
-
+/**
+ * A slider with its value. One component for every layout: the mobile generator moves the presets
+ * under the track, swaps the number box for a tap-to-type value and can add − / + steppers; its
+ * touch sizes come from the mobile generator's stylesheet, not from here.
+ */
 export function SliderInput({
   value,
   onChange,
@@ -84,166 +97,216 @@ export function SliderInput({
   max = 100,
   step,
   precision: initialPrecision,
-  sliderProps,
+  ariaLabel,
   numberProps,
-  reverse,
   presets,
   label,
   disabled,
   warning,
   recommended,
+  steppers,
+  className,
   ...inputWrapperProps
 }: SliderInputProps) {
+  const mobile = useMobileGenerator();
   const numberRef = useRef<HTMLInputElement>(null);
-  const [state, setState] = useState<State>({
-    focused: false,
-    value,
-    changeEndValue: undefined,
-    computedWidth: undefined,
-  });
+  const [numberWidth, setNumberWidth] = useState<string>();
+  const [draft, setDraft] = useState<number>();
+  const [editing, setEditing] = useState(false);
 
-  const handleSliderChange = (newValue?: number) => {
-    setState((current) => ({ ...current, value: newValue }));
+  const precision = initialPrecision ?? step?.toString().split('.')[1]?.length;
+  const range = { min, max, step };
+  const current = value ?? min;
+  const shown = draft ?? current;
+  const name = ariaLabel ?? accessibleNameOf(label);
+  const format = (v: number) => (precision ? v.toFixed(precision) : String(v));
+  const hasPresets = !!presets?.length;
+  // A band that is a single value (CFG 1 for some turbo LoRAs) reads as that value, not a range.
+  const recommendation =
+    recommended &&
+    (recommended.min === recommended.max
+      ? `Recommended: ${format(recommended.min)}`
+      : `Recommended: ${format(recommended.min)}–${format(recommended.max)}`);
+
+  const commit = (next: number) => {
+    setDraft(undefined);
+    if (next !== value) onChange?.(next);
   };
+  const decrease = useHoldRepeat(() => commit(snapToStep(current - (step ?? 1), range)));
+  const increase = useHoldRepeat(() => commit(snapToStep(current + (step ?? 1), range)));
 
-  const handleInputChange = (newValue?: number | string) => {
-    const parsedValue = typeof newValue === 'string' ? parseFloat(newValue) : newValue;
-    setState((current) => ({ ...current, value: parsedValue }));
-    onChange?.(parsedValue as any);
-  };
+  useEffect(() => {
+    if (numberRef.current) setNumberWidth(getComputedWidth(numberRef.current, min, max, precision));
+  }, [min, max, precision, mobile]);
 
-  const precision = useMemo(
-    () => initialPrecision ?? step?.toString().split('.')[1]?.length,
-    [initialPrecision, step]
+  const slider = (
+    <TouchSlider
+      className={clsx(classes.track, classes.grow)}
+      value={shown}
+      min={min}
+      max={max}
+      step={step}
+      recommended={recommended}
+      disabled={disabled}
+      label={name}
+      formatValue={format}
+      onChange={setDraft}
+      onChangeEnd={commit}
+    />
   );
 
-  const handleSliderFocus = (event: React.FocusEvent<HTMLDivElement>) => {
-    setState((current) => ({ ...current, focused: true }));
-    sliderProps?.onFocus?.(event);
-  };
+  const warningText = warning && (
+    <Text size="xs" color="yellow" className="mt-1 flex items-center gap-1">
+      <IconAlertTriangle size={14} />
+      {warning}
+    </Text>
+  );
 
-  const handleSliderBlur = (event: React.FocusEvent<HTMLDivElement>) => {
-    setState((current) => ({ ...current, focused: false }));
-    sliderProps?.onBlur?.(event);
-  };
+  if (!mobile) {
+    return (
+      <Input.Wrapper
+        {...inputWrapperProps}
+        label={
+          hasPresets ? (
+            <Group gap={8} className="w-full" justify="space-between" wrap="nowrap">
+              {label}
+              <PresetOptions
+                disabled={disabled}
+                options={presets}
+                value={value}
+                onChange={commit}
+              />
+            </Group>
+          ) : (
+            label
+          )
+        }
+        className={clsx('flex flex-col', className)}
+        styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
+      >
+        <div className="flex items-center gap-2">
+          {slider}
+          <NumberInput
+            ref={numberRef}
+            aria-label={numberProps?.['aria-label'] ?? name}
+            {...numberProps}
+            className={clsx('min-w-[60px] flex-[0]', numberProps?.className)}
+            style={{
+              ...numberProps?.style,
+              minWidth: (numberProps?.style as CSSProperties)?.minWidth ?? numberWidth,
+            }}
+            min={min}
+            max={max}
+            step={step}
+            decimalScale={precision}
+            value={shown}
+            onChange={(typed) => {
+              const next = typeof typed === 'string' ? parseFloat(typed) : typed;
+              if (Number.isFinite(next)) commit(next);
+            }}
+            disabled={disabled}
+          />
+        </div>
+        {warningText}
+      </Input.Wrapper>
+    );
+  }
 
-  const handleInputFocus = (event: React.FocusEvent<HTMLInputElement>) => {
-    setState((current) => ({ ...current, focused: true }));
-    numberProps?.onFocus?.(event);
-  };
-
-  const handleInputBlur = (event: React.FocusEvent<HTMLInputElement>) => {
-    setState((current) => ({ ...current, focused: false }));
-    numberProps?.onBlur?.(event);
-  };
-
-  useEffect(() => {
-    if (!state.focused) setState((current) => ({ ...current, value }));
-  }, [value, precision, state.focused]);
-
-  useEffect(() => {
-    if (state.changeEndValue === undefined) return;
-    onChange?.(state.changeEndValue);
-    // Clear changeEndValue after calling onChange to prevent re-firing on onChange reference change
-    setState((current) => ({ ...current, changeEndValue: undefined }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.changeEndValue]);
-
-  useEffect(() => {
-    if (!numberRef.current) return;
-    setState((current) => ({
-      ...current,
-      computedWidth: numberRef.current
-        ? getComputedWidth(numberRef.current, min, max, precision)
-        : undefined,
-    }));
-  }, [min, max, precision]);
-
-  const hasPresets = presets && presets.length > 0;
-
-  const zone = sliderZone({ min, max }, recommended);
-  const zoneStyles = zone ? sliderZoneStyles(zone) : undefined;
-
-  // Derive an accessible name for the Slider thumb + NumberInput. The visible
-  // `label` (rendered on Input.Wrapper) can't be programmatically associated
-  // with either of the two inner controls, so a11y tooling reports both as
-  // unnamed. Reuse the field's own visible label so the accessible name always
-  // matches what the user sees. Handles both a plain string label and the
-  // `<ControllerLabel label="..." />` wrapper used across the generation form.
-  const accessibleName =
-    typeof label === 'string'
-      ? label
-      : isValidElement(label) && typeof (label.props as { label?: unknown })?.label === 'string'
-      ? (label.props as { label: string }).label
-      : undefined;
+  const valueControl = editing ? (
+    <NumberInput
+      autoFocus
+      {...numberProps}
+      defaultValue={current}
+      min={min}
+      max={max}
+      step={step}
+      decimalScale={precision}
+      inputMode="decimal"
+      hideControls
+      aria-label={name}
+      className={classes.valueInput}
+      styles={{ input: { minHeight: 44, fontSize: 16, textAlign: 'center' } }}
+      onBlur={(e) => {
+        const typed = parseFloat(e.currentTarget.value);
+        if (Number.isFinite(typed)) commit(snapToStep(typed, range));
+        setEditing(false);
+        numberProps?.onBlur?.(e);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+      }}
+    />
+  ) : (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => setEditing(true)}
+      aria-label={`${name ?? 'Value'}: ${format(shown)}. Tap to type a value`}
+      className={classes.value}
+    >
+      {format(shown)}
+    </button>
+  );
 
   return (
-    <Input.Wrapper
-      {...inputWrapperProps}
-      label={
-        hasPresets ? (
-          <Group gap={8} className="w-full" justify="space-between" wrap="nowrap">
-            {label}
-            <PresetOptions
-              disabled={disabled}
-              options={presets}
-              value={value}
-              onChange={(v) => onChange?.(v)}
-            />
-          </Group>
-        ) : (
-          label
-        )
-      }
-      className={clsx('flex flex-col', inputWrapperProps.className)}
-      classNames={{ label: !presets?.length ? '-mb-3' : undefined }}
-      styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
-    >
-      <div className={clsx('mt-1 flex items-center gap-2', { ['flex-row-reverse']: reverse })}>
-        <Slider
-          {...sliderProps}
-          styles={zoneStyles ? { ...sliderProps?.styles, ...zoneStyles } : sliderProps?.styles}
-          thumbLabel={sliderProps?.thumbLabel ?? accessibleName}
-          className={clsx('flex-1', sliderProps?.className)}
-          min={min}
-          max={max}
-          step={step}
-          precision={precision}
-          value={state.value}
-          onChange={handleSliderChange}
-          onBlur={handleSliderBlur}
-          onFocus={handleSliderFocus}
-          label={(v) => (v && precision ? v.toFixed(precision) : v)}
-          onChangeEnd={(v) => setState((current) => ({ ...current, changeEndValue: v }))}
-          disabled={disabled}
-        />
-        <NumberInput
-          ref={numberRef}
-          aria-label={numberProps?.['aria-label'] ?? accessibleName}
-          {...numberProps}
-          className={clsx('min-w-[60px] flex-[0]', numberProps?.className)}
-          style={{
-            ...numberProps?.style,
-            minWidth: (numberProps?.style as CSSProperties)?.minWidth ?? state.computedWidth,
-          }}
-          min={min}
-          max={max}
-          step={step}
-          decimalScale={precision}
-          value={state.value}
-          onChange={handleInputChange}
-          onBlur={handleInputBlur}
-          onFocus={handleInputFocus}
-          disabled={disabled}
-        />
-      </div>
-      {warning && (
-        <Text size="xs" color="yellow" className="mt-1 flex items-center gap-1">
-          <IconAlertTriangle size={14} />
-          {warning}
-        </Text>
+    <div className={clsx(classes.column, className)}>
+      {steppers ? (
+        <div className={classes.row}>
+          <button
+            type="button"
+            aria-label={`Decrease ${name ?? 'value'}`}
+            disabled={disabled || current <= min}
+            className={classes.stepper}
+            {...decrease}
+          >
+            <IconMinus size={18} stroke={2.2} />
+          </button>
+          {slider}
+          {valueControl}
+          <button
+            type="button"
+            aria-label={`Increase ${name ?? 'value'}`}
+            disabled={disabled || current >= max}
+            className={classes.stepper}
+            {...increase}
+          >
+            <IconPlus size={18} stroke={2.2} />
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className={classes.label}>{label}</div>
+          <div className={clsx(classes.row, classes.underLabel)}>
+            {slider}
+            {valueControl}
+          </div>
+        </>
       )}
-    </Input.Wrapper>
+      {recommendation && (
+        <p className={classes.recommendation}>
+          <span className={classes.recommendationDot} aria-hidden />
+          {recommendation}
+        </p>
+      )}
+      {hasPresets && (
+        <div className={classes.presets}>
+          {presets.map((preset) => (
+            <button
+              key={preset.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => commit(preset.value)}
+              aria-pressed={current === preset.value}
+              className={classes.preset}
+            >
+              <span className={classes.presetLabel}>{preset.label}</span>
+              <span className={classes.presetValue}>{format(preset.value)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {warningText}
+    </div>
   );
 }
 

@@ -43,7 +43,8 @@ import {
 import {
   buildFliptContext,
   getFeatureFlagsAsync,
-  getFeatureFlagsLazy,
+  getFeatureFlagsLazyLegacy,
+  getFeatureFlagsLazyProto,
 } from '~/server/services/feature-flags.service';
 import { canAccessAppAssistant, resolveAppsBuildPageMode } from '~/shared/utils/app-blocks-access';
 import type { SessionUser } from '~/types/session';
@@ -143,7 +144,16 @@ describe('app-builder grant: hub session → Flipt context', () => {
 
 describe.each([
   ['eager (SSR seed)', (user?: SessionUser) => getFeatureFlagsAsync({ user, req })],
-  ['lazy (tRPC context)', async (user?: SessionUser) => getFeatureFlagsLazy({ user, req })],
+  // Both lazy implementations behind `feature-flags-lazy-proto`, chosen explicitly rather than
+  // through `getFeatureFlagsLazy`, whose pick would follow this file's Flipt mock.
+  [
+    'lazy legacy (tRPC context)',
+    async (user?: SessionUser) => getFeatureFlagsLazyLegacy({ user, req }),
+  ],
+  [
+    'lazy proto (tRPC context)',
+    async (user?: SessionUser) => getFeatureFlagsLazyProto({ user, req }),
+  ],
 ])('app-builder grant decides the builder flags — %s', (_label, flagsFor) => {
   it('🔴 approved: the App Assistant gate admits them and /apps/build renders the assistant', async () => {
     const user = sessionUser(freshId(), true);

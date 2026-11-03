@@ -4,7 +4,8 @@
 // Two ways the fan-out worker can be alive but useless, both of which a static 200 hid:
 //   - redis: every cache command has failed for a sustained window, with no success in between (a
 //     stuck client that only a restart clears). One failed command, or a burst that recovers, is not it.
-//   - the poll loop: no row and no tick has finished for the stall window, so nothing is being delivered.
+//   - a poll-loop lane: no row and no tick has finished for the stall window, so nothing is being
+//     delivered in that lane. Tracked per lane so a busy lane cannot hide a stalled one.
 // Both checks apply only once the worker has started in this process: an API-only pod keeps its
 // dependency-free 200, because pulling it from service would stop notification creates too.
 
@@ -23,8 +24,7 @@ export function createHealthTracker({
 }) {
   let redisFailingSince: number | null = null;
   let lastRedisFailureAt: number | null = null;
-  let workerStarted = false;
-  let lastWorkerProgressAt = 0;
+  const lastWorkerProgressAt = new Map<string, number>();
 
   return {
     recordRedisSuccess() {
@@ -36,15 +36,14 @@ export function createHealthTracker({
       redisFailingSince ??= t;
       lastRedisFailureAt = t;
     },
-    markWorkerStarted() {
-      workerStarted = true;
-      lastWorkerProgressAt = now();
+    markWorkerStarted(lane = 'normal') {
+      lastWorkerProgressAt.set(lane, now());
     },
-    markWorkerProgress() {
-      lastWorkerProgressAt = now();
+    markWorkerProgress(lane = 'normal') {
+      lastWorkerProgressAt.set(lane, now());
     },
     check(): HealthReport {
-      if (!workerStarted) return { ok: true };
+      if (lastWorkerProgressAt.size === 0) return { ok: true };
       const reasons: string[] = [];
       // Span of the failure streak as observed, not time since its start: with no traffic since the
       // last failure we have no evidence the outage lasted any longer.
@@ -59,9 +58,12 @@ export function createHealthTracker({
           )}s`
         );
       }
-      const idleMs = now() - lastWorkerProgressAt;
-      if (idleMs >= workerStallMs) {
-        reasons.push(`worker: no progress for ${Math.round(idleMs / 1000)}s`);
+      for (const [lane, at] of lastWorkerProgressAt) {
+        const idleMs = now() - at;
+        if (idleMs >= workerStallMs) {
+          const name = lane === 'normal' ? 'worker' : `worker (${lane})`;
+          reasons.push(`${name}: no progress for ${Math.round(idleMs / 1000)}s`);
+        }
       }
       return reasons.length ? { ok: false, reasons } : { ok: true };
     },

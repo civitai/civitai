@@ -76,6 +76,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 const versionFileUrlsForOwner = ownerOnlyFileUrls<
   Awaited<ReturnType<typeof getModelVersionHandler>>
@@ -170,7 +171,9 @@ export const modelVersionRouter = router({
   getVersionsByIds: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)
-    .query(({ input }) => getVersionsByIds(input)),
+    .query(({ input, ctx }) =>
+      getVersionsByIds({ ...input, browsingLevel: getRequestBrowsingLevel(ctx) })
+    ),
   getLicensingRoots: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getLicensingRootsSchema)

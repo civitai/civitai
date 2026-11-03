@@ -33,9 +33,9 @@ change.
 | Function | For | On bad input |
 |---|---|---|
 | `record_label(...)` | site code recording a human judgement | logs to `record_failure` and returns NULL; does not raise on bad input |
-| `record_prediction(...)` | site code recording a model output | same |
+| `record_prediction(...)` | database-side producers (the scan-flag trigger); app code uses `submit_predictions` | same |
 | `submit_prediction(...)` | the authenticated prediction endpoint, on behalf of pipelines | raises |
-| `submit_predictions(p_items)` | the endpoint's batch: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
+| `submit_predictions(p_items)` | the endpoint's batch, and what app code calls to record predictions: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
 | `attach_bytes(p_subject_type, p_subject_id, p_content_hash, p_bytes_ref, p_expire_at)` | pointing a subject at bytes the site keeps (no expiry when `p_expire_at` is NULL) | sets the pointer once, only on the subject with that exact `p_content_hash`; returns false (nothing changed) for an excluded subject, one that already has a pointer, or no such subject; raises on store errors |
 | `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop snapshot, pHash and bytes pointer |
 | `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns and tombstones the owner; not called on account deletion |
@@ -46,8 +46,8 @@ excluded when it, or another image sharing its stored file, matches. Deleting an
 image out too. The same job excludes a `model_text` subject as `removed` once its model is deleted (soft or hard),
 so the owner's text goes and the judgements stay; in batches.
 
-The functions belong to the owner of the site tables; site code that calls them directly connects as
-that owner.
+The functions belong to the owner of the site tables. App code may call only the routines in the
+allowlist of the `no-ungranted-label-store-routine` guard.
 
 Pass people as user ids (`p_labeller_user_id`, `p_owner_user_id`); the store hashes them. Give every
 call a `p_source_ref` that is unique to the source row: a retry with the same ref records nothing.
@@ -77,10 +77,12 @@ price is in the snapshot, not the hash. Family `creator_shop`; question `creator
 (`approve`, `request_changes`, `reject`, `revert`) or `creator_shop.listing.takedown` (`takedown`); the
 moderator's note is the `reasonNote`. `attach_bytes` points the subject at the artwork
 (`cf-image:<key>`, no expiry). The ref is `CreatorShopReview:<listingId>:<history entry at>:<value>`
-(`CreatorShopTakedown:<listingId>:<at>`), shared with the temporary backfill endpoint
-`POST /api/admin/temp/creator-shop-label-backfill` (deleted after the production run), which records past verdicts from each listing's review history. Listings reviewed before that history
-existed get one label inferred from their status, ref `CreatorShopReviewInferred:…` and `inferred: true`
-in the snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
+(`CreatorShopTakedown:<listingId>:<at>`). Verdicts made before the live path existed were backfilled
+once from each listing's review history under the same refs, with snapshot `contentAt: 'reconstructed'`
+(live labels say `verdict`). Listings reviewed before that history existed got one label inferred from
+their status, ref `CreatorShopReviewInferred:…`, `contentAt: 'backfill'` and `inferred: true` in the
+snapshot; filter them out by ref prefix. Mystery packs were not backfilled: their labels start with
+the live path. A deleted listing is excluded as `removed`; a takedown is
 not excluded. No `rule` rows yet.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the

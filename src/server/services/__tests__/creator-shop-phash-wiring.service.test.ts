@@ -41,6 +41,13 @@ vi.mock('~/server/services/cosmetic-phash.service', async (importOriginal) => ({
 
 import { submitCreatorShopItem, updateCreatorShopItem } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+// Shop artwork is a bare upload key; this one's issue record names the creator (user 11).
+const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
+beforeEach(() => {
+  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+});
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
@@ -72,7 +79,7 @@ const submitInput = {
   cosmeticType: CosmeticType.Badge,
   name: 'Golden Laurel',
   description: null,
-  imageUrl: 'cf-image-id',
+  imageUrl: ART_KEY,
   price: 500,
   availableQuantity: null,
   buzzType: 'yellow',
@@ -116,7 +123,7 @@ describe('submitCreatorShopItem hashes the artwork it just created', () => {
 
     expect(mocks.queueCosmeticPerceptualHash).toHaveBeenCalledWith({
       id: 99,
-      url: 'cf-image-id',
+      url: ART_KEY,
     });
   });
 
@@ -167,13 +174,13 @@ describe('updateCreatorShopItem re-hashes swapped artwork', () => {
     await updateCreatorShopItem({
       id: 42,
       userId: 11,
-      imageUrl: 'new-image',
+      imageUrl: ART_KEY,
       rightsAffirmed: true,
     });
 
     expect(mocks.queueCosmeticPerceptualHash).toHaveBeenCalledWith({
       id: 7,
-      url: 'new-image',
+      url: ART_KEY,
     });
   });
 

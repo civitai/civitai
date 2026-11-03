@@ -73,15 +73,21 @@ describe('control', () => {
 describe('getPlacementConfig (KeyValue)', () => {
   const load = async () => (await import('~/server/services/placement.service')).getPlacementConfig;
 
-  it('OFF: one Prisma read on the replica', async () => {
+  // Stored values differ from each other and from the default: the assertion names the read used.
+  it('OFF: one Prisma read on the replica, whose value configures the result', async () => {
     const getPlacementConfig = await load();
-    await getPlacementConfig();
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'placement:config',
+      value: { expiryHours: { sticker: 29 } },
+    });
+    const config = await getPlacementConfig();
     expect(flag.mock.calls).toEqual([[FLAG]]);
     expect(dbMock.dbRead.keyValue.findUnique.mock.calls).toEqual([
       [{ where: { key: 'placement:config' } }],
     ]);
     expect(dbMock.dbWrite.keyValue.findUnique).not.toHaveBeenCalled();
     expectNoKyselyRead();
+    expect(config.expiryHours('sticker')).toBe(29);
   });
 
   it('ON: one Kysely read on the replica, whose value configures the result', async () => {
@@ -89,13 +95,21 @@ describe('getPlacementConfig (KeyValue)', () => {
     flag.mockResolvedValue(true);
     q.getKeyValue.mockResolvedValue({
       key: 'placement:config',
-      value: { expiryHours: { 'model.sidebar_top': 31 } },
+      value: { expiryHours: { sticker: 31 } },
     } as never);
     const config = await getPlacementConfig();
     expect(q.getKeyValue.mock.calls).toEqual([[kyselyRead, 'placement:config']]);
     expect(q.getKeyValue.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.keyValue.findUnique).not.toHaveBeenCalled();
-    expect(config).toBeTruthy();
+    expect(config.expiryHours('sticker')).toBe(31);
+  });
+
+  it('ON: a missing Kysely row leaves the compiled default', async () => {
+    const getPlacementConfig = await load();
+    flag.mockResolvedValue(true);
+    q.getKeyValue.mockResolvedValue(undefined as never);
+    const config = await getPlacementConfig();
+    expect(config.expiryHours('sticker')).toBe(48);
   });
 });
 
@@ -447,7 +461,8 @@ describe('getUserEngagedModelVersionsHandler (the version ids)', () => {
   });
 
   it('ON: the Kysely read on the replica', async () => {
-    flag.mockResolvedValue(true);
+    // Only this flag: the engagement read that follows has a Kysely flag of its own.
+    flag.mockImplementation(async (key) => key === FLAG);
     q.listModelVersionIds.mockResolvedValue([{ id: 1 }] as never);
     await call();
     expect(q.listModelVersionIds.mock.calls).toEqual([[kyselyRead, ID]]);

@@ -15,6 +15,7 @@ import {
   BANKABLE_EARNING_PREDICATE_SQL,
   generationTipsPaidSql,
   getBankableAmount,
+  LAST_PRE_CUTOVER_COMPENSATION_PREFIX,
   paidToUsersSql,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
@@ -159,6 +160,16 @@ describe('getBankableAmount', () => {
 
     mockLedger({ snapshot: 0, earned: 15_000, spent: 13_000, consumed: 0 });
     expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(2_000);
+  });
+
+  // The counterparty review files Buzz that returns to a creator but moves no money: this netting
+  // is what keeps it out of bankable.
+  it('gains nothing from Buzz paid out that comes back as earnings', async () => {
+    mockLedger({ snapshot: 50_000, earned: 25_000, spent: 25_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(50_000);
+
+    mockLedger({ snapshot: 0, earned: 25_000, spent: 25_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
   });
 
   it('never reports a negative remaining amount', async () => {
@@ -411,6 +422,7 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
   type IN ('licenseFee', 'donation', 'sell', 'bounty')
   OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
   OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))
+  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'creator-tip-comp-2026-10-31-'))
   OR (type = 'fee' AND description IN (${placementLegs}))
   OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE 'App author fee%')
   OR ${SERVICE_RELEASE_SQL}
@@ -420,13 +432,63 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
   // Justin, 2026-10-09: generation tips are real money the generating user pays on top of the
   // price, so Yellow and Green tips are bankable. Blue tips stay out through the bankable-account
   // filter on the earned query, not through this predicate.
-  it('leaves generation compensation out, except the generation-tip transactions', () => {
+  it('leaves generation compensation out, except the generation-tip transactions and the last pre-cutover day', () => {
     const compensationClauses = BANKABLE_EARNING_PREDICATE_SQL.split('\n').filter((line) =>
       line.includes('compensation')
     );
     expect(compensationClauses).toEqual([
       "  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))",
+      "  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'creator-tip-comp-2026-10-31-'))",
     ]);
+  });
+
+  // Justin, 2026-11-02: compensation earned on the last day before the cutover is paid after it, so
+  // it misses the snapshot; it counts as bankable for every creator. Later days must stay out: if
+  // this clause ever matches a post-cutover day, generation compensation becomes bankable again.
+  describe('compensation earned on the last day before the cutover', () => {
+    // The externalTransactionId prefixes a platform-paid compensation row must start with to count.
+    const compensationPrefixes = [
+      ...BANKABLE_EARNING_PREDICATE_SQL.matchAll(
+        /\(type = 'compensation' AND fromAccountId = 0 AND startsWith\(externalTransactionId, '([^']+)'\)\)/g
+      ),
+    ].map((m) => m[1]);
+    const counts = (key: string) => compensationPrefixes.some((prefix) => key.startsWith(prefix));
+
+    it('counts the 10-31 compensation, keyed as the payout job keys it', () => {
+      expect(counts('creator-tip-comp-2026-10-31-1234-Yellow')).toBe(true);
+      expect(counts('creator-tip-comp-2026-10-31-1234-Green')).toBe(true);
+    });
+
+    it('does not count compensation for the cutover day or any day after it', () => {
+      expect(counts('creator-tip-comp-2026-11-01-1234-Yellow')).toBe(false);
+      expect(counts('creator-tip-comp-2026-11-02-1234-Yellow')).toBe(false);
+    });
+
+    it('does not count compensation for earlier days, which the snapshot already holds', () => {
+      expect(counts('creator-tip-comp-2026-10-30-1234-Yellow')).toBe(false);
+    });
+
+    it('still counts generation tips, before and after the cutover', () => {
+      expect(counts('generation-tip-2026-10-31-1234-Yellow')).toBe(true);
+      expect(counts('generation-tip-2026-11-01-1234-Yellow')).toBe(true);
+    });
+
+    it('derives the day from the cutover', () => {
+      expect(LAST_PRE_CUTOVER_COMPENSATION_PREFIX).toBe('creator-tip-comp-2026-10-31-');
+      expect(BANKABLE_CUTOVER.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    });
+
+    // The rows were paid after midnight, so only the earned query can see them. Platform-paid rows
+    // must not reach what a creator received from, or paid to, other users.
+    it('cannot reach the received-from-user or paid-to-user paths, which require a user payer', () => {
+      expect(RECEIVED_FROM_USER_SQL).toMatch(/^\(fromAccountId > 0 AND /);
+      expect(squash(receivedFromUsersSql('1 = 1'))).toContain(
+        squash(`${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}`)
+      );
+      expect(squash(paidToUsersSql(userId, { from: BANKABLE_CUTOVER }))).toContain(
+        squash(`${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}`)
+      );
+    });
   });
 
   // The generation-tip clause matches Blue tips too; only the bankable-account filter keeps them out.
@@ -662,13 +724,15 @@ describe('peak-earning predicates', () => {
   });
 
   // Generation compensation stopped setting the peak at the cutover; only its tip rows still do.
+  // The last pre-cutover day's compensation is bankable but does not set the peak either: from the
+  // cutover no compensation row sets any month's peak, and this one is dated in November.
   it('leaves generation compensation out, except the generation-tip transactions', () => {
     const compensationClauses = PEAK_EARNING_PREDICATE_SQL.split('\n').filter((l) =>
       l.includes('compensation')
     );
-    expect(compensationClauses).toEqual(
-      BANKABLE_EARNING_PREDICATE_SQL.split('\n').filter((l) => l.includes('compensation'))
-    );
+    expect(compensationClauses).toEqual([
+      "  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))",
+    ]);
   });
 
   it('also counts generation compensation before the cutover', () => {

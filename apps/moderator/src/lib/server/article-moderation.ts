@@ -5,11 +5,15 @@ import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { deleteImageRows, finishImageDeletes } from './image-deletion';
+import { detachHeldArticleThreadsSqlText, heldCommentV3OnArticleSqlText } from './delete-hold-sql';
 import { syncSearchIndex } from './search-index';
+import { logToAxiom } from './axiom';
+import type { KeptImage } from '$lib/image-kept-reasons';
+import { LEGAL_HOLD_REFUSAL } from '$lib/legal-hold';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
-type ModerateResult = { ok: true } | { ok: false; error: string };
+type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
 
 const UNPUBLISHED: ArticleStatus[] = [
   ArticleStatus.Unpublished,
@@ -28,11 +32,12 @@ export async function moderateArticle(
         customMessage: string | null;
       }
 ): Promise<ModerateResult> {
+  let kept: KeptImage[] | undefined;
   try {
     if (input.action === 'restore') await restoreArticle(input.articleId);
     else if (input.action === 'unpublish')
       await unpublishArticle(input.articleId, input.userId, input.reason, input.customMessage);
-    else await deleteArticle(input.articleId);
+    else kept = await deleteArticle(input.articleId);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -48,7 +53,7 @@ export async function moderateArticle(
   if (input.action === 'unpublish')
     void recordArticleEvent('Unpublish', input.articleId, input.userId);
 
-  return { ok: true };
+  return kept?.length ? { ok: true, kept } : { ok: true };
 }
 
 async function recordArticleEvent(
@@ -119,6 +124,22 @@ async function unpublishArticle(
   });
 
   await bustArticleCounts(userId);
+}
+
+type RestoredIngestion = 'Scanned' | 'Blocked' | 'Error' | 'Pending';
+
+/**
+ * `derived` as the main app's ingestion recompute adjusts it for content urls it holds without an
+ * image row: refused counts as blocked, deferred as unscanned, and neither is covered by a
+ * moderator's rating.
+ */
+export function withContentLinkHold(
+  derived: RestoredIngestion,
+  hold: { deferred: string[]; refused: string[] } | undefined
+): RestoredIngestion {
+  if (hold?.refused.length) return 'Blocked';
+  if (hold?.deferred.length && derived === 'Scanned') return 'Pending';
+  return derived;
 }
 
 async function restoreArticle(id: number): Promise<void> {
@@ -237,7 +258,12 @@ async function restoreArticle(id: number): Promise<void> {
     // A moderator override must keep the article Scanned even if an image is still non-terminal, else a
     // restored mod-pinned article is wrongly hidden.
     const hasModeratorOverride = article.moderatorNsfwLevel != null;
-    const next = hasModeratorOverride
+    const hold = await trx
+      .selectFrom('ArticleContentLinkHold')
+      .select(['deferred', 'refused'])
+      .where('articleId', '=', id)
+      .executeTakeFirst();
+    const derived: RestoredIngestion = hasModeratorOverride
       ? 'Scanned'
       : imageBlocked || textBlocked
       ? 'Blocked'
@@ -246,6 +272,7 @@ async function restoreArticle(id: number): Promise<void> {
       : imageDone && textDone
       ? 'Scanned'
       : 'Pending';
+    const next = withContentLinkHold(derived, hold);
 
     await trx
       .updateTable('Article')
@@ -264,7 +291,10 @@ async function restoreArticle(id: number): Promise<void> {
   await bustArticleCounts(userId);
 }
 
-async function deleteArticle(id: number): Promise<void> {
+/** Deletes the article and its orphaned images; returns the images a hold kept. */
+async function deleteArticle(id: number): Promise<KeptImage[]> {
+  // The id is written into the comment-hold SQL as text, where a fraction would be cast to another id.
+  if (!Number.isInteger(id)) throw new Error(`Invalid article id ${id}`);
   // Capture the content image ids before the transaction deletes the connections, or they're lost.
   const contentImageIds = (
     await dbWrite
@@ -284,6 +314,20 @@ async function deleteArticle(id: number): Promise<void> {
       .where('id', '=', id)
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
+
+    // Same lock order as the main app's deleteArticleById: CommentV3 before the cascade reaches
+    // CommentV2.
+    await sql`SELECT 1 FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}
+      FOR UPDATE`.execute(trx);
+    const kept = await sql<{ keptByComment: boolean }>`
+      SELECT ${sql.raw(heldCommentV3OnArticleSqlText(`${id}::int`))} AS "keptByComment"`.execute(
+      trx
+    );
+    if (kept.rows[0]?.keptByComment) throw new Error(LEGAL_HOLD_REFUSAL);
+    await sql`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`.execute(
+      trx
+    );
+    await sql.raw(detachHeldArticleThreadsSqlText(`SELECT ${id}::int`)).execute(trx);
 
     await trx
       .deleteFrom('File')
@@ -324,5 +368,15 @@ async function deleteArticle(id: number): Promise<void> {
     return toDelete.length ? deleteImageRows(trx, toDelete) : null;
   });
 
-  if (rows) await finishImageDeletes(rows);
+  if (!rows) return [];
+  if (rows.refused.length)
+    void logToAxiom({
+      type: 'info',
+      name: 'image-deletion',
+      message: 'images kept by a hold',
+      articleId: id,
+      kept: rows.refused,
+    }).catch(() => undefined);
+  await finishImageDeletes(rows);
+  return rows.refused;
 }

@@ -7,6 +7,10 @@ import type {
 } from '~/server/schema/announcement.schema';
 import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
+import {
+  activeAnnouncementWhere,
+  announcementWindowOverlapsWhere,
+} from '~/server/services/announcement-window';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
@@ -14,7 +18,11 @@ import {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
+import { registerCounterWithLabels, registerGaugeWithLabels } from '~/server/prom/client';
 import { getAllServerHosts } from '~/server/utils/server-domain';
+import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -146,13 +154,11 @@ export async function getCreatorAnnouncements({
       // other one. Without this the profile shows both, which is a browsing-boundary
       // leak rather than a double-render.
       ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      ...(includeHidden
-        ? {}
-        : {
-            disabled: false,
-            OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-            AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
-          }),
+      // The shared live window, as a member of a literal `AND` key rather than spread: the
+      // helper carries its own `AND`, and a spread followed by another `AND` here would
+      // silently drop the window. As a literal key, a second `AND` is TS1117 and does not
+      // compile. `includeHidden` gets the empty conjunction, which Prisma treats as no filter.
+      AND: includeHidden ? [] : [activeAnnouncementWhere(now)],
     },
     select: creatorAnnouncementSelect,
     orderBy: [{ startsAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
@@ -166,6 +172,195 @@ export async function getCreatorAnnouncements({
   // If a byline is ever added to the profile, flip this — do not remove the argument.
   return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
 }
+
+/*
+ * The live-author short-circuit for the followed feed (behind CREATOR_FEED_SHORTCIRCUIT).
+ *
+ * The feed query filters through the author relation with correlated subqueries, and the bell
+ * runs it on every signed-in page load — for most viewers to find that nobody they follow has a
+ * live announcement. So the feed first asks two cheap questions: which authors have a feedable
+ * announcement at all (a small read per domain per pod each time the cached set expires — the memo
+ * does not dedupe in flight, so requests that miss together each read once), and which of those this viewer
+ * follows (a primary-key range read on UserEngagement). An empty answer to either ends the call;
+ * otherwise the feed query runs exactly as before, with `userId IN (that intersection)` added.
+ *
+ * Why the results are the same rows: the added filter can only drop rows whose author is not in
+ * the intersection, and the feed query itself requires both halves of it — the author follows
+ * relation (`engagedUsers some Follow`) and a non-profileOnly, non-disabled row in the live
+ * window for the domain. The author set is a SUPERSET of the authors that are live at any moment
+ * inside its TTL: it looks ahead past `startsAt` by twice the TTL, looks back past `endsAt` by one
+ * TTL (so a request whose own clock reading came before the set's still finds an author whose only
+ * row ended in between), and keeps rows whose `endsAt` passes during its life. The feed query
+ * re-applies the exact window. Every viewer predicate —
+ * mutes, blocks both ways, hides — stays in the feed query, untouched.
+ *
+ * Where it can differ: an author who becomes live in a way the lookahead cannot foresee — a new
+ * announcement, an edit that moves a row into the window or the domain, a disabled row re-enabled
+ * — is absent from a set built before that write until the set refreshes, on this pod or any
+ * other: up to LIVE_AUTHORS_TTL_MS (plus replica lag) late for that author's followers. Removals
+ * (delete, disable, profileOnly) only shrink the true set, which a superset absorbs. That bounded
+ * delay is the accepted cost, and why this sits behind a switch.
+ */
+const LIVE_AUTHORS_TTL_MS = 30_000;
+// Twice the TTL, so a row whose start falls inside a cached set's lifetime is already in it even
+// when the read that built the set was slow (the memo's expiry is stamped after the read).
+const LIVE_AUTHORS_LOOKAHEAD_MS = 2 * LIVE_AUTHORS_TTL_MS;
+// One TTL back. The feed reads its `now` before it asks for the set, and a cold set is built a
+// little later, by this or another request; a row that ended in that gap is live for the feed
+// query and must not be missing from the set. Requests take far less than a TTL.
+const LIVE_AUTHORS_LOOKBACK_MS = LIVE_AUTHORS_TTL_MS;
+const ANY_DOMAIN = 'any';
+
+/** Exported for tests only. One increment per short-circuit decision, by what it decided. */
+export const creatorFeedShortcircuitCounter = registerCounterWithLabels({
+  name: 'creator_feed_shortcircuit_total',
+  help: 'Followed creator feed short-circuit outcomes: empty_set, no_follows, narrowed, fallback.',
+  labelNames: ['outcome'] as const,
+});
+
+/** Exported for tests only. Size of the live-author set at its last build, per domain key. */
+export const creatorFeedLiveAuthorsGauge = registerGaugeWithLabels({
+  name: 'creator_feed_live_authors',
+  help: 'Authors in the followed creator feed live-author set at its last build, per domain.',
+  labelNames: ['domain'] as const,
+});
+
+const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
+  async (domainKey) => {
+    const now = Date.now();
+    const rows = await dbRead.announcement.findMany({
+      where: {
+        profileOnly: false,
+        userId: { not: null },
+        ...(domainKey !== ANY_DOMAIN
+          ? { domain: { hasSome: [DomainColor.all, domainKey as DomainColor] } }
+          : {}),
+        // The shared "is this announcement showing" window (enabled, open-ended start and end),
+        // widened: one TTL back past `endsAt`, two ahead past `startsAt`. The feed query uses
+        // the same helper at its exact `now`, so the set is a superset of it by construction.
+        // An AND member, never spread: see `followedAnnouncementsWhere`.
+        AND: [
+          announcementWindowOverlapsWhere(
+            new Date(now - LIVE_AUTHORS_LOOKBACK_MS),
+            new Date(now + LIVE_AUTHORS_LOOKAHEAD_MS)
+          ),
+        ],
+      },
+      select: { userId: true },
+    });
+    const authors = [...new Set(rows.map((x) => x.userId).filter(isDefined))];
+    creatorFeedLiveAuthorsGauge.set({ domain: domainKey }, authors.length);
+    return authors;
+  },
+  LIVE_AUTHORS_TTL_MS,
+  () => Date.now(),
+  // One array served to every request on the pod for the TTL.
+  { freeze: true }
+);
+
+/** Exported for tests only. */
+export function resetLiveAuthorCache() {
+  liveAuthorIdsMemo.clear();
+}
+
+/**
+ * The authors this viewer follows who may have a feedable announcement, or `undefined` when the
+ * feed should run unnarrowed (switch off, or the narrowing read failed — the feed query then
+ * answers as it always has). An empty array means the feed is empty.
+ */
+async function resolveFollowedLiveAuthors({
+  userId,
+  domain,
+}: {
+  userId: number;
+  domain?: DomainColor;
+}): Promise<number[] | undefined> {
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CREATOR_FEED_SHORTCIRCUIT))) return undefined;
+
+  try {
+    const candidates = await liveAuthorIdsMemo(domain ?? ANY_DOMAIN);
+    if (!candidates.length) {
+      creatorFeedShortcircuitCounter.inc({ outcome: 'empty_set' });
+      return [];
+    }
+
+    const follows = await dbRead.userEngagement.findMany({
+      where: { userId, type: UserEngagementType.Follow, targetUserId: { in: [...candidates] } },
+      select: { targetUserId: true },
+    });
+    creatorFeedShortcircuitCounter.inc({ outcome: follows.length ? 'narrowed' : 'no_follows' });
+    return follows.map((x) => x.targetUserId);
+  } catch (error) {
+    // Falls back to the unnarrowed feed query, which answers as it did before the switch: the
+    // viewer sees no difference, so this counter and log are the only sign it happened.
+    creatorFeedShortcircuitCounter.inc({ outcome: 'fallback' });
+    logToAxiom({
+      name: 'creator-feed-shortcircuit-fallback',
+      type: 'warning',
+      message: 'Live-author narrowing failed; ran the unnarrowed followed feed query',
+      details: {
+        errorName: error instanceof Error ? error.name : typeof error,
+        error: error instanceof Error ? error.message : String(error),
+        domain: domain ?? ANY_DOMAIN,
+      },
+    }).catch(() => undefined);
+    return undefined;
+  }
+}
+
+function followedAnnouncementsWhere({
+  userId,
+  domain,
+  authorIds,
+  now,
+}: {
+  userId: number;
+  domain?: DomainColor;
+  authorIds?: number[];
+  now: Date;
+}) {
+  return {
+    profileOnly: false,
+    userId: authorIds ? { in: authorIds } : { not: null },
+    user: {
+      // engagedUsers = rows where this author is the TARGET, i.e. their followers.
+      // engagingUsers is the other direction (follows the author made) and would
+      // return a plausible, wrong feed.
+      announcementMutesReceived: { none: { userId } },
+      // Blocks both ways, mirroring `notBlockedBetween` exactly — the asymmetry is
+      // deliberate there: the viewer's Block OR Hide of the author hides it, while the
+      // author's side hides it only on Block. A follow predates the block that
+      // followed it, so the follow edge alone is not consent to keep appearing.
+      engagingUsers: { none: { targetUserId: userId, type: UserEngagementType.Block } },
+      // Both conditions are on engagedUsers, so they go in AND rather than as two keys
+      // of the same object. A repeated key here is TS1117 and would not compile; the
+      // hazard is the sibling `where`, where a spread between two keys makes the same
+      // mistake legal and silent.
+      AND: [
+        { engagedUsers: { some: { userId, type: UserEngagementType.Follow } } },
+        {
+          engagedUsers: {
+            none: {
+              userId,
+              type: { in: [UserEngagementType.Block, UserEngagementType.Hide] },
+            },
+          },
+        },
+      ],
+    },
+    ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
+    // The shared live window — the same helper the live-author set widens, so the set stays a
+    // superset of this query by construction. An AND member, never spread: the helper carries
+    // its own `AND` key, and a spread followed by another `AND` here would silently drop the
+    // window. As a literal key, a second `AND` is TS1117 and does not compile.
+    AND: [activeAnnouncementWhere(now)],
+  } satisfies Prisma.AnnouncementWhereInput;
+}
+
+const followedAnnouncementsOrderBy = [
+  { startsAt: { sort: 'desc', nulls: 'last' } },
+  { id: 'desc' },
+] satisfies Prisma.AnnouncementOrderByWithRelationInput[];
 
 /**
  * The *Creators* chip: live announcements from authors the caller follows.
@@ -188,43 +383,13 @@ export async function getFollowedAnnouncements({
 }) {
   const now = new Date();
 
+  const authorIds = await resolveFollowedLiveAuthors({ userId, domain });
+  if (authorIds && !authorIds.length) return { items: [], nextCursor: undefined };
+
   const announcements = await dbRead.announcement.findMany({
-    where: {
-      profileOnly: false,
-      disabled: false,
-      userId: { not: null },
-      user: {
-        // engagedUsers = rows where this author is the TARGET, i.e. their followers.
-        // engagingUsers is the other direction (follows the author made) and would
-        // return a plausible, wrong feed.
-        announcementMutesReceived: { none: { userId } },
-        // Blocks both ways, mirroring `notBlockedBetween` exactly — the asymmetry is
-        // deliberate there: the viewer's Block OR Hide of the author hides it, while the
-        // author's side hides it only on Block. A follow predates the block that
-        // followed it, so the follow edge alone is not consent to keep appearing.
-        engagingUsers: { none: { targetUserId: userId, type: UserEngagementType.Block } },
-        // Both conditions are on engagedUsers, so they go in AND rather than as two keys
-        // of the same object. A repeated key here is TS1117 and would not compile; the
-        // hazard is the sibling `where`, where a spread between two keys makes the same
-        // mistake legal and silent.
-        AND: [
-          { engagedUsers: { some: { userId, type: UserEngagementType.Follow } } },
-          {
-            engagedUsers: {
-              none: {
-                userId,
-                type: { in: [UserEngagementType.Block, UserEngagementType.Hide] },
-              },
-            },
-          },
-        ],
-      },
-      ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-      AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
-    },
+    where: followedAnnouncementsWhere({ userId, domain, authorIds, now }),
     select: creatorAnnouncementSelect,
-    orderBy: [{ startsAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+    orderBy: followedAnnouncementsOrderBy,
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });

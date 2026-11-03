@@ -1,3 +1,8 @@
+import {
+  commentDetachedSql,
+  heldCommentInTreeSql,
+  threadDetachedSql,
+} from '~/server/services/comment-thread-hold';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   CommentV2Model,
@@ -22,9 +27,9 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
+import { logToAxiom } from '~/server/logging/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getImageThread } from '@civitai/db-queries/hot-reads';
 import type {
   UpsertCommentV2Input,
@@ -34,7 +39,13 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
-import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  contentKeptError,
+  holdMarkerViewExists,
+  isLegalHoldAbort,
+  logHoldRetained,
+} from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -56,7 +67,23 @@ import { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { onCommentCreated, onCommentsRemoved } from '~/server/events/points/hooks';
+import {
+  bulkClearCommentV3TosViolation,
+  bulkSetCommentV3TosViolation,
+  v3WriteCommentIds,
+} from '~/server/services/commentv3/moderation.service';
+import {
+  getV3WriteComment,
+  isV3WriteSurface,
+  isV3WriteTarget,
+  V3_WRITE_TARGET_MESSAGE,
+  prismaRunner,
+  toggleCommentMute,
+  toggleTopicLock,
+  toggleTopicMute,
+} from '~/server/services/commentv3/write.service';
 import { getCosmeticsAndProfilePicturesForUsers } from '~/server/services/user.service';
+import { getShowcaseHatsForUsers } from '~/server/events/showcase-hat';
 
 export type CommentThread = {
   id: number;
@@ -230,10 +257,15 @@ export async function getThreadEntityOwnerId({
       return findUserId(
         dbRead.resourceReview.findUnique({ where: { id: entityId }, select: { userId: true } })
       );
-    case 'comment':
-      return findUserId(
-        dbRead.commentV2.findUnique({ where: { id: entityId }, select: { userId: true } })
-      );
+    case 'comment': {
+      // CommentV3 holds every comment, including those on surfaces that no longer write CommentV2.
+      const row = await kyselyRead
+        .selectFrom('CommentV3')
+        .select('userId')
+        .where('id', '=', entityId)
+        .executeTakeFirst();
+      return row?.userId ?? null;
+    }
     case 'question':
       return findUserId(
         dbRead.question.findUnique({ where: { id: entityId }, select: { userId: true } })
@@ -297,6 +329,12 @@ export async function isViewerContentOwner({
  * actually holds, live beside the constant.
  */
 
+/** Comments on a surface that writes CommentV3 are written through `commentv3` only. */
+async function throwIfV3WriteTarget(target: { entityType: string; entityId: number }) {
+  if (await isV3WriteTarget(prismaRunner(dbWrite), target))
+    throw throwBadRequestError(V3_WRITE_TARGET_MESSAGE);
+}
+
 /**
  * Refuses a write into a locked thread, into any thread nested under one, or into a chain this
  * cannot resolve to a top-level thread.
@@ -350,16 +388,23 @@ export const upsertComment = async ({
   // value can be a stale cached null.
   parentThreadId: _clientParentThreadId,
   isModerator,
+  includeHidden,
   track,
   eventPoints = true,
   ...data
 }: UpsertCommentV2Input & {
   userId: number;
   isModerator?: boolean;
+  // An edit that reaches a comment hidden for ToS (the challenge judge re-reviewing its own). Widens
+  // only the edit's target; every content and block check still runs.
+  includeHidden?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
 }) => {
+  await throwIfV3WriteTarget(
+    data.id ? { entityType: 'comment', entityId: data.id } : { entityType, entityId }
+  );
   await throwOnBlockedCommentContent(data.content, { isModerator });
   // Edits too, not just creates — a comment written before the block would otherwise stay editable
   // into anything afterwards. An edit resolves its target from the stored comment rather than from
@@ -481,11 +526,18 @@ export const upsertComment = async ({
   // Wrapped so the edit's charge and the edit itself commit together.
   const { updated, charged } = await dbWrite.$transaction(async (tx) => {
     const chargedStickers = await chargeStickers(tx);
-    const row = await tx.commentV2.update({
-      where: { id: data.id },
-      data,
-      select: commentV2Select,
-    });
+    // A member edits only a comment still on the page: one hidden since the read above (an author's
+    // delete can keep it that way for a hold) answers as gone, and only a moderator sets the flag.
+    const row = await tx.commentV2
+      .update({
+        where:
+          isModerator || includeHidden ? { id: data.id } : { id: data.id, tosViolation: false },
+        data: isModerator ? data : { ...data, tosViolation: undefined },
+        select: commentV2Select,
+      })
+      .catch((e: { code?: string }) => {
+        throw e?.code === 'P2025' ? throwNotFoundError() : e;
+      });
     return { updated: row, charged: chargedStickers };
   });
   recordStickerUsage({
@@ -504,6 +556,13 @@ export async function toggleThreadMute({
   commentId,
   userId,
 }: ToggleThreadMuteInput & { userId: number }) {
+  const v3 = await getV3WriteComment(prismaRunner(dbWrite), commentId);
+  if (v3) {
+    // Refused for a ToS removal, as below: the endpoint takes a bare id.
+    if (v3.tosViolation) throw throwNotFoundError();
+    const { muted } = await toggleCommentMute(prismaRunner(dbWrite), { userId, commentId });
+    return { muted, threadId: null };
+  }
   const comment = await dbWrite.commentV2.findUnique({
     where: { id: commentId },
     select: {
@@ -567,6 +626,18 @@ export async function toggleSectionMute({
   entityId,
   userId,
 }: SectionMuteInput & { userId: number }) {
+  // A surface that writes CommentV3 mutes the topic itself, comments or not, so long as the
+  // entity exists: this takes a plain entity id.
+  if (isV3WriteSurface(entityType)) {
+    if (!(await getThreadEntityOwnerId({ entityType, entityId })))
+      return { muted: false, threadId: null, hasThread: false };
+    const { muted } = await toggleTopicMute(prismaRunner(dbWrite), {
+      userId,
+      entityType,
+      entityId,
+    });
+    return { muted, threadId: null, hasThread: true };
+  }
   // Deliberately does NOT create the thread. An entity with no thread has no comments, so there is
   // nothing to be notified about and nothing to mute; the first comment creates the thread and the
   // control works from then on. Refusing to create also means this endpoint — which takes a plain
@@ -575,16 +646,16 @@ export async function toggleSectionMute({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true },
   });
-  if (!thread) return { muted: false, threadId: null };
+  if (!thread) return { muted: false, threadId: null, hasThread: false };
 
   const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId: thread.id, userId } });
-  if (count > 0) return { muted: false, threadId: thread.id };
+  if (count > 0) return { muted: false, threadId: thread.id, hasThread: true };
 
   await dbWrite.threadMute.createMany({
     data: [{ threadId: thread.id, userId }],
     skipDuplicates: true,
   });
-  return { muted: true, threadId: thread.id };
+  return { muted: true, threadId: thread.id, hasThread: true };
 }
 
 const isCommentEntityType = (type: string): type is CommentEntityType =>
@@ -595,13 +666,16 @@ export async function getSectionMuted({
   entityId,
   userId,
 }: SectionMuteInput & { userId: number }) {
-  const thread = await dbRead.thread.findUnique({
-    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: { id: true },
-  });
-  // `hasThread: false` is not "not muted": the toggle writes a ThreadMute on the root thread, so
-  // with no thread nothing can be muted and offering the action would report success over a no-op.
-  if (!thread) return { muted: false, hasThread: false };
+  // A surface that writes CommentV3 mutes its topic directly, so it needs no thread.
+  if (!isV3WriteSurface(entityType)) {
+    const thread = await dbRead.thread.findUnique({
+      where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+      select: { id: true },
+    });
+    // `hasThread: false` is not "not muted": the toggle writes a ThreadMute on the root thread, so
+    // with no thread nothing can be muted and offering the action would report success over a no-op.
+    if (!thread) return { muted: false, hasThread: false };
+  }
 
   // Read what the suppression reads (`CommentTopicMute`), not the `ThreadMute` the toggle writes:
   // the mirror trigger keeps them in step, and if they drift the suppression is what the user
@@ -621,10 +695,14 @@ export async function getThreadMuted({
   commentId,
   userId,
 }: ToggleThreadMuteInput & { userId: number }) {
-  const comment = await dbRead.commentV2.findUnique({
-    where: { id: commentId },
-    select: { tosViolation: true, childThread: { select: { id: true } } },
-  });
+  // Muting a comment on a CommentV3-write surface needs no thread, so a lock never stops it.
+  const v3 = await getV3WriteComment(prismaRunner(dbWrite), commentId);
+  const comment = v3
+    ? { tosViolation: v3.tosViolation, childThread: null }
+    : await dbRead.commentV2.findUnique({
+        where: { id: commentId },
+        select: { tosViolation: true, childThread: { select: { id: true } } },
+      });
   // Refuses what the toggle refuses; answering for a ToS-removed comment makes this the oracle its
   // neighbour was fixed not to be.
   if (!comment || comment.tosViolation) return { muted: false, viaAncestor: false, canMute: false };
@@ -657,7 +735,7 @@ export async function getThreadMuted({
   // refuses anywhere in a locked chain: the comment, an ancestor or its topic. Answered here rather
   // than from the client's `isLocked`, which is assembled from React nesting and is simply false on
   // a drilled-in or deep-linked thread — the view a reply notification actually opens.
-  const canMute = !!comment.childThread || !(row?.locked ?? false);
+  const canMute = !!v3 || !!comment.childThread || !(row?.locked ?? false);
   return { muted: own || ancestor, viaAncestor: !own && ancestor, canMute };
 }
 
@@ -690,39 +768,76 @@ export async function getCommentThreadBounty(
   return entryId ? { entryId } : null;
 }
 
-export async function getCommentThreadCrucibleId(threadId: number): Promise<number | null> {
-  const thread = await dbRead.thread.findUnique({
-    where: { id: threadId },
-    select: { crucibleId: true, rootThread: { select: { crucibleId: true } } },
-  });
-  return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
-}
-
 /**
- * The storyline above a thread, as one query. Matches on the stored `commentId -> threadId` chain
- * or on any chain thread's `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted
- * comment breaks the chain, so either alone can miss a storyline and let a reply skip its gate.
+ * The storyline or crucible above a thread, as one query. Matches on the stored
+ * `commentId -> threadId` chain or on any chain thread's `rootThreadId`: some reply threads have no
+ * `rootThreadId`, and a deleted comment breaks the chain, so either alone can miss the entity and
+ * let a reply skip its gate.
+ *
+ * Each chain thread's column is read by a correlated primary-key probe so the chain drives the
+ * lookup: as a join, the planner starts from the column's unique index instead, reading every
+ * crucible's (or storyline's) thread on every call.
  */
-const storylineAboveSql = (seed: string) => Prisma.sql`
+const entityAboveSql = (column: 'storylineId' | 'crucibleId', seed: string) => Prisma.sql`
   ${Prisma.raw(threadAncestorsCte(seed))}
-  SELECT th."storylineId"
+  SELECT chain."entityId" ${Prisma.raw(`"${column}"`)}
   FROM (
-    SELECT mt."id" FROM thread_ancestors mt
-    UNION ALL
-    SELECT t."rootThreadId" FROM thread_ancestors mt JOIN "Thread" t ON t.id = mt."id"
+    SELECT (SELECT th.${Prisma.raw(
+      `"${column}"`
+    )} FROM "Thread" th WHERE th.id = link."id") "entityId"
+    FROM (
+      SELECT mt."id" FROM thread_ancestors mt
+      UNION ALL
+      SELECT t."rootThreadId" FROM thread_ancestors mt JOIN "Thread" t ON t.id = mt."id"
+    ) link
   ) chain
-  JOIN "Thread" th ON th.id = chain."id"
-  WHERE th."storylineId" IS NOT NULL
+  WHERE chain."entityId" IS NOT NULL
   LIMIT 1`;
 
+const commentThreadSeed = (commentId: number) =>
+  `(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`;
+
 export const storylineOfThreadSql = (threadId: number) =>
-  storylineAboveSql(String(Number(threadId)));
+  entityAboveSql('storylineId', String(Number(threadId)));
 
 export const storylineOfCommentSql = (commentId: number) =>
-  storylineAboveSql(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
+  entityAboveSql('storylineId', commentThreadSeed(commentId));
 
 const firstStorylineId = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ storylineId: number }[]>(sql))[0]?.storylineId ?? null;
+
+export const crucibleOfCommentSql = (commentId: number) =>
+  entityAboveSql('crucibleId', commentThreadSeed(commentId));
+
+/** The crucible a reply's thread belongs to, for the replies of a crucible discussion. */
+export const getCommentCrucibleId = async (commentId: number) =>
+  (await dbRead.$queryRaw<{ crucibleId: number }[]>(crucibleOfCommentSql(commentId)))[0]
+    ?.crucibleId ?? null;
+
+const isDetached = async (sql: Prisma.Sql) =>
+  (await dbRead.$queryRaw<{ detached: boolean }[]>(sql))[0]?.detached === true;
+
+/** Whether a thread was taken off a deleted parent to keep a held author's comment: not public. */
+export const isThreadDetached = (threadId: number) => isDetached(threadDetachedSql(threadId));
+
+export const isCommentDetached = (commentId: number) => isDetached(commentDetachedSql(commentId));
+
+/**
+ * Whether a member gets the comment as missing: gone, hidden for ToS, or detached. Read on the
+ * primary, so a delete just made counts. A comment on a surface that writes CommentV3 has no
+ * CommentV2 row.
+ */
+export const isCommentGoneForMembers = async (commentId: number) => {
+  const row = await dbWrite.commentV2.findUnique({
+    where: { id: commentId },
+    select: { tosViolation: true },
+  });
+  if (!row) {
+    const v3 = await getV3WriteComment(prismaRunner(dbWrite), commentId);
+    return !v3 || v3.tosViolation;
+  }
+  return row.tosViolation || (await isCommentDetached(commentId));
+};
 
 export const getCommentThreadStorylineId = (threadId: number) =>
   firstStorylineId(storylineOfThreadSql(threadId));
@@ -730,10 +845,34 @@ export const getCommentThreadStorylineId = (threadId: number) =>
 export const getCommentStorylineId = (commentId: number) =>
   firstStorylineId(storylineOfCommentSql(commentId));
 
-export const deleteComment = async ({ id }: { id: number }) => {
-  const deleted = await dbWrite.commentV2.delete({ where: { id } });
-  void onCommentsRemoved([deleted]);
-  return deleted;
+/**
+ * A comment kept for a hold is hidden for ToS instead, which its author cannot tell from a delete:
+ * it goes from every read they get, and its points with it.
+ */
+export const deleteComment = async ({
+  id,
+  byAuthor = false,
+}: {
+  id: number;
+  byAuthor?: boolean;
+}) => {
+  await throwIfV3WriteTarget({ entityType: 'comment', entityId: id });
+  const comment = await dbWrite.commentV2.findUnique({ where: { id } });
+  if (!comment) return null;
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite
+    .$transaction((tx) => deleteCommentsV2UnlessHeld(tx, [id], markerView, { byAuthor }))
+    .catch((e: unknown) => {
+      throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
+    });
+  if (!deleted.length && !retained.length) return null;
+  if (retained.length)
+    void logHoldRetained(
+      'commentV2.delete',
+      retained.map((r) => r.userId)
+    ).catch(() => undefined);
+  void onCommentsRemoved([comment]);
+  return comment;
 };
 
 /**
@@ -746,7 +885,8 @@ export const deleteComment = async ({ id }: { id: number }) => {
 export async function deleteCommentsV2UnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
@@ -754,22 +894,17 @@ export async function deleteCommentsV2UnlessHeld(
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
       AND NOT EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
-          UNION
-          SELECT t.id FROM "Thread" t
-          JOIN "CommentV2" k ON t."commentId" = k.id
-          JOIN below b ON k."threadId" = b.id
-        ),
-        authors AS MATERIALIZED (
-          SELECT DISTINCT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-        )
-        SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
+        SELECT 1 FROM "Thread" t
+        WHERE t."commentId" = c.id AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
       )
     RETURNING c."userId", c."threadId"
   `;
+  // One its author removed is marked, so a moderator's ToS restore can tell it from a ToS removal.
+  const removedByAuthor = byAuthor
+    ? Prisma.sql`, metadata = COALESCE(metadata, '{}'::jsonb) || '{"removedByAuthor": true}'::jsonb`
+    : Prisma.empty;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
-    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now() ${removedByAuthor}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;
@@ -799,26 +934,36 @@ export async function afterCommentsV2Deleted({
  * 4) Send 'tos-violation' notification to comment owner
  */
 export async function bulkSetCommentV2TosViolation({
-  ids,
+  ids: requested,
   actor,
 }: {
   ids: number[];
   actor: { id: number; ip?: string };
 }) {
-  if (ids.length === 0) return { count: 0, notified: 0, rewardedReports: 0 };
+  if (requested.length === 0) return { count: 0, notified: 0, rewardedReports: 0 };
+  // A comment on a surface that writes CommentV3 is flagged there, where its reports are linked too.
+  const v3Ids = await v3WriteCommentIds(requested);
+  const v3 = await bulkSetCommentV3TosViolation({ ids: v3Ids, actor });
+  const ids = requested.filter((id) => !v3Ids.includes(id));
+  if (ids.length === 0) return v3;
 
-  const { v4: uuid } = await import('uuid');
   const { reportAcceptedReward } = await import('~/server/rewards');
   const { createNotification } = await import('~/server/services/notification.service');
   const { NotificationCategory } = await import('~/server/common/enums');
   const enums = await import('~/shared/utils/prisma/enums');
 
-  let rewardedReports = 0;
-  let notified = 0;
-  // Rows actually flagged, NOT ids submitted — see the note on the legacy twin in comment.service.ts.
-  let count = 0;
+  let rewardedReports = v3.rewardedReports;
+  let notified = v3.notified;
+  // Rows written, not ids submitted. A row already hidden counts: its reports are actioned on this
+  // pass.
+  let count = v3.count;
 
   for (const id of ids) {
+    // An already-hidden comment may be one its author deleted, kept for a hold: its reports are still
+    // actioned, but its author must not hear about a comment they removed.
+    const wasHidden = (
+      await dbWrite.commentV2.findUnique({ where: { id }, select: { tosViolation: true } })
+    )?.tosViolation;
     const updated = await dbWrite.commentV2
       .update({
         where: { id },
@@ -849,11 +994,12 @@ export async function bulkSetCommentV2TosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: updated.userId,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:commentv2:${uuid()}`,
+      key: `tos-violation:commentv2:${crypto.randomUUID()}`,
       details: { modelName: '', entity: 'comment' },
     })
       .then(() => {
@@ -888,6 +1034,16 @@ export async function getCommentsThreadDetails2({
   entityId,
   entityType,
 }: CommentConnectorInput): Promise<{ id: number; locked: boolean } | null> {
+  // A surface that writes CommentV3 has no thread; its lock is the topic's, and there is no id.
+  if (isV3WriteSurface(entityType)) {
+    const topic = await kyselyRead
+      .selectFrom('CommentTopic')
+      .select('locked')
+      .where('entityType', '=', entityType as CommentEntityType)
+      .where('entityId', '=', entityId)
+      .executeTakeFirst();
+    return topic ? { id: 0, locked: topic.locked } : null;
+  }
   const viaKysely = await readImageThreadViaKysely(entityType, entityId);
   if (viaKysely !== undefined) return viaKysely;
   return dbRead.thread.findUnique({
@@ -897,21 +1053,23 @@ export async function getCommentsThreadDetails2({
 }
 
 /**
- * An IMAGE's thread on the replica through Kysely when `kysely-hot-reads-2` is on: `{ id, locked }`,
- * or `null` when the image has none, exactly as the Prisma `findUnique` answers. `undefined` means
- * "not taken": the flag is off or the entity is not an image, and the caller reads Prisma as before.
- * Only images, the hot shape; every other entity type stays on Prisma.
+ * An IMAGE's thread on the replica through Kysely: `{ id, locked }`, or `null` when the image has
+ * none, exactly as the Prisma `findUnique` answers. `undefined` means "not taken": the entity is not
+ * an image, and the caller reads Prisma. Only images, the hot shape; every other entity type stays
+ * on Prisma.
  */
 async function readImageThreadViaKysely(
   entityType: string,
   entityId: number
 ): Promise<{ id: number; locked: boolean } | null | undefined> {
   if (entityType !== 'image') return undefined;
-  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))) return undefined;
   return (await getImageThread((await loadKyselyDb()).kyselyRead, entityId)) ?? null;
 }
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
+  // A surface that writes CommentV3 keeps its lock on the topic only.
+  if (isV3WriteSurface(entityType))
+    return toggleTopicLock(prismaRunner(dbWrite), { entityType, entityId });
   const thread = await dbWrite.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
@@ -939,6 +1097,7 @@ export const toggleHideComment = async ({
   id,
   currentToggle,
 }: GetByIdInput & { currentToggle: boolean }) => {
+  await throwIfV3WriteTarget({ entityType: 'comment', entityId: id });
   return dbWrite.commentV2.update({
     where: { id },
     data: { hidden: !currentToggle },
@@ -946,6 +1105,7 @@ export const toggleHideComment = async ({
 };
 
 export async function togglePinComment({ id }: GetByIdInput) {
+  await throwIfV3WriteTarget({ entityType: 'comment', entityId: id });
   const comment = await dbRead.commentV2.findUnique({ where: { id }, select: { pinnedAt: true } });
   if (!comment) throw throwNotFoundError();
 
@@ -1260,18 +1420,36 @@ export async function getCommentsInfinite({
       : { threads: [], childlessCommentIds: [] };
 
     const replyComments = replies.threads.flatMap((thread) => thread.comments);
-    const userCosmetics = await getCosmeticsAndProfilePicturesForUsers(
-      [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
-        (x) => x.user.id
-      )
-    );
+    const [userCosmetics, regularShowcaseHats] = await Promise.all([
+      getCosmeticsAndProfilePicturesForUsers(
+        [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
+          (x) => x.user.id
+        ),
+        { showcaseHat: true }
+      ),
+      // The page's own comments carry their cosmetics from the query, all but the showcase hat.
+      getShowcaseHatsForUsers(regularComments.flatMap((x) => (x.user ? [x.user.id] : []))),
+    ]);
     const withUserCosmetics = (comment: CommentV2WithCachedUser): CommentV2Model => ({
       ...comment,
       user: { ...comment.user, ...userCosmetics(comment.user.id) },
     });
 
     return {
-      comments: [...pinnedComments.map(withUserCosmetics), ...regularComments],
+      comments: [
+        ...pinnedComments.map(withUserCosmetics),
+        ...regularComments.map((comment) =>
+          comment.user
+            ? {
+                ...comment,
+                user: {
+                  ...comment.user,
+                  showcaseHat: regularShowcaseHats[comment.user.id] ?? null,
+                },
+              }
+            : comment
+        ),
+      ],
       nextCursor,
       targetComment: targetComment ? withUserCosmetics(targetComment) : null,
       replyThreads: replies.threads.map((thread) => ({
@@ -1303,40 +1481,131 @@ export async function getCommentsInfinite({
  *    "never mind" equivalent, and inventing one would tell an author their comment was removed at the
  *    moment it is being restored.
  */
-export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+export async function bulkClearCommentV2TosViolation({ ids: requested }: { ids: number[] }) {
+  if (requested.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
+  const v3Ids = await v3WriteCommentIds(requested);
+  const v3 = await bulkClearCommentV3TosViolation({ ids: v3Ids });
+  const ids = requested.filter((id) => !v3Ids.includes(id));
+  if (ids.length === 0) return v3;
 
-  const enums = await import('~/shared/utils/prisma/enums');
+  const markerView = await holdMarkerViewExists();
 
-  let reopenedReports = 0;
+  let reopenedReports = v3.reopenedReports;
   // Rows actually cleared, NOT ids submitted — a comment already unflagged must not be counted, or the
   // caller reports a restore that restored nothing.
-  let count = 0;
+  let count = v3.count;
+  const retained: number[] = [];
+  let retainedHidden = v3.retainedHidden;
+  let failed = v3.failed;
 
   for (const id of ids) {
-    const updated = await dbWrite.commentV2
-      .update({
-        where: { id },
-        data: { tosViolation: false },
-        select: { id: true },
-      })
-      .catch(() => null);
-    if (!updated) continue;
+    const outcome = await clearTosOrKeep('CommentV2', id, markerView);
+    if (outcome?.failed) failed += 1;
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
+    if (!outcome?.cleared) continue;
     count += 1;
-
-    // Only `Actioned` rows: a report someone Dismissed for its own reasons was not closed by this flag,
-    // and reopening it would put a ruled-on report back in the queue.
-    const reports = await dbWrite.$queryRaw<{ id: number }[]>`
-      UPDATE "Report" r SET status = ${enums.ReportStatus.Pending}::"ReportStatus"
-      FROM "CommentV2Report" c
-      WHERE c."reportId" = r.id
-        AND c."commentV2Id" = ${id}
-        AND r.reason = ${enums.ReportReason.TOSViolation}::"ReportReason"
-        AND r.status = ${enums.ReportStatus.Actioned}::"ReportStatus"
-      RETURNING id
-    `;
-    reopenedReports += reports.length;
+    reopenedReports += outcome.reopened;
   }
 
-  return { count, reopenedReports };
+  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
+  return { count, reopenedReports, retainedHidden, failed };
+}
+
+/**
+ * Whether a held author replied anywhere below the comment aliased `c`: a moderator's delete keeps
+ * such a comment, hidden, as it keeps a held author's own.
+ */
+const heldReplyBelowSql = (table: 'Comment' | 'CommentV2', markerView: boolean) =>
+  table === 'Comment'
+    ? Prisma.sql`EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
+          UNION
+          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
+        )
+        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
+      )`
+    : Prisma.sql`EXISTS (
+        SELECT 1 FROM "Thread" t
+        WHERE t."commentId" = c.id AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
+      )`;
+
+const removedByAuthorSql = {
+  Comment: Prisma.sql`c."removedByAuthor"`,
+  CommentV2: Prisma.sql`(c.metadata ->> 'removedByAuthor')::boolean`,
+};
+
+const reportLinkOf = {
+  Comment: { table: Prisma.raw('"CommentReport"'), key: Prisma.raw('"commentId"') },
+  CommentV2: { table: Prisma.raw('"CommentV2Report"'), key: Prisma.raw('"commentV2Id"') },
+};
+
+/**
+ * Clears the ToS flag on the flagged comment `id` unless a moderator's delete would keep it: its
+ * author, or anyone who replied below it, is held. Such a comment stays hidden. The hold is read in
+ * the same statement as the write, and the reports the flag actioned reopen in it too, so a clear
+ * never lands without them. Null when there is no such flagged comment, or when its author deleted
+ * it: clearing that would republish it.
+ */
+export async function clearTosUnlessHeld(
+  table: 'Comment' | 'CommentV2',
+  id: number,
+  markerView: boolean
+) {
+  const { ReportReason, ReportStatus } = await import('~/shared/utils/prisma/enums');
+  const link = reportLinkOf[table];
+  const [row] = await dbWrite.$queryRaw<
+    { userId: number; held: boolean; cleared: boolean; reopened: number }[]
+  >`
+    WITH target AS (
+      SELECT c.id, c."userId",
+        (${accountHoldSql(Prisma.raw('c."userId"'), markerView)}
+          OR ${heldReplyBelowSql(table, markerView)}) AS held
+      FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id} AND c."tosViolation"
+        AND ${removedByAuthorSql[table]} IS NOT TRUE
+    ), cleared AS (
+      UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
+      FROM target t WHERE c.id = t.id AND t.held IS FALSE AND c."tosViolation"
+      RETURNING c.id
+    ), reopened AS (
+      -- Only Actioned: a report someone Dismissed was not closed by this flag.
+      UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
+      FROM ${link.table} link
+      WHERE link."reportId" = r.id
+        AND link.${link.key} IN (SELECT id FROM cleared)
+        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+        AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
+      RETURNING r.id
+    )
+    SELECT t."userId", t.held IS NOT FALSE AS held, EXISTS (SELECT 1 FROM cleared) AS cleared,
+      (SELECT count(*) FROM reopened)::int AS reopened
+    FROM target t
+  `;
+  return row ?? null;
+}
+
+/**
+ * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden and is reported as
+ * `failed`, not as held: the rest of the batch still runs and reports what it did.
+ */
+export async function clearTosOrKeep(
+  table: 'Comment' | 'CommentV2',
+  id: number,
+  markerView: boolean
+) {
+  try {
+    const row = await clearTosUnlessHeld(table, id, markerView);
+    return row && { ...row, failed: false };
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'comment-tos-restore',
+      message: 'Clearing a ToS flag failed; the comment stays hidden',
+      details: { table, id, error: (e as Error)?.message },
+    }).catch(() => undefined);
+    return { userId: null, held: false, cleared: false, reopened: 0, failed: true };
+  }
 }

@@ -8,6 +8,7 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { checkStudioModelLive } from '~/components/Training/studio-model-live';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
 import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -235,6 +236,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             epoch: String(req.epoch),
           })}`,
         modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
+        modelLive: checkStudioModelLive,
         // The studio's Custom base: open this app's resource-select modal and hand back the picked
         // checkpoint as an AIR (the same urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>
         // shape the studio's paste input takes). Resolves null on cancel.

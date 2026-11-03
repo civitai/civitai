@@ -45,7 +45,7 @@ for exactly that creator choice:
 So the majority of gated models cost nothing to generate with, and the model-level attribute would
 hide all of them.
 
-**It is model-level.** The picker resolves to a *version*. A model with one gated version and five
+**It is model-level.** The picker resolves to a _version_. A model with one gated version and five
 free ones reads as paid.
 
 ## The domain model
@@ -121,7 +121,7 @@ model 257749, versions span Pony | SD 1.5
   NOT versions.baseModel = "Pony"   -> 0   (excluded)
 ```
 
-So `NOT versions.pricing = PayToGenerate` means *no* version is gated — it would hide a model with one
+So `NOT versions.pricing = PayToGenerate` means _no_ version is gated — it would hide a model with one
 paid version and five free ones. The product keeps those visible, so the hide filter is:
 
 ```
@@ -143,20 +143,20 @@ a second clause builder elsewhere would not be caught.
 
 ## What was built
 
-| Piece | Where | Deploy |
-| ----- | ----- | ------ |
-| Pricing util + signal enum | `packages/civitai-buzz/src/model-version-pricing.ts` | 1 ✅ |
-| Per-version gate terms | `getModelVersionPaidAccessTerms` in `paid-access.service.ts` | 1 ✅ |
-| Document build | `models.search-index.ts` (`transformData`) | 1 ✅ |
-| `versions.pricing` filterable | `filterable-attributes.ts` | 1 ✅ |
-| Tests | `model-version-pricing.test.ts`, `models-index-pricing-signals.test.ts` | 1 ✅ |
-| Clause builder, version + badge predicates | `src/shared/search/model-pricing-filter.ts` | 2 |
-| Server filter + input | `resource-select.service.ts`, `model.schema.ts` | 2 |
-| Filter state + wire | `resource-select.types.ts`, `ResourceSelectProvider.tsx`, `useResourceSelectInfinite.ts` | 2 |
-| "Hide paid" chip | `ResourceSelectFilters.tsx` (generation sources only) | 2 |
-| Card badge | `VersionPricingBadge.tsx`, `ResourceSelectCard.tsx` | 2 |
-| Version pre-selection | `pickInitialVersionIndex` / `resolveSelectedIndex` in `resource-select.types.ts` | 2 |
-| Tests | `model-pricing-filter.test.ts`, `resource-select.pricing-filter.test.ts` (the clause reaches the query, and the official pin re-applies it), `pick-initial-version-index.test.ts`, `ResourceSelectPersistence.test.ts` | 2 |
+| Piece                                      | Where                                                                                                                                                                                                                  | Deploy |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Pricing util + signal enum                 | `packages/civitai-buzz/src/model-version-pricing.ts`                                                                                                                                                                   | 1 ✅   |
+| Per-version gate terms                     | `getModelVersionPaidAccessTerms` in `paid-access.service.ts`                                                                                                                                                           | 1 ✅   |
+| Document build                             | `models.search-index.ts` (`transformData`)                                                                                                                                                                             | 1 ✅   |
+| `versions.pricing` filterable              | `filterable-attributes.ts`                                                                                                                                                                                             | 1 ✅   |
+| Tests                                      | `model-version-pricing.test.ts`, `models-index-pricing-signals.test.ts`                                                                                                                                                | 1 ✅   |
+| Clause builder, version + badge predicates | `src/shared/search/model-pricing-filter.ts`                                                                                                                                                                            | 2      |
+| Server filter + input                      | `resource-select.service.ts`, `model.schema.ts`                                                                                                                                                                        | 2      |
+| Filter state + wire                        | `resource-select.types.ts`, `ResourceSelectProvider.tsx`, `useResourceSelectInfinite.ts`                                                                                                                               | 2      |
+| "Hide paid" chip                           | `ResourceSelectFilters.tsx` (generation sources only)                                                                                                                                                                  | 2      |
+| Card badge                                 | `VersionPricingBadge.tsx`, `ResourceSelectCard.tsx`                                                                                                                                                                    | 2      |
+| Version pre-selection                      | `pickInitialVersionIndex` / `resolveSelectedIndex` in `resource-select.types.ts`                                                                                                                                       | 2      |
+| Tests                                      | `model-pricing-filter.test.ts`, `resource-select.pricing-filter.test.ts` (the clause reaches the query, and the official pin re-applies it), `pick-initial-version-index.test.ts`, `ResourceSelectPersistence.test.ts` | 2      |
 
 Rows marked 2 are not in `main` until deploy 2 merges.
 
@@ -179,10 +179,12 @@ the two cannot disagree about which gates are live. Its JSDoc carries the rest (
   opens on a version that satisfies it rather than index 0 — but **compatibility outranks price**: a
   free version the current ecosystem cannot use is not a resource the viewer can generate with, while a
   compatible paid one is at least honest once the badge shows its cost. With the chip **off** the card
-  opens on index 0 exactly as before; re-selecting on compatibility alone would have silently changed
+  opens on index 0 exactly as before, except on the Featured tab, where it opens on the version that
+  was featured (`preferred`; `getFeaturedModels` returns `modelVersionId`) whenever that version is
+  compatible and the chip allows it; re-selecting on compatibility alone would have silently changed
   an untouched picker. ⚠️ The card does not see every version: `filterVersions` in `ResourceHitList.tsx`
   has already dropped versions failing `canGenerate`, the ecosystem's base models or `excludedVersionIds`
-  (base models are skipped on `featured` and the own-tabs). So `pickInitialVersionIndex`'s compatibility
+  (base models are skipped on the own-tabs, and on `featured` for checkpoints only). So `pickInitialVersionIndex`'s compatibility
   arm is a THIRD copy of that rule and only bites where it and `filterVersions` disagree — it is not the
   first line of defence, and `docs/resource-select-modal-refactor.md` already tracks de-duplicating them.
 - **The chip is generation-only.** `ResourceSelectFiltersDropdown` is shared with the
@@ -227,7 +229,7 @@ the two cannot disagree about which gates are live. Its JSDoc carries the rest (
   - **A read path sized for "what has this user bought"**, which is the opposite direction from how
     `EntityAccess` is addressed elsewhere. Confirm the access-path and caching specifics with an infra
     owner before designing against them — they are recorded privately, not here.
-  - **A permission filter.** A grant is not automatically a *generation* grant; the id set has to be
+  - **A permission filter.** A grant is not automatically a _generation_ grant; the id set has to be
     narrowed by `EntityAccessPermission` before it can widen a search filter.
   - **A cap** on the id list, with a defined fallback.
 
@@ -267,7 +269,7 @@ clause `canGenerate = true AND (versions.pricing = 3 OR NOT versions.pricing EXI
 against a 21 ms baseline.
 
 🔴 **The completeness check is "how many GATED models lack the attribute", and nothing else.** "How
-many documents lack it" is capped by the index's `maxTotalHits` *and* falls forever as the index
+many documents lack it" is capped by the index's `maxTotalHits` _and_ falls forever as the index
 rewrites, so it can neither reach zero nor prove anything. The gated set is the one that must be
 complete, because the clause fails open.
 
@@ -284,7 +286,7 @@ this repo squash-merges and `CLAUDE.md` forbids stacked PRs.
 ## Known limitation: flattening pairs clauses across versions
 
 Meilisearch flattens `versions[]`, so a filter on two version attributes can satisfy each from a
-*different* version. Probed on the live index — model 257749 has a Pony version and an SD 1.5 version
+_different_ version. Probed on the live index — model 257749 has a Pony version and an SD 1.5 version
 with different hashes:
 
 ```
@@ -297,8 +299,8 @@ whose SD 1.5 version is free. This matters routinely rather than rarely: `buildF
 pins `versions.baseModel` to the loaded resource's compatible set, so the generator almost always carries
 a base-model constraint alongside the pricing one.
 
-| models with both a gated and an ungated version | 201 |
-| ------------------------------------------------ | ----- |
+| models with both a gated and an ungated version    | 201 |
+| -------------------------------------------------- | --- |
 | …**and versions spanning >1 base model** (exposed) | 125 |
 
 Pre-existing — type and base model already pair across versions — but pricing is the first axis where the

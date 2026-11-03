@@ -55,6 +55,10 @@ export const modelCommentUrl = (civitaiUrl: string, modelId: number, commentId: 
 export const commentV2Url = (civitaiUrl: string, commentId: number) =>
   `${civitaiUrl}/comments/v2/${commentId}`;
 
+/** `CommentV3`: the same server-side resolution, through the permalink that reads any comment. */
+export const commentV3Url = (civitaiUrl: string, commentId: number) =>
+  `${civitaiUrl}/comments/${commentId}`;
+
 /** A user's profile, optionally a section of it (`models`, `images`, `posts`, …). Encoded — usernames
  *  allow characters that change the path when left raw, which the previous `$lib/articles` copy did. */
 export function userUrl(civitaiUrl: string, username: string, section?: string | null): string {
@@ -65,6 +69,18 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 /** The main site's account-level CSAM report for a user. */
 export const csamReportUrl = (civitaiUrl: string, userId: number) =>
   `${civitaiUrl}/moderator/csam/${userId}`;
+
+/** The same page filing a report that supplements `priorReportId`, with `imageIds` preselected. */
+export function csamSupplementalReportUrl(
+  civitaiUrl: string,
+  userId: number,
+  priorReportId: number,
+  imageIds: number[] = []
+): string {
+  const params = new URLSearchParams({ supplementalOf: String(priorReportId) });
+  if (imageIds.length) params.set('imageIds', imageIds.join(','));
+  return `${csamReportUrl(civitaiUrl, userId)}?${params}`;
+}
 
 /** A workflow-only training run's review page. */
 export const trainingWorkflowReviewUrl = (workflowId: string) =>
@@ -113,6 +129,10 @@ export const chatAuditUserUrl = (username: string) =>
  *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
   `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
+
+/** A bounty on the site. */
+export const bountyUrl = (civitaiUrl: string, bountyId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}`;
 
 /** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
  *  has no entry for them. */

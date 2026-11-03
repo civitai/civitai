@@ -111,6 +111,7 @@ function blockRow(over: Record<string, unknown> = {}) {
 /** Wire the block resolve + the seat resolve + the owner-ban read on BOTH pools. */
 function wire(opts: {
   block?: unknown;
+  viewerMuted?: boolean;
   seatFor?: number | null;
   /**
    * The seat row's STORED status. Defaults to `'accepted'`.
@@ -163,9 +164,15 @@ function wire(opts: {
     // `dbWrite` are distinct objects here.
     db.user.findUnique.mockImplementation(async (args: any) => {
       const id = args?.where?.id;
-      if (id === OWNER) return { bannedAt: opts.ownerBannedAt ?? null, deletedAt: null };
+      if (id === OWNER) {
+        return {
+          bannedAt: opts.ownerBannedAt ?? null,
+          deletedAt: null,
+          muted: opts.viewerMuted ?? false,
+        };
+      }
       // Every other id is the viewer: eligible unless the row says otherwise.
-      return { bannedAt: null, deletedAt: null };
+      return { bannedAt: null, deletedAt: null, muted: opts.viewerMuted ?? false };
     });
   }
 }
@@ -398,6 +405,20 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
     });
   }
 
+  it.each([true, false])(
+    'admits the owner and reports viewerMuted=%s from the authoritative row',
+    async (muted) => {
+      wire({ viewerMuted: muted });
+      const res = await resolvePrivateRunAccess({
+        by: { appBlockId: APP_BLOCK },
+        viewer: viewers.owner as never,
+        db: 'write',
+        privateRunEnabled: true,
+      });
+      expect(res).toMatchObject({ allowed: true, audience: 'owner', viewerMuted: muted });
+    }
+  );
+
   it('POSITIVE CONTROL: the table contains BOTH outcomes, so no assertion is vacuous', () => {
     // A matrix that had silently become all-refusals would still pass every row above
     // while proving nothing about the allow path — and vice versa. Assert both
@@ -503,7 +524,7 @@ describe('resolvePrivateRunAccess — guard REACHABILITY [INV]', () => {
     });
     // The OWNER-ban read: keyed on the owner, and identifiable by its narrower select
     // (`{ bannedAt }`) — the VIEWER read legitimately asks about the editor's own id with
-    // `{ deletedAt, bannedAt }`, so the id alone no longer discriminates the two.
+    // `{ deletedAt, bannedAt, muted }`, so the id alone no longer discriminates the two.
     expect(mockWriteDb.user.findUnique).toHaveBeenCalledWith({
       where: { id: OWNER },
       select: { bannedAt: true },
@@ -571,7 +592,7 @@ describe('resolvePrivateRunAccess — guard REACHABILITY [INV]', () => {
     // …and the viewer read DID happen, so the moderator is not exempt from eligibility.
     expect(mockWriteDb.user.findUnique).toHaveBeenCalledWith({
       where: { id: MOD },
-      select: { deletedAt: true, bannedAt: true },
+      select: { deletedAt: true, bannedAt: true, muted: true },
     });
   });
 });
@@ -634,16 +655,16 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
     //
     // The narrower `select` is the discriminator, not the id: the OWNER-ban read
     // legitimately asks the caller's pool about a user with `{ bannedAt }`, and on an
-    // owner-audience row it asks about the viewer's own id. `{ deletedAt, bannedAt }` is
+    // owner-audience row it asks about the viewer's own id. `{ deletedAt, bannedAt, muted }` is
     // the viewer re-read's own shape — the same technique the owner-ban row above uses in
     // the opposite direction.
     expect(mockWriteDb.user.findUnique).toHaveBeenCalledWith({
       where: { id: EDITOR },
-      select: { deletedAt: true, bannedAt: true },
+      select: { deletedAt: true, bannedAt: true, muted: true },
     });
     expect(mockDb.user.findUnique).not.toHaveBeenCalledWith({
       where: { id: EDITOR },
-      select: { deletedAt: true, bannedAt: true },
+      select: { deletedAt: true, bannedAt: true, muted: true },
     });
 
     // 🔴 THE OWNER-BAN READ, AS A PAIR. The positive pins that it follows the caller's pool;

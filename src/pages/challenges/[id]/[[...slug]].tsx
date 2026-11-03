@@ -1373,6 +1373,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               <Group justify="space-between">Judging</Group>
             </Accordion.Control>
             <Accordion.Panel>
+              <Text size="xs" c="dimmed" px="xs" pb={4}>
+                Only entries the judge scores can place. The highest scores make a shortlist, and a
+                final review of that shortlist decides the places, so a higher score doesn&apos;t
+                guarantee a place.
+              </Text>
               <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
                 {challenge.judgingCategories.map((category) => (
                   <div

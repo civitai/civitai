@@ -1,4 +1,5 @@
 import type {
+  AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
@@ -24,6 +25,7 @@ export const studioModelFlagFeatures = {
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
   'moss-image-training': 'mossImageTraining',
+  'flux2-klein-edit-training': 'flux2KleinEditTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
 } as const satisfies Record<string, FeatureFlagKey>;
 
@@ -125,6 +127,26 @@ export const aiToolkitBatchMax = (baseType: TrainingBaseModelType): number => {
   return 1;
 };
 
+// LoRA file size per unit of network dim, in MB, from the median size of published trainings. Size is
+// linear in dim but the per-dim cost depends on the architecture, so only measured types are listed.
+// Same figures as the Training Studio's LORA_MB_PER_DIM.
+const loraMbPerDim: Partial<Record<TrainingBaseModelType, number>> = {
+  sdxl: 6.8,
+  flux: 10.25,
+  sd15: 1.125,
+};
+
+/** "At dim 32 the file is about 218MB (≈6.8MB per dim)." for a measured base type, else null. */
+export const networkDimSizeHint = (
+  baseType: TrainingBaseModelType,
+  dim: number | undefined
+): string | null => {
+  const mbPerDim = loraMbPerDim[baseType];
+  if (!mbPerDim || !dim || !Number.isFinite(dim) || dim <= 0) return null;
+  const perDim = Math.round(mbPerDim * 10) / 10;
+  return `At dim ${dim} the file is about ${Math.round(dim * mbPerDim)}MB (≈${perDim}MB per dim).`;
+};
+
 export const engineTypes = [
   'kohya',
   'rapid',
@@ -140,6 +162,28 @@ export type OptimizerTypes = (typeof optimizerTypes)[number];
 
 export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
 export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
+
+// AI-Toolkit's own (lowercase) enums — the single source for the submit, whatif and stored-params
+// schemas, so an optimizer can't be accepted by one and rejected or defaulted by another.
+export const aiToolkitLrSchedulerTypes = [
+  'constant',
+  'constant_with_warmup',
+  'cosine',
+  'linear',
+  'step',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['lrScheduler']>[];
+export const aiToolkitOptimizerTypes = [
+  'adamw',
+  'adamw8bit',
+  'adam8bit',
+  'lion',
+  'lion8bit',
+  'adafactor',
+  'adagrad',
+  'prodigy',
+  'prodigy8bit',
+  'automagic',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['optimizerType']>[];
 
 export const trainingModelInfo: {
   [key in TrainingDetailsBaseModelList]: {

@@ -45,6 +45,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
   '~/server/services/bot-account-detection/cohort'
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
+const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
 const { getThreadMuted } = await import('~/server/services/commentsv2.service');
 
 const db = { pg: null as unknown as PGlite };
@@ -356,6 +357,22 @@ describe('notification queries on CommentV3', () => {
       }
     );
   });
+  it('opens a clamped reply under its parent on a surface that reads v3, and under the comment it answers elsewhere', async () => {
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content) VALUES
+         (1061, 'article', 10, 106, NULL, 2, 'article reply'),
+         (1062, 'article', 10, 106, 1061, 3, 'clamped article reply')`,
+      `DELETE FROM "CommentV3" WHERE id IN (1062, 1061)`,
+      async () => {
+        const out = await emitted('new-comment-reply');
+        const reply = out.find((r) => r.details.commentId === 1062)!;
+        // The v3 article section shows 106's replies, which is where 1062 sits.
+        expect(reply.details).toMatchObject({ commentParentId: 106, commentParentType: 'comment' });
+        // Images still read v2, where the clamped reply sits in the answered comment's thread.
+        expect(out.find((r) => r.details.commentId === 103)!.details.commentParentId).toBe(102);
+      }
+    );
+  });
 });
 
 describe('dedupe keys', () => {
@@ -521,6 +538,13 @@ describe('the permalink row', () => {
     );
   });
 
+  it('finds no row for a comment hidden for ToS, but for a moderator', async () => {
+    // 400 is hidden for ToS, 401 only by the sweep (the detail fetcher's rows).
+    expect(await getCommentPermalinkRow(400)).toBeUndefined();
+    expect(await getCommentPermalinkRow(400, { includeHidden: true })).toMatchObject({ id: 400 });
+    expect(await getCommentPermalinkRow(401)).toMatchObject({ id: 401 });
+  });
+
   it('finds no row for a deleted comment, and no link for a listing with no slug', async () => {
     expect(await getCommentPermalinkRow(108)).toBeUndefined();
     expect(buildCommentPermalink(await getCommentPermalinkRow(305))).toBeNull();
@@ -536,6 +560,31 @@ describe('the points hook', () => {
     expect(await liveCommentsOn(10, { entityType: 'Image', entityId: 10 })).toBe(1);
     // User 6's only comment is deleted.
     expect(await liveCommentsOn(6, { entityType: 'Image', entityId: 10 })).toBe(0);
+    // User 5's on article 10 was removed for ToS (400, in the detail fetcher's rows); user 7 still
+    // has one there that is only hidden by the sweep.
+    expect(await liveCommentsOn(5, { entityType: 'Article', entityId: 10 })).toBe(0);
+    expect(await liveCommentsOn(7, { entityType: 'Article', entityId: 10 })).toBe(1);
+  });
+});
+
+describe('the challenge comment count', () => {
+  it('counts live top-level comments only: not replies, deleted ones, or ones hidden for ToS', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Challenge" (id) VALUES (60);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('challenge', 60);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "deletedAt") VALUES
+        (600, 'challenge', 60, 4, 'live', false, NULL),
+        (601, 'challenge', 60, 5, 'kept for a hold', true, NULL),
+        (602, 'challenge', 60, 6, '', false, now());
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "parentId") VALUES
+        (603, 'challenge', 60, 7, 'a reply', 600);
+    `);
+    const where = countedTopLevelCommentSql(Prisma.raw('v'), 'challenge');
+    const { rows } = await db.pg.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 60`,
+      where.values as unknown[]
+    );
+    expect(rows[0].n).toBe(1);
   });
 });
 
@@ -558,5 +607,39 @@ describe('the bot cohort comment counts', () => {
     ]);
     // User 6's only comment is deleted: no row at all.
     expect(await commentV3Counts.groupBy(allCommentCountArgs([6]))).toEqual([]);
+  });
+});
+
+describe('a comment hidden for ToS', () => {
+  beforeAll(async () => {
+    await db.pg.exec(`
+      INSERT INTO "ResourceReview" (id) VALUES (70);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('review', 70);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation") VALUES
+        (610, 'image', 10, 8, 'kept for a hold', true),
+        (611, 'image', 10, 9, 'live', false),
+        (612, 'review', 70, 8, 'kept for a hold', true),
+        (613, 'review', 70, 9, 'live', false);
+    `);
+  });
+
+  it('notifies no one of it, as a deleted one notifies no one', async () => {
+    const ids = pairs(await emitted('new-image-comment')).map(([id]) => id);
+    expect(ids).toContain(611);
+    expect(ids).not.toContain(610);
+  });
+
+  it('does not tell its author about later comments in the thread they were in', async () => {
+    const replies = pairs(await emitted('new-thread-response')).filter(([id]) => id === 611);
+    expect(replies.map(([, to]) => to)).not.toContain(8);
+  });
+
+  it('leaves the review comment count, as a deleted one does', async () => {
+    const where = countedTopLevelCommentSql(Prisma.raw('v'), 'review');
+    const { rows } = await db.pg.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 70`,
+      where.values as unknown[]
+    );
+    expect(rows[0].n).toBe(1);
   });
 });

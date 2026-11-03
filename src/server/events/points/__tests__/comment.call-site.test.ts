@@ -82,6 +82,15 @@ beforeEach(() => {
   db.thread.findMany.mockResolvedValue([IMAGE_THREAD]);
 });
 
+/** The owner's single delete reads `comment`, then deletes it under the hold check. */
+function deletes(comment: { id: number; userId: number; threadId: number }) {
+  db.commentV2.findUnique.mockResolvedValue(comment as never);
+  vi.mocked(db.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown) =>
+    fn(db)) as never);
+  vi.mocked(db.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join('').includes('DELETE FROM') ? [comment] : []) as never);
+}
+
 describe('CommentV2 event points', () => {
   it('awards a new comment on an image', async () => {
     db.commentV2.create.mockResolvedValue({ id: 456, threadId: 70 });
@@ -114,7 +123,7 @@ describe('CommentV2 event points', () => {
   });
 
   it("removes when the deleted comment was the actor's last under the image", async () => {
-    db.commentV2.delete.mockResolvedValue({ id: 456, userId: USER, threadId: 70 });
+    deletes({ id: 456, userId: USER, threadId: 70 });
 
     await deleteComment({ id: 456 });
     await settle();
@@ -132,13 +141,14 @@ describe('CommentV2 event points', () => {
           ['entityType', '=', 'image'],
           ['entityId', '=', 7],
           ['deletedAt', 'is', null],
+          ['tosViolation', '=', false],
         ],
       },
     ]);
   });
 
   it('keeps the points while the actor has another live comment under the image', async () => {
-    db.commentV2.delete.mockResolvedValue({ id: 456, userId: USER, threadId: 70 });
+    deletes({ id: 456, userId: USER, threadId: 70 });
     kysely.state.live = 1;
 
     await deleteComment({ id: 456 });

@@ -13,10 +13,10 @@ import {
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
   resolveUploadRowStatus,
-  shouldRelayOnPartFailure,
+  selectRelayFallback,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
-import { relayImageFallback } from '~/utils/upload-settlement';
+import { relayImageChunkedFallback, relayImageFallback } from '~/utils/upload-settlement';
 import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallback-outcome';
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
@@ -296,6 +296,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             type,
             uploadId,
             backend,
+            fileSize: size,
             ...(failure ? { failure } : {}),
             ...(relayOutcome ? { relayOutcome } : {}),
           }),
@@ -342,7 +343,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           const xhr = new XMLHttpRequest();
           activeXhrs.add(xhr);
           // 🔴 Lets the `abort` handler tell THIS abort from the person's, so it can reject with
-          // `aborted: false`. `shouldRelayOnPartFailure` refuses on `err.aborted`, so collapsing
+          // `aborted: false`. `selectRelayFallback` refuses on `err.aborted`, so collapsing
           // the two shapes makes the watchdog fire into a gate it cannot pass: the upload still
           // fails and the relay still never runs.
           const stalledRef = { value: false, responsePhase: false };
@@ -489,32 +490,46 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         // Relay fallback: a client whose network cannot reach the storage host at all
         // (DNS, TLS, connection reset — the ERR_CONNECTION_RESET class behind the 2026-09
         // image-upload ticket) re-sends the whole file through our own origin, the same
-        // rescue `useCFImageUpload` got in #4573. Gated by shouldRelayOnPartFailure: only
-        // network-layer failures, only image uploads on the image backend, only files
-        // that fit the relay's body cap. A relayed upload reports the RELAY-MINTED key —
+        // rescue `useCFImageUpload` got in #4573. Gated by selectRelayFallback: only
+        // network-layer failures, only image uploads on the image backend, and files over
+        // the single-shot body cap go through the chunked relay. A relayed upload reports
+        // the RELAY-MINTED key —
         // the fallback endpoint deliberately accepts no caller key, so the id this
         // returns is not the one the multipart session was opened with.
 
         // `not_attempted` is the gate declining, distinct from a relay that ran and failed.
         let relayOutcome: ClientDeclarableRelayFallbackOutcome = 'not_attempted';
 
-        if (
-          shouldRelayOnPartFailure(fatal, {
-            type,
-            backend,
-            fileSize: size,
-            userAborted: userAbortController.signal.aborted,
-          })
-        ) {
-          const relayed = await relayImageFallback(file, {
+        const relayRoute = selectRelayFallback(fatal, {
+          type,
+          backend,
+          fileSize: size,
+          userAborted: userAbortController.signal.aborted,
+        });
+        if (relayRoute) {
+          const relayOpts = {
             // 🔴 The USER's signal, not the teardown's — which by here has ALWAYS fired.
             // Handing the teardown signal to the relay aborts its POST on the first tick,
             // so the fallback stays inert even once the gate above opens. A cancel during
             // the relay still cancels it, which is the behaviour this signal is for.
             signal: userAbortController.signal,
-            sleep: (ms) => cancellableSleep(ms, userAbortController.signal),
+            sleep: (ms: number) => cancellableSleep(ms, userAbortController.signal),
             defaultRetryAfterSeconds: 2,
-          });
+          };
+          const relayed =
+            relayRoute === 'chunked'
+              ? await relayImageChunkedFallback(file, {
+                  ...relayOpts,
+                  onProgress: (sent) =>
+                    updateFile({
+                      progress: (sent / size) * 100,
+                      uploaded: sent,
+                      size,
+                      status: 'uploading',
+                      name: file.name,
+                    }),
+                })
+              : await relayImageFallback(file, relayOpts);
           relayOutcome = relayed.ok ? 'rescued' : relayed.reason;
           if (relayed.ok) {
             // 🔴 `progress` MUST be written here, unlike the ordinary success path below.

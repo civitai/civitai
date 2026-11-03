@@ -142,6 +142,9 @@ export function placeButtonBoxes({
     : { below: current, above: shiftDown(current, -distance) };
 }
 
+/** More than the candidate model can be off by, so a flip never undoes itself. */
+const FLIP_MARGIN = 2;
+
 /**
  * Whether the buy button belongs above the sticker rather than below it.
  *
@@ -160,18 +163,111 @@ export function shouldFlipPlaceButton({
   above,
   tray,
   clip,
+  flipped = false,
   viewportTop = 0,
 }: {
   below: Box;
   above: Box;
   tray: Box | null;
   clip: Box | null;
+  /** Which side the cluster is on now: the other side is the one held to the margin. */
+  flipped?: boolean;
   viewportTop?: number;
 }) {
-  const hidden = (box: Box) =>
-    box.top < viewportTop ||
-    (!!tray && overlaps(box, tray)) ||
-    (!!clip && (box.bottom > clip.bottom || box.top < clip.top));
+  const hidden = (box: Box, margin = 0) => {
+    // By name, never a spread: `box` can be a DOMRect (see `shiftDown`).
+    const grown: Box = {
+      top: box.top - margin,
+      bottom: box.bottom + margin,
+      left: box.left,
+      right: box.right,
+    };
+    return (
+      grown.top < viewportTop ||
+      (!!tray && overlaps(grown, tray)) ||
+      (!!clip && (grown.bottom > clip.bottom || grown.top < clip.top))
+    );
+  };
 
-  return hidden(below) && !hidden(above);
+  // 🔴 THE SIDE IT WOULD MOVE TO HAS TO CLEAR BY A MARGIN. One of the two
+  // candidates is measured and the other is modelled, so they can disagree by a
+  // fraction of a pixel; without slack a cluster edge in that sliver flips,
+  // finds the model was wrong, flips back, and never settles (React #185).
+  return flipped
+    ? hidden(below, FLIP_MARGIN) && !hidden(above)
+    : hidden(below) && !hidden(above, FLIP_MARGIN);
+}
+
+/**
+ * What `placeButtonPosition` may read from an element: its rect, never `offset*`.
+ * Rects are screen px while the standoffs are written back as CSS px, which
+ * agree only while nothing above the overlay is scaled.
+ */
+type Measurable = { getBoundingClientRect(): Box & { width: number; height: number } };
+
+/**
+ * Which side of the sticker the buy cluster belongs on, and the standoffs for
+ * it, from the live elements — or `null` while the sticker has no size yet.
+ *
+ * Whole here rather than in `DraftSticker` so the two facts the flip depends on
+ * are testable: every height is a rect height, and the current side is passed
+ * through to `shouldFlipPlaceButton`.
+ */
+export function placeButtonPosition({
+  sticker,
+  cluster,
+  tray,
+  clip,
+  flipped,
+  rotation,
+  knobOffset,
+  outset,
+  gap,
+}: {
+  sticker: Measurable;
+  cluster: Measurable;
+  tray: Box | null;
+  clip: Box | null;
+  flipped: boolean;
+  rotation: number;
+  knobOffset: number;
+  outset: number;
+  gap: number;
+}): { flipped: boolean; below: number; above: number } | null {
+  // The artwork rotates inside the sticker's element, so the element's box is
+  // the unrotated one the chrome is laid out against.
+
+  // 🔴 FRACTIONAL, LIKE THE RECT THE CANDIDATES START FROM. `offsetHeight`
+  // rounds, and when this and the cluster's height both round down the
+  // modelled jump comes out shorter than the real one: a cluster edge inside
+  // that sliver of the tray flips, then sees the tray miss it and unflips —
+  // "Maximum update depth exceeded" (React #185).
+  const { height, width } = sticker.getBoundingClientRect();
+  // 🔴 AN UNMEASURED STICKER DECIDES NOTHING. `EdgeImage` has no intrinsic size
+  // until it loads, so a draft dragged in from the tray measures 0 tall for its
+  // first frames, and a flip decided from that puts the two candidates close
+  // enough together that each argues for the other. Same rule as
+  // `placementControlPosition`.
+  if (!(height > 0) || !(width > 0)) return null;
+
+  const clearance = chromeClearance({ width, height, rotation, knobOffset, outset, gap });
+  // From the cluster's own measured rect, both times: the pair that comes out
+  // is the same whichever side it is currently on.
+  const current = cluster.getBoundingClientRect();
+  const boxes = placeButtonBoxes({
+    current,
+    flipped,
+    distance: candidateDistance({
+      height,
+      clusterHeight: current.height,
+      below: clearance.below,
+      above: clearance.above,
+    }),
+  });
+
+  return {
+    flipped: shouldFlipPlaceButton({ ...boxes, tray, clip, flipped }),
+    below: clearance.below,
+    above: clearance.above,
+  };
 }

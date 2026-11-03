@@ -105,6 +105,7 @@ import { SFW_ONLY_LOCKED_PROPERTIES, setModelSfwOnly } from '~/server/services/m
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { rowChangesBeforeLock } from './model-row-lock.fake';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -125,8 +126,8 @@ const baseModelRow = {
   lockedProperties: [] as string[],
 };
 
-function mockBefore(overrides: Partial<typeof baseModelRow>) {
-  mockDbRead.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
+function mockBefore(overrides: Partial<typeof baseModelRow> & { meta?: unknown }) {
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
 }
 
 function mockTracker() {
@@ -173,6 +174,36 @@ beforeEach(() => {
 });
 
 describe('setModelSfwOnly — set', () => {
+  // A later lift must not put back a rating the moderator has since ruled on.
+  const ownerFlagOverride = {
+    at: '2026-10-01T00:00:00.000Z',
+    flags: ['minor'],
+    prevNsfw: true,
+    prevSfwOnly: false,
+    prevLockedProperties: ['nsfw'],
+  };
+  const rawWrites = () =>
+    mockDbWrite.$executeRaw.mock.calls.map(
+      (call) =>
+        Array.from(call[0] as TemplateStringsArray).join('?') + JSON.stringify(call.slice(1))
+    );
+
+  it.each([true, false])(
+    "drops an owner's flag override and supersedes the minor snapshot (sfwOnly: %s)",
+    async (sfwOnly) => {
+      mockBefore({ sfwOnly: !sfwOnly, meta: { ownerFlagOverride } });
+      await setModelSfwOnly({ id: MODEL_ID, sfwOnly, userId: MODERATOR_ID });
+      expect(rawWrites().filter((sql) => sql.includes('ownerFlagOverride'))).toHaveLength(1);
+      expect(rawWrites().filter((sql) => sql.includes("'supersededAt'"))).toHaveLength(1);
+    }
+  );
+
+  it('writes no override change on a model without one', async () => {
+    mockBefore({});
+    await setModelSfwOnly({ id: MODEL_ID, sfwOnly: true, userId: MODERATOR_ID });
+    expect(rawWrites().filter((sql) => sql.includes('ownerFlagOverride'))).toHaveLength(0);
+  });
+
   it('writes sfwOnly/nsfw/gallerySettings.level and unions locks without dropping an existing poi lock', async () => {
     mockBefore({ lockedProperties: ['poi'] });
 
@@ -319,7 +350,7 @@ describe('setModelSfwOnly — unset', () => {
 
 describe('setModelSfwOnly — missing model', () => {
   it('throws before writing anything', async () => {
-    mockDbRead.model.findUnique.mockResolvedValue(null);
+    mockDbWrite.model.findUnique.mockResolvedValue(null);
 
     await expect(
       setModelSfwOnly({ id: MODEL_ID, sfwOnly: true, userId: MODERATOR_ID })
@@ -427,5 +458,57 @@ describe('setModelSfwOnly — change history', () => {
     });
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
+  });
+});
+
+// A flag or lock another moderator or a job sets after an earlier read of the model is in the row
+// the setter locks, and both the refusal and the write are decided from that row.
+describe('setModelSfwOnly — decides from the row it locks', () => {
+  it('refuses to clear SFW-only on a model flagged minor since an earlier read', async () => {
+    const { tx } = rowChangesBeforeLock(
+      { ...baseModelRow, sfwOnly: true, nsfw: false },
+      { ...baseModelRow, sfwOnly: true, nsfw: false, minor: true }
+    );
+
+    await expect(
+      setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID })
+    ).rejects.toThrow(/Unset as Minor first/);
+    expect(tx.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses to clear SFW-only on a model made private since an earlier read', async () => {
+    const { tx } = rowChangesBeforeLock(
+      { ...baseModelRow, sfwOnly: true, nsfw: false },
+      { ...baseModelRow, sfwOnly: true, nsfw: false, availability: Availability.Private }
+    );
+
+    await expect(
+      setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID })
+    ).rejects.toThrow(/Private models must be SFW only/);
+    expect(tx.model.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps a lock set since an earlier read', async () => {
+    const { written } = rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      lockedProperties: ['minor'],
+    });
+
+    await setModelSfwOnly({ id: MODEL_ID, sfwOnly: true, userId: MODERATOR_ID });
+
+    expect([...(written().lockedProperties as string[])].sort()).toEqual([
+      'minor',
+      'nsfw',
+      'sfwOnly',
+    ]);
+  });
+
+  it('clears SFW-only when nothing changed since the read', async () => {
+    const row = { ...baseModelRow, sfwOnly: true, nsfw: false };
+    const { written } = rowChangesBeforeLock(row, row);
+
+    await setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID });
+
+    expect(written()).toMatchObject({ sfwOnly: false });
   });
 });

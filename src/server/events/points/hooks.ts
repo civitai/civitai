@@ -2,8 +2,8 @@
 // they never throw and are never awaited, so a points failure cannot fail or slow the reaction,
 // comment, approval or tracking request it rides on.
 //
-// Every award and removal is gated on `isHattedEntity`, an in-memory check, so content without an
-// event hat costs nothing past that check. The one exception is a comment reply or a deleted
+// Every award and removal is gated on `isHattedEntity`, an in-memory check (true for a hat or a Hat
+// Turf leader), so content that earns nothing costs nothing past that check. The one exception is a comment reply or a deleted
 // comment, whose thread must be read to learn which Image or Article it belongs to.
 //
 // Each action carries `time`, taken synchronously at the write site, so two quick opposite writes
@@ -21,6 +21,7 @@ import { dbWrite } from '~/server/db/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import {
   awardEventPoints,
+  hasTurfMark,
   isHattedEntity,
   isHattedEntityOnceLoaded,
   removeEventPoints,
@@ -115,7 +116,12 @@ async function removeIfLast(
     Pick<EventPointAction, 'time'>,
   stillHas: () => Promise<number>
 ) {
-  if (!(await isHattedEntityOnceLoaded(action.entityType, action.entityId))) return;
+  // A turf lead can end between the add and its removal; the earned mark still finds it.
+  if (
+    !(await isHattedEntityOnceLoaded(action.entityType, action.entityId)) &&
+    !(await hasTurfMark(action))
+  )
+    return;
   if ((await stillHas()) > 0) return;
   await removeEventPoints([action]);
 }
@@ -204,6 +210,7 @@ export async function liveCommentsOn(userId: number, { entityType, entityId }: E
     .where('entityType', '=', entityType === 'Image' ? 'image' : 'article')
     .where('entityId', '=', entityId)
     .where('deletedAt', 'is', null)
+    .where('tosViolation', '=', false)
     .executeTakeFirst();
   return Number(row?.n ?? 0);
 }
@@ -218,8 +225,9 @@ const commentAction = (userId: number, { entityType, entityId }: Entity, time: D
 });
 
 /**
- * A new comment. Top-level comments on an Image or Article name their entity directly; a reply
- * (`entityType: 'comment'`) is resolved through its thread to the root entity.
+ * A new comment. Top-level comments on an Image or Article name their entity directly; a v2 reply
+ * (`entityType: 'comment'`) is resolved through its thread to the root entity. A CommentV3 comment,
+ * reply or not, names its section's entity.
  */
 export async function onCommentCreated({
   userId,
@@ -230,14 +238,15 @@ export async function onCommentCreated({
   userId: number;
   entityType: string;
   entityId: number;
-  threadId: number;
+  threadId?: number;
 }): Promise<void> {
   const time = new Date();
   try {
     let target: Entity | undefined;
     if (entityType === 'image') target = { entityType: 'Image', entityId };
     else if (entityType === 'article') target = { entityType: 'Article', entityId };
-    else if (entityType === 'comment') target = (await commentRoots([threadId])).get(threadId);
+    else if (entityType === 'comment' && threadId)
+      target = (await commentRoots([threadId])).get(threadId);
     if (!target || !isHattedEntity(target.entityType, target.entityId)) return;
     await awardEventPoints([commentAction(userId, target, time)]);
   } catch (error) {
@@ -257,6 +266,31 @@ export async function onCommentsRemoved(
     const seen = new Set<string>();
     for (const { userId, threadId } of comments) {
       const root = roots.get(threadId);
+      if (!root) continue;
+      const action = commentAction(userId, root, time);
+      if (seen.has(action.sourceId)) continue;
+      seen.add(action.sourceId);
+      await removeIfLast(action, () => liveCommentsOn(userId, root));
+    }
+  } catch (error) {
+    swallow('event-points:comment')(error);
+  }
+}
+
+/** Deleted CommentV3 comments, as `{ userId, entityType, entityId }` of each removed row. */
+export async function onTopicCommentsRemoved(
+  comments: { userId: number; entityType: string; entityId: number }[]
+): Promise<void> {
+  const time = new Date();
+  try {
+    const seen = new Set<string>();
+    for (const { userId, entityType, entityId } of comments) {
+      const root: Entity | undefined =
+        entityType === 'image'
+          ? { entityType: 'Image', entityId }
+          : entityType === 'article'
+          ? { entityType: 'Article', entityId }
+          : undefined;
       if (!root) continue;
       const action = commentAction(userId, root, time);
       if (seen.has(action.sourceId)) continue;

@@ -1,5 +1,3 @@
-import OneKeyMap from '@essentials/one-key-map';
-import trieMemoize from 'trie-memoize';
 import { Button, useComputedColorScheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
@@ -114,51 +112,9 @@ export function MasonryGrid<TData>({
             </TwCard>
           </AdUnitRenderable>
         );
-        // return (
-        //   <React.Fragment key={key}>
-        //     {item.type === 'data' &&
-        //       createRenderElement(RenderComponent, index, item.data, columnWidth)}
-        //     {item.type === 'ad' && (
-        //       <AdUnitRenderable>
-        //         <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
-        //           <div className="flex flex-col items-center  gap-2">
-        //             <Image
-        //               src={`/images/logo_${theme.colorScheme}_mode.png`}
-        //               alt="Civitai logo"
-        //               height={30}
-        //               width={142}
-        //             />
-        //             <Text>Become a Member to turn off ads today.</Text>
-        //             <Button
-        //               component={Link}
-        //               href="/pricing"
-        //               compact
-        //               color="green"
-        //               variant="outline"
-        //               className="w-24"
-        //             >
-        //               <Text fw={500}>Do It</Text>
-        //               <IconCaretRightFilled size={16} />
-        //             </Button>
-        //           </div>
-        //           <div>
-        //             <item.data.AdUnit />
-        //           </div>
-        //         </TwCard>
-        //       </AdUnitRenderable>
-        //     )}
-        //   </React.Fragment>
-        // );
       })}
     </div>
   ) : (
     <div style={{ height: columnWidth }}>{empty}</div>
   );
 }
-
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap, OneKeyMap, OneKeyMap],
-  (RenderComponent, index, data, columnWidth) => (
-    <RenderComponent index={index} data={data} width={columnWidth} height={columnWidth} />
-  )
-);

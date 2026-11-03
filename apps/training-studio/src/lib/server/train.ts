@@ -4,15 +4,12 @@ import { env } from '$env/dynamic/private';
 import { logToAxiom, safeError } from './axiom';
 import { orchestratorClient } from './orchestrator';
 import { workflowSignalCallbacks } from './signals';
-import { mainAppTextCheck } from './text-check';
-import type { TrainingTextCheck } from '$lib/training-text';
+import { requestTextCheck } from './text-check';
 import * as core from '$lib/train-core';
 import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
-const textCheck = (cookie: string | null, userId: number): TrainingTextCheck =>
-  cookie === null ? async () => undefined : mainAppTextCheck(cookie, userId);
-
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
+export { MatureAckRequiredError } from '$lib/train-core';
 
 // Live NDJSON tracing is in production orchestrator-side, so it defaults ON; TRAINING_TRACE_MODE
 // (`events` | `logs` | `none`) remains the kill switch if the submit ever starts rejecting it.
@@ -30,7 +27,7 @@ export function submitTrainingBatch(
   cookie: string | null
 ): Promise<SubmittedBatch> {
   return core.submitTrainingBatch(orchestratorClient(token), runs, {
-    checkText: textCheck(cookie, userId),
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
     onRunError: (err, runIndex) =>
@@ -57,7 +54,7 @@ export function continueTraining(
   cookie: string | null
 ): Promise<string> {
   return core.continueTraining(orchestratorClient(token), opts, {
-    checkText: textCheck(cookie, userId),
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });
@@ -68,7 +65,7 @@ export function continueTrainingWhatIf(
   token: string,
   userId: number,
   opts: ContinueOpts
-): Promise<{ cost: number | null; steps: number | undefined }> {
+): Promise<{ cost: number | null; steps: number | undefined; matureCount: number }> {
   return core.continueTrainingWhatIf(orchestratorClient(token), opts, {
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,

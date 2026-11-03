@@ -9,6 +9,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { isUsernamePermitted } from '~/server/services/username-permitted';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { isSystemAccountMeta, SYSTEM_ACCOUNT_META } from '@civitai/auth';
+import { isReservedModerationUsername } from '~/server/auth/moderation-account';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 
 /**
@@ -81,7 +82,9 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
   const existing = await resolve(email, username);
   if (existing.kind !== 'available') return respond(existing);
 
-  if (!(await isUsernamePermitted(username)))
+  // Reserved for the shared moderation account, which the blocklist would otherwise refuse.
+  const reserved = isReservedModerationUsername(username);
+  if (!reserved && !(await isUsernamePermitted(username)))
     return res.status(400).json({ error: 'Username is not permitted' });
 
   let userId: number;
@@ -110,14 +113,11 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
   }
 
   const actor = actorUserId ?? SYSTEM_ACTOR_ID;
-  logToAxiom(
-    {
-      type: 'info',
-      name: 'system-account-created',
-      details: { userId, username, emailDomain: SYSTEM_ACCOUNT_EMAIL_DOMAIN, actorUserId: actor },
-    },
-    'moderation'
-  ).catch(() => null);
+  logToAxiom({
+    type: 'info',
+    name: 'system-account-created',
+    details: { userId, username, emailDomain: SYSTEM_ACCOUNT_EMAIL_DOMAIN, actorUserId: actor },
+  }).catch(() => null);
   const auditRecorded = await trackModActivity(actor, {
     entityType: 'user',
     activity: 'createSystemAccount',

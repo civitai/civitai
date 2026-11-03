@@ -38,6 +38,10 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import {
+  readModelAssociationTargetsViaKysely,
+  readModelAssociationTargetsViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
@@ -150,6 +154,7 @@ import {
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
+  removedWithOwnerEditError,
   updateModelById,
   queueModelEarlyAccessReindex,
   upsertModel,
@@ -222,11 +227,13 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-import { resolveActorFor } from '~/utils/resolve-attribution';
+import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
+import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -243,7 +250,7 @@ import {
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({
-  input: { excludeTrainingData, ...input },
+  input: { excludeTrainingData, forEditor, ...input },
   ctx,
 }: {
   input: GetModelByIdSchema;
@@ -265,9 +272,10 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
-    // Owners and moderators get the stored pair instead: this payload seeds the model editor.
+    // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
+    const editorRead = isOwner && !!forEditor;
     const withSfwFace =
-      !isOwner && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
+      !editorRead && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
 
     // Prevent non-owners from viewing scheduled/draft/unpublished models
     if (!isOwner && model.status !== ModelStatus.Published) {
@@ -367,6 +375,7 @@ export const getModelHandler = async ({
       ) ?? [];
     const generationResources = await getResourceData(regularResourceIds, {
       user: ctx?.user,
+      browsingLevel: getRequestBrowsingLevel(ctx),
     });
 
     // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
@@ -905,7 +914,11 @@ export const publishModelHandler = async ({
       throw throwBadRequestError('Model is already published');
 
     const { isModerator } = ctx.user;
-    if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
+    // A model a content wipe kept is publishable by a moderator only, whatever its status.
+    if (
+      !isModerator &&
+      (constants.modPublishOnlyStatuses.includes(model.status) || isRemovedWithOwner(model.meta))
+    )
       throw throwAuthorizationError('You are not authorized to publish this model');
     // The model's status says nothing about its versions: one a moderator took down while the
     // model stayed public must not come back because its id was in this list. Refused here, before
@@ -933,13 +946,23 @@ export const publishModelHandler = async ({
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
-    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
-      modelMeta || {};
     const updatedModel = await publishModelById({
       ...input,
-      meta: withModelRulesClearance(meta, modelMeta, isModerator),
+      meta: (stored) => {
+        const {
+          needsReview,
+          unpublishedReason,
+          unpublishedAt,
+          unpublishedBy,
+          customMessage,
+          ...rest
+        } = stored || {};
+        // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
+        return withModelRulesClearance(withoutRemovedWithOwner(rest), stored, isModerator);
+      },
       republishing,
       enforceModelRules: !isModerator,
+      refuseRemovedWithOwner: !isModerator,
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
@@ -1315,13 +1338,14 @@ export const getDownloadCommandHandler = async ({
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.
       // Safer for us.
-      ctx.track.modelVersionEvent({
-        type: 'Download',
-        modelId: modelVersion.model.id,
-        modelVersionId: modelVersion.id,
-        nsfw: modelVersion.model.nsfw,
-        time: now,
-      });
+      if (countsAsPublicDownload(ctx.user))
+        ctx.track.modelVersionEvent({
+          type: 'Download',
+          modelId: modelVersion.model.id,
+          modelVersionId: modelVersion.id,
+          nsfw: modelVersion.model.nsfw,
+          time: now,
+        });
 
       // Bust the downloads cache so the user sees their download immediately
       if (ctx.user?.id) {
@@ -1706,7 +1730,13 @@ export const setModelSfwOnlyHandler = async ({
   }
 };
 
-export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+export const requestReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
@@ -1716,22 +1746,28 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
         status: true,
         type: true,
         uploadType: true,
-        meta: true,
         userId: true,
       },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
-    if (model.status !== ModelStatus.UnpublishedViolation)
-      throw throwBadRequestError(
-        'Cannot request a review for this model because it is not in the correct status'
-      );
+    const assertReviewable = (status: ModelStatus | undefined) => {
+      if (status !== ModelStatus.UnpublishedViolation)
+        throw throwBadRequestError(
+          'Cannot request a review for this model because it is not in the correct status'
+        );
+    };
+    assertReviewable(model.status);
 
-    const meta = (model.meta as ModelMeta | null) || {};
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
     // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
-      data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
+      data: {},
+      meta: (stored, row) => {
+        assertReviewable(row?.status);
+        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
+        return { ...stored, needsReview: true };
+      },
     });
 
     return updatedModel;
@@ -1765,21 +1801,25 @@ export const declineReviewHandler = async ({
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = (model.meta as ModelMeta | null) || {};
-    if (model.status !== ModelStatus.UnpublishedViolation && !meta?.needsReview)
-      throw throwBadRequestError(
-        'Cannot decline a review for this model because it is not in the correct status'
-      );
+    const assertDeclinable = (status: ModelStatus | undefined, meta: ModelMeta | null) => {
+      if (status !== ModelStatus.UnpublishedViolation && !meta?.needsReview)
+        throw throwBadRequestError(
+          'Cannot decline a review for this model because it is not in the correct status'
+        );
+    };
+    assertDeclinable(model.status, model.meta as ModelMeta | null);
 
     const updatedModel = await updateModelById({
       id: model.id,
-      data: {
-        meta: {
-          ...meta,
+      data: {},
+      meta: (stored, row) => {
+        assertDeclinable(row?.status, stored);
+        return {
+          ...stored,
           declinedReason: input.reason,
           declinedAt: new Date().toISOString(),
           needsReview: false,
-        } as Prisma.JsonObject,
+        };
       },
     });
     await trackModActivity(ctx.user.id, {
@@ -1807,29 +1847,31 @@ export const changeModelModifierHandler = async ({
     // If changing to takenDown, only moderators can do it
     if (mode === ModelModifier.TakenDown && !ctx.user.isModerator) throw throwAuthorizationError();
 
-    const model = await getModel({ id, select: { id: true, meta: true, mode: true } });
+    // Checked on the early read to fail fast, and again on the locked row: a takedown that lands in
+    // between must not be undone by the owner's change.
+    const assertModeChange = (current: ModelModifier | null | undefined) => {
+      if (current === mode) throw throwBadRequestError(`Model is already ${String(mode)}`);
+      // Only moderators move a model off a takedown.
+      if (current === ModelModifier.TakenDown && !ctx.user.isModerator)
+        throw throwAuthorizationError();
+    };
+    const model = await getModel({ id, select: { id: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
-    if (model.mode === mode) throw throwBadRequestError(`Model is already ${String(mode)}`);
-    // If removing mode, but model is taken down, only moderators can do it
-    if (model.mode === ModelModifier.TakenDown && mode === null && !ctx.user.isModerator)
-      throw throwAuthorizationError();
-
-    const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } =
-      (model.meta as ModelMeta | null) || {};
-    let updatedMeta: ModelMeta = {};
-    if (mode === ModelModifier.Archived)
-      updatedMeta = { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
-    else if (mode === ModelModifier.TakenDown)
-      updatedMeta = {
-        ...restMeta,
-        takenDownAt: new Date().toISOString(),
-        takenDownBy: ctx.user.id,
-      };
-    else updatedMeta = restMeta;
+    assertModeChange(model.mode);
 
     const updatedModel = await updateModelById({
       id,
-      data: { mode, meta: { ...updatedMeta } },
+      data: { mode },
+      meta: (stored, row) => {
+        assertModeChange(row?.mode);
+        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
+        const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } = stored || {};
+        if (mode === ModelModifier.Archived)
+          return { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
+        if (mode === ModelModifier.TakenDown)
+          return { ...restMeta, takenDownAt: new Date().toISOString(), takenDownBy: ctx.user.id };
+        return restMeta;
+      },
     });
 
     if (mode === ModelModifier.Archived || mode === ModelModifier.TakenDown) {
@@ -1895,11 +1937,12 @@ export const getAssociatedResourcesCardDataHandler = async ({
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
     const useNext = await nextCoverageEnabled();
-    const associatedResources = await dbRead.modelAssociations.findMany({
-      where: { fromModelId: fromId, type },
-      select: { toModelId: true, toArticleId: true },
-      orderBy: { index: 'asc' },
-    });
+    const associatedResources = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+      ? await readModelAssociationTargetsViaKysely((await loadKyselyDb()).kyselyRead, {
+          fromModelId: fromId,
+          type,
+        })
+      : await readModelAssociationTargetsViaPrisma(dbRead, { fromModelId: fromId, type });
 
     const resourcesIds = associatedResources.map(({ toModelId, toArticleId }) =>
       toModelId
@@ -2295,29 +2338,30 @@ export const updateGallerySettingsHandler = async ({
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
 
-    const model = await getModel({
-      id,
-      select: { id: true, userId: true, minor: true, sfwOnly: true },
-    });
-    if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
-      throw throwNotFoundError(`No model with id ${id}`);
-
-    // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
-    // gallery back above SFW from here. Moderators keep full control.
-    const sfwLocked = !sessionUser.isModerator && (model.minor || model.sfwOnly);
-
-    const updatedSettings = gallerySettings
-      ? {
-          hiddenImages: gallerySettings.hiddenImages,
-          users: gallerySettings.hiddenUsers.map(({ id }) => id),
-          tags: gallerySettings.hiddenTags.map(({ id }) => id),
-          level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
-          pinnedPosts: gallerySettings.pinnedPosts,
-        }
-      : null;
     const updatedModel = await updateModelById({
       id,
-      data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
+      // Decided on the row locked for the write, so a flag set since the request began holds.
+      data: (model) => {
+        if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
+          throw throwNotFoundError(`No model with id ${id}`);
+
+        // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
+        // gallery back above SFW from here. Moderators keep full control.
+        const sfwLocked = !sessionUser.isModerator && (model.minor || model.sfwOnly);
+
+        const updatedSettings = gallerySettings
+          ? {
+              hiddenImages: gallerySettings.hiddenImages,
+              users: gallerySettings.hiddenUsers.map(({ id }) => id),
+              tags: gallerySettings.hiddenTags.map(({ id }) => id),
+              level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
+              pinnedPosts: gallerySettings.pinnedPosts,
+            }
+          : sfwLocked
+          ? { level: sfwBrowsingLevelsFlag }
+          : null;
+        return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
+      },
     });
     await bustModelGallerySettings([id]);
 
@@ -2382,8 +2426,6 @@ export async function copyGalleryBrowsingLevelHandler({
 
 export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
   try {
-    // `kysely-hot-reads-5` on: the same two columns through Kysely, on the client the same lag
-    // decision picks (`getModel` reads through `getDbWithoutLag('model', id)`).
     const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
       ? await readModelMetaViaKysely(await getKyselyWithoutLag('model', input.id), input.id)
       : await getModel({ id: input.id, select: { id: true, meta: true } });

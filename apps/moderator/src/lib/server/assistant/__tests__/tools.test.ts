@@ -71,6 +71,13 @@ vi.mock('$lib/server/dossier.service', () => ({
 
 const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], truncated: false }));
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
+const getPlacementFlows = vi.fn(async () => ({
+  days: 90,
+  accounts: [],
+  pairs: [],
+  truncated: false,
+}));
+vi.mock('$lib/server/placement-flows.service', () => ({ getPlacementFlows }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
 const getRegistrationEmails = vi.fn(
@@ -103,6 +110,26 @@ vi.mock('../store', () => ({
     body: 'Check 192.0.2.44 and 2001:db8:abc::9.',
     pending: 0,
   })),
+}));
+
+const previewMembershipExtension = vi.fn(async () => ({
+  ok: true as const,
+  preview: {
+    userId: 5,
+    days: 3,
+    subscription: null,
+    problems: [],
+    expectedCurrentPeriodEnd: 1795314120,
+    trialEndIso: '2026-11-25T02:22:00.000Z',
+    mode: 'renewing' as const,
+  },
+}));
+const extendMembership = vi.fn(async () => {
+  throw new Error('the assistant must never extend');
+});
+vi.mock('$lib/server/user-actions.service', () => ({
+  previewMembershipExtension,
+  extendMembership,
 }));
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
@@ -146,9 +173,14 @@ describe('toolsFor', () => {
       'accounts_on_address',
       'search_accounts',
       'buzz_flows',
+      'placement_flows',
       'abuse_findings',
     ])
       expect(offered).not.toContain(lookupOnly);
+  });
+
+  it('offers placement_flows to a User Lookup holder', () => {
+    expect(names(['/retool/user-lookup'])).toContain('placement_flows');
   });
 
   it('offers detector findings only with the /abuse page', () => {
@@ -189,6 +221,32 @@ describe('what the tools hand the model', () => {
     expect(without.sources).not.toContainEqual(expect.objectContaining({ ref: 'run:4' }));
     const withAbuse = await run('get_user_dossier', { userId: 5 }, ['/reports/user', '/abuse']);
     expect(withAbuse.sources).toContainEqual(expect.objectContaining({ ref: 'run:4' }));
+  });
+});
+
+describe('placement_flows', () => {
+  it('takes 1 to 100 accounts and at most a year, like buzz_flows', () => {
+    const input = TOOLS.find((t) => t.name === 'placement_flows')!.input;
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(input.safeParse({ userIds: ids(100), days: 365 }).success).toBe(true);
+    expect(input.safeParse({ userIds: ids(101) }).success).toBe(false);
+    expect(input.safeParse({ userIds: [] }).success).toBe(false);
+    expect(input.safeParse({ userIds: [1], days: 366 }).success).toBe(false);
+  });
+
+  it('cites both ends of every pair it returns, and passes the cap on', async () => {
+    getPlacementFlows.mockResolvedValueOnce({
+      days: 30,
+      accounts: [{ userId: 5, username: 'five', placed: {}, received: {} }],
+      pairs: [{ placerId: 5, placerName: 'five', ownerId: 9, ownerName: 'nine' }],
+      truncated: true,
+    } as never);
+    const out = (await run('placement_flows', { userIds: [5], days: 30 }, [
+      '/retool/user-lookup',
+    ])) as unknown as { truncated: boolean; sources: unknown[] };
+    expect(getPlacementFlows).toHaveBeenLastCalledWith([5], 30);
+    expect(out.truncated).toBe(true);
+    expect(out.sources).toContainEqual(expect.objectContaining({ ref: 'user:9' }));
   });
 });
 
@@ -786,5 +844,83 @@ describe('reactors_of', () => {
   it('lets any other failure of the address check fail the call', async () => {
     getSharedIpCoverage.mockRejectedValue(new Error('ClickHouse query failed: connection refused'));
     await expect(reactors()).rejects.toThrow(/connection refused/);
+  });
+});
+
+describe('membership extension: the assistant reads and proposes, a person extends', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const GRANT = ['user.membership.extend'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('offers the two tools only with User Lookup AND the extension grant', () => {
+    const both = ['preview_membership_extension', 'propose_membership_extension'];
+    expect(offered(LOOKUP_PAGE, GRANT)).toEqual(expect.arrayContaining(both));
+    for (const name of both) {
+      expect(offered(LOOKUP_PAGE, [])).not.toContain(name);
+      expect(offered([], GRANT)).not.toContain(name);
+    }
+  });
+
+  it('proposing extends nothing: it returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_extension',
+      { userId: 5, days: 3, reason: 'Ticket 123: three free days' },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: { extended: boolean; confirmAt: string } };
+    expect(out.data.extended).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&extendDays=3&extendReason=Ticket+123%3A+three+free+days#membership-extend'
+    );
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('the preview hands the model status, dates and the verdict, and no Stripe ids', async () => {
+    previewMembershipExtension.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        days: 3,
+        subscription: {
+          id: 'sub_secret',
+          status: 'active',
+          currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+          trialEnd: null,
+          cancelAtPeriodEnd: false,
+          cancelAt: null,
+          latestInvoiceId: 'in_secret',
+        },
+        problems: [],
+        expectedCurrentPeriodEnd: 1795314120,
+        trialEndIso: '2026-11-25T02:22:00.000Z',
+        mode: 'renewing',
+      },
+    } as never);
+    const out = (await run(
+      'preview_membership_extension',
+      { userId: 5, days: 3 },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      days: 3,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: false,
+      },
+      problems: [],
+      newEnd: '2026-11-25T02:22:00.000Z',
+      mode: 'renewing',
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/sub_secret|in_secret/);
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the extend write', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\bextendMembership\b|callModEndpoint|user\/membership-extend\b/);
   });
 });

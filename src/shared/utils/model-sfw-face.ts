@@ -2,7 +2,12 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import { Flags } from '~/shared/utils/flags';
+
+export const SFW_NAME_TOO_LONG_MESSAGE = `Title must be ${MODEL_NAME_MAX_LENGTH} characters or fewer.`;
+export const SFW_DESCRIPTION_MAX_LENGTH = 50_000;
+export const SFW_DESCRIPTION_TOO_LONG_MESSAGE = 'Description is too long.';
 
 /**
  * A model's .com face: `Model.sfwName` / `sfwDescription`, shown in place of the name and
@@ -47,6 +52,22 @@ export function resolveModelFace<T extends ModelSfwFaceSource>(
     name: sfwName,
     ...('description' in model ? { description: sfwDescription ?? null } : {}),
   };
+}
+
+/**
+ * Swaps the model name on rows that name a model by id (image resources, version lists,
+ * notification details) for its .com title. `sfwNames` holds only models with a face on, and is
+ * empty for a viewer who gets the .red face.
+ */
+export function withSfwModelNames<T extends { modelId: number; modelName: string }>(
+  rows: T[],
+  sfwNames: ReadonlyMap<number, string>
+): T[] {
+  if (!sfwNames.size) return rows;
+  return rows.map((row) => {
+    const sfwName = sfwNames.get(row.modelId);
+    return sfwName ? { ...row, modelName: sfwName } : row;
+  });
 }
 
 /** Normalises a write that carries the face. Clearing the title turns the face off, description included. */

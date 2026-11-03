@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: shared db/redis/env/prom mocks and the REAL test RSA keypair, so the
 // tokens below are really signed and the procedures really verify them.
 import '~/__tests__/setup';
@@ -65,6 +66,24 @@ function flagFor(ids: () => number[]) {
   return async (opts?: { user?: { id?: number } }) =>
     opts?.user ? opts.user.id != null && ids().includes(opts.user.id) : h.flagBase.on;
 }
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
@@ -1436,30 +1455,58 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
   },
   'blocks.submitWorkflow': {
-    'valid token': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
+    'valid token': PASSED(
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'missing scope': E(
+      'FORBIDDEN',
+      'block lacks ai:write:budgeted scope',
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
+      ['bridge-auth:ok']
+    ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'workflow submit requires authenticated viewer',
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "anon")', 'checkBlockSubmitUserRateLimit("anon")'],
       ['bridge-auth:ok']
     ),
     'flag off': E(
       'UNAUTHORIZED',
       'Apps are not enabled',
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
-    'rate limited': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      ['bridge-auth:ok']
+    ),
     "session user is not the token subject (session user's run flag off)": PASSED(
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag on)": PASSED(
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },

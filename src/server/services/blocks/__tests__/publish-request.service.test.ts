@@ -623,7 +623,12 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
   it('does NOT create a draft on a SUBSEQUENT-version submit (an AppBlock already exists)', async () => {
     dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_existing', appId: 'app_1' });
     const buf = await makeBundle({ ...baseManifest, version: '0.2.0', scopes: [] });
-    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
 
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
@@ -815,7 +820,12 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
   it('accepts a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
     dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
     const buf = await makeBundle('old--name');
-    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: SUBMITTER,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
     expect(result.slug).toBe('old--name');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });
@@ -832,7 +842,12 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
   it('accepts a new version of an EXISTING app whose blockId is now reserved', async () => {
     dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
     const buf = await makeBundle('dev-legacy');
-    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: SUBMITTER,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
     expect(result.slug).toBe('dev-legacy');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });

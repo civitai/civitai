@@ -29,10 +29,10 @@
  * REPO DOES. Verified 2026-10-03 against the API: `civitai/civitai` `main` carries
  * `required_status_checks: null`, so no check can block a merge here at all. The
  * tiers differ on how a red shows. `.github/workflows/lint.yml`'s
- * `geometry:` job runs `vitest run --project geometry` with a collected-count ledger and
- * is `continue-on-error` only for `pull_request` — report-only on a PR, a real red on a
- * push to `main`. The `component` tier runs there too, as `Component tests`, and goes
- * red on the PR itself.
+ * `Geometry tests` step runs `vitest run --project geometry` with a collected-count ledger
+ * and is `continue-on-error` only for `pull_request` — report-only on a PR (an error
+ * annotation on a green job), a real red on a push to `main`. The `component` tier runs
+ * in the same job, as the `Component tests` step, and goes red on the PR itself.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHERE THE REST OF THE RAIL'S VERTICAL GEOMETRY LIVES

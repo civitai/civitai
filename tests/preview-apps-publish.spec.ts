@@ -16,9 +16,11 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *   - `Dockerfile`/`nginx.conf` are NOT required in the bundle (only
  *     `block.manifest.json` is mandatory); the build pipeline injects its own.
  *
- * Runs as the `mod` fixture (id 2000000001): `/api/blocks/submit-version` is a
- * `ModEndpoint` and `features.appBlocks` (the Flipt mod segment) gates it, so a
- * non-mod would be 401/503 on every call. mod is also rate-limit-exempt.
+ * Runs as the `mod` fixture (id 2000000001): `/api/blocks/submit-version` takes a
+ * signed-in session (or a full-access personal key) with the `appBlocksAuthor`
+ * capability (static fallback mod-only), and `features.appBlocks` (the Flipt mod
+ * segment) gates it, so a user with neither would be 403/503 on every call. The
+ * route rate-limits submits per user (`SUBMIT_RATE_LIMIT`).
  *
  * SAFE + SELF-CLEANING (the dev DB + Forgejo are shared across concurrent
  * previews):
@@ -49,7 +51,7 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  * in PR #2581. ---------------------------------------------------------------
  *
  * Verified shapes (origin/main, paths relative to civitai/src):
- *  - POST /api/blocks/submit-version (ModEndpoint; body { bundleBase64 }) → 200
+ *  - POST /api/blocks/submit-version (session + appBlocksAuthor; body { bundleBase64 }) → 200
  *    `{ publishRequestId, slug, version, bundleSha256, fileSummary,
  *    manifestDiffSummary }` (publish-request.service.ts SubmitVersionResult).
  *    isProd CSRF gate → stamp Origin/Referer (the trpc helper does the same).
@@ -154,10 +156,7 @@ async function findPendingBySlug(
   return null;
 }
 
-async function withdrawPendingForSlug(
-  request: APIRequestContext,
-  slug: string
-): Promise<void> {
+async function withdrawPendingForSlug(request: APIRequestContext, slug: string): Promise<void> {
   const r = await trpcQuery<{ pending: { id: string } | null }>(
     request,
     'blocks.getMyPendingForSlug',

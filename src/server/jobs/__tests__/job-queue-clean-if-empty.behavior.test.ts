@@ -17,6 +17,8 @@ const job = jobQueueJobs.find((j) => j.name === 'job-queue-clean-if-empty')!;
 const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
 
 const OWNER = 7;
+const HELD = 8; // named on a pending report
+const MARKED = 9; // held by a hold marker
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -27,7 +29,26 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY, "modelId" integer NOT NULL, "status" "ModelStatus" NOT NULL
     );
     CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer);
-    CREATE TABLE "Image" ("id" integer PRIMARY KEY, "postId" integer REFERENCES "Post"(id));
+    CREATE TABLE "Image" (
+      "id" integer PRIMARY KEY, "postId" integer REFERENCES "Post"(id), "userId" integer,
+      "needsReview" text, "blockedFor" text
+    );
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
+      details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
+    CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
+    CREATE TABLE "Thread" (
+      id int PRIMARY KEY, "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
+      "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (
+      id int PRIMARY KEY, "userId" int NOT NULL,
+      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
+    );
+    INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
+    INSERT INTO "EvidenceHold" VALUES (${MARKED});
     CREATE TABLE "StorylineChapter" (
       "id" integer PRIMARY KEY,
       "postId" integer UNIQUE REFERENCES "Post"(id) ON DELETE SET NULL
@@ -38,7 +59,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await holder.db.exec(
-    `TRUNCATE "StorylineChapter", "Image", "Post", "ModelVersion", "Model" CASCADE`
+    `TRUNCATE "StorylineChapter", "Image", "Thread", "Post", "ModelVersion", "Model" CASCADE`
   );
 });
 
@@ -95,5 +116,33 @@ describe('job-queue-clean-if-empty', () => {
 
     // Another user's empty post on the same version is not an anchor.
     expect(await remainingPostIds()).toEqual([1]);
+  });
+
+  it.each([HELD, MARKED])("leaves a held owner's empty post (owner %i)", async (owner) => {
+    await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${owner})`);
+    queuePosts(1);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([1]);
+  });
+
+  it.each([
+    ['keeps', HELD, [1]],
+    ['keeps', MARKED, [1]],
+    ['takes, as a control,', OWNER, []],
+  ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
+    await holder.db.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER});
+      INSERT INTO "Thread" (id, "postId") VALUES (100, 1);
+      INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
+    `);
+    queuePosts(1);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([]);
+    const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
+    expect(rows.map((r) => r.id)).toEqual(left);
   });
 });

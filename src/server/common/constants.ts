@@ -57,6 +57,10 @@ function chatCivHosts() {
  */
 const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
+/** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
+const v3PageBudgetOverrides: Record<string, number> = {};
+const v3PageBudget = 40;
+
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
   if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
@@ -433,6 +437,28 @@ export const constants = {
      */
     autoExpandBudget: 40,
     replyPageSize: 5,
+    /**
+     * The v3 suite's page, in rendered comments, replies included: top-level comments are added
+     * until the next would pass it, so one with a large thread costs its share and fewer load.
+     */
+    v3PageBudget,
+    getV3PageBudget({ entityType }: { entityType: string }) {
+      return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
+    },
+    /**
+     * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
+     * it here and mounts `CommentSection`; notifications build their deep links from this list.
+     */
+    v3ReadSurfaces: ['article'] as string[],
+    /**
+     * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
+     * on one exists only there.
+     */
+    v3WriteSurfaces: ['article'] as string[],
+    /** Most replies the v3 suite opens up front under one top-level comment. */
+    v3RepliesPerRoot: 10,
+    /** Replies per "show more" page in the v3 suite. */
+    v3ReplyPageSize: 10,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
@@ -724,6 +750,17 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  'flux nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
+    name: 'FLUX Non-Commercial License',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
     name: 'Illustrious License',
@@ -919,8 +956,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 Klein 9B': baseLicenses['flux nc'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux nc'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
   'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,

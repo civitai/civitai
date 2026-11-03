@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useComputedColorScheme } from '@mantine/core';
 import { PageBlockHost, type PageBlockHostProps } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
+import { useDevPreviewErrorReporter } from '~/components/AppBlocks/devPreviewErrors';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
@@ -21,6 +22,13 @@ export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host' 
    * Reload does. See `PageBlockHostProps.onGuestReloaded`.
    */
   onGuestReloaded: () => void;
+  /**
+   * A freshly signed entry URL for a Retry of a frame that failed to load, WITHOUT remounting
+   * this host (that would reset its bounded auto-retry budget). Omitted, a Retry reloads the
+   * entry URL it was given, which fails once that URL's short-lived token has expired. See
+   * `PageBlockHostProps.onRefreshEntryUrl`.
+   */
+  refreshEntryUrl?: () => Promise<string>;
 };
 
 /** The caller's own app, running from its dev tunnel inside the real page host. */
@@ -38,6 +46,7 @@ export function DevTunnelBlockHost({
   fit,
   tokenErrorFallback,
   onGuestReloaded,
+  refreshEntryUrl,
 }: DevTunnelBlockHostProps) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -46,6 +55,8 @@ export function DevTunnelBlockHost({
 
   // Synthetic page instance id — same shape as the prod page mint path.
   const blockInstanceId = `page_${appBlockId}`;
+  // The errors the app's own code reports here, kept for App Assistant's app activity.
+  const onBlockError = useDevPreviewErrorReporter(blockId);
 
   const install = useMemo<BlockInstall>(
     () => ({
@@ -156,6 +167,8 @@ export function DevTunnelBlockHost({
       onConsentGranted={refresh}
       onRetryToken={refresh}
       onGuestReloaded={onGuestReloaded}
+      onRefreshEntryUrl={refreshEntryUrl}
+      onBlockError={onBlockError}
       // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, which 404s unless the
       // viewer has BOTH flags; see `PageBlockHostProps.canOpenPage`.
       canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
