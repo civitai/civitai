@@ -38,6 +38,7 @@ import {
 } from '~/server/services/creator-shop-withheld';
 import { bustUserCreatorCache } from '~/server/services/user-creator.service';
 import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
+import { refreshShowcaseHats } from '~/server/events/showcase-hat';
 import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
@@ -798,6 +799,8 @@ async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquipped
   const hatSync = writeThroughRemovedEventHats(equipped);
 
   await userCosmeticCache.refresh(userIds);
+  // `equipped` holds placed holdings only; a showcased hat need not be placed.
+  await refreshShowcaseHats(userIds);
   await refreshOwnedStickerCache(userIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();

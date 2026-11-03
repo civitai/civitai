@@ -102,7 +102,10 @@ export const getCommentsInfiniteHandler = async ({
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
   const [userCosmetics] = await Promise.all([
-    getCosmeticsAndProfilePicturesForUsers(allComments.map((c) => c.user.id)),
+    getCosmeticsAndProfilePicturesForUsers(
+      allComments.map((c) => c.user.id),
+      { showcaseHat: true }
+    ),
     maskHiddenReactors(
       allComments.map((c) => c.reactions),
       user

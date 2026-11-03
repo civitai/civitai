@@ -231,6 +231,11 @@ import {
   fetchUserCreator,
   getCachedUserCreator,
 } from '~/server/services/user-creator.service';
+import {
+  getShowcaseHatForUser,
+  getShowcaseHatsForUsers,
+  type ShowcaseHat,
+} from '~/server/events/showcase-hat';
 import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -270,9 +275,13 @@ export const getUserCreator = async ({
   // An id on its own is the hot shape (creator card, header) and is served from a short-TTL
   // per-user cache; what invalidates it is documented on `userCreatorCache`. A username lookup
   // reads the database as before.
-  if (where.id !== undefined && where.username === undefined)
-    return await getCachedUserCreator(where.id);
-  return await fetchUserCreator(where);
+  const creator =
+    where.id !== undefined && where.username === undefined
+      ? await getCachedUserCreator(where.id)
+      : await fetchUserCreator(where);
+  if (!creator) return creator;
+  // Read beside the cached card, not inside it, so the card's own invalidation stays as it is.
+  return { ...creator, showcaseHat: await getShowcaseHatForUser(creator.id) };
 };
 
 type UserSearchResult = {
@@ -2339,7 +2348,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
 export type CachedUserCosmeticsAndProfilePicture = Pick<
   UserWithCosmetics,
   'profilePicture' | 'cosmetics'
->;
+> & { showcaseHat?: ShowcaseHat | null };
 
 /**
  * The `profilePicture` and `cosmetics` that `userWithCosmeticsSelect` nests, in that shape, from the
@@ -2347,18 +2356,27 @@ export type CachedUserCosmeticsAndProfilePicture = Pick<
  * `{ profilePicture: null, cosmetics: [] }`, as the nested select gives.
  */
 export async function getCosmeticsAndProfilePicturesForUsers(
-  userIds: number[]
+  userIds: number[],
+  // Only for surfaces that draw it (UserAvatar `withShowcaseHat`): it is one more cache read.
+  { showcaseHat = false }: { showcaseHat?: boolean } = {}
 ): Promise<(userId: number) => CachedUserCosmeticsAndProfilePicture> {
   const ids = [...new Set(userIds)];
-  if (!ids.length) return () => ({ profilePicture: null, cosmetics: [] });
+  if (!ids.length)
+    return () => ({
+      profilePicture: null,
+      ...(showcaseHat && { showcaseHat: null }),
+      cosmetics: [],
+    });
 
-  const [profilePictures, cosmetics] = await Promise.all([
+  const [profilePictures, cosmetics, showcaseHats] = await Promise.all([
     getProfilePicturesForUsers(ids),
     getCosmeticsForUsers(ids),
+    showcaseHat ? getShowcaseHatsForUsers(ids) : undefined,
   ]);
 
   return (userId) => ({
     profilePicture: profilePictures[userId] ?? null,
+    ...(showcaseHats && { showcaseHat: showcaseHats[userId] ?? null }),
     cosmetics: (cosmetics[userId] ?? []).flatMap(({ data, cosmetic }) =>
       cosmetic
         ? [

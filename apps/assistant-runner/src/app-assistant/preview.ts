@@ -156,6 +156,28 @@ export class RunnerPreview {
     return { [START_PREVIEW]: this.#startTool(), [STOP_PREVIEW]: this.#stopTool() };
   }
 
+  /**
+   * The block id the open app's preview runs under, which its calls and errors are kept by: the one
+   * this run started for it, else the `blockId` in its project's manifest (what a start uses, and
+   * what a preview an earlier run or the page's Restart preview opened ran under), else the app's
+   * key (a start's own default). It can differ from the key: the assistant picks another blockId
+   * when the key's is taken. `null` when no app is open.
+   */
+  async previewBlockId(signal?: AbortSignal): Promise<string | null> {
+    const app = this.#deps.sandbox.active;
+    if (!app) return null;
+    const open = this.#open;
+    if (open && open.app === app.name) return open.blockId;
+    try {
+      const dir = await this.#projectDir(app.app, await this.#devServerStatus(signal), signal);
+      const blockId = dir ? (await this.#manifest(dir, signal)).block_id : undefined;
+      if (typeof blockId === 'string' && isAppBlockId(blockId)) return blockId;
+    } catch {
+      // The sandbox did not answer: the app's own key.
+    }
+    return app.app;
+  }
+
   #startTool(): ChatTool {
     return {
       description:

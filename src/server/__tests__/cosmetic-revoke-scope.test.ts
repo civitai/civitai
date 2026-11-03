@@ -14,6 +14,8 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+const showcase = vi.hoisted(() => ({ refreshShowcaseHats: vi.fn() }));
+vi.mock('~/server/events/showcase-hat', () => showcase);
 
 const { revokeCosmeticsFromUsers, unassignCosmetic } = await import(
   '~/server/services/cosmetic.service'
@@ -86,5 +88,21 @@ describe('revoking or unassigning a worn cosmetic queues the wearer', () => {
     await unassignCosmetic({ cosmeticId: COSMETICS[0], userIds: USERS });
 
     expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([WEARER]);
+  });
+});
+
+// A showcased hat need not be placed on anything, so the placed holdings the removal re-derives do
+// not name its owner: every owner who lost a holding is refreshed, or the hat stays up to an hour.
+describe('removing a holding refreshes the showcase hat', () => {
+  it('unassignCosmetic refreshes every owner, placed or not', async () => {
+    await unassignCosmetic({ cosmeticId: COSMETICS[0], userIds: USERS });
+
+    expect(showcase.refreshShowcaseHats).toHaveBeenCalledWith(USERS);
+  });
+
+  it('revokeCosmeticsFromUsers refreshes every owner, placed or not', async () => {
+    await revokeCosmeticsFromUsers({ userIds: USERS, cosmeticIds: COSMETICS });
+
+    expect(showcase.refreshShowcaseHats.mock.calls.flat(2).sort()).toEqual(USERS);
   });
 });

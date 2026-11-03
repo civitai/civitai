@@ -139,6 +139,8 @@ export type DocStoreErrorCode =
   | 'not_author'
   | 'write_policy'
   | 'resource_not_owned'
+  /** A document body does not match its collection's declared `schema` (`doc-store-schema.ts`). */
+  | 'schema_violation'
   | 'not_found'
   | 'collection_not_declared'
   | 'version_conflict'
