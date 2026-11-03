@@ -73,6 +73,11 @@ the repo. Correcting that produced a convention, a doc sweep, and four code PRs.
 
 ### `typecheck-tests-gate` is merged, unwired, AND failing
 
+**Status (corrected 2026-10-30): wired.** `package.json` now has `typecheck:tests`, and
+`.github/workflows/lint.yml` runs it as the `typecheck-tests` job on non-draft PRs and on dispatch.
+The root `tsconfig.json` now excludes every test file, so this gate is their only typecheck, and it
+was re-baselined at HEAD. The rest of this section is the August state.
+
 - **Symptom + exact repro:** `scripts/ci/typecheck-tests-gate.mjs` exists on `main`, has its own
   unit tests, and runs nowhere.
 - **Observed (with values):** `package.json` has only `"typecheck": "node scripts/typecheck.mjs"`
@@ -128,7 +133,8 @@ the repo. Correcting that produced a convention, a doc sweep, and four code PRs.
    resolves `ask` → auto-reject. One character, test pattern already exists
    (`test_rm_glob_misses_these_recursive_spellings`). ⚠ That rule also has a genuine *under*-match
    gap in the opposite direction, documented in that same test — don't disturb it.
-2. **Wire `typecheck-tests-gate`** (card #257) — decide baseline-at-HEAD vs burn-down first.
+2. ~~**Wire `typecheck-tests-gate`** (card #257)~~ — done 2026-10-30 (baseline at HEAD); see the
+   correction under that heading.
 3. **Card 309/310 wiring** — find why #4289 got no `component-tests` status.
 4. **318**, once the box is genuinely quiet *and* the check is fixed (see above).
 5. **315's RSS measurement** — needs the real build environment; this box cannot settle it

@@ -282,7 +282,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
           holdings: holdings({ hidden: { bytes: 47, docs: 1 } }),
         },
       };
-      for (const uid of [COUNTER_ONLY, HIDDEN_ONLY]) {
+      for (const uid of [COUNTER_ONLY, HIDDEN_ONLY] as const) {
         const row = {
           appBlockId: APP_A.id,
           name: 'Alpha Notes',

@@ -356,6 +356,8 @@ describe('creator card invalidation ledger', () => {
       'src/server/controllers/user.controller.ts': 1,
       'src/server/services/creator-milestone-grant.service.ts': 1,
       'src/server/services/creator-shop.service.ts': 1,
+      // A showcase hat pick: the card carries it beside the cached entry, so only the edge copy is stale.
+      'src/server/services/event.service.ts': 1,
     });
   });
 

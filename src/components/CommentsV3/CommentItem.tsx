@@ -193,7 +193,7 @@ export function CommentItem({
       ) : concealed ? (
         <HiddenCommentAvatar size={26} />
       ) : (
-        <UserAvatar user={author} size="sm" linkToProfile />
+        <UserAvatar user={author} size="sm" linkToProfile withShowcaseHat />
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">

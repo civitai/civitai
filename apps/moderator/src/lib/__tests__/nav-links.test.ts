@@ -320,6 +320,7 @@ describe('the text-scan lab', () => {
       ['/csam/text-holds', 'CSAM holds'],
       ['/text-scan/prompts', 'Prompts'],
       ['/text-scan/model-rules', 'Model rules'],
+      ['/text-scan/shadow-sexual-prompt', 'Shadow sexual prompt'],
     ]);
   });
 

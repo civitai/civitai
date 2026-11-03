@@ -34,6 +34,9 @@ type HomeBlockForCache = {
 
 const log = createLogger('home-block-cache', 'green');
 
+// Not 'default': entries under that key predate the PG cap and must never be read again.
+const FEATURED_MODELS_HOME_BLOCK_KEY = 'pg';
+
 /**
  * Takes RESOLVED metadata — the source block's, for a clone — never the row's own column. A
  * clone's column is empty now that it is a pointer, so keying off it would produce `undefined`
@@ -54,7 +57,7 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
       // their own. Was keyed on the clone's own id back when the snapshot could disagree.
       return metadata.cosmeticShopSection?.id;
     case HomeBlockType.FeaturedModelVersion:
-      return 'default';
+      return FEATURED_MODELS_HOME_BLOCK_KEY;
     case HomeBlockType.FeaturedCollections:
     case HomeBlockType.Feed:
       // Source-keyed, so one entry serves every clone. It also makes the existing busts land:
@@ -154,4 +157,8 @@ export async function homeBlockCacheBust(type: HomeBlockType, entityId: number |
   ];
   log(`Cache busted: ${base} (${keys.length} keys)`);
   await Promise.all(keys.map((key) => redis.del(key as typeof base)));
+}
+
+export async function bustFeaturedModelsHomeBlockCache() {
+  await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, FEATURED_MODELS_HOME_BLOCK_KEY);
 }
