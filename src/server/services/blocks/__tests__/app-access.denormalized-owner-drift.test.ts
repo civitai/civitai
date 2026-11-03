@@ -83,6 +83,7 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     image: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
     oauthClient: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    appListingModerationEvent: { create: vi.fn(async (args: { data: unknown }) => args.data) },
     $transaction: vi.fn(async (arg: unknown) =>
       typeof arg === 'function'
         ? (arg as (tx: unknown) => Promise<unknown>)(null)
@@ -108,6 +109,7 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
   newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
   newUlid: () => `ULID${++seq.n}`,
+  newAppListingModerationEventId: () => `alme_new_${++seq.n}`,
 }));
 
 const { getMyListingForApp, submitListingRevision, updateListing } = await import(
@@ -311,24 +313,13 @@ describe('offsite-listing::loadOwnedEditableListing (via updateListing)', () => 
   });
 });
 
-describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, not as a string', () => {
+describe('🔴 D1 (resolved): offsite-listing admits a moderator, and audits the edit', () => {
   /**
-   * D1 is the decision that `offsite-listing.service`'s author gates admit ONLY the
-   * owner and an accepted editor, while its sibling `app-listing-assets.service` also
-   * lets a moderator through. Until now that decision existed as prose in
-   * `app-access.call-site-ledger.test.ts` and as a comment on `loadOwnedEditableListing`
-   * — and a LEDGER STRING IS NOT A GUARD. A mutant that threads `isModerator` into
-   * `loadOwnedEditableListing` and short-circuits on it leaves the entire blocks suite
-   * green, and the comments there explicitly anticipate a future "make the mod bypass
-   * consistent" edit — which would silently widen an AUTHOR edit path to every moderator.
-   *
-   * `updateListing` already accepts `isModerator` (it is threaded into `deriveScopePatch`
-   * so a mod editing a listing that links a foreign OAuth client is not blocked by the
-   * client re-assertion), so the flag reaching the function is not hypothetical: it is
-   * already in the signature, one line away from the gate. These cases pin that it does
-   * NOT reach the gate.
+   * The two sibling gates used to disagree: `app-listing-assets` let a moderator through,
+   * `offsite-listing` did not. Moderators may now edit any listing's content, so both
+   * admit one; offsite-listing records a `moderator-edit` event before the write.
    */
-  it('a moderator who is not the owner is REFUSED on an ON-SITE listing', async () => {
+  it('a moderator who is not the owner edits an ON-SITE listing, recorded as actor', async () => {
     await expect(
       updateListing({
         listingId: LIVE,
@@ -336,13 +327,14 @@ describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, no
         userId: STRANGER,
         isModerator: true,
       })
-    ).rejects.toMatchObject({ code: 'NOT_OWNED', message: 'you can only edit your own listings' });
-    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ listingId: LIVE });
+    expect(mockWrite.appListing.update).toHaveBeenCalledOnce();
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'moderator-edit', actorUserId: STRANGER }),
+    });
   });
 
-  it('a moderator who is not the owner is REFUSED on an OFF-SITE listing', async () => {
-    // The kind D1 is named for. Same refusal, so the decision is not an artefact of the
-    // drifted onsite fixture.
+  it('a non-owner who is NOT a moderator is still REFUSED on an OFF-SITE listing', async () => {
     wireListings({
       [LIVE]: liveRow({
         kind: 'offsite',
@@ -357,7 +349,7 @@ describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, no
         listingId: LIVE,
         patch: { name: 'Renamed' },
         userId: STRANGER,
-        isModerator: true,
+        isModerator: false,
       })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
