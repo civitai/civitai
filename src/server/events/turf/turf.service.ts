@@ -96,12 +96,18 @@ export function turfSupplyAt(
 export async function getTurfStock(eventName: string, userId: number, now = new Date()) {
   const event = await getTurfEvent(eventName, now);
   if (!event) throw throwNotFoundError('This event has no turf');
-  const row = await dbRead.eventTurfStock.findUnique({
-    where: { event_userId: { event: event.name, userId } },
-    select: { stock: true, refilledAt: true },
-  });
+  const [row, [user]] = await Promise.all([
+    dbRead.eventTurfStock.findUnique({
+      where: { event_userId: { event: event.name, userId } },
+      select: { stock: true, refilledAt: true },
+    }),
+    dbRead.$queryRaw<{ optedIn: boolean | null }[]>`
+      SELECT (settings -> ${TURF_SETTING} ->> ${event.name}) = 'true' AS "optedIn"
+      FROM "User" WHERE id = ${userId}
+    `,
+  ]);
   const { stock: _, ...supply } = turfSupplyAt(event, row, now);
-  return { ...supply, mode: event.turf.mode };
+  return { ...supply, mode: event.turf.mode, optedIn: !!user?.optedIn };
 }
 // #endregion
 
@@ -112,6 +118,7 @@ export type PlaceTurfStickerInput = {
   imageId: number;
   cosmeticId: number;
   data: TurfStickerData;
+  source?: 'feed' | 'image-detail';
 };
 
 export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
@@ -182,7 +189,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
           userId,
           team,
           cosmeticId: input.cosmeticId,
-          data: input.data,
+          data: input.source ? { ...input.data, source: input.source } : input.data,
           createdAt: now,
         },
       });
@@ -405,22 +412,34 @@ export async function reconcileAllTurf(now = new Date()) {
 // #region reads
 /**
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
- * protects the image, so its stickers earn nothing until the hat comes off. Two HMGETs.
+ * protects the image, so its stickers earn nothing until the hat comes off. `open`: for every image
+ * asked about, whether it can take a new sticker now (visible, owner opted in); owners may sticker
+ * their own.
  */
 export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
   const event = await getTurfEvent(eventName);
-  if (!event || event.turf.mode === 'off' || !imageIds.length) return { team: null, images: {} };
+  if (!event || event.turf.mode === 'off' || !imageIds.length)
+    return { team: null, images: {}, open: {} };
   const keys = imageIds.map((id) => `Image:${id}`);
-  const [counts, hats] = await Promise.all([
+  const [counts, hats, openRows] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
+    dbRead.$queryRaw<{ id: number }[]>`
+      SELECT i.id FROM "Image" i
+      JOIN "Post" p ON p.id = i."postId"
+      JOIN "User" o ON o.id = i."userId"
+      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible}
+        AND (o.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true'
+    `,
   ]);
+  const openIds = new Set(openRows.map((r) => r.id));
+  const open = Object.fromEntries(imageIds.map((id) => [id, openIds.has(id)]));
   const images: Record<number, TurfCounts & { hatted: boolean }> = {};
   imageIds.forEach((id, i) => {
     if (counts[i]) images[id] = { ...(JSON.parse(counts[i]!) as TurfCounts), hatted: !!hats[i] };
   });
   const team = viewerId ? await event.getUserTeam(viewerId).catch(() => null) : null;
-  return { team: team ?? null, images };
+  return { team: team ?? null, images, open };
 }
 
 type DrawnSticker = {

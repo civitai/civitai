@@ -20,6 +20,8 @@ export const placeTurfStickerSchema = z.object({
   // Which of the player's event hats the sticker shows.
   cosmeticId: z.number().int().positive(),
   data: turfStickerDataSchema,
+  // Where the placement started, for the UI experiment readout. Absent from older clients.
+  source: z.enum(['feed', 'image-detail']).optional(),
 });
 
 export const turfEventSchema = z.object({ event: eventName });

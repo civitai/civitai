@@ -122,6 +122,14 @@ describe('placeTurfSticker', () => {
     expect(dbMock.dbWrite.eventTurfSticker.create).not.toHaveBeenCalled();
   });
 
+  it('records where the placement started, for the experiment readout', async () => {
+    given(OK_PLACER, OK_IMAGE, 3);
+    await placeTurfSticker({ ...input, source: 'feed' }, NOW);
+    expect(dbMock.dbWrite.eventTurfSticker.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ data: expect.objectContaining({ x: 0.5, source: 'feed' }) }),
+    });
+  });
+
   it('places the sticker and spends exactly one', async () => {
     given(OK_PLACER, OK_IMAGE, 3);
     await placeTurfSticker(input, NOW);
