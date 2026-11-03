@@ -2052,7 +2052,7 @@ export function IframeHost({
       // and never reads it as a request for this app's own scopes.
       // Why refuse rather than drop: the model slot has no source-publish prompt yet, and reading
       // the request as an ordinary one would open THIS app's prompt for a scope in another app.
-      if (false && resolveSourcePublishConsentRequest(payload) !== null) {
+      if (resolveSourcePublishConsentRequest(payload) !== null) {
         send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
         return;
       }

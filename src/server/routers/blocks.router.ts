@@ -3612,7 +3612,7 @@ export const blocksRouter = router({
           from: input.from,
           host: ctx.req?.headers?.host ?? '',
         });
-        await afterPromptedGrant(ctx.user!.id, input.appBlockId, source.manifest, revokedScopesAfterClear);
+        await afterPromptedGrant(ctx.user!.id, source.id, source.manifest, revokedScopesAfterClear);
         return { ok: true, granted: [APP_STORAGE_PUBLISH_SCOPE], buzzBudgetPerDay: undefined };
       }
       // Ceiling = manifest.scopes ∩ approvedScopes, via the SHARED `effectiveBlockScopes`
