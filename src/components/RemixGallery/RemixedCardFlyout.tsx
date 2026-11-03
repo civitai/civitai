@@ -1,6 +1,7 @@
 import { Text } from '@mantine/core';
 import { IconEyeOff, IconHierarchy, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -10,10 +11,12 @@ import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-state';
 import { Flags } from '~/shared/utils/flags';
 import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import {
   resolveShelfCell,
   useRemixFlyoutLayout,
 } from '~/components/RemixGallery/remix-flyout-layout';
+import type { RemixGalleryCardEntry } from '~/server/services/remix-gallery.service';
 import styles from './RemixedCardFlyout.module.scss';
 
 /** Dwell before the flyout opens, in ms. */
@@ -478,35 +481,14 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           exactly and there is nothing to scroll. */}
       <div className={clsx('flex gap-1 px-2 pb-2', side && 'flex-col')}>
         {entries.map((entry, index) => (
-          <button
+          <RemixFlyoutTile
             key={index}
+            entry={entry}
+            blurred={Flags.hasFlag(blurLevels ?? 0, entry.nsfwLevel)}
             className={clsx('min-w-0', styles.tile, side ? 'mx-auto' : 'max-w-16 flex-1')}
             style={side ? { width: tile, height: tile } : undefined}
-            aria-label={entry.username ? `Open ${entry.username}'s remix` : 'Open remix'}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              close();
-              triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } });
-            }}
-          >
-            {Flags.hasFlag(blurLevels ?? 0, entry.nsfwLevel) ? (
-              // A placeholder rather than a blurred image: the strip is a hover
-              // preview with no room for a reveal toggle, so there is no gesture
-              // that would un-blur it. The tile still opens the remix, and the
-              // detail view has its own guard.
-              <div className="flex aspect-square w-full items-center justify-center rounded bg-gray-3 ring-1 ring-gray-3 dark:bg-dark-5 dark:ring-dark-4">
-                <IconEyeOff size={16} className="text-gray-6 dark:text-dark-2" />
-              </div>
-            ) : (
-              <EdgeMedia
-                src={entry.url}
-                type={entry.type}
-                width={128}
-                className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
-              />
-            )}
-          </button>
+            onOpen={close}
+          />
         ))}
         {count > entries.length && (
           <div
@@ -573,5 +555,56 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           host
         )}
     </>
+  );
+}
+
+function RemixFlyoutTile({
+  entry,
+  blurred,
+  className,
+  style,
+  onOpen,
+}: {
+  entry: RemixGalleryCardEntry;
+  blurred: boolean;
+  className: string;
+  style?: CSSProperties;
+  onOpen: () => void;
+}) {
+  // A placeholder shows nothing of the remix, so only a revealed tile is a view.
+  const ref = useTrackImpression<HTMLButtonElement>(
+    blurred ? undefined : [{ entityType: 'Image', entityId: entry.imageId }]
+  );
+
+  return (
+    <button
+      ref={ref}
+      className={className}
+      style={style}
+      aria-label={entry.username ? `Open ${entry.username}'s remix` : 'Open remix'}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen();
+        triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } });
+      }}
+    >
+      {blurred ? (
+        // A placeholder rather than a blurred image: the strip is a hover
+        // preview with no room for a reveal toggle, so there is no gesture
+        // that would un-blur it. The tile still opens the remix, and the
+        // detail view has its own guard.
+        <div className="flex aspect-square w-full items-center justify-center rounded bg-gray-3 ring-1 ring-gray-3 dark:bg-dark-5 dark:ring-dark-4">
+          <IconEyeOff size={16} className="text-gray-6 dark:text-dark-2" />
+        </div>
+      ) : (
+        <EdgeMedia
+          src={entry.url}
+          type={entry.type}
+          width={128}
+          className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
+        />
+      )}
+    </button>
   );
 }

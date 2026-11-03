@@ -162,4 +162,13 @@
   .railDrawerTrigger {
     display: none;
   }
+
+  /* A page with no header has nothing in the band once the drawer trigger is hidden, so the
+     band goes too: a `display: none` flex child takes its gap with it, and the body starts at
+     the rail's top instead of one empty band lower. It sits on a plain wrapper, not the Stack: the
+     Stack's own `display: flex` comes from Mantine's stylesheet, whose order against this module
+     is not ours to rely on. */
+  .bandBare {
+    display: none;
+  }
 }

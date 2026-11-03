@@ -202,6 +202,7 @@ import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
@@ -1271,6 +1272,11 @@ export default function ModelDetailsV2({
                                 >
                                   Lookup Model
                                 </ModeratorLookupMenuItem>
+                                <TrainingAuditMenuItem
+                                  modelId={model.id}
+                                  uploadType={model.uploadType}
+                                  isModerator={isModerator}
+                                />
                                 {published && (
                                   <Menu.Item
                                     color="yellow"
