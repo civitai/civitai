@@ -784,6 +784,12 @@ export interface PageBlockHostProps {
    */
   onRefreshEntryUrl?: () => Promise<string>;
   /**
+   * DEV-TUNNEL ONLY: every `BLOCK_ERROR` payload the block posts (unvalidated), for the dev host
+   * to keep for App Assistant's app activity (`useDevPreviewErrorReporter`). Unset on every other
+   * surface, so a production block's errors go nowhere new.
+   */
+  onBlockError?: (payload: unknown) => void;
+  /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
    * side-effecting / money / private / cross-user handler replies with a
@@ -936,6 +942,7 @@ export function PageBlockHost({
   onRetryToken,
   onGuestReloaded,
   onRefreshEntryUrl,
+  onBlockError,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -1876,12 +1883,15 @@ export function PageBlockHost({
     });
   }, [status, appBlockId, blockInstanceId]);
 
-  // BLOCK_ERROR{fatal:true} → fatal.
+  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel only).
+  const onBlockErrorRef = useRef(onBlockError);
+  onBlockErrorRef.current = onBlockError;
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_ERROR', (raw) => {
       if (raw && typeof raw === 'object' && (raw as { fatal?: unknown }).fatal === true) {
         setStatus((current) => (current === 'loading' || current === 'ready' ? 'fatal' : current));
       }
+      onBlockErrorRef.current?.(raw);
     });
     return off;
   }, [onMessage]);

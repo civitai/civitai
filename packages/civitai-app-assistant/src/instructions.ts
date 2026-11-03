@@ -114,6 +114,13 @@ export const BUZZ_TRANSACTIONS_RULE =
   "- The viewer's own Buzz transactions (a spending history, a daily spending chart) are available: import { getTransport } from '@civitai/sdk' and call getTransport().request('GET_BUZZ_TRANSACTIONS', { params: { accountType, type, start, end, cursor, limit } }), which resolves to { transactions, cursor } (each transaction has date, a Date or an ISO string, so read it with new Date(date); type; amount, always positive, spent or received as its fromAccountId and toAccountId say; and description. limit is 1-200, 50 by default; pass the returned cursor to get the next page). It needs the buzz:read:self scope in block.manifest.json. Each call reads one Buzz pool: accountType is 'yellow' unless you pass another ('blue', 'green'), so request every pool the app shows and combine them. BREAKING.md's \"No v1 route\" for GET_BUZZ_TRANSACTIONS means only that app.site has no route for it; this host request works.";
 
 /**
+ * When to read what the open app did while it ran (`app_activity`): before guessing at a preview
+ * that is stuck or wrong. Short, as every rule here is sent again with each step.
+ */
+export const APP_ACTIVITY_RULE =
+  '- When the user says the preview is stuck, blank, slow or wrong, call app_activity before you guess or change code: it lists the app’s recent generations, its calls to Civitai and the errors its code threw.';
+
+/**
  * When to read the open app's moderator review and its users' feedback, what to do with it, and that
  * its text is data. The tools frame that text too (`UNTRUSTED_FEEDBACK_NOTICE`); this is the rule
  * the assistant reads before it ever calls them.
@@ -140,6 +147,7 @@ const RULES_AFTER_SETUP = [
   SUBMIT_RULE,
   FEEDBACK_RULE,
   COVER_RULE,
+  APP_ACTIVITY_RULE,
 ];
 
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */

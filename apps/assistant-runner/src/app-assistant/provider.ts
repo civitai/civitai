@@ -46,6 +46,11 @@ import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
+import {
+  RUNNER_ACTIVITY_TOOLS,
+  runnerActivityTools,
+  type CivitaiAppActivity,
+} from './app-activity';
 import { runnerCoverTools, unconfiguredCoverTools, type CoverListings } from './cover';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
@@ -125,6 +130,8 @@ const RUNNER_PAGE_TOOLS = [
   ...APP_FEEDBACK_TOOLS,
   // Offers a store cover; the page's card makes it.
   GENERATE_APP_COVER,
+  // What the open app did while it ran (`app_activity`), read by civitai as the run's user.
+  ...RUNNER_ACTIVITY_TOOLS,
 ] as const;
 
 export interface AppAssistantToolsOptions {
@@ -148,6 +155,11 @@ export interface AppAssistantToolsOptions {
    * feedback tools say they cannot read it here.
    */
   appFeedback?(runId: string, signal: AbortSignal): AppFeedbackSource;
+  /**
+   * civitai's app-activity read with one run's grant (`CivitaiAppActivity.forRun`). Unset,
+   * `app_activity` says it cannot read it here.
+   */
+  appActivity?(runId: string, signal: AbortSignal): ReturnType<CivitaiAppActivity['forRun']>;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
@@ -343,6 +355,11 @@ export class AppAssistantTools implements ToolProvider {
         [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),
         ...coverTools,
+        ...runnerActivityTools({
+          // The preview's block id, not the app's key: the two differ when the key's was taken.
+          currentApp: () => livePreview.previewBlockId(signal),
+          source: this.#options.appActivity?.(runId, signal),
+        }),
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.

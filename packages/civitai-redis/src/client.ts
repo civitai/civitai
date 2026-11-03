@@ -2367,6 +2367,14 @@ export const REDIS_SYS_KEYS = {
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
     /**
+     * APP DEV PREVIEW ERRORS — the uncaught errors (and console errors) an app's own code reported
+     * in its LIVE DEV PREVIEW (`BLOCK_ERROR {fatal:false}` from a dev-tunnel host only), keyed
+     * `${DEV_PREVIEW_ERRORS}:<userId>:<blockId>`. A capped LIST (newest first, last 200), hard-TTL
+     * EX 2h, written only while the user has a live dev tunnel of that app; read back by App
+     * Assistant's app-activity read for that same user (preview-errors.service.ts). On `sysRedis`.
+     */
+    DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
+    /**
      * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
      * post-paid customComfy job's terminal poll/cancel can refund the
      * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
