@@ -126,14 +126,22 @@ export const getAllUserCollectionsInputSchema = z
 
 // Declared here, not in the service, so the client can render the picker without pulling in
 // server-only AI deps.
-export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
+export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.6-flash'] as const;
+type AiReviewModel = (typeof AI_REVIEW_MODELS)[number];
+
+// A stored config outlives the model it names (mimo-v2.5 lost every provider), and a config that
+// fails to parse is skipped by the review job, so an unlisted model reads as the default.
+const aiReviewModelSchema = z.preprocess(
+  (value) => (AI_REVIEW_MODELS.includes(value as AiReviewModel) ? value : undefined),
+  z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0])
+);
 
 export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
 // Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
 // metadata, capping a Contest collection's metadata at the btree row limit (~2704 bytes).
 export const collectionAiReviewSchema = z.object({
   enabled: z.boolean().default(false),
-  model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
+  model: aiReviewModelSchema,
   prompt: z.string().trim().min(1).max(20000),
   // Bitmask of NsfwLevel flags. An item outside the mask is rejected without a vision call.
   allowedNsfwLevels: z

@@ -27,6 +27,7 @@ import {
   reviewImage,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
+import { describeProviderError } from '~/server/services/ai/provider-error';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { isDefined } from '~/utils/type-guards';
@@ -188,7 +189,7 @@ async function classifyItem({
         collectionId,
         imageId: item.imageId,
         attempts,
-        error: (error as Error).message,
+        error: describeProviderError(error),
       }).catch(() => undefined);
       // Most failures clear on a later run, so the item is left for the next one. Stamped once the
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not

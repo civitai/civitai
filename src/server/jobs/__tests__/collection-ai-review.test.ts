@@ -1,3 +1,4 @@
+import { ChatError } from '@openrouter/sdk/models/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionReviewService from '~/server/services/ai/collection-review.service';
 import type * as CollectionService from '~/server/services/collection.service';
@@ -66,7 +67,7 @@ const ITEM_ID = 1001;
 
 const config: CollectionAiReviewSchema = {
   enabled: true,
-  model: 'xiaomi/mimo-v2.5',
+  model: 'xiaomi/mimo-v2.6-flash',
   prompt: 'review',
   allowedNsfwLevels: 3,
   escalationAction: 'reject',
@@ -155,6 +156,39 @@ describe('reviewCollection: a failed model call', () => {
     expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(
       `system:collection-ai-review:attempts:${ITEM_ID}`,
       1
+    );
+  });
+
+  it("logs the provider's own reason, which the SDK's message leaves out", async () => {
+    queuePending([pendingItem()]);
+    const body = JSON.stringify({
+      error: { message: 'Provider returned error', metadata: { raw: 'no healthy upstream' } },
+    });
+    reviewImage.mockRejectedValue(
+      new ChatError(
+        {
+          error: { message: 'Provider returned error', code: 502 },
+          request$: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response$: new Response(body, { status: 502 }),
+          body$: body,
+        } as never,
+        {
+          request: new Request('https://openrouter.ai/api/v1/chat/completions'),
+          response: new Response(body, { status: 502 }),
+          body,
+        }
+      )
+    );
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'job-error',
+        imageId: 5,
+        error: expect.stringContaining('no healthy upstream'),
+      })
     );
   });
 });
