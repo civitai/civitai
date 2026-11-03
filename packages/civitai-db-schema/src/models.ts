@@ -5176,7 +5176,6 @@ export interface KnightsReferenceImage {
   failures: number;
   createdAt: Date;
   updatedAt: Date;
-  trialAnswers?: KnightsTrialAnswer[];
 }
 
 export interface KnightsYesNoReference {
@@ -5190,32 +5189,6 @@ export interface KnightsYesNoReference {
   createdBy: number;
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface KnightsTrialRun {
-  id: number;
-  playerId: number;
-  questionKey: string;
-  seed: number;
-  itemIds: JsonValue;
-  startedAt: Date;
-  finishedAt: Date | null;
-  result: string | null;
-  score: number | null;
-  cooldownUntil: Date | null;
-  trialAnswers?: KnightsTrialAnswer[];
-}
-
-export interface KnightsTrialAnswer {
-  id: number;
-  runId: number;
-  run?: KnightsTrialRun;
-  playerId: number;
-  referenceId: number;
-  reference?: KnightsReferenceImage;
-  answer: string;
-  correct: boolean;
-  createdAt: Date;
 }
 
 export interface KnightsApprenticeAnswer {

@@ -118,9 +118,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(
-    `TRUNCATE "KnightsTrialAnswer","KnightsTrialRun","KnightsReferenceImage","Image","Post" RESTART IDENTITY CASCADE`
-  );
+  await db.exec(`TRUNCATE "KnightsReferenceImage","Image","Post" RESTART IDENTITY CASCADE`);
 });
 
 describe('addCoreImage', () => {
