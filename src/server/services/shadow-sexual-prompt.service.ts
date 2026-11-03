@@ -6,6 +6,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { labelResultErrored } from '~/server/services/moderation-label-helpers';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 
@@ -18,6 +19,7 @@ import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 const SHADOW_KIND = 'sexual-prompt';
 const LABEL = 'Sexual';
 const NEGATIVE_FIELD = 'Negative Prompt';
+const MODEL_REF = 'xguard-prompt';
 export const SHADOW_SEXUAL_PROMPT_QUESTION = 'image.prompt_sexual';
 
 const shadowMetadataSchema = z.object({
@@ -92,7 +94,7 @@ export async function submitShadowSexualPromptScan(image: {
     labels: [LABEL],
     priority: 'low',
     recordForReview: false,
-    extraMetadata: { shadow },
+    shadow,
   });
 }
 
@@ -118,8 +120,9 @@ export async function recordShadowSexualPrompt(
   const result = steps
     .find((s) => s.$type === 'xGuardModeration')
     ?.output?.results.find((r) => r.label.toLowerCase() === LABEL.toLowerCase());
-  if (!result || !workflow.id) {
-    logShadowSexualPromptError(new Error(`no ${LABEL} result on ${workflow.id}`), shadow.imageId);
+  // An errored label answers nothing; recording it would read as a clean verdict.
+  if (!result || !workflow.id || labelResultErrored(result)) {
+    logShadowSexualPromptError(new Error(`no ${LABEL} verdict on ${workflow.id}`), shadow.imageId);
     return;
   }
 
@@ -142,7 +145,7 @@ export async function recordShadowSexualPrompt(
       wouldRaise: would > shadow.currentNsfwLevel ? 1 : 0,
       onSite: shadow.onSite ? 1 : 0,
       policyHash,
-      modelVersion: String(workflow.metadata?.version ?? ''),
+      modelVersion: MODEL_REF,
       scannedAt: toClickHouseDateTime(scannedAt),
     }).catch((e) => logShadowSexualPromptError(e, shadow.imageId)),
     recordPrediction({
@@ -184,7 +187,10 @@ async function recordPrediction(args: {
     currentNsfwLevel: shadow.currentNsfwLevel,
     wouldNsfwLevel: args.would,
   };
-  await dbWrite.$queryRaw`
+  // No snapshot: the subject is shared with the scan-label producers, and the first snapshot
+  // written is kept. The exclusion check matches theirs, so a held image is out of training at once.
+  const rows = await dbWrite.$queryRaw<{ id: bigint | number | null }[]>`
+    WITH recorded AS (
     SELECT label_store.record_prediction(
       p_subject_type => 'image',
       p_subject_id => ${String(shadow.imageId)}::text,
@@ -192,7 +198,7 @@ async function recordPrediction(args: {
       p_family => 'xguard_prompt',
       p_question => ${SHADOW_SEXUAL_PROMPT_QUESTION}::text,
       p_value => ${args.sexualPrompt ? 'sexual' : 'not_sexual'}::text,
-      p_model_ref => ${`xguard-prompt@${args.policyHash}`}::text,
+      p_model_ref => ${`${MODEL_REF}@${args.policyHash}`}::text,
       p_source_ref => ${`ShadowSexualPrompt:${args.workflowId}`}::text,
       p_predicted_at => ${args.scannedAt}::timestamptz,
       p_question_version => 1,
@@ -204,11 +210,17 @@ async function recordPrediction(args: {
       })}::jsonb,
       p_input_hash => ${shadow.promptHash}::text,
       p_detail => ${JSON.stringify(detail)}::jsonb,
-      p_snapshot => jsonb_build_object('url', i."url"),
       p_phash => i."pHash",
       p_owner_user_id => i."userId"
-    )
+    ) AS id
     FROM "Image" i
     WHERE i.id = ${shadow.imageId}::int
+    )
+    SELECT r.id,
+      CASE WHEN r.id IS NOT NULL AND label_store.image_excluded(${shadow.imageId}::int)
+        THEN label_store.exclude('image', ${String(shadow.imageId)}::text, 'safety') END AS excluded
+    FROM recorded r
   `;
+  if (rows.length === 0)
+    logShadowSexualPromptError(new Error('image not found for prediction'), shadow.imageId);
 }

@@ -19,6 +19,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 import { NsfwLevel } from '~/server/common/enums';
 import {
   countsAsSexualPrompt,
+  hashPromptPair,
   readShadowSexualPromptMetadata,
   submitShadowSexualPromptScan,
   wouldNsfwLevel,
@@ -83,15 +84,29 @@ describe('submitShadowSexualPromptScan', () => {
     expect(args.entityType).toBeUndefined();
     expect(args.entityId).toBeUndefined();
 
-    const shadow = readShadowSexualPromptMetadata(args.extraMetadata);
-    expect(shadow).toEqual({
+    expect(readShadowSexualPromptMetadata({ shadow: args.shadow })).toEqual({
       kind: 'sexual-prompt',
       imageId: 4242,
       currentNsfwLevel: NsfwLevel.PG13,
       onSite: true,
-      promptHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      promptHash: hashPromptPair(PROMPT, 'blurry'),
     });
-    expect(JSON.stringify(args.extraMetadata)).not.toContain(PROMPT);
+    expect(JSON.stringify(args.shadow)).not.toContain(PROMPT);
+  });
+
+  it('marks a prompt from an off-site tool as not on-site', async () => {
+    await submitShadowSexualPromptScan(
+      image({ prompt: PROMPT, civitaiResources: [], Version: 'v1.10' })
+    );
+    expect(createXGuardModerationRequest.mock.calls[0][0].shadow.onSite).toBe(false);
+  });
+});
+
+describe('hashPromptPair', () => {
+  it('distinguishes the negative prompt, and treats none as empty', () => {
+    expect(hashPromptPair(PROMPT, 'a')).not.toBe(hashPromptPair(PROMPT, 'b'));
+    expect(hashPromptPair(PROMPT, undefined)).toBe(hashPromptPair(PROMPT, ''));
+    expect(hashPromptPair(PROMPT, undefined)).not.toBe(hashPromptPair(`${PROMPT} `, undefined));
   });
 });
 
@@ -134,6 +149,7 @@ describe('the rating the rule would set', () => {
     [NsfwLevel.X, true, 'Positive Prompt', NsfwLevel.X],
     [NsfwLevel.PG, true, 'Negative Prompt', NsfwLevel.PG],
     [NsfwLevel.PG13, false, 'Positive Prompt', NsfwLevel.PG13],
+    [NsfwLevel.PG, true, null, NsfwLevel.R],
   ])('level %i, triggered %s on %s -> %i', (current, triggered, field, expected) => {
     expect(wouldNsfwLevel(current, countsAsSexualPrompt({ triggered, field }))).toBe(expected);
   });

@@ -89,9 +89,22 @@ describe('applyIngestionSideEffects: the shadow sexual-prompt scan', () => {
     vi.clearAllMocks();
 
     arrange();
-    const shadowed = await run();
+    const pending = Symbol('pending');
+    const shadowed = await Promise.race([
+      run(),
+      new Promise<typeof pending>((resolve) => setTimeout(() => resolve(pending), 1000)),
+    ]);
 
+    expect(shadowed).not.toBe(pending);
     expect(shadowed).toEqual(baseline);
-    expect(shadowed.queue).toHaveLength(1);
+    expect(baseline.queue).toHaveLength(1);
+  });
+
+  it('does not shadow a blocked image', async () => {
+    await applyIngestionSideEffects({
+      image,
+      outcome: { ...outcome, ingestion: ImageIngestionStatus.Blocked },
+    });
+    expect(submit).not.toHaveBeenCalled();
   });
 });
