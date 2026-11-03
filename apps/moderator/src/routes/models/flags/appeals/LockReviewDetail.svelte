@@ -24,6 +24,7 @@
 </script>
 
 <script lang="ts">
+  import { IconAlertTriangle } from '@tabler/icons-svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { isRequestableLock, requestableLockLabels } from '@civitai/shared/lock-review';
@@ -75,7 +76,11 @@
 
   const detail = $derived(modelFlagDetail(MODEL_FLAGS_APPEALS_PATH, row.modelId, ''));
   const asked = $derived((row.lockReview ?? []).filter(isRequestableLock));
-  const stillLocked = $derived(asked.filter((key) => row.lockedProperties.includes(key)));
+  // The row is not refetched after a ruling, so an approval shows here through its verdict.
+  const approved = $derived(verdict === RULINGS.find((r) => r.verdict === 'Approved')?.outcome);
+  const stillLocked = $derived(
+    approved ? [] : asked.filter((key) => row.lockedProperties.includes(key))
+  );
   // Mirrors the endpoint, which refuses an approval once either flag is set.
   const flagged = $derived(row.minor || row.poi);
 
@@ -185,6 +190,17 @@
   {/snippet}
 
   {#snippet info()}
+    {#if row.alsoInNeedsReview}
+      <div
+        class="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5 text-xs leading-[1.45] text-amber-200"
+      >
+        <IconAlertTriangle class="mt-px size-3.5 shrink-0" aria-hidden="true" />
+        <p class="m-0">
+          Needs review also lists this model, for a held detection or a file match. Rule on that
+          first: a real person or minor flag it confirms keeps these settings locked.
+        </p>
+      </div>
+    {/if}
     <OwnerSaysCard
       message={row.appealMessage}
       appealedAt={row.appealCreatedAt}
@@ -199,7 +215,7 @@
             {#if stillLocked.includes(key)}
               <MetaChip tone="amber">locked</MetaChip>
             {:else}
-              <MetaChip tone="green">already unlocked</MetaChip>
+              <MetaChip tone="green">{approved ? 'unlocked' : 'already unlocked'}</MetaChip>
             {/if}
           </li>
         {/each}
