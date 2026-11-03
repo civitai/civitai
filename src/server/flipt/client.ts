@@ -587,6 +587,7 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // the feedback gate, and the app-blocks store pair.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
+export const getFliptVariantDetailSync = flipt.getVariantDetailSync;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
 export const ensureFliptInitialized = flipt.ensureInitialized;
