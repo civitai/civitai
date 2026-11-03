@@ -105,13 +105,22 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
   const inflightById = new Map<number, Promise<SessionUser | null>>();
 
   // Shared-cache read for `session:data2:{userId}`, fail-open (a blip falls through to the hub fetch). The
-  // `clearedAt` tombstone + non-object guard mirror the token path. Returns undefined on miss/blip.
+  // `clearedAt` tombstone + non-object guard mirror the token path. Returns undefined on miss/blip/timeout.
+  // Bounded because a disconnected redis client queues the command instead of rejecting, so a dead cache would
+  // otherwise hang every authenticated request.
   async function readCachedUser(userId: number): Promise<SessionUser | null | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const cached = await getCacheRedis().packed.get<SessionUser>(sessionCacheKey(userId));
+      const read = getCacheRedis().packed.get<SessionUser>(sessionCacheKey(userId));
+      const deadline = new Promise<undefined>((resolve) => {
+        timer = setTimeout(resolve, CACHE_READ_TIMEOUT_MS, undefined);
+      });
+      const cached = await Promise.race([read, deadline]);
       return cached && typeof cached === 'object' && !('clearedAt' in cached) ? cached : undefined;
     } catch {
       return undefined;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -293,6 +302,8 @@ function trustedHubBase(iss: string | undefined): string | null {
 // than stalling the authed request. Defense-in-depth on top of the internal routing: the fetch never had a
 // timeout before, so a half-open connection could park the whole request until OS TCP keepalive (~min).
 const IDENTITY_FETCH_TIMEOUT_MS = 1500;
+// Session-cache read deadline: a hit is sub-millisecond, so this only trips when the cache is unreachable.
+const CACHE_READ_TIMEOUT_MS = 400;
 
 /** Read source: GET `{base}/api/auth/identity` with the session token as a Bearer, bounded by a timeout. */
 async function fetchIdentity(baseUrl: string, token: string): Promise<SessionUser | null> {
