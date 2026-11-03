@@ -1,9 +1,13 @@
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { MAX_EDGE_WIDTH, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { getEngineRefusal, getRemixEngine, type RemixSourceImage } from '~/shared/utils/remix-tier';
+import {
+  getEngineRefusal,
+  getRemixEngine,
+  getRemixSourceUrl,
+  REMIX_FALLBACK_DIMENSIONS,
+  type RemixSourceImage,
+} from '~/shared/utils/remix-tier';
 import {
   fetchGenerationData,
   generationGraphPanel,
@@ -17,11 +21,10 @@ import { trpcVanilla } from '~/utils/trpc';
 export {
   getEngineRefusal,
   getRemixEngine,
+  getRemixSourceUrl,
   getRemixTier,
   type RemixSourceImage,
 } from '~/shared/utils/remix-tier';
-
-const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
 
 /**
  * Prompt reuse copies text and resource ids that are already on the page, so it
@@ -37,19 +40,6 @@ export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
   if (image.type === 'image') return ['edit', 'video'];
   if (image.type === 'video') return ['video'];
   return [];
-}
-
-/**
- * The still the engine receives. A video's stored file is an mp4, and `original: true` returns it
- * untouched whatever else is asked, so frame 0 needs a capped width instead.
- */
-export function getRemixSourceUrl(image: RemixSourceImage) {
-  return image.type === 'video'
-    ? getEdgeUrl(image.url, {
-        ...videoStillEdgeOptions,
-        width: Math.min(image.width ?? MAX_EDGE_WIDTH, MAX_EDGE_WIDTH),
-      })
-    : getEdgeUrl(image.url, { original: true });
 }
 
 /** One thing the Remix button can do for this viewer: a remix kind, or prompt reuse. */
@@ -87,7 +77,7 @@ export function canReusePrompt(image: RemixSourceImage): boolean {
 
 async function resolveDimensions(image: RemixSourceImage, sourceUrl: string) {
   if (image.width && image.height) return { width: image.width, height: image.height };
-  return getImageDimensions(sourceUrl).catch(() => FALLBACK_DIMENSIONS);
+  return getImageDimensions(sourceUrl).catch(() => REMIX_FALLBACK_DIMENSIONS);
 }
 
 /**

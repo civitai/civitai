@@ -9,12 +9,16 @@ import { getEngineRefusal, getRemixTier, type RemixSourceImage } from '~/shared/
 export function resolveRemixAppEngine(
   app: RemixAppDefinition,
   image: RemixSourceImage,
-  { isGreen }: { isGreen: boolean }
+  viewer: { isGreen: boolean; showNsfw: boolean }
 ): { tier: RemixTier; engine: RemixAppEngine } | { refusal: string } {
   const refusal = getEngineRefusal(image);
   if (refusal) return { refusal };
   const tier = getRemixTier(image);
-  if (tier === 'mature' && isGreen) return { refusal: 'Mature images cannot be remixed here.' };
+  if (tier === 'mature' && viewer.isGreen)
+    return { refusal: 'Mature images cannot be remixed here.' };
+  // The output of a mature source is mature, and this viewer would never be shown it.
+  if (tier === 'mature' && !viewer.showNsfw)
+    return { refusal: 'Turn on mature content to remix this image.' };
   const engine = app.engine[tier];
   if (!engine) return { refusal: `${app.name} does not run on mature images.` };
   return { tier, engine };

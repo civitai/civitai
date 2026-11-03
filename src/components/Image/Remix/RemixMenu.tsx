@@ -14,7 +14,7 @@ import {
   type RemixOptionKey,
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
-import { RemixAppItem, useRemixApps } from '~/components/Image/Remix/RemixApps';
+import { RemixAppsSection, useRemixApps } from '~/components/Image/Remix/RemixApps';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 import { waitForElement } from '~/utils/html-helpers';
@@ -246,19 +246,12 @@ export function RemixMenu({
           );
         })}
         {remixApps.length > 0 && (
-          <>
-            <Menu.Divider />
-            <Menu.Label>Remix apps</Menu.Label>
-            {remixApps.map((app) => (
-              <RemixAppItem
-                key={app.slug}
-                app={app}
-                imageId={image.id}
-                priced={menuOpened}
-                onRun={onAction}
-              />
-            ))}
-          </>
+          <RemixAppsSection
+            apps={remixApps}
+            imageId={image.id}
+            priced={menuOpened}
+            onRun={onAction}
+          />
         )}
       </Menu.Dropdown>
     </Menu>

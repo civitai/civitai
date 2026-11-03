@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   })),
   confirm: vi.fn(),
   flags: { remixApps: true, isGreen: false } as Record<string, boolean>,
+  user: { id: 9, showNsfw: true } as { id: number; showNsfw: boolean } | null,
+  quoteEnabled: [] as boolean[],
 }));
 
 vi.mock('~/components/TrackView/track.utils', () => ({
@@ -31,6 +33,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
   useOptionalFeatureFlags: () => h.flags,
 }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
 vi.mock('@mantine/modals', async (importOriginal) => ({
   ...(await importOriginal<typeof Modals>()),
   openConfirmModal: h.confirm,
@@ -41,7 +44,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<object>()),
     trpc: makeTrpcProxy({
       'remixApp.quote': {
-        useQuery: () => ({ data: { cost: 25 }, isLoading: false, isError: false }),
+        useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
+          h.quoteEnabled.push(opts.enabled);
+          return {
+            data: opts.enabled
+              ? { prices: [{ slug: 'anime-it', cost: 25, ready: true }] }
+              : undefined,
+            isLoading: false,
+            isError: false,
+          };
+        },
       },
     }),
     trpcVanilla: { remixApp: { run: { mutate: h.run } } },
@@ -75,16 +87,21 @@ const lastConfirm = () => h.confirm.mock.calls.at(-1)![0] as ConfirmProps;
 beforeEach(() => {
   vi.clearAllMocks();
   h.flags = { remixApps: true, isGreen: false };
+  h.user = { id: 9, showNsfw: true };
+  h.quoteEnabled = [];
   localStorage.clear();
 });
 
 describe('Remix apps in the Remix menu', () => {
   test('a source with one built-in option still opens the menu when apps exist', async () => {
     renderMenu(video);
+    // Priced only once open: a card that was merely rendered asks for no quote.
+    expect(h.quoteEnabled.filter(Boolean)).toEqual([]);
     await page.getByRole('button', { name: 'Remix' }).click();
 
     expect(h.startRemix).not.toHaveBeenCalled();
     await expect.element(page.getByText('Remix apps')).toBeVisible();
+    expect(h.quoteEnabled.at(-1)).toBe(true);
     for (const app of SYSTEM_REMIX_APPS)
       await expect.element(page.getByRole('menuitem', { name: app.name })).toBeVisible();
   });
@@ -92,6 +109,14 @@ describe('Remix apps in the Remix menu', () => {
   test('with the flag off the sole option runs without a menu', async () => {
     h.flags = { remixApps: false };
     renderMenu(video);
+    await page.getByRole('button', { name: 'Remix' }).click();
+
+    expect(h.startRemix).toHaveBeenCalledTimes(1);
+  });
+
+  test('a mature source offers no apps to a viewer with mature content off', async () => {
+    h.user = { id: 9, showNsfw: false };
+    renderMenu({ ...video, nsfwLevel: 8 });
     await page.getByRole('button', { name: 'Remix' }).click();
 
     expect(h.startRemix).toHaveBeenCalledTimes(1);
@@ -116,14 +141,20 @@ describe('Remix apps in the Remix menu', () => {
     renderWithProviders(lastConfirm().children);
     await expect.element(page.getByText('for 25 Buzz')).toBeInTheDocument();
     await page.getByRole('checkbox', { name: "Don't ask again" }).click();
+    // A double click on Run repeats the same tap.
     lastConfirm().onConfirm();
-    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
+    lastConfirm().onConfirm();
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2));
     expect(h.run.mock.calls[0][0]).toMatchObject({ slug: firstApp.slug, imageId: video.id });
+    const firstNonce = h.run.mock.calls[0][0].nonce;
+    expect(h.run.mock.calls[1][0].nonce).toBe(firstNonce);
+    h.run.mockClear();
 
     await page.getByRole('button', { name: 'Remix' }).click();
     await page.getByRole('menuitem', { name: firstApp.name }).click();
-    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
     expect(h.confirm).toHaveBeenCalledTimes(1);
-    expect(h.run.mock.calls[1][0].nonce).not.toBe(h.run.mock.calls[0][0].nonce);
+    // A new menu open is a new tap.
+    expect(h.run.mock.calls[0][0].nonce).not.toBe(firstNonce);
   });
 });

@@ -3095,7 +3095,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
-    // Remix app whatIf price, keyed by `remix-app.service` `quoteCacheKey`.
+    // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
     REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global

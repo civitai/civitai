@@ -1,3 +1,4 @@
+import { getEdgeUrl, MAX_EDGE_WIDTH, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
@@ -107,4 +108,20 @@ export function getRemixTier(image: RemixSourceImage): RemixTier {
 
 export function getRemixEngine(kind: RemixKind, image: RemixSourceImage): RemixEngine {
   return REMIX_ENGINES[kind][getRemixTier(image)];
+}
+
+/** Used when a source row has no dimensions. */
+export const REMIX_FALLBACK_DIMENSIONS = { width: 512, height: 512 };
+
+/**
+ * The still the engine receives. A video's stored file is an mp4, and `original: true` returns it
+ * untouched whatever else is asked, so frame 0 needs a capped width instead.
+ */
+export function getRemixSourceUrl(image: RemixSourceImage) {
+  return image.type === 'video'
+    ? getEdgeUrl(image.url, {
+        ...videoStillEdgeOptions,
+        width: Math.min(image.width ?? MAX_EDGE_WIDTH, MAX_EDGE_WIDTH),
+      })
+    : getEdgeUrl(image.url, { original: true });
 }

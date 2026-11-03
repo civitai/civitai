@@ -20,6 +20,8 @@ vi.mock('~/components/Image/Remix/remix.utils', async (importOriginal) => ({
   startRemix,
   startPromptReuse,
 }));
+// The remix-apps section reads the session; these tests render without one (no apps).
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ToursProvider>()),
   useTourContext: () => ({ running: tour.running, setBlockedTarget: vi.fn() }),

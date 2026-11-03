@@ -1,14 +1,18 @@
 import { Checkbox, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { showNotification } from '@mantine/notifications';
 import {
   IconCamera,
+  IconCheck,
   IconCube,
   IconGridDots,
   IconHorseToy,
   IconPencil,
   IconSparkles,
 } from '@tabler/icons-react';
+import { useRef } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   SYSTEM_REMIX_APPS,
@@ -17,7 +21,7 @@ import {
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc, trpcVanilla } from '~/utils/trpc';
 
 const CONFIRMED_KEY = 'remix-apps:confirmed';
@@ -34,12 +38,15 @@ const icons: Record<string, typeof IconSparkles> = {
 /** The remix apps this viewer can run on this image: the same rule the server applies. */
 export function useRemixApps(image: RemixSourceImage): RemixAppDefinition[] {
   const features = useOptionalFeatureFlags();
-  if (!features?.remixApps) return [];
+  const currentUser = useCurrentUser();
+  if (!features?.remixApps || !currentUser) return [];
+  const viewer = { isGreen: !!features.isGreen, showNsfw: !!currentUser.showNsfw };
   return SYSTEM_REMIX_APPS.filter(
-    (app) => !('refusal' in resolveRemixAppEngine(app, image, { isGreen: !!features.isGreen }))
+    (app) => !('refusal' in resolveRemixAppEngine(app, image, viewer))
   );
 }
 
+// Plain localStorage rather than a hook: the confirm runs after the menu item has unmounted.
 function hasConfirmed() {
   try {
     return localStorage.getItem(CONFIRMED_KEY) === '1';
@@ -65,16 +72,13 @@ function openQueue() {
 async function submitRemixApp(app: RemixAppDefinition, imageId: number, nonce: string) {
   try {
     await trpcVanilla.remixApp.run.mutate({ slug: app.slug, imageId, nonce });
-    showSuccessNotification({
+    showNotification({
+      icon: <IconCheck size={18} />,
+      color: 'teal',
       title: `${app.name} started`,
-      message: (
-        <Text size="sm">
-          Added to your{' '}
-          <Text component="span" c="blue.4" className="cursor-pointer" onClick={openQueue}>
-            queue
-          </Text>
-        </Text>
-      ),
+      message: 'Added to your queue. Click to open it.',
+      className: 'cursor-pointer',
+      onClick: openQueue,
       autoClose: 6000,
     });
   } catch (error) {
@@ -82,17 +86,21 @@ async function submitRemixApp(app: RemixAppDefinition, imageId: number, nonce: s
   }
 }
 
+/**
+ * `nonce` names this tap: the server derives the workflow's externalId from it, so a repeated
+ * submit of the same tap makes one workflow.
+ */
 export function runRemixApp({
   app,
   imageId,
   cost,
+  nonce,
 }: {
   app: RemixAppDefinition;
   imageId: number;
   cost?: number;
+  nonce: string;
 }) {
-  // One nonce per tap: a repeated submit of the same tap names the same workflow.
-  const nonce = crypto.randomUUID();
   if (hasConfirmed()) return submitRemixApp(app, imageId, nonce);
 
   let dontAskAgain = false;
@@ -123,54 +131,89 @@ export function runRemixApp({
   });
 }
 
-export function RemixAppItem({
+function RemixAppItem({
   app,
   imageId,
-  priced,
+  price,
+  loading,
   onRun,
 }: {
   app: RemixAppDefinition;
   imageId: number;
-  /** Quote only once the menu is open, never on card render. */
-  priced: boolean;
+  price?: { cost: number } | { refusal: string };
+  loading: boolean;
   onRun?: () => void;
 }) {
-  const quote = trpc.remixApp.quote.useQuery(
-    { slug: app.slug, imageId },
-    { enabled: priced, staleTime: 3 * 60 * 1000, retry: false }
-  );
+  // One nonce per menu open: the dropdown remounts on every open, so a second click during the
+  // close animation repeats this tap instead of starting a new one.
+  const nonce = useRef(crypto.randomUUID()).current;
   const Icon = icons[app.icon] ?? IconSparkles;
+  const refusal = price && 'refusal' in price ? price.refusal : undefined;
+  const cost = price && 'cost' in price ? price.cost : undefined;
 
   return (
     <Menu.Item
       className="rounded-md p-2"
-      disabled={quote.isError}
+      disabled={!!refusal}
       leftSection={
         <ThemeIcon size={36} radius="md" variant="light" color="grape">
           <Icon size={20} stroke={1.7} />
         </ThemeIcon>
       }
       rightSection={
-        <CurrencyBadge
-          currency="BUZZ"
-          unitAmount={quote.data?.cost ?? 0}
-          loading={quote.isLoading}
-          size="sm"
-        />
+        !refusal && (
+          <CurrencyBadge currency="BUZZ" unitAmount={cost ?? 0} loading={loading} size="sm" />
+        )
       }
       onClick={() => {
         onRun?.();
-        runRemixApp({ app, imageId, cost: quote.data?.cost });
+        runRemixApp({ app, imageId, cost, nonce });
       }}
     >
       <Text size="sm" fw={600} lh={1.2}>
         {app.name}
       </Text>
-      {quote.isError && (
+      {refusal && (
         <Text size="xs" c="dimmed" lh={1.2}>
-          {quote.error.message}
+          {refusal}
         </Text>
       )}
     </Menu.Item>
+  );
+}
+
+export function RemixAppsSection({
+  apps,
+  imageId,
+  priced,
+  onRun,
+}: {
+  apps: RemixAppDefinition[];
+  imageId: number;
+  /** Quote only once the menu is open, never on card render. */
+  priced: boolean;
+  onRun?: () => void;
+}) {
+  const quote = trpc.remixApp.quote.useQuery(
+    { imageId },
+    { enabled: priced, staleTime: 3 * 60 * 1000, retry: false }
+  );
+  const prices = new Map(quote.data?.prices.map((p) => [p.slug, p]));
+
+  return (
+    <>
+      <Menu.Divider />
+      <Menu.Label>Remix apps</Menu.Label>
+      {apps.map((app) => (
+        <RemixAppItem
+          key={app.slug}
+          app={app}
+          imageId={imageId}
+          price={quote.isError ? { refusal: quote.error.message } : prices.get(app.slug)}
+          loading={quote.isLoading}
+          onRun={onRun}
+        />
+      ))}
+    </>
   );
 }
