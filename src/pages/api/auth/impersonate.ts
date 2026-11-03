@@ -49,6 +49,6 @@ export default AuthedEndpoint(
     return res.status(200).json({ ok: true });
   },
   ['POST', 'DELETE'],
-  // While impersonating, the session user is the target, who may be banned; the hub checks the moderator's own ban.
+  // While impersonating, the session user is the target, who may be banned; the hub refuses a banned caller itself.
   { allowBanned: true }
 );

@@ -5541,6 +5541,7 @@ export const getAllModelsWithCategories = async ({
         ? [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training]
         : [ModelStatus.Published],
     },
+    ...(!seesUnpublished && { availability: { not: Availability.Private } }),
     deletedAt: null,
     userId,
     // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.

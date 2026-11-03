@@ -112,16 +112,27 @@ describe('AuthedEndpoint ban gate', () => {
 describe('allowBanned is used only by the approved routes', () => {
   it('matches the approved list exactly', () => {
     const using = sources
-      .filter(({ source }) => /allowBanned:\s*true/.test(source))
+      .filter(({ source }) => /\ballowBanned\b/.test(source))
       .map(({ route }) => route)
       .sort();
     expect(using).toEqual([...ALLOW_BANNED].sort());
   });
 });
 
+describe('the approved routes still serve a banned session', () => {
+  it.each(ALLOW_BANNED)('%s does not answer the banned 403', async (route) => {
+    getServerAuthSession.mockResolvedValue(banned);
+    const { default: handler } = await import(/* @vite-ignore */ join(API_DIR, route));
+    const results = await Promise.all(['GET', 'POST', 'DELETE'].map((m) => call(handler, m)));
+    const served = results.filter((r) => r.status !== 405);
+    expect(served.length).toBeGreaterThan(0);
+    for (const r of served) expect(r.body).not.toEqual({ error: BANNED_ACCOUNT_MESSAGE });
+  });
+});
+
 describe('every authed API route refuses a banned session', () => {
   it('finds the authed routes', () => {
-    expect(gatedRoutes.length).toBeGreaterThan(20);
+    expect(gatedRoutes.length).toBeGreaterThanOrEqual(33);
   });
 
   it.each(gatedRoutes.map(({ route, path }) => [route, path]))(

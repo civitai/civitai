@@ -9,11 +9,16 @@ const ROWS = [
   { id: 1, name: 'published', status: 'Published' },
   { id: 2, name: 'draft', status: 'Draft' },
   { id: 3, name: 'training', status: 'Training' },
+  { id: 4, name: 'private', status: 'Published', availability: 'Private' },
 ];
 
-type Where = { status: { in: string[] } };
+type Where = { status: { in: string[] }; availability?: { not: string } };
 const visible = ({ where }: { where: Where }) =>
-  ROWS.filter((r) => where.status.in.includes(r.status));
+  ROWS.filter(
+    (r) =>
+      where.status.in.includes(r.status) &&
+      (!where.availability || r.availability !== where.availability.not)
+  );
 
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
@@ -91,24 +96,25 @@ beforeEach(() => {
   vi.mocked(modelTagCache.fetch).mockResolvedValue({});
 });
 
-describe('getAllModelsWithCategories, unpublished models', () => {
-  it('lists only published models to a signed-out viewer', async () => {
+describe('getAllModelsWithCategories, unpublished and private models', () => {
+  it('lists only public models to a signed-out viewer', async () => {
     expect(await names(null)).toEqual(['published']);
   });
 
-  it("lists only published models to another user's viewer", async () => {
+  it("lists only public models to another user's viewer", async () => {
     expect(await names({ id: OWNER_ID + 1 })).toEqual(['published']);
   });
 
-  it('lists draft and training models to their owner', async () => {
-    expect(await names({ id: OWNER_ID })).toEqual(['published', 'draft', 'training']);
+  it('lists draft, training and private models to their owner', async () => {
+    expect(await names({ id: OWNER_ID })).toEqual(['published', 'draft', 'training', 'private']);
   });
 
-  it('lists draft and training models to a moderator', async () => {
+  it('lists draft, training and private models to a moderator', async () => {
     expect(await names({ id: OWNER_ID + 1, isModerator: true })).toEqual([
       'published',
       'draft',
       'training',
+      'private',
     ]);
   });
 });
