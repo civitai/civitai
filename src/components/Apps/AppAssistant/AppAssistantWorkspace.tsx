@@ -501,8 +501,12 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
-      // What the open app did while it ran (on the server runner, the runner reads it itself).
-      ...createPageActivityTools(() => live.current.active?.app ?? null),
+      // What the open app did while it ran (on the server runner, the runner reads it itself), read
+      // by the block id its live preview runs under: the assistant picks another blockId when the
+      // app key's is taken, and the preview's calls and errors are kept under it.
+      ...createPageActivityTools(
+        () => live.current.session?.blockId ?? live.current.active?.app ?? null
+      ),
     }),
     [canPreview, gate, appTools, showPreview]
   );

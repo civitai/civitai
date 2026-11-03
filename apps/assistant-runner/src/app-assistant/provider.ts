@@ -348,7 +348,8 @@ export class AppAssistantTools implements ToolProvider {
         ...preview.tools(),
         ...coverTools,
         ...runnerActivityTools({
-          currentApp: () => sandbox.active?.app ?? null,
+          // The preview's block id, not the app's key: the two differ when the key's was taken.
+          currentApp: () => livePreview.previewBlockId(signal),
           source: this.#options.appActivity?.(runId, signal),
         }),
       };

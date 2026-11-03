@@ -61,14 +61,54 @@ export const PREVIEW_ERROR_SOURCES = [
 ] as const;
 export type PreviewErrorSource = (typeof PREVIEW_ERROR_SOURCES)[number];
 
-/** An error the app's own code threw (or logged) in the live preview. */
+/**
+ * An error the app's own code threw (or logged) in the live preview. The same error repeated back to
+ * back ({@link sameError}) is one item: `at` is its newest time, `firstAt` its first and `count` how
+ * many; both are absent for an error seen once ({@link errorCount}).
+ */
 export interface ErrorActivity {
   kind: 'error';
   at: string;
+  /** ISO time of the first of a folded run; absent = `at`. */
+  firstAt?: string;
+  /** How many times it repeated back to back; absent = 1. */
+  count?: number;
   source: PreviewErrorSource;
   fatal: boolean;
   message: string;
   stack: string | null;
+}
+
+/** How many times an error item happened (a folded run counts each). */
+export function errorCount(error: ErrorActivity): number {
+  return typeof error.count === 'number' && Number.isFinite(error.count) && error.count > 1
+    ? Math.floor(error.count)
+    : 1;
+}
+
+/** The same error again: one message, source and fatality, thrown from the same first frame. */
+export function sameError(a: ErrorActivity, b: ErrorActivity): boolean {
+  return (
+    a.message === b.message &&
+    a.source === b.source &&
+    a.fatal === b.fatal &&
+    firstFrame(a.stack, a.message) === firstFrame(b.stack, b.message)
+  );
+}
+
+/**
+ * Two runs of {@link sameError} as one: the newer's time, the older's first time and stack, and both
+ * counts. Either may be the newer.
+ */
+export function foldErrors(a: ErrorActivity, b: ErrorActivity): ErrorActivity {
+  const [older, newer] = timeOf(a.at) <= timeOf(b.at) ? [a, b] : [b, a];
+  const firsts = [older.firstAt ?? older.at, newer.firstAt ?? newer.at];
+  return {
+    ...older,
+    at: newer.at,
+    firstAt: timeOf(firsts[1]!) < timeOf(firsts[0]!) ? firsts[1]! : firsts[0]!,
+    count: errorCount(older) + errorCount(newer),
+  };
 }
 
 export type AppActivityItem = GenerationActivity | CallActivity | ErrorActivity;
@@ -133,6 +173,17 @@ function collapseCalls(calls: CallActivity[]): CallActivity[] {
   return out;
 }
 
+/** Back-to-back repeats of one error (a loop) as one item with their count and first time. */
+function collapseErrors(errors: ErrorActivity[]): ErrorActivity[] {
+  const out: ErrorActivity[] = [];
+  for (const error of [...errors].sort((a, b) => timeOf(b.at) - timeOf(a.at))) {
+    const last = out[out.length - 1];
+    if (last && sameError(last, error)) out[out.length - 1] = foldErrors(last, error);
+    else out.push(error);
+  }
+  return out;
+}
+
 /** Ties (same millisecond) read errors first, then generations, then calls. */
 const KIND_ORDER: Record<AppActivityItem['kind'], number> = { error: 0, generation: 1, call: 2 };
 
@@ -165,7 +216,9 @@ export function activitySummary(
   const failed = generations.filter((g) => FAILED.includes(g.status)).length;
   const canceled = generations.filter((g) => g.status === 'canceled').length;
   const inProgress = generations.filter((g) => IN_PROGRESS.includes(g.status)).length;
-  const errors = items.filter((i) => i.kind === 'error').length;
+  const errors = items
+    .filter((i): i is ErrorActivity => i.kind === 'error')
+    .reduce((n, e) => n + errorCount(e), 0);
   const refused = items
     .filter((i): i is CallActivity => i.kind === 'call' && i.statusCode >= 400)
     .reduce((n, c) => n + c.count, 0);
@@ -190,8 +243,8 @@ export function activitySummary(
 
 /**
  * The parts merged into one list, newest first: only what is inside the window ending at `now`,
- * back-to-back identical calls collapsed, at most {@link APP_ACTIVITY_MAX_ITEMS} items. The summary
- * counts every item in the window, returned or not.
+ * back-to-back identical calls and errors collapsed, at most {@link APP_ACTIVITY_MAX_ITEMS} items.
+ * The summary counts every item in the window, returned or not (a collapsed run counts each).
  */
 export function mergeAppActivity(app: string, parts: AppActivityParts, now: number): AppActivity {
   const since = now - APP_ACTIVITY_WINDOW_MS;
@@ -206,7 +259,7 @@ export function mergeAppActivity(app: string, parts: AppActivityParts, now: numb
   const all: AppActivityItem[] = [
     ...inWindow(parts.generations),
     ...collapseCalls(inWindow(parts.calls)),
-    ...inWindow(parts.errors),
+    ...collapseErrors(inWindow(parts.errors)),
   ].sort((a, b) => timeOf(b.at) - timeOf(a.at) || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
   return {
     app,
@@ -253,9 +306,14 @@ export function activityLine(item: AppActivityItem, now: number): string {
       }${item.count > 1 ? ` ×${item.count}` : ''}`;
     case 'error': {
       const frame = firstFrame(item.stack, item.message);
+      const count = errorCount(item);
+      const repeated =
+        count > 1
+          ? ` ×${count}${item.firstAt ? ` (first ${relativeTime(timeOf(item.firstAt), now)})` : ''}`
+          : '';
       return `- ${when} · ${item.fatal ? 'fatal ' : ''}error (${item.source}) · ${quoteUntrusted(
         item.message
-      )}${frame ? `\n    at ${quoteUntrusted(frame)}` : ''}`;
+      )}${repeated}${frame ? `\n    at ${quoteUntrusted(frame)}` : ''}`;
     }
   }
 }
@@ -283,8 +341,11 @@ export function formatAppActivity(
 }
 
 export interface AppActivityToolOptions {
-  /** The open app's key, or null. */
-  current: () => string | null;
+  /**
+   * The block id the open app's live preview runs under (what its calls and errors are kept by),
+   * which can differ from the app's key; null when no app is open.
+   */
+  current: () => string | null | Promise<string | null>;
   source: AppActivitySource;
   /** The clock (tests). */
   now?: () => number;
@@ -302,7 +363,7 @@ export function createAppActivityTool({
     activity: 'Reading your app’s activity…',
     inputSchema: { properties: {} },
     async execute() {
-      const app = current();
+      const app = await current();
       if (!app) throw new Error(NO_APP_FOR_ACTIVITY);
       let activity: AppActivity | null;
       try {

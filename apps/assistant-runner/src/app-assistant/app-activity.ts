@@ -93,7 +93,8 @@ export function runnerActivityTools({
   currentApp,
   source,
 }: {
-  currentApp: () => string | null;
+  /** The block id the open app's preview runs under (`RunnerPreview.previewBlockId`), or null. */
+  currentApp: () => string | null | Promise<string | null>;
   /** Unset: the tool says activity cannot be read here. */
   source: AppActivitySource | undefined;
 }): Record<string, ChatTool> {

@@ -2,6 +2,9 @@ import * as z from 'zod';
 import {
   APP_ACTIVITY_WINDOW_MS,
   PREVIEW_ERROR_SOURCES,
+  errorCount,
+  foldErrors,
+  sameError,
   type ErrorActivity,
   type PreviewErrorSource,
 } from '@civitai/app-assistant';
@@ -17,6 +20,10 @@ import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service'
  * and only while the caller has a live dev tunnel of that app (`getActiveDevTunnel`, which is
  * keyed by user and checks the session is theirs): a production block has no dev tunnel, so
  * nothing it posts is kept. Stored per (user, app) as a capped list, newest first, with a 2 h TTL.
+ *
+ * The same error repeated back to back (`sameError`: a loop) is ONE entry with a count and its first
+ * and last times, folded as it is written: at the SDK's 20 a minute, unfolded repeats filled the list
+ * in about ten minutes and pushed out the first error, usually the root cause.
  *
  * The text is the app's own output, so it is redacted (anything token- or key-shaped) and capped
  * again here; the client's caps are not trusted.
@@ -94,6 +101,17 @@ export function previewErrorsKey(userId: number, blockId: string) {
   return `${REDIS_SYS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
 }
 
+/** Back-to-back repeats in `entries` (oldest first) folded into one entry each. */
+function foldRepeats(entries: ErrorActivity[]): ErrorActivity[] {
+  const out: ErrorActivity[] = [];
+  for (const entry of entries) {
+    const last = out[out.length - 1];
+    if (last && sameError(last, entry)) out[out.length - 1] = foldErrors(last, entry);
+    else out.push(entry);
+  }
+  return out;
+}
+
 /**
  * Keeps `reports` for the caller's live dev preview of `blockId`. `not-found` (nothing written)
  * when the caller has no live dev tunnel of that app: not theirs, not a dev session, or gone.
@@ -111,21 +129,51 @@ export async function storePreviewErrors({
 }): Promise<{ status: 'stored'; stored: number } | { status: 'not-found' }> {
   const tunnel = await getActiveDevTunnel(userId, blockId);
   if (!tunnel) return { status: 'not-found' };
-  const entries = reports
-    .slice(0, PREVIEW_ERRORS_BATCH_MAX)
-    .map((report) => sanitizePreviewError(report, now))
-    // Oldest pushed first, so the newest ends up at the head of the list.
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const entries = foldRepeats(
+    reports
+      .slice(0, PREVIEW_ERRORS_BATCH_MAX)
+      .map((report) => sanitizePreviewError(report, now))
+      // Oldest pushed first, so the newest ends up at the head of the list.
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+  );
   if (entries.length === 0) return { status: 'stored', stored: 0 };
   const key = previewErrorsKey(userId, blockId);
+
+  // The oldest of this batch repeats the newest kept entry: that entry is replaced by the fold.
+  const [headRaw] = (await withSysReadDeadline(sysRedis.lRange<string | Buffer>(key, 0, 0))) ?? [];
+  const head = headRaw === undefined ? null : parseStored(headRaw);
+  const replacesHead = !!head && sameError(head, entries[0]!);
+  if (head && replacesHead) entries[0] = foldErrors(head, entries[0]!);
+
   const pipeline = sysRedis.multi();
+  if (replacesHead) pipeline.lPopCount(key, 1);
   pipeline.lPush(
     key,
     entries.map((entry) => JSON.stringify(entry))
   );
   pipeline.lTrim(key, 0, PREVIEW_ERRORS_MAX_ENTRIES - 1);
   pipeline.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-  await withSysReadDeadline(pipeline.exec());
+  const replies: unknown = await withSysReadDeadline(pipeline.exec());
+
+  // Another write pushed between the read and the replace, so the pop took ITS entry: it goes back
+  // (readers order by time, so its place in the list does not matter). The entry this meant to
+  // replace then stays beside its fold, its count read twice until it ages out: rarer, and cheaper,
+  // than losing an entry.
+  if (replacesHead) {
+    const popped: unknown = Array.isArray(replies) ? replies[0] : undefined;
+    const kept = decodeRedisString(headRaw);
+    const others = (Array.isArray(popped) ? popped : [])
+      .map((raw: unknown) =>
+        typeof raw === 'string' || Buffer.isBuffer(raw) ? decodeRedisString(raw) : null
+      )
+      .filter((raw): raw is string => typeof raw === 'string' && raw !== kept);
+    if (others.length > 0) {
+      const putBack = sysRedis.multi();
+      putBack.lPush(key, others);
+      putBack.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
+      await withSysReadDeadline(putBack.exec());
+    }
+  }
   return { status: 'stored', stored: entries.length };
 }
 
@@ -136,9 +184,16 @@ function parseStored(raw: string | Buffer): ErrorActivity | null {
   try {
     const value = JSON.parse(text) as Partial<ErrorActivity>;
     if (typeof value.message !== 'string' || typeof value.at !== 'string') return null;
+    const count = typeof value.count === 'number' ? errorCount(value as ErrorActivity) : 1;
     return {
       kind: 'error',
       at: value.at,
+      ...(count > 1
+        ? {
+            ...(typeof value.firstAt === 'string' ? { firstAt: value.firstAt } : {}),
+            count,
+          }
+        : {}),
       source: (PREVIEW_ERROR_SOURCES as readonly string[]).includes(value.source ?? '')
         ? (value.source as PreviewErrorSource)
         : 'reported',

@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Collapse, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import { IconChevronDown, IconChevronUp, IconMessageCircle } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
-import { relativeTime, type AppActivity, type AppActivityItem } from '@civitai/app-assistant';
+import {
+  errorCount,
+  relativeTime,
+  type AppActivity,
+  type AppActivityItem,
+} from '@civitai/app-assistant';
 import { humaniseScopeInvocation } from '~/components/Apps/AppActivityPanel';
 import { fetchAppActivity, tellAssistantText } from '~/components/Apps/AppAssistant/appActivity';
 
@@ -47,7 +52,9 @@ function itemText(item: AppActivityItem): { label: string; detail: string | null
       };
     case 'error':
       return {
-        label: item.fatal ? 'App crashed' : 'App error',
+        label: `${item.fatal ? 'App crashed' : 'App error'}${
+          errorCount(item) > 1 ? ` ×${errorCount(item)}` : ''
+        }`,
         detail: item.message,
         bad: true,
       };
@@ -88,7 +95,9 @@ export function AppActivityStrip({
     retry: false,
   });
   const data = activity.data ?? null;
-  const errors = data?.items.filter((item) => item.kind === 'error').length ?? 0;
+  // Every occurrence: a folded run of one error counts each.
+  const errors =
+    data?.items.reduce((n, item) => n + (item.kind === 'error' ? errorCount(item) : 0), 0) ?? 0;
 
   const toggle = () => {
     setOpen((was) => !was);
