@@ -14,6 +14,7 @@ import {
   hatField,
   LIVE_BUCKET_MS,
   parseHatField,
+  TEAM_HOURS_CUT_FIELD,
   type EventPointSeason,
   type TotalScope,
 } from '~/server/events/points/keys';
@@ -24,6 +25,7 @@ import {
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Settle only up to a bucket boundary this far back, so ledger rows still in ClickHouse's async
@@ -58,6 +60,8 @@ export type RefereeRow = {
   stickers: number;
   remixes: number;
   modelLikes: number;
+  // UTC hour (0-23) -> points granted in it.
+  hours: Record<number, number>;
 };
 
 const startOfUtcDay = (time: Date) =>
@@ -246,6 +250,9 @@ export async function queryReferee(event: RefereeEvent, window: Window) {
     stickers: Number(r.stickers),
     remixes: Number(r.remixes),
     modelLikes: Number(r.modelLikes),
+    hours: Object.fromEntries(
+      Object.entries(r.hours ?? {}).map(([hour, points]) => [Number(hour), Number(points)])
+    ),
   }));
 }
 
@@ -315,6 +322,35 @@ async function finalDayTotals(event: RefereeEvent, window: Window) {
       AND day >= ${isoDay(window.start)}::date AND day < ${isoDay(window.recomputeFrom)}::date
     GROUP BY "userId", "cosmeticId", "claimKey"
   `;
+}
+
+// Every day the run recomputed, empty days included, so a day that lost all its points is cleared.
+export function teamHoursByDay(
+  window: Pick<Window, 'recomputeFrom' | 'cut'>,
+  rows: Pick<RefereeRow, 'day' | 'team' | 'hours'>[]
+) {
+  const days = new Map<string, Record<string, number[]>>();
+  for (
+    let t = startOfUtcDay(window.recomputeFrom).getTime();
+    t <= window.cut.getTime();
+    t += DAY_MS
+  )
+    days.set(isoDay(new Date(t)), {});
+  for (const { day, team, hours } of rows) {
+    const teams = days.get(day);
+    if (!teams) continue;
+    const byHour = (teams[team] ??= new Array<number>(24).fill(0));
+    for (const [hour, points] of Object.entries(hours)) byHour[Number(hour)] += points;
+  }
+  return days;
+}
+
+async function writeTeamHours(event: RefereeEvent, window: Window, rows: RefereeRow[]) {
+  const days = teamHoursByDay(window, rows);
+  await sysRedis.hSet(eventSeasonKeys(event.name, 'live').teamHours, {
+    ...Object.fromEntries([...days].map(([day, teams]) => [day, JSON.stringify(teams)])),
+    [TEAM_HOURS_CUT_FIELD]: window.cut.toISOString(),
+  });
 }
 
 export type RefereeRedis = Pick<typeof sysRedis, 'get' | 'hGetAll' | 'del' | 'hSet' | 'multi'>;
@@ -402,6 +438,11 @@ export async function runEventPointsReferee(
     }
     await drainEventPointsPush();
   }
+  // Feeds only the chart: a failed write must not fail a settle that has already landed.
+  if (season === 'live')
+    await writeTeamHours(event, window, rows).catch((error) =>
+      logSysRedisFailOpen('write-degraded', 'writeTeamHours', error, { event: event.name })
+    );
   return {
     season,
     rows: rows.length,

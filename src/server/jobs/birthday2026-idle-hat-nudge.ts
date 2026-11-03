@@ -13,8 +13,8 @@ import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
 export const IDLE_HAT_NUDGE_JOB = 'birthday2026-idle-hat-nudge';
 
-// The notices route sends a sendId to each user at most once and pins it to this exact type, message
-// and url on its first call, dry runs included: changing any of them needs a new sendId.
+// The notices route sends a sendId to each user at most once and pins it to this exact type, message,
+// url and title on its first call, dry runs included: changing any of them needs a new sendId.
 // First wave (a system-announcement, so never pushed); kept so later sends exclude its recipients.
 export const IDLE_HAT_NUDGE_LEGACY_SEND_ID = IDLE_HAT_NUDGE_JOB;
 export const IDLE_HAT_REMINDER_SEND_ID = 'birthday2026-idle-hat-reminder';

@@ -169,8 +169,8 @@ export const sendSystemNoticesInput = z
   .object({
     sendId: noticeSendId,
     /**
-     * Earlier sendIds whose recipients count as alreadySent here. A sendId pins its type, message
-     * and url, so changing any of them means a new sendId; this keeps that new send from reaching
+     * Earlier sendIds whose recipients count as alreadySent here. A sendId pins its type, message,
+     * url and title, so changing any of them means a new sendId; this keeps that new send from reaching
      * the users the old one already did.
      */
     excludeSendIds: z.array(noticeSendId).max(MAX_NOTICE_EXCLUDE_SEND_IDS).optional(),

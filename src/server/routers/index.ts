@@ -92,6 +92,7 @@ const routers = {
   wildcardSet: () => import('./wildcard-set.router').then((m) => m.wildcardSetRouter),
   newsletter: () => import('./newsletter.router').then((m) => m.newsletterRouter),
   system: () => import('./system.router').then((m) => m.systemRouter),
+  experiments: () => import('~/server/routers/experiments.router').then((m) => m.experimentsRouter),
   hiddenPreferences: () =>
     import('./hidden-preferences.router').then((m) => m.hiddenPreferencesRouter),
   userReferralCode: () =>

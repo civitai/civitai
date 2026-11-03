@@ -103,7 +103,9 @@ SELECT
   toUInt64(countIf(type = 'comment' AND granted > 0)) AS comments,
   toUInt64(countIf(type = 'sticker' AND granted > 0)) AS stickers,
   toUInt64(countIf(type = 'remix' AND granted > 0)) AS remixes,
-  toUInt64(countIf(type = 'modelLike' AND granted > 0)) AS modelLikes
+  toUInt64(countIf(type = 'modelLike' AND granted > 0)) AS modelLikes,
+  -- UTC hour (0-23) -> points granted in it; the team standings' points-per-hour series.
+  sumMap(map(toHour(firstTime), granted)) AS hours
 FROM credited
 GROUP BY day, userId, cosmeticId, claimKey
 ORDER BY day, userId, cosmeticId, claimKey

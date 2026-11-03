@@ -8,7 +8,10 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
-import { APP_STORAGE_BASE_SCOPE } from '~/shared/constants/block-storage.constants';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   countGuestFrameEvent,
@@ -156,6 +159,7 @@ import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -2071,6 +2075,28 @@ export function PageBlockHost({
           color: 'yellow',
           title: notification.title,
           message: notification.message,
+        });
+        return;
+      }
+
+      // `apps:storage:publish` in the SOURCE app of one of this app's imports (`from`): a prompt
+      // for that app, not for this one, so it never reaches the missing-set path below. The
+      // modal names the source from this app's approved imports, and the server records the grant
+      // only for a source this app imports with `readwrite`. A malformed request is refused.
+      const sourcePublish = resolveSourcePublishConsentRequest(payload);
+      if (sourcePublish === 'invalid') {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
+      if (sourcePublish !== null) {
+        openBlockConsentModal({
+          appBlockId,
+          blockName: appName,
+          missingScopes: [APP_STORAGE_PUBLISH_SCOPE],
+          from: sourcePublish.from,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
         });
         return;
       }

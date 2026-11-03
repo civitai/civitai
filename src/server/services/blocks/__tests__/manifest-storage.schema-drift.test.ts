@@ -427,6 +427,11 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
       APP_STORAGE_COLLECTION_NAME_RE.source
     );
     expect(p.access.enum).toEqual([...APP_STORAGE_IMPORT_ACCESS]);
+    // The whole string, because it is the published claim of which writes need the source's
+    // publish grant (`resolveImportAccess`: every op but read and delete). A reword fails here.
+    expect(p.access.description).toBe(
+      '"read": reads only; every write is refused. "readwrite": reads and writes, under the source collection\'s own write policy. A create, update, counter, mark or unmark in one of the source\'s SHARED collections also needs the viewer\'s own `apps:storage:publish` grant in the source app, which the app asks the host to prompt for; a document delete, and any write to a private collection, needs only the import grant.'
+    );
   });
 
   it('pins every bound to the exported constants', () => {
