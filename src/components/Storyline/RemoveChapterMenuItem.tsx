@@ -25,6 +25,7 @@ export function RemoveChapterMenuItem({
   chapterId,
   title,
   depth,
+  takenDown,
   hasChildren,
   byAuthor,
   onRemoved,
@@ -32,6 +33,8 @@ export function RemoveChapterMenuItem({
   chapterId: number;
   title: string;
   depth: number;
+  /** The storyline was taken down, so its owner can't delete it either. */
+  takenDown: boolean;
   hasChildren: boolean;
   /** The viewer wrote the chapter, so any Buzz paid to add it was theirs. */
   byAuthor: boolean;
@@ -53,10 +56,12 @@ export function RemoveChapterMenuItem({
       onConfirm: () => remove.mutate(chapterId),
     });
 
-  // Chapter 1's way out is "Delete storyline" in the storyline's ⋯ menu.
+  // Chapter 1's way out is "Delete storyline" in the storyline's ⋯ menu, which a takedown hides.
   const refusal =
     depth === 0
-      ? "Chapter 1 can't be removed. Delete the storyline instead"
+      ? takenDown
+        ? "Chapter 1 can't be removed"
+        : "Chapter 1 can't be removed. Delete the storyline instead"
       : hasChildren
       ? 'Other chapters continue from this one'
       : null;

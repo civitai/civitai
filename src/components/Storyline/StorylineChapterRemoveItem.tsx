@@ -28,6 +28,7 @@ export function StorylineChapterRemoveItem({ imageId }: { imageId: number }) {
       chapterId={chapter.chapterId}
       title={chapter.post.title || 'this chapter'}
       depth={chapter.depth}
+      takenDown={storyline.path.storyline.tosViolation}
       hasChildren={chapter.childCount > 0}
       byAuthor={byAuthor}
       onRemoved={storyline.leave}

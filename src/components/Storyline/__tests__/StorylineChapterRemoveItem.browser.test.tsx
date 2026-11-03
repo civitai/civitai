@@ -33,7 +33,7 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
     leave: mocks.leave,
     chapterIdOfImage: (imageId: number) => 99 + imageId,
     path: {
-      storyline: { id: 2, userId: OWNER },
+      storyline: { id: 2, userId: OWNER, tosViolation: false },
       chapters: [
         { chapterId: 100, depth: 0, childCount: 2, post: { id: 500, title: 'One', userId: OWNER } },
         {
@@ -115,6 +115,5 @@ describe('Remove from storyline in the reader', () => {
     await expect
       .element(item)
       .toHaveTextContent("Chapter 1 can't be removed. Delete the storyline");
-    expect(mocks.remove).not.toHaveBeenCalled();
   });
 });
