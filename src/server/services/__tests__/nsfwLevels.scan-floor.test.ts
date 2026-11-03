@@ -7,6 +7,10 @@ import {
   ratedEntityDerivedNsfwLevelText,
 } from '@civitai/shared/rated-entity-sql';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
+
+const onStorySparkPostsHidden = vi.hoisted(() => vi.fn());
+vi.mock('~/server/events/points/hooks', () => ({ onStorySparkPostsHidden }));
 
 // Hand-listed, as in challenge-moderation-adapter.test.ts: article-rating-review.helpers imports it.
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -83,6 +87,26 @@ describe.each([
   it('binds the ids as parameters', async () => {
     await fn([1, 2]);
     expect(sentText()).toMatch(/IN \(\$1,\$2\)/);
+  });
+});
+
+describe('updatePostNsfwLevels and story sparks', () => {
+  const change = (id: number, after: number) => ({ id, before: NsfwLevel.PG, after });
+
+  it('forfeits the spark of each post that became Blocked or unrated, in one call', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      change(1, NsfwLevel.Blocked),
+      change(2, 0),
+      change(3, NsfwLevel.R),
+    ]);
+    await updatePostNsfwLevels([1, 2, 3]);
+    expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({ postIds: [1, 2] });
+  });
+
+  it('keeps the spark when a post only changes rating', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([change(3, NsfwLevel.R)]);
+    await updatePostNsfwLevels([3]);
+    expect(onStorySparkPostsHidden).not.toHaveBeenCalled();
   });
 });
 
