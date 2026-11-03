@@ -455,6 +455,9 @@ const featureFlags = createFeatureFlags({
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
+  // Moderators who may give a Stripe member free days (subscriptions.extendMembership). `granted`
+  // only: the moderator must carry `membershipExtend` in user.permissions; being a mod is not enough.
+  membershipExtend: ['granted'],
   chat: {
     toggleable: true,
     default: true,
