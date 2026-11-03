@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { modelsSearchIndex } from '~/server/search-index';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { FEATURED_MODELS_HOME_BLOCK_KEY } from '~/shared/constants/home-block.constants';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -19,7 +20,7 @@ export const refreshAuctionCache = createJob('refresh-auction-cache', '6 0 * * *
     data.map((c) => ({ id: c.model_id, action: SearchIndexUpdateQueueAction.Update }))
   );
   await bustFeaturedModelsCache();
-  await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
+  await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, FEATURED_MODELS_HOME_BLOCK_KEY);
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds);
 });

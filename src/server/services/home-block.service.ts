@@ -63,7 +63,8 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   allBrowsingLevelsFlag,
-  hasSafeBrowsingLevel,
+  hasPublicBrowsingLevel,
+  isPublicOnlyBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -804,9 +805,22 @@ export const getHomeBlockData = async ({
             ).items
           : ([] as GetModelsWithImagesAndModelVersions[]);
 
-      const validModelData = modelData.filter(
-        (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi
-      );
+      // PG only, for every viewer, so the shared payload cannot carry PG-13 for the client to show.
+      // Filtering after the slim slice is safe: `biasImageSlice` keeps one image of every level.
+      const validModelData = modelData
+        .filter((m) => hasPublicBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi)
+        .map((m) => ({
+          ...m,
+          images: m.images.filter((image) => isPublicOnlyBrowsingLevel(image.nsfwLevel)),
+          user: {
+            ...m.user,
+            profilePicture:
+              m.user.profilePicture && isPublicOnlyBrowsingLevel(m.user.profilePicture.nsfwLevel)
+                ? m.user.profilePicture
+                : null,
+          },
+        }))
+        .filter((m) => m.images.length > 0);
 
       const validModelDataSorted = validModelData.sort((a, b) => {
         const matchA = featured.find((f) => f.modelId === a.id);

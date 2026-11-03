@@ -27,6 +27,7 @@ import {
 } from '~/server/services/buzz.service';
 import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { FEATURED_MODELS_HOME_BLOCK_KEY } from '~/shared/constants/home-block.constants';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -454,7 +455,7 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
       coverageModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
     await bustFeaturedModelsCache();
-    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
+    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, FEATURED_MODELS_HOME_BLOCK_KEY);
     // Dropouts need the winners' invalidation: the set also takes top weekly earners, so a version
     // leaves with no auction event of its own, and unbusted the orchestrator keeps serving it as
     // covered until its entry expires.

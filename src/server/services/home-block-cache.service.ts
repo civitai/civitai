@@ -5,6 +5,7 @@ import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
+import { FEATURED_MODELS_HOME_BLOCK_KEY } from '~/shared/constants/home-block.constants';
 import { createLogger } from '~/utils/logging';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
@@ -54,7 +55,7 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
       // their own. Was keyed on the clone's own id back when the snapshot could disagree.
       return metadata.cosmeticShopSection?.id;
     case HomeBlockType.FeaturedModelVersion:
-      return 'default';
+      return FEATURED_MODELS_HOME_BLOCK_KEY;
     case HomeBlockType.FeaturedCollections:
     case HomeBlockType.Feed:
       // Source-keyed, so one entry serves every clone. It also makes the existing busts land:
