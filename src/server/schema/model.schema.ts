@@ -61,6 +61,8 @@ export type GetModelByIdSchema = z.infer<typeof getModelByIdSchema>;
 export const getModelByIdSchema = z.object({
   id: z.number(),
   excludeTrainingData: z.boolean().optional(),
+  /** The editor's read: owners and mods get the stored .red name/description, not the .com face. */
+  forEditor: z.boolean().optional(),
 });
 
 export const getAllModelsSchema = z.object({

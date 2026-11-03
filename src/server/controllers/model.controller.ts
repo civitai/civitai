@@ -250,7 +250,7 @@ import {
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({
-  input: { excludeTrainingData, ...input },
+  input: { excludeTrainingData, forEditor, ...input },
   ctx,
 }: {
   input: GetModelByIdSchema;
@@ -272,9 +272,10 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
-    // Owners and moderators get the stored pair instead: this payload seeds the model editor.
+    // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
+    const editorRead = isOwner && !!forEditor;
     const withSfwFace =
-      !isOwner && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
+      !editorRead && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
 
     // Prevent non-owners from viewing scheduled/draft/unpublished models
     if (!isOwner && model.status !== ModelStatus.Published) {
