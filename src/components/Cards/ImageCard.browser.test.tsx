@@ -80,9 +80,8 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 // 336px, and 296px in the three narrower rules).
 const CARD_WIDTH = 336;
 const NARROW_CARD_WIDTH = 296;
-const WIDE_CARD_WIDTH = 400;
 
-function imageData(counts: number, poi = false) {
+function imageData(counts: number, poi = false, framed = false) {
   return {
     id: 1,
     url: LOADABLE_IMAGE_DATA_URI,
@@ -94,6 +93,9 @@ function imageData(counts: number, poi = false) {
     height: 900,
     hasMeta: true,
     poi,
+    cosmetic: framed
+      ? { data: { cssFrame: 'linear-gradient(135deg, #f5d36b, #b8860b)' } }
+      : undefined,
     reactions: [],
     user: { id: 2, username: 'someone' },
     stats: {
@@ -120,10 +122,6 @@ async function renderCard(counts: number, width: number = CARD_WIDTH, poi = fals
   await vi.waitFor(() => {
     expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(0);
   });
-}
-
-function resizeCard(width: number) {
-  (document.querySelector('[data-testid="card-root"]') as HTMLElement).style.width = `${width}px`;
 }
 
 function reactionBarOverflow() {
@@ -164,63 +162,76 @@ describe('ImageCard info button', () => {
 });
 
 // Reported 2026-08-14 (ClickUp 868krjmvv): on the featured grid, reaction counts of four digits
-// were clipped at the card edge (a count cropped to "1,16"). Counts are spelled out in full where
-// there is room (a reader watching one tick up) and abbreviate on the narrow column.
-describe('ImageCard action row at four-digit reaction counts', () => {
-  // The reaction row takes the full narrow column and abbreviates its counts, so four- and
-  // five-digit counts fit. The Buzz tip no longer shares that row (see the next describe).
-  test('fits the narrow column at four- and five-digit counts, abbreviated', async () => {
-    await renderCard(1455, NARROW_CARD_WIDTH);
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-    expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('1.5K')));
-    await cleanup();
+// were clipped at the card edge (a count cropped to "1,16").
+describe('ImageCard action row counts', () => {
+  test.each([NARROW_CARD_WIDTH, CARD_WIDTH, 420, 450])(
+    'abbreviates every count and fits the card at %ipx',
+    async (width) => {
+      await renderCard(1455, width);
+      expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
+      expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('1.5K')));
+    }
+  );
 
-    await renderCard(12345, NARROW_CARD_WIDTH);
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-    expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('12.3K')));
-  });
-
-  // Counts are spelled out in full wherever there is room: a reader watching one tick up.
-  test('keeps full counts on a wide card', async () => {
-    await renderCard(1455, CARD_WIDTH);
-    expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('1,455')));
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-    await cleanup();
-
-    await renderCard(12345, WIDE_CARD_WIDTH);
-    expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('12,345')));
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-  });
-
-  // The form follows the row's own width, so the same card flips both ways. This is what fails
-  // if the container query stops applying: the labels would stay in one form.
-  test('the same card flips between abbreviated and full as its width changes', async () => {
-    await renderCard(1455, NARROW_CARD_WIDTH);
-    expect(reactionLabels()[0]).toContain('1.5K');
-
-    resizeCard(WIDE_CARD_WIDTH);
-    await vi.waitFor(() => expect(reactionLabels()[0]).toContain('1,455'));
-
-    resizeCard(NARROW_CARD_WIDTH);
-    await vi.waitFor(() => expect(reactionLabels()[0]).toContain('1.5K'));
-  });
-
-  // The width a count needs grows with its length, so the point where it abbreviates does too:
-  // 123,456 does not fit a 365px card in full.
-  test('six-digit counts abbreviate where they would clip in full', async () => {
-    await renderCard(123456, 365);
-    expect(reactionLabels()[0]).toContain('123.5K');
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-    await cleanup();
-
-    await renderCard(123456, 450);
-    expect(reactionLabels()[0]).toContain('123,456');
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-  });
+  test.each([NARROW_CARD_WIDTH, 420, 450])(
+    'abbreviates six-digit counts and fits at %ipx',
+    async (width) => {
+      await renderCard(123456, width);
+      expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
+      expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('123.5K')));
+    }
+  );
 });
 
-// The Buzz tip is its own element in the action row, not part of the reaction bar. It always sits
-// on the line under the reactions, beside the sticker badge, so cards in one grid line up.
+// Reported 2026-11-02 (hq:image_cards_reaction_58hs): a gold-framed card showed "1K" in a bar
+// spanning the row while the unframed card beside it showed "1,082" in a content-width bar. The
+// frame's padding narrows the footer, and the old per-row container query picked the count form
+// and the bar width from that width. Two cards with the same counts must lay out the same.
+describe('ImageCard cosmetic frame', () => {
+  test.each([NARROW_CARD_WIDTH, 320, CARD_WIDTH, 358, 420])(
+    'framed and unframed cards show the same counts in a content-width bar at %ipx',
+    async (width) => {
+      renderWithProviders(
+        <IntersectionObserverProvider>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width }}>
+            {[false, true].map((framed) => (
+              <div key={String(framed)} data-testid={framed ? 'framed' : 'plain'} style={{ width }}>
+                <ImageCard data={imageData(1082, false, framed)} />
+              </div>
+            ))}
+          </div>
+        </IntersectionObserverProvider>
+      );
+      await vi.waitFor(() => {
+        expect(document.body.querySelectorAll('[aria-label$="reaction"]')).toHaveLength(8);
+      });
+      const measure = (id: string) => {
+        const root = document.querySelector(`[data-testid="${id}"]`)!;
+        const buttons = [...root.querySelectorAll('[aria-label$="reaction"]')];
+        const bar = buttons[0].parentElement!;
+        const natural = buttons.reduce((sum, b) => sum + b.getBoundingClientRect().width, 0);
+        return {
+          labels: buttons.map((b) => (b as HTMLElement).innerText.split('\n').filter(Boolean)[1]),
+          // How far the frame pushes the footer in from the card's edge.
+          inset: buttons[0].getBoundingClientRect().left - root.getBoundingClientRect().left,
+          // Slack of one 2px gap per button; a bar stretched across the row is far past it.
+          stretch: bar.getBoundingClientRect().width - natural - 2 * buttons.length,
+        };
+      };
+      const plain = measure('plain');
+      const framed = measure('framed');
+      expect(plain.labels).toEqual(Array(4).fill('1.1K'));
+      expect(framed.labels).toEqual(plain.labels);
+      expect(plain.stretch).toBeLessThanOrEqual(0);
+      expect(framed.stretch).toBeLessThanOrEqual(0);
+      // Control: the frame really narrows the footer here, so the equal results above are earned.
+      expect(framed.inset).toBeGreaterThan(plain.inset);
+    }
+  );
+});
+
+// The Buzz tip is its own element in the action row, not part of the reaction bar. It sits under
+// the reactions on a narrow card and beside them on a wide one.
 describe('ImageCard Buzz tip placement', () => {
   const TIP_ROW_WIDTHS = [NARROW_CARD_WIDTH, 420];
 
@@ -236,18 +247,54 @@ describe('ImageCard Buzz tip placement', () => {
     return { tip: bolt?.getBoundingClientRect(), sticker, bar, card };
   }
 
-  test.each(TIP_ROW_WIDTHS)(
-    'is under the reactions at %ipx, whatever the count length',
-    async (width) => {
-      for (const counts of [7, 1455, 12345]) {
-        await renderCard(counts, width);
-        const { tip, bar } = rects();
-        expect(tip!.top).toBeGreaterThanOrEqual(bar.bottom);
-        expect(Math.abs(tip!.left - bar.left)).toBeLessThan(8);
-        await cleanup();
-      }
+  test.each([7, 1455, 12345])(
+    'is under the reactions on a narrow card, counts %i',
+    async (counts) => {
+      await renderCard(counts, NARROW_CARD_WIDTH);
+      const { tip, bar } = rects();
+      expect(tip!.top).toBeGreaterThanOrEqual(bar.bottom);
+      expect(Math.abs(tip!.left - bar.left)).toBeLessThan(8);
     }
   );
+
+  test.each([7, 342])('is beside the reactions on a 420px card, counts %i', async (counts) => {
+    features.stickerPlacement = true;
+    features.imageCardInfoButton = true;
+    await renderCard(counts, 420);
+    const { tip, bar, sticker, card } = rects();
+    const info = infoButtons()[0].getBoundingClientRect();
+    const mid = (r: DOMRect) => r.top + r.height / 2;
+
+    expect(tip!.left).toBeGreaterThanOrEqual(bar.right - 1);
+    expect(Math.abs(mid(tip!) - (bar.top + bar.height / 2))).toBeLessThan(4);
+    expect(Math.abs(mid(sticker!) - mid(tip!))).toBeLessThan(4);
+    expect(Math.abs(mid(info) - mid(tip!))).toBeLessThan(4);
+    expect(info.right).toBeLessThanOrEqual(card.right);
+  });
+
+  // Five-digit counts fill the line, so the badges wrap under the bar.
+  test('wraps the badges under the reactions when five-digit counts fill the line', async () => {
+    features.stickerPlacement = true;
+    await renderCard(12345, 420);
+    const { bar, sticker, card } = rects();
+    expect(sticker!.top).toBeGreaterThanOrEqual(bar.bottom);
+    expect(sticker!.right).toBeLessThanOrEqual(card.right);
+  });
+
+  test('footer controls are compact: 22px bars, one line at 420px, two on a narrow card', async () => {
+    await renderCard(1455, 420);
+    const wide = rects();
+    expect(wide.bar.height).toBe(22);
+    expect(
+      Math.abs(wide.tip!.top + wide.tip!.height / 2 - (wide.bar.top + wide.bar.height / 2))
+    ).toBeLessThan(4);
+    await cleanup();
+
+    await renderCard(1455, NARROW_CARD_WIDTH);
+    const narrow = rects();
+    expect(narrow.bar.height).toBe(22);
+    expect(narrow.tip!.top).toBeGreaterThanOrEqual(narrow.bar.bottom);
+  });
 
   test.each(TIP_ROW_WIDTHS)(
     'shares its line with the sticker badge and info button at %ipx',
@@ -255,10 +302,9 @@ describe('ImageCard Buzz tip placement', () => {
       features.stickerPlacement = true;
       features.imageCardInfoButton = true;
       await renderCard(7, width);
-      const { tip, sticker, bar } = rects();
+      const { tip, sticker } = rects();
       const info = infoButtons()[0].getBoundingClientRect();
 
-      expect(tip!.top).toBeGreaterThanOrEqual(bar.bottom);
       expect(
         Math.abs(tip!.top + tip!.height / 2 - (sticker!.top + sticker!.height / 2))
       ).toBeLessThan(8);
@@ -273,7 +319,8 @@ describe('ImageCard Buzz tip placement', () => {
     'keeps the reactions the same distance from the card bottom with or without a sticker badge at %ipx',
     async (width) => {
       features.stickerPlacement = true;
-      for (const counts of [7, 1455, 12345]) {
+      // At 420px five-digit counts wrap the badge to its own line, which moves the bar.
+      for (const counts of width === 420 ? [7, 1455] : [7, 1455, 12345]) {
         stickerBadge.renders = true;
         await renderCard(counts, width);
         const withSticker = rects();
@@ -293,17 +340,10 @@ describe('ImageCard Buzz tip placement', () => {
     }
   );
 
-  // Content-sized and left-aligned where the counts fit in full; the whole row only where they
-  // abbreviate, as before the tip moved.
-  test('the reaction bar fills the row only where the counts abbreviate', async () => {
-    await renderCard(7, 420);
-    const wide = rects();
-    expect(wide.bar.width).toBeLessThan(wide.card.width - 100);
-    await cleanup();
-
+  test('the reaction bar is content-width, not the whole row', async () => {
     await renderCard(7, NARROW_CARD_WIDTH);
     const narrow = rects();
-    expect(narrow.bar.width).toBeGreaterThan(narrow.card.width - 24);
+    expect(narrow.bar.width).toBeLessThan(narrow.card.width - 100);
   });
 
   test('a card with no tip, no stickers and no info button has no second line', async () => {

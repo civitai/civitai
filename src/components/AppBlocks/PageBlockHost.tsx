@@ -7,6 +7,8 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
+import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import { APP_STORAGE_BASE_SCOPE } from '~/shared/constants/block-storage.constants';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   countGuestFrameEvent,
@@ -5824,6 +5826,16 @@ export function PageBlockHost({
           onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
         />
       )}
+      {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when
+          the app opens, never one per storage call. Live runs of a storage app only; a review
+          or the dev tunnel writes to a namespace this does not measure. */}
+      {!reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' &&
+        declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
+          <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

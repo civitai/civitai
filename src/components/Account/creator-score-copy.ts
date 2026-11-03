@@ -1,3 +1,4 @@
+import { REMOVAL_SCORE_WINDOW_LABEL } from '~/shared/constants/creator-journey.constants';
 import { capitalize } from '~/utils/string-helpers';
 
 export const CREATOR_SCORE_ANCHOR = 'creator-score';
@@ -36,4 +37,4 @@ export const creatorScoreStaffAwarded = {
 
 export const creatorScoreGrowsWhen = 'people use, react to, and follow your work';
 
-export const creatorScorePenalty = 'Images removed for breaking our rules take points away.';
+export const creatorScorePenalty = `Images removed for breaking our rules take points away for ${REMOVAL_SCORE_WINDOW_LABEL}, some less than others depending on the reason.`;

@@ -2603,7 +2603,7 @@ const commercialUsePermissionContent: Record<CommercialUse, string> = {
 <b>Civitai Generation Services: Do not run the Model on the Civitai platform for generation (available at [${env.NEXTAUTH_URL}/generate](/generate)).</b>
 `,
   [CommercialUse.Sell]: `
-<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value. This restriction does not apply to a Merge.</b>
+<b>Sale of the Model: Do not sell or license the Model in exchange for a fee or something else of value. This restriction does not apply to a Merge.</b>
 `,
   [CommercialUse.SellMerge]: `
 <b>Sale of Merges: Do not sell or license a Merge in exchange for a fee or something else of value.</b>
@@ -2658,12 +2658,6 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (allowsDifferentLicenseOnMerges(options)) {
-    license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
-`;
-  }
-
   const additionalCommercialRestrictions = Object.entries(commercialUsePermissionContent)
     .map(([key, value]) => {
       if (options.allowCommercialUse.includes(key as CommercialUse)) return '';
@@ -2671,6 +2665,13 @@ You agree to the following with respect to the Model (each a “Permission”):
     })
     .join('');
   license += additionalCommercialRestrictions;
+
+  // Last on purpose: it grants against every restriction above it, so nothing may be appended after.
+  if (allowsDifferentLicenseOnMerges(options)) {
+    license += `
+<b>Changing Permissions: You may modify or eliminate any of the Permissions in this Attachment B when sharing or making available a Merge. This does not change the terms of the License itself, which continue to apply to the Merge.</b>
+`;
+  }
 
   return license;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import {
     Table,
     TableBody,
@@ -23,6 +24,9 @@
     lastActioned,
     oldest,
     now,
+    mine = false,
+    toggle,
+    onShowAll,
   }: {
     /** `null` while the counts load. */
     rows: { over: AttentionItem[]; rest: AttentionItem[] } | null;
@@ -30,6 +34,11 @@
     lastActioned: Record<string, { at: string; by: string | null }> | null;
     oldest: Promise<Record<string, string>>;
     now: number;
+    /** Showing only the viewer's own queues (My tasks): an empty list says so, not "all clear". */
+    mine?: boolean;
+    /** The My tasks / Everything switch, drawn in the header when the viewer owns any queue. */
+    toggle?: Snippet;
+    onShowAll?: () => void;
   } = $props();
 
   const BADGE = 'rounded bg-white/5 px-1 text-[11px] font-semibold tabular-nums';
@@ -42,7 +51,10 @@
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
   <header class="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-    <h2 class="text-sm font-semibold text-white">Needs attention</h2>
+    <div class="flex items-center gap-3">
+      <h2 class="text-sm font-semibold text-white">Needs attention</h2>
+      {@render toggle?.()}
+    </div>
     <span class="text-xs text-dark-2">
       Every queue over its threshold, worst first, then longest untouched
     </span>
@@ -60,8 +72,15 @@
         {uncounted
           ? 'Nothing counted is over its threshold. Some counts are unavailable.'
           : rows.rest.length
-            ? 'Nothing is over its threshold.'
-            : 'Every queue is clear.'}
+            ? mine
+              ? 'None of your queues is over its threshold.'
+              : 'Nothing is over its threshold.'
+            : mine
+              ? 'None of your queues need attention.'
+              : 'Every queue is clear.'}
+        {#if mine && onShowAll}
+          <button type="button" class="underline" onclick={onShowAll}>Show everything</button>
+        {/if}
       </p>
     {/if}
     {#if shown.length}

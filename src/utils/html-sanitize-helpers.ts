@@ -152,8 +152,20 @@ export function getBlurbText(html: string) {
  *
  * Idempotent — call it whenever you are unsure.
  */
-export function sanitizeBlurbInterior(html: string) {
-  return sanitizeHtml(html, BLURB_INTERIOR_SANITIZE_OPTIONS);
+export function sanitizeBlurbInterior(html: string, rewriteHref?: (href: string) => string) {
+  const sanitized = sanitizeHtml(html, BLURB_INTERIOR_SANITIZE_OPTIONS);
+  if (!rewriteHref) return sanitized;
+  // A second pass rather than an `a` transform on the first: a caller's `a` replaces the
+  // wrapper's default one instead of composing with it.
+  return sanitizeHtml(sanitized, {
+    ...BLURB_INTERIOR_SANITIZE_OPTIONS,
+    transformTags: {
+      a: (tagName, attribs) => ({
+        tagName,
+        attribs: attribs.href ? { ...attribs, href: rewriteHref(attribs.href) } : attribs,
+      }),
+    },
+  });
 }
 
 // Stickers are paid goods. `span` and its data-* attributes are in the default

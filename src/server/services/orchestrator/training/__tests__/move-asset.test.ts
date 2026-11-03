@@ -224,7 +224,10 @@ describe('training.moveAsset — approved checkpoint of an owned run', () => {
         files: { where: { type: 'Training Data' }, select: { metadata: true } },
       },
     });
-    expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
       path: { workflowId: WORKFLOW_ID },
@@ -265,7 +268,9 @@ describe('training.moveAsset — approved checkpoint of an owned run', () => {
     await expect(move({ userId: MODERATOR, isModerator: true })).resolves.toMatchObject({
       fileSize: 7,
     });
-    expect(mockGetToken.mock.calls).toEqual([[OWNER, undefined, { bypassCache: true }]]);
+    expect(mockGetToken.mock.calls).toEqual([
+      [OWNER, undefined, { bypassCache: true, allowRestricted: true }],
+    ]);
   });
 });
 
@@ -390,7 +395,10 @@ describe('training.moveAsset — workflow run whose epochs are job asset URLs', 
         newUrl: expect.stringMatching(copiedTo('run_000001', '.safetensors')),
         fileSize: 9,
       });
-      expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, { bypassCache: mod });
+      expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, {
+        bypassCache: mod,
+        allowRestricted: mod,
+      });
       expect(mockGetCaller).toHaveBeenCalledWith(new Date(RUN_SUBMITTED_AT));
       expect(mockCopyAsset).toHaveBeenCalledWith({
         payload: {

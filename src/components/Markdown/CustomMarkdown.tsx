@@ -8,6 +8,7 @@ import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { remarkTimestamp } from '~/components/Markdown/remark-timestamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
 import { isExternalHref } from '~/utils/external-link';
 
@@ -32,6 +33,7 @@ export function CustomMarkdown({
 }: CustomOptions) {
   const user = useCurrentUser();
   const internalHosts = useInternalHosts();
+  const toCurrentDomain = useCurrentDomainHref();
 
   // Discord-style `<t:UNIX:STYLE>` timestamp support is available in every
   // markdown surface. Caller-provided remark plugins still run alongside it.
@@ -83,7 +85,7 @@ export function CustomMarkdown({
       }
 
       const isExternalLink = href.startsWith('http');
-      if (typeof window !== 'undefined') href = href.replace('//civitai.com', `//${location.host}`);
+      href = toCurrentDomain(href);
 
       href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
 

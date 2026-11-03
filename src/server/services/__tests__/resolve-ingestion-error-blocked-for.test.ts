@@ -9,7 +9,11 @@ const UNPROBEABLE_URL = 'https://example.com/legacy.jpeg';
 
 const resolve = () => resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 1, userId: 7 });
 
-function armImage(columns: { blockedFor?: string | null; needsReview?: string | null }) {
+function armImage(columns: {
+  blockedFor?: string | null;
+  needsReview?: string | null;
+  user?: { bannedAt: Date | null; deletedAt: Date | null };
+}) {
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     ingestion: 'Error',
     postId: null,
@@ -18,6 +22,7 @@ function armImage(columns: { blockedFor?: string | null; needsReview?: string | 
     url: UNPROBEABLE_URL,
     blockedFor: null,
     needsReview: null,
+    user: { bannedAt: null, deletedAt: null },
     ...columns,
   } as never);
 }
@@ -50,6 +55,7 @@ describe('resolveIngestionError and blockedFor', () => {
       id: IMAGE_ID,
       blockedFor: 'a prompt audit reason',
       needsReview: null,
+      user: { bannedAt: null, deletedAt: null },
     });
     expect(arg.data).toMatchObject({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
     const drops = purgeRowDrops();
@@ -87,6 +93,21 @@ describe('resolveIngestionError and blockedFor', () => {
 
     expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+    expect(purgeRowDrops()).toHaveLength(0);
+  });
+
+  it.each([
+    ['banned', { bannedAt: new Date(), deletedAt: null }],
+    ['deleted', { bannedAt: null, deletedAt: new Date() }],
+  ])('refuses an image whose owner is %s and writes nothing', async (_label, user) => {
+    armImage({ blockedFor: 'a prompt audit reason', user });
+
+    await expect(resolve()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "This image's owner account is banned or deleted; it can't be published from here.",
+    });
+
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
     expect(purgeRowDrops()).toHaveLength(0);
   });
 
