@@ -88,7 +88,8 @@ Commands, generation and migration details: `.claude/rules/database.md`.
   `pnpm run db:generate`. Every other `schema.prisma` is generated or introspected.
 - **Migrations are applied by hand. Never suggest `prisma migrate deploy`, `migrate resolve` or any
   auto-apply path.** Write the SQL under `packages/civitai-db-schema/prisma/migrations/`, commit it, and
-  tell the user it needs applying manually (preview / staging / prod).
+  tell the user it needs applying manually to each writable environment, with the dry run and the
+  post-apply scoped drift check from "Migration details" in `.claude/rules/database.md`.
 - Adding an enum value: deploy the regenerated client **before** the migration and any backfill.
 
 ## Security — this repository is public
