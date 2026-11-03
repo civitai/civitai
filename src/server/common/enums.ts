@@ -193,6 +193,7 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  EventPointsTurf = 'event-points:turf',
 }
 
 export enum BountySort {

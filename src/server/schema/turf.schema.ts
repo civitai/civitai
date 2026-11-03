@@ -34,3 +34,14 @@ export const turfImageSchema = z.object({ event: eventName, imageId: z.number().
 export const setTurfOptInSchema = z.object({ event: eventName, optedIn: z.boolean() });
 
 export const removeTurfStickerSchema = z.object({ id: z.coerce.bigint().positive() });
+
+export const turfStickersForImagesSchema = z.object({
+  event: eventName,
+  imageIds: z.array(z.number().int().positive()).max(100),
+  perImage: z.number().int().min(1).max(5).default(5),
+});
+
+export const watchTurfImagesSchema = z.object({
+  event: eventName,
+  imageIds: z.array(z.number().int().positive()).max(50),
+});

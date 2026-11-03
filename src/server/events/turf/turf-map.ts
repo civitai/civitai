@@ -1,3 +1,4 @@
+import { SignalTopic } from '~/server/common/enums';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 
 // Which team holds each turf image and whom an action on it credits. Built from the live stickers
@@ -13,8 +14,14 @@ export function turfKeys(event: string) {
     log: `${root}:map-log` as const,
     // `Image:{id}` -> TurfCounts, for every image with a live sticker. Display only.
     counts: `${root}:counts` as const,
+    // Image ids on someone's screen -> when that lapses (ms): which counts to push (turf-watch.ts).
+    watch: `${root}:watch` as const,
   };
 }
+
+// One image's live counts. Image ids are public and so is what this carries, so no keyed id.
+export const eventTurfTopic = (event: string, imageId: number) =>
+  `${SignalTopic.EventPoints}:${event}:turf:${imageId}` as const;
 
 /** The leading team on a turf image and the stickerers an action there credits. */
 export type TurfEntry = {

@@ -20,6 +20,7 @@ import {
   type TurfEntry,
   type TurfStickerRow,
 } from '~/server/events/turf/turf-map';
+import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/turf/turf-watch';
 import { logToAxiom } from '~/server/logging/client';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
@@ -321,11 +322,17 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
   const desired = new Map([...entries].map(([k, e]) => [k, encodeTurfEntry(e)]));
   await writeMap(event, current, desired);
   const countsKey = turfKeys(event.name).counts;
-  for (const k of keys) {
+  const before = await sysRedis.hmGet(countsKey, keys);
+  const changes: TurfPush[] = [];
+  for (const [i, k] of keys.entries()) {
     const c = counts.get(k);
-    if (c) await sysRedis.hSet(countsKey, k, JSON.stringify(c));
+    const value = c ? JSON.stringify(c) : null;
+    if (value === before[i]) continue;
+    if (value) await sysRedis.hSet(countsKey, k, value);
     else await sysRedis.hDel(countsKey, k);
+    changes.push({ imageId: imageIds[i], counts: c ?? null });
   }
+  await pushTurfCounts(event.name, changes);
 }
 
 /** Rebuilds the whole turf map and counts for an event: hides, bans, opt-outs and cap changes. */
@@ -372,6 +379,11 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     await Promise.all(part.map(([k, v]) => sysRedis.hSet(keys.counts, k, v)));
   for (const part of chunk(countDiff.remove, 500))
     await Promise.all(part.map((k) => sysRedis.hDel(keys.counts, k)));
+  const imageIdOf = (k: string) => Number(k.slice('Image:'.length));
+  await pushTurfCounts(event.name, [
+    ...countDiff.set.map(([k]) => ({ imageId: imageIdOf(k), counts: counts.get(k) ?? null })),
+    ...countDiff.remove.map((k) => ({ imageId: imageIdOf(k), counts: null })),
+  ]);
   return { images: counts.size, turf: kept.size, dropped, ...written };
 }
 
@@ -443,6 +455,53 @@ export async function getTurfStickers(eventName: string, imageId: number, viewer
     viewerId ? rows(Prisma.sql`AND s."userId" = ${viewerId}`, 1) : [],
   ]);
   return { stickers, mine: mine[0] ?? null };
+}
+
+/**
+ * Stickers to draw on a page of feed cards: per image, the latest sticker of each team first, then
+ * the next most recent, up to `perImage`. Same visibility and placer rules as getTurfStickers.
+ */
+export async function getTurfStickersForImages(
+  eventName: string,
+  imageIds: number[],
+  perImage: number
+) {
+  const event = await getTurfEvent(eventName);
+  if (!event || event.turf.mode === 'off' || !imageIds.length) return {};
+  const rows = await dbRead.$queryRaw<(DrawnSticker & { imageId: number })[]>`
+    WITH ranked AS (
+      SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
+        row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
+          AS "teamRank"
+      FROM "EventTurfSticker" s
+      JOIN "User" u ON u.id = s."userId"
+      JOIN "Image" i ON i.id = s."imageId"
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
+        AND s."removedAt" IS NULL AND ${imageVisible}
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+    ), picked AS (
+      SELECT *, row_number() OVER (
+        PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC
+      ) AS n
+      FROM ranked
+      WHERE "teamRank" <= ${perImage}
+    )
+    SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt"
+    FROM picked WHERE n <= ${perImage}
+    ORDER BY "imageId", n
+  `;
+  const byImage: Record<number, DrawnSticker[]> = {};
+  for (const { imageId, ...sticker } of rows) (byImage[imageId] ??= []).push(sticker);
+  return byImage;
+}
+
+/** Marks images as on a viewer's screen, so changes to their counts are pushed (turf-watch.ts). */
+export async function watchTurfImages(eventName: string, imageIds: number[]) {
+  const event = await getTurfEvent(eventName);
+  if (!event || event.turf.mode === 'off') return 0;
+  const endsAt = new Date(event.endDate.getTime() + (event.scoring?.finalizeAfterMs ?? 0));
+  return markTurfWatched({ name: event.name, endsAt }, imageIds);
 }
 
 /**
