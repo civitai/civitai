@@ -566,8 +566,8 @@ export function formatGateResult(
 
 /**
  * Shortest reason accepted, after trimming. Long enough that a reason has to say something,
- * short enough not to demand an essay for an obvious case. A length floor alone is walkable by padding, which is why the word and placeholder
- * checks below exist as well.
+ * short enough not to demand an essay for an obvious case. A length floor alone is walkable
+ * by padding, which is why the word and placeholder checks below exist as well.
  */
 export const MIN_REASON_LENGTH = 20;
 
