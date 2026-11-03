@@ -1,62 +1,54 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import Avatar from '$lib/Avatar.svelte';
+  import { helpCookie } from '$lib/fervor-help';
   import { compact, count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import RankEmblem from '$lib/RankEmblem.svelte';
+  import { formatTally } from '$lib/tally';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   type Row = PageData['entries'][number];
-  let failed = $state<Record<number, boolean>>({});
+  // Keyed on the badge url, so a new url gets a fresh try after an earlier one failed.
   let badgeFailed = $state<Record<string, boolean>>({});
 
   const podium = $derived(data.entries.length >= 3 ? data.entries.slice(0, 3) : []);
   const stage = $derived(podium.length ? [podium[1], podium[0], podium[2]] : []);
   const rows = $derived(podium.length ? data.entries.slice(3) : data.entries);
 
-  // Open on a first visit; a collapse is remembered per viewer, and everything works without storage.
-  let open = $state(true);
-  const storageKey = $derived(`knights:fervor-panel-collapsed:${data.viewerId}`);
-  onMount(() => {
-    try {
-      if (localStorage.getItem(storageKey) === '1') open = false;
-    } catch {
-      // Storage blocked: the panel stays open.
-    }
-  });
+  // The server reads the cookie, so a collapsed panel renders closed from the first paint.
+  let open = $state(untrack(() => !data.helpClosed));
   function remember(event: Event) {
     open = (event.currentTarget as HTMLDetailsElement).open;
-    try {
-      localStorage.setItem(storageKey, open ? '0' : '1');
-    } catch {
-      // Not remembered.
-    }
+    document.cookie = helpCookie(!open);
   }
+
+  // The server renders the first value; the page then keeps it current until the next UTC midnight.
+  let tally = $state(untrack(() => data.nextTally));
+  onMount(() => {
+    const tick = () => {
+      tally = formatTally(Date.parse(data.nextTallyAt) - Date.now());
+    };
+    const timer = setInterval(tick, 30_000);
+    return () => clearInterval(timer);
+  });
 </script>
 
 {#snippet avatar(entry: Row, size: 'big' | 'mid' | 'row')}
   <span class="av {size}">
-    {#if entry.avatarUrl && !failed[entry.userId]}
-      <img
-        src={entry.avatarUrl}
-        alt=""
-        loading="lazy"
-        onerror={() => (failed[entry.userId] = true)}
-      />
-    {:else}
-      <span class="initial" aria-hidden="true">{(entry.username[0] ?? 'K').toUpperCase()}</span>
-    {/if}
+    <Avatar src={entry.avatarUrl} name={entry.username} />
     <span class="bdg">
-      {#if entry.badgeUrl && !badgeFailed[entry.rankType]}
+      {#if entry.badgeUrl && !badgeFailed[entry.badgeUrl]}
         <img
           src={entry.badgeUrl}
           alt=""
           loading="lazy"
-          onerror={() => (badgeFailed[entry.rankType] = true)}
+          onerror={() => (badgeFailed[entry.badgeUrl ?? ''] = true)}
         />
       {:else}
-        <RankEmblem rank={entry.rankType} size="xs" />
+        <RankEmblem rank={entry.rankType} size="xs" fill />
       {/if}
     </span>
   </span>
@@ -70,6 +62,10 @@
   {/if}
 {/snippet}
 
+{#snippet level(entry: Row)}
+  <span class="lv">Level {entry.level}</span><span class="lv-short">Lv {entry.level}</span>
+{/snippet}
+
 {#snippet row(entry: Row, you: boolean, behind: { place: number; gap: number } | null)}
   <div class="entry" class:you>
     <span class="position">{entry.position}</span>
@@ -80,9 +76,8 @@
         {#if you}<span class="tag">YOU</span>{/if}
       </span>
       <span class="sub">
-        {#if you}<span class="mine">You ·</span>{/if}{entry.rankType} · <span class="lv"
-          >Level {entry.level}</span
-        ><span class="lv-short">{entry.level}</span>
+        {#if you}<span class="mine">You ·</span>{/if}
+        {entry.rankType} · {@render level(entry)}
       </span>
     </span>
     <span class="fervor">
@@ -90,6 +85,20 @@
       <span>{behind ? `${count(behind.gap)} behind #${behind.place}` : 'fervor'}</span>
     </span>
   </div>
+{/snippet}
+
+{#snippet standing(where: 'm' | 'd')}
+  <section class="standing {where}" aria-label="Your standing">
+    <p class="standing-label">Your standing</p>
+    {#if data.self}
+      {@render row(data.self, true, data.self.behind)}
+    {:else}
+      <p class="note">
+        You are not on the board this week. Judge as a Knight or above and your fervor will place
+        you.
+      </p>
+    {/if}
+  </section>
 {/snippet}
 
 <div class="page-wide">
@@ -101,12 +110,14 @@
     <p class="meta">
       <span>Fervor from judgments cast in the last {data.windowDays} days</span>
       <span class="tally"
-        ><Icon name="hourglass" size={14} /> Tallied daily · next tally in {data.nextTally}</span
+        ><Icon name="hourglass" size={14} />
+        {tally ? `Tallied daily · next tally in ${tally}` : 'New tally ready, refresh'}</span
       >
     </p>
     <p class="meta-m">
-      Fervor from judgments cast in the last {data.windowDays} days. Tallied daily · next tally in
-      {data.nextTally}.
+      Fervor from judgments cast in the last {data.windowDays} days. Tallied daily · {tally
+        ? `next tally in ${tally}`
+        : 'new tally ready, refresh'}.
     </p>
   </header>
 
@@ -127,19 +138,23 @@
   {/if}
 
   {#if podium.length}
-    <ol class="podium" aria-label="Top three">
+    <ol class="podium" role="list" aria-label="Top three">
       {#each stage as entry (entry.userId)}
-        <li class="col p{entry.position}">
+        {@const you = entry.userId === data.viewerId}
+        <li class="col p{entry.position}" class:you>
           {@render avatar(entry, entry.position === 1 ? 'big' : 'mid')}
-          {@render name(entry)}
-          <span class="sub"
-            >{entry.rankType} · <span class="lv">Level {entry.level}</span><span class="lv-short"
-              >{entry.level}</span
-            ></span
-          >
+          <span class="line pline">
+            {@render name(entry)}
+            {#if you}<span class="tag">YOU</span>{/if}
+          </span>
+          <span class="sub">{entry.rankType} · {@render level(entry)}</span>
           <span class="pedestal">
             <span class="place">{entry.position}</span>
-            <b class="value"><span class="full">{count(entry.fervor)}</span><span class="short">{compact(entry.fervor)}</span></b>
+            <b class="value"
+              ><span class="full">{count(entry.fervor)}</span><span class="short"
+                >{compact(entry.fervor)}</span
+              ></b
+            >
             <span class="label">fervor</span>
           </span>
         </li>
@@ -147,32 +162,20 @@
     </ol>
   {/if}
 
-  <div class="body">
-    {#if rows.length}
-      <div class="list" role="list" aria-label="Most devoted this week">
-        {#each rows as entry (entry.userId)}
-          <div role="listitem" class="item">
-            {@render row(entry, entry.userId === data.viewerId, null)}
-          </div>
-        {/each}
-      </div>
-      {#if data.entries.length >= data.size}
-        <p class="more">Top {data.size} · scroll for more</p>
-      {/if}
-    {/if}
+  {@render standing('m')}
 
-    <section class="standing" aria-label="Your standing">
-      <p class="standing-label">Your standing</p>
-      {#if data.self}
-        {@render row(data.self, true, data.self.behind)}
-      {:else}
-        <p class="note">
-          You are not on the board this week. Judge as a Knight or above and your fervor will place
-          you.
-        </p>
-      {/if}
-    </section>
-  </div>
+  {#if rows.length}
+    <ul class="list" role="list" aria-label="Most devoted this week">
+      {#each rows as entry (entry.userId)}
+        <li class="item">{@render row(entry, entry.userId === data.viewerId, null)}</li>
+      {/each}
+    </ul>
+    {#if data.entries.length >= data.size}
+      <p class="more">Showing the top {data.size}</p>
+    {/if}
+  {/if}
+
+  {@render standing('d')}
 </div>
 
 <style>
@@ -285,7 +288,8 @@
     max-width: 17rem;
     font-family: var(--io-font-ui);
   }
-  .col .name {
+  .pline {
+    justify-content: center;
     max-width: 100%;
   }
   .col .sub {
@@ -297,11 +301,12 @@
     align-items: center;
     justify-content: center;
     gap: 0.1rem;
+    box-sizing: border-box;
     width: 100%;
+    height: 112px;
     margin-top: 0.4rem;
     border-top: 1px solid var(--io-gold-muted);
     background: var(--io-surface);
-    height: 112px;
   }
   .p1 .pedestal {
     height: 156px;
@@ -310,12 +315,19 @@
   .p2 .pedestal {
     height: 128px;
   }
+  .col.you .pedestal {
+    border: 1px solid var(--io-gold);
+    border-top: 2px solid var(--io-gold);
+  }
   .place {
     color: var(--io-parchment-muted);
     font: 700 2rem/1 var(--io-font-display);
   }
-  .p1 .place {
+  .p1 .place,
+  .you .place {
     color: var(--io-gold);
+  }
+  .p1 .place {
     font-size: 2.6rem;
   }
   .value {
@@ -332,43 +344,28 @@
     text-transform: uppercase;
   }
 
-  /* Avatars and the rank badge laid over their corner. */
+  /* The rank badge laid over the avatar's corner. */
   .av {
     position: relative;
     display: inline-flex;
     flex: none;
-    width: var(--s);
-    height: var(--s);
+    width: var(--avatar-size);
+    height: var(--avatar-size);
   }
   .av.big {
-    --s: 96px;
+    --avatar-size: 96px;
     --b: 32px;
-    --ring: 2px solid var(--io-gold);
+    --avatar-ring: 2px solid var(--io-gold);
   }
   .av.mid {
-    --s: 80px;
+    --avatar-size: 80px;
     --b: 28px;
-    --ring: 2px solid var(--io-gold-muted);
+    --avatar-ring: 2px solid var(--io-gold-muted);
   }
   .av.row {
-    --s: 44px;
+    --avatar-size: 44px;
     --b: 20px;
-    --ring: 1px solid var(--io-gold-muted);
-  }
-  .av > img,
-  .initial {
-    width: 100%;
-    height: 100%;
-    border: var(--ring);
-    border-radius: 50%;
-    background: var(--io-bg);
-    object-fit: cover;
-  }
-  .initial {
-    display: grid;
-    place-items: center;
-    color: var(--io-gold);
-    font: 700 1rem/1 var(--io-font-display);
+    --avatar-ring: 1px solid var(--io-gold-muted);
   }
   .bdg {
     position: absolute;
@@ -388,17 +385,9 @@
     height: 80%;
     object-fit: contain;
   }
-  .bdg :global(.emblem) {
-    width: 100% !important;
-    height: 100% !important;
-    border: 0;
-  }
-  .bdg :global(svg) {
-    width: 60%;
-    height: 60%;
-  }
 
   .name {
+    min-width: 0;
     overflow: hidden;
     color: var(--io-parchment);
     font-weight: 600;
@@ -419,32 +408,31 @@
   }
 
   /* Rows from 4 down, and the viewer's own. */
-  .body {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .list,
-  .standing,
-  .entry {
+  .list {
     box-sizing: border-box;
     width: 100%;
-    min-width: 0;
-  }
-  .list {
-    order: 1;
+    margin: 0;
+    padding: 0;
     border-top: 1px solid var(--io-gold-muted);
+    list-style: none;
+  }
+  .item {
+    border-bottom: 1px solid var(--io-gold-muted);
   }
   .more {
-    order: 2;
     margin: 0.75rem 0 0;
     color: var(--io-parchment-muted);
     font: 400 0.8rem/1 var(--io-font-ui);
     text-align: center;
   }
   .standing {
-    order: 3;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
     margin-top: 1.75rem;
+  }
+  .standing.m {
+    display: none;
   }
   .standing-label {
     margin-bottom: 0.6rem;
@@ -455,15 +443,15 @@
   }
   .entry {
     display: grid;
+    box-sizing: border-box;
     grid-template-columns: 2.5rem 44px minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.9rem;
+    width: 100%;
+    min-width: 0;
     min-height: 68px;
     padding: 0 0.5rem;
     font-family: var(--io-font-ui);
-  }
-  .item {
-    border-bottom: 1px solid var(--io-gold-muted);
   }
   .entry.you {
     border: 1px solid var(--io-gold);
@@ -484,9 +472,6 @@
   .who {
     display: flex;
     flex-direction: column;
-    min-width: 0;
-  }
-  .line > .name {
     min-width: 0;
   }
   .line {
@@ -550,15 +535,15 @@
       margin-bottom: 1.5rem;
     }
     .av.big {
-      --s: 64px;
+      --avatar-size: 64px;
       --b: 24px;
     }
     .av.mid {
-      --s: 52px;
+      --avatar-size: 52px;
       --b: 22px;
     }
     .av.row {
-      --s: 36px;
+      --avatar-size: 36px;
       --b: 18px;
     }
     .pedestal {
@@ -587,9 +572,12 @@
     .lv-short {
       display: inline;
     }
-    .standing {
-      order: 0;
+    .standing.m {
+      display: block;
       margin: 0 0 1.5rem;
+    }
+    .standing.d {
+      display: none;
     }
     .entry {
       grid-template-columns: 1.75rem 36px minmax(0, 1fr) auto;
@@ -598,11 +586,14 @@
     }
     .you .mine {
       display: inline;
-      margin-right: 0.3em;
       color: var(--io-gold);
     }
-    .you .tag {
+    .entry .tag {
       display: none;
+    }
+    .pline .tag {
+      padding: 0 5px;
+      font-size: 0.55rem;
     }
   }
 </style>

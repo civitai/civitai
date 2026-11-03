@@ -15,7 +15,11 @@ vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 
 const { load } = await import('./+page.server');
 
-const run = () => load({ locals: { user: { id: 7 } } } as never) as Promise<Record<string, any>>;
+const run = (help?: string) =>
+  load({
+    locals: { user: { id: 7 } },
+    cookies: { get: (name: string) => (name === 'knights_fervor_help' ? help : undefined) },
+  } as never) as Promise<Record<string, any>>;
 const row = (userId: number, image: string | null, rankType = 'Knight') => ({
   userId,
   username: `user${userId}`,
@@ -68,5 +72,13 @@ describe('leaderboard load', () => {
     expect(data.copy.formula).toContain('× 100 ×');
     expect(data.entries[0]).not.toHaveProperty('image');
     expect(data.windowDays).toBe(7);
+    expect(new Date(data.nextTallyAt).getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(data.nextTallyAt).toISOString().slice(11)).toBe('00:00:00.000Z');
+  });
+
+  it('renders the panel closed only when the viewer collapsed it', async () => {
+    expect((await run()).helpClosed).toBe(false);
+    expect((await run('closed')).helpClosed).toBe(true);
+    expect((await run('open')).helpClosed).toBe(false);
   });
 });

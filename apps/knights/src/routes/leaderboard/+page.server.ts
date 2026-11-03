@@ -11,12 +11,14 @@ import { fervorCopy, nextTally } from '$lib/server/leaderboard-view';
 import { boardCache } from '$lib/server/leaderboard-runtime';
 import { requireMember } from '$lib/server/membership';
 import { PROGRESSION } from '$lib/server/progression/config';
+import { HELP_COOKIE } from '$lib/fervor-help';
+import { nextTallyAt } from '$lib/tally';
 import { playerBadge } from '$lib/player-badge';
 import type { PageServerLoad } from './$types';
 
 const BADGE_PX = 48;
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, cookies }) => {
   const civitaiUrl = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
   const now = new Date();
   const [status, board] = await Promise.all([
@@ -43,6 +45,8 @@ export const load: PageServerLoad = async ({ locals }) => {
     size: LEADERBOARD_SIZE,
     windowDays: PROGRESSION.fervorWindowDays,
     nextTally: nextTally(now),
+    nextTallyAt: nextTallyAt(now).toISOString(),
+    helpClosed: cookies.get(HELP_COOKIE) === 'closed',
     copy: fervorCopy(),
     entries: view.entries.map(shown),
     self: view.self && shown(view.self),
