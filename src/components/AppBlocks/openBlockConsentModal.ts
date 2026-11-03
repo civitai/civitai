@@ -19,6 +19,11 @@ export type OpenBlockConsentModalArgs = {
   missingScopes: string[];
   /** Called after the grant lands so the host can re-mint the block token. */
   onGranted: () => void;
+  /**
+   * The SOURCE app's blockId when the block asked for `apps:storage:publish` in an app it imports
+   * from (`resolveSourcePublishConsentRequest`); `missingScopes` is then that one scope.
+   */
+  from?: string;
 };
 
 /**
@@ -46,10 +51,18 @@ export function openBlockConsentModal({
   blockName,
   missingScopes,
   onGranted,
+  from,
 }: OpenBlockConsentModalArgs) {
   dialogStore.trigger({
-    id: `block-consent-${appBlockId}`,
+    // A prompt for a source app is a different prompt from this app's own, so it gets its own id.
+    id: from === undefined ? `block-consent-${appBlockId}` : `block-consent-${appBlockId}-${from}`,
     component: BlockConsentModal,
-    props: { appBlockId, blockName, missingScopes, onGranted },
+    props: {
+      appBlockId,
+      blockName,
+      missingScopes,
+      onGranted,
+      ...(from === undefined ? {} : { from }),
+    },
   });
 }

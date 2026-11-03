@@ -144,8 +144,8 @@ describe('a database without the hand-applied table', () => {
 });
 
 describe('a database whose table predates the collections and access columns', () => {
-  // `undefined_column`: a table created by the earlier draft of the migration. Fail closed like
-  // a missing table, never a 500 on every import call.
+  // `undefined_column`: a table without those columns. Fail closed like a missing table, never a
+  // 500 on every import call.
   const oldShape = Object.assign(
     new Error('Raw query failed. Code: `42703`. Message: `column "collections" does not exist`'),
     { code: 'P2010', meta: { code: '42703' } }
