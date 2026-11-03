@@ -38,6 +38,7 @@ import {
   getMyRosterStatus,
   setRosterOptIn,
   getMyShowcaseHat,
+  getMyShowcaseHatArt,
   setShowcaseHat,
 } from '~/server/services/event.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
@@ -217,6 +218,10 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .query(({ ctx, input }) => getMyShowcaseHat({ user: ctx.user, ...input })),
+  getMyShowcaseHatArt: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyShowcaseHatArt({ user: ctx.user, ...input })),
   setShowcaseHat: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(showcaseHatSchema)
