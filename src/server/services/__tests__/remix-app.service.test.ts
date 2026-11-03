@@ -50,8 +50,10 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   }),
 }));
 
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import {
   buildRemixAppRun,
+  remixAppExternalId,
   quoteRemixApps,
   runRemixApp,
   type RemixAppCaller,
@@ -277,9 +279,34 @@ describe('remixApp.run → graph input', () => {
     expect(again).toBe(first);
     expect(other).not.toBe(first);
   });
+
+  it('keys the externalId on user, app and image too, so taps never collide across them', () => {
+    const tap = { userId: 1, slug: 'anime-it', imageId: 2, nonce: 'nonce-same' };
+    const base = remixAppExternalId(tap);
+    expect(remixAppExternalId({ ...tap, userId: 3 })).not.toBe(base);
+    expect(remixAppExternalId({ ...tap, slug: 'pixel-art' })).not.toBe(base);
+    expect(remixAppExternalId({ ...tap, imageId: 4 })).not.toBe(base);
+  });
+
+  it('confirms an owner block on the primary before a paid run, not before a quote', async () => {
+    addImage(19);
+    await runRemixApp({ slug: 'anime-it', imageId: 19, nonce: 'nonce-0019', caller: caller() });
+    await quoteRemixApps({ imageId: 19, caller: caller() });
+    const calls = vi.mocked(assertImageVisibleToViewer).mock.calls.map((c) => c[0]);
+    expect(calls[0]).toMatchObject({ id: 19, userId: USER_ID, confirmBlockOnPrimary: true });
+    expect(calls[1]).toMatchObject({ id: 19, userId: USER_ID, confirmBlockOnPrimary: false });
+  });
 });
 
 describe('remixApp.quote', () => {
+  it('a price that fails marks that app only, not the whole menu', async () => {
+    addImage(20);
+    h.whatIfFromGraph.mockRejectedValueOnce(new Error('engine down'));
+    const { prices } = await quoteRemixApps({ imageId: 20, caller: caller() });
+    expect(prices.filter((p) => 'refusal' in p)).toHaveLength(1);
+    expect(prices.filter((p) => 'cost' in p)).toHaveLength(SYSTEM_REMIX_APPS.length - 1);
+  });
+
   const whatIfInputs = () =>
     (h.whatIfFromGraph.mock.calls as unknown as [SubmitArgs][]).map((c) => c[0].input);
 

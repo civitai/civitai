@@ -64,6 +64,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
+import { Menu } from '@mantine/core';
+import { RemixAppsSection } from '~/components/Image/Remix/RemixApps';
 import { RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import type { RemixSourceImage } from '~/components/Image/Remix/remix.utils';
 import { SYSTEM_REMIX_APPS } from '~/shared/constants/remix-apps.constants';
@@ -160,5 +162,40 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.confirm).toHaveBeenCalledTimes(1);
     // A new menu open is a new tap.
     expect(h.run.mock.calls[0][0].nonce).not.toBe(firstNonce);
+  });
+
+  test('a signed-out viewer is offered no apps', async () => {
+    h.user = null;
+    renderMenu(video);
+    await page.getByRole('button', { name: 'Remix' }).click();
+
+    expect(h.startRemix).toHaveBeenCalledTimes(1);
+  });
+
+  test('two clicks in one open repeat the tap; the next open is a new tap', async () => {
+    localStorage.setItem('remix-apps:confirmed', '1');
+    // Mounted once and kept mounted, as Mantine does across a quick reopen.
+    const section = (openCount: number) => (
+      <Menu opened>
+        <Menu.Target>
+          <button type="button">target</button>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <RemixAppsSection apps={[firstApp]} imageId={video.id} openCount={openCount} />
+        </Menu.Dropdown>
+      </Menu>
+    );
+    const screen = await renderWithProviders(section(1));
+    const item = page.getByRole('menuitem', { name: firstApp.name });
+    await item.click();
+    await item.click();
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2));
+    const [first, second] = h.run.mock.calls.map((c) => c[0].nonce);
+    expect(second).toBe(first);
+
+    await screen.rerender(section(2));
+    await item.click();
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(3));
+    expect(h.run.mock.calls[2][0].nonce).not.toBe(first);
   });
 });
