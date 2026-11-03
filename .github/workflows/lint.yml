@@ -534,8 +534,11 @@ jobs:
     # before merge — but drafts skip this job and `main` has no required checks, so
     # PRs merged as drafts or merged red let 12 errors in 9 files reach `main`
     # unmeasured (re-baselined in #7571), and every later PR inherited the red with
-    # no way to tell which commit caused it. On `main` it renders red on that commit
-    # and blocks nothing.
+    # no way to tell which commit caused it. On `main` it renders red and blocks
+    # nothing. It usually lands on the commit that caused it: the job takes ~3 min,
+    # and a finished job keeps its result when the concurrency group cancels the run.
+    # A push within ~3 min of the previous one cancels the job first, and the error
+    # then shows on the newer commit's run.
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
     timeout-minutes: 30
     steps:
