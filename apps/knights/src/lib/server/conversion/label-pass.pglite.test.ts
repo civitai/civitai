@@ -263,6 +263,43 @@ describe('labels', () => {
     expect(await labels()).toHaveLength(1);
   });
 
+  it('logs each pass with failures at error level, and the vote it gives up on once', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await vote(1, 1, 101);
+    await vote(2, 2, 102);
+    await pg.exec(
+      `INSERT INTO label_store.erased_subject ("subjectType","subjectId") VALUES ('image','101')`
+    );
+
+    for (let i = 0; i < 8; i++) {
+      await pass();
+      await wait();
+    }
+
+    const named = (name: string) => log.mock.calls.map((c) => c[0]).filter((e) => e.name === name);
+    expect(named('knights-label-failures')).toHaveLength(5);
+    expect(named('knights-label-failures')[0]).toMatchObject({
+      type: 'error',
+      details: { labelFailures: 1 },
+    });
+    const gaveUp = named('knights-label-given-up');
+    expect(gaveUp).toHaveLength(1);
+    expect(gaveUp[0]).toMatchObject({
+      type: 'error',
+      details: { kind: 'rating', itemId: 1, refPrefix: expect.stringMatching(/^[0-9a-f]{12}$/) },
+    });
+    expect(JSON.stringify(gaveUp[0])).not.toMatch(/playerId|userId/);
+  });
+
+  it('logs and rethrows when the pass itself raises', async () => {
+    await expect(runLabelPass({} as never, { now: NOW, log })).rejects.toThrow();
+
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'knights-label-pass-failed' })
+    );
+  });
+
   it('does not try a refused vote again before the retry age', async () => {
     await seedPlayer(pg, 1);
     await vote(1, 1, 101);
@@ -335,6 +372,18 @@ describe('labels', () => {
 
       expect(await labelled(2)).toEqual([true]);
       expect(await labels()).toHaveLength(2);
+      expect(
+        log.mock.calls.map((c) => c[0]).filter((e) => e.name === 'knights-label-given-up')
+      ).toEqual([
+        expect.objectContaining({
+          type: 'error',
+          details: {
+            kind: 'rating',
+            itemId: 2,
+            refPrefix: expect.stringMatching(/^[0-9a-f]{12}$/),
+          },
+        }),
+      ]);
       expect(
         (
           await pg.query(
