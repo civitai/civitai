@@ -137,7 +137,7 @@ const GATE_LEDGER: Record<string, string> = {
     'ACCEPTED collaborator, all three via the one resolveListingRole helper (a thin read ' +
     'of resolveListingAccess) — the owner half included, so a stale denormalized column ' +
     'cannot invert them (D5). A moderator holding no seat is admitted as role `moderator` ' +
-    'and the content writes record a moderator-edit event first (D1). submitListingRevision needed the ' +
+    'and the content writes record a moderator-edit event in the write transaction (D1). submitListingRevision needed the ' +
     'seat check specifically because beginListingRevision clones the shadow with the ' +
     'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
     'clone is a copy of a copy, which is why reading it directly was doubly wrong.',

@@ -1,6 +1,4 @@
--- ============================================================
 -- Moderator listing edits: widen the app_listing_moderation_events action CHECK
--- ============================================================
 -- Adds ONE moderation action, written by `app-listing-moderator-edit.ts`:
 --   * 'moderator-edit' — a moderator edited a listing's details or store media without
 --     holding a seat on it. Changes no `app_listings.status`.
@@ -11,8 +9,8 @@
 -- then production). CI and deploys do not run it.
 --
 -- WITHOUT IT moderator edits to a listing they hold no seat on REFUSE, and that is the safe
--- direction: the audit row is inserted BEFORE the listing write, so its 23514 aborts the
--- edit and nothing changes unrecorded. Owner and collaborator edits never write this row
+-- direction: the audit row is inserted in the same transaction as the listing write, so its
+-- 23514 rolls the edit back and nothing changes unrecorded. Owner and collaborator edits never write this row
 -- and work before, during and after the apply. Apply it before moderators need to edit.
 --
 -- ADDITIVE: the new IN-list is a strict superset of the previous widen

@@ -1357,8 +1357,8 @@ async function resolveListingRole(
  * Load a listing and assert the caller may edit it: its OWNER, an ACCEPTED
  * collaborator ON THE LISTING (seats are listing-keyed since the re-key; the backing
  * AppBlock is not the seat key, and an off-site listing has none), or — when
- * `isModerator` — a moderator, as role `moderator`. Writers record a moderator's edit
- * with `recordModeratorListingEdit` before writing.
+ * `isModerator` — a moderator, as role `moderator`. Writers record a moderator edit
+ * with `withModeratorEditAudit`, in the write transaction.
  *
  * 🔴 THE OWNER HALF IS `resolveListingRole`, NOT `listing.userId` — the row loaded here
  * carries the DENORMALIZED copy, which is stale-able for onsite. See
