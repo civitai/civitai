@@ -56,7 +56,6 @@ export function usePushBrowserState() {
   const support = usePushSubscriptionStore((s) => s.support);
   const permission = usePushSubscriptionStore((s) => s.permission);
   const subscribed = usePushSubscriptionStore((s) => s.subscribed);
-  const checked = usePushSubscriptionStore((s) => s.checked);
   const setState = usePushSubscriptionStore((s) => s.set);
 
   // Effect, not render-time: SSR always computes 'unsupported', so deriving during render would
@@ -71,15 +70,11 @@ export function usePushBrowserState() {
     // Only look for an existing registration — never create one from an effect.
     navigator.serviceWorker.getRegistration('/sw.js').then(async (registration) => {
       const subscription = await registration?.pushManager.getSubscription();
-      setState({
-        subscribed: !!subscription,
-        currentEndpoint: subscription?.endpoint ?? null,
-        checked: true,
-      });
+      setState({ subscribed: !!subscription, currentEndpoint: subscription?.endpoint ?? null });
     });
   }, [support, currentUser, setState]);
 
-  return { support, permission, subscribed, checked };
+  return { support, permission, subscribed };
 }
 
 /**
@@ -93,7 +88,7 @@ export function usePushSubscription() {
   // One store for the whole browser, not per-hook state: this hook is mounted independently by
   // PushDeviceToggle and PushDeviceList, and per-instance copies drift apart the moment either one
   // subscribes or revokes (see the store's own comment).
-  const { support, permission, subscribed, checked } = usePushBrowserState();
+  const { support, permission, subscribed } = usePushBrowserState();
   const currentEndpoint = usePushSubscriptionStore((s) => s.currentEndpoint);
   const busy = usePushSubscriptionStore((s) => s.busy);
   const setState = usePushSubscriptionStore((s) => s.set);
@@ -194,7 +189,6 @@ export function usePushSubscription() {
     active: permission === 'granted' && subscribed && serverKnowsThisDevice !== false,
     /** This browser's subscription endpoint — matches its PushSubscription row. */
     currentEndpoint,
-    checked,
     busy,
     enable,
     disable,
