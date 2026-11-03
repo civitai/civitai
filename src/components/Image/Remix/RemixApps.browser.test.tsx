@@ -35,7 +35,8 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useCivitaiSessionContext: () => (h.user ? { type: 'authed', ...h.user } : { type: 'unauthed' }),
+  useOptionalCivitaiSessionContext: () =>
+    h.user ? { type: 'authed', ...h.user } : { type: 'unauthed' },
 }));
 vi.mock('@mantine/modals', async (importOriginal) => ({
   ...(await importOriginal<typeof Modals>()),

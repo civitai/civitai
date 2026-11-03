@@ -11,7 +11,7 @@ import {
   IconSparkles,
 } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -39,8 +39,8 @@ const icons: Record<string, typeof IconSparkles> = {
 export function useRemixApps(image: RemixSourceImage): RemixAppDefinition[] {
   const features = useOptionalFeatureFlags();
   // The session's showNsfw, which the server reads too; `CurrentUser` leaves it out.
-  const session = useCivitaiSessionContext();
-  if (!features?.remixApps || session.type !== 'authed') return [];
+  const session = useOptionalCivitaiSessionContext();
+  if (!features?.remixApps || session?.type !== 'authed') return [];
   const viewer = { isGreen: !!features.isGreen, showNsfw: !!session.showNsfw };
   return SYSTEM_REMIX_APPS.filter(
     (app) => !('refusal' in resolveRemixAppEngine(app, image, viewer))
