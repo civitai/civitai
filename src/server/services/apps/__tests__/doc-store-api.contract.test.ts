@@ -147,6 +147,7 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { DOC_STORE_READ_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS, DocStoreError } from '~/server/services/apps/doc-store.types';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -359,6 +360,8 @@ async function mint(opts: {
   scopes: string[];
   dev?: boolean;
   reviewRunForReal?: boolean;
+  /** The token's maturity ceiling; SFW (1) unless a test mints a red-host token. */
+  maxBrowsingLevel?: number;
 }): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: opts.uid,
@@ -368,7 +371,7 @@ async function mint(opts: {
     blockInstanceId: `bki_${opts.app.id}`,
     scopes: opts.scopes,
     ctx: {},
-    maxBrowsingLevel: 1,
+    maxBrowsingLevel: opts.maxBrowsingLevel ?? 1,
     domain: 'green',
     ...(opts.dev ? { dev: true } : {}),
     ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
@@ -3082,6 +3085,92 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       expect(r.body).toMatchObject({ code: 'rate_limited', details: { bucket: 'read' } });
     }
     expect(kv.get(readBucket(S, VIEWER_IDS.v1))).toBeUndefined();
+  });
+
+  // ── A mature-rated source is reached only from a token whose ceiling allows mature ──────────
+
+  it('a mature-rated source is refused to a SFW-ceiling consumer token, before any grant is read', async () => {
+    const pair = (rating: string) => {
+      seq += 1;
+      const app = (label: string, manifest: unknown): AppRow => {
+        const r = {
+          id: `apb_imprating${label}${seq}`,
+          appId: `appblk-imprating${label}${seq}`,
+          blockId: `imp-rating-${label}-${seq}`,
+          status: 'approved',
+          manifest,
+        };
+        apps.push(r);
+        return r;
+      };
+      const S = app('src', {
+        contentRating: rating,
+        scopes: ['apps:storage'],
+        storage: { collections: { notes: { visibility: 'private' } } },
+      });
+      const C = app('fork', {
+        contentRating: 'g',
+        scopes: CONSUMER_SCOPES,
+        storage: {
+          collections: { own: { visibility: 'private' } },
+          imports: [{ from: S.blockId, collections: ['notes'], access: 'readwrite' }],
+        },
+      });
+      return { S, C };
+    };
+    const SFW_CEILING = 1;
+    const read = async (S: AppRow, C: AppRow, maxBrowsingLevel: number) =>
+      call({
+        token: await mint({
+          app: C,
+          uid: VIEWER_IDS.v1,
+          scopes: CONSUMER_SCOPES,
+          maxBrowsingLevel,
+        }),
+        method: 'GET',
+        path: '/notes/n1',
+        query: { from: S.blockId },
+      });
+    const ledgerReads = () =>
+      dbMock.dbWrite.$queryRaw.mock.calls.filter((c) =>
+        (c[0] as unknown as string[]).join('?').includes('app_storage_import_grants')
+      ).length;
+
+    const mature = pair('x');
+    await grant(VIEWER_IDS.v1, mature.C, mature.S);
+    await call({
+      token: await sourceToken(mature.S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'mature source' } },
+    });
+    dbMock.dbWrite.$queryRaw.mockClear();
+    const refused = await read(mature.S, mature.C, SFW_CEILING);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({
+      code: 'not_eligible',
+      details: { reason: 'import_source_rating' },
+    });
+    expect(JSON.stringify(refused.body)).not.toContain('mature source');
+    expect(ledgerReads()).toBe(0);
+    // A red-host token (its ceiling allows mature) reaches it.
+    const red = await read(mature.S, mature.C, allBrowsingLevelsFlag);
+    expect(red.status).toBe(200);
+    expect(red.body).toMatchObject({ data: { text: 'mature source' } });
+
+    // A SFW source is reached from both.
+    const sfw = pair('g');
+    await grant(VIEWER_IDS.v1, sfw.C, sfw.S);
+    await call({
+      token: await sourceToken(sfw.S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'sfw source' } },
+    });
+    for (const ceiling of [SFW_CEILING, allBrowsingLevelsFlag]) {
+      const r = await read(sfw.S, sfw.C, ceiling);
+      expect(r.status, `ceiling ${ceiling}`).toBe(200);
+    }
   });
 
   // ── Counters and marks on the source's SHARED collections need its publish consent too ────

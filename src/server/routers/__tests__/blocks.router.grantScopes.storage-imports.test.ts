@@ -150,6 +150,22 @@ describe('blocks.grantScopes records the imports the viewer was shown', () => {
     expect(grantRow.create).toHaveBeenCalledTimes(1);
   });
 
+  it('records no grant for a mature-rated source on a host that cannot show mature content', async () => {
+    dbMock.dbRead.appBlock.findMany.mockResolvedValue([
+      {
+        id: 'apb_src_3511',
+        blockId: 'notes-app',
+        manifest: { name: 'Notes App', contentRating: 'x' },
+      },
+    ]);
+    // The consent context's host is empty: not red-capable.
+    await grant([NOTES, WORDS]);
+    expect(recordImports).toHaveBeenCalledTimes(1);
+    expect(recordImports.mock.calls[0]).toEqual([
+      { userId: 7421, consumerAppBlockId: 'apb_fork_3501', grants: [] },
+    ]);
+  });
+
   it.each<[string, unknown]>([
     ['a narrower access than the manifest now declares', [{ ...NOTES, access: 'read' }, WORDS]],
     [
