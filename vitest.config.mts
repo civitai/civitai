@@ -5,7 +5,6 @@ import path from 'path';
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
 import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
-import { browserPostcss } from './test/browser-postcss.mjs';
 
 // CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
 // every worker inherits it on any machine.
@@ -522,7 +521,7 @@ const browserModeOptions = () => ({
 /** Everything a browser project needs outside its own `test` block. */
 const browserProjectShell = () => ({
   resolve: { ...browserResolve },
-  css: { postcss: browserPostcss },
+  css: { postcss: path.resolve(__dirname, 'test/browser-postcss') },
   plugins: [componentGroupOrderPlugin],
   optimizeDeps: { ...browserOptimizeDeps },
 });
