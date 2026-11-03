@@ -75,6 +75,17 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
+.moreButton {
+  border: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.moreButton:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .lock {
   position: absolute;
   left: 50%;

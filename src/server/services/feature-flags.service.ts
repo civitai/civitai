@@ -542,6 +542,9 @@ const featureFlags = createFeatureFlags({
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // Read through useHatTurfFeed, which also checks the event is playable.
   hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
+  // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
+  // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
+  hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a

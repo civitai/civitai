@@ -1,0 +1,186 @@
+.group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  background-color: rgba(55, 58, 64, 0.9);
+  color: var(--mantine-color-white);
+}
+
+.hatOn {
+  background-color: var(--mantine-color-yellow-4);
+  color: var(--mantine-color-dark-9);
+}
+
+.hatActive {
+  outline: 2px solid var(--mantine-color-white);
+}
+
+.hatEmpty {
+  opacity: 0.55;
+}
+
+.badgeButton {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.badgeEmpty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: var(--mantine-color-blue-6);
+  color: var(--mantine-color-white);
+}
+
+.invite {
+  width: 236px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-violet-8);
+  background-color: var(--mantine-color-violet-9);
+  color: var(--mantine-color-white);
+}
+
+.cover {
+  position: relative;
+  height: 34px;
+  background: radial-gradient(
+    120% 200% at 80% 0%,
+    var(--mantine-color-violet-6) 0%,
+    var(--mantine-color-violet-8) 55%,
+    var(--mantine-color-violet-9) 100%
+  );
+
+  /* Fades into the text below. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, transparent 35%, var(--mantine-color-violet-9) 100%);
+  }
+}
+
+.coverHat {
+  position: absolute;
+}
+
+.inviteBody {
+  position: relative;
+  z-index: 1;
+  margin-top: -6px;
+  padding: 0 12px 10px;
+}
+
+.inviteTitle {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.inviteActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.notNow {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--mantine-color-violet-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stats {
+  width: 230px;
+  padding: 10px 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.count {
+  margin-left: auto;
+  font-weight: 800;
+}
+
+.tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mantine-color-yellow-4);
+}
+
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--mantine-color-dimmed);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: var(--mantine-radius-md);
+  background-color: var(--mantine-color-default-hover);
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.tileActive {
+  outline: 2px solid var(--mantine-color-yellow-4);
+  color: var(--mantine-color-text);
+}
