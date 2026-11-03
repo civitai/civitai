@@ -38,6 +38,7 @@ import type { SessionUser } from '~/types/session';
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import (it imports this module back). See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
+import { listingEditorRole } from '~/shared/constants/app-capabilities.constants';
 import {
   classifyStoredObjectIntegrity,
   readRecordedEtag,
@@ -444,7 +445,8 @@ async function resolveListingRole(
 
 async function auditModeratorAssetEdit(listing: OwnedListing, user: SessionUser): Promise<void> {
   if (!user.isModerator) return;
-  if ((await resolveListingRole(listing.id, user.id, dbWrite)) !== null) return;
+  const role = await resolveListingRole(listing.id, user.id, dbWrite);
+  if (listingEditorRole(role, user.isModerator) !== 'moderator') return;
   await recordModeratorListingEdit({
     appListingId: listing.id,
     actorUserId: user.id,

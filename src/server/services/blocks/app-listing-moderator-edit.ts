@@ -6,11 +6,12 @@ import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 
 export const MODERATOR_EDIT_ACTION = 'moderator-edit' satisfies AppListingModerationAction;
 
-export type ModeratorEditSurface = 'details' | 'media';
+export type ModeratorEditSurface = 'details' | 'media' | 'revision';
 
-const SURFACE_LABEL: Record<ModeratorEditSurface, string> = {
-  details: 'details',
-  media: 'store media',
+const SURFACE_REASON: Record<ModeratorEditSurface, string> = {
+  details: "A moderator edited this listing's details.",
+  media: "A moderator edited this listing's store media.",
+  revision: 'A moderator submitted a revision of this listing for review.',
 };
 
 /**
@@ -37,7 +38,7 @@ export async function recordModeratorListingEdit(args: {
       slug: target.slug,
       action: MODERATOR_EDIT_ACTION,
       actorUserId: args.actorUserId,
-      reason: `A moderator edited this listing's ${SURFACE_LABEL[args.surface]}.`,
+      reason: SURFACE_REASON[args.surface],
       detail: args.surface,
     },
   });

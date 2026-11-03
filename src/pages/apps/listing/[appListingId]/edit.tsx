@@ -267,7 +267,7 @@ export default function AppListingEditPage() {
                   {/* FORKING — on-site only (an off-site app has no source here to fork), and
                       it gates itself on the `app-blocks-fork` rollout flag. Saves on its own,
                       in place, never through the form below: see `ListingForkSetting`. */}
-                  {context.kind === 'onsite' ? (
+                  {context.kind === 'onsite' && context.role !== 'moderator' ? (
                     <ListingForkSetting
                       appListingId={context.appListingId}
                       forkable={context.forkable}

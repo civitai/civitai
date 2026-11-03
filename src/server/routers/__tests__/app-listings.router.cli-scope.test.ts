@@ -413,3 +413,36 @@ describe('🔴 app-listings CLI scope gate — the doctor procs are IN the matri
     }
   });
 });
+
+describe('moderator listing-edit authority needs a session or a full-access key', () => {
+  const MOD_EDIT_PROCS = PROCS.filter((p) =>
+    [
+      'getMyListingForEdit',
+      'getMyListingForApp',
+      'beginListingRevision',
+      'submitListingRevision',
+      'updateListing',
+      'updateRevisionDraft',
+    ].includes(p.name)
+  );
+
+  it('covers every editor procedure that takes the moderator flag', () => {
+    expect(MOD_EDIT_PROCS).toHaveLength(6);
+  });
+
+  for (const { name, input, mock } of MOD_EDIT_PROCS) {
+    it(`${name}: a moderator's session passes isModerator through`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller(authedCtx(100, true) as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
+    });
+
+    it(`${name}: a moderator's app-scoped CLI token does not act as a moderator`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller(tokenCtx(100, CLI) as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: false }));
+    });
+  }
+});

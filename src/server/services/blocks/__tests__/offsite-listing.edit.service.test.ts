@@ -2388,5 +2388,42 @@ describe('moderator edits', () => {
         data: expect.objectContaining({ submittedByUserId: MOD }),
       })
     );
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD, detail: 'revision' }),
+    ]);
+  });
+
+  it("a moderator's revision-draft edit is written to the shadow and recorded on the parent", async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { tagline: 'mod tagline' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'mod tagline' },
+    });
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD, detail: 'details' }),
+    ]);
+  });
+
+  it('a moderator cannot change whether the app can be forked', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ kind: 'onsite', status: 'draft' })
+    );
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { forkable: true },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(auditEvents()).toEqual([]);
   });
 });

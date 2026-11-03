@@ -35,6 +35,7 @@ import {
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
 import {
+  FORKABLE_MODERATOR_MESSAGE,
   FORKABLE_OFFSITE_MESSAGE,
   FORKABLE_ON_REVISION_MESSAGE,
   assertForkableWritable,
@@ -1481,6 +1482,10 @@ export async function updateListing(opts: {
   // which is required, not incidental: the column is no-type and does not exist on the delegate.
   const forkable = effectivePatch.forkable;
   if (forkable !== undefined) {
+    // Forking shares the owner's source, so it is the owner's (or a seat holder's) consent.
+    if (listing.callerRole === 'moderator') {
+      throw new TRPCError({ code: 'FORBIDDEN', message: FORKABLE_MODERATOR_MESSAGE });
+    }
     // An off-site app has no source on the platform, so there is nothing to fork.
     if (listing.kind !== 'onsite') {
       throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_OFFSITE_MESSAGE });
@@ -1955,7 +1960,8 @@ export async function submitListingRevision(opts: {
   // editor on their own shadow (the clone names the parent owner, not them) AND, on any
   // shadow that outlives a transfer of its parent, it named an owner who had already
   // been replaced, refusing the new owner and admitting the old one.
-  if ((await resolveListingRole(shadowId, userId, isModerator)) === null) {
+  const callerRole = await resolveListingRole(shadowId, userId, isModerator);
+  if (callerRole === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only submit your own revision');
   }
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
@@ -2011,6 +2017,13 @@ export async function submitListingRevision(opts: {
     return { publishRequestId: openRequest.id, shadowId, slug: openRequest.slug };
   }
 
+  if (callerRole === 'moderator') {
+    await recordModeratorListingEdit({
+      appListingId: shadowId,
+      actorUserId: userId,
+      surface: 'revision',
+    });
+  }
   const publishRequestId = newAppListingPublishRequestId();
   await dbWrite.appListingPublishRequest.create({
     data: {

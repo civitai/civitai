@@ -855,6 +855,28 @@ describe('screenshot CRUD', () => {
     expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("a moderator's caption edit is audited", async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_live',
+      status: 'approved',
+      revisionOfId: null,
+    });
+    recordModeratorEdit.mockClear();
+    const { updateListingScreenshotCaption } = await import('../app-listing-assets.service');
+    await updateListingScreenshotCaption({ screenshotId: 'b', caption: 'hi' }, mod);
+    expect(recordModeratorEdit).toHaveBeenCalledWith({
+      appListingId: 'apl_live',
+      actorUserId: 7,
+      surface: 'media',
+    });
+  });
+
   it('an owner who is also a moderator is not audited as a moderator edit', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
@@ -1423,6 +1445,7 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     '%s hands a raise to the history, attributed to the moderator',
     async (proc, dims) => {
       recordRatingChange.mockClear();
+      recordModeratorEdit.mockClear();
       // The fake does not apply the asset write, so the row already names image 500 in
       // every slot the re-derive reads back.
       mockDb.appListing.findUnique.mockResolvedValue({
@@ -1443,6 +1466,11 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
 
       await service[proc]({ listingId: 'apl_live', imageId: 500 }, mod);
 
+      expect(recordModeratorEdit).toHaveBeenCalledWith({
+        appListingId: 'apl_live',
+        actorUserId: 7,
+        surface: 'media',
+      });
       expect(recordRatingChange).toHaveBeenCalledTimes(1);
       expect(recordRatingChange).toHaveBeenCalledWith({
         appListingId: 'apl_live',
