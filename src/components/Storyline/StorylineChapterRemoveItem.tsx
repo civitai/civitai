@@ -15,7 +15,6 @@ export function StorylineChapterRemoveItem({ imageId }: { imageId: number }) {
   if (
     !chapter?.post ||
     !canRemoveStorylineChapter({
-      depth: chapter.depth,
       authorId: chapter.post.userId,
       ownerId: storyline.path.storyline.userId,
       viewer: currentUser,
@@ -28,6 +27,7 @@ export function StorylineChapterRemoveItem({ imageId }: { imageId: number }) {
     <RemoveChapterMenuItem
       chapterId={chapter.chapterId}
       title={chapter.post.title || 'this chapter'}
+      depth={chapter.depth}
       hasChildren={chapter.childCount > 0}
       byAuthor={byAuthor}
       onRemoved={storyline.leave}

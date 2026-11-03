@@ -3,35 +3,35 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconTrash } from '@tabler/icons-react';
 import { useRemoveStorylineChapter } from '~/components/Storyline/storyline.data';
 
-/** Who is offered the removal; the server decides (a paid chapter, a pending continuation). */
+/**
+ * Who is offered the removal, chapter 1 included so they are told why it can't go; the server
+ * decides the rest (a paid chapter, a pending continuation).
+ */
 export const canRemoveStorylineChapter = ({
-  depth,
   authorId,
   ownerId,
   viewer,
 }: {
-  depth: number;
   authorId: number;
   ownerId: number;
   viewer: { id: number; isModerator?: boolean } | null | undefined;
-}) =>
-  !!viewer &&
-  depth > 0 &&
-  (viewer.id === authorId || viewer.id === ownerId || !!viewer.isModerator);
+}) => !!viewer && (viewer.id === authorId || viewer.id === ownerId || !!viewer.isModerator);
 
 /**
- * Takes a chapter out of its storyline; its post stays published. Only a chapter nothing continues
- * from can go, so for one that has continuations the item says why instead.
+ * Takes a chapter out of its storyline; its post stays published. Chapter 1 and a chapter others
+ * continue from can't go, so for those the item is disabled and says why.
  */
 export function RemoveChapterMenuItem({
   chapterId,
   title,
+  depth,
   hasChildren,
   byAuthor,
   onRemoved,
 }: {
   chapterId: number;
   title: string;
+  depth: number;
   hasChildren: boolean;
   /** The viewer wrote the chapter, so any Buzz paid to add it was theirs. */
   byAuthor: boolean;
@@ -53,17 +53,25 @@ export function RemoveChapterMenuItem({
       onConfirm: () => remove.mutate(chapterId),
     });
 
+  // Chapter 1's way out is "Delete storyline" in the storyline's ⋯ menu.
+  const refusal =
+    depth === 0
+      ? "Chapter 1 can't be removed. Delete the storyline instead"
+      : hasChildren
+      ? 'Other chapters continue from this one'
+      : null;
+
   return (
     <Menu.Item
       color="red"
       leftSection={<IconTrash size={14} stroke={1.5} />}
-      disabled={hasChildren || remove.isPending}
+      disabled={!!refusal || remove.isPending}
       onClick={confirmRemove}
     >
       Remove from storyline
-      {hasChildren && (
+      {refusal && (
         <Text size="xs" c="dimmed">
-          Other chapters continue from this one
+          {refusal}
         </Text>
       )}
     </Menu.Item>

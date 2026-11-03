@@ -476,7 +476,6 @@ function CanonStop({
   const canRemove =
     !!post &&
     canRemoveStorylineChapter({
-      depth: node.chapter.depth,
       authorId: post.userId,
       ownerId,
       viewer: currentUser,
@@ -527,6 +526,7 @@ function CanonStop({
                 <RemoveChapterMenuItem
                   chapterId={node.chapterId}
                   title={node.title}
+                  depth={node.chapter.depth}
                   hasChildren={(canon?.childCount ?? 0) > 0}
                   byAuthor={post.userId === currentUser?.id}
                 />
