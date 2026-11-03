@@ -111,7 +111,7 @@ type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>
 type FoldBlob = { url?: string; blobId?: string; status?: string };
 
 /** A preserved file is one blob however many filings name it; a legacy file is its URL. A copy that
- *  was preserved replaces one that could not be. */
+ *  was preserved replaces one that could not be, but never a moderator's exclusion. */
 function foldBlobs(stored: unknown, added: unknown) {
   const byKey = new Map<unknown, FoldBlob>();
   for (const blob of [
@@ -120,7 +120,10 @@ function foldBlobs(stored: unknown, added: unknown) {
   ] as FoldBlob[]) {
     const key = blob?.blobId ?? blob?.url;
     const kept = byKey.get(key);
-    if (!kept || (kept.status !== 'preserved' && blob?.status === 'preserved'))
+    if (
+      !kept ||
+      (kept.status !== 'preserved' && kept.status !== 'excluded' && blob?.status === 'preserved')
+    )
       byKey.set(key, blob);
   }
   return [...byKey.values()];

@@ -180,7 +180,7 @@ async function loadJobs(deps: PreserveDeps, input: PreserveInput) {
   return { jobs, refused };
 }
 
-const jobKeyFor = (job: EvidenceJob) =>
+const jobKeyFor = (job: Pick<EvidenceJob, 'jobId' | 'source'>) =>
   job.source === 'workflow' ? job.jobId : job.jobId.replace(/:/g, '-');
 
 /**
@@ -217,7 +217,7 @@ export async function preserveGeneratorEvidence(
   if (isGeneratorEvidenceDetails(pending?.details))
     for (const job of pending.details.generatedImages ?? [])
       for (const blob of job.blobs ?? [])
-        if (blob.status === 'preserved') kept.set(blob.blobId, blob);
+        if (blob.status === 'preserved' || blob.status === 'excluded') kept.set(blob.blobId, blob);
 
   const limit = plimit(3);
   const stored: StoredEvidenceJob[] = [];
@@ -240,6 +240,14 @@ export async function preserveGeneratorEvidence(
       return adoptCopy(deps.store, copy, base, input.moderatorId, deps.now?.() ?? new Date());
     }
 
+    // The copy is the file's; the role and step are this workflow's use of it.
+    function keptAs(ref: EvidenceRef & { kind: 'blob' }): StoredEvidenceBlob | undefined {
+      const prior = kept.get(ref.blobId);
+      if (!prior) return undefined;
+      const { derivedOutputIds: _derived, stepName: _step, ...copy } = prior;
+      return { ...copy, role: ref.role, ...(ref.stepName && { stepName: ref.stepName }) };
+    }
+
     async function storedBlobFor(ref: EvidenceRef) {
       let blob: StoredEvidenceBlob;
       if (ref.kind === 'external')
@@ -252,7 +260,7 @@ export async function preserveGeneratorEvidence(
         };
       else
         blob =
-          kept.get(ref.blobId) ??
+          keptAs(ref) ??
           (await adoptFromManifest(ref)) ??
           (await preserveBlob(deps, {
             userId: input.userId,
@@ -339,7 +347,7 @@ export async function getGeneratorEvidenceReport(userId: number, viewerId: numbe
         blobId: blob.blobId,
         role: blob.role,
         status: blob.status,
-        reason: blob.reason ?? blob.blockedReason,
+        reason: blob.excluded?.reason ?? blob.reason ?? blob.blockedReason,
         sha256: blob.sha256,
         bytes: blob.bytes,
         contentType: blob.contentType,
@@ -400,4 +408,122 @@ export async function approveGeneratorEvidenceReport(input: {
     await tx.csamReport.update({ where: { id: input.reportId }, data: { details } });
     return { approved: true };
   });
+}
+
+type EvidenceFileAction = { reportId: number; userId: number; moderatorId: number; blobId: string };
+
+/** Changes every use of one file in an unsent, unclaimed report. The report waits for a new approval. */
+async function changeEvidenceFile(
+  input: EvidenceFileAction,
+  change: (blob: StoredEvidenceBlob) => StoredEvidenceBlob
+) {
+  return dbWrite.$transaction(async (tx) => {
+    const [locked] = await tx.$queryRaw<{ details: unknown }[]>`
+      SELECT details FROM "CsamReport"
+      WHERE id = ${input.reportId} AND "userId" = ${input.userId}
+        AND type = 'GeneratedImage' AND "reportSentAt" IS NULL AND "sendClaimId" IS NULL
+      FOR UPDATE`;
+    if (!locked || !isGeneratorEvidenceDetails(locked.details))
+      throw new TRPCError({ code: 'CONFLICT', message: 'This report can no longer be changed.' });
+    let found = false;
+    const generatedImages = locked.details.generatedImages.map((job) => ({
+      ...job,
+      blobs: job.blobs.map((blob) => {
+        if (blob.blobId !== input.blobId) return blob;
+        found = true;
+        return change(blob);
+      }),
+    }));
+    if (!found)
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'This report does not name that file.' });
+    const details: GeneratorEvidenceDetails = {
+      ...locked.details,
+      generatedImages,
+      generatorEvidence: {
+        ...locked.details.generatorEvidence,
+        approvedAt: null,
+        approvedById: null,
+      },
+    };
+    await tx.csamReport.update({ where: { id: input.reportId }, data: { details } });
+    return { version: evidenceVersion(details) };
+  });
+}
+
+/** Keeps one file out of what the report sends; its copy stays retained, and the reason is recorded. */
+export async function excludeGeneratorEvidenceFile(input: EvidenceFileAction & { reason: string }) {
+  const at = new Date().toISOString();
+  return changeEvidenceFile(input, (blob) =>
+    blob.status === 'excluded'
+      ? blob
+      : {
+          ...blob,
+          status: 'excluded',
+          excluded: { reason: input.reason, byId: input.moderatorId, at, status: blob.status },
+        }
+  );
+}
+
+/**
+ * Copies one file from the orchestrator again, to a new key, for a copy that no longer reads back as
+ * recorded. The old copy is left where it is and named in `replaced`. A file the orchestrator no longer
+ * gives up is left as it was.
+ */
+export async function recopyGeneratorEvidenceFile(
+  input: EvidenceFileAction,
+  deps: PreserveDeps = { config: orchestratorEvidenceConfig(), store: csamEvidenceStore() }
+) {
+  const report = await dbWrite.csamReport.findFirst({
+    where: { id: input.reportId, ...generatorEvidenceReportWhere(input.userId) },
+    select: { details: true },
+  });
+  if (!report || !isGeneratorEvidenceDetails(report.details))
+    throw new TRPCError({ code: 'CONFLICT', message: 'This report can no longer be changed.' });
+  const job = report.details.generatedImages.find((j) =>
+    j.blobs.some((b) => b.blobId === input.blobId)
+  );
+  const blob = job?.blobs.find((b) => b.blobId === input.blobId);
+  if (!job || !blob)
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'This report does not name that file.' });
+  if (blob.status === 'external' || blob.status === 'excluded')
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Only a generator file still in the report can be copied again.',
+    });
+
+  const now = deps.now?.() ?? new Date();
+  const fresh = await preserveBlob(deps, {
+    userId: input.userId,
+    jobKey: `${jobKeyFor(job)}/recopy-${now.getTime()}`,
+    blobId: input.blobId,
+    role: blob.role,
+    blockedReason: blob.blockedReason,
+    moderatorId: input.moderatorId,
+  });
+  if (fresh.status !== 'preserved') return { status: fresh.status, reason: fresh.reason };
+
+  const { version } = await changeEvidenceFile(input, (current) => ({
+    ...current,
+    status: 'preserved',
+    evidenceKey: fresh.evidenceKey,
+    sha256: fresh.sha256,
+    bytes: fresh.bytes,
+    contentType: fresh.contentType,
+    preservedAt: fresh.preservedAt,
+    preservedById: fresh.preservedById,
+    reason: undefined,
+    blockedReason: undefined,
+    refreshedAt: undefined,
+    replaced: [
+      ...(current.replaced ?? []),
+      {
+        status: current.status,
+        evidenceKey: current.evidenceKey,
+        sha256: current.sha256,
+        at: now.toISOString(),
+        byId: input.moderatorId,
+      },
+    ],
+  }));
+  return { status: fresh.status, version };
 }

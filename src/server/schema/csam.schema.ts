@@ -152,3 +152,12 @@ export const approveGeneratorEvidenceSchema = generatorEvidenceUserSchema.extend
   version: z.string().min(1).max(64),
   priorCTReports: priorCTReportsSchema,
 });
+
+export const generatorEvidenceFileSchema = generatorEvidenceUserSchema.extend({
+  reportId: z.number().int().positive(),
+  blobId: z.string().min(1).max(300),
+});
+
+export const excludeGeneratorEvidenceFileSchema = generatorEvidenceFileSchema.extend({
+  reason: z.string().trim().min(3).max(1000),
+});

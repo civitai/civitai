@@ -4,18 +4,27 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** Who may preserve and approve generator evidence. Ids are invented. */
 
-const { preserveGeneratorEvidence, approveGeneratorEvidenceReport, getEvidenceTriggers } =
-  vi.hoisted(() => ({
-    preserveGeneratorEvidence: vi.fn(async () => ({ reportId: 1, refused: [], counts: {} })),
-    approveGeneratorEvidenceReport: vi.fn(async () => ({ approved: true })),
-    getEvidenceTriggers: vi.fn(async () => []),
-  }));
+const {
+  preserveGeneratorEvidence,
+  approveGeneratorEvidenceReport,
+  getEvidenceTriggers,
+  recopyGeneratorEvidenceFile,
+  excludeGeneratorEvidenceFile,
+} = vi.hoisted(() => ({
+  preserveGeneratorEvidence: vi.fn(async () => ({ reportId: 1, refused: [], counts: {} })),
+  approveGeneratorEvidenceReport: vi.fn(async () => ({ approved: true })),
+  getEvidenceTriggers: vi.fn(async () => []),
+  recopyGeneratorEvidenceFile: vi.fn(async () => ({ status: 'preserved' })),
+  excludeGeneratorEvidenceFile: vi.fn(async () => ({ version: 'v' })),
+}));
 vi.mock(
   '~/server/services/generator-evidence/generator-evidence.service',
   async (importOriginal) => ({
     ...(await importOriginal<typeof EvidenceService>()),
     preserveGeneratorEvidence,
     approveGeneratorEvidenceReport,
+    recopyGeneratorEvidenceFile,
+    excludeGeneratorEvidenceFile,
   })
 );
 
@@ -36,6 +45,7 @@ const caller = (user: Record<string, unknown> | undefined, csamReports: boolean)
 
 const preserve = { userId: 7, workflowIds: ['7-20261101000000000000'], triggers: [] };
 const approve = { userId: 7, reportId: 3, version: 'v' };
+const file = { userId: 7, reportId: 3, blobId: 'OUTPUT000000001.png' };
 const codeOf = (call: Promise<unknown>) =>
   call.then(
     () => 'ok',
@@ -69,7 +79,13 @@ describe('generator evidence procedures', () => {
     const moderator = caller({ id: 5, isModerator: true }, false);
     expect(await codeOf(moderator.preserveGeneratorEvidence(preserve))).toBe('FORBIDDEN');
     expect(await codeOf(moderator.approveGeneratorEvidence(approve))).toBe('FORBIDDEN');
+    expect(await codeOf(moderator.recopyGeneratorEvidenceFile(file))).toBe('FORBIDDEN');
+    expect(
+      await codeOf(moderator.excludeGeneratorEvidenceFile({ ...file, reason: 'damaged copy' }))
+    ).toBe('FORBIDDEN');
     expect(preserveGeneratorEvidence).not.toHaveBeenCalled();
+    expect(recopyGeneratorEvidenceFile).not.toHaveBeenCalled();
+    expect(excludeGeneratorEvidenceFile).not.toHaveBeenCalled();
   });
 
   it('let a moderator with CSAM reporting access through, acting as that moderator', async () => {

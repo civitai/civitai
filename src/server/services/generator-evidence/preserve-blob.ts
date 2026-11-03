@@ -14,7 +14,8 @@ export type EvidenceStatus =
   | 'blocked-unreadable'
   | 'gone'
   | 'unavailable'
-  | 'external';
+  | 'external'
+  | 'excluded';
 
 /** One file of `details.generatedImages[].blobs[]` on a report filed with preserved evidence. */
 export type StoredEvidenceBlob = {
@@ -33,6 +34,16 @@ export type StoredEvidenceBlob = {
   contentType?: string;
   preservedAt?: string;
   preservedById?: number;
+  /** A moderator kept this file out of the report; its copy, if any, is still retained. */
+  excluded?: { reason: string; byId: number; at: string; status: EvidenceStatus };
+  /** Earlier copies of this file a moderator replaced with a fresh one. */
+  replaced?: {
+    status: EvidenceStatus;
+    evidenceKey?: string;
+    sha256?: string;
+    at: string;
+    byId: number;
+  }[];
   /** For an input: the outputs of the same workflow, which were made from it. */
   derivedOutputIds?: string[];
 };

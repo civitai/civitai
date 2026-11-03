@@ -21,6 +21,7 @@ const STATUS_COLOR: Record<string, string> = {
   gone: 'gray',
   unavailable: 'orange',
   external: 'blue',
+  excluded: 'dark',
 };
 
 function parseCyberTips(value: string) {
@@ -102,6 +103,81 @@ function EvidenceFile({
   ) : (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={src} alt={blobId} style={{ maxWidth: 360 }} />
+  );
+}
+
+/** Either action changes what the report sends, so it waits for approval again. */
+function FileActions({
+  userId,
+  reportId,
+  blobId,
+}: {
+  userId: number;
+  reportId: number;
+  blobId: string;
+}) {
+  const utils = trpc.useUtils();
+  const [reason, setReason] = useState('');
+  const [excluding, setExcluding] = useState(false);
+  const refresh = () => utils.csam.getGeneratorEvidenceReport.invalidate({ userId });
+  const recopy = trpc.csam.recopyGeneratorEvidenceFile.useMutation({ onSuccess: refresh });
+  const exclude = trpc.csam.excludeGeneratorEvidenceFile.useMutation({ onSuccess: refresh });
+  const error = recopy.error ?? exclude.error;
+  const notCopied =
+    recopy.data && recopy.data.status !== 'preserved'
+      ? `Not copied: ${recopy.data.status}${recopy.data.reason ? `, ${recopy.data.reason}` : ''}`
+      : null;
+
+  return (
+    <Stack gap={4}>
+      <Group gap={4}>
+        <Button
+          size="compact-xs"
+          variant="light"
+          loading={recopy.isPending}
+          onClick={() => recopy.mutate({ userId, reportId, blobId })}
+        >
+          Re-copy from generator
+        </Button>
+        <Button
+          size="compact-xs"
+          variant="light"
+          color="red"
+          onClick={() => setExcluding((v) => !v)}
+        >
+          Exclude from report
+        </Button>
+      </Group>
+      {excluding && (
+        <Group gap={4} align="flex-end">
+          <TextInput
+            size="xs"
+            label="Why is this file excluded?"
+            value={reason}
+            onChange={(e) => setReason(e.currentTarget.value)}
+          />
+          <Button
+            size="xs"
+            color="red"
+            disabled={reason.trim().length < 3}
+            loading={exclude.isPending}
+            onClick={() => exclude.mutate({ userId, reportId, blobId, reason })}
+          >
+            Exclude
+          </Button>
+        </Group>
+      )}
+      {notCopied && (
+        <Text size="xs" c="orange">
+          {notCopied}
+        </Text>
+      )}
+      {error && (
+        <Text size="xs" c="red">
+          {error.message}
+        </Text>
+      )}
+    </Stack>
   );
 }
 
@@ -195,6 +271,9 @@ function PendingReport({ userId }: { userId: number }) {
                       <Text size="xs" c="dimmed">
                         Retention restarted {blob.refreshedAt}
                       </Text>
+                    )}
+                    {blob.status !== 'external' && blob.status !== 'excluded' && (
+                      <FileActions userId={userId} reportId={report.id} blobId={blob.blobId} />
                     )}
                   </Stack>
                   {blob.status === 'preserved' && (

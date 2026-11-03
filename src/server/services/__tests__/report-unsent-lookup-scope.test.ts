@@ -359,7 +359,7 @@ describe('a second report folded into an unsent one', () => {
     });
   });
 
-  it('folds preserved generator files by blob id, a preserved copy replacing an unreadable one', async () => {
+  it('folds preserved generator files by blob id, a preserved copy replacing an unreadable one but not an excluded one', async () => {
     const evidence = { version: 1, approvedAt: '2026-11-01T00:00:00Z', approvedById: MOD };
     const first = seed({
       userId: 101,
@@ -372,6 +372,7 @@ describe('a second report folded into an unsent one', () => {
             blobs: [
               { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'old' },
               { blobId: 'b2', role: 'output', status: 'blocked-unreadable' },
+              { blobId: 'b4', role: 'output', status: 'excluded' },
             ],
           },
         ],
@@ -392,6 +393,7 @@ describe('a second report folded into an unsent one', () => {
               { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'new' },
               { blobId: 'b2', role: 'output', status: 'preserved', sha256: 'b2' },
               { blobId: 'b3', role: 'input', status: 'preserved', sha256: 'b3' },
+              { blobId: 'b4', role: 'output', status: 'preserved', sha256: 'b4' },
             ],
           },
         ],
@@ -400,13 +402,14 @@ describe('a second report folded into an unsent one', () => {
 
     expect(rows).toHaveLength(1);
     const details = rows.find((r) => r.id === first.id)?.details as {
-      generatedImages: { blobs: { blobId: string; sha256?: string }[] }[];
+      generatedImages: { blobs: { blobId: string; sha256?: string; status: string }[] }[];
       generatorEvidence: { approvedAt: unknown };
     };
-    expect(details.generatedImages[0].blobs.map((b) => [b.blobId, b.sha256])).toEqual([
-      ['b1', 'old'],
-      ['b2', 'b2'],
-      ['b3', 'b3'],
+    expect(details.generatedImages[0].blobs.map((b) => [b.blobId, b.sha256, b.status])).toEqual([
+      ['b1', 'old', 'preserved'],
+      ['b2', 'b2', 'preserved'],
+      ['b4', undefined, 'excluded'],
+      ['b3', 'b3', 'preserved'],
     ]);
     expect(details.generatorEvidence.approvedAt).toBeNull();
   });

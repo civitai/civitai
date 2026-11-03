@@ -29,7 +29,9 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 
 import {
   approveGeneratorEvidenceReport,
+  excludeGeneratorEvidenceFile,
   preserveGeneratorEvidence,
+  recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
 import { evidenceVersion } from '~/server/services/generator-evidence/evidence-meta';
@@ -233,6 +235,63 @@ describe('preserveGeneratorEvidence', () => {
     expect(fetched.filter((p) => p.includes('/blocked/'))).toEqual([]);
   });
 
+  describe('a file the pending report already holds', () => {
+    const KEPT = `generator-evidence/${USER}/${USER}-20261031000000000000/${OUTPUT}`;
+    const pendingWith = (blob: Record<string, unknown>) =>
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [
+            {
+              jobId: `${USER}-20261031000000000000`,
+              source: 'workflow',
+              blobs: [{ blobId: OUTPUT, ...blob }],
+            },
+          ],
+        },
+      } as never);
+
+    it('is not copied again, and takes the role this workflow gives it', async () => {
+      pendingWith({
+        role: 'input',
+        status: 'preserved',
+        evidenceKey: KEPT,
+        sha256: 'a'.repeat(64),
+        derivedOutputIds: ['SOMETHINGELSE.png'],
+      });
+      const store = memoryStore();
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+        { config, store }
+      );
+
+      const [job] = createCsamReport.mock.calls[0][0].details.generatedImages;
+      const kept = job.blobs.find((b: { blobId: string }) => b.blobId === OUTPUT);
+      expect(kept).toMatchObject({ role: 'output', evidenceKey: KEPT, stepName: 'edit' });
+      expect(kept.derivedOutputIds).toBeUndefined();
+      expect(vi.mocked(store.upload).mock.calls.map(([key]) => key)).not.toContainEqual(
+        expect.stringContaining(OUTPUT)
+      );
+    });
+
+    it('stays excluded when a later preserve names it again', async () => {
+      const excluded = { reason: 'not relevant', byId: 2, at: '2026-11-02T00:00:00Z' };
+      pendingWith({ role: 'output', status: 'excluded', evidenceKey: KEPT, excluded });
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+        { config, store: memoryStore() }
+      );
+
+      const [job] = createCsamReport.mock.calls[0][0].details.generatedImages;
+      expect(job.blobs.find((b: { blobId: string }) => b.blobId === OUTPUT)).toMatchObject({
+        status: 'excluded',
+        excluded,
+      });
+    });
+  });
+
   describe("adopting a preserve run's manifest", () => {
     const MANIFEST = `case-a/${USER}/manifest-20261103T000000Z.jsonl`;
     const COPY = `case-a/${USER}/${WORKFLOW}/${OUTPUT}`;
@@ -296,6 +355,22 @@ describe('preserveGeneratorEvidence', () => {
 
       const blobs = createCsamReport.mock.calls[0][0].details.generatedImages[0].blobs;
       expect(blobs[0].evidenceKey).not.toBe(outside);
+    });
+
+    it('copies afresh when the manifest records a type that is not evidence media', async () => {
+      const store = memoryStore({
+        [MANIFEST]: Buffer.from(row({ contentType: 'text/html' }) + '\n'),
+        [COPY]: bytes,
+      });
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: MANIFEST },
+        { config, store }
+      );
+
+      const blobs = createCsamReport.mock.calls[0][0].details.generatedImages[0].blobs;
+      expect(blobs[0]).toMatchObject({ status: 'preserved', contentType: 'image/png' });
+      expect(blobs[0].evidenceKey).not.toBe(COPY);
     });
 
     it("refuses another user's manifest", async () => {
@@ -384,6 +459,108 @@ describe('preserveGeneratorEvidence', () => {
       expect(where).toEqual({ id: 3 });
       expect(data.details.generatorEvidence.approvedById).toBe(1);
       expect(Date.parse(data.details.generatorEvidence.approvedAt)).not.toBeNaN();
+    });
+  });
+
+  describe('changing one file of an unsent report', () => {
+    const OLD_KEY = `generator-evidence/${USER}/${WORKFLOW}/${OUTPUT}`;
+    const report = () => ({
+      generatorEvidence: { version: 1, approvedAt: '2026-11-02T00:00:00Z', approvedById: 1 },
+      generatedImages: [
+        {
+          jobId: WORKFLOW,
+          source: 'workflow',
+          workflowId: WORKFLOW,
+          blobs: [
+            {
+              blobId: OUTPUT,
+              role: 'output',
+              status: 'preserved',
+              evidenceKey: OLD_KEY,
+              sha256: 'b'.repeat(64),
+            },
+            { blobId: INPUT, role: 'input', status: 'preserved', evidenceKey: 'k', sha256: 'c' },
+          ],
+        },
+      ],
+    });
+    const written = () =>
+      (
+        dbMock.dbWrite.csamReport.update.mock.calls[0][0] as {
+          data: { details: ReturnType<typeof report> & Record<string, never> };
+        }
+      ).data.details;
+    beforeEach(() => dbMock.dbWrite.csamReport.update.mockClear());
+    const blobOf = (details: ReturnType<typeof report>, blobId: string) =>
+      details.generatedImages[0].blobs.find((b) => b.blobId === blobId) as Record<string, unknown>;
+
+    it('excludes the file with its reason, keeps its copy, and withdraws the approval', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: report() }] as never);
+
+      await excludeGeneratorEvidenceFile({
+        reportId: 3,
+        userId: USER,
+        moderatorId: 2,
+        blobId: OUTPUT,
+        reason: 'copy is damaged',
+      });
+
+      const details = written();
+      expect(blobOf(details, OUTPUT)).toMatchObject({
+        status: 'excluded',
+        evidenceKey: OLD_KEY,
+        excluded: { reason: 'copy is damaged', byId: 2, status: 'preserved' },
+      });
+      expect(blobOf(details, INPUT).status).toBe('preserved');
+      expect(details.generatorEvidence).toMatchObject({ approvedAt: null, approvedById: null });
+    });
+
+    it('refuses a file the report does not name', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: report() }] as never);
+      await expect(
+        excludeGeneratorEvidenceFile({
+          reportId: 3,
+          userId: USER,
+          moderatorId: 2,
+          blobId: 'NOTINREPORT.png',
+          reason: 'x x x',
+        })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('re-copies the file to a new key, records the old copy, and withdraws the approval', async () => {
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({ details: report() } as never);
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: report() }] as never);
+      const store = memoryStore();
+
+      const result = await recopyGeneratorEvidenceFile(
+        { reportId: 3, userId: USER, moderatorId: 2, blobId: OUTPUT },
+        { config, store }
+      );
+
+      expect(result.status).toBe('preserved');
+      const blob = blobOf(written(), OUTPUT);
+      expect(blob.evidenceKey).not.toBe(OLD_KEY);
+      expect(blob.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+      expect(await store.read(blob.evidenceKey as string)).toEqual(new Uint8Array(bytes));
+      expect(blob.replaced).toEqual([
+        expect.objectContaining({ evidenceKey: OLD_KEY, sha256: 'b'.repeat(64), byId: 2 }),
+      ]);
+      expect(written().generatorEvidence).toMatchObject({ approvedAt: null });
+    });
+
+    it('leaves the report as it was when the generator no longer has the file', async () => {
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({ details: report() } as never);
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(null, { status: 404 }));
+
+      const result = await recopyGeneratorEvidenceFile(
+        { reportId: 3, userId: USER, moderatorId: 2, blobId: OUTPUT },
+        { config, store: memoryStore() }
+      );
+
+      expect(result.status).toBe('gone');
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     });
   });
 });

@@ -9,16 +9,20 @@ import {
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
   approveGeneratorEvidenceSchema,
+  excludeGeneratorEvidenceFileSchema,
+  generatorEvidenceFileSchema,
   generatorEvidenceUserSchema,
   generatorEvidenceWorkflowsSchema,
   preserveGeneratorEvidenceSchema,
 } from '~/server/schema/csam.schema';
 import {
   approveGeneratorEvidenceReport,
+  excludeGeneratorEvidenceFile,
   getEvidenceTriggers,
   getEvidenceWorkflows,
   getGeneratorEvidenceReport,
   preserveGeneratorEvidence,
+  recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
 import {
@@ -64,5 +68,15 @@ export const csamRouter = router({
     .input(approveGeneratorEvidenceSchema)
     .mutation(({ input, ctx }) =>
       approveGeneratorEvidenceReport({ ...input, moderatorId: ctx.user.id })
+    ),
+  recopyGeneratorEvidenceFile: csamProcedure
+    .input(generatorEvidenceFileSchema)
+    .mutation(({ input, ctx }) =>
+      recopyGeneratorEvidenceFile({ ...input, moderatorId: ctx.user.id })
+    ),
+  excludeGeneratorEvidenceFile: csamProcedure
+    .input(excludeGeneratorEvidenceFileSchema)
+    .mutation(({ input, ctx }) =>
+      excludeGeneratorEvidenceFile({ ...input, moderatorId: ctx.user.id })
     ),
 });

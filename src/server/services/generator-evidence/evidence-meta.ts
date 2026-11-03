@@ -46,11 +46,15 @@ export const isGeneratorEvidenceDetails = (details: unknown): details is Generat
 export const isAwaitingEvidenceApproval = (details: unknown) =>
   isGeneratorEvidenceDetails(details) && !details.generatorEvidence.approvedAt;
 
-export const generatorEvidenceReportWhere = (userId: number) => ({
-  userId,
+export const unsentGeneratorEvidenceWhere = {
   type: CsamReportType.GeneratedImage,
   reportSentAt: null,
   details: { path: ['generatorEvidence', 'version'], equals: GENERATOR_EVIDENCE_VERSION },
+};
+
+export const generatorEvidenceReportWhere = (userId: number) => ({
+  userId,
+  ...unsentGeneratorEvidenceWhere,
 });
 
 /** What a moderator reviewed: the report's files and their states. An approval must name it. */

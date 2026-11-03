@@ -83,7 +83,17 @@ vi.mock('~/server/services/generator-evidence/evidence-store', async (importOrig
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
-import { getCsamsToReport, processCsamReport } from '~/server/services/csam.service-new';
+import {
+  CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS,
+  getCsamsToReport,
+  logOverdueEvidenceApprovals,
+  processCsamReport,
+} from '~/server/services/csam.service-new';
+import {
+  MAX_GENERATION_TEXT_CHARS,
+  TRUNCATION_MARKER,
+} from '~/server/services/generator-evidence/evidence-payload';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { createHash } from 'crypto';
 
 const stored = Buffer.from('the bytes the user uploaded');
@@ -400,5 +410,140 @@ describe('sending a report of preserved generator evidence', () => {
     ];
     expect(where.entityId).toBe(id);
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+  });
+
+  it('also writes the prompt, negative prompt and resources into each file as plain text', async () => {
+    await sendEvidenceReport(evidenceDetails());
+
+    for (const blobId of [INPUT, OUTPUT])
+      expect(detailsFor(blobId).additionalInfo[1]).toBe(
+        [
+          'Prompt: the prompt text',
+          'Negative prompt: the negative text',
+          'Resources: urn:air:sdxl:checkpoint:civitai:1@2',
+        ].join('\n')
+      );
+  });
+
+  it('cuts a prompt past the limit and says the full text is preserved', async () => {
+    const details = evidenceDetails();
+    const long = 'p'.repeat(MAX_GENERATION_TEXT_CHARS + 50);
+    details.generatedImages[0].prompt = long;
+
+    await sendEvidenceReport(details);
+
+    const [promptLine, ...rest] = detailsFor(OUTPUT).additionalInfo[1].split('\n');
+    expect(promptLine).toBe(
+      `Prompt: ${'p'.repeat(MAX_GENERATION_TEXT_CHARS)}… ${TRUNCATION_MARKER}`
+    );
+    expect(TRUNCATION_MARKER).toContain('truncated; full text preserved');
+    expect(rest).toEqual([
+      'Negative prompt: the negative text',
+      'Resources: urn:air:sdxl:checkpoint:civitai:1@2',
+    ]);
+    expect(detailsFor(OUTPUT).details[0].valuePair[0].value).toBe(long);
+  });
+
+  describe('a file one workflow produced and another used as its input', () => {
+    const LATER = '20-20261102000000000000';
+    const reusing = () => {
+      const details = evidenceDetails();
+      details.generatedImages.push({
+        ...details.generatedImages[0],
+        jobId: LATER,
+        workflowId: LATER,
+        blobs: [
+          {
+            ...details.generatedImages[0].blobs[0],
+            role: 'input',
+            derivedOutputIds: ['OTHER000000001.png'],
+          },
+        ],
+      });
+      return details;
+    };
+
+    it('is sent once, as a generated output', async () => {
+      await sendEvidenceReport(reusing());
+
+      expect(uploadFile).toHaveBeenCalledTimes(2);
+      expect(detailsFor(OUTPUT).fileAnnotations).toEqual({ generativeAi: true });
+      expect(detailsFor(OUTPUT).additionalInfo[0]).not.toMatch(/real photo/);
+    });
+
+    it('is a generated output even when its producing workflow was added to the report later', async () => {
+      const details = reusing();
+      details.generatedImages.reverse();
+
+      await sendEvidenceReport(details);
+
+      expect(detailsFor(OUTPUT).fileAnnotations).toEqual({ generativeAi: true });
+      expect(detailsFor(OUTPUT).additionalInfo[0]).toContain(WORKFLOW);
+      expect(detailsFor(INPUT).fileAnnotations).toEqual({ generativeAi: false });
+    });
+  });
+
+  it('opens no CyberTip when a preserved file is recorded with a type that is not evidence media', async () => {
+    const details = evidenceDetails();
+    Object.assign(details.generatedImages[0].blobs[0], { contentType: 'text/html' });
+
+    const id = await sendEvidenceReport(details);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect((await readRow(id)).reportSentAt).toBeNull();
+  });
+
+  it('sends the rest of the report without a file a moderator excluded', async () => {
+    const details = evidenceDetails({ outputSha: 'f'.repeat(64) });
+    Object.assign(details.generatedImages[0].blobs[0], {
+      status: 'excluded',
+      excluded: {
+        reason: 'damaged copy',
+        byId: 10,
+        at: '2026-11-02T00:00:00Z',
+        status: 'preserved',
+      },
+    });
+
+    const id = await sendEvidenceReport(details);
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(submitFileDetails.mock.calls.map(([d]) => d.originalFileName)).toEqual([INPUT]);
+    expect((await readRow(id)).reportSentAt).not.toBeNull();
+  });
+});
+
+describe('a preserved-evidence report left waiting for approval', () => {
+  const filedHoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000 - 60_000);
+  const overdueLines = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as { subType?: string; awaiting?: string; reportId?: number })
+      .filter((line) => line.subType === 'send-blocked' && line.awaiting === 'evidence-approval');
+
+  it('raises a blocked line once it has waited past the threshold, and not once approved', async () => {
+    loggingMock.logToAxiom.mockClear();
+    dbMock.dbWrite.csamReport.findMany.mockResolvedValueOnce([
+      {
+        id: 1,
+        createdAt: filedHoursAgo(CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS),
+        details: evidenceDetails({ approved: false }),
+      },
+      {
+        id: 2,
+        createdAt: filedHoursAgo(CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS),
+        details: evidenceDetails(),
+      },
+    ] as never);
+
+    await logOverdueEvidenceApprovals();
+
+    const [{ where }] = dbMock.dbWrite.csamReport.findMany.mock.calls.at(-1) as [
+      { where: { createdAt: { lt: Date }; reportSentAt: null } }
+    ];
+    expect(where.reportSentAt).toBeNull();
+    expect(Date.now() - where.createdAt.lt.getTime()).toBeGreaterThanOrEqual(
+      CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS * 3_600_000 - 1000
+    );
+    expect(overdueLines()).toEqual([expect.objectContaining({ reportId: 1, type: 'error' })]);
   });
 });

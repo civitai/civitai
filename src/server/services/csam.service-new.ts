@@ -71,6 +71,7 @@ import type { GeneratorEvidenceDetails } from '~/server/services/generator-evide
 import {
   isAwaitingEvidenceApproval,
   isGeneratorEvidenceDetails,
+  unsentGeneratorEvidenceWhere,
 } from '~/server/services/generator-evidence/evidence-meta';
 import {
   evidenceFileDetails,
@@ -720,6 +721,32 @@ export async function logBlockedCsamReports(reportIds: number[]) {
       message: `report ${report.id} unsent after ${hoursPending} hours`,
       reportId: report.id,
       hoursPending,
+    });
+  }
+}
+
+export const CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS = 24;
+
+/** A preserved-evidence report the send job skips until a moderator approves it, left waiting too long. */
+export async function logOverdueEvidenceApprovals() {
+  const waiting = await dbWrite.csamReport.findMany({
+    where: {
+      ...unsentGeneratorEvidenceWhere,
+      createdAt: { lt: new Date(Date.now() - CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS * 3_600_000) },
+    },
+    select: { id: true, createdAt: true, details: true },
+  });
+  for (const report of waiting) {
+    if (!isAwaitingEvidenceApproval(report.details)) continue;
+    const hoursPending = hoursSinceFiled(report);
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'send-blocked',
+      message: `report ${report.id} has waited ${hoursPending} hours for a moderator to approve its evidence`,
+      reportId: report.id,
+      hoursPending,
+      awaiting: 'evidence-approval',
     });
   }
 }

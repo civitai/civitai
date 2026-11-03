@@ -1,4 +1,5 @@
 import type { TriggerRef } from '~/server/services/generator-evidence/evidence-meta';
+import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
 import { workflowOwnerId } from '~/server/services/generator-evidence/evidence-refs';
 import type {
   EvidenceStore,
@@ -64,6 +65,7 @@ export function parseManifest(text: string, key: string, userId: number) {
       continue;
     if (!objectKey.startsWith(scope.prefix) || objectKey.includes('..') || !SHA256.test(sha256))
       continue;
+    if (!EVIDENCE_MEDIA_TYPES.has(contentType.toLowerCase())) continue;
     copies.set(imageId, { objectKey, sha256, bytes, contentType });
   }
   return { copies, workflowIds: [...workflowIds], triggers: [...triggers.values()] };
