@@ -113,7 +113,8 @@ export function remixAppExternalId(args: {
     .update(JSON.stringify([args.userId, args.slug, args.imageId, args.nonce]))
     .digest('hex')
     .slice(0, 32);
-  return `remix-app:${digest}`;
+  // The orchestrator only accepts [A-Za-z0-9_-] in an externalId.
+  return `remix-app_${digest}`;
 }
 
 export type RemixAppCaller = {

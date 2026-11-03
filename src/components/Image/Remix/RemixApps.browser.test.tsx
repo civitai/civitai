@@ -33,7 +33,10 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
   useOptionalFeatureFlags: () => h.flags,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
+vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useCivitaiSessionContext: () => (h.user ? { type: 'authed', ...h.user } : { type: 'unauthed' }),
+}));
 vi.mock('@mantine/modals', async (importOriginal) => ({
   ...(await importOriginal<typeof Modals>()),
   openConfirmModal: h.confirm,

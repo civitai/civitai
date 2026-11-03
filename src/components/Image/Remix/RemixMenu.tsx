@@ -112,7 +112,7 @@ export function RemixMenu({
   const options = getRemixOptions(image);
   const engineRefusal = getEngineRefusal(image);
   const remixApps = useRemixApps(image);
-  const [menuOpened, setMenuOpened] = useState(false);
+  const [openCount, setOpenCount] = useState(0);
   // Exactly one thing to offer: skip the menu and run it. A tour spotlighting
   // this menu teaches the menu, so while one is running it opens as usual rather
   // than skipping the step that describes it.
@@ -170,7 +170,7 @@ export function RemixMenu({
   useEffect(() => clearBlocked, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpen = () => {
-    setMenuOpened(true);
+    setOpenCount((count) => count + 1);
     if (announcedOpen.current) return;
     announcedOpen.current = true;
     if (tourTarget && !hasActionableItem) {
@@ -249,7 +249,7 @@ export function RemixMenu({
           <RemixAppsSection
             apps={remixApps}
             imageId={image.id}
-            priced={menuOpened}
+            openCount={openCount}
             onRun={onAction}
           />
         )}

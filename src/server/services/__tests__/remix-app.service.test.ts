@@ -272,7 +272,8 @@ describe('remixApp.run → graph input', () => {
     await tap('nonce-bbbb');
 
     const [first, again, other] = submitted().map((a) => a.externalId);
-    expect(first).toBeTruthy();
+    // The orchestrator's own pattern; it 400s anything else.
+    for (const id of [first, again, other]) expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(again).toBe(first);
     expect(other).not.toBe(first);
   });

@@ -10,9 +10,9 @@ import {
   IconPencil,
   IconSparkles,
 } from '@tabler/icons-react';
-import { useRef } from 'react';
+import { useMemo } from 'react';
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   SYSTEM_REMIX_APPS,
@@ -38,9 +38,10 @@ const icons: Record<string, typeof IconSparkles> = {
 /** The remix apps this viewer can run on this image: the same rule the server applies. */
 export function useRemixApps(image: RemixSourceImage): RemixAppDefinition[] {
   const features = useOptionalFeatureFlags();
-  const currentUser = useCurrentUser();
-  if (!features?.remixApps || !currentUser) return [];
-  const viewer = { isGreen: !!features.isGreen, showNsfw: !!currentUser.showNsfw };
+  // The session's showNsfw, which the server reads too; `CurrentUser` leaves it out.
+  const session = useCivitaiSessionContext();
+  if (!features?.remixApps || session.type !== 'authed') return [];
+  const viewer = { isGreen: !!features.isGreen, showNsfw: !!session.showNsfw };
   return SYSTEM_REMIX_APPS.filter(
     (app) => !('refusal' in resolveRemixAppEngine(app, image, viewer))
   );
@@ -136,17 +137,19 @@ function RemixAppItem({
   imageId,
   price,
   loading,
+  openCount,
   onRun,
 }: {
   app: RemixAppDefinition;
   imageId: number;
+  openCount: number;
   price?: { cost: number } | { refusal: string };
   loading: boolean;
   onRun?: () => void;
 }) {
-  // One nonce per menu open: the dropdown remounts on every open, so a second click during the
-  // close animation repeats this tap instead of starting a new one.
-  const nonce = useRef(crypto.randomUUID()).current;
+  // One nonce per menu open, not per mount: a click while the menu is still closing, or after a
+  // quick reopen, can land on this same mounted item.
+  const nonce = useMemo(() => crypto.randomUUID(), [openCount]); // eslint-disable-line react-hooks/exhaustive-deps
   const Icon = icons[app.icon] ?? IconSparkles;
   const refusal = price && 'refusal' in price ? price.refusal : undefined;
   const cost = price && 'cost' in price ? price.cost : undefined;
@@ -185,18 +188,18 @@ function RemixAppItem({
 export function RemixAppsSection({
   apps,
   imageId,
-  priced,
+  openCount,
   onRun,
 }: {
   apps: RemixAppDefinition[];
   imageId: number;
-  /** Quote only once the menu is open, never on card render. */
-  priced: boolean;
+  /** How many times the menu has opened; 0 means never, and nothing is quoted. */
+  openCount: number;
   onRun?: () => void;
 }) {
   const quote = trpc.remixApp.quote.useQuery(
     { imageId },
-    { enabled: priced, staleTime: 3 * 60 * 1000, retry: false }
+    { enabled: openCount > 0, staleTime: 3 * 60 * 1000, retry: false }
   );
   const prices = new Map(quote.data?.prices.map((p) => [p.slug, p]));
 
@@ -211,6 +214,7 @@ export function RemixAppsSection({
           imageId={imageId}
           price={quote.isError ? { refusal: quote.error.message } : prices.get(app.slug)}
           loading={quote.isLoading}
+          openCount={openCount}
           onRun={onRun}
         />
       ))}
