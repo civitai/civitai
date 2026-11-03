@@ -277,7 +277,7 @@ describe('runPayout', () => {
     ]);
   });
 
-  it('pays no compensation for a version under the FLUX non-commercial license', async () => {
+  it('pays no compensation for a version on a non-commercial base model', async () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
       row('compensation', 'Yellow', 7, 12),
@@ -288,7 +288,6 @@ describe('runPayout', () => {
       {
         userId: CREATOR,
         modelVersionIds: [11, 12, 13],
-        // Flux.3 Klein is non-commercial under another license, which still pays comp.
         baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B', 'Flux.3 Klein'],
       },
     ]);
@@ -307,7 +306,7 @@ describe('runPayout', () => {
       }))
     ).toEqual(
       expect.arrayContaining([
-        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 11 },
+        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
         { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
       ])
     );

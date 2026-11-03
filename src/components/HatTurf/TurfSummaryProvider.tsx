@@ -50,12 +50,16 @@ export const TurfSummaryContext = createContext<TurfSummaries | null>(null);
  */
 export function TurfSummaryProvider({
   imageIds,
+  gate: gateOverride,
   children,
 }: {
   imageIds: number[];
+  /** Another surface's own gate (image detail has its own flag); omitted, the feed gate decides. */
+  gate?: { event: string } | null;
   children: React.ReactNode;
 }) {
-  const gate = useHatTurfFeed();
+  const feedGate = useHatTurfFeed();
+  const gate = gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
   const arm = gate?.arm ?? 'control';
   const utils = trpc.useUtils();

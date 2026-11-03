@@ -236,8 +236,11 @@ describe('/apps store — the first client paint already reflects the URL', () =
     // so a name query is a strict-mode violation whenever both are on screen.)
     await userEvent.click(page.getByTestId('apps-store-filters-dropdown'));
     await expect
-      .element(page.getByRole('button', { name: 'Standalone' }))
-      .toHaveAttribute('aria-pressed', 'true');
+      .element(page.getByRole('checkbox', { name: 'Standalone', exact: true }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole('checkbox', { name: 'Embedded', exact: true }))
+      .not.toBeChecked();
   });
 
   test('🔴 the control row is IDENTICAL pre-mount and post-mount (the hydration invariant)', async () => {
