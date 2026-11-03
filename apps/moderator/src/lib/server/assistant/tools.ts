@@ -894,7 +894,13 @@ export const TOOLS = [
       // loaded outside SvelteKit (the pglite suites) does not have.
       const { previewMembershipExtension } = await import('../user-actions.service');
       const r = await previewMembershipExtension({ userId: id, days });
-      if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
       // Status, dates and the verdict only: no Stripe ids for the model provider.
       const { subscription: sub, trialEndIso, mode } = r.preview;
       const problems = r.preview.problems.map(withoutStripeIds);
@@ -939,7 +945,6 @@ export const TOOLS = [
     },
   }),
 
-  // No tool calls the cancel or re-sync write endpoints; these only preview and prefill the panel.
   tool({
     name: 'preview_membership_cancel',
     description:
@@ -951,7 +956,13 @@ export const TOOLS = [
     run: async ({ userId: id, cancelAtPeriodEnd }) => {
       const { previewMembershipCancel } = await import('../user-actions.service');
       const r = await previewMembershipCancel({ userId: id, cancelAtPeriodEnd });
-      if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
       const { subscription: sub, changed } = r.preview;
       const problems = r.preview.problems.map(withoutStripeIds);
       const data = {
@@ -1008,8 +1019,14 @@ export const TOOLS = [
     run: async ({ userId: id }) => {
       const { previewMembershipResync } = await import('../user-actions.service');
       const r = await previewMembershipResync({ userId: id });
-      if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
-      // Changes minus the id and plan rows, and the verdict.
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      // Leave out endsBuzzMembership.confirm: only the moderator's checkbox may send it.
       const { changes, endsBuzzMembership } = r.preview;
       const problems = r.preview.problems.map(withoutStripeIds);
       const data = {

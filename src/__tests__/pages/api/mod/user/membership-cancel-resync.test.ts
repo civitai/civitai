@@ -10,7 +10,8 @@ import { toDateTime } from '~/server/services/stripe.service';
 /**
  * `/api/mod/user/membership-cancel*` and `/api/mod/user/membership-resync*`. Drives the REAL
  * endpoints, the REAL role-grant check and the REAL services (the re-sync through the webhook's real
- * `upsertSubscription`). Only the edges are faked: the session, the grant row, Stripe, the database.
+ * `upsertSubscription`). Faked: the session, the grant row, Stripe, the database, and side effects
+ * (mod activity, lock release, session and cache refresh, Freshdesk).
  */
 
 const NOW = Math.floor(Date.UTC(2026, 10, 3, 12, 0) / 1000);
@@ -52,7 +53,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
   },
 }));
-// The grant store: one `AppPageAccess` row, keyed by the path the check asks for.
 vi.mock('~/server/db/kyselyDb', () => {
   let path: unknown;
   const query = {
@@ -144,9 +144,10 @@ function fakeStripe(
         prop in target ? target[prop as keyof T] : recorder(`${name}.${String(prop)}`),
     });
   const subscriptions = {
-    retrieve: vi.fn(async () => {
+    retrieve: vi.fn(async (id?: string) => {
       if (updated && hooks.retrieveErrorAfterUpdate) throw hooks.retrieveErrorAfterUpdate;
-      return structuredClone(state);
+      const listed = (list as { id?: string }[]).find((s) => s.id === id && id !== state.id);
+      return structuredClone(listed ?? state);
     }),
     list: vi.fn(async () => ({ data: list })),
     update: vi.fn(async (_id: string, params: Record<string, unknown>) => {
@@ -232,7 +233,7 @@ const BUZZ_MEMBERSHIP = {
   status: 'active',
   currentPeriodEnd: toDateTime(PERIOD_END),
 };
-// What the preview hands back for the panel's checkbox to send.
+// Mirrors buzzView's token in membership-resync.service; change both together.
 const BUZZ_CONFIRM = `buzz_sub_1|active|${toDateTime(PERIOD_END).toISOString()}`;
 
 beforeEach(() => {
@@ -756,5 +757,155 @@ describe('races the lanes found', () => {
     redisMock.sysRedis.set.mockResolvedValue(null as never);
     expect((await resync()).status).toBe(409);
     expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('re-sync: final-head lanes', () => {
+  beforeEach(() => {
+    grantRow.path = 'grant:user.membership.extend';
+  });
+
+  it.each([
+    [
+      'a test Stripe key',
+      () => setEnv({ STRIPE_SECRET_KEY: 'sk_test_00000000000000000000' }),
+      /key is not live/,
+    ],
+    [
+      'a test-mode subscription',
+      () => fakeStripe(liveSub({ livemode: false })),
+      /not a live-mode subscription/,
+    ],
+    [
+      'a moderator member',
+      () =>
+        dbMock.dbWrite.user.findUnique.mockResolvedValue({
+          customerId: 'cus_case',
+          isModerator: true,
+        }),
+      /is a moderator/,
+    ],
+  ])(
+    '%s is refused (400), the preview says so, nothing is stored',
+    async (_label, arrange, message) => {
+      fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
+      arrange();
+      const { status, body } = await resync();
+      expect(status).toBe(400);
+      expect(body.message).toMatch(message);
+      expect(String((await previewResync()).body.problems)).toMatch(message);
+      expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+    }
+  );
+
+  it('is refused (409) when Stripe moved the subscription after the read, nothing stored', async () => {
+    const { subscriptions } = fakeStripe(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END })
+    );
+    subscriptions.retrieve
+      .mockResolvedValueOnce(
+        liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }) as never
+      )
+      .mockResolvedValueOnce(liveSub() as never);
+    const { status, body } = await resync();
+    expect(status).toBe(409);
+    expect(body.message).toMatch(/changed in Stripe during the re-sync/);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a trialing Stripe membership ends a Buzz one too, so it needs the confirm (400)', async () => {
+    fakeStripe(liveSub({ status: 'trialing' }));
+    dbMock.dbWrite.customerSubscription.findFirst.mockResolvedValue(BUZZ_MEMBERSHIP);
+    const { status, body } = await resync();
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/Buzz-bought membership buzz_sub_1/);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('is refused (409) when a Buzz membership appeared after the decision', async () => {
+    fakeStripe();
+    dbMock.dbWrite.customerSubscription.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(BUZZ_MEMBERSHIP);
+    expect((await resync()).status).toBe(409);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('takes the member lock with NX and an expiry, and releases it with its owner token', async () => {
+    fakeStripe();
+    await resync();
+    const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(lockKey, expect.any(String), {
+      NX: true,
+      EX: 600,
+    });
+    const owner = redisMock.sysRedis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
+    expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, lockKey, owner);
+  });
+
+  it('the re-read failing after a stored upsert still leaves one ModActivity row', async () => {
+    fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
+    dbMock.dbWrite.customerSubscription.findUnique
+      .mockResolvedValueOnce(ROW)
+      .mockRejectedValueOnce(new Error('pool timeout'));
+    expect((await resync()).status).toBe(500);
+    expect(dbMock.dbWrite.customerSubscription.upsert).toHaveBeenCalled();
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('the cancel grant alone does not reach re-sync (403)', async () => {
+    fakeStripe();
+    grantRow.path = 'grant:user.membership.cancel';
+    expect((await resync()).status).toBe(403);
+    expect((await previewResync()).status).toBe(403);
+  });
+
+  // vitest pins TZ=UTC, where toDateTime's offset is a flat 30 min. These run the process in a
+  // daylight-saving zone, where it moves with the date and two seconds can store as one time.
+  it.each([
+    ['a summer date', Math.floor(Date.UTC(2026, 6, 15, 2, 22) / 1000)],
+    // toDateTime stores these two an hour apart as one time; only the forward match tells them apart.
+    ['the spring-forward hour', 1772951400],
+    ['the hour after it', 1772955000],
+  ])('a matching row previews as no changes in America/New_York: %s', async (_label, secs) => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      fakeStripe(liveSub({ current_period_end: secs }));
+      dbMock.dbWrite.customerSubscription.findUnique.mockResolvedValue({
+        ...ROW,
+        currentPeriodEnd: toDateTime(secs),
+      });
+      const { body } = await previewResync();
+      expect(body).toMatchObject({ problems: [], changes: [] });
+      expect(body.ours.currentPeriodEnd).toBe(new Date(secs * 1000).toISOString());
+      expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+      expect(trackModActivity).not.toHaveBeenCalled();
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
+  it('a row that differs shows its own time with the offset undone, in America/New_York', async () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      const secs = Math.floor(Date.UTC(2026, 6, 15, 2, 22) / 1000);
+      fakeStripe(liveSub({ current_period_end: secs + 86_400 }));
+      dbMock.dbWrite.customerSubscription.findUnique.mockResolvedValue({
+        ...ROW,
+        currentPeriodEnd: toDateTime(secs),
+      });
+      const { body } = await previewResync();
+      expect(body.changes).toEqual([
+        {
+          field: 'currentPeriodEnd',
+          ours: new Date(secs * 1000).toISOString(),
+          stripe: new Date((secs + 86_400) * 1000).toISOString(),
+        },
+      ]);
+    } finally {
+      process.env.TZ = tz;
+    }
   });
 });

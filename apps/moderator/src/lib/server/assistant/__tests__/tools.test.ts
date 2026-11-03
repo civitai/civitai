@@ -903,7 +903,7 @@ describe('membership extension: the assistant reads and proposes, a person exten
           cancelAt: null,
           latestInvoiceId: 'in_secret',
         },
-        problems: [],
+        problems: ['sub_secret is on a schedule'],
         expectedCurrentPeriodEnd: 1795314120,
         trialEndIso: '2026-11-25T02:22:00.000Z',
         mode: 'renewing',
@@ -922,7 +922,7 @@ describe('membership extension: the assistant reads and proposes, a person exten
         currentPeriodEnd: '2026-11-22T02:22:00.000Z',
         cancelAtPeriodEnd: false,
       },
-      problems: [],
+      problems: ['[Stripe id] is on a schedule'],
       newEnd: '2026-11-25T02:22:00.000Z',
       mode: 'renewing',
     });
@@ -991,7 +991,7 @@ describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a 
           currentPeriodEnd: null,
           confirm: 'buzz_secret|active|null',
         },
-        problems: [],
+        problems: ['Stripe has no subscription sub_1Oldsecret'],
       },
     });
     const out = (await run('preview_membership_resync', { userId: 5 }, LOOKUP_PAGE, [
@@ -1001,7 +1001,7 @@ describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a 
       changes: [{ field: 'status', ours: 'past_due', stripe: 'active' }],
       idOrPlanDiffers: true,
       endsBuzzMembership: { status: 'active', currentPeriodEnd: null },
-      problems: [],
+      problems: ['Stripe has no subscription [Stripe id]'],
     });
     expect(JSON.stringify(out.data)).not.toMatch(/secret/);
     expect(resyncMembership).not.toHaveBeenCalled();

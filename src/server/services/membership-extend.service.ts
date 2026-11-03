@@ -90,7 +90,7 @@ export function cancelModeOf(
   return null;
 }
 
-/** That the Stripe subscription and customer are this user's. Shared with membership-cancel.service. */
+/** That the Stripe subscription and customer are this user's. */
 export function ownershipProblems({
   userId,
   row,

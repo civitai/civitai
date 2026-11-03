@@ -94,7 +94,8 @@ export function checkCancelChange({
     )
       problems.push('the cancel was made by a ban or mute; lifting that restores it');
     if (row.userBannedOrMuted) problems.push('the member is banned or muted');
-    // The member keeps a gift with Keep my membership, which also makes sure a card will be billed.
+    // A gift is kept through the member's own "Keep my membership", which also makes sure a card
+    // is on file; this path would not.
     if (sub.metadata?.membershipGiftId) problems.push('the subscription is a membership gift');
   }
   return { problems, changed: problems.length ? undefined : true };
@@ -227,8 +228,8 @@ export async function setMembershipCancel({
     throw throwBadRequestError('Membership changes run against live Stripe only');
   const stripe = await requireStripe();
 
-  // Extend's lock: extend re-sends cancel_at_period_end as it read it, so a toggle landing between
-  // its read and its write would be undone.
+  // Extend's lock: extend re-sends cancel_at_period_end as it read it, so a toggle between its read
+  // and write would be undone.
   const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
   const owner = randomUUID();
   if ((await sysRedis.set(lockKey, owner, { NX: true, EX: LOCK_SECONDS })) === null)
@@ -293,8 +294,8 @@ async function setLocked({
     return result;
   }
 
-  // A ban or mute landing since the read would otherwise be undone: its own cancel sees ours and
-  // leaves no mark, so reinstate never revisits it. Narrows the window; the ban flow takes no lock.
+  // A ban or mute since the read finds the sub already cancelling and leaves no mark, so undoing now
+  // would leave a banned member renewing.
   if (!cancelAtPeriodEnd) {
     const now = await dbWrite.user.findUnique({
       where: { id: userId },

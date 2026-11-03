@@ -4,7 +4,9 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownershipProblems } from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { env } from '~/env/server';
 import { toDateTime, upsertSubscription } from '~/server/services/stripe.service';
+import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } from '~/shared/utils/buzz-membership';
@@ -36,13 +38,16 @@ const SUPERSEDING_STATUSES = ['active', 'trialing'];
 const iso = (epoch: number | null | undefined) =>
   epoch == null ? null : new Date(epoch * 1000).toISOString();
 // The upsert stores Stripe times through toDateTime, which is offset from the epoch (30 min, plus the
-// process timezone's DST shift). Undoing it per value gives Stripe's own time, so a matching row
-// compares equal and both columns show true time.
-const storedIso = (d: Date | null) => {
+// process timezone's 1970 offset less its current one). A stored time that toDateTime gives for
+// Stripe's shows Stripe's, so a matching row compares equal. Any other is shown with the offset
+// undone, which is ambiguous around a spring-forward hour: toDateTime stores two seconds as one.
+const storedIso = (d: Date | null, stripeEpoch?: number | null) => {
   if (d == null) return null;
-  const guess = Math.round(d.getTime() / 1000) - 1800;
-  const offsetMs = toDateTime(guess).getTime() - guess * 1000;
-  return new Date(d.getTime() - offsetMs).toISOString();
+  if (stripeEpoch != null && toDateTime(stripeEpoch).getTime() === d.getTime())
+    return iso(stripeEpoch);
+  let secs = Math.round(d.getTime() / 1000) - 1800;
+  for (let i = 0; i < 3; i++) secs += Math.round((d.getTime() - toDateTime(secs).getTime()) / 1000);
+  return iso(secs);
 };
 
 const log = (data: MixedObject) =>
@@ -67,21 +72,24 @@ const rowSelect = {
   product: { select: { provider: true } },
 } as const;
 
-function rowView(row: {
-  id: string;
-  status: string;
-  priceId: string;
-  cancelAtPeriodEnd: boolean | null;
-  cancelAt: Date | null;
-  currentPeriodEnd: Date | null;
-}): RowView {
+function rowView(
+  row: {
+    id: string;
+    status: string;
+    priceId: string;
+    cancelAtPeriodEnd: boolean | null;
+    cancelAt: Date | null;
+    currentPeriodEnd: Date | null;
+  },
+  sub: Stripe.Subscription | null
+): RowView {
   return {
     id: row.id,
     status: row.status,
     priceId: row.priceId,
     cancelAtPeriodEnd: !!row.cancelAtPeriodEnd,
-    cancelAt: storedIso(row.cancelAt),
-    currentPeriodEnd: storedIso(row.currentPeriodEnd),
+    cancelAt: storedIso(row.cancelAt, sub?.cancel_at),
+    currentPeriodEnd: storedIso(row.currentPeriodEnd, sub?.current_period_end),
   };
 }
 
@@ -138,7 +146,10 @@ async function load(stripe: Stripe, userId: number) {
       where: { userId_buzzType: { userId, buzzType: 'green' } },
       select: rowSelect,
     }),
-    dbWrite.user.findUnique({ where: { id: userId }, select: { customerId: true } }),
+    dbWrite.user.findUnique({
+      where: { id: userId },
+      select: { customerId: true, isModerator: true },
+    }),
     liveBuzzMembership(userId),
   ]);
   const problems: string[] = [];
@@ -146,6 +157,8 @@ async function load(stripe: Stripe, userId: number) {
   if (row && row.product.provider !== PaymentProvider.Stripe)
     problems.push(`the membership is billed by ${row.product.provider}, not Stripe`);
   if (!customerId) problems.push('the user has no Stripe customer');
+  if (user?.isModerator) problems.push('the member is a moderator; change it out of band');
+  if (stripeKeyMode(env.STRIPE_SECRET_KEY) !== 'live') problems.push('the Stripe key is not live');
   if (problems.length) return { problems, row, sub: null, customerId, buzz: null };
 
   const notFound = (e: { statusCode?: number }) => {
@@ -192,6 +205,7 @@ async function load(stripe: Stripe, userId: number) {
           : 'the customer has no live Stripe subscription'
       );
   }
+  if (sub && !sub.livemode) problems.push('the subscription is not a live-mode subscription');
   if (sub) {
     const customer = await stripe.customers.retrieve(customerId as string).catch(notFound);
     problems.push(
@@ -231,9 +245,9 @@ export async function previewMembershipResync({
   const { problems, row, sub, buzz } = await load(stripe, userId);
   return {
     userId,
-    ours: row ? rowView(row) : null,
+    ours: row ? rowView(row, sub) : null,
     stripe: sub ? stripeView(sub) : null,
-    changes: sub ? diffRow(row ? rowView(row) : null, stripeView(sub)) : [],
+    changes: sub ? diffRow(row ? rowView(row, sub) : null, stripeView(sub)) : [],
     endsBuzzMembership: buzz,
     problems,
   };
@@ -253,8 +267,8 @@ export async function resyncMembership({
 }) {
   refuseOwn(userId, actorId);
   const stripe = await requireStripe();
-  // The extend and cancel lock: a re-sync landing between their write and its webhook would write
-  // back the old Stripe copy.
+  // Shares extend's and cancel's lock: a re-sync that read Stripe before their write would store
+  // that old copy over the webhook's newer row.
   const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
   const owner = randomUUID();
   if ((await sysRedis.set(lockKey, owner, { NX: true, EX: 600 })) === null)
@@ -291,7 +305,7 @@ async function resyncLocked({
     throw throwBadRequestError(`Not re-synced: ${problems.join('; ')}`);
   }
 
-  const before = row ? rowView(row) : null;
+  const before = row ? rowView(row, sub) : null;
   const changes = diffRow(before, stripeView(sub));
   const audit = () =>
     trackModActivity(actorId, {
@@ -307,6 +321,14 @@ async function resyncLocked({
   if ((buzzNow ? buzzView(buzzNow).confirm : null) !== (buzz?.confirm ?? null)) {
     await log({ type: 'refused', actorId, userId, reason, problems: ['Buzz membership changed'] });
     throw throwConflictError("The member's Buzz-bought membership changed; preview again");
+  }
+  // Webhooks and the member's own changes take no lock: refuse to store a copy Stripe has moved past.
+  const fresh = await stripe.subscriptions.retrieve(sub.id);
+  if (diffRow(stripeView(sub), stripeView(fresh)).length) {
+    await log({ type: 'refused', actorId, userId, reason, problems: ['subscription changed'] });
+    throw throwConflictError(
+      'The subscription changed in Stripe during the re-sync; preview again'
+    );
   }
   try {
     // Not a webhook event type, so the upsert neither waits out a webhook race nor deletes the row.
@@ -326,6 +348,7 @@ async function resyncLocked({
     });
     throw e;
   }
+  await audit();
   await syncFreshdeskMembership({ customerId }).catch((e) =>
     log({ type: 'freshdesk-sync-failed', userId, error: (e as Error).message })
   );
@@ -333,9 +356,7 @@ async function resyncLocked({
     where: { userId_buzzType: { userId, buzzType: 'green' } },
     select: rowSelect,
   });
-  const after = afterRow ? rowView(afterRow) : null;
-
-  await audit();
+  const after = afterRow ? rowView(afterRow, sub) : null;
   await log({
     type: 'resynced',
     actorId,

@@ -676,8 +676,7 @@ export const actions: Actions = {
     const input = parseForm(
       userIdSchema.extend({
         reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
-        // The checkbox carries the preview's confirm token; absent when unticked. The endpoint
-        // refuses when it is needed and missing or stale.
+        // The checkbox carries the preview's confirm token; absent when unticked.
         confirmEndBuzzMembership: z.string().max(200).optional(),
       }),
       await request.formData()
