@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_TOOLS,
+  DOCS_BODY_MAX_CHARS,
   DOCS_MAX_CHARS,
   NO_SANDBOX_FEATURES,
   READ_DOCS,
@@ -19,6 +20,7 @@ import {
   createDocsTool,
   createGateCore,
   docsUrlOf,
+  readBody,
   reportReadyDescription,
   sandboxFeaturesOf,
   type SandboxFeatures,
@@ -28,13 +30,15 @@ import {
 const ctx = { conversationId: 'conv-1', reply: 1 };
 const ALL: SandboxFeatures = { readFiles: true, batchEdits: true, runChecks: true };
 
-/** A `sandbox__run_checks` result as the sandbox writes it. */
+/** A `sandbox__run_checks` result as the sandbox writes it (see the format's describe below). */
 const checks = (test: number, typecheck: number, isError = false): ToolResult => ({
   name: RUN_CHECKS,
   input: { cwd: 'my-app' },
   output: `exit_code: ${
     test === 0 && typecheck === 0 ? 0 : 1
-  }\ntest: exit_code ${test}\ntypecheck: exit_code ${typecheck}\n--- typecheck (last 150 lines) ---\nsrc/a.ts(1,1): error`,
+  }\ntest: exit_code ${test} (npm test, 3.1s)\ntypecheck: exit_code ${typecheck} (npx tsc --noEmit, 5.2s)\n${
+    typecheck === 0 ? '' : '\n--- typecheck output (last 1 lines) ---\nsrc/a.ts(1,1): error\n'
+  }`,
   isError,
 });
 const preview: ToolResult = {
@@ -90,7 +94,10 @@ describe('sandbox__run_checks in the gate', () => {
   });
 
   it.each([
-    ['no exit_code line', 'test: exit_code 0\ntypecheck: exit_code 0'],
+    [
+      'no exit_code line',
+      'test: exit_code 0 (npm test, 3.1s)\ntypecheck: exit_code 0 (npx tsc --noEmit, 5.2s)',
+    ],
     ['no check lines', 'exit_code: 0\nall good'],
     ['prose', 'tests passed, typecheck passed'],
     ['not text', { exit_code: 0 }],
@@ -162,12 +169,18 @@ describe('sandbox__run_checks in the gate', () => {
   });
 
   it('checkExitCodesOf reads each check’s own line', () => {
-    expect(checkExitCodesOf('exit_code: 1\ntest: exit_code 0\ntypecheck: exit_code 2')).toEqual({
-      tests: 0,
-      typecheck: 2,
+    expect(
+      checkExitCodesOf(
+        'exit_code: 1\ntest: exit_code 0 (npm test, 3.1s)\ntypecheck: exit_code 2 (npx tsc --noEmit, 5.2s)\n'
+      )
+    ).toEqual({ tests: 0, typecheck: 2 });
+    expect(checkExitCodesOf('exit_code: 1\ntest: exit_code -1 (npm test, 0.0s)')).toEqual({
+      tests: -1,
     });
-    expect(checkExitCodesOf('exit_code: 1\ntest: exit_code -1')).toEqual({ tests: -1 });
-    expect(checkExitCodesOf('test: exit_code 0')).toBeNull();
+    // A bare line with nothing after the number still reads; a number run into text does not.
+    expect(checkExitCodesOf('exit_code: 1\ntest: exit_code 3')).toEqual({ tests: 3 });
+    expect(checkExitCodesOf('exit_code: 0\ntest: exit_code 0x1 (npm test, 1.0s)')).toEqual({});
+    expect(checkExitCodesOf('test: exit_code 0 (npm test, 3.1s)')).toBeNull();
   });
 });
 
@@ -362,6 +375,14 @@ describe('read_docs', () => {
     createDocsTool({ fetch, ...(timeoutMs !== undefined ? { timeoutMs } : {}) });
   const read = (t: ReturnType<typeof createDocsTool>, url: string) =>
     Promise.resolve(t.execute({ url }));
+  /** A read by a caller that can be stopped: the runner hands execute its signal. */
+  const readStoppable = (t: ReturnType<typeof createDocsTool>, url: string, signal: AbortSignal) =>
+    Promise.resolve(
+      (t.execute as (input: Record<string, unknown>, context: { signal: AbortSignal }) => unknown)(
+        { url },
+        { signal }
+      )
+    );
 
   it('reads a developer.civitai.com page', async () => {
     const fetch = vi.fn(async (_url: string) => text('# Setup\nRun npx.'));
@@ -430,7 +451,107 @@ describe('read_docs', () => {
     const fetch = vi.fn(async () => text('a'.repeat(DOCS_MAX_CHARS) + 'b'.repeat(4_321)));
     const { text: got } = (await read(tool(fetch), PAGE)) as { text: string };
     expect(DOCS_MAX_CHARS).toBe(16_000);
-    expect(got).toBe(`${'a'.repeat(16_000)}\n\n[cut: 4,321 more characters not shown]`);
+    expect(got).toBe(
+      `${'a'.repeat(16_000)}\n\n[cut: 4,321 more characters not shown; read on with offset 16000]`
+    );
+  });
+
+  it('reads on from the offset a cut note names, from the one fetch', async () => {
+    // 40,007 characters, each 1,000-character block its own letter, so a part's position shows.
+    const page = Array.from({ length: 40 }, (_, i) =>
+      String.fromCharCode(65 + (i % 26)).repeat(1_000)
+    )
+      .join('')
+      .concat('the end');
+    const fetch = vi.fn(async () => text(page));
+    const t = tool(fetch);
+    const at = async (offset?: number | string) =>
+      (
+        (await t.execute({ url: PAGE, ...(offset !== undefined ? { offset } : {}) })) as {
+          text: string;
+        }
+      ).text;
+
+    const first = await at();
+    expect(first).toBe(
+      `${page.slice(
+        0,
+        16_000
+      )}\n\n[cut: 24,007 more characters not shown; read on with offset 16000]`
+    );
+    const second = await at(16_000);
+    expect(second).toBe(
+      `[from character 16,000 of 40,007]\n\n${page.slice(
+        16_000,
+        32_000
+      )}\n\n[cut: 8,007 more characters not shown; read on with offset 32000]`
+    );
+    expect(await at('32000')).toBe(`[from character 32,000 of 40,007]\n\n${page.slice(32_000)}`);
+    // Every part read back to back is the whole page.
+    expect(page.slice(0, 16_000) + page.slice(16_000, 32_000) + page.slice(32_000)).toBe(page);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    await expect(at(40_007)).rejects.toThrow('is 40,007 characters; offset 40,007 is past its end');
+    for (const bad of [-1, 1.5, 'ten', Number.NaN])
+      await expect(at(bad as never)).rejects.toThrow('offset must be a whole number');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('one caller stopping does not fail another reading the same page', async () => {
+    let answer!: (r: Response) => void;
+    const fetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          answer = resolve;
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('', 'AbortError')));
+        })
+    );
+    const t = tool(fetch as never);
+    const stopper = new AbortController();
+    const stoppedRead = readStoppable(t, PAGE, stopper.signal);
+    const otherRead = read(t, PAGE);
+    stopper.abort();
+    await expect(stoppedRead).rejects.toThrow('read_docs was stopped.');
+    answer(text('guide'));
+    await expect(otherRead).resolves.toMatchObject({ text: 'guide' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((fetch.mock.calls[0]![1] as RequestInit).signal!.aborted).toBe(false);
+  });
+
+  it('when every caller stops, the fetch is aborted and not kept', async () => {
+    const signals: AbortSignal[] = [];
+    let calls = 0;
+    const fetch = vi.fn((_url: string, init?: RequestInit) => {
+      signals.push(init!.signal!);
+      if (++calls > 1) return Promise.resolve(text('second'));
+      return new Promise<Response>((_, reject) =>
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('', 'AbortError')))
+      );
+    });
+    const t = tool(fetch as never);
+    const stopper = new AbortController();
+    const read1 = readStoppable(t, PAGE, stopper.signal);
+    stopper.abort();
+    await expect(read1).rejects.toThrow('read_docs was stopped.');
+    expect(signals[0]!.aborted).toBe(true);
+    await expect(read(t, PAGE)).resolves.toMatchObject({ text: 'second' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads at most the body cap of a response, and stops reading it there', async () => {
+    let pulled = 0;
+    const chunk = new TextEncoder().encode('x'.repeat(100_000));
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(chunk);
+      },
+    });
+    const body = await readBody(new Response(endless), DOCS_BODY_MAX_CHARS);
+    expect(body.length).toBe(DOCS_BODY_MAX_CHARS);
+    expect(DOCS_BODY_MAX_CHARS).toBe(1_000_000);
+    // 10 chunks reach the cap; the stream's high-water mark may pull one more ahead.
+    expect(pulled).toBeLessThanOrEqual(12);
   });
 
   it('reads a page once per tool: a repeat is free, a failure is tried again', async () => {

@@ -145,15 +145,24 @@ export function exitCodeOf(output: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/** One check's summary line: `test: exit_code 0 (npm test, 3.1s)`, `..., timed out)` on a timeout. */
+const CHECK_SUMMARY_LINE = /^(test|typecheck): exit_code (-?\d+)(?=[ \t]|\(|$)/;
+
 /**
- * Each check's exit code in a `sandbox__run_checks` result: its first line is `exit_code: <n>`, then a
- * `test: exit_code <n>` and a `typecheck: exit_code <n>` line. Null when the first line is not there;
- * a check whose line is missing is left out.
+ * Each check's exit code in a `sandbox__run_checks` result, as the sandbox MCP server's run_checks
+ * writes it (formatChecks in civitai/talos-infra applications/sandbox-mcp/src/checks.ts): a first line
+ * `exit_code: <n>`, then one `<name>: exit_code <n> (<command>, <secs>s[, timed out])` line per check,
+ * then a blank line and each failed check's output. Only the lines before that first blank line are
+ * read, and the first line for a check wins, so a check's output can never stand in for its summary.
+ * Null when the first line is not there; a check whose line is missing is left out.
  */
 export function checkExitCodesOf(output: unknown): Partial<Record<CheckKind, number>> | null {
   if (typeof output !== 'string' || exitCodeOf(output) === null) return null;
   const codes: Partial<Record<CheckKind, number>> = {};
-  for (const match of output.matchAll(/^(test|typecheck): exit_code (-?\d+)[ \t]*$/gm)) {
+  for (const line of output.split('\n').slice(1)) {
+    if (!line.trim()) break;
+    const match = CHECK_SUMMARY_LINE.exec(line);
+    if (!match) continue;
     const kind: CheckKind = match[1] === 'test' ? 'tests' : 'typecheck';
     codes[kind] ??= Number(match[2]);
   }

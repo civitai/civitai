@@ -1219,7 +1219,9 @@ describe('the sandbox’s replies on the runner', () => {
 });
 
 describe('a sandbox with the newer tools (read_files, edits, run_checks)', () => {
-  const RUN_CHECKS_OK = 'exit_code: 0\ntest: exit_code 0\ntypecheck: exit_code 0';
+  // The sandbox's own format (formatChecks in civitai/talos-infra applications/sandbox-mcp/src/checks.ts).
+  const RUN_CHECKS_OK =
+    'exit_code: 0\ntest: exit_code 0 (npm test, 3.1s)\ntypecheck: exit_code 0 (npx tsc --noEmit, 5.2s)\n';
   function newerSandbox() {
     fake.add('my-app');
     fake.newTools.add('read_files');
