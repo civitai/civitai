@@ -128,6 +128,13 @@ describe('sendKlein9bNotice', () => {
     );
   });
 
+  it('two runs at once still send each creator once', async () => {
+    const [a, b] = await Promise.all([run(false), run(false)]);
+    expect(a.sent + b.sent).toBe(2);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(notifyMock).toHaveBeenCalledTimes(2);
+  });
+
   it('a failed send is un-recorded so the next run retries it; the others stay recorded', async () => {
     sendMock.mockImplementation(async ({ to }: { to: string }) => {
       if (to === 'u2@example.com') throw new Error('smtp down');
