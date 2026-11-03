@@ -350,8 +350,6 @@ export const autoTagHandler = async ({
     payload,
   });
 
-  console.log(response, payload);
-
   if (response.status === 429) {
     throw throwRateLimitError();
   }
