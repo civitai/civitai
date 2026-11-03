@@ -128,7 +128,7 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
 
 const q = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const hats = () => document.body.querySelectorAll('[data-testid="hat-turf-hat"]');
-const click = (el: Element | null) => (el as HTMLElement).click();
+const click = (el: Element | null | undefined) => (el as HTMLElement).click();
 const text = (re: RegExp) =>
   [...document.body.querySelectorAll<HTMLElement>('button')].find((b) =>
     re.test(b.textContent ?? '')
