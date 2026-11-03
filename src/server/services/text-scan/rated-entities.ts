@@ -10,9 +10,11 @@ import { maybeAutoResolveRatingDisputeAfterScan } from '~/server/services/rating
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { highestNsfwLevel } from '~/server/services/text-scan/evaluate';
 import {
+  logRatingNoticeDecision,
   notifyTextScanRatingRaised,
   ratingRose,
   type NotifyTextScanRatingRaisedArgs,
+  type RatingNoticeDecision,
 } from '~/server/services/text-scan/notify';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -116,20 +118,39 @@ async function raiseToFloor(
   if (!outcome.nsfw) return NOTHING_DEFERRED;
 
   const entity = ratedEntities[entityType];
+  const decide = (
+    decision: RatingNoticeDecision,
+    levels: { before?: number; baseline?: number; after?: number } = {}
+  ) => {
+    logRatingNoticeDecision({
+      path: 'callback',
+      entityType,
+      entityId,
+      workflowId,
+      decision,
+      before: levels.before ?? null,
+      baseline: levels.baseline ?? null,
+      after: levels.after ?? null,
+    });
+    return NOTHING_DEFERRED;
+  };
   const before = ratingBefore !== undefined ? ratingBefore : await entity.read(entityId);
-  if (!before) return NOTHING_DEFERRED;
+  if (!before) return decide('entity-gone');
   await entity.recompute([entityId]);
 
-  if (!outcome.nsfw.raised || before.moderatorNsfwLevel != null || !before.userId)
-    return NOTHING_DEFERRED;
+  const was = { before: before.nsfwLevel };
+  if (!outcome.nsfw.raised) return decide('not-raised', was);
+  if (before.moderatorNsfwLevel != null) return decide('moderator-rated', was);
+  if (!before.userId) return decide('no-owner', was);
   const after = await entity.read(entityId);
-  if (!after) return NOTHING_DEFERRED;
+  if (!after) return decide('entity-gone', was);
   // A stored 0 may only mean the job has not recomputed the post yet; judge against its images.
   const shown =
     before.nsfwLevel === 0 && entity.imageLevel
       ? await entity.imageLevel(entityId)
       : before.nsfwLevel;
-  if (!ratingRose(shown, after.nsfwLevel)) return NOTHING_DEFERRED;
+  const levels = { ...was, baseline: shown, after: after.nsfwLevel };
+  if (!ratingRose(shown, after.nsfwLevel)) return decide('no-rise', levels);
 
   const notice: NotifyTextScanRatingRaisedArgs = {
     entityType,
@@ -140,7 +161,10 @@ async function raiseToFloor(
     url: before.url,
     workflowId,
   };
-  if (outcome.poi?.detected || outcome.minor?.detected) return { deferredRatingNotice: notice };
+  if (outcome.poi?.detected || outcome.minor?.detected) {
+    decide('deferred-poi-minor', levels);
+    return { deferredRatingNotice: notice };
+  }
   await notifyTextScanRatingRaised(notice);
-  return NOTHING_DEFERRED;
+  return decide('sent', levels);
 }
