@@ -91,6 +91,16 @@ describe('hatTurf.setOptIn tracking', () => {
     );
   });
 
+  it('emits opt_out when the player turned it off', async () => {
+    mockSetOptIn.mockResolvedValue({ changed: true, event: 'birthday2026' });
+    const { caller, trackAction } = callerAs(player);
+    await caller.setOptIn({ ...input, optedIn: false });
+    expect(trackAction).toHaveBeenCalledWith(
+      { type: 'HatTurf_Action', details: { action: 'opt_out', event: 'birthday2026' } },
+      { skipActorMeta: true }
+    );
+  });
+
   it('emits nothing when the setting was already that value', async () => {
     mockSetOptIn.mockResolvedValue({ changed: false, event: 'birthday2026' });
     const { caller, trackAction } = callerAs(player);
