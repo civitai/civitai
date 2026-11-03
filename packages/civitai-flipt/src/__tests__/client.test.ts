@@ -175,6 +175,15 @@ describe('createFliptClient', () => {
       expect(evaluateVariant).toHaveBeenCalledTimes(2);
     });
 
+    it('re-evaluates a bypassed flag on every call', async () => {
+      const flipt = createFliptClient({ ...baseConfig, cacheBypass: ['exp'] });
+      await flipt.ensureInitialized();
+      expect(flipt.getVariantDetailSync('exp', '1')?.variantKey).toBe('primary');
+      evaluateVariant.mockImplementation(() => ({ match: true, variantKey: 'b' }));
+      expect(flipt.getVariantDetailSync('exp', '1')?.variantKey).toBe('b');
+      expect(evaluateVariant).toHaveBeenCalledTimes(2);
+    });
+
     it('answers a local override without evaluating, marked as such', async () => {
       const flipt = createFliptClient({ ...baseConfig, localOverrides: { exp: 'b' } });
       expect(flipt.getVariantDetailSync('exp', '7')).toEqual({
