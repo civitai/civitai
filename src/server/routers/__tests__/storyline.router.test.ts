@@ -375,6 +375,8 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
 
   beforeEach(() => {
     w.storyline.findUnique.mockResolvedValue(xStory as never);
+    // The spark read: this storyline was not started from an image.
+    r.storyline.findUnique.mockResolvedValue({ sparkImage: null } as never);
     r.$queryRaw.mockResolvedValue([
       { depth: 0, userId: OWNER, nsfwLevel: NsfwLevel.X, ...shownChapter },
       { depth: 1, userId: AUTHOR, nsfwLevel: NsfwLevel.PG, ...shownChapter },
@@ -384,6 +386,7 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
   it('gives the owner the chapter levels', async () => {
     await expect(callerFor(OWNER).getChapterLevels({ id: 10 })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.X,
+      sparkNsfwLevel: null,
       chapterLevels: [NsfwLevel.PG],
     });
   });

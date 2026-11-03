@@ -655,6 +655,13 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'owner-checked',
     guards: { imageId: 'if (image.post.userId !== userId)' },
   },
+  // The spark: someone else's image by design, refused unless it may be shown, is outside a block
+  // with the starter and its creator's remix gallery is open. Written once, here.
+  'src/server/services/storyline.service.ts#createStoryline': {
+    writes: ['sparkImageId'],
+    decision: 'owner-checked',
+    guards: { sparkImageId: 'if (sparkImageId) await assertStorylineSpark({' },
+  },
   // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
   // collaborator, or an image this request uploaded, refused otherwise. A pick sent back unchanged
   // is not judged again. `imageId` records an upload: only ids `resolveCoverImageId` just returned.
