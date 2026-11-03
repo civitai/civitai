@@ -385,9 +385,12 @@ describe('getResourceData — non-commercial base models', () => {
     }
   );
 
-  it('a Flux.2 Klein 4B version still takes tips (control)', async () => {
-    expect((await resourceFor({ baseModel: 'Flux.2 Klein 4B' })).tipsEnabled).toBe(true);
-  });
+  it.each(['Flux.2 Klein 4B', 'Flux.3 Klein'])(
+    'a %s version still takes tips',
+    async (baseModel) => {
+      expect((await resourceFor({ baseModel })).tipsEnabled).toBe(true);
+    }
+  );
 
   it('a past buyer of a Flux.2 Klein 9B version keeps access', async () => {
     expect(

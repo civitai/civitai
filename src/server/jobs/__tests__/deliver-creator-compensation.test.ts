@@ -281,17 +281,24 @@ describe('runPayout', () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
       row('compensation', 'Yellow', 7, 12),
+      row('compensation', 'Yellow', 4, 13),
       row('tip', 'Yellow', 6, 11),
     ]);
     dbMock.dbRead.$queryRaw.mockResolvedValue([
       {
         userId: CREATOR,
-        modelVersionIds: [11, 12],
-        baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B'],
+        modelVersionIds: [11, 12, 13],
+        // Flux.3 Klein is non-commercial under another license, which still pays comp.
+        baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B', 'Flux.3 Klein'],
       },
     ]);
 
     await runPayout(START);
+
+    // The filter pairs baseModels[i] with modelVersionIds[i], so both aggregates must share an order.
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain('array_agg(mv.id::int ORDER BY mv.id) as "modelVersionIds"');
+    expect(sql).toContain('array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels"');
 
     expect(
       sentTransactions().map(({ externalTransactionId, amount }) => ({
@@ -300,7 +307,7 @@ describe('runPayout', () => {
       }))
     ).toEqual(
       expect.arrayContaining([
-        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
+        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 11 },
         { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
       ])
     );

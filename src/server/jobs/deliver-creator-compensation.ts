@@ -1,7 +1,7 @@
 import { chunk, isEmpty } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { isNonCommercialBaseModel } from '~/server/common/constants';
+import { stopsCreatorEarnings } from '~/server/common/constants';
 import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -277,16 +277,16 @@ export async function runPayout(lastUpdate: Date) {
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
 
-      // Civitai-funded compensation stops for a non-commercial base model even while the
-      // orchestrator still holds an older payoutEnabled for it.
-      const nonCommercialIds = modelVersionIds.filter((_, i) =>
-        isNonCommercialBaseModel(baseModels[i])
+      // Drop creator-compensation rows where earnings stopped: the orchestrator's stored
+      // payoutEnabled can predate the base model's license change.
+      const earningsStoppedIds = modelVersionIds.filter((_, i) =>
+        stopsCreatorEarnings(baseModels[i])
       );
       creatorsToPay[userId].push(
         ...batch.filter(
           (r) =>
             modelVersionIds.includes(r.modelVersionId) &&
-            !(r.source === 'compensation' && nonCommercialIds.includes(r.modelVersionId))
+            !(r.source === 'compensation' && earningsStoppedIds.includes(r.modelVersionId))
         )
       );
     }

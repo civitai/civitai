@@ -6,7 +6,7 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { isNonCommercialBaseModel } from '~/server/common/constants';
+import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import {
   getShouldChargeForResources,
@@ -425,8 +425,8 @@ export default MixedAuthEndpoint(async function handler(
   //      (a checkpoint built on Turbo inherits the Turbo rate).
   //   Otherwise there is no lineage fee — a null source is NOT a fallback to a
   //   (baseModel, modelType) default; derivatives carry an explicit parent.
-  // A non-commercial licence forbids charging for the model, so no fee, comp or tip is sent.
   const nonCommercial = isNonCommercialBaseModel(modelVersion.baseModel);
+  const earningsStopped = stopsCreatorEarnings(modelVersion.baseModel);
   const isLicensingRoot =
     !nonCommercial &&
     modelVersion.isLicensingRoot &&
@@ -497,12 +497,12 @@ export default MixedAuthEndpoint(async function handler(
   // A version charging its own fee earns through that channel instead of creator comp. The
   // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
-    !nonCommercial &&
+    !earningsStopped &&
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
     !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
   // Independent of the fee: a fee creator still gets their share of the creator tip.
   const tipsEnabled =
-    !nonCommercial &&
+    !earningsStopped &&
     isCreatorTipEligible({
       ownerId: modelVersion.modelUserId,
       ownerFlags: modelVersion.userFlags,

@@ -1,6 +1,6 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { asResourceValue } from '~/shared/utils/resource.utils';
-import { isNonCommercialBaseModel } from '~/server/common/constants';
+import { stopsCreatorEarnings } from '~/server/common/constants';
 import {
   LORA_STRENGTH_BOUNDS,
   fluxKreaAir,
@@ -1425,7 +1425,7 @@ export async function getResourceData(
       isOwnedByUser,
       isPrivate,
       tipsEnabled:
-        !isNonCommercialBaseModel(item.baseModel) &&
+        !stopsCreatorEarnings(item.baseModel) &&
         isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
     };
   }

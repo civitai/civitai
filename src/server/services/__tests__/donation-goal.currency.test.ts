@@ -88,7 +88,7 @@ describe('donateToGoal — non-commercial base models', () => {
       );
       expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
       expect(mockDbRead.modelVersion.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 555 } })
+        expect.objectContaining({ where: { id: 555 }, select: { baseModel: true } })
       );
     }
   );
