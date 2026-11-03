@@ -83,6 +83,8 @@ type SearchIndexProcessor = {
    * document. Without the override those ids would be reported as having produced nothing.
    */
   getHandledIds?: (transformedData: any) => (number | string)[];
+  /** Runs after queued deletes are removed from Meilisearch, with the ids removed. */
+  onDocumentsDeleted?: (ids: number[]) => Promise<void>;
   client?: MeiliSearch | null;
   jobName?: string;
   partial?: boolean;
@@ -448,6 +450,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     retired = false,
   } = processor;
 
+  const removeDocuments = async (ids: number[]) => {
+    await onSearchIndexDocumentsCleanup({ indexName, ids, client: processor.client });
+    await processor.onDocumentsDeleted?.(ids);
+  };
+
   // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
   // (lodash-es 4.17.21; `Infinity` is the one non-finite size that does not — it returns a single
   // batch of everything). A processor configured with any of the empty-returning values would
@@ -612,11 +619,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // drain order alone decides the outcome. Pulling second lets `pullData`'s own WHERE
       // arbitrate; pulling first rebuilt the document and then deleted it.
       if (queuedDeletes.content.length > 0 && !partial) {
-        await onSearchIndexDocumentsCleanup({
-          indexName,
-          ids: queuedDeletes.content,
-          client: processor.client,
-        });
+        await removeDocuments(queuedDeletes.content);
       }
 
       const workers = Array.from({ length: workerCount }).map(() => {
@@ -753,11 +756,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           .map(({ id }) => id);
 
         if (deleteIds.length > 0 && !partial) {
-          await onSearchIndexDocumentsCleanup({
-            indexName,
-            ids: deleteIds,
-            client: processor.client,
-          });
+          await removeDocuments(deleteIds);
         }
 
         if (updateIds.length > 0) {
@@ -839,11 +838,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         );
 
         if (queuedDeletes.content.length > 0 && !partial) {
-          await onSearchIndexDocumentsCleanup({
-            indexName,
-            ids: queuedDeletes.content,
-            client: processor.client,
-          });
+          await removeDocuments(queuedDeletes.content);
         }
 
         await queuedDeletes.commit();

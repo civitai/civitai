@@ -10,6 +10,7 @@ import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
+import { mirrorModelDeletes, mirrorModelDocuments } from '~/server/search/opensearch/models-mirror';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -887,8 +888,12 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
         documents: records,
         batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
       });
+      // The live index only: a reset writes `<index>_NEW`, and OpenSearch is rebuilt by its own job.
+      if (indexName === INDEX_ID)
+        await mirrorModelDocuments({ indexReadyRecords, indexRecordsWithImages });
     }
 
     return;
   },
+  onDocumentsDeleted: mirrorModelDeletes,
 });
