@@ -22,7 +22,7 @@ describe('parseAppsStoreFilters — a bare /apps', () => {
     expect(parseAppsStoreFilters({})).toEqual({
       kind: 'all',
       category: null,
-      sort: 'top-rated',
+      sort: 'popular',
       query: '',
     });
     expect(parseAppsStoreFilters({})).toEqual(APPS_STORE_DEFAULTS);
@@ -106,7 +106,7 @@ describe('resolveAppsStoreFilters — pure and deterministic', () => {
 describe('appsStoreFiltersToQuery — only NON-default filters reach the URL', () => {
   test('a default value serialises to undefined so removeEmpty strips it', () => {
     expect(appsStoreFiltersToQuery({ kind: 'all' })).toEqual({ kind: undefined });
-    expect(appsStoreFiltersToQuery({ sort: 'top-rated' })).toEqual({ sort: undefined });
+    expect(appsStoreFiltersToQuery({ sort: 'popular' })).toEqual({ sort: undefined });
     expect(appsStoreFiltersToQuery({ category: null })).toEqual({ category: undefined });
     expect(appsStoreFiltersToQuery({ query: '' })).toEqual({ query: undefined });
     expect(appsStoreFiltersToQuery({ query: '  ' })).toEqual({ query: undefined });
@@ -114,6 +114,7 @@ describe('appsStoreFiltersToQuery — only NON-default filters reach the URL', (
 
   test('a non-default value is written through', () => {
     expect(appsStoreFiltersToQuery({ kind: 'offsite' })).toEqual({ kind: 'offsite' });
+    expect(appsStoreFiltersToQuery({ sort: 'top-rated' })).toEqual({ sort: 'top-rated' });
     expect(appsStoreFiltersToQuery({ category: 'games' })).toEqual({ category: 'games' });
     expect(appsStoreFiltersToQuery({ sort: 'newest' })).toEqual({ sort: 'newest' });
     expect(appsStoreFiltersToQuery({ query: 'gen' })).toEqual({ query: 'gen' });
