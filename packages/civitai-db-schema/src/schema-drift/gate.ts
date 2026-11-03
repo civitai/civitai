@@ -619,10 +619,7 @@ export function validateReason(reason: unknown): string | null {
   if (typeof reason !== 'string') return 'has no reason';
   const trimmed = reason.trim();
   if (trimmed.length === 0) return 'has an empty reason';
-  const normalised = trimmed
-    .toLowerCase()
-    .replace(/[\s.!:;,'"`-]+$/g, '')
-    .replace(/\s+/g, ' ');
+  const normalised = normaliseReason(trimmed);
   if (PLACEHOLDERS.has(normalised)) return `has a placeholder reason ("${trimmed}")`;
   const first = normalised.split(/[^a-z/]+/).filter(Boolean)[0] ?? '';
   if (PLACEHOLDER_PREFIXES.includes(first)) return `has a placeholder reason ("${trimmed}")`;
@@ -676,6 +673,38 @@ export function reasonProblems(baseline: { entries: readonly unknown[] }): Reaso
   return out;
 }
 
+/**
+ * The one reason every entry got when the baseline was first created. It is a valid reason for
+ * those entries — it says truthfully that they were accepted wholesale and not reviewed — but it
+ * is not a reason for anything accepted since, so `acceptIntoBaseline` refuses it as a NEW
+ * entry's `--reason`. Compared after normalising case, whitespace and trailing punctuation, so a
+ * re-typed copy is refused as well.
+ */
+export const BACKFILL_REASON =
+  'Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline ' +
+  'was created, not reviewed entry by entry.';
+
+function normaliseReason(reason: string): string {
+  return reason
+    .trim()
+    .toLowerCase()
+    .replace(/[\s.!:;,'"`-]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+/** `validateReason`, plus the refusals that apply only to a reason being given NOW. */
+function newReasonProblem(reason: string): string | null {
+  const problem = validateReason(reason);
+  if (problem !== null) return problem;
+  if (normaliseReason(reason) === normaliseReason(BACKFILL_REASON)) {
+    return (
+      'has the shared backfill reason, which records that an entry was NOT reviewed; a newly ' +
+      'accepted entry needs its own'
+    );
+  }
+  return null;
+}
+
 export interface Acceptance {
   reason?: string;
   ref?: string;
@@ -700,13 +729,18 @@ export type AcceptResult =
 /**
  * Turn a candidate baseline into a committed one, carrying every existing reason over.
  *
- * Each candidate entry is matched to the previous baseline BY FINGERPRINT. A match whose
- * previous reason and ref are valid keeps them, byte for byte — a refresh must never rewrite a
- * reason someone wrote (a tier change, e.g. an absorbed escalation, keeps it too: the drift is
- * the same drift). Everything else — a finding the previous baseline did not have, or one it
- * had without a valid reason — needs `acceptance.reason` and `acceptance.ref`, and if either is
- * missing or invalid NOTHING is returned to write. All or nothing: a partial write would commit
- * a baseline the gate then fails.
+ * Each candidate entry is matched to the previous baseline BY FINGERPRINT AND TIER. A match
+ * whose previous reason and ref are valid keeps them, byte for byte — a refresh must never
+ * rewrite a reason someone wrote. A TIER CHANGE is not a match: an entry accepted as `pending`
+ * and now `enforced` (an absorbed escalation) was accepted for a reason that is no longer true,
+ * so it is a new acceptance, and the refusal names it as having risen. Everything else — a
+ * finding the previous baseline did not have, one whose tier changed, or one it had without a
+ * valid reason — needs `acceptance.reason` and `acceptance.ref`, and if either is missing or
+ * invalid NOTHING is returned to write. All or nothing: a partial write would commit a baseline
+ * the gate then fails.
+ *
+ * A NEW acceptance may not use `BACKFILL_REASON`: that string records that an entry was NOT
+ * reviewed. Entries that already carry it keep it.
  */
 export function acceptIntoBaseline(
   previous: { entries: readonly Partial<BaselineEntry>[] } | null,
@@ -719,20 +753,35 @@ export function acceptIntoBaseline(
   }
 
   const needReason: BaselineFinding[] = [];
+  const tierChanges: string[] = [];
   const entries: BaselineEntry[] = [];
   let carried = 0;
   const reasonProblem =
-    acceptance.reason === undefined ? 'no --reason' : validateReason(acceptance.reason);
+    acceptance.reason === undefined ? 'no --reason' : newReasonProblem(acceptance.reason);
   const refProblem = acceptance.ref === undefined ? 'no --ref' : validateRef(acceptance.ref);
 
   for (const finding of candidate.entries) {
     const old = before.get(finding.fingerprint);
-    const keep = old && validateReason(old.reason) === null && validateRef(old.ref) === null;
+    // A reason is carried only for the SAME acceptance: same fingerprint AND same tier. A
+    // finding accepted as `pending` ("the column does not exist yet") that is now `enforced`
+    // was accepted for a reason that is no longer true, and carrying it would absorb a
+    // blocking escalation with no --reason at all.
+    const sameTier = old?.tier === finding.tier;
+    const keep =
+      old && sameTier && validateReason(old.reason) === null && validateRef(old.ref) === null;
     if (keep) {
       carried += 1;
       entries.push(withReason(finding, old.reason as string, old.ref as string));
     } else {
       needReason.push(finding);
+      if (old && !sameTier) {
+        const verb =
+          old.tier === 'pending' && finding.tier === 'enforced' ? 'rose' : 'changed tier';
+        tierChanges.push(
+          `${finding.kind}  ${finding.table}.${finding.columns.join('+')} (${finding.model}) ` +
+            `${verb} from ${old.tier ?? 'unknown'} to ${finding.tier}`
+        );
+      }
       if (reasonProblem === null && refProblem === null) {
         entries.push(
           withReason(finding, (acceptance.reason as string).trim(), acceptance.ref as string)
@@ -743,6 +792,12 @@ export function acceptIntoBaseline(
 
   if (needReason.length > 0 && (reasonProblem !== null || refProblem !== null)) {
     const problems: string[] = [];
+    for (const change of tierChanges) {
+      problems.push(
+        `${change}: the reason it was accepted under no longer describes it, so it needs a ` +
+          'new --reason and --ref'
+      );
+    }
     if (reasonProblem !== null) {
       problems.push(
         acceptance.reason === undefined

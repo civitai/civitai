@@ -743,6 +743,42 @@ describe('baseline reasons', () => {
       expect(result.problems).toEqual([expect.stringMatching(/^--reason is a placeholder/)]);
     });
 
+    // The backfill reason says an entry was accepted wholesale and NOT reviewed. True of the
+    // entries that carry it; never true of one accepted today. The literal is spelled out here
+    // rather than imported, so the test does not take its expectation from the code.
+    describe('the shared backfill reason', () => {
+      const backfill =
+        'Pre-existing at the 2026-10-20 production capture; accepted wholesale when the ' +
+        'baseline was created, not reviewed entry by entry.';
+
+      it('is what the committed entries carry, and they keep it', () => {
+        expect(committed.entries.every((e) => e.reason === backfill)).toBe(true);
+        const result = acceptIntoBaseline(committed, candidate, {});
+        expect(result.ok && result.baseline.entries.every((e) => e.reason === backfill)).toBe(true);
+      });
+
+      it.each([
+        ['verbatim', backfill],
+        [
+          're-typed with other case, spacing and no full stop',
+          `  ${backfill.toUpperCase().slice(0, -1).replace(/ /g, '  ')}  `,
+        ],
+      ])('is refused as the reason for a newly accepted entry (%s)', (_label, reason) => {
+        const result = acceptIntoBaseline({ entries: committed.entries.slice(1) }, candidate, {
+          reason,
+          ref: '#3',
+        });
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.needReason.map((e) => e.fingerprint)).toEqual([
+          committed.entries[0].fingerprint,
+        ]);
+        expect(result.problems).toEqual([
+          expect.stringMatching(/^--reason is the shared backfill reason/),
+        ]);
+      });
+    });
+
     // A finding accepted as `pending` ("the column does not exist yet") that comes back
     // `enforced` is a different acceptance: the reason it was accepted for is no longer true.
     // Carrying the old reason would absorb a blocking escalation with no --reason at all.

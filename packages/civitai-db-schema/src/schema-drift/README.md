@@ -114,8 +114,8 @@ own — a quoted name inside a function body may be a column, a table, or neithe
 `--allow-unparsed` the statements are still printed in the report, under the scope header.
 
 Measured on this repo's migrations at the time of writing: 763 of 1,016 classify completely;
-of the last 30, 17 do and 13 contain a `DO` block, a function, a trigger or a `DROP INDEX`. Those
-13 are refused, which is the intended outcome. `__tests__/migration-tables.test.ts` pins all 30,
+of the last 30, 18 do and 12 contain a `DO` block, a function, a trigger or a `DROP INDEX`. Those
+12 are refused, which is the intended outcome. `__tests__/migration-tables.test.ts` pins all 30,
 table by table.
 
 ### Limitations
@@ -580,10 +580,14 @@ were the same line.
   directory name; free text is refused, because a ref nobody can resolve is a second reason
   field, not a pointer.
 - **The writer requires them for new entries and preserves old ones.** `drift:baseline` carries
-  every existing entry's reason and ref over by fingerprint, byte for byte — including across a
-  tier change. Any entry that needs one (a finding the previous baseline did not have, or one it
-  had without a valid reason) takes `--reason` and `--ref`; if either is missing or invalid the
-  writer refuses, lists the entries, exits 2 and **writes nothing**.
+  every existing entry's reason and ref over, byte for byte, when the fingerprint **and the
+  tier** both match. A tier change is a new acceptance: an entry accepted as `pending` that is
+  now `enforced` was accepted for a reason that is no longer true, and the refusal says it rose
+  from pending to enforced. Any entry that needs one (a finding the previous baseline did not
+  have, one whose tier changed, or one it had without a valid reason) takes `--reason` and
+  `--ref`; if either is missing or invalid the writer refuses, lists the entries, exits 2 and
+  **writes nothing**. The shared backfill reason below is refused as the `--reason` for a new
+  entry: it records that an entry was not reviewed.
 - **The 112 entries present when this was introduced** share one honest reason — pre-existing at
   the 2026-10-20 capture, accepted wholesale when the baseline was created, not reviewed entry by
   entry — and the ref of the PR that last regenerated the entry set (#6323; the 2026-10-20
@@ -679,7 +683,9 @@ the PR description.
   read the list before passing one.
 
 - **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
-  without failing; `drift:baseline` prunes it (no `--reason` needed when nothing is added).
+  without failing; `drift:baseline` prunes it. The refresh still needs `--reason` and `--ref`
+  whenever any finding in the run is outside the baseline — a new pending finding included, since
+  the schema is often ahead of the snapshot — or has changed tier since it was accepted.
 - **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit, with a
   `--reason` and `--ref` for whatever the recapture adds. The
   catalog and the baseline are a pair and the gate enforces that they stay one. Diff the old

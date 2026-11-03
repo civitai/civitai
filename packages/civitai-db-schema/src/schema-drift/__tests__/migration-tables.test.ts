@@ -287,7 +287,7 @@ describe('extractMigrationTables — the forms it refuses to guess at', () => {
  * from the parser's output: the point is to catch the parser misreading a real file, which a
  * test derived from its own output cannot.
  *
- * 17 of the 30 parse completely. The other 13 contain a DO block, a function, a trigger or a
+ * 18 of the 30 parse completely. The other 12 contain a DO block, a function, a trigger or a
  * DROP INDEX, and the parser REFUSES them — which is the correct outcome, and why `drift
  * --migration` needs `--allow-unparsed` (and usually `--tables`) for those files.
  *

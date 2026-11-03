@@ -499,21 +499,25 @@ function classifyWith(
   const prog = programmability(tokens);
   if (prog) return unparsed(prog);
 
-  const benign = ignorable(tokens);
-  if (benign) return ignored(benign);
-
   // A statement-level CASCADE drops or alters objects the statement does not name — a foreign
-  // key on another table, a view — so the set of touched tables is not in the text. The
-  // referential action `ON DELETE CASCADE` / `ON UPDATE CASCADE` is NOT that: it is a property
-  // of the constraint being defined, and reading it as one made every real
-  // `ADD CONSTRAINT ... ON DELETE CASCADE` unparseable on the first sweep.
+  // key on another table, a view, every column of a dropped type — so the set of touched tables
+  // is not in the text. The referential action `ON DELETE CASCADE` / `ON UPDATE CASCADE` is NOT
+  // that: it is a property of the constraint being defined, and reading it as one made every
+  // real `ADD CONSTRAINT ... ON DELETE CASCADE` unparseable on the first sweep.
+  //
+  // Checked BEFORE `ignorable`, and for every statement head: `DROP TYPE x CASCADE` is on the
+  // ignorable list without its CASCADE, and answering "touches no table" for it is exactly the
+  // silent skip the module comment rules out.
   const statementCascade = tokens.some(
     (t, i) =>
       t.keyword === 'CASCADE' && kw(tokens, i - 1) !== 'DELETE' && kw(tokens, i - 1) !== 'UPDATE'
   );
-  if ((a === 'DROP' || a === 'ALTER' || a === 'TRUNCATE') && statementCascade) {
+  if (statementCascade) {
     return unparsed('CASCADE also changes objects on tables the statement does not name');
   }
+
+  const benign = ignorable(tokens);
+  if (benign) return ignored(benign);
 
   const refs = (via = 'REFERENCES') =>
     referencedTables(tokens, qn).map((table) => ({ table, action: 'present' as const, via }));
