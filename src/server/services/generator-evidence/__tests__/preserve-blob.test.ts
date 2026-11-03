@@ -83,7 +83,9 @@ describe('preserveBlob', () => {
       url.pathname.endsWith('/refresh')
         ? new Response('{}', { status: 200 })
         : url.pathname === `/v2/consumer/blobs/${BLOB}`
-        ? redirect('/v2/consumer/blobs/blocked/placeholder-token', { 'x-blocked-reason': 'Withheld' })
+        ? redirect('/v2/consumer/blobs/blocked/placeholder-token', {
+            'x-blocked-reason': 'Withheld',
+          })
         : new Response(Buffer.from('placeholder png'), {
             status: 403,
             headers: { 'content-type': 'image/png' },
@@ -148,7 +150,9 @@ describe('preserveBlob', () => {
     routes = (url) =>
       url.pathname.endsWith('/refresh')
         ? new Response('{}', { status: 200 })
-        : redirect('/v2/consumer/blobs/blocked/placeholder-token', { 'x-blocked-reason': 'Withheld' });
+        : redirect('/v2/consumer/blobs/blocked/placeholder-token', {
+            'x-blocked-reason': 'Withheld',
+          });
 
     const result = await preserveBlob({ config, store: memoryStore() }, input);
 
