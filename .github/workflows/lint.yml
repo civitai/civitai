@@ -189,8 +189,8 @@ on:
   # and the quarantine run). On pull_request and push `inputs.only` is empty, so
   # it narrows nothing: what runs there is decided by each job's or step's own
   # event gate (`unit` skips pull requests without the `full-ci` label and the
-  # quarantine step skips all of them; `typecheck-tests` skips push; ESLint is
-  # PR-only; typecheck runs where Tekton does not; drafts run ESLint only unless
+  # quarantine step skips all of them; ESLint is PR-only; typecheck runs where
+  # Tekton does not; drafts run ESLint only unless
   # labeled `full-ci`).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   # The app suites moved to apps.yml, which has its own dispatch.
@@ -528,9 +528,18 @@ jobs:
     # change adds a test file with type errors, or raises a baselined file's count
     # (scripts/ci/typecheck-tests-gate.mjs, baseline beside it).
     #
-    # Non-draft PRs and dispatch, not push to `main`: a type error in a test file is caught
-    # before merge, or not at all.
-    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
+    # Non-draft PRs, dispatch, and push to `main`. The gate compares against the
+    # committed baseline, not a PR base, so a push run means the same thing a PR run
+    # does. It used to skip push on the theory that a test-file type error is caught
+    # before merge — but drafts skip this job and `main` has no required checks, so
+    # PRs merged as drafts or merged red let 12 errors in 9 files reach `main`
+    # unmeasured (re-baselined in #7571), and every later PR inherited the red with
+    # no way to tell which commit caused it. On `main` it renders red and blocks
+    # nothing. It lands on the first run that finishes after the bad commit: a verdict
+    # takes ~4-5 min from push, a newer push cancels the run in flight, and a finished
+    # job keeps its result. In a burst of pushes the error shows on the last commit of
+    # the burst, so check the cancelled runs before it.
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
