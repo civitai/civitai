@@ -1052,19 +1052,22 @@ describe('Hat Turf', () => {
     expect(await engine.hasTurfMark(action)).toBe(true);
   });
 
-  it('never asks Redis about a removal on an image that was never turf', async () => {
+  // Decision: the removal lookup always asks Redis (two SISMEMBERs) rather than prefiltering on what
+  // this server has loaded. A prefilter forgets everything at a restart, and an un-react it skips
+  // leaves the earlier add scoring. Do not reintroduce one without keeping this test red-on-revert.
+  it('still finds an earning after a restart while turf mode is off (no in-memory prefilter)', async () => {
     build({ loadScoredEvents: async () => [turfEvent('live')] });
-    await engine.refresh();
-    const sIsMember = vi.spyOn(fake.redis, 'sIsMember');
-    const removal = {
+    const action = {
       type: 'reaction' as const,
       actorId: 30,
       entityType: 'Image' as const,
-      entityId: 999,
-      sourceId: 'ImageReaction:999:30',
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
     };
-    expect(await engine.hasTurfMark(removal)).toBe(false);
-    expect(sIsMember).not.toHaveBeenCalled();
+    await engine.awardEventPoints([action]);
+    // A fresh engine is a restarted server; with the mode off it loads no turf map at all.
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: 'off' as const }] });
+    expect(await engine.hasTurfMark(action)).toBe(true);
   });
 
   it('nets a shadow reaction out under its shadow type', async () => {
