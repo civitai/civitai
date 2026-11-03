@@ -23,7 +23,7 @@ import { getServicesMinCreatorScore } from '~/server/services/creator-service-mi
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 import { isHatTurfLive } from '~/server/events/turf/live';
-import { TURF_MIN_CREATOR_SCORE } from '~/shared/constants/turf.constants';
+import { TURF_SCORE_TIER_KEY } from '~/server/events/turf/config';
 import { SERVICES_MIN_CREATOR_SCORE } from '~/shared/constants/creator-service.constants';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
@@ -54,6 +54,8 @@ export type CreatorScoreUnlockInputs = {
   servicesMinScore: number;
   /** Listed only while Hat Turf is open to everyone. */
   hatTurfLive: boolean;
+  /** The Spark tier's threshold, from its CreatorMilestone row; 0 (not listed) when unread. */
+  turfMinScore: number;
 };
 
 export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
@@ -64,6 +66,7 @@ export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
   servicesEnabled: false,
   servicesMinScore: SERVICES_MIN_CREATOR_SCORE,
   hatTurfLive: false,
+  turfMinScore: 0,
 };
 
 /** Every privilege a Creator Score unlocks, lowest first. A threshold of 0 is not an unlock. */
@@ -216,7 +219,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       ? [
           {
             key: 'hat-turf-team-stickers',
-            minScore: TURF_MIN_CREATOR_SCORE,
+            minScore: inputs.turfMinScore,
             label: 'Hat Turf: your team stickers count (new accounts)',
             surface: 'events',
             scoreKind: 'total',
@@ -259,6 +262,7 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     servicesEnabled,
     servicesMinScore,
     hatTurfLive,
+    turfMinScore,
   ] = await Promise.all([
     getSaleMinScore(),
     getAnnouncementMinScore(),
@@ -266,6 +270,7 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     isServicesPublic(),
     getServicesMinCreatorScore(),
     isHatTurfLive(),
+    getTurfMinScore(),
   ]);
 
   return buildCreatorScoreUnlocks({
@@ -276,5 +281,18 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     servicesEnabled,
     servicesMinScore,
     hatTurfLive,
+    turfMinScore,
   });
+}
+
+async function getTurfMinScore() {
+  try {
+    const row = await dbRead.creatorMilestone.findUnique({
+      where: { key: TURF_SCORE_TIER_KEY },
+      select: { threshold: true },
+    });
+    return row?.threshold ?? 0;
+  } catch {
+    return 0;
+  }
 }

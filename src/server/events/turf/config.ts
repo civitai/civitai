@@ -1,10 +1,15 @@
 import * as z from 'zod';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { scoreTierKey } from '~/shared/constants/creator-journey.constants';
 import type { CreditStep, SupplyStep } from '~/server/events/turf/schedule';
 
 // off: no placing, nothing earns. shadow: testers place and turf actions are recorded under
 // `shadow:<type>` point types, which no weight can ever count (the referee reads only the types in
 // the event's scoring config). live: turf actions record the real point types.
+// New accounts earn turf from this Creator Journey tier's threshold (its CreatorMilestone row). A
+// missing row fails closed: none earn.
+export const TURF_SCORE_TIER_KEY = scoreTierKey('spark');
+
 export const TURF_MODES = ['off', 'shadow', 'live'] as const;
 export type TurfMode = (typeof TURF_MODES)[number];
 
