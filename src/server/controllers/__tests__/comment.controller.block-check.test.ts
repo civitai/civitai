@@ -42,7 +42,7 @@ vi.mock('~/server/services/comment.service', () => ({
   getCommentById: vi.fn(),
   getCommentReactions: vi.fn(),
   getComments: vi.fn(),
-  getPinnedComments: vi.fn(),
+  getPinnedCommentsViaKysely: vi.fn(),
   toggleHideComment: vi.fn(),
   togglePinComment: vi.fn(),
   updateCommentById: vi.fn(),
