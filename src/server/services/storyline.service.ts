@@ -3987,7 +3987,8 @@ async function withFirstImages<T extends { post: { id: number } | null }>(
 /**
  * The image a storyline started from, with its creator, when this reader may be shown it: by the
  * chapter-image gate (so never above the story's ceiling), from a published post, by an account in
- * good standing outside a block with the reader. Otherwise null, and the story reads without it.
+ * good standing outside a block with the reader or the story's owner, either way. Otherwise null,
+ * and the story reads without it.
  */
 export async function getStorylineSpark(
   gate: StorylineImageGateSource,
@@ -4005,6 +4006,12 @@ export async function getStorylineSpark(
     WHERE st.id = ${storylineId}
       AND p."publishedAt" < now() AND p."tosViolation" = false
       AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "UserEngagement" blk
+        WHERE blk.type = 'Block'
+          AND ((blk."userId" = i."userId" AND blk."targetUserId" = st."userId")
+            OR (blk."userId" = st."userId" AND blk."targetUserId" = i."userId"))
+      )
       AND ${storylineImageVisible(resolved)}
   `;
   if (!row || resolved.blockedUserIds.has(row.userId)) return null;

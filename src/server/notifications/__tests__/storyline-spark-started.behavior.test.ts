@@ -96,6 +96,14 @@ describe('storyline-spark-started', () => {
       () => story().then(() => chapterOne({ createdAt: BEFORE })),
     ],
     ['only a later chapter is new', () => story().then(() => chapterOne({ depth: 1 }))],
+    [
+      'chapter 1 was removed',
+      async () => {
+        await story();
+        await chapterOne();
+        await db.exec(`UPDATE "StorylineChapter" SET "removedAt" = now()`);
+      },
+    ],
     ['the image is the starter’s own', () => story(501).then(() => chapterOne())],
     [
       'the storyline is taken down',

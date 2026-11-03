@@ -50,6 +50,9 @@ beforeAll(async () => {
       ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text);
     CREATE TABLE "TagsOnImageDetails" ("imageId" integer, "tagId" integer,
       disabled boolean NOT NULL DEFAULT false);
+    CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
+    CREATE TABLE "UserEngagement" ("userId" integer, "targetUserId" integer,
+      type "UserEngagementType" NOT NULL);
   `);
   for (const name of [
     '20261023120000_storylines',
@@ -73,7 +76,7 @@ beforeEach(async () => {
   const raw = pgliteRaw(db.pg);
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   await db.pg.exec(`
-    TRUNCATE "User", "Post", "Image", "TagsOnImageDetails", "Storyline" CASCADE;
+    TRUNCATE "User", "Post", "Image", "TagsOnImageDetails", "UserEngagement", "Storyline" CASCADE;
     INSERT INTO "User" (id, username) VALUES (1, 'creator'), (2, 'starter'), (3, 'reader');
     INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (50, ${CREATOR}, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId", "userId", "nsfwLevel")
@@ -110,9 +113,22 @@ describe("a storyline's spark credit", () => {
     ['the image is taken down', `UPDATE "Image" SET "tosViolation" = true`],
     ['the image is above the story ceiling', `UPDATE "Image" SET "nsfwLevel" = ${NsfwLevel.X}`],
     ['its post is private', `UPDATE "Post" SET availability = 'Private'`],
+    [
+      'its creator blocks the story owner',
+      `INSERT INTO "UserEngagement" VALUES (${CREATOR}, ${STARTER}, 'Block')`,
+    ],
+    [
+      'the story owner blocks its creator',
+      `INSERT INTO "UserEngagement" VALUES (${STARTER}, ${CREATOR}, 'Block')`,
+    ],
   ])('is hidden when %s', async (_name, change) => {
     await db.pg.exec(change);
     await expect(read()).resolves.toBeNull();
+  });
+
+  it('is still shown when its creator follows the story owner', async () => {
+    await db.pg.exec(`INSERT INTO "UserEngagement" VALUES (${CREATOR}, ${STARTER}, 'Follow')`);
+    await expect(read()).resolves.not.toBeNull();
   });
 
   it("is shown to the image's own creator on a private post", async () => {
