@@ -28,8 +28,10 @@
   // The server renders the first value; the page then keeps it current until the next UTC midnight.
   let tally = $state(untrack(() => data.nextTally));
   onMount(() => {
+    // Measured once against the server's clock, so a viewer whose clock runs fast isn't told to refresh early.
+    const skew = Date.parse(data.serverNow) - Date.now();
     const tick = () => {
-      tally = formatTally(Date.parse(data.nextTallyAt) - Date.now());
+      tally = formatTally(Date.parse(data.nextTallyAt) - (Date.now() + skew));
     };
     const timer = setInterval(tick, 30_000);
     return () => clearInterval(timer);

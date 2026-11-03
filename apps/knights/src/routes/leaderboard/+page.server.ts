@@ -46,6 +46,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
     windowDays: PROGRESSION.fervorWindowDays,
     nextTally: nextTally(now),
     nextTallyAt: nextTallyAt(now).toISOString(),
+    serverNow: now.toISOString(),
     helpClosed: cookies.get(HELP_COOKIE) === 'closed',
     copy: fervorCopy(),
     entries: view.entries.map(shown),
