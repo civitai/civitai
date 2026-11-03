@@ -16,13 +16,42 @@ import {
   type Outcome,
 } from '$lib/server/knights/coreset.service';
 import { CORESET } from '$lib/server/knights/coreset.config';
+import {
+  addYesNoReference,
+  deleteYesNoReference,
+  getYesNoQuestions,
+  getYesNoReferenceCount,
+  getYesNoReferences,
+  setYesNoReferenceActive,
+} from '$lib/server/knights/yesno-reference.service';
 
-const TABS = ['core', 'fresh', 'spot-check'] as const;
+const TABS = ['core', 'fresh', 'spot-check', 'yes-no'] as const;
 type Tab = (typeof TABS)[number];
 
 const level = z.coerce.number().int();
 const why = z.string().max(2000);
+
+/** An image id, or any civitai image page URL (`/images/<id>`). */
+const imageRef = z.preprocess((value) => {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (/^\d+$/.test(text)) return Number(text);
+  const fromUrl = text.match(/\/images\/(\d+)(?:[/?#]|$)/);
+  return fromUrl ? Number(fromUrl[1]) : NaN;
+}, int4Id);
+const yesNo = z.enum(['yes', 'no']).transform((value) => value === 'yes');
+
 const forms = {
+  addYesNo: z.object({
+    image: imageRef,
+    questionKey: z.string().trim().min(1).max(200),
+    answer: yesNo,
+    explanation: why.optional().default(''),
+  }),
+  toggleYesNo: z.object({
+    id: int4Id,
+    active: z.enum(['true', 'false']).transform((v) => v === 'true'),
+  }),
+  deleteYesNo: z.object({ id: int4Id }),
   add: z.object({ imageId: int4Id, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
   retire: z.object({ id: int4Id }),
@@ -34,14 +63,18 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
   const requested = url.searchParams.get('tab');
   const tab: Tab = TABS.find((t) => t === requested) ?? 'core';
-  const counts = await getCoreSetCounts();
+  const [counts, yesNoCount] = await Promise.all([getCoreSetCounts(), getYesNoReferenceCount()]);
   return {
     tab,
-    counts,
+    counts: { ...counts, yesNo: yesNoCount },
     limit: CORESET.listLimit,
     flagRule: { minAnswers: CORESET.flagMinAnswers, failureRate: CORESET.flagFailureRate },
     items: tab === 'core' ? await getCoreItems() : tab === 'fresh' ? await getFreshItems() : [],
     spotCheck: tab === 'spot-check' ? await getSpotCheckItems() : [],
+    yesNo:
+      tab === 'yes-no'
+        ? { items: await getYesNoReferences(), questions: await getYesNoQuestions() }
+        : { items: [], questions: [] },
   };
 };
 
@@ -72,4 +105,14 @@ export const actions: Actions = {
   retire: (event) => run(event, forms.retire, 'retire the image', ({ id }) => retireReference(id)),
   promote: (event) => run(event, forms.promote, 'promote the image', promoteToCore),
   spotCheck: (event) => run(event, forms.spotCheck, 'record the rating', spotCheckItem),
+  addYesNo: (event) =>
+    run(event, forms.addYesNo, 'add the pair', ({ image, ...rest }) =>
+      addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user?.id ?? 0 })
+    ),
+  toggleYesNo: (event) =>
+    run(event, forms.toggleYesNo, 'update the pair', ({ id, active }) =>
+      setYesNoReferenceActive(id, active)
+    ),
+  deleteYesNo: (event) =>
+    run(event, forms.deleteYesNo, 'delete the pair', ({ id }) => deleteYesNoReference(id)),
 };

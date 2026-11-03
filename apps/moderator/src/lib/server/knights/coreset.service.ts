@@ -139,7 +139,7 @@ const keepCountsIf = (answer: string) =>
   } as const);
 
 /** Returns an error message unless Acolytes would be shown the image. */
-async function unservableReason(imageId: number): Promise<string | null> {
+export async function unservableReason(imageId: number): Promise<string | null> {
   const servable = await dbWrite
     .selectFrom('Image as img')
     .innerJoin('Post as p', 'p.id', 'img.postId')
