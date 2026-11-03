@@ -3840,6 +3840,17 @@ export type KnightsVote = {
   consequence: string | null;
   noticedAt: Timestamp | null;
 };
+export type KnightsYesNoReference = {
+  id: Generated<number>;
+  imageId: number;
+  questionKey: string;
+  answer: boolean;
+  explanation: string | null;
+  active: Generated<boolean>;
+  createdBy: number;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type Leaderboard = {
   id: string;
   index: number;
@@ -6668,6 +6679,7 @@ export type DB = {
   KnightsTrialAnswer: KnightsTrialAnswer;
   KnightsTrialRun: KnightsTrialRun;
   KnightsVote: KnightsVote;
+  KnightsYesNoReference: KnightsYesNoReference;
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;
