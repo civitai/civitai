@@ -28,7 +28,7 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
   assertCanPlace,
 }));
 
-const { placeTurfSticker } = await import('~/server/events/turf/turf.service');
+const { placeTurfSticker, getTurfStickers } = await import('~/server/events/turf/turf.service');
 
 const NOW = new Date('2026-11-05T12:00:00Z');
 const PLACER = 5;
@@ -145,5 +145,63 @@ describe('placeTurfSticker', () => {
       new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' })
     );
     await expect(placeTurfSticker(input, NOW)).rejects.toThrow(/already put a hat sticker/);
+  });
+});
+
+describe('getTurfStickers paging', () => {
+  const LIMIT = EVENT.turf.renderLimit;
+  // Newest first, as the query orders them: ids LIMIT+1 down to 1, a minute apart.
+  const drawn = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: BigInt(n - i),
+      userId: 1,
+      team: 'Blue',
+      cosmeticId: 11,
+      data: {},
+      createdAt: new Date(NOW.getTime() - i * 60_000),
+    }));
+  const queries = () =>
+    dbMock.dbRead.$queryRaw.mock.calls.map(([strings, ...values]) =>
+      Prisma.sql(strings as TemplateStringsArray, ...values)
+    );
+
+  // Stands in for Postgres: returns `rows` up to the query's own LIMIT, its last parameter.
+  const serve = (rows: ReturnType<typeof drawn>) =>
+    dbMock.dbRead.$queryRaw.mockImplementationOnce(((
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => Promise.resolve(rows.slice(0, Number(Prisma.sql(strings, ...v).values.at(-1))))) as never);
+
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset());
+
+  it('hands back a cursor at the last sticker drawn when more are older', async () => {
+    const rows = drawn(LIMIT + 5);
+    serve(rows);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    const { stickers, nextCursor } = await getTurfStickers('e', 900, PLACER);
+    expect(stickers).toHaveLength(LIMIT);
+    expect(nextCursor).toEqual({
+      createdAt: rows[LIMIT - 1].createdAt.toISOString(),
+      id: rows[LIMIT - 1].id.toString(),
+    });
+  });
+
+  it('no cursor once the oldest sticker is on the page', async () => {
+    serve(drawn(LIMIT));
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    expect((await getTurfStickers('e', 900, PLACER)).nextCursor).toBeNull();
+  });
+
+  it('a later page asks only for stickers older than the cursor, and not for mine', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    const before = { createdAt: '2026-11-05T11:00:00.123Z', id: BigInt(4242) };
+    const { mine } = await getTurfStickers('e', 900, PLACER, before);
+    expect(mine).toBeNull();
+    const [page, ...rest] = queries();
+    expect(rest).toHaveLength(0);
+    // Without this bound every page repeats the first one.
+    expect(page.text).toMatch(/\(s\."createdAt", s\.id\) < \(\$\d+::timestamptz, \$\d+::bigint\)/);
+    expect(page.values).toContainEqual(new Date(before.createdAt));
+    expect(page.values).toContain(BigInt(4242));
   });
 });

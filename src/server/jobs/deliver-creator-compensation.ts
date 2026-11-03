@@ -1,6 +1,7 @@
 import { chunk, isEmpty } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
+import { stopsCreatorEarnings } from '~/server/common/constants';
 import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -103,7 +104,7 @@ export async function payDueCompensation(now: Date) {
   }
 }
 
-type UserVersions = { userId: number; modelVersionIds: number[] };
+type UserVersions = { userId: number; modelVersionIds: number[]; baseModels?: string[] };
 // Orchestrator ships PascalCase accountType (e.g. 'Yellow', 'CashSettled'); the
 // buzz API tolerates the aliases so we forward them as-is and only branch on
 // cashSettled below for the pennies conversion.
@@ -263,20 +264,30 @@ export async function runPayout(lastUpdate: Date) {
     const userVersions = await dbRead.$queryRaw<UserVersions[]>`
         SELECT
           m."userId" as "userId",
-          array_agg(mv.id::int) as "modelVersionIds"
+          array_agg(mv.id::int ORDER BY mv.id) as "modelVersionIds",
+          array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE mv.id IN (${Prisma.join(versionIds)})
         GROUP BY m."userId";
       `;
 
-    for (const { userId, modelVersionIds } of userVersions) {
+    for (const { userId, modelVersionIds, baseModels = [] } of userVersions) {
       if (!modelVersionIds.length || userId === -1) continue;
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
 
+      // Drop creator-compensation rows where earnings stopped: the orchestrator's stored
+      // payoutEnabled can predate the base model's license change.
+      const earningsStoppedIds = modelVersionIds.filter((_, i) =>
+        stopsCreatorEarnings(baseModels[i])
+      );
       creatorsToPay[userId].push(
-        ...batch.filter((r) => modelVersionIds.includes(r.modelVersionId))
+        ...batch.filter(
+          (r) =>
+            modelVersionIds.includes(r.modelVersionId) &&
+            !(r.source === 'compensation' && earningsStoppedIds.includes(r.modelVersionId))
+        )
       );
     }
   }

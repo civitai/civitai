@@ -9,6 +9,8 @@ import {
   baseModelLicenses,
   getEffectiveCommercialUse,
   getEffectiveDifferentLicense,
+  nonCommercialBaseModels,
+  stopsCreatorEarnings,
 } from '~/server/common/constants';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
@@ -33,7 +35,7 @@ describe('Flux.2 Klein 9B licence registration', () => {
     (name, record) => {
       const server = baseModelLicenses[name as BaseModel];
       expect(server, `no licence bound for base model '${name}'`).toBeDefined();
-      expect(server!.name).toBe('FLUX Non-Commercial License');
+      expect(server!.name).toBe('FLUX Non-Commercial License v2.1');
       expect(server!.url).toBe(PERMALINK);
 
       const shared = sharedLicenses.find((l) => l.id === record.licenseId);
@@ -57,5 +59,26 @@ describe('what a Flux.2 Klein 9B version shows', () => {
       CommercialUse.Sell,
     ]);
     expect(getEffectiveDifferentLicense(true, 'Flux.2 Klein 4B')).toBe(true);
+  });
+});
+
+describe('which non-commercial base models stop creator earnings', () => {
+  // Pins today's decision that the two rules match; narrow this deliberately if they diverge.
+  it('every non-commercial base model, and no commercial one', () => {
+    expect(nonCommercialBaseModels.filter((b) => stopsCreatorEarnings(b))).toEqual(
+      nonCommercialBaseModels
+    );
+    expect(nonCommercialBaseModels).toEqual(
+      expect.arrayContaining([
+        'Flux.2 Klein 9B',
+        'Flux.2 Klein 9B-base',
+        'Flux.3 Klein',
+        'Flux.3 Klein-base',
+        'Ideogram 4.0',
+        'Qwen 2.1',
+      ])
+    );
+    for (const commercial of ['Flux.2 Klein 4B', 'Flux.2 Klein 4B-base', 'SDXL 1.0'])
+      expect(stopsCreatorEarnings(commercial)).toBe(false);
   });
 });
