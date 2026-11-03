@@ -37,6 +37,8 @@ const { db, s3, holder } = vi.hoisted(() => {
     $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The previous approved version (`getPreviousApprovedState`): none.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
