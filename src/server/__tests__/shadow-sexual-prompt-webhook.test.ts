@@ -182,7 +182,18 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
     expect(text).toMatch(/'subjectType', 'image',/);
     expect(text).toMatch(/'contentHash', label_store\.text_hash\(i\."url"\),/);
     expect(text).toMatch(/'questionVersion', 1,/);
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+    // Exactly one line, and nothing from the prompt in it.
+    expect(loggingMock.logToAxiom.mock.calls).toEqual([
+      [
+        {
+          type: 'info',
+          name: 'shadow-sexual-prompt',
+          message: 'prediction submitted',
+          status: 'recorded',
+          workflowId: 'wf-shadow',
+        },
+      ],
+    ]);
     expect(predictionValues()).toEqual(
       expect.arrayContaining([
         'image.prompt_sexual',
@@ -270,6 +281,9 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
         message: 'prediction rejected: subject erased',
         imageId: 9001,
       })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'info', status: 'rejected', workflowId: 'wf-shadow' })
     );
   });
 
