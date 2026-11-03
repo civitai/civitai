@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { Stripe } from 'stripe';
-import { dbMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
+import { dbMock, loggingMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { toDateTime } from '~/server/services/stripe.service';
@@ -851,6 +851,10 @@ describe('re-sync: final-head lanes', () => {
     const { status, body } = await resync();
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: true, after: null });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'reread-failed', error: 'pool timeout' }),
+      'webhooks'
+    );
     expect(dbMock.dbWrite.customerSubscription.upsert).toHaveBeenCalled();
     expect(trackModActivity).toHaveBeenCalledTimes(1);
   });

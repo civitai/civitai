@@ -79,9 +79,13 @@
     >
       Re-synced: {resynced.changes.length
         ? `${resynced.changes.length} field${resynced.changes.length === 1 ? '' : 's'} updated`
-        : 'already matched'}. Now {resynced.after?.status}, period ends {dateTime(
-        resynced.after?.currentPeriodEnd ?? null
-      )}.
+        : 'already matched'}.
+      {#if resynced.after}
+        Now {resynced.after.status}, period ends
+        {dateTime(resynced.after.currentPeriodEnd ?? null)}.
+      {:else}
+        The row could not be read back; refresh to check it.
+      {/if}
       {#if resynced.endedBuzzMembership}
         <span class="block text-xs">
           Ended the Buzz-bought membership {resynced.endedBuzzMembership.id}.

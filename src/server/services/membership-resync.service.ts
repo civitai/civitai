@@ -329,7 +329,13 @@ async function resyncLocked({
   const moved = (s: Stripe.Subscription) =>
     JSON.stringify([stripeView(s), s.metadata ?? {}, s.canceled_at ?? null]);
   if (!fresh || moved(fresh) !== moved(sub)) {
-    await log({ type: 'refused', actorId, userId, reason, problems: ['subscription changed'] });
+    await log({
+      type: 'refused',
+      actorId,
+      userId,
+      reason,
+      problems: [fresh ? 'subscription changed' : 'Stripe no longer has the subscription'],
+    });
     throw throwConflictError(
       'The subscription changed in Stripe during the re-sync; preview again'
     );
@@ -362,7 +368,10 @@ async function resyncLocked({
       where: { userId_buzzType: { userId, buzzType: 'green' } },
       select: rowSelect,
     })
-    .catch(() => null);
+    .catch((e) => {
+      log({ type: 'reread-failed', userId, error: (e as Error).message });
+      return null;
+    });
   const after = afterRow ? rowView(afterRow, sub) : null;
   await log({
     type: 'resynced',
