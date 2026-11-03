@@ -11,3 +11,5 @@ export * from './sdk-floor';
 export * from './models';
 export * from './cover';
 export * from './app-feedback';
+export * from './sandbox-tools';
+export * from './docs';

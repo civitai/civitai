@@ -684,3 +684,36 @@ describe('the ready card', () => {
     );
   });
 });
+
+describe('sandbox__run_checks', () => {
+  // A sandbox that lists run_checks runs the tests and the typecheck in one call. Before the gate
+  // read it, it cleared the checks as any unknown sandbox tool does, so report_ready could never pass.
+  const runChecks = (test: number, typecheck: number): ChatToolResult => ({
+    name: 'sandbox__run_checks',
+    input: { cwd: 'my-app' },
+    // The sandbox MCP server's own run_checks output format.
+    output: `exit_code: ${
+      test || typecheck ? 1 : 0
+    }\ntest: exit_code ${test} (npm test, 3.1s)\ntypecheck: exit_code ${typecheck} (npx tsc --noEmit, 5.2s)\n`,
+    isError: false,
+  });
+
+  it('counts as a test run and a typecheck run', async () => {
+    const gate = gateInConversation();
+    await setChecklist(gate, [{ label: 'Type a description', done: true }]);
+    gate.onToolResult(preview('ok'));
+    gate.onToolResult(runChecks(0, 0));
+    expect(readyDecision(gate)).toEqual({ allow: true });
+  });
+
+  it('a failed typecheck in it fails only the typecheck', async () => {
+    const gate = gateInConversation();
+    await setChecklist(gate, [{ label: 'Type a description', done: true }]);
+    gate.onToolResult(preview('ok'));
+    gate.onToolResult(runChecks(0, 2));
+    expect(readyDecision(gate)).toEqual({
+      refuse:
+        'Not ready yet. The last typecheck failed. Fix it, then run cd <blockId> && npx tsc --noEmit again. Then call report_ready again.',
+    });
+  });
+});
