@@ -26,6 +26,14 @@ for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
     pgliteRaw(holder.db).queryRaw(...a)) as never);
 }
 
+// `server-domain.ts` reads its host map at import: civitai.red is red-capable, civitai.com is not.
+vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.green');
+vi.stubEnv('SERVER_DOMAIN_GREEN_ALIASES', '');
+vi.stubEnv('SERVER_DOMAIN_BLUE', 'civitai.com');
+vi.stubEnv('SERVER_DOMAIN_BLUE_ALIASES', 'civitai.red');
+vi.stubEnv('SERVER_DOMAIN_RED', 'civitai.red');
+vi.stubEnv('SERVER_DOMAIN_RED_ALIASES', '');
+
 const {
   isImportScopeCovered,
   getStorageImportGrant,
@@ -46,7 +54,10 @@ const CONSUMER = 'apb_consumer_3401';
 const SOURCES: Record<string, string> = {
   'notes-app': 'apb_src_3411',
   'words-app': 'apb_src_3412',
+  'mature-app': 'apb_src_3413',
 };
+/** Source ratings; a source not listed is SFW. */
+const RATINGS: Record<string, string> = { 'mature-app': 'x' };
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -54,14 +65,18 @@ beforeAll(async () => {
     CREATE TABLE "User" ("id" integer PRIMARY KEY);
     CREATE TABLE "app_blocks" ("id" text PRIMARY KEY);
     INSERT INTO "User" VALUES (${UID}), (${OTHER_UID});
-    INSERT INTO "app_blocks" VALUES ('${CONSUMER}'), ('apb_src_3411'), ('apb_src_3412');
+    INSERT INTO "app_blocks" VALUES ('${CONSUMER}'), ('apb_src_3411'), ('apb_src_3412'), ('apb_src_3413');
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   dbMock.dbRead.appBlock.findMany.mockImplementation(
     async ({ where }: { where: { blockId: { in: string[] } } }) =>
       where.blockId.in
         .filter((b) => b in SOURCES)
-        .map((blockId) => ({ id: SOURCES[blockId], blockId, manifest: { name: blockId } }))
+        .map((blockId) => ({
+          id: SOURCES[blockId],
+          blockId,
+          manifest: { name: blockId, contentRating: RATINGS[blockId] ?? 'g' },
+        }))
   );
 });
 
@@ -102,6 +117,7 @@ const covered = (uid: number, ...imports: Decl[]) =>
     userId: uid,
     consumerAppBlockId: CONSUMER,
     manifest: manifestImporting(...imports),
+    host: 'civitai.red',
   });
 
 describe('the ledger SQL on the real migration', () => {
@@ -258,5 +274,62 @@ describe('the migration on a database holding the earlier draft of the table', (
     } finally {
       await fresh.close();
     }
+  });
+});
+
+describe('a host that cannot show a mature-rated source', () => {
+  const MATURE = { from: 'mature-app', collections: ['notes'], access: 'read' } as Decl;
+  const WORDS = { from: 'words-app', collections: ['words'], access: 'read' } as Decl;
+  const SFW_HOST = 'civitai.com';
+
+  it('the mint there covers the scope once the sources that host can show are granted', async () => {
+    // The consent on that host offers and records WORDS only.
+    await grantFor(UID, WORDS);
+    expect(
+      await isImportScopeCovered({
+        userId: UID,
+        consumerAppBlockId: CONSUMER,
+        manifest: manifestImporting(MATURE, WORDS),
+        host: SFW_HOST,
+      })
+    ).toBe(true);
+    // Control: on a red-capable host the mature source is reachable, so it needs its grant.
+    expect(
+      await isImportScopeCovered({
+        userId: UID,
+        consumerAppBlockId: CONSUMER,
+        manifest: manifestImporting(MATURE, WORDS),
+        host: 'civitai.red',
+      })
+    ).toBe(false);
+  });
+
+  it('a mint there does not prune the grant given for the mature source on a red host', async () => {
+    await grantFor(UID, MATURE, WORDS);
+    await isImportScopeCovered({
+      userId: UID,
+      consumerAppBlockId: CONSUMER,
+      manifest: manifestImporting(MATURE, WORDS),
+      host: SFW_HOST,
+    });
+    expect((await rows()).map((r) => r.source_app_block_id)).toEqual([
+      'apb_src_3412',
+      'apb_src_3413',
+    ]);
+  });
+
+  it('a consent there keeps the grant given for the mature source on a red host', async () => {
+    await grantFor(UID, MATURE, WORDS);
+    // The consent on the SFW host records WORDS and keeps the source it could not show.
+    await recordStorageImportGrants({
+      userId: UID,
+      consumerAppBlockId: CONSUMER,
+      grants: [{ sourceAppBlockId: SOURCES['words-app'], collections: ['words'], access: 'read' }],
+      keepUnshown: [SOURCES['mature-app']],
+    });
+    expect((await rows()).map((r) => r.source_app_block_id)).toEqual([
+      'apb_src_3412',
+      'apb_src_3413',
+    ]);
   });
 });

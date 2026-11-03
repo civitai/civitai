@@ -2934,6 +2934,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
         userId: VIEWER_IDS.v1,
         consumerAppBlockId: C.id,
         manifest: C.manifest,
+        host: '',
       })
     ).toBe(false);
     // The prompt for v2, accepted: covered again.
@@ -2990,6 +2991,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
         userId: VIEWER_IDS.v1,
         consumerAppBlockId: C.id,
         manifest: C.manifest,
+        host: '',
       })
     ).toBe(true);
     // v3 declares exactly what v1 did.

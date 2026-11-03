@@ -53,7 +53,8 @@ describe('the mint signs apps:storage:import only while every reachable source i
     const covered = await importScopeCoverage(
       7301,
       { ...CONSUMER, manifest: manifestImporting('notes-app') },
-      SCOPES
+      SCOPES,
+      ''
     );
     expect(covered).toBe(true);
     expect(withholdUncoveredImportScope({ signable: SCOPES, missing: [] }, covered)).toEqual({
@@ -67,7 +68,8 @@ describe('the mint signs apps:storage:import only while every reachable source i
     const covered = await importScopeCoverage(
       7301,
       { ...CONSUMER, manifest: manifestImporting('notes-app', 'words-app') },
-      SCOPES
+      SCOPES,
+      ''
     );
     expect(covered).toBe(false);
     expect(
@@ -81,7 +83,8 @@ describe('the mint signs apps:storage:import only while every reachable source i
       await importScopeCoverage(
         7301,
         { ...CONSUMER, manifest: manifestImporting('gone-app') },
-        SCOPES
+        SCOPES,
+        ''
       )
     ).toBe(true);
   });
@@ -91,9 +94,12 @@ describe('the mint signs apps:storage:import only while every reachable source i
     // Shared mocks reset per FILE, not per test.
     dbMock.dbRead.appBlock.findMany.mockClear();
     expect(
-      await importScopeCoverage(7301, { ...CONSUMER, manifest: manifestImporting('notes-app') }, [
-        'apps:storage',
-      ])
+      await importScopeCoverage(
+        7301,
+        { ...CONSUMER, manifest: manifestImporting('notes-app') },
+        ['apps:storage'],
+        ''
+      )
     ).toBeNull();
     expect(dbMock.dbRead.appBlock.findMany).not.toHaveBeenCalled();
   });

@@ -145,6 +145,7 @@ describe('blocks.grantScopes records the imports the viewer was shown', () => {
             access: 'readwrite',
           },
         ],
+        keepUnshown: [],
       },
     ]);
     expect(grantRow.create).toHaveBeenCalledTimes(1);
@@ -162,7 +163,13 @@ describe('blocks.grantScopes records the imports the viewer was shown', () => {
     await grant([NOTES, WORDS]);
     expect(recordImports).toHaveBeenCalledTimes(1);
     expect(recordImports.mock.calls[0]).toEqual([
-      { userId: 7421, consumerAppBlockId: 'apb_fork_3501', grants: [] },
+      // The mature source is kept, not pruned: its grant may have been given on a red host.
+      {
+        userId: 7421,
+        consumerAppBlockId: 'apb_fork_3501',
+        grants: [],
+        keepUnshown: ['apb_src_3511'],
+      },
     ]);
   });
 
