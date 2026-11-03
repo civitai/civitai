@@ -1,11 +1,11 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
 
-  type Size = 'sm' | 'md' | 'lg';
+  type Size = 'xs' | 'sm' | 'md' | 'lg';
   let { rank, size = 'md', dim = false }: { rank: string; size?: Size; dim?: boolean } = $props();
 
   const ICONS = { Acolyte: 'flame', Knight: 'sword', Templar: 'shield', Paladin: 'crown' } as const;
-  const DIAMETER = { sm: 56, md: 70, lg: 76 } as const;
+  const DIAMETER = { xs: 24, sm: 56, md: 70, lg: 76 } as const;
   const icon = $derived(ICONS[rank as keyof typeof ICONS] ?? 'shield');
 </script>
 

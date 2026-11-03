@@ -39,6 +39,7 @@
     { href: '/play', label: 'Play', icon: 'play' as const },
     { href: '/judgments', label: 'Judgments', icon: 'scroll-text' as const },
     ...(conversionOpen ? [{ href: '/gold', label: 'Convert gold', icon: 'coins' as const }] : []),
+    { href: '/leaderboard', label: 'Leaderboard', icon: 'crown' as const },
     { href: '/ranks', label: 'Ranks', icon: 'shield' as const },
     { href: '/rules', label: 'Rules', icon: 'book-open' as const },
   ]);
