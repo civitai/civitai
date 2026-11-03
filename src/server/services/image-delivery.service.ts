@@ -136,13 +136,20 @@ export const IMAGE_DELIVERY_METADATA_PG_SQL = `
       LIMIT 1
     `;
 
-const pgRows = (pool: AugmentedPool, url: string) =>
-  pool
+// A url holding a lone UTF-16 surrogate cannot be encoded as UTF-8. Prisma refuses it with an error
+// (so the replica read fails, the primary read fails the same way, and the request errors); node-pg
+// would instead encode it as U+FFFD and quietly answer not-found. Refusing it here, on both pools,
+// keeps the pg path failing exactly where Prisma fails. Measured by the real-Postgres parity suite.
+const pgRows = (pool: AugmentedPool, url: string): Promise<ImageDeliveryMetadataRow[]> => {
+  if (!url.isWellFormed())
+    return Promise.reject(new Error('image-delivery lookup: url is not well-formed UTF-16'));
+  return pool
     .query<ImageDeliveryMetadataRow>(IMAGE_DELIVERY_METADATA_PG_SQL, [
       url,
       ImageIngestionStatus.NotFound,
     ])
     .then((result) => result.rows);
+};
 
 const pgReaders: ImageDeliveryReaders = {
   read: (url) => pgRows(pgDbRead, url),

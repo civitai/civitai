@@ -109,6 +109,7 @@ const AUDIO = 'parity/sound.mp3';
 const UNICODE = 'パリティ/画像 1.jpeg';
 const QUOTED = "parity/it's.jpeg";
 const LONG = `parity/${'x'.repeat(4000)}.jpeg`;
+const ASTRAL = 'parity/\u{1F3A8} art.png'; // a surrogate PAIR: well-formed, must be found
 const MISSING = 'parity/missing.jpeg';
 
 const ROWS: Row[] = [
@@ -202,6 +203,14 @@ const ROWS: Row[] = [
     hideMeta: false,
     type: 'video',
     mimeType: 'video/webm',
+    ingestion: 'Scanned',
+  },
+  {
+    id: 9114,
+    url: ASTRAL,
+    hideMeta: true,
+    type: 'image',
+    mimeType: 'image/png',
     ingestion: 'Scanned',
   },
 ];
@@ -308,7 +317,13 @@ async function request(
 }
 
 /** Off and on, compared on everything the caller (and the cache) can observe. */
-async function both(query: Record<string, unknown>, topology?: { read: Target; write: Target }) {
+async function both(
+  query: Record<string, unknown>,
+  topology?: { read: Target; write: Target },
+  // The pg pool calls, when they are not the Prisma calls: a url the pg path refuses before it
+  // reaches a pool.
+  pgCalls?: [number, number]
+) {
   const off = await request(false, query, topology);
   const on = await request(true, query, topology);
   const { used: offUsed, ...offSeen } = off;
@@ -317,7 +332,7 @@ async function both(query: Record<string, unknown>, topology?: { read: Target; w
   // Each mode reached only its own driver, the same number of times.
   expect(offUsed.pg).toEqual([0, 0]);
   expect(onUsed.prisma).toEqual([0, 0]);
-  expect(onUsed.pg).toEqual(offUsed.prisma);
+  expect(onUsed.pg).toEqual(pgCalls ?? offUsed.prisma);
   expect(vi.mocked(pgDbReadLong.query)).not.toHaveBeenCalled();
   return { seen: offSeen, used: offUsed.prisma };
 }
@@ -449,6 +464,11 @@ describe.skipIf(!databaseUrl)(
           LONG,
           { id: 9113, url: LONG, hideMeta: false, type: 'video', mimeType: 'video/webm' },
         ],
+        [
+          'a url with an astral character (a surrogate pair)',
+          ASTRAL,
+          { id: 9114, url: ASTRAL, hideMeta: true, type: 'image', mimeType: 'image/png' },
+        ],
       ])('%s', async (_, id, body) => {
         const { seen, used } = await both({ id });
         expect(seen).toStrictEqual(found(byUrl(id), body));
@@ -487,9 +507,23 @@ describe.skipIf(!databaseUrl)(
         expect(used).toEqual([1, 1]);
       });
 
-      it('a lone surrogate', async () => {
-        // Whatever each driver makes of it, they must make the same of it.
-        await both({ id: `${VISIBLE}\uD800` });
+      // Not UTF-8-encodable. Prisma errors on it (replica, then primary); node-pg alone would encode
+      // it as U+FFFD and answer not-found, which is why the pg path refuses it itself.
+      it.each<[string, string]>([
+        ['a lone high surrogate at the end', `${VISIBLE}\uD800`],
+        ['a lone low surrogate at the start', `\uDC00${VISIBLE}`],
+        ['a reversed pair', `parity/\uDE3A\uD83C.png`],
+      ])('%s: both fall back to the primary, then fail', async (_, id) => {
+        // pg refuses it before reaching either pool.
+        const { seen, used } = await both({ id }, undefined, [0, 0]);
+        expect(seen).toStrictEqual({
+          status: null,
+          body: undefined,
+          threw: true,
+          fallbacks: FALLBACK,
+          cacheWrites: [],
+        });
+        expect(used).toEqual([1, 1]);
       });
 
       it.each<[string, Record<string, unknown>]>([

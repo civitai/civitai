@@ -138,6 +138,21 @@ describe('image-delivery lookup: driver routing', () => {
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
   });
 
+  it('on, a url with a lone surrogate: refused on both pools without a query, as Prisma refuses it', async () => {
+    flag.value = true;
+    await expect(getCachedImageDeliveryMetadata(`${URL}\uD800`)).rejects.toThrow(
+      'not well-formed UTF-16'
+    );
+    expect(pgRead).not.toHaveBeenCalled();
+    expect(pgWrite).not.toHaveBeenCalled();
+    expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
+      [{ entity: 'image', caller: 'imageDelivery' }],
+    ]);
+    // A surrogate PAIR is well-formed and is looked up.
+    await getCachedImageDeliveryMetadata(`${URL}\u{1F3A8}`);
+    expect(pgRead).toHaveBeenCalledTimes(1);
+  });
+
   it.each<[string, boolean | null, boolean]>([
     ['a missing key on a live client', null, true],
     ['a client that has not initialised', null, false],
