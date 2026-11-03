@@ -110,7 +110,7 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
     <TurfSummaryContext.Provider
       value={{
         event: 'birthday2026',
-        arm: 'control',
+        arm: null,
         team: 'blue',
         images: {
           9: {

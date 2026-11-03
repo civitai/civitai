@@ -27,8 +27,8 @@ const STICKER_REFRESH_DEBOUNCE_MS = 800;
 
 export type TurfSummaries = {
   event: string;
-  /** The viewer's `hatTurfFeedCard` arm. */
-  arm: HatTurfFeedArm;
+  /** The viewer's `hatTurfFeedCard` arm; null on a surface outside that experiment (image detail). */
+  arm: HatTurfFeedArm | null;
   /** The viewer's team, or null (signed out, or not in the event). */
   team: string | null;
   images: Record<number, TurfSummary>;
@@ -61,7 +61,7 @@ export function TurfSummaryProvider({
   const feedGate = useHatTurfFeed();
   const gate = gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
-  const arm = (gateOverride === undefined ? feedGate?.arm : undefined) ?? 'control';
+  const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
 
   const chunks = useMemo(

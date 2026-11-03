@@ -3,7 +3,6 @@ import { Button, Popover, Switch, Text } from '@mantine/core';
 import { IconCheck, IconSettings } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
-import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfButton.module.css';
@@ -33,7 +32,6 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
   const [menu, setMenu] = useState(false);
   const [join, setJoin] = useState(false);
-  const exposureRef = useExperimentExposure('hatTurfFeedCard', 'feed-card');
   const track = useHatTurfAction('feed-card');
   const utils = trpc.useUtils();
   const setOptIn = trpc.hatTurf.setOptIn.useMutation({
@@ -81,7 +79,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   };
 
   return (
-    <div ref={exposureRef} className={classes.wrap} data-testid="hat-turf-button">
+    <div className={classes.wrap} data-testid="hat-turf-button">
       <button
         type="button"
         className={clsx(

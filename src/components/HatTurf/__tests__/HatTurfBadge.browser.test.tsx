@@ -5,6 +5,7 @@ import type * as CardStickerOverlayModule from '~/components/Sticker/CardSticker
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
+import type * as UseExperimentModule from '~/components/Experiments/useExperiment';
 
 // The component project loads no global stylesheet, so Tailwind — including
 // preflight's `box-sizing: border-box` — is inert unless a test imports it.
@@ -39,6 +40,13 @@ const trackAction = vi.hoisted(() =>
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtilsModule>()),
   useTrackEvent: () => ({ trackAction }),
+}));
+vi.mock('~/components/Experiments/useExperiment', async (importOriginal) => ({
+  ...(await importOriginal<typeof UseExperimentModule>()),
+  useExperiment: (_key: string, opts?: { enabled?: boolean }) =>
+    opts?.enabled === false
+      ? { ready: false, variant: undefined, assignment: undefined }
+      : { ready: true, variant: 'control', assignment: 'rule' },
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
@@ -93,6 +101,7 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
 }));
 
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { resetExperimentExposuresForTests } from '~/components/Experiments/useExperimentExposure';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
@@ -146,19 +155,22 @@ function renderCard(opts: {
   );
 }
 const onCardClick = vi.fn();
+const tracked = (type: string) =>
+  trackAction.mock.calls.map(([data]) => data as { type: string }).filter((d) => d.type === type);
 
 const badge = () =>
   document.body.querySelector('[data-testid="hat-turf-badge"]') as HTMLElement | null;
 const feedWith = (
   images: TurfSummaries['images'],
   team: string | null = 'blue',
-  arm: TurfSummaries['arm'] = 'control'
+  arm: TurfSummaries['arm'] = 'control',
+  open: TurfSummaries['open'] = {}
 ): TurfSummaries => ({
   event: 'birthday2026',
   arm,
   team,
   images,
-  open: {},
+  open,
   stickers: {},
   watch: () => () => undefined,
 });
@@ -167,6 +179,8 @@ afterEach(() => {
   cleanup();
   trackAction.mockClear();
   onCardClick.mockClear();
+  resetExperimentExposuresForTests();
+  localStorage.removeItem('experiment-exposures');
   document.documentElement.removeAttribute('data-mantine-color-scheme');
 });
 
@@ -228,7 +242,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     hit.click();
     expect(onCardClick).toHaveBeenCalledTimes(1);
     expect(document.body.querySelector('[data-testid="hat-turf-standings"]')).toBeNull();
-    expect(trackAction).not.toHaveBeenCalled();
+    expect(tracked('HatTurf_Action')).toEqual([]);
   });
 
   test('badge-popover arm: tapping the badge opens every team’s count without opening the card', async () => {
@@ -251,14 +265,43 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     ).toBe('blue holds this image. pink needs 3 more to take it.');
     standings()!.click();
     expect(onCardClick).not.toHaveBeenCalled();
-    expect(trackAction).toHaveBeenCalledTimes(1);
+    expect(tracked('HatTurf_Action')).toHaveLength(1);
     expect(trackAction).toHaveBeenCalledWith({
       type: 'HatTurf_Action',
       details: { action: 'hat_count_open', event: 'birthday2026', surface: 'feed-card' },
     });
     badge()!.click();
     await vi.waitFor(() => expect(badge()!.getAttribute('aria-expanded')).toBe('false'));
-    expect(trackAction).toHaveBeenCalledTimes(1);
+    expect(tracked('HatTurf_Action')).toHaveLength(1);
+  });
+
+  test.each(['control', 'badge-popover'] as const)(
+    '%s arm: logs one exposure from the badge, even on a card with no hat button',
+    async (arm) => {
+      renderCard({ feed: feedWith({ 1: standing() }, 'pink', arm, { 1: false }) });
+      await vi.waitFor(() => expect(badge()).not.toBeNull());
+      expect(document.body.querySelector('[data-testid="hat-turf-button"]')).toBeNull();
+      await vi.waitFor(() =>
+        expect(tracked('Experiment_Exposure')).toEqual([
+          {
+            type: 'Experiment_Exposure',
+            details: {
+              exp: 'hatTurfFeedCard',
+              variant: 'control',
+              assignment: 'rule',
+              surface: 'feed-card',
+            },
+          },
+        ])
+      );
+    }
+  );
+
+  test('logs no feed exposure on a surface outside the experiment', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, 'pink', null) });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(tracked('Experiment_Exposure')).toEqual([]);
   });
 
   test('a hat-protected image keeps its badge, with a lock, and says why in the popover', async () => {

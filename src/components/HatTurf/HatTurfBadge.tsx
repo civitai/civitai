@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Popover } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -15,6 +15,7 @@ import {
 } from '~/components/HatTurf/hat-turf.utils';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const FALLBACK = 'var(--mantine-color-gray-6)';
@@ -27,15 +28,21 @@ export function HatTurfBadge({ imageId }: { imageId: number }) {
   const summary = useTurfSummary(imageId);
   const teamColor = useTeamColor();
   const track = useHatTurfAction('feed-card');
+  // The badge is what differs between arms, and it shows on cards that have no hat button.
+  const exposureRef = useExperimentExposure('hatTurfFeedCard', 'feed-card', {
+    enabled: !!feed?.arm,
+  });
   const [open, setOpen] = useState(false);
   const leader = summary ? badgeLeader(summary) : null;
   const shownCount = summary && leader ? summary.counted[leader] : null;
-  // Pops only when a count the viewer already saw changes, not when the first one arrives.
-  const previous = useRef<number | null>(null);
-  const bump = previous.current !== null && shownCount !== null && previous.current !== shownCount;
-  useEffect(() => {
-    previous.current = shownCount;
-  }, [shownCount]);
+  // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
+  // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
+  const [seenCount, setSeenCount] = useState(shownCount);
+  const [bump, setBump] = useState(false);
+  if (shownCount !== seenCount) {
+    setSeenCount(shownCount);
+    setBump(seenCount !== null && shownCount !== null);
+  }
 
   if (!summary || !feed) return null;
   const arcs = ringArcs(summary.counted);
@@ -105,6 +112,7 @@ export function HatTurfBadge({ imageId }: { imageId: number }) {
   if (feed.arm !== 'badge-popover') {
     return (
       <div
+        ref={exposureRef}
         className={clsx(classes.badge, classes.passive)}
         role="img"
         aria-label={label}
@@ -127,6 +135,7 @@ export function HatTurfBadge({ imageId }: { imageId: number }) {
     >
       <Popover.Target>
         <button
+          ref={exposureRef}
           type="button"
           className={classes.badge}
           aria-label={`${label} Show teams`}
