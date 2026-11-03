@@ -271,7 +271,7 @@ describe('drift CLI, scoped', () => {
       expect(result.stderr).toMatch(/1 statement\(s\) in the migration could not be classified/);
       expect(result.stderr).toContain(`${path}:2  DO $$ BEGIN`);
       expect(result.stderr).toMatch(/DO block: procedural code/);
-      expect(result.stderr).toMatch(/mentions schema tables: Project$/);
+      expect(result.stderr).toMatch(/mentions schema tables: Project\n/);
       expect(result.stderr).toMatch(/Refusing to run a scoped check over a guessed subset/);
       expect(result.stderr).not.toMatch(/DATABASE_URL is not set/);
     });
