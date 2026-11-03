@@ -271,13 +271,11 @@ describe('prepareMessage — an appListing thread produces a linked notification
  */
 describe('thread naming is one rule shared by all three consumers', () => {
   /**
-   * Every `threadType` the notification SQL can emit: the twelve CASE arms plus the `comment`
-   * fallback. `question`/`answer` are filtered out of the thread-response and mention queries
-   * but survive in new-comment-reply's CASE, so they are reachable and belong here.
+   * Every `threadType` the notification SQL can emit.
    *
    * The expected noun is the entity key VERBATIM except the four the map translates, so this
-   * table doubles as the negative control on the map: nine of the thirteen must come back
-   * untouched, which is what stops "translate `appListing`" turning into "translate everything".
+   * table doubles as the negative control on the map: the rest must come back untouched, which
+   * is what stops "translate `appListing`" turning into "translate everything".
    *
    * 🔴 `model3d → "3D model"` is a REORDERING, and it is the one label starting with a DIGIT.
    * The article is picked from the noun, and `'3'` is not in the vowel set, so `a 3D model` is
@@ -288,8 +286,6 @@ describe('thread naming is one rule shared by all three consumers', () => {
     image: 'an image',
     model: 'a model',
     post: 'a post',
-    question: 'a question',
-    answer: 'an answer',
     review: 'a review',
     article: 'an article',
     bounty: 'a bounty',

@@ -12,7 +12,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
@@ -97,11 +97,6 @@ export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
     period: MetricTimeframe.AllTime,
-  },
-  questionFilterDefaults: {
-    sort: QuestionSort.MostLiked,
-    period: MetricTimeframe.AllTime,
-    limit: 50,
   },
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,

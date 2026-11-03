@@ -1,7 +1,5 @@
 import {
-  answersToQuestionsSql,
   heldEntryOnBountySql,
-  keepHeldAnswersCte,
   keepHeldReviewsCte,
   reviewsOnModelsSql,
 } from '~/server/services/held-review.service';
@@ -42,7 +40,6 @@ import {
   heldLegacyCommentOnModelSql,
   heldLegacyReplyBelowSql,
   modelThreadParents,
-  questionThreadParents,
   type ThreadParents,
 } from '~/server/services/comment-thread-hold';
 import {
@@ -1807,8 +1804,8 @@ export const removeAllContent = async ({
   await dbWrite.collection.deleteMany({ where: { userId: id } });
 
   // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
-  // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries,
-  // answers, questions and reviews are here because each cascades its comment thread.
+  // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries
+  // and reviews are here because each cascades its comment thread.
   const unlessHeld = Prisma.sql`NOT ${held}`;
   const softDeleteFailed: { modelId: number; message: string }[] = [];
   const softDeleteRefundFailures: BidRefundFailure[] = [];
@@ -1851,13 +1848,6 @@ export const removeAllContent = async ({
       Prisma.sql`SELECT o.id FROM ${Prisma.raw(
         `"${table}"`
       )} o WHERE o."userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`
-      WITH ${detach({ answerId: owned('Answer') })}
-      DELETE FROM "Answer" WHERE id IN (${owned('Answer')})`;
-    await dbWrite.$executeRaw`
-      WITH ${detach(questionThreadParents(owned('Question')))},
-      ${keepHeldAnswersCte(answersToQuestionsSql(owned('Question')), markerView)}
-      DELETE FROM "Question" WHERE id IN (${owned('Question')})`;
     await dbWrite.$executeRaw`
       WITH ${detach({ reviewId: owned('ResourceReview') })}
       DELETE FROM "ResourceReview" WHERE id IN (${owned('ResourceReview')})`;
