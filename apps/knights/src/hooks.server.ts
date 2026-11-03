@@ -15,6 +15,10 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/callback',
 ]);
 
+// The liveness/readiness probe. Not a job and not a sign-in route: exempt on its own, before any
+// session, access or standing lookup, so a probe never depends on the hub, Flipt or the database.
+const HEALTH_PATH = '/healthz';
+
 const FORBIDDEN_REDIRECT = 'https://civitai.com';
 
 const closedPage = (user: { username?: string }, reason: 'closed' | 'banned' = 'closed') =>
@@ -27,6 +31,7 @@ const closedPage = (user: { username?: string }, reason: 'closed' | 'banned' = '
   );
 
 export const handle: Handle = async ({ event, resolve }) => {
+  if (event.url.pathname === HEALTH_PATH) return resolve(event);
   if (PUBLIC_PATHS.has(event.url.pathname) || JOB_PATHS.has(event.url.pathname)) {
     return resolve(event);
   }

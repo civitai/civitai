@@ -81,6 +81,27 @@ describe('knights access gate', () => {
     }
   );
 
+  it('answers the /healthz probe without a session, access or standing lookup', async () => {
+    guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
+    const { response, resolve } = await run('/healthz');
+    expect(resolve).toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(guardCheck).not.toHaveBeenCalled();
+    expect(accessFor).not.toHaveBeenCalled();
+    expect(getStanding).not.toHaveBeenCalled();
+  });
+
+  it.each(['/healthzx', '/healthz/x', '/healthz/', '/api/healthz'])(
+    'still guards %s: only /healthz itself is exempt',
+    async (path) => {
+      guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
+      const { response, resolve } = await run(path);
+      expect(guardCheck).toHaveBeenCalled();
+      expect(response.status).toBe(302);
+      expect(resolve).not.toHaveBeenCalled();
+    }
+  );
+
   it('serves the sign-in routes without a session', async () => {
     const { resolve } = await run('/api/auth/callback');
     expect(resolve).toHaveBeenCalled();

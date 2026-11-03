@@ -145,6 +145,10 @@ Tokens and easings are in `src/global.css`, keyframes in `src/motion.css`. Keep 
 `@civitai/flipt` (access flag), `@civitai/redis` (sys client: the guard's session revocation check, the skip sets, the leaderboard cache),
 `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the level curve, also used by the main app's `game-helpers.ts`). Add others when a task needs them.
 
+## Deploy
+
+`Dockerfile` (adapter-node, user 1001, port 3000, `node build`) builds from the repo root: `docker build -f apps/knights/Dockerfile .`; its only build-time env is a placeholder `DATABASE_URL`. `GET /healthz` (`src/routes/healthz`) is the probe: 200 `ok`, no database, Redis or Flipt, and `hooks.server.ts` exempts that exact path (apart from `JOB_PATHS`) from the guard, the access gate and the standing check.
+
 ## Tests
 
 `pnpm --filter @civitai/knights-app test` (project `app:knights`). Typecheck with `typecheck`, never `check`.
