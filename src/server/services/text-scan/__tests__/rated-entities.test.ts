@@ -35,6 +35,7 @@ const { maybeAutoResolveRatingDisputeAfterScan } = await import(
 const args = (level: number, raised: boolean) => ({
   entityId: 7,
   workflowId: 'wf-1',
+  textHash: 'h',
   outcome: {
     nsfw: { detectedLevel: level, declaredLevel: 1, raised, reason: 'r' },
     triggeredLabels: raised ? ['nsfw' as const] : [],
@@ -169,6 +170,37 @@ describe('applyRatingFloor', () => {
     dbMock.dbWrite.post.findUnique.mockResolvedValue(post(0));
     await applyRatingFloor('Post', args(4, true));
     expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
+  describe('a post whose images are rated before the job recomputed it (stored level 0)', () => {
+    const imagesAt = (level: number) =>
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (query: {
+        text: string;
+        values: unknown[];
+      }) => {
+        expect(query.text).toContain(
+          'bit_or(i."nsfwLevel") AS level FROM "Image" i WHERE i."postId" ='
+        );
+        expect(query.values).toEqual([7]);
+        return [{ level }];
+      }) as never);
+
+    it('does not credit the text when the images already give the level', async () => {
+      imagesAt(8);
+      dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(0)).mockResolvedValueOnce(post(8));
+      await applyRatingFloor('Post', args(4, true));
+      expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+    });
+
+    it('notifies once when the floor lifts the post above its images', async () => {
+      imagesAt(1);
+      dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(0)).mockResolvedValueOnce(post(8));
+      await applyRatingFloor('Post', args(8, true));
+      expect(notifyTextScanRatingRaised).toHaveBeenCalledTimes(1);
+      expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(
+        expect.objectContaining({ level: 8 })
+      );
+    });
   });
 
   it('does nothing without an nsfw verdict', async () => {

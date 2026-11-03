@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { highestNsfwLevel } from '~/server/services/text-scan/evaluate';
 import { notifyTextScanRatingRaised, ratingRose } from '~/server/services/text-scan/notify';
 
@@ -35,16 +36,28 @@ export async function notifyPostFloorRaises(
     if (labels.includes('poi') || labels.includes('minor')) continue;
     if (post.moderatorNsfwLevel != null || !post.userId || !post.workflowId) continue;
     const change = firstRated.get(post.id);
-    // change.before is 0 here; compare against the images alone, as the callback does.
+    // change.before is 0 here; compare against the images alone, as raiseToFloor does.
     if (!change || !ratingRose(post.images ?? 0, change.after)) continue;
-    await notifyTextScanRatingRaised({
-      entityType: 'Post',
-      entityId: post.id,
-      userId: post.userId,
-      level: highestNsfwLevel(change.after),
-      title: post.title,
-      url: `/posts/${post.id}`,
-      workflowId: post.workflowId,
-    });
+    // One failed notice must not drop the rest of the batch.
+    try {
+      await notifyTextScanRatingRaised({
+        entityType: 'Post',
+        entityId: post.id,
+        userId: post.userId,
+        level: highestNsfwLevel(change.after),
+        title: post.title,
+        url: `/posts/${post.id}`,
+        workflowId: post.workflowId,
+      });
+    } catch (error) {
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'post floor notice failed',
+        postId: post.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: (error as { code?: unknown } | null | undefined)?.code,
+      }).catch(() => undefined);
+    }
   }
 }
