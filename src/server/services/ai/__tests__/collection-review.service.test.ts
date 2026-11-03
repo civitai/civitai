@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyScannerFloor,
   decideFromObservations,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
@@ -82,6 +83,25 @@ describe('decideFromObservations', () => {
 
   it.each(['PG', 'PG-13'])('does not treat nsfwEstimate %s as adult content', (rating) => {
     expect(decideFromObservations({ ...clean, nsfwEstimate: rating }).decision).toBe('approve');
+  });
+
+  it.each(['mature', 'teen', '', undefined])(
+    'sends unrecognized nsfwEstimate %j to a human instead of approving',
+    (rating) => {
+      const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
+      expect(result.decision).toBe('escalate');
+      expect(result.neverReject).toBe(true);
+    }
+  );
+
+  it('still rejects visible sexual content behind an unrecognized nsfwEstimate', () => {
+    const result = decideFromObservations({
+      ...clean,
+      sexualContent: true,
+      nsfwEstimate: 'mature',
+    });
+    expect(result.violations).toContain('sexual/adult content');
+    expect(result.neverReject).toBeUndefined();
   });
 
   it('rejects visible sexual content', () => {
@@ -281,5 +301,36 @@ describe('needsMinorReview', () => {
     ['an unreadable response', { hasBuzzReference: undefined }],
   ])('leaves %s out of it', (_label, overrides) => {
     expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(false);
+  });
+});
+
+describe('applyScannerFloor', () => {
+  const approved = decideFromObservations(clean);
+
+  it.each([NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.PG | NsfwLevel.PG13])(
+    'lets an approval stand at scanner level %i',
+    (level) => {
+      expect(applyScannerFloor(approved, level).decision).toBe('approve');
+    }
+  );
+
+  // The model calling an image PG does not outrank a scanner that rated it R or above.
+  it.each([
+    NsfwLevel.R,
+    NsfwLevel.X,
+    NsfwLevel.XXX,
+    NsfwLevel.Blocked,
+    NsfwLevel.PG | NsfwLevel.R,
+    0,
+    -1,
+  ])('sends an approval at scanner level %i to a human', (level) => {
+    const result = applyScannerFloor(approved, level);
+    expect(result.decision).toBe('escalate');
+    expect(result.neverReject).toBe(true);
+  });
+
+  it("leaves the model's own rejection alone", () => {
+    const rejected = decideFromObservations({ ...clean, sexualContent: true });
+    expect(applyScannerFloor(rejected, NsfwLevel.X)).toEqual(rejected);
   });
 });

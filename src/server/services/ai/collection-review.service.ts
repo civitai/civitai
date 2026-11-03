@@ -1,6 +1,8 @@
 import * as z from 'zod';
 import { openrouter } from '~/server/services/ai/openrouter';
 import type { TokenUsage } from '~/server/services/ai/openrouter';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 const AI_REVIEW_VIOLATIONS = [
   'sexual/adult content',
@@ -34,6 +36,9 @@ const GENERIC_REJECTION = "It doesn't meet this collection's guidelines.";
 // Anything at or above R means the image does not belong on an all-ages surface. 'R+' is what the
 // prompt asks for; the rest are the labels a model reaches for on its own.
 const ADULT_RATINGS = ['r+', 'r', 'x', 'xxx', 'nsfw', 'explicit'];
+// Only these read as safe. Anything else, or no label at all, goes to a human: a label we have not
+// listed must not fall through to approve.
+const SAFE_RATINGS = ['g', 'pg', 'pg-13', 'pg13', 'sfw'];
 
 // The booleans the rules depend on are required: a response missing them is one we cannot read,
 // and it must not resolve to approve.
@@ -103,9 +108,13 @@ export function decideFromObservations(
   if (anyMinorSignal && o.minorInappropriate) escalations.push(MINOR_ESCALATIONS.inappropriate);
   if (o.depictsRealPerson) escalations.push('real person likeness');
 
-  const adultRating = ADULT_RATINGS.includes((o.nsfwEstimate ?? '').toLowerCase().trim());
+  const rating = (o.nsfwEstimate ?? '').toLowerCase().trim();
+  const adultRating = ADULT_RATINGS.includes(rating);
+  const unrecognizedRating = !adultRating && !SAFE_RATINGS.includes(rating);
   if (o.sexualContent || adultRating) violations.push('sexual/adult content');
   else if (o.suggestiveStyling) escalations.push('suggestive styling');
+  if (unrecognizedRating)
+    escalations.push(`unrecognized nsfwEstimate: ${o.nsfwEstimate?.slice(0, 40) || '(none)'}`);
 
   // Escalating on this hedge alone would sweep up much of the stylized art these collections are
   // made of, which is exactly what the prompt invites the model to be unsure about. It matters
@@ -135,7 +144,32 @@ export function decideFromObservations(
     decision,
     violations,
     escalations,
-    neverReject: uncertainAge || (isVideo && !o.hasBuzzReference) || undefined,
+    // An unreadable label is only our uncertainty while nothing else in the response is a violation.
+    neverReject:
+      uncertainAge ||
+      (unrecognizedRating && !violations.length) ||
+      (isVideo && !o.hasBuzzReference) ||
+      undefined,
+  };
+}
+
+/**
+ * The model can under-rate what the scanner already rated R or above, so only a PG/PG-13 scanner
+ * rating lets an approval stand. The escalation is never a rejection: a human makes that call.
+ */
+export function applyScannerFloor(decision: AiReviewDecision, nsfwLevel: number): AiReviewDecision {
+  if (decision.decision !== 'approve') return decision;
+  const scannedSafe =
+    !isUnratedNsfwLevel(nsfwLevel) && Flags.hasFlag(sfwBrowsingLevelsFlag, nsfwLevel);
+  if (scannedSafe) return decision;
+  return {
+    ...decision,
+    decision: 'escalate',
+    escalations: [
+      ...decision.escalations,
+      isUnratedNsfwLevel(nsfwLevel) ? 'no scanner rating' : 'scanner rated above PG-13',
+    ],
+    neverReject: true,
   };
 }
 

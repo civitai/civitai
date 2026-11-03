@@ -18,6 +18,7 @@ import {
   updateCollectionItemsStatus,
 } from '~/server/services/collection.service';
 import {
+  applyScannerFloor,
   decideFromObservations,
   isAiReviewAvailable,
   isNsfwLevelAllowed,
@@ -179,7 +180,10 @@ async function classifyItem({
       if (!result) return undefined;
 
       ({ usage } = result);
-      decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
+      decision = applyScannerFloor(
+        decideFromObservations(result.observations, { isVideo: item.type === 'video' }),
+        item.nsfwLevel
+      );
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
       const attempts = await recordFailedAttempt(item.collectionItemId);

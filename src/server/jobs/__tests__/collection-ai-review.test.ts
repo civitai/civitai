@@ -1,5 +1,6 @@
 import { ChatError } from '@openrouter/sdk/models/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import type * as CollectionReviewService from '~/server/services/ai/collection-review.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as TrackerModule from '~/server/clickhouse/tracker';
@@ -517,5 +518,27 @@ describe('reviewCollection: a minor-related escalation', () => {
     await reviewCollection(COLLECTION_ID, config);
 
     expect(minorFlagCalls()).toHaveLength(1);
+  });
+});
+
+describe('reviewCollection: a scanner rating above what the model saw', () => {
+  const allowsR = { ...config, allowedNsfwLevels: NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R };
+
+  it('holds an R image the model called PG for a person, under escalationAction reject', async () => {
+    queuePending([pendingItem({ nsfwLevel: NsfwLevel.R })]);
+    modelSees({ nsfwEstimate: 'PG' });
+
+    await reviewCollection(COLLECTION_ID, allowsR);
+
+    expect(statusWrites()).toEqual([]);
+  });
+
+  it('accepts a PG image the model called PG', async () => {
+    queuePending([pendingItem({ nsfwLevel: NsfwLevel.PG })]);
+    modelSees({ nsfwEstimate: 'PG' });
+
+    await reviewCollection(COLLECTION_ID, allowsR);
+
+    expect(statusWrites()).toEqual(['ACCEPTED']);
   });
 });
