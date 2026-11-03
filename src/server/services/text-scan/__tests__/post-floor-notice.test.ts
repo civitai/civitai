@@ -5,8 +5,8 @@ import type * as Adapters from '~/server/services/moderation-adapters';
 import type * as RatingReviewService from '~/server/services/rating-review.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// The real text-scan callback and the real UpdateNsfwLevel job recompute over one post, against a fake
-// database that derives the post's level as the SQL does.
+// Drives the real callback and the real level recompute, against a fake database that derives the
+// level as the SQL does.
 
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
@@ -88,7 +88,6 @@ type Verdict = {
 type PostState = { images: number; level: number; moderatorNsfwLevel: number | null };
 let post: PostState;
 let verdict: Verdict | null;
-// A second post in the same batch, with its own verdict, for the tests that need one.
 let other: (PostState & { verdict: Verdict | null }) | null;
 const stateOf = (id: number) =>
   id === POST_ID ? { ...post, verdict } : id === OTHER_ID && other ? other : null;
@@ -99,7 +98,7 @@ const raisedVerdict = (triggeredLabels = ['nsfw']): Verdict => ({
   result: { version: 1 },
 });
 
-// scanFloorText and raiseNsfwLevelText in packages/civitai-shared/src/rated-entity-sql.ts.
+// Mirrors scanFloorText and raiseNsfwLevelText (packages/civitai-shared/src/rated-entity-sql.ts); update together.
 const derivedLevel = (p: PostState, v: Verdict | null) => {
   const usable = v && (v.result as { version?: number } | null)?.version != null;
   const f = usable && (v?.nsfwLevel ?? 0) >= 2 ? v!.nsfwLevel! : 0;
@@ -112,12 +111,12 @@ const setLevel = (id: number, level: number) => {
   else if (other) other.level = level;
 };
 
-// A fake for the two raw statements this path sends; anything else fails the test.
+// Only the two statements this path sends; anything else throws.
 const fakeRaw = async (query: Prisma.Sql) => {
   const sql = query.text.replace(/\s+/g, ' ').trim();
   const ids = query.values as number[];
   if (sql.startsWith('WITH next AS') && sql.includes('UPDATE "Post" p')) {
-    // Without these the statement either fails in Postgres or returns unchanged posts too.
+    // Pin the SQL the fake cannot run: the before-level column and the changed-only filter.
     expect(sql).toContain('p."nsfwLevel" "before"');
     expect(sql).toContain('WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"');
     const changed = ids.flatMap((id) => {
@@ -156,7 +155,6 @@ const fakeRaw = async (query: Prisma.Sql) => {
 const ratingNotices = () =>
   vi.mocked(createNotification).mock.calls.filter(([n]) => n.type === 'text-scan-rating-raised');
 
-// What the UpdateNsfwLevel job runs once an image's level changes.
 const imageRated = async (imageLevel: number, postIds = [POST_ID]) => {
   post.images |= imageLevel;
   await updateNsfwLevels({
@@ -220,19 +218,54 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     });
   });
 
-  it('sends nothing on a later recompute once the callback notified, under the same key', async () => {
+  it('the callback notifies a rated post under the key the recompute uses', async () => {
     post.images = 1;
     post.level = 1;
     vi.mocked(getWorkflow).mockResolvedValue(raisedWorkflow as never);
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
-    expect(ratingNotices()).toHaveLength(1);
-    // The key the recompute sends in the first test, so an overlap of the two paths is one row.
-    expect(ratingNotices()[0][0].key).toBe(`text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`);
 
-    await imageRated(2);
+    expect(ratingNotices().map(([n]) => n.key)).toEqual([
+      `text-scan-rating-raised-Post-${POST_ID}-${FLOOR}-wf-1`,
+    ]);
+  });
+
+  it('does not credit the text when an image later raises a post the floor already held', async () => {
+    verdict = { ...raisedVerdict(), nsfwLevel: 4 };
+    post.images = 1;
+    post.level = 4;
+
+    await imageRated(8);
+
+    expect(post.level).toBe(8);
+    expect(ratingNotices()).toHaveLength(0);
+  });
+
+  it('does not notify a floor that changes nothing a rated post would show', async () => {
+    verdict = raisedVerdict();
+    post.images = 4 | 8;
+
+    await imageRated(0);
+
+    expect(post.level).toBe(8);
+    expect(ratingNotices()).toHaveLength(0);
+  });
+
+  it.each([
+    ['owner', { userId: null }],
+    ['workflow id', { workflowId: null }],
+  ])('does not notify a post with no %s', async (_, missing) => {
+    verdict = raisedVerdict();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (query: Prisma.Sql) => {
+      const rows = (await fakeRaw(query)) as Record<string, unknown>[];
+      return query.text.includes('JOIN "EntityModeration" em')
+        ? rows.map((r) => ({ ...r, ...missing }))
+        : rows;
+    }) as never);
+
+    await imageRated(1);
 
     expect(post.level).toBe(FLOOR);
-    expect(ratingNotices()).toHaveLength(1);
+    expect(ratingNotices()).toHaveLength(0);
   });
 
   it('does not notify when the images reach the level on their own', async () => {
@@ -267,8 +300,7 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
     expect(ratingNotices()[0][0]).toMatchObject({ details: { level: 4 } });
   });
 
-  // Post levels are masks here (bit_or of the images). A floor below the images' top level still
-  // drops the safe-browsing bits, which is the rise the callback reports too.
+  // Post levels are masks (bit_or of the images): a lower floor still drops the SFW bits.
   it('notifies at the top level when a lower floor drops safe browsing from a PG + X post', async () => {
     verdict = { ...raisedVerdict(), nsfwLevel: 4 };
     post.images = 1 | 8;

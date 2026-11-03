@@ -13,31 +13,32 @@ type Candidate = {
   images: number | null;
 };
 
-// An unrated post (images at 0) stays 0 whatever the floor, so the callback sees no rise and sends
-// nothing. The floor lands here, on the level recompute; notify under the callback's workflowId key.
+// The text-scan callback sees no rise on a post whose images are unrated, so the floor lands on this
+// recompute. Only that first rating is the callback's to report: a rated post's later changes are
+// the images'. Notify under the callback's workflowId so the two paths dedupe.
 export async function notifyPostFloorRaises(
   changes: { id: number; before: number; after: number }[]
 ) {
-  const risen = new Map(
-    changes.filter((c) => ratingRose(c.before, c.after)).map((c) => [c.id, c] as const)
+  const firstRated = new Map(
+    changes.filter((c) => c.before === 0 && c.after !== 0).map((c) => [c.id, c] as const)
   );
-  if (!risen.size) return;
+  if (!firstRated.size) return;
 
   const candidates = await dbWrite.$queryRaw<Candidate[]>(Prisma.sql`
     SELECT p.id, p."userId", p.title, p."moderatorNsfwLevel", em."workflowId", em."triggeredLabels",
       (SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = p.id) AS images
     FROM "Post" p
     JOIN "EntityModeration" em ON em."entityType" = 'Post' AND em."entityId" = p.id
-    WHERE p.id IN (${Prisma.join([...risen.keys()])})
+    WHERE p.id IN (${Prisma.join([...firstRated.keys()])})
       AND 'nsfw' = ANY(em."triggeredLabels")
   `);
   for (const post of candidates) {
     const labels = post.triggeredLabels;
     if (labels.includes('poi') || labels.includes('minor')) continue;
     if (post.moderatorNsfwLevel != null || !post.userId || !post.workflowId) continue;
-    const change = risen.get(post.id);
-    // A level the images give on their own was raised by the images, not the text.
-    if (!change || change.after === (post.images ?? 0)) continue;
+    const change = firstRated.get(post.id);
+    // Judged as the callback would judge the verdict landing on the rated images.
+    if (!change || !ratingRose(post.images ?? 0, change.after)) continue;
     await notifyTextScanRatingRaised({
       entityType: 'Post',
       entityId: post.id,
