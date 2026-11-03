@@ -438,6 +438,17 @@ describe('moderator listing-edit authority needs a session or a full-access key'
       expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
     });
 
+    it(`${name}: a moderator's full-access personal key acts as a moderator`, async () => {
+      mock.mockClear();
+      const caller = appListingsRouter.createCaller({
+        ...tokenCtx(100, FULL),
+        apiKeyType: 'User',
+        subject: { type: 'apiKey' },
+      } as never);
+      await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+      expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
+    });
+
     it(`${name}: a moderator's app-scoped CLI token does not act as a moderator`, async () => {
       mock.mockClear();
       const caller = appListingsRouter.createCaller(tokenCtx(100, CLI) as never);

@@ -2423,7 +2423,10 @@ describe('moderator edits', () => {
         userId: MOD,
         isModerator: true,
       })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only the app’s owner or a collaborator can change whether it can be forked.',
+    });
     expect(auditEvents()).toEqual([]);
   });
 });
