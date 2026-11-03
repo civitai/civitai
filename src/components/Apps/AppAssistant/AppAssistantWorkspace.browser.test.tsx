@@ -387,6 +387,24 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
     return <div data-testid="preview" />;
   },
 }));
+// The preview's App activity strip reads this instead of the network.
+const act = vi.hoisted(() => ({
+  asked: [] as string[],
+  activity: {
+    app: 'app-aaaa',
+    summary: '6 generations: 6 succeeded (last 3 min ago); 0 failed; 0 in progress; 0 errors',
+    items: [],
+    omitted: 0,
+    unavailable: [],
+  },
+}));
+vi.mock('~/components/Apps/AppAssistant/appActivity', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchAppActivity: async (blockId: string) => {
+    act.asked.push(blockId);
+    return act.activity;
+  },
+}));
 vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
   fetchPreviewFrame: (blockId: string) => r.probe(blockId),
 }));
@@ -2335,6 +2353,7 @@ describe('AppAssistantWorkspace tool gate', () => {
   test('offers create_app, generate_app_cover, report_ready, set_checklist and submit_for_review beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -2653,6 +2672,7 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await mountRunner();
     // The runner's host tools (its `RUNNER_PAGE_TOOLS`), the feedback tools' cards included.
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -2684,6 +2704,25 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await expect.element(pane()).not.toBeInTheDocument();
     // The page has no id for the runner's tunnel and never stops it: the runner and civitai do.
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  test('the shown preview’s App activity strip puts its activity in the message box, never sends it', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect
+      .element(page.getByTestId('app-activity-summary'))
+      .toHaveTextContent(act.activity.summary);
+    expect(act.asked).toContain('app-aaaa');
+    m.compose.mockClear();
+    m.send.mockClear();
+    await page.getByRole('button', { name: 'Tell the assistant' }).click();
+    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledTimes(1));
+    expect(m.compose.mock.calls[0]![0]).toMatch(
+      /^The preview of my app seems stuck or wrong\. Here is what it did recently;/
+    );
+    expect(m.compose.mock.calls[0]![0]).toContain(act.activity.summary);
+    expect(m.send).not.toHaveBeenCalled();
   });
 
   test('a failed start shows nothing', async () => {

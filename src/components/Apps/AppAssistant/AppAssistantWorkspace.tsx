@@ -26,6 +26,8 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
+import { AppActivityStrip } from '~/components/Apps/AppAssistant/AppActivityStrip';
+import { createPageActivityTools } from '~/components/Apps/AppAssistant/appActivity';
 import { fetchSandboxAppBuilt } from '~/components/Apps/AppAssistant/sandboxAppBuilt';
 import {
   AppExportError,
@@ -504,6 +506,8 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
+      // What the open app did while it ran (on the server runner, the runner reads it itself).
+      ...createPageActivityTools(() => live.current.active?.app ?? null),
     }),
     [canPreview, gate, appTools, showPreview]
   );
@@ -1435,13 +1439,22 @@ export function AppAssistantWorkspace({
               shownTab === 'preview' ? 'flex' : 'hidden'
             )}
           >
-            <AppAssistantPreview
-              canPreview={canPreview}
-              session={session}
-              restart={previewRestart}
-              tunnelStatus={tunnelStatus}
-              devServerUp={devServerUp}
-            />
+            {/* The preview takes what the activity strip under it leaves. */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <AppAssistantPreview
+                canPreview={canPreview}
+                session={session}
+                restart={previewRestart}
+                tunnelStatus={tunnelStatus}
+                devServerUp={devServerUp}
+              />
+            </div>
+            {session && (
+              <AppActivityStrip
+                blockId={session.blockId}
+                onTellAssistant={(text) => void chatRef.current?.compose(text)}
+              />
+            )}
           </Paper>
         )}
       </div>
