@@ -13,8 +13,8 @@ describe('Ideogram generator default', () => {
     expect(JSON.stringify(capability?.versions)).not.toContain(String(v40));
   });
 
-  it('the locked ecosystem default is not 4.0', () => {
+  it('the locked ecosystem default is 4.5', () => {
     const settings = ecosystemSettings.find((s) => s.ecosystemId === ECO.Ideogram);
-    expect(settings?.defaults?.model?.id).not.toBe(v40);
+    expect(settings?.defaults?.model?.id).toBe(ideogramVersionIds['v4.5']);
   });
 });

@@ -928,6 +928,27 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
   return mandatoryTypes.includes(baseType);
 };
 
+/**
+ * True when every catalog entry for this base type, or for this AI Toolkit ecosystem, is disabled.
+ * The form hides such a type entirely, but a custom-model run names an AIR rather than a catalog key,
+ * so the per-key `disabled` check alone would let it through.
+ */
+export const isRetiredTrainingTarget = ({
+  baseModelType,
+  ecosystem,
+}: {
+  baseModelType: string;
+  ecosystem?: string;
+}): boolean => {
+  const entries = Object.values(trainingModelInfo);
+  const allDisabled = (matching: typeof entries) =>
+    matching.length > 0 && matching.every((v) => v.disabled === true);
+  return (
+    allDisabled(entries.filter((v) => v.type === baseModelType)) ||
+    (!!ecosystem && allDisabled(entries.filter((v) => v.aiToolkit?.ecosystem === ecosystem)))
+  );
+};
+
 export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolean => {
   return (trainingBaseModelTypesAudio as readonly string[]).includes(baseType);
 };
