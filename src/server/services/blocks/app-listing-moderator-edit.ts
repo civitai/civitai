@@ -91,10 +91,14 @@ export async function assertModeratorMayUseShadow(
   db: ModeratorEditDb,
   args: { shadowId: string; actorUserId: number }
 ): Promise<void> {
-  // Inside the write's transaction, hold the shadow row so an owner save to it waits.
+  // Inside the write's transaction, hold the shadow and its screenshot rows so an owner
+  // save to either waits until the moderator's write and its fingerprint have committed.
   if (db !== dbWrite) {
     await db.$queryRaw(
       Prisma.sql`SELECT 1 FROM app_listings WHERE id = ${args.shadowId} FOR UPDATE`
+    );
+    await db.$queryRaw(
+      Prisma.sql`SELECT 1 FROM app_listing_screenshots WHERE app_listing_id = ${args.shadowId} FOR UPDATE`
     );
   }
   const shadow = await db.appListing.findUnique({
