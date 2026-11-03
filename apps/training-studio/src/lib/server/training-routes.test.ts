@@ -6,6 +6,7 @@ const train = vi.hoisted(() => ({
   submitTrainingBatch: vi.fn(),
   continueTraining: vi.fn(),
   continueTrainingWhatIf: vi.fn(),
+  MatureAckRequiredError: class extends Error {},
 }));
 vi.mock('$lib/server/train', () => train);
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));

@@ -104,7 +104,9 @@
       launched: LaunchedRun[],
       prompts: SamplePrompt[],
       name: string,
-      currencies: string[]
+      currencies: string[],
+      /** The user ticked the mature-dataset Yellow confirm. */
+      matureAck: boolean
     ) => Promise<void>;
     onBack: () => void;
     /** Back to the Data step, filtered to the mature images. */
@@ -223,7 +225,7 @@
   const spend = $derived(
     nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
   );
-  const ackKey = $derived(matureAckKey(spend, matureCount));
+  const ackKey = $derived(matureAckKey(spend?.amount ?? total, matureCount));
   let ackedFor = $state<string | null>(null);
   const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
@@ -458,7 +460,8 @@
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
         prompts,
         name,
-        buzzMode.currencies
+        buzzMode.currencies,
+        ackKey !== null && !ackMissing
       );
     } catch (e) {
       startError = e instanceof Error ? e.message : 'Could not start training';
@@ -979,10 +982,16 @@
             class="mt-0.5 shrink-0"
           />
           <label for="ack-mature-yellow" class="cursor-pointer">
-            I understand {spend?.uncertain ? 'up to ' : ''}<strong
-              >{spend?.amount.toLocaleString()} Yellow Buzz</strong
-            >
-            will be charged because this dataset has mature images.
+            {#if spend}
+              I understand {spend.uncertain ? 'up to ' : ''}<strong
+                >{spend.amount.toLocaleString()} Yellow Buzz</strong
+              >
+              will be charged because this dataset has mature images.
+            {:else}
+              I understand this dataset has mature images, so anything beyond my
+              <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
           </label>
         </div>
       {/if}

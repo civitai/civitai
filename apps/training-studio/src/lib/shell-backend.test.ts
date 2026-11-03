@@ -16,9 +16,14 @@ describe('keep-training requests carry the picked currencies', () => {
 
   it('submit sends them in the body', async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ workflowId: 'wf-2' }));
-    await shellBackend.continueRun('wf-1', 10, 5, ['blue', 'green']);
+    await shellBackend.continueRun('wf-1', 10, 5, ['blue', 'green'], true);
     const init = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(JSON.parse(init.body as string).currencies).toEqual(['blue', 'green']);
+    expect(JSON.parse(init.body as string).matureAck).toBe(true);
+    fetchMock.mockResolvedValueOnce(Response.json({ workflowId: 'wf-3' }));
+    await shellBackend.continueRun('wf-1', 10, 5, ['blue'], false);
+    const unacked = fetchMock.mock.calls[1]![1] as RequestInit;
+    expect(JSON.parse(unacked.body as string).matureAck).toBe(false);
   });
 });
 

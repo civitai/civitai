@@ -198,14 +198,14 @@ export const shellBackend: StudioBackend = {
     for (const currency of currencies) params.append('currencies', currency);
     const res = await fetch(`/api/continue-training?${params}`);
     if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
-    return (await res.json()) as { cost: number | null; steps?: number };
+    return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
   },
 
-  continueRun: async (workflowId, fromEpoch, addEpochs, currencies) => {
+  continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
     const res = await fetch('/api/continue-training', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies }),
+      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies, matureAck }),
     });
     if (!res.ok) throw new Error(await messageOf(res, 'Could not start training.'));
     return ((await res.json()) as { workflowId: string }).workflowId;
