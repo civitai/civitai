@@ -62,7 +62,7 @@ export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFilters
     >
       <Stack gap={0} data-testid="apps-store-filters-panel">
         <Stack gap="lg" p="md">
-          <Stack gap={8}>
+          <Stack gap="md">
             {/* `Divider label=` is the /models panel's section-header idiom: a labelled rule, not a
                 heading, so the panel doesn't inject h3s into the page's heading outline. */}
             <Divider label={LISTING_FACET_LABELS.kind} className="text-sm font-bold" />
@@ -71,7 +71,7 @@ export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFilters
               onChange={(kind) => patchPending({ kind })}
             />
           </Stack>
-          <Stack gap={8}>
+          <Stack gap="md">
             <Divider label="Category" className="text-sm font-bold" />
             <CategoryFilterChips
               value={mergedFilters.category}
