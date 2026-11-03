@@ -116,16 +116,20 @@ const fixtures = `
 sql = one(sql, 'WITH\n', `WITH\n${fixtures}\n`);
 
 // day, userId, cosmeticId, claimKey, team, points, views, reactions, comments, stickers, remixes,
-// modelLikes
+// modelLikes, points per UTC hour. An action's hour is its first add's, even when a later re-add
+// is what made it count (actor 1 at 01:00).
 const full = [
-  ['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5 + 5, 46, 5, 1, 1, 0, 1],
-  ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0],
-  ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5 + 1, 1, 1, 0, 0, 0, 0],
-  ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0],
+  [
+    ...['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5 + 5, 46, 5, 1, 1, 0, 1],
+    { 1: 5, 4: 45, 6: 1, 9: 5, 10: 20 + 5, 11: 5, 13: 5 },
+  ],
+  ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0, { 5: 5 }],
+  ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5 + 1, 1, 1, 0, 0, 0, 0, { 5: 1, 8: 5 }],
+  ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0, { 4: 1, 6: 1 }],
 ];
 // The hourly run from day two: day one is final and not returned, and actor 9's day-two log is not a
 // new first, because the event-scoped first was on day one.
-const partial = [['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0]];
+const partial = [['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0, { 4: 1, 6: 1 }]];
 
 const client = createClient({
   url: process.env.CLICKHOUSE_HOST,
@@ -159,6 +163,12 @@ async function run(recomputeFrom) {
     r.team,
     ...['points', 'views', 'reactions', 'comments', 'stickers', 'remixes', 'modelLikes'].map((k) =>
       Number(r[k])
+    ),
+    // An hour credited nothing (a capped action) reads the same whether listed as 0 or left out.
+    Object.fromEntries(
+      Object.entries(r.hours)
+        .map(([hour, points]) => [Number(hour), Number(points)])
+        .filter(([, points]) => points)
     ),
   ]);
 }
