@@ -227,12 +227,19 @@ export function buildPresetGraphInput({
   return input;
 }
 
+/** A registry entry, or an engine named directly (remix apps run the Remix button's engines). */
+export type PresetEngine = Pick<
+  PresetModelConfig,
+  'ecosystem' | 'versionId' | 'maxReferenceImages'
+> &
+  Partial<Pick<PresetModelConfig, 'resolution'>>;
+
 type PresetGenArgs = {
   prompt?: string;
   aspectRatio: string;
   quantity?: number;
   images?: { url: string; width: number; height: number }[] | null;
-  modelConfig: PresetModelConfig;
+  modelConfig: PresetEngine;
   /** Override the resource version (e.g. a model's img2img variant). */
   versionIdOverride?: number;
   user: SessionUser;
@@ -270,10 +277,15 @@ export async function submitPresetImageGen({
   isGreen,
   allowMatureContent,
   track,
+  remixOfId,
+  externalId,
 }: PresetGenArgs & {
   isGreen?: boolean;
   allowMatureContent?: boolean;
   track?: any; // Tracker class from createContext
+  remixOfId?: number;
+  /** The orchestrator dedupes on (user, externalId), so a repeated submit returns one workflow. */
+  externalId?: string;
 }) {
   const versionId = versionIdOverride ?? modelConfig.versionId;
   const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
@@ -310,6 +322,8 @@ export async function submitPresetImageGen({
     currencies: currencies as any,
     tags,
     track,
+    remixOfId,
+    externalId,
     inputGate: 'checked-by-caller',
   });
 }

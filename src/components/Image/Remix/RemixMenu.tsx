@@ -1,5 +1,5 @@
 import { Menu, Text, ThemeIcon } from '@mantine/core';
-import { cloneElement, isValidElement, useEffect, useRef } from 'react';
+import { cloneElement, isValidElement, useEffect, useRef, useState } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
@@ -14,6 +14,7 @@ import {
   type RemixOptionKey,
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
+import { RemixAppItem, useRemixApps } from '~/components/Image/Remix/RemixApps';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 import { waitForElement } from '~/utils/html-helpers';
@@ -110,10 +111,14 @@ export function RemixMenu({
   const { setBlockedTarget, running: tourRunning } = useTourContext();
   const options = getRemixOptions(image);
   const engineRefusal = getEngineRefusal(image);
+  const remixApps = useRemixApps(image);
+  const [menuOpened, setMenuOpened] = useState(false);
   // Exactly one thing to offer: skip the menu and run it. A tour spotlighting
   // this menu teaches the menu, so while one is running it opens as usual rather
   // than skipping the step that describes it.
-  const soleOption = tourTarget && tourRunning ? undefined : getSoleRemixOption(image);
+  // Remix apps live only in the menu, so while any exist the menu always opens.
+  const soleOption =
+    (tourTarget && tourRunning) || remixApps.length > 0 ? undefined : getSoleRemixOption(image);
 
   const track = (remixKind: 'edit' | 'video' | 'reuse') =>
     trackAction({
@@ -149,7 +154,7 @@ export function RemixMenu({
   // holding nothing but a disabled refusal has no item to click, so there an
   // `onAction` that only fires from an item would strand a tour step whose sole
   // exit is clicking through this button.
-  const hasActionableItem = options.length > 0;
+  const hasActionableItem = options.length > 0 || remixApps.length > 0;
   const announcedOpen = useRef(false);
 
   // The menu step hides its footer, so a menu holding nothing but a disabled refusal
@@ -165,6 +170,7 @@ export function RemixMenu({
   useEffect(() => clearBlocked, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpen = () => {
+    setMenuOpened(true);
     if (announcedOpen.current) return;
     announcedOpen.current = true;
     if (tourTarget && !hasActionableItem) {
@@ -239,6 +245,21 @@ export function RemixMenu({
             </Menu.Item>
           );
         })}
+        {remixApps.length > 0 && (
+          <>
+            <Menu.Divider />
+            <Menu.Label>Remix apps</Menu.Label>
+            {remixApps.map((app) => (
+              <RemixAppItem
+                key={app.slug}
+                app={app}
+                imageId={image.id}
+                priced={menuOpened}
+                onRun={onAction}
+              />
+            ))}
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   );

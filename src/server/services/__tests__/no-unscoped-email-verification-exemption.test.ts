@@ -60,6 +60,7 @@ const MUST_STAY_GUARDED: Record<string, string[]> = {
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
+  'remix-app.router.ts': ['run'],
 };
 
 /**
@@ -112,6 +113,8 @@ const DERIVED_BASES: Record<string, string> = {
   orchestratorProcedure: 'protectedProcedure',
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
+  // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  remixAppProcedure: 'protectedProcedure',
   semanticSearchProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',

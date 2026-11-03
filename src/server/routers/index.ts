@@ -133,6 +133,7 @@ const routers = {
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter),
   orchestrator: () =>
     import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter),
+  remixApp: () => import('~/server/routers/remix-app.router').then((m) => m.remixAppRouter),
   moderator: () => import('~/server/routers/moderator').then((m) => m.modRouter),
   entityCollaborator: () =>
     import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter),

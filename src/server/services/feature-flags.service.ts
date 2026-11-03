@@ -755,6 +755,8 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
+  // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
+  remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
