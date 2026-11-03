@@ -8,10 +8,12 @@ import {
   captionTriggerHit,
   compareFileNames,
   defaultRunParams,
+  networkDimSizeHint,
   newRun,
   nextImgId,
   optimizerLrParams,
   paramDeviations,
+  paramHelpText,
   promptHasTrigger,
   runExtraCapabilities,
   sampleImagesProblem,
@@ -412,6 +414,37 @@ describe('optimizer learning-rate coupling', () => {
     const r = run('sdxl');
     const params = { ...defaultRunParams(r), optimizer: 'Adafactor', unetLr: '0.0002' };
     expect(optimizerLrParams(r, params).unetLr).toBe('0.0002');
+  });
+});
+
+describe('network dim size hint', () => {
+  it('names the file size for measured cards, which must still exist', () => {
+    for (const type of ['sdxl', 'illustrious', 'pony', 'flux', 'sd15']) {
+      expect(cardByType(type), type).toBeDefined();
+      expect(networkDimSizeHint(type, 32), type).toMatch(/about \d+MB/);
+    }
+    expect(networkDimSizeHint('illustrious', 8)).toBe(
+      ' At dim 8 the file is about 54MB (≈6.8MB per dim).'
+    );
+    expect(networkDimSizeHint('flux', 32)).toBe(
+      ' At dim 32 the file is about 328MB (≈10.3MB per dim).'
+    );
+  });
+
+  it('says nothing for unmeasured cards or a cleared field', () => {
+    expect(networkDimSizeHint('wan', 32)).toBe('');
+    expect(networkDimSizeHint('sdxl', '')).toBe('');
+    expect(networkDimSizeHint('sdxl', 0)).toBe('');
+    expect(networkDimSizeHint('sdxl', -8)).toBe('');
+  });
+
+  it('sizes the help text for the dim the user entered, not the recommended one', () => {
+    const run = newRun(cardByType('sdxl')!);
+    const defaults = defaultRunParams(run, '');
+    const help = paramHelpText('networkDim', 'sdxl', defaults, { ...defaults, networkDim: 128 });
+    expect(help).toContain('Recommended for this model: 32.');
+    expect(help).toContain('At dim 128 the file is about 870MB');
+    expect(paramHelpText('networkAlpha', 'sdxl', defaults, defaults)).not.toContain('MB');
   });
 });
 

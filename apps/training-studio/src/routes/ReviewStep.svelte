@@ -44,11 +44,11 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
-    PARAM_HELP,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
     paramDisplay,
+    paramHelpText,
     promptHasTrigger,
     runCard,
     runExtraCapabilities,
@@ -330,7 +330,7 @@
     const run = selection.runs[i]!;
     if (field === 'textEncoderLr' && teLocked(run))
       return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
-    return PARAM_HELP[field].replace('{recommended}', paramDisplay(defaultsAt(i)[field]));
+    return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
   function setField(i: number, field: ParamField, value: NumericInput | boolean) {
