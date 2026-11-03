@@ -183,7 +183,7 @@ describe('the ledger SQL on the real migration', () => {
 });
 
 describe('a grant covers exactly what the viewer was shown', () => {
-  const V1 = { from: 'notes-app', collections: ['notes'], access: 'read' } as const;
+  const V1: Decl = { from: 'notes-app', collections: ['notes'], access: 'read' };
 
   it('the version the viewer granted is covered (control)', async () => {
     await grantFor(UID, V1);
