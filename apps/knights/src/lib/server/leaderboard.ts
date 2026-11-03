@@ -78,14 +78,29 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
   return { rows, badges };
 }
 
-/** The top of the board, plus the viewer's own row and position whether or not it is inside the list. */
+export type Behind = { place: number; gap: number };
+
+/** How far the row at `index` is behind the place above it (0 on a tie), or null for first place. */
+export function standingGap(rows: { fervor: number }[], index: number): Behind | null {
+  return index > 0 ? { place: index, gap: rows[index - 1].fervor - rows[index].fervor } : null;
+}
+
+/** The top of the board, plus the viewer's own row, position and gap to the place above, inside the list or not. */
 export function viewBoard(
   board: Board,
   viewerId: number | null,
   { size = LEADERBOARD_SIZE }: { size?: number } = {}
-): { entries: LeaderboardEntry[]; self: LeaderboardEntry | null; badges: Board['badges'] } {
+): {
+  entries: LeaderboardEntry[];
+  self: (LeaderboardEntry & { behind: Behind | null }) | null;
+  badges: Board['badges'];
+} {
   const at = (index: number): LeaderboardEntry => ({ ...board.rows[index], position: index + 1 });
   const entries = board.rows.slice(0, size).map((_, index) => at(index));
   const own = viewerId === null ? -1 : board.rows.findIndex((row) => row.userId === viewerId);
-  return { entries, self: own === -1 ? null : at(own), badges: board.badges };
+  return {
+    entries,
+    self: own === -1 ? null : { ...at(own), behind: standingGap(board.rows, own) },
+    badges: board.badges,
+  };
 }

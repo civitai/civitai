@@ -22,7 +22,7 @@ const row = (userId: number, image: string | null, rankType = 'Knight') => ({
   image,
   rankType,
   level: 3,
-  fervor: 100 - userId,
+  fervor: 100,
 });
 
 beforeEach(() => {
@@ -63,7 +63,9 @@ describe('leaderboard load', () => {
       'cdn/templar-key@48',
       'cdn/knight-key@48',
     ]);
-    expect(data.self).toMatchObject({ userId: 7, position: 4 });
+    expect(data.self).toMatchObject({ userId: 7, position: 4, behind: { place: 3, gap: 0 } });
+    expect(data.nextTally).toMatch(/^\d+h \d+m$/);
+    expect(data.copy.formula).toContain('× 100 ×');
     expect(data.entries[0]).not.toHaveProperty('image');
     expect(data.windowDays).toBe(7);
   });

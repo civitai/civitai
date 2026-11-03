@@ -24,3 +24,7 @@ export const count = (n: number): string => n.toLocaleString('en-US');
 /** An ISO timestamp as a UTC calendar date, e.g. "Dec 15, 2026". */
 export const formatDate = (iso: string): string =>
   new Date(iso).toLocaleDateString('en-US', { timeZone: 'UTC', dateStyle: 'medium' });
+
+/** A number as `1.45M` or `32K`, for tight spaces. */
+export const compact = (n: number): string =>
+  n.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 2 });

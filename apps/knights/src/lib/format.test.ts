@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { count, formatClock, formatDate, formatWait } from './format';
+import { compact, count, formatClock, formatDate, formatWait } from './format';
 
 describe('formatWait', () => {
   it.each([
@@ -31,5 +31,15 @@ describe('count and formatDate', () => {
 
   it('reads a timestamp as its UTC calendar date', () => {
     expect(formatDate('2026-12-15T23:30:00Z')).toBe('Dec 15, 2026');
+  });
+});
+
+describe('compact', () => {
+  it.each([
+    [950, '950'],
+    [32000, '32K'],
+    [1450000, '1.45M'],
+  ])('writes %i as %s', (n, text) => {
+    expect(compact(n)).toBe(text);
   });
 });

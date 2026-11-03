@@ -1,7 +1,13 @@
 import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
 import { imageUrl } from '$lib/server/image-url';
-import { queryBoard, viewBoard, type LeaderboardEntry } from '$lib/server/leaderboard';
+import {
+  LEADERBOARD_SIZE,
+  queryBoard,
+  viewBoard,
+  type LeaderboardEntry,
+} from '$lib/server/leaderboard';
+import { fervorCopy, nextTally } from '$lib/server/leaderboard-view';
 import { boardCache } from '$lib/server/leaderboard-runtime';
 import { requireMember } from '$lib/server/membership';
 import { PROGRESSION } from '$lib/server/progression/config';
@@ -18,7 +24,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     boardCache.get(now, () => queryBoard(db, now)),
   ]);
   const view = viewBoard(board, locals.user.id);
-  const shown = ({ image, ...entry }: LeaderboardEntry) => {
+  const shown = <T extends LeaderboardEntry>({ image, ...entry }: T) => {
     const badge = playerBadge(
       { username: entry.username, image: image ?? undefined },
       civitaiUrl,
@@ -34,7 +40,10 @@ export const load: PageServerLoad = async ({ locals }) => {
   };
   return {
     status,
+    size: LEADERBOARD_SIZE,
     windowDays: PROGRESSION.fervorWindowDays,
+    nextTally: nextTally(now),
+    copy: fervorCopy(),
     entries: view.entries.map(shown),
     self: view.self && shown(view.self),
     viewerId: locals.user.id,
