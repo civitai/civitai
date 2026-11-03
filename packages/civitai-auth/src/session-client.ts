@@ -1,5 +1,4 @@
 import { createAuthVerifier, type AuthVerifier } from './verify';
-import type { VerifiedClaimsCacheOptions } from './verified-claims-cache';
 import { loadAuthEnv } from './env';
 import { hubFetch } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
@@ -68,12 +67,6 @@ export interface SessionClientConfig {
    */
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
   /**
-   * Optional switched cache of signature verifications for this client's hot-path verifier. Forwarded straight
-   * to the internal `createAuthVerifier` — see AuthVerifierConfig.claimsCache. `isRevoked` still runs on every
-   * getSessionUser call, cache hit or not.
-   */
-  claimsCache?: VerifiedClaimsCacheOptions;
-  /**
    * Optional instrumentation for the BY-USERID read-through hub hop (getSessionUserById) — the hot read for
    * API-key / OAuth / legacy-cookie auth. Same shape as onIdentityLeg. `miss` = the hub reported no user
    * (401/404/5xx). Now routed in-cluster + bounded like the token identity leg.
@@ -95,7 +88,6 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     (_verifier ??= createAuthVerifier({
       isRevoked: config.isRevoked,
       onJwksLeg: config.onJwksLeg,
-      claimsCache: config.claimsCache,
     })).verifyToken(token);
 
   // Per-pod single-flight: collapse concurrent read-misses for the same user into ONE hub fetch, so a cache

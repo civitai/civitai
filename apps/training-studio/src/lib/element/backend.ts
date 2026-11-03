@@ -198,7 +198,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
 
-    editImageQuote: () => call((client) => edit.editImageQuote(client)),
+    editImageQuote: (imageUrl) => call((client) => edit.editImageQuote(client, imageUrl)),
 
     editImageSubmit: async (req) => {
       await hostTextCheck({ editPrompt: req.prompt, inputImages: [req.imageUrl] });

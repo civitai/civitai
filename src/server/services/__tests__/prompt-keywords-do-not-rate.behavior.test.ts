@@ -131,8 +131,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   vi.mocked(includesPoi).mockReturnValue(false);
-  vi.mocked(includesInappropriate).mockImplementation(
-    (_: unknown, nsfw: boolean) => (nsfw ? 'minor' : false) as never
+  vi.mocked(includesInappropriate).mockImplementation((_: unknown, nsfw?: boolean) =>
+    nsfw ? 'minor' : false
   );
   holder.holdRuleTag = '';
   vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['audit'] } as never);
