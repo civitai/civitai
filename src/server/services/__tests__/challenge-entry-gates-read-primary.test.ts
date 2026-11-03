@@ -22,6 +22,10 @@ const { mockChargeEntryFees, mockAmIBlockedByUser } = vi.hoisted(() => ({
   mockAmIBlockedByUser: vi.fn(async () => false),
 }));
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),

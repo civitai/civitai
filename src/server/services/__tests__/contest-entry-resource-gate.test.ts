@@ -29,6 +29,10 @@ const mockDbRead = dbMock.dbRead;
 const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 const mockImageResourceNewFindMany = mockDbRead.imageResourceNew.findMany;
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 // @civitai/db's index re-exports ./kysely, whose top-level `import 'kysely'` is not
