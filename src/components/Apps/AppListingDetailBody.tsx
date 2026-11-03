@@ -822,13 +822,14 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 ) : row.storeHref ? (
                   // SAME-SITE store link (the category row → `/apps` filtered to it): a
                   // client-side `Link`, no new tab. See `storeHref` in
-                  // `appListingDetailRows.ts` for why it is not `href`.
+                  // `appListingDetailRows.ts` for why it is not `href`. Its own data
+                  // attribute too: `data-listing-detail-link` means the OUTBOUND link.
                   <Anchor
                     component={Link}
                     size="sm"
                     href={row.storeHref}
                     underline="always"
-                    data-listing-detail-link={row.key}
+                    data-listing-detail-store-link={row.key}
                   >
                     {row.value}
                   </Anchor>

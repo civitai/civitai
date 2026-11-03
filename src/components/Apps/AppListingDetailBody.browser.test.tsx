@@ -923,6 +923,9 @@ describe('AppListingDetailBody', () => {
     // Same-site navigation: no new tab (that contract belongs to the outbound Source link).
     expect(link!.getAttribute('target')).toBeNull();
     expect(link!.textContent).toBe('Games');
+    // Marked as a STORE link, not with the outbound-link marker other tests select on.
+    expect(link!.getAttribute('data-listing-detail-store-link')).toBe('category');
+    expect(link!.getAttribute('data-listing-detail-link')).toBeNull();
   });
 
   test('the Details category row is NOT a link in the moderator preview', async () => {
