@@ -11,6 +11,7 @@ import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-state';
 import { Flags } from '~/shared/utils/flags';
 import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { SparkStorylineTile } from '~/components/RemixGallery/SparkStorylineTile';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import {
   resolveShelfCell,
@@ -140,7 +141,10 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const openId = useRemixPeelStore((state) => state.openId);
   const setOpen = useRemixPeelStore((state) => state.toggle);
   const close = useRemixPeelStore((state) => state.close);
-  const { count, entries: available } = useRemixCardData(imageId);
+  const { count: remixCount, entries: available, storylines } = useRemixCardData(imageId);
+  // Everything the strip lists: remixes and the storylines started from this image. Every gate
+  // below reads this, so a host with only storylines still opens.
+  const count = remixCount + storylines.count;
   const open = openId === imageId;
 
   const anchorRef = useRef<HTMLSpanElement>(null);
@@ -443,19 +447,27 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   if (!count || !fine) return null;
 
   // At most four thumbnails; `+N` carries the rest. More than that and the tiles
-  // shrink to the point of being unreadable at feed card widths.
+  // shrink to the point of being unreadable at feed card widths. Storylines come
+  // first: there are fewer of them, and a remix is one picture where a story is many.
   //
   // Sliced rather than trusted: the query already caps what it returns, and the
   // `+N` is computed from `count`, so a shorter list than `shown` would silently
   // overstate the remainder.
-  const entries = available.slice(0, shown);
+  const stories = storylines.entries.slice(0, shown);
+  const entries = available.slice(0, shown - stories.length);
+  const listed = stories.length + entries.length;
   const side = layout === 'side';
-  const label = count === 1 ? '1 remix' : `${count} remixes`;
+  const label = [
+    remixCount && (remixCount === 1 ? '1 remix' : `${remixCount} remixes`),
+    storylines.count && (storylines.count === 1 ? '1 story' : `${storylines.count} stories`),
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const body = (tile: number | undefined) => (
     <>
       <div className={clsx('flex items-center px-2 pb-1 pt-1.5', side ? 'gap-1' : 'gap-1.5')}>
         <IconHierarchy size={13} className="shrink-0 text-yellow-5" />
-        <Text size="xs" fw={600} className="truncate">
+        <Text size="xs" fw={600} className="truncate" title={label}>
           {label}
         </Text>
         {/* No close button on a side strip: it costs the width the word needs,
@@ -480,6 +492,17 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           at 64px and shrink to fit anything narrower, so the row always fits
           exactly and there is nothing to scroll. */}
       <div className={clsx('flex gap-1 px-2 pb-2', side && 'flex-col')}>
+        {stories.map((entry) => (
+          <SparkStorylineTile
+            key={`story-${entry.storylineId}`}
+            entry={entry}
+            blurLevels={blurLevels ?? 0}
+            paging={open}
+            className={clsx('min-w-0', styles.tile, side ? 'mx-auto' : 'max-w-16 flex-1')}
+            style={side ? { width: tile, height: tile } : undefined}
+            onOpen={close}
+          />
+        ))}
         {entries.map((entry, index) => (
           <RemixFlyoutTile
             key={index}
@@ -490,7 +513,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
             onOpen={close}
           />
         ))}
-        {count > entries.length && (
+        {count > listed && (
           <div
             className={clsx(
               'flex min-w-0 items-center justify-center rounded bg-gray-2 dark:bg-dark-5',
@@ -499,7 +522,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
             style={side ? { width: tile, height: tile } : undefined}
           >
             <Text size="xs" fw={600}>
-              +{count - entries.length}
+              +{count - listed}
             </Text>
           </div>
         )}
