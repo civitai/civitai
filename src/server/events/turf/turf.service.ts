@@ -25,7 +25,7 @@ import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/
 import { logToAxiom } from '~/server/logging/client';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
-import type { TurfStickerData } from '~/server/schema/turf.schema';
+import type { TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
@@ -248,7 +248,9 @@ type StickerRow = TurfStickerRow & { imageId: number };
 // before the event start, or one that has since reached the Spark tier's threshold, read from its
 // CreatorMilestone row so the tier stays the one source (compared as
 // creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
-// or excluded. Read when the map is written, so a newly eligible placer counts from then on only.
+// or excluded. Read when the map is written, so credit is forward-only: a newly eligible placer
+// counts from the next map write, and never for an action already recorded, since each ledger row
+// names the players credited when the action happened.
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s."userId", s.team, s."cosmeticId", s."createdAt",
@@ -473,11 +475,17 @@ type DrawnSticker = {
 
 /**
  * One image's live stickers to draw: the most recent `renderLimit`, plus the viewer's own. Nothing
- * for an image outside a published post, and no sticker from a banned or deleted placer.
+ * for an image outside a published post, and no sticker from a banned or deleted placer. `before`
+ * pages back from a previous page's `nextCursor`; later pages leave `mine` null.
  */
-export async function getTurfStickers(eventName: string, imageId: number, viewerId?: number) {
+export async function getTurfStickers(
+  eventName: string,
+  imageId: number,
+  viewerId?: number,
+  before?: { createdAt: string; id: bigint }
+) {
   const event = await getTurfEvent(eventName);
-  if (!event || event.turf.mode === 'off') return { stickers: [], mine: null };
+  if (!event || event.turf.mode === 'off') return { stickers: [], mine: null, nextCursor: null };
   const rows = (only: Prisma.Sql, limit: number) => dbRead.$queryRaw<DrawnSticker[]>`
     SELECT s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt"
     FROM "EventTurfSticker" s
@@ -489,11 +497,23 @@ export async function getTurfStickers(eventName: string, imageId: number, viewer
     ORDER BY s."createdAt" DESC, s.id DESC
     LIMIT ${limit}
   `;
-  const [stickers, mine] = await Promise.all([
-    rows(Prisma.empty, event.turf.renderLimit),
-    viewerId ? rows(Prisma.sql`AND s."userId" = ${viewerId}`, 1) : [],
+  const limit = event.turf.renderLimit;
+  const at = before && new Date(before.createdAt);
+  const olderThanCursor = before
+    ? Prisma.sql`AND (s."createdAt", s.id) < (${at}::timestamptz, ${before.id}::bigint)`
+    : Prisma.empty;
+  const [page, mine] = await Promise.all([
+    // One extra row says whether another page exists.
+    rows(olderThanCursor, limit + 1),
+    viewerId && !before ? rows(Prisma.sql`AND s."userId" = ${viewerId}`, 1) : [],
   ]);
-  return { stickers, mine: mine[0] ?? null };
+  const stickers = page.slice(0, limit);
+  const last = stickers[stickers.length - 1];
+  const nextCursor: TurfStickersCursor | null =
+    page.length > limit && last
+      ? { createdAt: last.createdAt.toISOString(), id: last.id.toString() }
+      : null;
+  return { stickers, mine: mine[0] ?? null, nextCursor };
 }
 
 /**

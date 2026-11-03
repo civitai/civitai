@@ -31,7 +31,18 @@ export const turfSummariesSchema = z.object({
   imageIds: z.array(z.number().int().positive()).max(100),
 });
 
-export const turfImageSchema = z.object({ event: eventName, imageId: z.number().int().positive() });
+export const turfImageSchema = z.object({
+  event: eventName,
+  imageId: z.number().int().positive(),
+  // The last sticker of the previous page: return only stickers older than it.
+  before: z
+    .object({
+      createdAt: z.iso.datetime(),
+      id: z.coerce.bigint().positive().max(BigInt('9223372036854775807')),
+    })
+    .optional(),
+});
+export type TurfStickersCursor = { createdAt: string; id: string };
 
 export const setTurfOptInSchema = z.object({ event: eventName, optedIn: z.boolean() });
 
