@@ -220,7 +220,7 @@ describe('sendNcEarningsNotice', () => {
   it('queries only the listed creators on the notice’s own base models', async () => {
     await run({ dryRun: true });
     const versionCall = dbMock.dbRead.$queryRaw.mock.calls.find(
-      ([strings]: [TemplateStringsArray]) => !strings.join('').includes('"bannedAt"')
+      ([strings]) => !(strings as TemplateStringsArray).join('').includes('"bannedAt"')
     );
     expect(versionCall?.slice(1)).toEqual([
       [1, 2, 3],
