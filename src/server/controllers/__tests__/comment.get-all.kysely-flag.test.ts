@@ -7,19 +7,19 @@ import type * as UserPreferences from '~/server/services/user-preferences.servic
 import type * as UserService from '~/server/services/user.service';
 import { ReviewSort } from '~/server/common/enums';
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Mocked for the invariant guard that no flag check remains on these reads (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read-4 statement stubbed: their rows against Prisma's are compared in
+// Every hot-read-4 statement stubbed: their rows, against a real database, are pinned in
 // src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/hot-reads-4', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads4>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
-// The lag decision, so a test can make it pick the primary and see both paths follow it.
+// The lag decision, so a test can make it pick the primary and see both reads follow it.
 const { getDbWithoutLag, getKyselyWithoutLag } = vi.hoisted(() => ({
   getDbWithoutLag: vi.fn(),
   getKyselyWithoutLag: vi.fn(),
@@ -59,10 +59,9 @@ import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 
 /**
- * `comment.getAll` (`getCommentsInfiniteHandler`) behind `kysely-hot-reads-4`: ON reads the first
- * page (newest or oldest first) and the pinned block through Kysely only, on the client the lag
- * decision picks, in the Prisma shape; a cursor page or another sort keeps the unpinned read on
- * Prisma. OFF reads Prisma only. Row parity is in
+ * `comment.getAll` (`getCommentsInfiniteHandler`): the first page (newest or oldest first) and the
+ * pinned block read through Kysely only, on the client the lag decision picks, in the Prisma shape;
+ * a cursor page or another sort keeps the unpinned read on Prisma. Row parity is in
  * src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts.
  */
 
@@ -133,10 +132,8 @@ beforeEach(() => {
   hidden.mockReset().mockResolvedValue([]);
   blockedBy.mockReset().mockResolvedValue([]);
   blocked.mockReset().mockResolvedValue([]);
-  dbMock.dbRead.comment.findMany.mockImplementation((async (arg: {
-    where: { pinnedAt: unknown };
-  }) =>
-    arg.where.pinnedAt === null ? [item(C_UNPINNED, null)] : [item(C_PINNED, PINNED_AT)]) as never);
+  // The unpinned list of a page Kysely does not serve.
+  dbMock.dbRead.comment.findMany.mockResolvedValue([item(C_UNPINNED, null)] as never);
   dbMock.dbRead.$queryRaw.mockResolvedValue([]);
   q.listTopLevelComments.mockImplementation((async (
     _db: unknown,
@@ -154,27 +151,12 @@ const getAll = (input: Record<string, unknown> = {}) =>
 const listCalls = () =>
   q.listTopLevelComments.mock.calls.map(([db, filter, page]) => ({ db, filter, page }));
 
-describe('comment.getAll behind kysely-hot-reads-4', () => {
+describe('comment.getAll', () => {
   it('control: the routing checks below can tell the two Kysely clients apart', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('evaluates kysely-hot-reads-4 by key, with no entity or context, once per request', async () => {
-    await getAll();
-    expect(flag.mock.calls).toEqual([['kysely-hot-reads-4']]);
-  });
-
-  it('OFF: reads both lists through Prisma only', async () => {
-    const { comments } = await getAll();
-    expect(comments.map((c) => c.id)).toEqual([C_PINNED, C_UNPINNED]);
-    expect(dbMock.dbRead.comment.findMany).toHaveBeenCalledTimes(2);
-    expect(getDbWithoutLag).toHaveBeenCalledWith('commentModel', MODEL);
-    expect(getKyselyWithoutLag).not.toHaveBeenCalled();
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-
-  it('ON: reads the first page and the pinned block through Kysely only, on the replica', async () => {
-    flag.mockResolvedValue(true);
+  it('reads the first page and the pinned block through Kysely only, on the replica (invariant: no flag check remains)', async () => {
     const { comments } = await getAll();
     expect(getKyselyWithoutLag.mock.calls).toEqual([
       ['commentModel', MODEL],
@@ -199,24 +181,22 @@ describe('comment.getAll behind kysely-hot-reads-4', () => {
       { ...item(C_PINNED, PINNED_AT), user: author, _count: { comments: 0 } },
       { ...item(C_UNPINNED, null), user: author, _count: { comments: 0 } },
     ]);
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: follows the lag decision to the primary, as the Prisma reads do', async () => {
-    flag.mockResolvedValue(true);
+  it('follows the lag decision to the primary, as the Prisma reads did', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     await getAll();
     expect(q.listTopLevelComments).toHaveBeenCalledTimes(2);
     for (const call of q.listTopLevelComments.mock.calls) expect(call[0]).toBe(kyselyWrite);
   });
 
-  it('ON: oldest first and a page number reach the statement', async () => {
-    flag.mockResolvedValue(true);
+  it('oldest first and a page number reach the statement', async () => {
     await getAll({ sort: ReviewSort.Oldest, page: 3 });
     expect(listCalls()[0].page).toEqual({ pinned: false, createdAt: 'asc', limit: 9, offset: 18 });
   });
 
-  it('ON: a cursor page reads the unpinned list through Prisma, and no pinned block', async () => {
-    flag.mockResolvedValue(true);
+  it('a cursor page reads the unpinned list through Prisma, and no pinned block', async () => {
     await getAll({ cursor: CURSOR });
     expect(dbMock.dbRead.comment.findMany).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.comment.findMany.mock.calls[0][0]).toMatchObject({
@@ -226,8 +206,7 @@ describe('comment.getAll behind kysely-hot-reads-4', () => {
     expect(q.listTopLevelComments).not.toHaveBeenCalled();
   });
 
-  it('ON: another sort reads the unpinned list through Prisma, the pinned block through Kysely', async () => {
-    flag.mockResolvedValue(true);
+  it('another sort reads the unpinned list through Prisma, the pinned block through Kysely', async () => {
     await getAll({ sort: ReviewSort.MostLiked });
     expect(dbMock.dbRead.comment.findMany).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.comment.findMany.mock.calls[0][0]).toMatchObject({
@@ -237,8 +216,7 @@ describe('comment.getAll behind kysely-hot-reads-4', () => {
     expect(listCalls()).toEqual([{ db: kyselyRead, filter: viewerFilter, page: { pinned: true } }]);
   });
 
-  it('ON: the viewer exclusions reach both statements', async () => {
-    flag.mockResolvedValue(true);
+  it('the viewer exclusions reach both statements', async () => {
     hidden.mockResolvedValue([{ id: AUTHOR }]);
     await getAll();
     for (const { filter } of listCalls()) expect(filter.excludedUserIds).toEqual([AUTHOR]);
