@@ -61,7 +61,7 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
-  addApiKey: vi.fn(async () => 'minted-api-key'),
+  mintApiKey: vi.fn(async () => 'minted-api-key'),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
