@@ -12,6 +12,7 @@ export {
   moderatorArticleLookupPath,
   moderatorModelLookupPath,
   moderatorModelVersionLookupPath,
+  moderatorTrainingAuditPath,
   moderatorBulkImageManagerPath,
   moderatorFeedbackReportPath,
   type BulkImageManagerSource,

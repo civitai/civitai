@@ -143,7 +143,10 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
-import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
+import {
+  moderatorModelLookupPath,
+  moderatorTrainingAuditPath,
+} from '~/shared/constants/moderator-app';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
@@ -173,6 +176,7 @@ import {
   CosmeticEntity,
   ModelStatus,
   ModelType,
+  ModelUploadType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -1269,6 +1273,13 @@ export default function ModelDetailsV2({
                                 >
                                   Lookup Model
                                 </ModeratorLookupMenuItem>
+                                {model.uploadType === ModelUploadType.Trained && (
+                                  <ModeratorLookupMenuItem
+                                    path={moderatorTrainingAuditPath(model.id)}
+                                  >
+                                    Training audit
+                                  </ModeratorLookupMenuItem>
+                                )}
                                 {published && (
                                   <Menu.Item
                                     color="yellow"
