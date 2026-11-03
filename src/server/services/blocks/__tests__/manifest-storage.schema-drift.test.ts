@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  APP_STORAGE_BREAKING_KEYWORDS,
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
   APP_STORAGE_ENABLED_FEATURES,
@@ -19,7 +20,13 @@ import {
   APP_STORAGE_MAX_IMPORTS,
   APP_STORAGE_MAX_INDEXES,
   APP_STORAGE_MAX_MARKS,
+  APP_STORAGE_MAX_MIGRATION_OPS,
   APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
+  APP_STORAGE_MAX_RETIRED_COLLECTIONS,
+  APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
+  APP_STORAGE_MIGRATION_OPS,
+  APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+  APP_STORAGE_MIGRATION_PATH_PATTERN,
   APP_STORAGE_OWNED_POINTER_PATTERN,
   APP_STORAGE_RESERVED_INDEX_NAMES,
   APP_STORAGE_SCHEMA_KEYWORDS,
@@ -175,6 +182,32 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['schema nested 16 deep', priv({ schema: deepSchema(16) }), true],
   ['pattern with maxLength 1000', priv({ schema: { pattern: 'x', maxLength: 1000 } }), true],
   ['256-char pattern', priv({ schema: { pattern: 'p'.repeat(256), maxLength: 1 } }), true],
+  // accept — schema migrations
+  [
+    'one op of every kind',
+    priv({
+      migrations: [
+        { op: 'default', path: '/status', value: 'draft' },
+        { op: 'rename', from: '/name', to: '/title' },
+        { op: 'remove', path: '/legacy' },
+        { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
+        { op: 'acknowledge', path: '' },
+        { op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' },
+      ],
+    }),
+    true,
+  ],
+  [
+    'default value of any JSON type',
+    priv({ migrations: [{ op: 'default', path: '/a', value: null }] }),
+    true,
+  ],
+  ['escaped path segments', priv({ migrations: [{ op: 'remove', path: '/a~1b/c~0d' }] }), true],
+  ['15-segment path', priv({ migrations: [{ op: 'remove', path: '/a'.repeat(15) }] }), true],
+  ['32 ops', priv({ migrations: names(32, '/p').map((path) => ({ op: 'remove', path })) }), true],
+  ['migrations on shared own', shared({ migrations: [{ op: 'remove', path: '/x' }] }), true],
+  ['retiredCollections beside collections', { ...priv(), retiredCollections: ['old_notes'] }, true],
+  ['retiredCollections only', { retiredCollections: ['old_notes'] }, true],
   // accept, but phased
   ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true, true],
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true, true],
@@ -311,6 +344,41 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     shared({ write: 'none', counters: ['plays'], schema: { type: 'object' } }),
     false,
   ],
+  // reject — schema migrations
+  ['migrations not an array', priv({ migrations: { op: 'remove', path: '/a' } }), false],
+  ['migrations empty', priv({ migrations: [] }), false],
+  ['33 ops', priv({ migrations: names(33, '/p').map((path) => ({ op: 'remove', path })) }), false],
+  ['unknown op', priv({ migrations: [{ op: 'copy', path: '/a' }] }), false],
+  ['op missing', priv({ migrations: [{ path: '/a' }] }), false],
+  ['default without value', priv({ migrations: [{ op: 'default', path: '/a' }] }), false],
+  ['rename without to', priv({ migrations: [{ op: 'rename', from: '/a' }] }), false],
+  ['unknown op key', priv({ migrations: [{ op: 'remove', path: '/a', value: 1 }] }), false],
+  ['root path on remove', priv({ migrations: [{ op: 'remove', path: '' }] }), false],
+  ['"*" segment on remove', priv({ migrations: [{ op: 'remove', path: '/tags/*' }] }), false],
+  [
+    '"*" segment on default',
+    priv({ migrations: [{ op: 'default', path: '/*', value: 1 }] }),
+    false,
+  ],
+  ['path without leading slash', priv({ migrations: [{ op: 'remove', path: 'a' }] }), false],
+  ['empty path segment', priv({ migrations: [{ op: 'remove', path: '/a//b' }] }), false],
+  ['bad escape', priv({ migrations: [{ op: 'remove', path: '/a~2' }] }), false],
+  ['16-segment path', priv({ migrations: [{ op: 'remove', path: '/a'.repeat(16) }] }), false],
+  ['513-char path', priv({ migrations: [{ op: 'remove', path: `/${'x'.repeat(512)}` }] }), false],
+  [
+    'unknown acknowledge keyword',
+    priv({ migrations: [{ op: 'acknowledge', path: '/a', keyword: 'format' }] }),
+    false,
+  ],
+  [
+    'migrations on write none',
+    shared({ write: 'none', counters: ['plays'], migrations: [{ op: 'remove', path: '/x' }] }),
+    false,
+  ],
+  ['retiredCollections empty', { ...priv(), retiredCollections: [] }, false],
+  ['retiredCollections with a bad name', { ...priv(), retiredCollections: ['Old'] }, false],
+  ['retiredCollections duplicated', { ...priv(), retiredCollections: ['a', 'a'] }, false],
+  ['17 retiredCollections', { ...priv(), retiredCollections: names(17, 'r') }, false],
   // reject — ownedModelVersions
   ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
   ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
@@ -394,6 +462,34 @@ const PARSER_ONLY: Array<[string, unknown]> = [
   ['minLength above maxLength', priv({ schema: { minLength: 3, maxLength: 2 } })],
   ['minimum above maximum', priv({ schema: { minimum: 3, maximum: 2 } })],
   ['a pattern that does not compile', priv({ schema: { pattern: '(', maxLength: 3 } })],
+  // Migrations: ops are compared with each other, and a default's size is measured as JSON.
+  [
+    'two ops touching one field',
+    priv({
+      migrations: [
+        { op: 'remove', path: '/b' },
+        { op: 'rename', from: '/a', to: '/b' },
+      ],
+    }),
+  ],
+  [
+    "an op inside another op's field",
+    priv({
+      migrations: [
+        { op: 'remove', path: '/meta' },
+        { op: 'default', path: '/meta/x', value: 1 },
+      ],
+    }),
+  ],
+  ['a rename onto itself', priv({ migrations: [{ op: 'rename', from: '/a', to: '/a' }] })],
+  [
+    'a default value over 4096 bytes',
+    priv({ migrations: [{ op: 'default', path: '/a', value: 'v'.repeat(4096) }] }),
+  ],
+  [
+    'a retired collection still declared',
+    { collections: { c: { visibility: 'private' } }, retiredCollections: ['c'] },
+  ],
 ];
 
 describe('app-block v1 schema ⇄ storage parser drift guard', () => {
@@ -403,7 +499,11 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(storageSchema.additionalProperties).toBe(false);
     // At least one of the two: an app may only import, and declare no collection of its own.
     expect(storageSchema.required).toBeUndefined();
-    expect(storageSchema.anyOf).toEqual([{ required: ['collections'] }, { required: ['imports'] }]);
+    expect(storageSchema.anyOf).toEqual([
+      { required: ['collections'] },
+      { required: ['imports'] },
+      { required: ['retiredCollections'] },
+    ]);
   });
 
   it('pins every imports bound to the exported constants', () => {
@@ -513,6 +613,45 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(
       ((then.properties as Record<string, SchemaObject>).maxLength as SchemaObject).maximum
     ).toBe(APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH);
+  });
+
+  it('pins the schema-migration declaration to the exported constants', () => {
+    const storageProps = storageSchema.properties as Record<string, SchemaObject>;
+    const retired = storageProps.retiredCollections;
+    expect([retired.type, retired.minItems, retired.maxItems, retired.uniqueItems]).toEqual([
+      'array',
+      1,
+      APP_STORAGE_MAX_RETIRED_COLLECTIONS,
+      true,
+    ]);
+    expect((retired.items as SchemaObject).pattern).toBe(APP_STORAGE_COLLECTION_NAME_RE.source);
+
+    const collection = Object.values(
+      (storageProps.collections as SchemaObject).patternProperties as Record<string, SchemaObject>
+    )[0];
+    const migrations = (collection.properties as Record<string, SchemaObject>).migrations;
+    expect([migrations.type, migrations.minItems, migrations.maxItems]).toEqual([
+      'array',
+      1,
+      APP_STORAGE_MAX_MIGRATION_OPS,
+    ]);
+    expect((migrations.items as SchemaObject).$ref).toBe('#/$defs/storageMigrationOp');
+
+    const path = schema.$defs.storageMigrationPath;
+    expect([path.pattern, path.maxLength]).toEqual([
+      APP_STORAGE_MIGRATION_PATH_PATTERN,
+      APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+    ]);
+    const variants = schema.$defs.storageMigrationOp.oneOf as SchemaObject[];
+    const opOf = (v: SchemaObject) =>
+      ((v.properties as Record<string, SchemaObject>).op as SchemaObject).const;
+    expect(variants.map(opOf)).toEqual([...APP_STORAGE_MIGRATION_OPS]);
+    const ack = variants[variants.length - 1].properties as Record<string, SchemaObject>;
+    expect([ack.path.pattern, ack.path.maxLength]).toEqual([
+      APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
+      APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+    ]);
+    expect(ack.keyword.enum).toEqual([...APP_STORAGE_BREAKING_KEYWORDS]);
   });
 
   it('the evaluator resolves a local $ref and refuses one it cannot resolve', () => {

@@ -223,6 +223,111 @@ export const APP_STORAGE_MANIFEST_MAX_PATTERNS = 32;
 export const APP_STORAGE_SCHEMA_PATTERN_FLAGS = 'u';
 
 /**
+ * SCHEMA MIGRATIONS — what a new version declares about the documents an earlier approved
+ * version left in its collections, when it narrows a collection's `schema`.
+ *
+ * Submit compares every collection schema of the app's previous APPROVED version with the
+ * submitted one (a static diff, `storage-schema-migrations.ts`; stored documents are never
+ * read) and refuses a BREAKING change — one that can leave a stored document unwritable — unless
+ * a migration op covers it. A collection's `migrations` is a list of DECLARATIVE ops (no author
+ * code runs on the server), applied to the collection's existing production documents when the
+ * version is approved:
+ *
+ *   - `{ op: "default", path, value }` — set the field when it is missing (its parent object
+ *     exists). Covers a newly required property; `value` must match the new schema there.
+ *   - `{ op: "rename", from, to }` — move the field when `from` is present and `to` absent
+ *     (`to`'s parent object exists). Covers a removed property.
+ *   - `{ op: "remove", path }` — delete the field. Covers a removed property, and any narrowing
+ *     at or under a field the new schema does not require.
+ *   - `{ op: "acknowledge", path, keyword? }` — the author accepts that stored documents may
+ *     violate this narrowing and are refused on their next write until reshaped. Changes
+ *     nothing. Without `keyword`, it covers every breaking change at or under `path`.
+ *
+ * Every op is IDEMPOTENT, and the mutation ops must touch disjoint fields (no path equal to or
+ * inside another's), so the whole list is too: applying it twice is applying it once, and a
+ * re-run or a write racing the run is safe.
+ *
+ * SCOPED TO ONE TRANSITION. Only the ops that cover a breaking change of THIS transition (the
+ * previous approved version → this one) run; an op that covers nothing is a submit WARNING and
+ * never runs. So a `migrations` list left in a later manifest re-triggers no refusal and never
+ * re-runs — a stale `remove` cannot delete a field a later version declares again.
+ *
+ * A collection REMOVED from the manifest is a breaking change too (its documents can no longer
+ * be reached); `storage.retiredCollections` lists the ones removed on purpose.
+ */
+export const APP_STORAGE_MIGRATION_OPS = ['default', 'rename', 'remove', 'acknowledge'] as const;
+export type AppStorageMigrationOpName = (typeof APP_STORAGE_MIGRATION_OPS)[number];
+/** Most ops one collection's `migrations` may declare. */
+export const APP_STORAGE_MAX_MIGRATION_OPS = 32;
+/**
+ * Most segments of a migration path: a field `n` segments deep sits in a schema nested `n + 1`
+ * deep, so this is the deepest field a collection schema can describe.
+ */
+export const APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS = APP_STORAGE_SCHEMA_MAX_DEPTH - 1;
+/** Longest migration path, in UTF-16 code units (as the schema's `maxLength` would count ASCII). */
+export const APP_STORAGE_MIGRATION_PATH_MAX_LENGTH = 512;
+/** Most bytes of one `default` value, as UTF-8 JSON. */
+export const APP_STORAGE_MIGRATION_VALUE_MAX_BYTES = 4096;
+/**
+ * In a breaking change's pointer and an `acknowledge` path, the segment that stands for EVERY
+ * array element (`items`) or every undeclared property (`additionalProperties` as a schema).
+ * The mutation ops act on named object fields only, so they refuse it.
+ */
+export const APP_STORAGE_MIGRATION_ANY_SEGMENT = '*';
+/**
+ * A JSON Pointer (RFC 6901) of 1 to {@link APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS} non-empty
+ * segments, `~0` and `~1` the only escapes. A string, not a `RegExp`, so the published schema's
+ * `pattern` can equal it byte for byte.
+ */
+export const APP_STORAGE_MIGRATION_PATH_PATTERN = `^(/([^/~]|~[01])+){1,${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS}}$`;
+/** The same, but the document root (`""`) is allowed: an `acknowledge` path. */
+export const APP_STORAGE_MIGRATION_ACK_PATH_PATTERN = `^(/([^/~]|~[01])+){0,${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS}}$`;
+const MIGRATION_PATH_RE = new RegExp(APP_STORAGE_MIGRATION_PATH_PATTERN, 'u');
+const MIGRATION_ACK_PATH_RE = new RegExp(APP_STORAGE_MIGRATION_ACK_PATH_PATTERN, 'u');
+/** The keywords a breaking change can name (`acknowledge.keyword`). */
+export const APP_STORAGE_BREAKING_KEYWORDS = [
+  'type',
+  'const',
+  'enum',
+  'minimum',
+  'maximum',
+  'minLength',
+  'maxLength',
+  'minItems',
+  'maxItems',
+  'pattern',
+  'required',
+  'additionalProperties',
+  'properties',
+] as const;
+export type AppStorageBreakingKeyword = (typeof APP_STORAGE_BREAKING_KEYWORDS)[number];
+/** Most names `storage.retiredCollections` may list (the most a manifest can declare). */
+export const APP_STORAGE_MAX_RETIRED_COLLECTIONS = APP_STORAGE_MAX_COLLECTIONS;
+
+/** One declared migration op, as validated by {@link parseManifestStorage}. */
+export type StorageMigrationOp =
+  | { op: 'default'; path: string; value: unknown }
+  | { op: 'rename'; from: string; to: string }
+  | { op: 'remove'; path: string }
+  | { op: 'acknowledge'; path: string; keyword?: AppStorageBreakingKeyword };
+
+/** The segments of a JSON Pointer, unescaped; `[]` for the root `""`. */
+export function jsonPointerSegments(pointer: string): string[] {
+  if (pointer === '') return [];
+  return pointer
+    .slice(1)
+    .split('/')
+    .map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'));
+}
+
+/** Whether pointer `a` is `b` or names an ancestor of it, segment by segment. */
+export function jsonPointerCovers(a: string, b: string): boolean {
+  const as = jsonPointerSegments(a);
+  const bs = jsonPointerSegments(b);
+  return as.length <= bs.length && as.every((s, i) => s === bs[i]);
+}
+
+/**
  * Most errors one parse reports; the rest are summarised in one final line. The errors are
  * joined into the submit response, so without a cap a crafted manifest can turn into a
  * multi-megabyte error message.
@@ -287,6 +392,11 @@ export type DeclaredStorageCollection = {
    * {@link parseCollectionSchema}). Absent: documents are not checked.
    */
   schema?: AppStorageCollectionSchema;
+  /**
+   * The migration ops this version declares for the collection's existing documents (see
+   * {@link APP_STORAGE_MIGRATION_OPS}). Absent: none.
+   */
+  migrations?: readonly StorageMigrationOp[];
 };
 
 /** Whether another app may reach this collection through an import. */
@@ -319,10 +429,18 @@ export type ParsedManifestStorage = {
   declared: boolean;
   collections: DeclaredStorageCollections;
   imports: DeclaredStorageImports;
+  /** Collections an earlier version declared that this one removes on purpose. */
+  retiredCollections: ReadonlySet<string>;
   errors: string[];
 };
 
-const STORAGE_KEYS = new Set(['collections', 'imports']);
+const STORAGE_KEYS = new Set(['collections', 'imports', 'retiredCollections']);
+const MIGRATION_OP_KEYS: Record<AppStorageMigrationOpName, ReadonlySet<string>> = {
+  default: new Set(['op', 'path', 'value']),
+  rename: new Set(['op', 'from', 'to']),
+  remove: new Set(['op', 'path']),
+  acknowledge: new Set(['op', 'path', 'keyword']),
+};
 const IMPORT_KEYS = new Set(['from', 'collections', 'access']);
 const COLLECTION_KEYS = new Set([
   'kind',
@@ -338,6 +456,7 @@ const COLLECTION_KEYS = new Set([
   'ownedModelVersions',
   'exportable',
   'schema',
+  'migrations',
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -680,6 +799,17 @@ function parseCollection(
     }
   }
 
+  let migrations: StorageMigrationOp[] | null = null;
+  if (raw.migrations !== undefined) {
+    if (write === 'none') {
+      errors.push(
+        `${at}.migrations does not apply to write "none" — no document body is ever written to that collection, so there is nothing to migrate`
+      );
+    } else {
+      migrations = parseMigrations(`${at}.migrations`, raw.migrations, errors);
+    }
+  }
+
   if (errors.length > before) return null;
   const collection: DeclaredStorageCollection = {
     kind,
@@ -697,7 +827,177 @@ function parseCollection(
   if (ownedModelVersions) collection.ownedModelVersions = ownedModelVersions;
   if (raw.exportable !== undefined) collection.exportable = raw.exportable as boolean;
   if (schema) collection.schema = schema;
+  if (migrations) collection.migrations = migrations;
   return collection;
+}
+
+/** Whether `pointer` is a valid migration path; `ack` admits the root and the `*` segment. */
+function isMigrationPath(pointer: unknown, ack: boolean): pointer is string {
+  if (typeof pointer !== 'string' || pointer.length > APP_STORAGE_MIGRATION_PATH_MAX_LENGTH) {
+    return false;
+  }
+  if (!(ack ? MIGRATION_ACK_PATH_RE : MIGRATION_PATH_RE).test(pointer)) return false;
+  return ack || !jsonPointerSegments(pointer).includes(APP_STORAGE_MIGRATION_ANY_SEGMENT);
+}
+
+function migrationPathError(at: string, ack: boolean): string {
+  return ack
+    ? `${at} must be a JSON pointer into the document's data — "" for the whole document, or up to ${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS} non-empty segments such as "/meta/title" ("*" stands for every array element or undeclared property; ~0 and ~1 escape ~ and /), at most ${APP_STORAGE_MIGRATION_PATH_MAX_LENGTH} characters`
+    : `${at} must be a JSON pointer to one field of the document's data: 1 to ${APP_STORAGE_MIGRATION_PATH_MAX_SEGMENTS} non-empty segments such as "/meta/title", no "*" segment (~0 and ~1 escape ~ and /), at most ${APP_STORAGE_MIGRATION_PATH_MAX_LENGTH} characters`;
+}
+
+/**
+ * Parses one collection's `migrations` (see {@link APP_STORAGE_MIGRATION_OPS}). Shape only:
+ * whether each op covers a breaking change, and whether a `default` value matches the new
+ * schema, need the previous version and are checked at submit (`storage-schema-migrations.ts`).
+ */
+function parseMigrations(at: string, raw: unknown, errors: string[]): StorageMigrationOp[] | null {
+  if (!Array.isArray(raw)) {
+    errors.push(`${at} must be an array of migration ops`);
+    return null;
+  }
+  // An empty list would read as a declared migration that does nothing.
+  if (raw.length === 0 || raw.length > APP_STORAGE_MAX_MIGRATION_OPS) {
+    errors.push(
+      `${at} must declare 1 to ${APP_STORAGE_MAX_MIGRATION_OPS} ops (found ${raw.length}) — omit it when there is nothing to migrate`
+    );
+    return null;
+  }
+  const before = errors.length;
+  const ops: StorageMigrationOp[] = [];
+  // Every field a mutation op touches, with the op that touches it.
+  const touched: { path: string; index: number }[] = [];
+  for (const [index, entry] of raw.entries()) {
+    const where = `${at}[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push(`${where} must be an object`);
+      continue;
+    }
+    const name = entry.op;
+    if (
+      typeof name !== 'string' ||
+      !(APP_STORAGE_MIGRATION_OPS as readonly string[]).includes(name)
+    ) {
+      errors.push(`${where}.op must be one of ${APP_STORAGE_MIGRATION_OPS.join(', ')}`);
+      continue;
+    }
+    const op = name as AppStorageMigrationOpName;
+    const opBefore = errors.length;
+    for (const key of Object.keys(entry)) {
+      if (!MIGRATION_OP_KEYS[op].has(key)) {
+        errors.push(`${where}.${boundKey(key)} is not allowed on a "${op}" op`);
+      }
+    }
+    const pathOf = (field: 'path' | 'from' | 'to', ack = false): string | null => {
+      const value = entry[field];
+      if (!isMigrationPath(value, ack)) {
+        errors.push(migrationPathError(`${where}.${field}`, ack));
+        return null;
+      }
+      return value;
+    };
+    if (op === 'default') {
+      const path = pathOf('path');
+      if (!Object.hasOwn(entry, 'value')) {
+        errors.push(`${where}.value is required on a "default" op`);
+      } else {
+        const bytes = utf8Bytes(JSON.stringify(entry.value) ?? '');
+        if (bytes > APP_STORAGE_MIGRATION_VALUE_MAX_BYTES) {
+          errors.push(
+            `${where}.value is ${bytes} bytes of JSON — a default may be at most ${APP_STORAGE_MIGRATION_VALUE_MAX_BYTES} bytes`
+          );
+        }
+      }
+      if (errors.length === opBefore && path !== null) {
+        ops.push({ op, path, value: entry.value });
+        touched.push({ path, index });
+      }
+    } else if (op === 'rename') {
+      const from = pathOf('from');
+      const to = pathOf('to');
+      if (errors.length === opBefore && from !== null && to !== null) {
+        ops.push({ op, from, to });
+        touched.push({ path: from, index }, { path: to, index });
+      }
+    } else if (op === 'remove') {
+      const path = pathOf('path');
+      if (errors.length === opBefore && path !== null) {
+        ops.push({ op, path });
+        touched.push({ path, index });
+      }
+    } else {
+      const path = pathOf('path', true);
+      const keyword = entry.keyword;
+      if (
+        keyword !== undefined &&
+        (typeof keyword !== 'string' ||
+          !(APP_STORAGE_BREAKING_KEYWORDS as readonly string[]).includes(keyword))
+      ) {
+        errors.push(
+          `${where}.keyword must be one of ${APP_STORAGE_BREAKING_KEYWORDS.join(
+            ', '
+          )} (or omit it to acknowledge every breaking change at or under path)`
+        );
+      }
+      if (errors.length === opBefore && path !== null) {
+        ops.push(
+          keyword === undefined
+            ? { op, path }
+            : { op, path, keyword: keyword as AppStorageBreakingKeyword }
+        );
+      }
+    }
+  }
+  // CROSS-OP: the mutation ops touch disjoint fields. Each op alone is idempotent; two that
+  // touch the same field (or one inside the other) are not together — `remove /b` before
+  // `rename /a → /b` deletes on a re-run the value the first run moved there.
+  for (let i = 0; i < touched.length; i++) {
+    for (let j = i + 1; j < touched.length; j++) {
+      const a = touched[i];
+      const b = touched[j];
+      if (jsonPointerCovers(a.path, b.path) || jsonPointerCovers(b.path, a.path)) {
+        errors.push(
+          a.index === b.index
+            ? `${at}[${a.index}] renames ${quoteName(a.path)} onto ${quoteName(
+                b.path
+              )}, which overlap — rename a field to a place outside itself`
+            : `${at}[${b.index}] touches ${quoteName(b.path)}, which overlaps ${quoteName(
+                a.path
+              )} touched by ${at}[${
+                a.index
+              }] — default, rename and remove ops must touch disjoint fields, so re-running them changes nothing`
+        );
+      }
+    }
+  }
+  return errors.length > before ? null : ops;
+}
+
+function parseRetiredCollections(raw: unknown, errors: string[]): Set<string> {
+  const out = new Set<string>();
+  const at = 'storage.retiredCollections';
+  if (!Array.isArray(raw)) {
+    errors.push(`${at} must be an array of collection names`);
+    return out;
+  }
+  if (raw.length === 0 || raw.length > APP_STORAGE_MAX_RETIRED_COLLECTIONS) {
+    errors.push(
+      `${at} must list 1 to ${APP_STORAGE_MAX_RETIRED_COLLECTIONS} collection names (found ${raw.length}) — omit it when no collection is retired`
+    );
+    return out;
+  }
+  for (const [i, name] of raw.entries()) {
+    if (typeof name !== 'string' || !APP_STORAGE_COLLECTION_NAME_RE.test(name)) {
+      errors.push(
+        `${at}[${i}] must be lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _`
+      );
+    } else if (out.has(name)) {
+      errors.push(`${at}[${i}] duplicates an earlier name (${quoteName(name)})`);
+    } else {
+      out.add(name);
+    }
+  }
+  return out;
 }
 
 function parseOwnedPointers(at: string, raw: unknown, errors: string[]): string[] | null {
@@ -1026,8 +1326,15 @@ function parse(
 ): ParsedManifestStorage {
   const collections = new Map<string, DeclaredStorageCollection>();
   const noImports = new Map<string, DeclaredStorageImport>();
+  const noneRetired = new Set<string>();
   if (!isPlainObject(manifest) || manifest.storage === undefined) {
-    return { declared: false, collections, imports: noImports, errors: [] };
+    return {
+      declared: false,
+      collections,
+      imports: noImports,
+      retiredCollections: noneRetired,
+      errors: [],
+    };
   }
   const storage = manifest.storage;
   if (!isPlainObject(storage)) {
@@ -1035,6 +1342,7 @@ function parse(
       declared: true,
       collections,
       imports: noImports,
+      retiredCollections: noneRetired,
       errors: ['storage must be an object'],
     };
   }
@@ -1042,7 +1350,9 @@ function parse(
   for (const key of Object.keys(storage)) {
     if (!STORAGE_KEYS.has(key)) {
       errors.push(
-        `storage.${boundKey(key)} is not allowed (storage takes only collections and imports)`
+        `storage.${boundKey(
+          key
+        )} is not allowed (storage takes only collections, imports and retiredCollections)`
       );
     }
   }
@@ -1050,10 +1360,31 @@ function parse(
     storage.imports === undefined
       ? noImports
       : parseImports(storage.imports, manifest.blockId, errors);
-  const done = (): ParsedManifestStorage => ({ declared: true, collections, imports, errors });
+  const retiredCollections =
+    storage.retiredCollections === undefined
+      ? noneRetired
+      : parseRetiredCollections(storage.retiredCollections, errors);
+  const done = (): ParsedManifestStorage => {
+    // CROSS-FIELD: a retired collection is one this version no longer declares.
+    for (const name of retiredCollections) {
+      if (isPlainObject(storage.collections) && Object.hasOwn(storage.collections, name)) {
+        errors.push(
+          `storage.retiredCollections lists ${quoteName(
+            name
+          )}, which storage.collections still declares — a retired collection is one this version removes`
+        );
+      }
+    }
+    return { declared: true, collections, imports, retiredCollections, errors };
+  };
   const raw = storage.collections;
-  // An app that only reads other apps' data declares no collections of its own.
-  if (raw === undefined && storage.imports !== undefined) return done();
+  // An app that only reads other apps' data declares no collections of its own, and an app that
+  // retires every collection it had declares none either.
+  if (
+    raw === undefined &&
+    (storage.imports !== undefined || storage.retiredCollections !== undefined)
+  )
+    return done();
   if (!isPlainObject(raw)) {
     errors.push('storage.collections must be an object mapping collection name to declaration');
     return done();
@@ -1096,7 +1427,8 @@ function parse(
  * that needs the declaration (the storage routes, the review table) reads `collections`.
  *
  * - **Total.** Never throws. A manifest with no `storage` key is valid and declares nothing.
- * - **All or nothing.** If there is ANY error, `collections` and `imports` are empty.
+ * - **All or nothing.** If there is ANY error, `collections`, `imports` and
+ *   `retiredCollections` are empty.
  * - **Bounded errors.** At most {@link APP_STORAGE_MAX_ERRORS} messages plus one summary.
  * - **Phase-gated.** Features switched off in `features` (default
  *   {@link APP_STORAGE_ENABLED_FEATURES}) are refused even though the schema admits them.
@@ -1116,6 +1448,7 @@ export function parseManifestStorage(
       declared: parsed?.declared ?? true,
       collections: new Map(),
       imports: new Map(),
+      retiredCollections: new Set(),
       errors,
     }),
   });

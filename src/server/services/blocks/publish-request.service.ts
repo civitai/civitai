@@ -166,6 +166,13 @@ export type SubmitVersionResult = {
    * submit never fails over it) or for an update to an app with no on-site listing.
    */
   listing: SubmitListingReadiness | null;
+  /**
+   * App Storage schema-migration notes for this submission: declared migration ops (or
+   * `retiredCollections` entries) that cover no breaking change since the previous approved
+   * version, and so will not run. Empty when there is nothing to say. A breaking change that
+   * nothing covers is not a warning: the submit is refused (`StorageMigrationRefusal`).
+   */
+  storageMigrationWarnings?: string[];
 };
 
 /**
@@ -1012,9 +1019,9 @@ async function getPreviousApprovedState(
     select: { manifest: true, fileSummary: true },
   });
   if (!prior) return null;
-  const fileSummary = prior.fileSummary as unknown as FileSummary;
+  const fileSummary = prior.fileSummary as unknown as FileSummary | null;
   return {
-    files: fileSummary.files ?? [],
+    files: fileSummary?.files ?? [],
     manifest: prior.manifest as Record<string, unknown>,
   };
 }
@@ -1259,6 +1266,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const fileSummary = computeFileDiff(files, previous?.files ?? null);
   const manifestDiffSummary = computeManifestDiff(manifest, previous?.manifest ?? null);
 
+  // 🔴 APP STORAGE SCHEMA MIGRATIONS — refused HERE, before the upload and the review-repo push:
+  // a collection schema this version narrows (against the previous APPROVED version) can leave
+  // documents already stored unwritable, for this app and every fork writing its collections,
+  // unless a declared migration op covers each breaking change. Static diff of the two
+  // manifests; no document is read. Approve runs the same check again (a push-originated
+  // request never passes here). See `storage-schema-migrations.ts`.
+  const { assertStorageMigrationsCover, checkStorageMigrations } = await import(
+    '~/server/services/apps/storage-schema-migrations'
+  );
+  const storageMigrations = checkStorageMigrations(previous?.manifest ?? null, manifest);
+  assertStorageMigrationsCover(storageMigrations);
+
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
   // retry after an upstream error reuses the same key safely.
   const key = await storeBundle(bundleBuffer, bundleSha256);
@@ -1433,6 +1452,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     fileSummary,
     manifestDiffSummary,
     listing,
+    storageMigrationWarnings: storageMigrations.warnings,
   };
 }
 
@@ -2968,6 +2988,18 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
+  // APP STORAGE SCHEMA MIGRATIONS — the submit gate, again, against the version approved LAST
+  // (this request excluded): a push-originated request never passed `submitVersion`, and this is
+  // the comparison the plan below must be computed from. Refused before anything is written.
+  const { assertStorageMigrationsCover, checkStorageMigrations } = await import(
+    '~/server/services/apps/storage-schema-migrations'
+  );
+  const previousApproved = isFirstVersion
+    ? null
+    : await getPreviousApprovedState(request.slug, request.id);
+  const storageMigrations = checkStorageMigrations(previousApproved?.manifest ?? null, manifest);
+  assertStorageMigrationsCover(storageMigrations);
+
   // The listing writes below log and continue on failure, so a split decision they could not
   // write is refused HERE, before anything is written or built — otherwise the app would deploy
   // with its listing left `draft` (or, on a reset re-approve, `pending` with the block still
@@ -3902,6 +3934,32 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           err instanceof Error ? err.message : String(err)
         }`
     );
+  }
+
+  // (6c) APP STORAGE SCHEMA MIGRATIONS — the new manifest (and so every collection's new schema)
+  // has been live on `app_blocks` since (3); run the plan computed above over the existing
+  // production documents. Recorded synchronously, run in the background, resumed by the
+  // `run-storage-migrations` job. LOG-AND-CONTINUE: never fails an approve whose code is
+  // committed (`startStorageMigrationsOnApprove` never rejects).
+  if (storageMigrations.plans.size > 0) {
+    try {
+      const { startStorageMigrationsOnApprove } = await import(
+        '~/server/services/apps/storage-migration-run.service'
+      );
+      await startStorageMigrationsOnApprove({
+        publishRequestId: request.id,
+        appBlockId,
+        plans: storageMigrations.plans,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] storage migrations not started (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — stored documents keep their old shape: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // Review document-store data of this request, started the moment the decision is durable:

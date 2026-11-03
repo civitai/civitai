@@ -21,7 +21,7 @@ import type {
 } from '~/shared/constants/block-storage.constants';
 import { APP_STORAGE_SCHEMA_PATTERN_FLAGS } from '~/shared/constants/block-storage.constants';
 
-type Failure = { pointer: string; keyword: string; reason: string };
+export type Failure = { pointer: string; keyword: string; reason: string };
 type Check = (value: unknown, pointer: string) => Failure | null;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -229,6 +229,18 @@ function compiledFor(appId: string, collection: string, schema: AppStorageCollec
   }
   compiled.set(key, check);
   return check;
+}
+
+/**
+ * The first failure of `value` against `schema`, or null when it matches — the same evaluator
+ * as {@link validateDocAgainstCollectionSchema}, uncached. For checks made once per submit
+ * (a migration `default` value against the new schema), never per write.
+ */
+export function firstSchemaFailure(
+  schema: AppStorageCollectionSchema,
+  value: unknown
+): Failure | null {
+  return compile(schema)(value, '');
 }
 
 /** Longest pointer quoted in a message; `details.pointer` always carries the whole one. */

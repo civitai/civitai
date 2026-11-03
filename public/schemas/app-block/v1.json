@@ -374,10 +374,22 @@
     },
     "storage": {
       "type": "object",
-      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; declaring any `imports` also requires the sensitive, consent-gated `apps:storage:import` scope with a `scopeJustifications` entry (and `apps:storage`); and requesting any of these scopes with nothing here for it to reach is rejected. At least one of `collections` and `imports` is required. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
+      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; declaring any `imports` also requires the sensitive, consent-gated `apps:storage:import` scope with a `scopeJustifications` entry (and `apps:storage`); and requesting any of these scopes with nothing here for it to reach is rejected. At least one of `collections`, `imports` and `retiredCollections` is required. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
       "additionalProperties": false,
-      "anyOf": [{ "required": ["collections"] }, { "required": ["imports"] }],
+      "anyOf": [
+        { "required": ["collections"] },
+        { "required": ["imports"] },
+        { "required": ["retiredCollections"] }
+      ],
       "properties": {
+        "retiredCollections": {
+          "type": "array",
+          "description": "Collections the previous approved version declared that this version removes ON PURPOSE. Removing a collection is a breaking change — its stored documents can no longer be reached — so submit refuses a version that drops a collection not listed here. A name listed here must not also be declared in `collections`; one the previous approved version did not declare is reported at submit and has no effect. 1 to 16 distinct collection names.",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" }
+        },
         "imports": {
           "type": "array",
           "description": "Collections of OTHER apps this app reaches as the viewer — for example a fork reading and writing its parent's data. Each import names the source app by its `blockId`, 1 to 16 distinct collection names the source declares, and the access wanted: \"read\" or \"readwrite\". At most 8 imports, one per source app, never this app itself. Through an import the app acts AS THE VIEWER IN THE SOURCE APP: a private collection gives that viewer's own documents, a shared one reads as the source shows it to them, writes follow the source collection's write policy, and usage counts against the source app's ceilings. Nothing is reached until the viewer grants it: the `apps:storage:import` consent is recorded per (viewer, this app, source app) and can be withdrawn under Apps → Permissions. A source collection with `exportable: false` refuses every import. The SDK reaches one with `app.storage.collection(name, { from: blockId })`.",
@@ -515,18 +527,25 @@
                   }
                 },
                 "schema": {
-                  "description": "Optional. A JSON Schema SUBSET that every document's `data` in this collection must match. The server checks it on every create and update and refuses a document that does not match with 400 `schema_violation`, whose message names the first failing JSON pointer into `data` (for example \"/title\"); counters and marks are not checked. Without a schema, documents are not checked. Supported keywords only: type (object, array, string, number, integer, boolean, null, or an array of them), properties, required, additionalProperties (true, false or a schema), items (one schema for every element), enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems and description; any other keyword is refused at submit with a message naming it. Keywords that do not apply to a value's type are ignored; string lengths count code points; `pattern` is a JavaScript regular expression (the \"u\" flag), unanchored, of at most 256 characters, and a schema with a `pattern` must also declare a `maxLength` of at most 1000; a pattern that can backtrack catastrophically (analysed with the \"u\" flag, as the store runs it) is refused at submit. At most 16 patterns per schema and 32 across all of the manifest's collection schemas together, schemas nested at most 16 deep, and at most 16384 bytes of JSON. Not allowed on a `write` \"none\" collection. Changing a schema does not re-check documents already stored; they are checked when next written.",
+                  "description": "Optional. A JSON Schema SUBSET that every document's `data` in this collection must match. The server checks it on every create and update and refuses a document that does not match with 400 `schema_violation`, whose message names the first failing JSON pointer into `data` (for example \"/title\"); counters and marks are not checked. Without a schema, documents are not checked. Supported keywords only: type (object, array, string, number, integer, boolean, null, or an array of them), properties, required, additionalProperties (true, false or a schema), items (one schema for every element), enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems and description; any other keyword is refused at submit with a message naming it. Keywords that do not apply to a value's type are ignored; string lengths count code points; `pattern` is a JavaScript regular expression (the \"u\" flag), unanchored, of at most 256 characters, and a schema with a `pattern` must also declare a `maxLength` of at most 1000; a pattern that can backtrack catastrophically (analysed with the \"u\" flag, as the store runs it) is refused at submit. At most 16 patterns per schema and 32 across all of the manifest's collection schemas together, schemas nested at most 16 deep, and at most 16384 bytes of JSON. Not allowed on a `write` \"none\" collection. Changing a schema does not re-check documents already stored; they are checked when next written. A change that narrows the schema against the previous approved version (a newly required property; a type, enum, const, bound or pattern narrowed; `additionalProperties` closed or newly a schema; a declared property removed under `additionalProperties: false`; or a schema added where there was none) is refused at submit unless `migrations` covers it.",
                   "$ref": "#/$defs/storageCollectionSchema"
+                },
+                "migrations": {
+                  "type": "array",
+                  "description": "Optional. Declarative ops applied to this collection's documents ALREADY STORED in production when this version is approved, for a schema change that would otherwise leave them unwritable. Submit compares this collection's `schema` with the previous approved version's (statically; stored documents are never read) and refuses every BREAKING change no op here covers: \"default\" covers a newly required property at its `path` (`value` must match the new schema there); \"rename\" covers a declared property removed under `additionalProperties: false`, at `from`; \"remove\" covers any breaking change at or under a field the new schema does not require; \"acknowledge\" covers the breaking change at `path` with `keyword` (or, without `keyword`, every one at or under `path`) and changes nothing — documents that violate it are refused on their next write until reshaped. Paths are JSON Pointers into a document's data (\"/meta/title\"); in an `acknowledge` path, \"\" is the whole document and the segment \"*\" stands for every array element or every undeclared property. Every op is idempotent, and default, rename and remove ops must touch disjoint fields, so a re-run changes nothing. Only the ops that cover a breaking change of THIS version run, once, in bounded batches; an op that covers nothing is reported at submit and never runs, so a list left in a later version is inert. Not allowed on a `write` \"none\" collection. 1 to 32 ops.",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "items": { "$ref": "#/$defs/storageMigrationOp" }
                 }
               },
               "allOf": [
                 {
-                  "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing.",
+                  "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing and a migration would migrate nothing.",
                   "if": {
                     "required": ["write"],
                     "properties": { "write": { "const": "none" } }
                   },
-                  "then": { "properties": { "schema": false } }
+                  "then": { "properties": { "schema": false, "migrations": false } }
                 },
                 {
                   "$comment": "A shared collection must state its write policy; a private one carries none of the shared-only fields.",
@@ -644,6 +663,81 @@
       },
       "if": { "required": ["pattern"] },
       "then": { "required": ["maxLength"], "properties": { "maxLength": { "maximum": 1000 } } }
+    },
+    "storageMigrationPath": {
+      "type": "string",
+      "description": "A JSON Pointer to one field of a document's data: 1 to 15 non-empty segments, each \"/\" then the field name with ~ written ~0 and / written ~1. No \"*\" segment.",
+      "maxLength": 512,
+      "pattern": "^(/([^/~]|~[01])+){1,15}$",
+      "not": { "pattern": "/\\*(/|$)" }
+    },
+    "storageMigrationOp": {
+      "description": "One migration op. See `storage.collections.<name>.migrations`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "path", "value"],
+          "properties": {
+            "op": { "const": "default" },
+            "path": { "$ref": "#/$defs/storageMigrationPath" },
+            "value": {
+              "description": "Set where the field is missing (its parent object exists). Must match the new schema at `path`; at most 4096 bytes of JSON."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "from", "to"],
+          "properties": {
+            "op": { "const": "rename" },
+            "from": { "$ref": "#/$defs/storageMigrationPath" },
+            "to": { "$ref": "#/$defs/storageMigrationPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "path"],
+          "properties": {
+            "op": { "const": "remove" },
+            "path": { "$ref": "#/$defs/storageMigrationPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "path"],
+          "properties": {
+            "op": { "const": "acknowledge" },
+            "path": {
+              "type": "string",
+              "description": "A JSON Pointer into a document's data: \"\" for the whole document, or up to 15 non-empty segments; the segment \"*\" stands for every array element or undeclared property.",
+              "maxLength": 512,
+              "pattern": "^(/([^/~]|~[01])+){0,15}$"
+            },
+            "keyword": {
+              "description": "The schema keyword of the breaking change accepted. Omit it to accept every breaking change at or under `path`.",
+              "enum": [
+                "type",
+                "const",
+                "enum",
+                "minimum",
+                "maximum",
+                "minLength",
+                "maxLength",
+                "minItems",
+                "maxItems",
+                "pattern",
+                "required",
+                "additionalProperties",
+                "properties"
+              ]
+            }
+          }
+        }
+      ]
     },
     "storageCollectionSchemaType": {
       "enum": ["object", "array", "string", "number", "integer", "boolean", "null"]
