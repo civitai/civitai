@@ -6,6 +6,7 @@ import {
   PAIR_CEILING,
   RUN_INTERVAL_HOURS,
   type DetectionClickhouse,
+  type Ring,
   type RingThresholds,
 } from './detect';
 import { renderSummary, toFinding } from './report';
@@ -48,20 +49,31 @@ export async function runBluePaidAccessDetection(deps: RunDeps): Promise<RunResu
     minSharePct: thresholds.minSharePct,
     activeSince: new Date(startedAt.getTime() - RUN_INTERVAL_HOURS * 3_600_000),
   });
-  const findings = rings
-    .flatMap((ring) => ring.buyers.map((buyer) => toFinding(ring, buyer, thresholds)))
-    .slice(0, MAX_FINDINGS_PER_REPORT);
+  const filed = ringsWithinCap(rings);
+  const findings = filed.flatMap(({ ring, buyers }) =>
+    buyers.map((buyer) => toFinding(ring, buyer, thresholds))
+  );
+  const detected = rings.reduce((sum, r) => sum + r.buyers.length, 0);
+  if (findings.length < detected)
+    deps.log?.('blue-buzz-paid-access-truncated', {
+      buyers_detected: detected,
+      buyers_filed: findings.length,
+      rings_detected: rings.length,
+      rings_filed: filed.length,
+    });
 
   // Filed with no findings too: a run row is how the board shows the detector ran.
   await deps.sendReport({
     detector: BLUE_PAID_ACCESS_DETECTOR,
     startedAt: startedAt.toISOString(),
     finishedAt: deps.now().toISOString(),
-    summary: renderSummary(rings, pairs.length, thresholds),
+    summary: renderSummary(rings, findings.length, pairs.length, thresholds),
     counters: {
       pairs: pairs.length,
       rings: rings.length,
-      buyers: rings.reduce((sum, r) => sum + r.buyers.length, 0),
+      buyers_detected: detected,
+      buyers_filed: findings.length,
+      findings_dropped: detected - findings.length,
       window_days: thresholds.windowDays,
       min_buyers: thresholds.minBuyers,
       min_share_pct: thresholds.minSharePct,
@@ -75,4 +87,26 @@ export async function runBluePaidAccessDetection(deps: RunDeps): Promise<RunResu
   });
 
   return { pairs: pairs.length, rings: rings.length, reported: findings.length };
+}
+
+/** The buyers filed under the per-report cap, ring by ring in the order given. A ring that fits is
+ *  filed whole and one that does not is skipped, so a smaller ring may take the room. Only a single
+ *  ring bigger than the whole cap is cut, to its first `cap` buyers; its reasons still describe the
+ *  whole ring. */
+export function ringsWithinCap(
+  rings: Ring[],
+  cap = MAX_FINDINGS_PER_REPORT
+): { ring: Ring; buyers: Ring['buyers'] }[] {
+  const filed: { ring: Ring; buyers: Ring['buyers'] }[] = [];
+  let room = cap;
+  for (const ring of rings) {
+    if (ring.buyers.length <= room) {
+      filed.push({ ring, buyers: ring.buyers });
+      room -= ring.buyers.length;
+    } else if (room === cap) {
+      filed.push({ ring, buyers: ring.buyers.slice(0, cap) });
+      room = 0;
+    }
+  }
+  return filed;
 }

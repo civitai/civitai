@@ -1,4 +1,8 @@
-import { MAX_REASON_LENGTH, type AbuseReportInput } from '@civitai/moderation';
+import {
+  MAX_FINDINGS_PER_REPORT,
+  MAX_REASON_LENGTH,
+  type AbuseReportInput,
+} from '@civitai/moderation';
 import { NO_ACTION_TAKEN, plural } from '../abuse-report-prose';
 import type { Ring, RingBuyer, RingThresholds } from './detect';
 
@@ -46,8 +50,7 @@ export function renderReason(
   return `${evidence.length <= room ? evidence : `${evidence.slice(0, room - 1)}…`}${tail}`;
 }
 
-/** 🔴 `actioned: false` is a literal and `action` is absent: this detector revokes and bans nothing.
- *  `confidence` only orders the board. */
+/** `confidence` only orders the board. */
 export function toFinding(
   ring: Ring,
   buyer: RingBuyer,
@@ -64,14 +67,25 @@ export function toFinding(
 
 export function renderSummary(
   rings: Ring[],
+  filed: number,
   pairs: number,
   { windowDays, minBuyers, minSharePct }: RingThresholds
 ): string {
   const buyers = rings.reduce((sum, r) => sum + r.buyers.length, 0);
+  const dropped = buyers - filed;
+  const outcome =
+    dropped > 0
+      ? `${buyers.toLocaleString()} ${plural(
+          buyers,
+          'buyer'
+        )} found and ${filed.toLocaleString()} ` +
+        `filed; the other ${dropped.toLocaleString()} did not fit in one report ` +
+        `(${MAX_FINDINGS_PER_REPORT.toLocaleString()} findings at most) and are not filed.`
+      : `${buyers} ${plural(buyers, 'buyer')} filed.`;
   return (
     `${rings.length} ${plural(rings.length, 'creator')} with at least ${minBuyers} Blue Buzz ` +
     `paid-access buyers each sending at least ${minSharePct}% of their spend to them, and a ` +
-    `purchase in the last day; ${buyers} ${plural(buyers, 'buyer')} filed. ` +
+    `purchase in the last day; ${outcome} ` +
     `${pairs.toLocaleString()} creator-buyer ${plural(pairs, 'pair')} read over ${windowDays} days.`
   );
 }

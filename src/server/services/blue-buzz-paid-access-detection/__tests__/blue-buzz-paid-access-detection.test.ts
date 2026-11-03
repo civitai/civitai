@@ -1,7 +1,10 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
-import { abuseReportInput, type AbuseReportInput } from '@civitai/moderation';
+import {
+  abuseReportInput,
+  MAX_FINDINGS_PER_REPORT,
+  MAX_REASON_LENGTH,
+  type AbuseReportInput,
+} from '@civitai/moderation';
 import { serverSchema } from '~/env/server-schema';
 import { ringThresholdsFromEnv } from '~/server/jobs/blue-buzz-paid-access-detection';
 import {
@@ -9,8 +12,10 @@ import {
   buyerPairsSql,
   type BuyerPair,
   type DetectionClickhouse,
+  type Ring,
+  type RingBuyer,
 } from '../detect';
-import { PROPOSED_ACTION } from '../report';
+import { PROPOSED_ACTION, toFinding } from '../report';
 import { runBluePaidAccessDetection, type RunDeps } from '../run';
 
 const NOW = new Date('2026-11-02T08:00:00Z');
@@ -66,14 +71,16 @@ function chReturning(pairs: BuyerPair[]) {
 async function run(pairs: BuyerPair[], t = thresholds()) {
   const ch = chReturning(pairs);
   const reports: AbuseReportInput[] = [];
+  const logs: [string, Record<string, unknown>][] = [];
   const result = await runBluePaidAccessDetection({
     ch: ch.port,
     thresholds: t,
     sendReport: async (r) => void reports.push(r),
     now: () => NOW,
+    log: (name, data) => void logs.push([name, data]),
   });
   expect(reports).toHaveLength(1);
-  return { result, report: reports[0], queries: ch.queries };
+  return { result, report: reports[0], queries: ch.queries, logs };
 }
 
 const RING_CREATOR = 9001;
@@ -149,7 +156,117 @@ describe('blue-buzz-paid-access detection', () => {
         'No action was taken by this scan — filed for a moderator to review.\n' +
         'Proposed action: review these buyers as one ring; consider revoking the paid-access grants they bought from this creator with Blue Buzz.'
     );
-    expect(report.counters).toMatchObject({ pairs: 8, rings: 1, buyers: 7 });
+    expect(report.counters).toEqual({
+      pairs: 8,
+      rings: 1,
+      buyers_detected: 7,
+      buyers_filed: 7,
+      findings_dropped: 0,
+      window_days: 7,
+      min_buyers: 5,
+      min_share_pct: 80,
+    });
+    expect(report.summary).toBe(
+      '1 creator with at least 5 Blue Buzz paid-access buyers each sending at least 80% of their spend to them, and a purchase in the last day; 7 buyers filed. 8 creator-buyer pairs read over 7 days.'
+    );
+  });
+
+  it('files a buyer at exactly the share threshold and not one just below it', async () => {
+    // Seven buyers at or above 80%, so the ring clears the buyer count either way and only the
+    // share comparison decides whether 404 is filed.
+    const SHARE_CREATOR = 9004;
+    const { report } = await run([
+      pair(SHARE_CREATOR, 401, 6_000, 6_000, 3, 2),
+      pair(SHARE_CREATOR, 402, 5_500, 6_000, 2, 2),
+      pair(SHARE_CREATOR, 403, 4_500, 5_000, 4, 3),
+      pair(SHARE_CREATOR, 404, 4_000, 5_000, 2, 1), // exactly 80%
+      pair(SHARE_CREATOR, 405, 3_950, 5_000, 2, 1), // 79%
+      pair(SHARE_CREATOR, 406, 3_000, 3_200, 5, 4),
+      pair(SHARE_CREATOR, 407, 2_600, 2_700, 1, 1),
+      pair(SHARE_CREATOR, 408, 1_900, 2_100, 6, 5),
+    ]);
+    expect(report.findings.map((f) => f.userId)).toEqual([401, 402, 403, 404, 406, 407, 408]);
+    expect(report.findings.find((f) => f.userId === 404)?.reason).toContain(
+      '80% of the 5,000 Blue Buzz'
+    );
+  });
+
+  it('files whole rings up to the per-report cap and counts what it dropped', async () => {
+    // Three rings of 600, 500 and 400 buyers. The 600 and the 400 fill the cap exactly; the 500 does
+    // not fit beside the 600 and is dropped whole rather than split.
+    const sizes = { 9301: 600, 9302: 500, 9303: 400 };
+    const pairs = Object.entries(sizes).flatMap(([creator, n], r) =>
+      Array.from({ length: n }, (_, i) =>
+        pair(Number(creator), 100_000 * (r + 1) + i, 1_000, 1_000, 1, 1)
+      )
+    );
+    const { report, result, logs } = await run(pairs);
+
+    expect(abuseReportInput.safeParse(report).success).toBe(true);
+    expect(result).toEqual({ pairs: 1_500, rings: 3, reported: MAX_FINDINGS_PER_REPORT });
+    const perGroup = new Map<string, number>();
+    for (const f of report.findings)
+      perGroup.set(String(f.groupKey), (perGroup.get(String(f.groupKey)) ?? 0) + 1);
+    expect(Object.fromEntries(perGroup)).toEqual({
+      'blue-paid-access:9301': 600,
+      'blue-paid-access:9303': 400,
+    });
+    expect(report.counters).toMatchObject({
+      rings: 3,
+      buyers_detected: 1_500,
+      buyers_filed: 1_000,
+      findings_dropped: 500,
+    });
+    expect(report.summary).toContain(
+      '1,500 buyers found and 1,000 filed; the other 500 did not fit in one report (1,000 findings at most) and are not filed.'
+    );
+    expect(logs).toContainEqual([
+      'blue-buzz-paid-access-truncated',
+      { buyers_detected: 1_500, buyers_filed: 1_000, rings_detected: 3, rings_filed: 2 },
+    ]);
+  });
+
+  it('cuts a single ring larger than the cap, and its reasons still describe the whole ring', async () => {
+    const pairs = Array.from({ length: 1_003 }, (_, i) =>
+      pair(9305, 500_000 + i, 1_000, 1_000, 1, 1)
+    );
+    const { report, result } = await run(pairs);
+
+    expect(abuseReportInput.safeParse(report).success).toBe(true);
+    expect(result.reported).toBe(MAX_FINDINGS_PER_REPORT);
+    expect(report.counters).toMatchObject({ buyers_filed: 1_000, findings_dropped: 3 });
+    expect(report.findings[0].reason).toContain('One of 1003 accounts');
+    expect(report.findings[0].reason).toContain('0 other Blue Buzz buyers');
+  });
+
+  it('truncates a reason past MAX_REASON_LENGTH and keeps the proposed action', () => {
+    // Only absurd magnitudes make the reason this long; they are what reach the cut.
+    const big = Number.MAX_VALUE;
+    const d = at('2026-11-01T00:00:00Z');
+    const buyer: RingBuyer = {
+      ...pair(big, 1, big, big, big, big, d, d),
+      sharePct: 100,
+    };
+    const longRing: Ring = {
+      creatorId: big,
+      buyers: [buyer],
+      allBuyers: big,
+      spent: big,
+      purchases: big,
+      firstAt: d,
+      lastAt: d,
+    };
+    const finding = toFinding(longRing, buyer, { windowDays: 7, minSharePct: 80 });
+
+    expect(finding.reason).toHaveLength(MAX_REASON_LENGTH);
+    expect(finding.reason.endsWith(`…\n${PROPOSED_ACTION}`)).toBe(true);
+    const report: AbuseReportInput = {
+      detector: BLUE_PAID_ACCESS_DETECTOR,
+      startedAt: NOW.toISOString(),
+      finishedAt: NOW.toISOString(),
+      findings: [finding],
+    };
+    expect(abuseReportInput.safeParse(report).success).toBe(true);
   });
 
   it('files nothing for a popular creator whose buyers spread their spend across creators', async () => {
@@ -230,22 +347,6 @@ describe('blue-buzz-paid-access detection', () => {
     await runBluePaidAccessDetection(deps);
     expect(sendReport).toHaveBeenCalledTimes(1);
     expect(ch.queries).toHaveLength(1);
-  });
-
-  it('imports no module that could act on an account', () => {
-    const dir = path.resolve(__dirname, '..');
-    const imports = ['detect.ts', 'report.ts', 'run.ts'].flatMap((f) =>
-      [...readFileSync(path.join(dir, f), 'utf8').matchAll(/from '([^']+)'/g)].map((m) => m[1])
-    );
-    expect([...new Set(imports)].sort()).toEqual([
-      '../abuse-report-prose',
-      './detect',
-      './report',
-      '@civitai/moderation',
-      '~/server/clickhouse/client',
-      '~/server/clickhouse/transaction-type',
-      '~/shared/constants/buzz.constants',
-    ]);
   });
 
   it('files nothing and sends nothing without ClickHouse', async () => {

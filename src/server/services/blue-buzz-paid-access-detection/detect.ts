@@ -113,7 +113,11 @@ export function findRings(
   }: Omit<RingThresholds, 'windowDays'> & { activeSince: Date }
 ): Ring[] {
   const byCreator = new Map<number, BuyerPair[]>();
-  for (const p of pairs) byCreator.set(p.creatorId, [...(byCreator.get(p.creatorId) ?? []), p]);
+  for (const p of pairs) {
+    const list = byCreator.get(p.creatorId);
+    if (list) list.push(p);
+    else byCreator.set(p.creatorId, [p]);
+  }
 
   const rings: Ring[] = [];
   for (const [creatorId, creatorPairs] of byCreator) {
@@ -122,7 +126,14 @@ export function findRings(
       .map((p) => ({ ...p, sharePct: Math.floor((p.spent / p.buyerTotal) * 100) }))
       .sort((a, b) => b.spent - a.spent || a.buyerId - b.buyerId);
     if (buyers.length < minBuyers) continue;
-    const lastAt = new Date(Math.max(...buyers.map((b) => b.lastAt.getTime())));
+    // A loop, not `Math.max(...)`: spreading a large buyer list throws a RangeError.
+    let first = Infinity;
+    let last = -Infinity;
+    for (const b of buyers) {
+      first = Math.min(first, b.firstAt.getTime());
+      last = Math.max(last, b.lastAt.getTime());
+    }
+    const lastAt = new Date(last);
     if (lastAt < activeSince) continue;
     rings.push({
       creatorId,
@@ -130,7 +141,7 @@ export function findRings(
       allBuyers: new Set(creatorPairs.map((p) => p.buyerId)).size,
       spent: buyers.reduce((sum, b) => sum + b.spent, 0),
       purchases: buyers.reduce((sum, b) => sum + b.purchases, 0),
-      firstAt: new Date(Math.min(...buyers.map((b) => b.firstAt.getTime()))),
+      firstAt: new Date(first),
       lastAt,
     });
   }
