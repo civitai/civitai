@@ -9,6 +9,8 @@ import {
   baseModelLicenses,
   getEffectiveCommercialUse,
   getEffectiveDifferentLicense,
+  nonCommercialBaseModels,
+  stopsCreatorEarnings,
 } from '~/server/common/constants';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
@@ -57,5 +59,16 @@ describe('what a Flux.2 Klein 9B version shows', () => {
       CommercialUse.Sell,
     ]);
     expect(getEffectiveDifferentLicense(true, 'Flux.2 Klein 4B')).toBe(true);
+  });
+});
+
+describe('which non-commercial base models stop creator earnings', () => {
+  it('only the Flux.2 Klein 9B models; the other non-commercial ones still pay comp and tips', () => {
+    expect(nonCommercialBaseModels.filter((b) => stopsCreatorEarnings(b)).sort()).toEqual(
+      klein9bRecords.map((r) => r.name).sort()
+    );
+    expect(nonCommercialBaseModels).toEqual(
+      expect.arrayContaining(['Flux.3 Klein', 'Ideogram 4.0'])
+    );
   });
 });

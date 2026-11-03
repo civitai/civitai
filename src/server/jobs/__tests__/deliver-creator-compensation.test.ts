@@ -277,7 +277,7 @@ describe('runPayout', () => {
     ]);
   });
 
-  it('pays no compensation for a version on a non-commercial base model', async () => {
+  it('pays no compensation for a version under the FLUX non-commercial license', async () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
       row('compensation', 'Yellow', 7, 12),
