@@ -218,6 +218,11 @@ what the whole section is worth.
   test over it).
 - Rank by consequence: money moving wrongly and content crossing a gate first, then production cost,
   then false confidence from a bad test, then reuse.
+- **Read each lane's `checks` block.** The test, reuse and correctness lanes end every report with one
+  (`assertions`; `searches`; `writes` and `siblings`; the shape is in each definition's Report section).
+  A missing block, or a missing key, means the lane skipped its method: re-ping it as you would a silent
+  lane. A `"none"` clear, a `passes`/`hangs` assertion or an unchecked sibling with neither a finding nor
+  a reason is the same gap.
 
 **C. Map contribution, not for this PR** — `civitai-reuse-review`'s "Pre-existing service duplication".
 
@@ -239,8 +244,8 @@ The store's own instructions say where and how to write; this step says **when**
    with its start time. On a pre-PR review, do this before the PR is opened or leaves draft: the running
    run is what tells a later reviewer the PR is being reviewed locally.
 2. **When each lane has delivered** (after the step 2 chase), mark its run complete with its prompt
-   version, model, finish time and findings count, and record its findings in the structured form the
-   lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
+   version, model, finish time and findings count, and record its findings and its `checks` block in the
+   structured form the lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
    complete with no findings.
 
 The record is what lets a later reviewer skip a lane you already ran, so it is only worth anything if it
