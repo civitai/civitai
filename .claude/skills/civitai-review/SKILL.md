@@ -218,7 +218,8 @@ what the whole section is worth.
   test over it).
 - **Severity comes from each finding's facts, not the lane's word.** Every lane reports `impact`,
   `reach` and `evidence` per finding (defined in each lane's Report section); its own severity is
-  advisory. A finding missing a fact goes back to its lane like a missing `checks` block. Compute:
+  advisory. A finding missing a fact goes back to its lane like a missing `checks` block. Intent findings carry the facts too, for
+  the hosted gate; section A keeps them unranked and computes no severity for them. Compute:
   - `money`, `access`, `data-loss` or `privacy`: `normal-use` is **high** when the evidence is
     `traced` or `reproduced` and **medium** when only `inferred`; `unusual-state` is **medium**;
     `theoretical` is **low**.

@@ -224,7 +224,8 @@ block as a fenced `json` block:
 <!-- pr-review-gate:facts -->
 Still give your own best severity; the gate may recompute it from these facts. Report all three on
 every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
-otherwise end each finding with them as `impact / reach / evidence`.
+otherwise end each finding with them as `impact / reach / evidence`, e.g.
+`money / unusual-state / traced src/server/services/x.service.ts:42`.
 
 - `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
   user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
@@ -251,6 +252,11 @@ Report the reach you can show, not the worst you can imagine. The allowed values
 
 Example: a discount flag set on redeem and never reset when the order is refunded is `money /
 unusual-state / traced` at the write's `file:line`.
+
+On a safety or access finding, `reproduced` names the test or file you ran, never the request that
+exercises the gap (see "Describe the missing control"); `traced` with the `file:line` earns the same
+severity. **confirmed** is `traced` or `reproduced`, **plausible** is `inferred`. A finding whose
+reach would be `theoretical` failed "Verify before reporting": drop it.
 
 ## Delivering your report
 

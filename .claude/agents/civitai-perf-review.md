@@ -163,7 +163,8 @@ next edit would.
 <!-- pr-review-gate:facts -->
 Still give your own best severity; the gate may recompute it from these facts. Report all three on
 every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
-otherwise end each finding with them as `impact / reach / evidence`.
+otherwise end each finding with them as `impact / reach / evidence`, e.g.
+`money / unusual-state / traced src/server/services/x.service.ts:42`.
 
 - `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
   user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
@@ -187,6 +188,8 @@ Report the reach you can show, not the worst you can imagine. The allowed values
 }
 ```
 <!-- /pr-review-gate:facts -->
+
+A *confirmed* finding is `traced` or `reproduced`; a *plausible* one is `inferred`.
 
 Example: an extra query on every request of a hot path is `internal / normal-use / traced`; a query that
 times out the page is `wrong-for-user`.
