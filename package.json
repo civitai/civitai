@@ -76,6 +76,7 @@
     "postinstall": "pnpm run db:generate",
     "typecheck": "node scripts/typecheck.mjs",
     "typecheck:fast": "node scripts/typecheck-fast.mjs",
+    "typecheck:tests": "node scripts/ci/typecheck-tests-gate.mjs",
     "typecheck:apps": "node scripts/typecheck-apps-run.mjs",
     "lint": "node scripts/queued-check.mjs lint",
     "lint:packages": "node scripts/queued-check.mjs lintPackages",
