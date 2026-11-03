@@ -150,7 +150,7 @@ const CHECK_SUMMARY_LINE = /^(test|typecheck): exit_code (-?\d+)(?=[ \t]|\(|$)/;
 
 /**
  * Each check's exit code in a `sandbox__run_checks` result, as the sandbox MCP server's run_checks
- * writes it (formatChecks in civitai/talos-infra applications/sandbox-mcp/src/checks.ts): a first line
+ * writes it: a first line
  * `exit_code: <n>`, then one `<name>: exit_code <n> (<command>, <secs>s[, timed out])` line per check,
  * then a blank line and each failed check's output. Only the lines before that first blank line are
  * read, and the first line for a check wins, so a check's output can never stand in for its summary.

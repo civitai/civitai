@@ -691,7 +691,7 @@ describe('sandbox__run_checks', () => {
   const runChecks = (test: number, typecheck: number): ChatToolResult => ({
     name: 'sandbox__run_checks',
     input: { cwd: 'my-app' },
-    // The sandbox's own format (formatChecks in civitai/talos-infra applications/sandbox-mcp/src/checks.ts).
+    // The sandbox MCP server's own run_checks output format.
     output: `exit_code: ${
       test || typecheck ? 1 : 0
     }\ntest: exit_code ${test} (npm test, 3.1s)\ntypecheck: exit_code ${typecheck} (npx tsc --noEmit, 5.2s)\n`,

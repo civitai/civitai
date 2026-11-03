@@ -185,8 +185,7 @@ describe('sandbox__run_checks in the gate', () => {
 });
 
 // The seam with the sandbox: these reports are copied, line for line, from what the sandbox MCP
-// server's run_checks writes (formatChecks in civitai/talos-infra
-// applications/sandbox-mcp/src/checks.ts): `exit_code: <overall>`, then one
+// server's run_checks writes: `exit_code: <overall>`, then one
 // `<name>: exit_code <n> (<command>, <secs>s[, timed out])` line per check, then a blank line and
 // each failed check's output. When that format changes, change these with it.
 describe('run_checks reports in the sandbox’s own format', () => {
@@ -541,10 +540,13 @@ describe('read_docs', () => {
   it('reads at most the body cap of a response, and stops reading it there', async () => {
     let pulled = 0;
     const chunk = new TextEncoder().encode('x'.repeat(100_000));
+    // Ends itself after 50 chunks, so a reader that lost its cap fails the count below
+    // instead of reading forever.
     const endless = new ReadableStream<Uint8Array>({
       pull(controller) {
         pulled++;
-        controller.enqueue(chunk);
+        if (pulled > 50) controller.close();
+        else controller.enqueue(chunk);
       },
     });
     const body = await readBody(new Response(endless), DOCS_BODY_MAX_CHARS);
