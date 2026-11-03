@@ -1322,9 +1322,9 @@ const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
         )`;
 
 /**
- * The host's gallery is not switched off, resolved image, post, account as
- * `resolvePlacementSpace` does. Off is the creator's remix opt-out, so storylines
- * started from the host are not listed on it.
+ * True unless the host's gallery resolves to off: image setting, then post, then account, then
+ * the surface default, as `resolvePlacementSpace` does. Off is the creator's remix opt-out, so
+ * storylines started from the host are not listed on it.
  */
 const hostGalleryOpen = (host: Prisma.Sql) => Prisma.sql`
         COALESCE(
@@ -1733,7 +1733,9 @@ async function getViewerPendingSubmissions({
     limit: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   };
   const rows = await readViewerPendingPlacementsViaKysely(
-    (await loadKyselyDb()).kyselyRead,
+    (
+      await loadKyselyDb()
+    ).kyselyRead,
     pendingInput
   );
 

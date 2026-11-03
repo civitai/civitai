@@ -84,7 +84,6 @@ describe('removing a chapter from the storyline page', () => {
     expect(mocks.confirmBody).not.toContain('not returned');
   });
 
-  // Chapter 1 used to be hidden, and owners couldn't tell why they couldn't remove it.
   test('chapter 1 is shown disabled, pointing to deleting the storyline', async () => {
     mocks.currentUser = { id: OWNER };
     renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
@@ -110,7 +109,6 @@ describe('removing a chapter from the storyline page', () => {
   test("chapter 1 offers nothing to a reader who can't remove it", async () => {
     mocks.currentUser = { id: CONTRIBUTOR };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
-    // The menu is there for reporting the chapter.
     await optionsOf(1).click();
     await expect.element(page.getByRole('menuitem', { name: 'Report chapter' })).toBeVisible();
     expect(document.body.textContent).not.toContain('Remove from storyline');
@@ -138,7 +136,6 @@ describe('removing a chapter from the storyline page', () => {
   test('a reader who is neither is not offered removal', async () => {
     mocks.currentUser = { id: 77 };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
-    // The menu is there for reporting the chapter.
     await optionsOf(2).click();
     await expect.element(page.getByRole('menuitem', { name: 'Report chapter' })).toBeVisible();
     expect(document.body.textContent).not.toContain('Remove from storyline');
