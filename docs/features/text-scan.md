@@ -102,6 +102,12 @@ A label's action is one of: raise the content rating (the owner can dispute it),
 (the owner can appeal), mute the account pending moderator review, or, for `modelRules`, hold the
 match for a moderator (see Model rules). Disputes, appeals and mute reviews go through the existing moderator queues
 (a storyline title appeal is on Storylines > Title Appeals).
+A raised rating notifies the owner once per scan, compared against the rating stored before the
+verdict was written. A post's text is scanned when it is scheduled or published and when its text
+changes while scheduled or published; a draft's edits are not scanned. A draft keeps the floor from
+its last scan, including after an unschedule, until it is scheduled or published again: that scan
+reads its current text, and the old floor holds until the new verdict lands. Unchanged text is not
+rescanned.
 A refused `ImageCaption` is only hidden from readers: its author is not notified, there is no
 appeal, and a clean scan of the caption's current text lets it back.
 

@@ -227,7 +227,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-import { resolveActorFor } from '~/utils/resolve-attribution';
+import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
@@ -1336,13 +1336,14 @@ export const getDownloadCommandHandler = async ({
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.
       // Safer for us.
-      ctx.track.modelVersionEvent({
-        type: 'Download',
-        modelId: modelVersion.model.id,
-        modelVersionId: modelVersion.id,
-        nsfw: modelVersion.model.nsfw,
-        time: now,
-      });
+      if (countsAsPublicDownload(ctx.user))
+        ctx.track.modelVersionEvent({
+          type: 'Download',
+          modelId: modelVersion.model.id,
+          modelVersionId: modelVersion.id,
+          nsfw: modelVersion.model.nsfw,
+          time: now,
+        });
 
       // Bust the downloads cache so the user sees their download immediately
       if (ctx.user?.id) {

@@ -38,6 +38,7 @@ vi.mock('~/server/games/new-order/utils', () => ({
   checkVotingRateLimit: vi.fn(),
   computePoolTargets: vi.fn(),
   getActiveSlot: vi.fn().mockResolvedValue('a'),
+  clearImageRatings: vi.fn(),
   getImageRatingsCounter: vi.fn(),
   getVotingCooldownUntil: vi.fn().mockResolvedValue(null),
   getVotingRateLimitConfig: vi.fn().mockResolvedValue(null),

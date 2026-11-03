@@ -80,6 +80,8 @@ type UserModActivity = {
     | 'createSystemAccount'
     | 'mintSystemAccountApiKey'
     | 'setSystemAccountProfile'
+    // A moderator gave a Stripe member free days (membership-extend.service). Counts toward its cooldown.
+    | 'extendMembership'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when

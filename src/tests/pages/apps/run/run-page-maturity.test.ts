@@ -37,6 +37,11 @@ vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { resolvePageBlockBySlug: mockResolvePageBlockBySlug },
 }));
 
+// The launch's ClickHouse event, which the page sends without awaiting.
+vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
+  recordAppListingOpen: vi.fn(async () => undefined),
+}));
+
 // Real-ish host gate: mature (r/x) requires civitai.red.
 vi.mock('~/server/utils/server-domain', () => ({
   ratingAllowedOnHost: (rating: unknown, host: string) => {

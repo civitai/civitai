@@ -119,22 +119,24 @@ function resolveGenerationCurrencies(
   return allowed;
 }
 
-const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
-  const user = ctx.user;
-  if (!user) throw throwAuthorizationError();
-  const token = await getOrchestratorToken(user.id, ctx);
-  const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
-  return next({
-    ctx: {
-      ...ctx,
-      user,
-      token,
-      allowMatureContent,
-      hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
-    },
+const orchestratorMiddlewareFor = (options?: { allowRestricted: boolean }) =>
+  middleware(async ({ ctx, next }) => {
+    const user = ctx.user;
+    if (!user) throw throwAuthorizationError();
+    const token = await getOrchestratorToken(user.id, ctx, options);
+    const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+    return next({
+      ctx: {
+        ...ctx,
+        user,
+        token,
+        allowMatureContent,
+        hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+      },
+    });
+    // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
   });
-  // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
-});
+const orchestratorMiddleware = orchestratorMiddlewareFor();
 
 const experimentalMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -181,6 +183,11 @@ const orchestratorProcedure = protectedProcedure
   .use(orchestratorMiddleware)
   .use(enforceGenerationVersion)
   .use(regionProxyMiddleware);
+// Restricted accounts keep reading, deleting and cancelling their own workflows; the token stays on the server.
+const orchestratorOwnWorkProcedure = protectedProcedure
+  .use(orchestratorMiddlewareFor({ allowRestricted: true }))
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
   .use(experimentalMiddleware)
@@ -219,7 +226,7 @@ export const orchestratorRouter = router({
       });
     }),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
-  queryWorkflowsByTags: orchestratorProcedure
+  queryWorkflowsByTags: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowQuerySchema)
     .query(async ({ ctx, input }) => {
@@ -229,7 +236,7 @@ export const orchestratorRouter = router({
         hideMatureContent: ctx.hideMatureContent,
       });
     }),
-  getWorkflow: orchestratorProcedure
+  getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
     .query(({ ctx, input }) =>
@@ -238,7 +245,7 @@ export const orchestratorRouter = router({
   // #endregion
 
   // #region [requests]
-  deleteWorkflow: orchestratorProcedure
+  deleteWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowIdSchema)
     .mutation(async ({ ctx, input }) => {
@@ -250,7 +257,7 @@ export const orchestratorRouter = router({
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
       return result;
     }),
-  cancelWorkflow: orchestratorProcedure
+  cancelWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowIdSchema)
     .mutation(async ({ ctx, input }) => {
@@ -366,7 +373,7 @@ export const orchestratorRouter = router({
   // #endregion
 
   // #region [generated images]
-  queryGeneratedImages: orchestratorProcedure
+  queryGeneratedImages: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowQuerySchema)
     .query(({ ctx, input }) =>
@@ -771,7 +778,10 @@ export const orchestratorRouter = router({
       // TARGET user's token off a MODERATOR session would leave 60s of
       // recoverable per-target-user state on every pod a moderator touched.
       // See orchestrator-token-cache.ts docstring (Round-5 audit H2).
-      const targetToken = await getOrchestratorToken(userId, ctx, { bypassCache: true });
+      const targetToken = await getOrchestratorToken(userId, ctx, {
+        bypassCache: true,
+        allowRestricted: true,
+      });
       return queryGeneratedImageWorkflows2({
         ...query,
         token: targetToken,

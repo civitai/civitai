@@ -88,6 +88,8 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  */
 const DERIVED_BASES: Record<string, string> = {
   appStorageProcedure: 'publicProcedure',
+  // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
+  appStorageUserProcedure: 'protectedProcedure',
   auctionProcedure: 'protectedProcedure',
   blurbProcedure: 'protectedProcedure',
   blurbWriteProcedure: 'guardedProcedure',
@@ -103,7 +105,10 @@ const DERIVED_BASES: Record<string, string> = {
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
+  // `subscriptions.router.ts`: a moderator granted `membershipExtend` gives a Stripe member free days.
+  membershipExtendProcedure: 'moderatorProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
+  orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',

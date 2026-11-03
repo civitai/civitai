@@ -189,22 +189,25 @@ on:
   # and the quarantine run). On pull_request and push `inputs.only` is empty, so
   # it narrows nothing: what runs there is decided by each job's or step's own
   # event gate (`unit` skips pull requests without the `full-ci` label and the
-  # quarantine step skips all of them; ESLint is PR-only; typecheck runs where
-  # Tekton does not; drafts run ESLint only unless labeled `full-ci`).
+  # quarantine step skips all of them; `typecheck-tests` skips push; ESLint is
+  # PR-only; typecheck runs where Tekton does not; drafts run ESLint only unless
+  # labeled `full-ci`).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   # The app suites moved to apps.yml, which has its own dispatch.
   workflow_dispatch:
     inputs:
       only:
         description: >-
-          Run only this suite. all = every suite (default). typecheck, unit (all 4
-          shards), unit-1 .. unit-4 (one shard), packages, geometry, component
-          (includes the quarantine run). App suites: dispatch apps.yml.
+          Run only this suite. all = every suite (default). typecheck,
+          typecheck-tests (test files only), unit (all 4 shards), unit-1 .. unit-4
+          (one shard), packages, geometry, component (includes the quarantine run).
+          App suites: dispatch apps.yml.
         type: choice
         default: all
         options:
           - all
           - typecheck
+          - typecheck-tests
           - unit
           - unit-1
           - unit-2
@@ -517,6 +520,40 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+  typecheck-tests:
+    name: Typecheck test files (ratchet)
+    runs-on: ubuntu-latest
+    # The root tsconfig excludes every test file, so `pnpm run typecheck` (here and
+    # in Tekton) never sees them. This job is their only typecheck: it fails when a
+    # change adds a test file with type errors, or raises a baselined file's count
+    # (scripts/ci/typecheck-tests-gate.mjs, baseline beside it).
+    #
+    # Non-draft PRs and dispatch, not push to `main`: a type error in a test file is caught
+    # before merge, or not at all.
+    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The gate runs TypeScript 7 from tools/ts7, which a root install does not fetch.
+      - name: Install TypeScript 7
+        run: pnpm -C tools/ts7 install --ignore-workspace --frozen-lockfile
+
+      - name: Typecheck test files
+        run: pnpm run typecheck:tests
+
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -691,6 +728,8 @@ jobs:
       KYSELY_HOT_READS_6_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-7 suite (its own `hot_reads_7_parity` schema).
       KYSELY_HOT_READS_7_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-8 suite (its own `hot_reads_8_parity` schema).
+      KYSELY_HOT_READS_8_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
         with:
