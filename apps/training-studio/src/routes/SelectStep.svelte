@@ -14,6 +14,7 @@
   import { untrack } from 'svelte';
   import { pickModel } from '$lib/host';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
@@ -743,8 +744,7 @@
   </div>
 
   <!-- summary -->
-  <div class="sticky top-4 h-fit">
-  <aside class="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">
@@ -794,25 +794,26 @@
         Paste a Civitai model AIR for the custom base to continue.
       </p>
     {/if}
-  </aside>
-  <p
-    class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
-  >
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="var(--color-buzz)"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      class="h-3 w-3 shrink-0"
-      aria-hidden="true"
+    {#snippet footer()}
+    <p
+      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
     >
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-    Nothing is saved until you start training
-  </p>
-  </div>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="var(--color-buzz)"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="h-3 w-3 shrink-0"
+        aria-hidden="true"
+      >
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+      Nothing is saved until you start training
+    </p>
+    {/snippet}
+  </StickySummary>
 </div>

@@ -28,6 +28,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { hostConfig, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
@@ -1284,7 +1285,7 @@
         </div>
       </div>
 
-      <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <StickySummary>
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
           <Tooltip.Provider>
@@ -1307,7 +1308,7 @@
           Prepended to each label when missing, and <span class="text-buzz">highlighted</span> where
           it already appears. Leave blank to skip.
         </p>
-      </aside>
+      </StickySummary>
     </div>
   {/if}
 

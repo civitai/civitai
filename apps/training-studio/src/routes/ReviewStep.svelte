@@ -16,6 +16,7 @@
   import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
@@ -859,7 +860,7 @@
     </div>
   </div>
 
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -1053,7 +1054,7 @@
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
     </p>
-  </aside>
+  </StickySummary>
 </div>
 
 <div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
