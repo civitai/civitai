@@ -13,6 +13,7 @@ import {
   EXPERIMENT_SURFACES,
   experimentKeys,
   HAT_TURF_CLIENT_ACTIONS,
+  HAT_TURF_EVENTS,
   isExperimentVariant,
   type ExperimentKey,
 } from '~/shared/constants/experiments.constants';
@@ -936,7 +937,7 @@ const hatTurfActionSchema = z.object({
   type: z.literal('HatTurf_Action'),
   details: z.object({
     action: z.enum(HAT_TURF_CLIENT_ACTIONS),
-    event: z.string().max(64),
+    event: z.enum(HAT_TURF_EVENTS),
     surface: z.enum(EXPERIMENT_SURFACES).optional(),
   }),
 });

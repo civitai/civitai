@@ -97,12 +97,17 @@ describe('useExperimentExposure', () => {
   });
 
   it.each([
-    ['a signed-out viewer', { ready: true, variant: 'control', assignment: 'signed-out' }],
-    ['an assignment still loading', { ready: false }],
-  ])('logs nothing for %s', (_label, experiment) => {
+    [
+      'a signed-out assignment',
+      { ready: true, variant: 'control', assignment: 'signed-out' },
+      true,
+    ],
+    ['no session user', { ready: true, variant: 'control', assignment: 'rule' }, false],
+    ['an assignment still loading', { ready: false }, true],
+  ])('logs nothing for %s', (_label, experiment, signedIn) => {
     state.inView = true;
     state.experiment = experiment;
-    if (experiment.assignment === 'signed-out') state.user = null;
+    if (!signedIn) state.user = null;
     mount();
     expect(state.sent).toEqual([]);
   });

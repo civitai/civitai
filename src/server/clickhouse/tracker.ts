@@ -321,11 +321,8 @@ export const ActionType = [
   // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
   // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
   'Push_Prompt',
-  // UI experiments: one row per (user, experiment, UTC day) the arm was on screen; the experiment,
-  // arm and how it was assigned ride in `details` (`experimentExposureSchema`).
+  // Fields ride in `details` (migrations/2026-11-03-experiment-exposure-hat-turf-actions.sql).
   'Experiment_Exposure',
-  // Hat Turf interactions measured per experiment arm. `opt_in`/`opt_out` are written by the server
-  // only; the browser schema admits the UI actions alone.
   'HatTurf_Action',
 ] as const;
 

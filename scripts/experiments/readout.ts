@@ -12,7 +12,11 @@
 // refuses a writable ClickHouse account and sets its Postgres session read-only.
 import { createClient } from '@clickhouse/client';
 import { Client as PgClient } from 'pg';
-import { experiments, type ExperimentKey } from '../../src/shared/constants/experiments.constants';
+import {
+  experiments,
+  HAT_TURF_FEED_SOURCE,
+  type ExperimentKey,
+} from '../../src/shared/constants/experiments.constants';
 import {
   moments,
   sampleRatio,
@@ -86,7 +90,8 @@ export type Readout = {
     metric: MetricKey;
     role: 'primary' | 'secondary' | 'guardrail';
     alpha: number;
-    result: Comparison;
+    /** `null` when either arm has no users. */
+    result: Comparison | null;
   }[];
   srm: { statistic: number; p: number; mismatch: boolean };
   contaminatedUsers: number;
@@ -147,6 +152,9 @@ export function buildReadout(
         const r = role(metric);
         const alpha = r === 'secondary' ? 0.05 / plan.secondary.length : 0.05;
         const pick = (xs: readonly ExposedUser[]) => xs.map((u) => u.outcomes[metric]);
+        if (!arm.length || !controlArm.length) {
+          return { variant, metric, role: r, alpha, result: null };
+        }
         const result =
           METRICS[metric].kind === 'mean'
             ? welch(moments(pick(controlArm)), moments(pick(arm)))
@@ -170,6 +178,40 @@ export function buildReadout(
     srm: { ...srm, mismatch: srm.p < SRM_ALPHA },
     contaminatedUsers: users.length - clean.length,
   };
+}
+
+// Exposure time is when the tracker received the batch (the browser flushes every ~3s) on a
+// different clock from Postgres, so an outcome this close before it still counts as after.
+export const ATTRIBUTION_SLACK_MS = 60_000;
+
+export type Placement = { atMs: number; source: string | null };
+
+export function toExposedUsers(
+  rows: readonly ExposureRow[],
+  placements: ReadonlyMap<number, readonly Placement[]>
+): ExposedUser[] {
+  return rows.map((r) => {
+    const userId = Number(r.userId);
+    const from = Number(r.firstSeen) * 1000 - ATTRIBUTION_SLACK_MS;
+    const after = (placements.get(userId) ?? []).filter((p) => p.atMs >= from);
+    const days = new Set(after.map((p) => new Date(p.atMs).toISOString().slice(0, 10)));
+    return {
+      userId,
+      variant: r.variant,
+      nVariants: Number(r.nVariants),
+      outcomes: {
+        joined: Number(r.joined),
+        placedAny: after.length,
+        placedFromFeed: after.filter((p) => p.source === HAT_TURF_FEED_SOURCE).length,
+        returned2Days: days.size >= 2 ? 1 : 0,
+        placements: after.length,
+        inviteDismissed: Number(r.inviteDismissed),
+        feedSaved: Number(r.feedSaved),
+        hatCountOpened: Number(r.hatCountOpened),
+        hidAllHats: Number(r.hidAllHats),
+      },
+    };
+  });
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
@@ -203,6 +245,10 @@ export function formatReadout(r: Readout, dropped: Record<string, number> = {}):
   }
   lines.push('', 'Against control (treatment minus control):');
   for (const c of r.comparisons) {
+    if (!c.result) {
+      lines.push(`  [${c.role}] ${c.variant} ${METRICS[c.metric].label}: an arm has no users`);
+      continue;
+    }
     const isRate = METRICS[c.metric].kind === 'rate';
     const f = isRate ? pct : num;
     const verdict = c.result.p < c.alpha ? 'significant' : 'not significant';
@@ -217,16 +263,15 @@ export function formatReadout(r: Readout, dropped: Record<string, number> = {}):
   return lines.join('\n');
 }
 
-// ---------------------------------------------------------------------------------------------
-// I/O. Not unit-tested: it needs both stores. Run it against a dev ClickHouse with seeded rows
-// before trusting a change to the queries.
+// The queries below are not unit-tested: run them against a dev ClickHouse with seeded rows before
+// trusting a change to them.
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-type ExposureRow = {
+export type ExposureRow = {
   userId: number;
   variant: string;
   firstSeen: number;
@@ -260,7 +305,7 @@ async function main() {
 
   const exposedWhere = `type = 'Experiment_Exposure'
       AND JSONExtractString(details, 'exp') = {exp:String}
-      AND userId > 0 AND time >= {since:DateTime} AND time <= {until:DateTime}`;
+      AND userId > 0 AND time >= toDateTime({since:String}, 'UTC') AND time <= toDateTime({until:String}, 'UTC')`;
 
   const droppedRows = await (
     await ch.query({
@@ -272,9 +317,10 @@ async function main() {
     })
   ).json<{ assignment: string; users: number | string }>();
 
-  // HatTurf actions are counted only at or after the user's first exposure.
   const ui = (action: string) =>
-    `countIf(a.userId != 0 AND a.time >= e.firstSeen AND JSONExtractString(a.details, 'action') = '${action}')`;
+    `countIf(a.userId != 0 AND a.time >= e.firstSeen - ${
+      ATTRIBUTION_SLACK_MS / 1000
+    } AND JSONExtractString(a.details, 'action') = '${action}')`;
   const rows = await (
     await ch.query({
       query: `WITH e AS (
@@ -293,58 +339,58 @@ async function main() {
         FROM e LEFT JOIN (
           SELECT userId, time, details FROM actions
           WHERE type = 'HatTurf_Action' AND JSONExtractString(details, 'event') = {event:String}
-            AND time >= {since:DateTime} AND time <= {until:DateTime}) AS a ON a.userId = e.userId
+            AND time >= toDateTime({since:String}, 'UTC') AND time <= toDateTime({until:String}, 'UTC')) AS a ON a.userId = e.userId
         GROUP BY e.userId, e.variant, e.firstSeen, e.nVariants`,
       query_params: params,
       format: 'JSONEachRow',
     })
   ).json<ExposureRow>();
+  const hatTurfRows = await (
+    await ch.query({
+      query: `SELECT count() AS n FROM actions WHERE type = 'HatTurf_Action'
+        AND JSONExtractString(details, 'event') = {event:String}
+        AND time >= toDateTime({since:String}, 'UTC') AND time <= toDateTime({until:String}, 'UTC')`,
+      query_params: params,
+      format: 'JSONEachRow',
+    })
+  ).json<{ n: number | string }>();
   await ch.close();
+  // Zero rows means the emitters or the tracker restart are missing, not that nobody acted: the
+  // HatTurf metrics would read 0 in every arm with nothing failing.
+  if (
+    Number(hatTurfRows[0]?.n ?? 0) === 0 &&
+    !process.argv.includes('--allow-no-hat-turf-actions')
+  ) {
+    throw new Error(
+      `No HatTurf_Action rows for ${event} in the window. Check the emitters and the tracker restart, or pass --allow-no-hat-turf-actions.`
+    );
+  }
 
   const pg = new PgClient({ connectionString: process.env.READOUT_DATABASE_URL });
   await pg.connect();
   await pg.query('SET default_transaction_read_only = on');
-  const placements = new Map<number, { at: Date; source: string | null }[]>();
+  await pg.query("SET TIME ZONE 'UTC'");
+  const placements = new Map<number, Placement[]>();
   const ids = rows.map((r) => Number(r.userId));
   for (let i = 0; i < ids.length; i += 10_000) {
-    const res = await pg.query<{ userId: number; createdAt: Date; source: string | null }>(
-      `SELECT "userId", "createdAt", data->>'source' AS source FROM "EventTurfSticker"
+    // "createdAt" is timestamp without time zone, stored in UTC: read it as epoch ms, so the
+    // client's own time zone cannot shift it.
+    const res = await pg.query<{ userId: number; atMs: string; source: string | null }>(
+      `SELECT "userId", (extract(epoch from "createdAt") * 1000)::bigint AS "atMs",
+              data->>'source' AS source FROM "EventTurfSticker"
        WHERE event = $1 AND "userId" = ANY($2::int[])
-         AND "createdAt" >= $3::timestamptz AND "createdAt" <= $4::timestamptz`,
-      [event, ids.slice(i, i + 10_000), `${since}T00:00:00Z`, `${until}T23:59:59Z`]
+         AND "createdAt" >= $3::timestamp AND "createdAt" <= $4::timestamp`,
+      [event, ids.slice(i, i + 10_000), `${since} 00:00:00`, `${until} 23:59:59`]
     );
     for (const p of res.rows) {
       const list = placements.get(p.userId) ?? [];
-      list.push({ at: p.createdAt, source: p.source });
+      list.push({ atMs: Number(p.atMs), source: p.source });
       placements.set(p.userId, list);
     }
   }
   await pg.end();
 
-  const users: ExposedUser[] = rows.map((r) => {
-    const userId = Number(r.userId);
-    const after = (placements.get(userId) ?? []).filter(
-      (p) => p.at.getTime() >= Number(r.firstSeen) * 1000
-    );
-    const days = new Set(after.map((p) => p.at.toISOString().slice(0, 10)));
-    return {
-      userId,
-      variant: r.variant,
-      nVariants: Number(r.nVariants),
-      outcomes: {
-        joined: Number(r.joined),
-        placedAny: after.length,
-        placedFromFeed: after.filter((p) => p.source === 'feed').length,
-        returned2Days: days.size >= 2 ? 1 : 0,
-        placements: after.length,
-        inviteDismissed: Number(r.inviteDismissed),
-        feedSaved: Number(r.feedSaved),
-        hatCountOpened: Number(r.hatCountOpened),
-        hidAllHats: Number(r.hidAllHats),
-      },
-    };
-  });
-
+  const users = toExposedUsers(rows, placements);
   const readout = buildReadout(exp, users);
   const dropped = Object.fromEntries(droppedRows.map((d) => [d.assignment, Number(d.users)]));
   if (process.argv.includes('--json')) {

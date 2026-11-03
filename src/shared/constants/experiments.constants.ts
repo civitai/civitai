@@ -29,7 +29,14 @@ export type ExperimentVariant<K extends ExperimentKey> =
   (typeof experiments)[K]['variants'][number];
 export const experimentKeys = Object.keys(experiments) as ExperimentKey[];
 
-// How a user came to their arm. Only `rule` is randomised; the readout drops the rest.
+/**
+ * How a user came to their arm. Only `rule` is randomised; the readout drops the rest.
+ * - `pinned`: a segment whose key starts with `EXPERIMENT_PIN_SEGMENT_PREFIX` matched.
+ * - `override`: a moderator's preview cookie, or a dev `FLIPT_LOCAL_OVERRIDES` entry.
+ * - `unavailable`: Flipt not initialised, the flag key missing, or no assignment reached the client.
+ * - `off`: the flag is disabled, or no rule matched.
+ * - `invalid`: Flipt returned a variant this registry does not list.
+ */
 export const EXPERIMENT_ASSIGNMENT_SOURCES = [
   'rule',
   'pinned',
@@ -56,6 +63,9 @@ export const HAT_TURF_CLIENT_ACTIONS = [
   'hide_all_hats_off',
 ] as const;
 export const HAT_TURF_SERVER_ACTIONS = ['opt_in', 'opt_out'] as const;
+export const HAT_TURF_EVENTS = ['birthday2026'] as const;
+/** `hatTurf.place`'s `source` for a placement started from a feed card, kept in the sticker's `data`. */
+export const HAT_TURF_FEED_SOURCE = 'feed';
 
 export const EXPERIMENT_PIN_SEGMENT_PREFIX = 'exp-pin-';
 

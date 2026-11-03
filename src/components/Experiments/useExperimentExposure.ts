@@ -9,7 +9,8 @@ const STORAGE_KEY = 'experiment-exposures';
 const sentThisTab = new Set<string>();
 
 // One row per (user, experiment, UTC day). The readout counts users, so this only keeps volume
-// down; a cleared storage or a second device adds rows, not users.
+// down; a cleared storage or a second device adds rows, not users. Claimed before delivery: a batch
+// lost to a tab closed mid-flush drops that user's exposure for the day.
 function claimExposure(userId: number, key: ExperimentKey): boolean {
   const day = new Date().toISOString().slice(0, 10);
   const id = `${userId}:${key}`;

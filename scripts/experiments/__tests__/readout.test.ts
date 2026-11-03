@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildReadout, formatReadout, METRICS, type ExposedUser, type MetricKey } from '../readout';
+import {
+  buildReadout,
+  formatReadout,
+  METRICS,
+  toExposedUsers,
+  type ExposedUser,
+  type ExposureRow,
+  type MetricKey,
+} from '../readout';
 
 const zero = Object.fromEntries(Object.keys(METRICS).map((k) => [k, 0])) as Record<
   MetricKey,
@@ -76,5 +84,49 @@ describe('buildReadout', () => {
     const r = buildReadout('hatTurfImageDetail', users('control', 2), BEFORE_READ);
     expect(r.interim).toBe(true);
     expect(formatReadout(r)).toContain('INTERIM');
+  });
+});
+
+describe('toExposedUsers', () => {
+  const firstSeen = Date.UTC(2026, 10, 10, 23, 0, 0) / 1000;
+  const row: ExposureRow = {
+    userId: 9,
+    variant: 'count-button',
+    firstSeen,
+    nVariants: 1,
+    joined: 1,
+    inviteDismissed: 0,
+    feedSaved: 0,
+    hatCountOpened: 0,
+    hidAllHats: 0,
+  };
+  const at = (secondsFromFirstSeen: number, source: string | null = null) => ({
+    atMs: (firstSeen + secondsFromFirstSeen) * 1000,
+    source,
+  });
+
+  it('counts placements from just before exposure (tracker lag) but not earlier ones', () => {
+    const [u] = toExposedUsers([row], new Map([[9, [at(-3600), at(-30), at(10)]]]));
+    expect(u.outcomes.placements).toBe(2);
+  });
+
+  it('counts feed placements by their source, and return days by UTC date', () => {
+    const [u] = toExposedUsers([row], new Map([[9, [at(10, 'feed'), at(3700, 'image-detail')]]]));
+    expect(u.outcomes.placedFromFeed).toBe(1);
+    // 23:00:10 and 00:01:40 the next day, in UTC.
+    expect(u.outcomes.returned2Days).toBe(1);
+  });
+
+  it('gives an exposed user with no placements zeroes, not a missing row', () => {
+    const [u] = toExposedUsers([row], new Map());
+    expect(u.outcomes).toMatchObject({ placements: 0, placedAny: 0, joined: 1 });
+  });
+});
+
+describe('an arm with no users', () => {
+  it('reports the empty arm instead of a verdict', () => {
+    const r = buildReadout('hatTurfFeedCard', users('control', 50));
+    expect(r.comparisons.every((c) => c.result === null)).toBe(true);
+    expect(formatReadout(r)).toContain('an arm has no users');
   });
 });
