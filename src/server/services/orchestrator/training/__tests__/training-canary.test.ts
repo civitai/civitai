@@ -9,7 +9,9 @@ const mocks = vi.hoisted(() => ({
   cancelWorkflow: vi.fn(async () => undefined),
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] as string[] })),
   getOrchestratorToken: vi.fn(async () => 'canary-user-token'),
-  fetch: vi.fn(async () => new Response(null, { status: 204 })),
+  fetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+    async () => new Response(null, { status: 204 })
+  ),
 }));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
@@ -100,7 +102,7 @@ function keyValues(initial: { config?: unknown; state?: TrainingCanaryState }) {
 function discordPosts() {
   return mocks.fetch.mock.calls.map(([url, init]) => ({
     url,
-    embed: JSON.parse(String((init as RequestInit).body)).embeds[0] as {
+    embed: JSON.parse(String(init?.body)).embeds[0] as {
       title: string;
       description: string;
     },
