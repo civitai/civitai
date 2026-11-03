@@ -101,6 +101,11 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import type { Context } from '~/server/createContext';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+
+/** Moderator authority on the listing editor needs a session or full-access key, never an app-scoped token. */
+const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
@@ -898,7 +903,7 @@ export const appListingsRouter = router({
           userId: ctx.user.id,
           // Mirror the mod-only client search: a mod editing a listing that links a
           // foreign OAuth client isn't blocked by the owner re-assertion.
-          isModerator: ctx.user.isModerator,
+          isModerator: actsAsModerator(ctx),
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -930,7 +935,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await getMyListingForEdit({ listingId: input.listingId, userId: ctx.user.id });
+        return await getMyListingForEdit({
+          listingId: input.listingId,
+          userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -950,7 +959,7 @@ export const appListingsRouter = router({
    * 403 for the same token, so `civitai app doctor --fix` could repair an approved app's
    * media but not its tagline.
    *
-   *   (a) Same `loadOwnedEditableListing` owner/seat gate, no moderator override.
+   *   (a) Same `loadOwnedEditableListing` owner/seat gate (plus a session-backed moderator).
    *   (b) Same `buildListingPatchData` write surface — author-owned scalars only.
    *   (c) Strictly TIGHTER on the revision model than `updateListing`: it REFUSES a
    *       top-level listing (`revisionOfId == null` → INVALID_REVISION) and refuses a
@@ -978,7 +987,7 @@ export const appListingsRouter = router({
           patch: input.patch,
           userId: ctx.user.id,
           // Mirror the mod-only client search (same rationale as `updateListing`).
-          isModerator: ctx.user.isModerator,
+          isModerator: actsAsModerator(ctx),
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1035,6 +1044,7 @@ export const appListingsRouter = router({
           appBlockId: input.appBlockId,
           slug: input.slug,
           userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1057,7 +1067,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await beginListingRevision({ listingId: input.listingId, userId: ctx.user.id });
+        return await beginListingRevision({
+          listingId: input.listingId,
+          userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -1089,6 +1103,7 @@ export const appListingsRouter = router({
         return await submitListingRevision({
           shadowId: input.shadowId,
           userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
           changelog: input.changelog,
         });
       } catch (err) {
@@ -1271,6 +1286,7 @@ export const appListingsRouter = router({
       return getAppListingAuthoringContext({
         appListingId: input.appListingId,
         userId: ctx.user.id,
+        isModerator: actsAsModerator(ctx),
       });
     }),
 
@@ -1302,7 +1318,11 @@ export const appListingsRouter = router({
       const { listListingHistory } = await import(
         '~/server/services/blocks/app-listing-history.service'
       );
-      return listListingHistory({ appListingId: input.appListingId, userId: ctx.user.id });
+      return listListingHistory({
+        appListingId: input.appListingId,
+        userId: ctx.user.id,
+        isModerator: actsAsModerator(ctx),
+      });
     }),
 
   /**

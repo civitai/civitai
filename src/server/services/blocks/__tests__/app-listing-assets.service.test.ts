@@ -82,6 +82,13 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingScreenshotId: () => `apls_test_${++ids.n}`,
 }));
+const { recordModeratorEdit } = vi.hoisted(() => ({
+  recordModeratorEdit: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-moderator-edit', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  recordModeratorListingEdit: (...a: unknown[]) => recordModeratorEdit(...a),
+}));
 
 const owner = { id: 42, isModerator: false } as never;
 
@@ -814,11 +821,84 @@ describe('screenshot CRUD', () => {
       revisionOfId: null,
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    recordModeratorEdit.mockClear();
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, mod);
     expect(res.removed).toBe('b');
     // A mod's edit is NOT staged on a shadow — nothing was cloned.
     expect(mockDb.appListing.create).not.toHaveBeenCalled();
+    expect(recordModeratorEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ appListingId: 'apl_live', actorUserId: 7, surface: 'media' })
+    );
+  });
+
+  it("a moderator's media edit is audited inside the write's transaction, and refused if the audit fails", async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_live',
+      status: 'approved',
+      revisionOfId: null,
+    });
+    const tx = { ...mockDb };
+    let deletedThrough: unknown = null;
+    tx.appListingScreenshot = {
+      ...mockDb.appListingScreenshot,
+      deleteMany: vi.fn(async () => {
+        deletedThrough = tx;
+        return { count: 1 };
+      }),
+    };
+    mockDb.$transaction.mockImplementationOnce(
+      async (cb: unknown) => (cb as (t: unknown) => Promise<unknown>)(tx) as Promise<unknown[]>
+    );
+    recordModeratorEdit.mockClear().mockRejectedValueOnce(new Error('check constraint'));
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    await expect(removeListingScreenshot({ screenshotId: 'b' }, mod)).rejects.toThrow(
+      'check constraint'
+    );
+    // The delete and the audit row went through the same transaction client.
+    expect(deletedThrough).toBe(tx);
+    expect(recordModeratorEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ db: tx, surface: 'media' })
+    );
+  });
+
+  it("a moderator's caption edit is audited", async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_live',
+      status: 'approved',
+      revisionOfId: null,
+    });
+    recordModeratorEdit.mockClear();
+    const { updateListingScreenshotCaption } = await import('../app-listing-assets.service');
+    await updateListingScreenshotCaption({ screenshotId: 'b', caption: 'hi' }, mod);
+    expect(recordModeratorEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ appListingId: 'apl_live', actorUserId: 7, surface: 'media' })
+    );
+  });
+
+  it('an owner who is also a moderator is not audited as a moderator edit', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_1',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, status: 'draft' });
+    recordModeratorEdit.mockClear();
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    await removeListingScreenshot({ screenshotId: 'b' }, { id: 42, isModerator: true } as never);
+    expect(recordModeratorEdit).not.toHaveBeenCalled();
   });
 
   it('🔴 setIcon STILL REFUSES when the resolve yields the LIVE listing (fail-closed)', async () => {
@@ -1376,6 +1456,7 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     '%s hands a raise to the history, attributed to the moderator',
     async (proc, dims) => {
       recordRatingChange.mockClear();
+      recordModeratorEdit.mockClear();
       // The fake does not apply the asset write, so the row already names image 500 in
       // every slot the re-derive reads back.
       mockDb.appListing.findUnique.mockResolvedValue({
@@ -1396,6 +1477,9 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
 
       await service[proc]({ listingId: 'apl_live', imageId: 500 }, mod);
 
+      expect(recordModeratorEdit).toHaveBeenCalledWith(
+        expect.objectContaining({ appListingId: 'apl_live', actorUserId: 7, surface: 'media' })
+      );
       expect(recordRatingChange).toHaveBeenCalledTimes(1);
       expect(recordRatingChange).toHaveBeenCalledWith({
         appListingId: 'apl_live',

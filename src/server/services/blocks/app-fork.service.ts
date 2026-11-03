@@ -129,6 +129,10 @@ export function assertForkableWritable(available: boolean): void {
 export const FORKABLE_OFFSITE_MESSAGE =
   'Only apps hosted on Civitai can be forked — an external app has no source here to fork.';
 
+/** Refusal for a moderator: only the owner or a seat holder may share the app's source. */
+export const FORKABLE_MODERATOR_MESSAGE =
+  'Only the app’s owner or a collaborator can change whether it can be forked.';
+
 /** Refusal for the revision-draft write path: the opt-in is never staged on a shadow. */
 export const FORKABLE_ON_REVISION_MESSAGE =
   'Forking is set on the live app, not on a revision draft. Change it from the app’s Details tab.';
