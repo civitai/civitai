@@ -117,6 +117,7 @@ async function submit(
       tags: HELPER_TAGS,
       steps: [step],
       currencies: resolveCurrencies(currencies, WHATIF_CURRENCIES),
+      upgradeMode: 'manual',
       // Generated media never comes back mature, whatever the starting image: the Studio can't tell
       // which site the result will be shown on, and the generator's own mature rules are per site.
       allowMatureContent: false,

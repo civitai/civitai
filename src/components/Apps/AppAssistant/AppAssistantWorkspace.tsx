@@ -26,6 +26,8 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
+import { AppActivityStrip } from '~/components/Apps/AppAssistant/AppActivityStrip';
+import { createPageActivityTools } from '~/components/Apps/AppAssistant/appActivity';
 import { fetchSandboxAppBuilt } from '~/components/Apps/AppAssistant/sandboxAppBuilt';
 import {
   AppExportError,
@@ -42,7 +44,12 @@ import {
   submitBundleFromExport,
 } from '~/components/Apps/AppAssistant/assistantSubmit';
 import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFeedback';
-import { chosenAppOf, createAppFeedbackSource } from '@civitai/app-assistant';
+import {
+  SANDBOX_RESULT_LIMIT,
+  SANDBOX_SERVER_LABEL,
+  chosenAppOf,
+  createAppFeedbackSource,
+} from '@civitai/app-assistant';
 import { appChatOf, appOfChat, rememberAppChat } from '~/components/Apps/AppAssistant/appChats';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
@@ -499,6 +506,12 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
+      // What the open app did while it ran (on the server runner, the runner reads it itself), read
+      // by the block id its live preview runs under: the assistant picks another blockId when the
+      // app key's is taken, and the preview's calls and errors are kept under it.
+      ...createPageActivityTools(
+        () => live.current.session?.blockId ?? live.current.active?.app ?? null
+      ),
     }),
     [canPreview, gate, appTools, showPreview]
   );
@@ -575,8 +588,10 @@ export function AppAssistantWorkspace({
             {
               id: SANDBOX_SERVER_ID,
               url: mcpUrl,
-              label: 'your app',
+              label: SANDBOX_SERVER_LABEL,
               token: () => tokens.getToken({ purpose: 'sandbox' }),
+              // As the server runner's: enough of a file or a test run that it is not read again.
+              resultLimit: SANDBOX_RESULT_LIMIT,
             },
           ]
         : NO_MCP_SERVERS,
@@ -1428,13 +1443,22 @@ export function AppAssistantWorkspace({
               shownTab === 'preview' ? 'flex' : 'hidden'
             )}
           >
-            <AppAssistantPreview
-              canPreview={canPreview}
-              session={session}
-              restart={previewRestart}
-              tunnelStatus={tunnelStatus}
-              devServerUp={devServerUp}
-            />
+            {/* The preview takes what the activity strip under it leaves. */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <AppAssistantPreview
+                canPreview={canPreview}
+                session={session}
+                restart={previewRestart}
+                tunnelStatus={tunnelStatus}
+                devServerUp={devServerUp}
+              />
+            </div>
+            {session && (
+              <AppActivityStrip
+                blockId={session.blockId}
+                onTellAssistant={(text) => void chatRef.current?.compose(text)}
+              />
+            )}
           </Paper>
         )}
       </div>

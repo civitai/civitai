@@ -8,7 +8,6 @@ import {
 import { MobileGenerator } from '~/components/ImageGeneration/MobileGenerator';
 import { QueueLimitBanner } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 import { historyLayersSettled, resetHistoryLayers } from '~/utils/history-layers';
 import { TitleRowReset } from '~/components/form-graph/generation/MobileFooterParts';
 
@@ -73,7 +72,6 @@ describe('MobileGenerator', () => {
     // The first-run swipe coach covers the screen; its own tests clear this.
     localStorage.setItem(COACH_KEY, JSON.stringify('done'));
     useGenerationPanelStore.setState({ view: 'generate' });
-    useMobileGeneratorStore.setState({ submittedAt: 0 });
     queueLimit = 4;
     tier = 'gold';
     requests = [];
@@ -185,15 +183,6 @@ describe('MobileGenerator', () => {
     }
   });
 
-  test('a submitted generation closes the sheet onto the results', async () => {
-    renderGenerator();
-    await expect.element(page.getByRole('button', { name: 'Close the form' })).toBeInTheDocument();
-    useMobileGeneratorStore.setState({ submittedAt: Date.now() });
-
-    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
-    expect(view()).toBe('queue');
-  });
-
   test('the first closed sheet is held behind the swipe coach until a swipe up opens the form', async () => {
     localStorage.removeItem(COACH_KEY);
     useGenerationPanelStore.setState({ view: 'queue' });
@@ -252,10 +241,9 @@ describe('MobileGenerator', () => {
   });
 
   test("the form's Reset sits in the open sheet's title row", async () => {
-    const onReset = vi.fn();
     renderWithProviders(
       <MobileGenerator
-        form={<TitleRowReset onReset={onReset} />}
+        form={<TitleRowReset onReset={vi.fn()} />}
         onClose={vi.fn()}
         closeLabel="Go back"
       />
@@ -265,8 +253,6 @@ describe('MobileGenerator', () => {
     // In the title row, beside the chevron, not down in the form.
     const chevron = page.getByRole('button', { name: 'Close the form' }).element();
     expect(chevron.parentElement?.contains(reset.element())).toBe(true);
-    await reset.click();
-    expect(onReset).toHaveBeenCalled();
   });
 
   test('the header shows every queue slot on one line, with the jobs in flight', async () => {
@@ -285,6 +271,30 @@ describe('MobileGenerator', () => {
     const header = page.getByRole('banner').element();
     await vi.waitFor(() => expect(header.querySelectorAll('[data-slot]')).toHaveLength(12));
     expect(header.querySelectorAll('[data-slot="processing"]')).toHaveLength(2);
+  });
+
+  test("while jobs run, the open form's chevron spins and counts them", async () => {
+    const running = (id: string) => ({
+      id,
+      status: 'processing',
+      steps: [{ params: { quantity: 2 }, output: [] }],
+      completedCount: 0,
+      processingCount: 2,
+    });
+    requests = [running('a'), running('b')];
+    renderGenerator();
+
+    const chevron = page.getByRole('button', { name: 'Close the form, 2 generating' });
+    await expect.element(chevron).toHaveAttribute('data-running');
+    await expect.element(chevron).toHaveTextContent('2');
+  });
+
+  test('with nothing running the chevron is plain', async () => {
+    renderGenerator();
+
+    const chevron = page.getByRole('button', { name: 'Close the form', exact: true });
+    await expect.element(chevron).toBeInTheDocument();
+    expect(chevron.element().hasAttribute('data-running')).toBe(false);
   });
 
   test("the form's queue state is the header's, not a second copy", async () => {

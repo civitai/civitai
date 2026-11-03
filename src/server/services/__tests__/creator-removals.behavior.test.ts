@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { REMOVAL_SCORE_WINDOW_DAYS } from '~/shared/constants/creator-journey.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -22,9 +23,8 @@ const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
   '~/server/services/creator-removed-images.service'
 );
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
-const { removalsQuery, withoutReversed } = await import(
-  '~/server/services/creator-removals.service'
-);
+const { getOwnersWithRemovals, getOwnersWithRemovalsAgedOutSince, removalsQuery, withoutReversed } =
+  await import('~/server/services/creator-removals.service');
 const { findPolicyChangeRemovals, insertRemovalScoreExemptions } = await import(
   '~/server/services/removal-score-exemption.service'
 );
@@ -41,8 +41,11 @@ const OTHER = 43; // whose only removal was reversed on appeal since the last ru
 const RESTORED_OWNER = 44; // whose only removal a restore event reversed since the last run
 const SETTLED = 45; // whose removal was reversed on appeal before the last run, nothing since
 const EXEMPT_OWNER = 46;
+const AGING_OWNER = 47; // whose older removal left the six-month window since the last run
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
+const DAY = 86_400;
+const NOW = new Date((REMOVED_AT + 30 * DAY) * 1000); // the removals above are a month old
 const at = (seconds: number) =>
   new Date(seconds * 1000).toISOString().slice(0, 23).replace('T', ' ');
 
@@ -54,7 +57,11 @@ const REMOVED_AGAIN = 4; // approved, then removed again later
 const EXEMPT = 7;
 const REMOVED_AFTER_EXEMPTION = 8;
 const POI_VERSION = 500;
+const windowStart = (now: Date) => new Date(now.getTime() - REMOVAL_SCORE_WINDOW_DAYS * DAY * 1000);
+const AGED_OUT_AT = Math.floor(windowStart(NOW).getTime() / 1000) - DAY;
 const removals = [
+  { ownerId: AGING_OWNER, imageId: 60, removedAt: AGED_OUT_AT },
+  { ownerId: AGING_OWNER, imageId: 61, removedAt: REMOVED_AT },
   { ownerId: OWNER, imageId: REMOVED_AGAIN, removedAt: REMOVED_AT + 7200 },
   { ownerId: OWNER, imageId: RESTORED, removedAt: REMOVED_AT },
   { ownerId: OWNER, imageId: STILL_REMOVED, removedAt: REMOVED_AT },
@@ -128,7 +135,7 @@ beforeEach(async () => {
 
 describe('the removed-images list', () => {
   it('leaves out a removal an approved appeal reversed, and keeps every other one', async () => {
-    const result = await getMyRemovedImages(OWNER);
+    const result = await getMyRemovedImages(OWNER, NOW);
 
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AGAIN, STILL_REMOVED, REJECTED]);
     expect(result.total).toBe(3);
@@ -139,7 +146,7 @@ describe('the removed-images list', () => {
   it('lists nothing, and so offers no appeal, to an owner under a hold marker', async () => {
     await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
 
-    const result = await getMyRemovedImages(OWNER);
+    const result = await getMyRemovedImages(OWNER, NOW);
 
     expect(result).toEqual({ total: 0, truncated: false, items: [] });
   });
@@ -160,7 +167,7 @@ describe('the removed-images list', () => {
     );
     const canAppeal = async () =>
       Object.fromEntries(
-        (await getMyRemovedImages(OWNER)).items.map((i) => [i.imageId, i.canAppeal])
+        (await getMyRemovedImages(OWNER, NOW)).items.map((i) => [i.imageId, i.canAppeal])
       );
 
     const before = await canAppeal();
@@ -186,7 +193,7 @@ describe('the removed-images list', () => {
     ];
     holder.chQuery.mockResolvedValue({ json: async () => full });
 
-    const result = await getMyRemovedImages(OWNER);
+    const result = await getMyRemovedImages(OWNER, NOW);
 
     expect(result.items.map((i) => i.imageId)).not.toContain(RESTORED);
     expect(result.truncated).toBe(true);
@@ -196,7 +203,11 @@ describe('the removed-images list', () => {
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 // The ClickHouse SQL as it must read; the fake answers only these, so a changed query fails.
 const REMOVALS_SQL = (owners: string) =>
-  flat(`SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = 'DeleteTOS')) AS removedAt
+  flat(`SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = 'DeleteTOS')) AS removedAt,
+    coalesce(
+      nullIf(argMaxIf(violationType, time, type = 'DeleteTOS'), ''),
+      argMaxIf(tosReason, time, type = 'DeleteTOS')
+    ) AS reason
     FROM images WHERE type IN ('DeleteTOS', 'Restore') AND ownerId IN (${owners})
     GROUP BY ownerId, imageId
     HAVING maxIf(time, type = 'DeleteTOS') > maxIf(time, type = 'Restore')`);
@@ -206,6 +217,11 @@ const REMOVED_SINCE_SQL = flat(
 const RESTORED_SINCE_SQL = flat(
   `SELECT DISTINCT ownerId FROM images WHERE type = 'Restore' AND time > ?`
 );
+const AGED_OUT_SQL = flat(`SELECT DISTINCT ownerId FROM images
+  WHERE type IN ('DeleteTOS', 'Restore') AND time > ?
+  GROUP BY ownerId, imageId
+  HAVING maxIf(time, type = 'DeleteTOS') > maxIf(time, type = 'Restore')
+    AND maxIf(time, type = 'DeleteTOS') > ? AND maxIf(time, type = 'DeleteTOS') <= ?`);
 const OWNERS_OF_SQL = (ids: string) =>
   flat(`SELECT DISTINCT ownerId FROM images WHERE type = 'DeleteTOS' AND imageId IN (${ids})`);
 
@@ -213,22 +229,31 @@ const OWNERS_OF_SQL = (ids: string) =>
  * Stands in for ClickHouse, which this suite cannot run: OWNER has a removal since the last run and
  * RESTORED_OWNER a restore event, whose removal the real query then drops (so `removals` has none).
  */
-function fakeClickhouse() {
+type FakeRemoval = { ownerId: number; imageId: number; removedAt: number; reason?: string | null };
+function fakeClickhouse(ownerRemovals: FakeRemoval[] = removals, now = NOW) {
   const $query = vi.fn(async (query: TemplateStringsArray | string, ...values: unknown[]) => {
     // Interpolates as the real client does, with each date checked and shown as `?`.
+    const dates: Date[] = [];
     const text =
       typeof query === 'string'
         ? query
         : query.reduce((acc, part, i) => {
             if (i === 0) return part;
             const value = values[i - 1];
-            if (value instanceof Date) expect(value).toEqual(new Date(LAST_RUN * 1000));
+            if (value instanceof Date) dates.push(value);
             return acc + (value instanceof Date ? '?' : String(value)) + part;
           }, '');
     const sql = flat(text);
+    if (sql === AGED_OUT_SQL) {
+      // The window as it stood at the last run, up to the window as it stands now.
+      const from = windowStart(new Date(LAST_RUN * 1000));
+      expect(dates).toEqual([from, from, windowStart(now)]);
+      return [{ ownerId: AGING_OWNER }];
+    }
+    for (const date of dates) expect(date).toEqual(new Date(LAST_RUN * 1000));
     const owners = sql.match(/ownerId IN \(([\d,]+)\)/)?.[1];
     if (owners && sql === REMOVALS_SQL(owners))
-      return removals.filter((r) => owners.split(',').map(Number).includes(r.ownerId));
+      return ownerRemovals.filter((r) => owners.split(',').map(Number).includes(r.ownerId));
     const ids = sql.match(/imageId IN \(([\d,]+)\)/)?.[1];
     if (ids && sql === OWNERS_OF_SQL(ids)) {
       const asked = ids.split(',').map(Number);
@@ -242,11 +267,12 @@ function fakeClickhouse() {
   return { $query };
 }
 
-async function scoreRun() {
+async function scoreRun(ch?: unknown, now = NOW) {
   const scores = new Map<number, number>();
   await getReportAgainstScore({
-    ch: fakeClickhouse() as never,
+    ch: (ch ?? fakeClickhouse(removals, now)) as never,
     lastUpdate: new Date(LAST_RUN * 1000),
+    now,
     scoreMultipliers: { reportsAgainst: -1000 } as never,
     setScore: (id, category, score) => {
       expect(category).toBe('reportsAgainst');
@@ -261,7 +287,7 @@ describe('a removal score exemption', () => {
     const own = removals.filter((r) => r.ownerId === EXEMPT_OWNER);
     holder.chQuery.mockResolvedValue({ json: async () => own });
 
-    const result = await getMyRemovedImages(EXEMPT_OWNER);
+    const result = await getMyRemovedImages(EXEMPT_OWNER, NOW);
 
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AFTER_EXEMPTION]);
   });
@@ -325,7 +351,89 @@ describe('a removal score exemption', () => {
   });
 });
 
+describe('the owners page of the retroactive pass', () => {
+  it('asks for owners after the cursor, in id order, up to the limit, as whole numbers', async () => {
+    const asked: string[] = [];
+    const $query = async (sql: string) => {
+      asked.push(sql);
+      return [{ ownerId: 11 }];
+    };
+
+    const owners = await getOwnersWithRemovals({ $query } as never, 10.9, 2.7);
+
+    expect(owners).toEqual([11]);
+    const sql = flat(asked[0]);
+    expect(sql).toContain('ownerId > 10 ORDER BY ownerId LIMIT 2');
+    expect(sql).toContain("type = 'DeleteTOS'");
+  });
+});
+
+describe('the nightly aged-out range', () => {
+  const rangeOf = async (since: Date, now: Date) => {
+    const asked: Date[][] = [];
+    const ch = {
+      $query: async (_q: TemplateStringsArray, ...values: unknown[]) => {
+        asked.push(values.filter((v): v is Date => v instanceof Date));
+        return [];
+      },
+    };
+    await getOwnersWithRemovalsAgedOutSince(ch as never, since, now);
+    // The query binds three dates: the range start twice (prune and lower bound), then its end.
+    const [from, , to] = asked[0];
+    return { from, to };
+  };
+
+  it('has no gap or overlap between consecutive runs across a month end', async () => {
+    const aug30 = new Date('2024-08-30T01:00:00Z');
+    const aug31 = new Date('2024-08-31T01:00:00Z');
+    const sep1 = new Date('2024-09-01T01:00:00Z');
+
+    const first = await rangeOf(aug30, aug31);
+    const second = await rangeOf(aug31, sep1);
+
+    expect(first.to).toEqual(second.from);
+    expect(second.to.getTime() - second.from.getTime()).toBe(DAY * 1000);
+  });
+});
+
 describe('the Removed content score', () => {
+  const windowEndsAfter = (seconds: number) =>
+    new Date((seconds + REMOVAL_SCORE_WINDOW_DAYS * DAY) * 1000);
+
+  it('stops counting a removal when its window has passed', async () => {
+    const justInside = new Date(windowEndsAfter(REMOVED_AT).getTime() - 1000);
+    expect((await scoreRun(undefined, justInside)).get(OWNER)).toBe(-3000);
+
+    // The three removals made at REMOVED_AT age out; the one made two hours later still counts.
+    const afterFirstThree = new Date(windowEndsAfter(REMOVED_AT).getTime() + 1000);
+    expect((await scoreRun(undefined, afterFirstThree)).get(OWNER)).toBe(-1000);
+
+    const afterAll = new Date(windowEndsAfter(REMOVED_AT + 7200).getTime() + 1000);
+    expect((await scoreRun(undefined, afterAll)).get(OWNER)).toBe(0);
+  });
+
+  it('weighs each removal by the reason of its latest removal', async () => {
+    const reasons = ['realPerson', 'fecalMatter', 'other', 'manual', null, 'spam'];
+    const own = reasons.map((reason, i) => ({
+      ownerId: OWNER,
+      imageId: 200 + i,
+      removedAt: REMOVED_AT,
+      reason,
+    }));
+    const ch = fakeClickhouse(own);
+
+    // 1 + 0.5 + 0 + 1 + 1 + 0.5
+    expect((await scoreRun(ch)).get(OWNER)).toBe(-4000);
+  });
+
+  it('weighs a single half-weight removal at half the penalty', async () => {
+    const ch = fakeClickhouse([
+      { ownerId: OWNER, imageId: 300, removedAt: REMOVED_AT, reason: 'diaper' },
+    ]);
+
+    expect((await scoreRun(ch)).get(OWNER)).toBe(-500);
+  });
+
   it('counts every removal but the one an approved appeal reversed', async () => {
     // Still removed, appeal rejected, and removed again after an approval: three of the four.
     expect((await scoreRun()).get(OWNER)).toBe(-3000);
@@ -345,7 +453,12 @@ describe('the Removed content score', () => {
       OTHER,
       RESTORED_OWNER,
       EXEMPT_OWNER,
+      AGING_OWNER,
     ]);
+  });
+
+  it('re-scores an owner whose removal left the window since the last run, keeping the newer one', async () => {
+    expect((await scoreRun()).get(AGING_OWNER)).toBe(-1000);
   });
 
   it('re-scores an owner exempted since the last run, counting only the removal made after its exemption', async () => {
@@ -370,15 +483,52 @@ describe('the Removed content score', () => {
   it('lets the member-facing list check appeals on the replica', async () => {
     dbMock.dbWrite.$queryRaw.mockClear();
     dbMock.dbRead.$queryRaw.mockClear();
-    await getMyRemovedImages(OWNER);
+    await getMyRemovedImages(OWNER, NOW);
 
     const counting = (c: unknown[]) => (c[0] as string[]).join('?').includes('to_timestamp');
     expect(dbMock.dbRead.$queryRaw.mock.calls.filter(counting)).toHaveLength(1);
     expect(dbMock.dbWrite.$queryRaw.mock.calls.filter(counting)).toHaveLength(0);
   });
 
+  it('lists exactly the removals that cost points, and its owner pays for them', async () => {
+    const own = [
+      { ownerId: OWNER, imageId: 400, removedAt: REMOVED_AT, reason: 'realPerson' },
+      { ownerId: OWNER, imageId: 401, removedAt: REMOVED_AT, reason: 'spam' },
+      { ownerId: OWNER, imageId: 402, removedAt: REMOVED_AT, reason: 'other' }, // costs nothing
+      { ownerId: OWNER, imageId: 403, removedAt: AGED_OUT_AT, reason: 'realPerson' }, // aged out
+      { ownerId: OWNER, imageId: 404, removedAt: REMOVED_AT, reason: ' other ' }, // padded, costs nothing
+    ];
+    // ClickHouse leaves out the aged-out and cost-free rows itself; read its filters off the query.
+    holder.chQuery.mockImplementation(async ({ query, query_params }) => {
+      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      // The query trims the reason as `removalWeight` does; an untrimmed match would list ' other '.
+      const trims = query.includes("trimBoth(ifNull(reason, ''))");
+      const json = own.filter((r) => {
+        const reason = trims ? (r.reason ?? '').trim() : r.reason ?? '';
+        expect(Number.isInteger(query_params.windowStart)).toBe(true);
+        const inWindow =
+          !query.includes('removedAt > {windowStart:Int64}') ||
+          r.removedAt > query_params.windowStart;
+        return inWindow && !excluded.includes(reason);
+      });
+      return { json: async () => json };
+    });
+    await holder.db.exec(
+      `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
+        (400, ${OWNER}, 'moderated'), (401, ${OWNER}, 'moderated'),
+        (402, ${OWNER}, 'moderated'), (403, ${OWNER}, 'moderated'), (404, ${OWNER}, 'moderated')`
+    );
+
+    const listed = await getMyRemovedImages(OWNER, NOW);
+    const score = (await scoreRun(fakeClickhouse(own))).get(OWNER)!;
+
+    expect(listed.items.map((i) => i.imageId)).toEqual([400, 401]);
+    expect(listed.total).toBe(2);
+    expect(score).toBe(-1500);
+  });
+
   it('matches the list for the same owner', async () => {
-    const listed = await getMyRemovedImages(OWNER);
+    const listed = await getMyRemovedImages(OWNER, NOW);
 
     expect(Math.abs((await scoreRun()).get(OWNER)!)).toBe(listed.total * 1000);
   });

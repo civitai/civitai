@@ -158,6 +158,9 @@ describe('static-asset rule values are unique to the rules', () => {
     });
   }
 
+  // Repo-relative with `/` on every OS, to compare against RULES_MODULE.
+  const rel = (file: string) => path.relative(ROOT, file).split(path.sep).join('/');
+
   const files = [
     ...['src', 'scripts', 'apps', 'packages'].flatMap((d) => sources(path.join(ROOT, d))),
     path.join(ROOT, 'next.config.mjs'),
@@ -165,13 +168,11 @@ describe('static-asset rule values are unique to the rules', () => {
 
   it('POSITIVE CONTROL: the walk sees the rules module and many sources', () => {
     expect(files.length).toBeGreaterThan(1000);
-    expect(files.map((f) => path.relative(ROOT, f))).toContain(RULES_MODULE);
+    expect(files.map(rel)).toContain(RULES_MODULE);
   });
 
   it.each([SHORT_LIVED, LONG_LIVED])('only the rules module contains %j', (value) => {
-    const holders = files
-      .filter((file) => fs.readFileSync(file, 'utf8').includes(value))
-      .map((file) => path.relative(ROOT, file));
+    const holders = files.filter((file) => fs.readFileSync(file, 'utf8').includes(value)).map(rel);
     expect(holders).toEqual([RULES_MODULE]);
   });
 

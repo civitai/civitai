@@ -7,6 +7,7 @@ import {
   eventSchema,
   placeableContentPageSchema,
   rosterOptInSchema,
+  showcaseHatSchema,
   teamRosterSchema,
   teamScoreHistorySchema,
   watchEventPointsSchema,
@@ -36,6 +37,9 @@ import {
   getTeamRoster,
   getMyRosterStatus,
   setRosterOptIn,
+  getMyShowcaseHat,
+  getMyShowcaseHatArt,
+  setShowcaseHat,
 } from '~/server/services/event.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -210,6 +214,19 @@ export const eventRouter = router({
     .input(rosterOptInSchema)
     .use(rateLimit({ limit: 20, period: 60 }))
     .mutation(({ ctx, input }) => setRosterOptIn({ user: ctx.user, ...input })),
+  getMyShowcaseHat: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyShowcaseHat({ user: ctx.user, ...input })),
+  getMyShowcaseHatArt: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyShowcaseHatArt({ user: ctx.user, ...input })),
+  setShowcaseHat: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(showcaseHatSchema)
+    .use(rateLimit({ limit: 20, period: 60 }))
+    .mutation(({ ctx, input }) => setShowcaseHat({ user: ctx.user, ...input })),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

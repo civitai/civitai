@@ -5,9 +5,7 @@ import { useGenerationPanelStore } from '~/store/generation-panel.store';
 export const useMobileGeneratorStore = create<{
   /** The mobile generator is on screen. */
   showing: boolean;
-  /** When the last generation was submitted; the mobile generator closes its form on it. */
-  submittedAt: number;
-}>(() => ({ showing: false, submittedAt: 0 }));
+}>(() => ({ showing: false }));
 
 // The mobile generator opens as it was left: form open or closed, and the results' density.
 const VIEW_KEY = 'mobile-generator-view';

@@ -117,6 +117,29 @@ describe('buzzTransactionLabel', () => {
       'Generation'
     );
   });
+
+  // Creator payouts since 2026-10-13 write generation tips as Compensation; only the
+  // externalTransactionId prefix tells them from the compensation row.
+  it('labels a generation tip payout "Tip" and other Compensation rows "Compensation"', () => {
+    const description = 'Generation tips (2026-11-01)';
+    expect(
+      buzzTransactionLabel({
+        type: TransactionType.Compensation,
+        description,
+        externalTransactionId: 'generation-tip-2026-11-01-7-yellow',
+      })
+    ).toBe('Tip');
+    expect(
+      buzzTransactionLabel({
+        type: TransactionType.Compensation,
+        description,
+        externalTransactionId: 'creator-tip-comp-2026-11-01-7-yellow',
+      })
+    ).toBe('Compensation');
+    expect(buzzTransactionLabel({ type: TransactionType.Compensation, description })).toBe(
+      'Compensation'
+    );
+  });
 });
 
 /**

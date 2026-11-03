@@ -22,6 +22,7 @@ const {
   liveBucket,
   previewTopicId,
 } = await import('~/server/events/points/keys');
+const { encodeTurfEntry, turfKeys } = await import('~/server/events/turf/turf-map');
 
 // A small Redis with real set, hash and stream semantics: the engine's correctness is in how it
 // combines SADD and HINCRBY results, so a fake that records calls would test nothing.
@@ -41,6 +42,9 @@ function fakeRedis() {
       if (set.has(member)) return 0;
       set.add(member);
       return 1;
+    },
+    async sIsMember(key: string, member: string) {
+      return sets.get(key)?.has(member) ?? false;
     },
     async sRem(key: string, member: string) {
       return sets.get(key)?.delete(member) ? 1 : 0;
@@ -125,8 +129,20 @@ function fakeRedis() {
     streams.set(keys.hatsLog, log);
     log.push({ id: `${1000 + ++seq}-0`, message: { k: entity, v: value } });
   };
+  // The turf map, written as turf.service writes it: hash, then log.
+  const setTurf = (event: string, entity: string, value: string) => {
+    const keys = turfKeys(event);
+    const hash = hashes.get(keys.map) ?? new Map();
+    hashes.set(keys.map, hash);
+    if (value) hash.set(entity, value);
+    else hash.delete(entity);
+    const log = streams.get(keys.log) ?? [];
+    streams.set(keys.log, log);
+    log.push({ id: `${1000 + ++seq}-0`, message: { k: entity, v: value } });
+  };
   return {
     redis: redis as unknown as EventPointsRedis,
+    setTurf,
     sets,
     hashes,
     zsets,
@@ -388,6 +404,7 @@ describe('awardEventPoints', () => {
         claimKey: 'claimed',
         team: 'Yellow',
         sourceId: 'ImageReaction:100:1',
+        players: [],
       },
     ]);
   });
@@ -890,5 +907,180 @@ describe('roster points', () => {
     expect(livePoints('hat', HAT_FIELD)).toBe(5);
     expect(granted).toHaveLength(1);
     expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.rosterPoints', expect.any(Error));
+  });
+});
+
+describe('Hat Turf', () => {
+  const PLAYERS = [21, 22, 23];
+  const TURF = { team: 'Yellow', cosmeticId: 7, players: PLAYERS, lastAt: 0 };
+  const turfEvent = (turfMode: 'shadow' | 'live') => ({ ...EVENT, turfMode });
+  const view = (actorId: number, entityId = 200) => ({
+    type: 'view' as const,
+    actorId,
+    entityType: 'Image' as const,
+    entityId,
+  });
+
+  beforeEach(() => fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry(TURF)));
+
+  it('live: one ledger row credits every listed player but the viewer, each as a hat owner', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(22)]);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      type: 'view',
+      ownerId: 0,
+      claimKey: 'turf',
+      players: [21, 23],
+    });
+    expect(livePoints('owner', '21')).toBe(1);
+    expect(livePoints('owner', '23')).toBe(1);
+    expect(livePoints('owner', '22')).toBe(0);
+    expect(livePoints('team', 'Yellow')).toBe(2);
+  });
+
+  it('a live first on a 25-player turf image costs a bounded number of Redis calls', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => 100 + i);
+    fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry({ ...TURF, players: many }));
+    let calls = 0;
+    const counted = new Proxy(fake.redis, {
+      get: (target, prop, receiver) => {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function'
+          ? (...args: unknown[]) => {
+              calls++;
+              return (value as (...a: unknown[]) => unknown).apply(target, args);
+            }
+          : value;
+      },
+    });
+    build({ redis: counted, loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(30)]);
+    calls = 0;
+    await engine.awardEventPoints([view(31)]);
+    expect(livePoints('team', 'Yellow')).toBe(50);
+    // Per player: the cap increment, its TTL (set on this viewer's first grant to that player today)
+    // and the owner increment; plus the seen mark, its TTL and one team increment.
+    expect(calls).toBeLessThanOrEqual(3 * 25 + 5);
+  });
+
+  it('caps each credited player separately for one viewer', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    await fake.redis.hIncrBy(keys.cap('2026-11-05', 21), '30', 50);
+    await engine.awardEventPoints([view(30)]);
+    expect(livePoints('owner', '21')).toBe(0);
+    expect(livePoints('owner', '22')).toBe(1);
+  });
+
+  it('shadow: records the shadow type and moves no live total', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('shadow')] });
+    await engine.awardEventPoints([view(30)]);
+    expect(ledger).toMatchObject([{ type: 'shadow:view', players: PLAYERS }]);
+    expect(livePoints('team', 'Yellow')).toBe(0);
+    expect(livePoints('owner', '21')).toBe(0);
+  });
+
+  it('a shadow view does not use up the real one: the same view earns once turf goes live', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('shadow')] });
+    await engine.awardEventPoints([view(30)]);
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(30)]);
+    expect(ledger.map((r) => r.type)).toEqual(['shadow:view', 'view']);
+  });
+
+  it('a worn hat protects the image: the hat earns and turf credits nobody', async () => {
+    fake.setHat(EVENT.name, 'Image:200', encodeHat(HAT));
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(30)]);
+    expect(ledger).toMatchObject([{ type: 'view', ownerId: OWNER, players: [] }]);
+    expect(livePoints('owner', '21')).toBe(0);
+  });
+
+  it('a reaction earned under a turf lead that has since ended is still found and netted out', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
+    await engine.awardEventPoints([action]);
+    fake.setTurf(EVENT.name, 'Image:200', '');
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 200)).toBe(false);
+    expect(await engine.hasTurfMark(action)).toBe(true);
+    expect(await engine.hasTurfMark({ ...action, actorId: 31 })).toBe(false);
+    await engine.removeEventPoints([action]);
+    expect(ledger.map((r) => [r.type, r.op])).toEqual([
+      ['reaction', 'add'],
+      ['reaction', 'remove'],
+    ]);
+  });
+
+  it('still finds a turf earning after the mode is switched off', async () => {
+    let mode: 'live' | 'off' = 'live';
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: mode }] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
+    await engine.awardEventPoints([action]);
+    mode = 'off';
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 200)).toBe(false);
+    expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
+  it('nets out a reaction earned under a hat that has since come off', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 100,
+      sourceId: 'ImageReaction:100:30',
+    };
+    await engine.awardEventPoints([action]);
+    fake.setHat(EVENT.name, 'Image:100', '');
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 100)).toBe(false);
+    expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
+  // Decision: the removal lookup always asks Redis (two SISMEMBERs) rather than prefiltering on what
+  // this server has loaded. A prefilter forgets everything at a restart, and an un-react it skips
+  // leaves the earlier add scoring. Do not reintroduce one without keeping this test red-on-revert.
+  it('still finds an earning after a restart while turf mode is off (no in-memory prefilter)', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
+    await engine.awardEventPoints([action]);
+    // A fresh engine is a restarted server; with the mode off it loads no turf map at all.
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: 'off' as const }] });
+    expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
+  it('nets a shadow reaction out under its shadow type', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('shadow')] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
+    await engine.awardEventPoints([action]);
+    await engine.removeEventPoints([action]);
+    expect(ledger.map((r) => [r.type, r.op])).toContainEqual(['shadow:reaction', 'remove']);
   });
 });

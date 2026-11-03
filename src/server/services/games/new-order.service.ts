@@ -24,6 +24,7 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  clearImageRatings,
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
@@ -34,6 +35,7 @@ import {
   smitesCounter,
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
+import { buildFinalRatingsInsert } from '~/server/games/new-order/final-ratings-sql';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { InfiniteQueryInput } from '~/server/schema/base.schema';
@@ -525,8 +527,10 @@ async function processImageRating({
   const voteLimit = getVoteLimitForRank(valueInQueue.rank);
 
   if (currentVoteCount >= voteLimit && valueInQueue.rank !== NewOrderRankType.Acolyte) {
-    // Vote limit already reached, remove from queue
+    // Vote limit already reached with no decision: the round ends undecided, so its votes are
+    // settled as Inconclusive, as the daily purge does for images that never reached one.
     await removeImageFromQueue({ imageId, valueInQueue });
+    await voidPendingRatings([imageId]);
     return { stats: player.stats };
   }
 
@@ -566,6 +570,8 @@ async function processImageRating({
 
   let currentNsfwLevel: NsfwLevel | undefined = image.nsfwLevel;
   let votesVoided = false;
+  // Set only when this vote decided the image: the level decided, or null for no consensus.
+  let decidedLevel: NsfwLevel | null | undefined;
 
   // Check if we've reached vote limits after the atomic increment
   const reachedKnightVoteLimit =
@@ -576,6 +582,8 @@ async function processImageRating({
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
     const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
+    // Unreachable while the Knight vote limit is below maxKnightVotes: a vote past the limit is
+    // refused above.
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
       // Guard against excessive down-rating: allow down-rating by at most 1 level,
@@ -637,6 +645,8 @@ async function processImageRating({
           });
         }
 
+        decidedLevel = consensus ? currentNsfwLevel ?? consensus : null;
+
         // Update pending ratings
         await updatePendingImageRatings({ imageId, rating: consensus });
 
@@ -656,13 +666,15 @@ async function processImageRating({
         : NewOrderImageRatingStatus.AcolyteFailed;
   } else if (votesVoided) {
     status = NewOrderImageRatingStatus.Inconclusive;
-  } else if (reachedKnightVoteLimit && currentNsfwLevel !== undefined) {
+  } else if (decidedLevel === null) {
+    status = NewOrderImageRatingStatus.Inconclusive;
+  } else if (decidedLevel !== undefined) {
     status =
-      currentNsfwLevel === rating
+      decidedLevel === rating
         ? NewOrderImageRatingStatus.Correct
         : NewOrderImageRatingStatus.Failed;
   } else {
-    // Knights leave the image in the pending status until their vote is confirmed.
+    // Until a decision is made, Knight votes stay Pending; the decision grades them.
     status = NewOrderImageRatingStatus.Pending;
   }
 
@@ -1031,44 +1043,7 @@ export async function processFinalRatings() {
     const updateEnd = new Date(updateEndString);
     if (updateStart.getTime() === updateEnd.getTime()) return { status: 'no-new-data' };
 
-    await clickhouse.$exec`
-      INSERT INTO knights_new_order_image_rating
-      WITH batch as (
-        SELECT
-            imageId,
-            argMax(rating, update_time) as rating,  -- Latest rating wins
-            max(update_time) as createdAt
-        FROM knights_rating_updates_batch
-        WHERE
-          update_time > ${updateStart}
-          AND update_time <= ${updateEnd}
-        GROUP BY imageId
-      )
-      SELECT
-          orig.userId,
-          orig.imageId as imageId,
-          orig.rating as rating,
-          orig.damnedReason,
-          CASE
-              WHEN new.rating IS NULL THEN '${NewOrderImageRatingStatus.Inconclusive}'
-              WHEN new.rating = orig.rating THEN '${NewOrderImageRatingStatus.Correct}'
-              ELSE '${NewOrderImageRatingStatus.Failed}'
-          END as status,
-          orig.grantedExp,
-          CASE
-              WHEN new.rating = orig.rating THEN 1
-              ELSE 0
-          END as multiplier,
-          new.createdAt as createdAt,
-          orig.ip,
-          orig.userAgent,
-          orig.deviceId,
-          orig.rank,
-          orig.originalLevel
-      FROM knights_new_order_image_rating orig
-      JOIN batch new ON new.imageId = orig.imageId
-      WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte';
-    `;
+    await clickhouse.$exec(buildFinalRatingsInsert({ updateStart, updateEnd }));
 
     // Update last processed time and reset pending count
     await sysRedis
@@ -1786,7 +1761,14 @@ export async function getImagesQueue({
         }
         // Out of the pool, so the daily purge can no longer settle their votes. Still in it, the
         // purge will.
-        if (removed) await voidPendingRatings(heldIds);
+        if (removed) {
+          await voidPendingRatings(heldIds);
+          try {
+            await clearImageRatings(heldIds);
+          } catch (e) {
+            handleLogError(e as Error, 'new-order-held-image-tally-clear');
+          }
+        }
       }
 
       // Don't overshoot the target — pass 2 redistribution relies on
@@ -1987,6 +1969,23 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   }
 
   return raters;
+}
+
+/**
+ * After a moderator rates an image: take it out of the New Order queues and drop its vote tally.
+ * The rating is already applied, so this is cleanup and never throws.
+ */
+export async function leaveQueuesAfterModeratorRating(imageId: number) {
+  try {
+    const valueInQueue = await isImageInQueue({
+      imageId,
+      rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
+    });
+    if (!valueInQueue) return;
+    await Promise.all([valueInQueue.pool.reset({ id: imageId }), clearImageRatings([imageId])]);
+  } catch (e) {
+    handleLogError(e as Error, 'new-order-mod-rating-queue-cleanup');
+  }
 }
 
 export async function isImageInQueue({

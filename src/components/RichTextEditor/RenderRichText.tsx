@@ -20,6 +20,7 @@ import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
 const extensions = [
@@ -36,6 +37,26 @@ const extensions = [
   BlurbNode,
 ];
 
+type JsonNode = {
+  marks?: { type?: string; attrs?: Record<string, unknown> }[];
+  content?: JsonNode[];
+  [key: string]: unknown;
+};
+
+function rewriteLinkMarks(node: JsonNode, rewrite: (href: string) => string): JsonNode {
+  if (!node || typeof node !== 'object') return node;
+  const next = { ...node };
+  if (Array.isArray(node.marks))
+    next.marks = node.marks.map((mark) =>
+      mark?.type === 'link' && typeof mark.attrs?.href === 'string'
+        ? { ...mark, attrs: { ...mark.attrs, href: rewrite(mark.attrs.href) } }
+        : mark
+    );
+  if (Array.isArray(node.content))
+    next.content = node.content.map((child) => rewriteLinkMarks(child, rewrite));
+  return next;
+}
+
 export function RenderRichText({
   content,
   fallbackHtml,
@@ -45,10 +66,11 @@ export function RenderRichText({
 }) {
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
+  const toCurrentDomain = useCurrentDomainHref();
   const memoized = useMemo(() => {
     try {
       const el = renderToReactElement({
-        content,
+        content: rewriteLinkMarks(content, toCurrentDomain) as typeof content,
         extensions,
         options: {
           nodeMapping: {
@@ -67,7 +89,7 @@ export function RenderRichText({
                 data-type="blurb"
                 data-id={node.attrs.id}
                 dangerouslySetInnerHTML={{
-                  __html: sanitizeBlurbInterior(node.attrs.text ?? ''),
+                  __html: sanitizeBlurbInterior(node.attrs.text ?? '', toCurrentDomain),
                 }}
               />
             ),
@@ -91,7 +113,7 @@ export function RenderRichText({
       // sync with `tiptapExtensions` by hand, so treat drift as reachable.
       return { ok: false as const };
     }
-  }, [content, allowed]);
+  }, [content, allowed, toCurrentDomain]);
 
   if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
 

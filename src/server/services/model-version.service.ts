@@ -53,6 +53,12 @@ import {
   readDefaultModelVersionsViaKysely,
   readDefaultModelVersionsViaPrisma,
 } from '~/server/services/hot-reads-3.reads';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  donationGoalVersionFindArgs,
+  readDonationGoalVersionViaKysely,
+  readDonationGoalVersionViaPrisma,
+} from '~/server/services/hot-reads-8.reads';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
@@ -121,6 +127,7 @@ import {
   paidGenerationGrant,
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -741,7 +748,7 @@ export const upsertModelVersion = async ({
   // Note the model-level strip below bypasses this: on a POI model the fee columns are cleared even when
   // the caller sent no fee at all, which is how a partial write (a moderator review action) stops
   // carrying one forward.
-  const feeProvided = data.licensingFee !== undefined;
+  let feeProvided = data.licensingFee !== undefined;
   const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
 
   // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
@@ -840,6 +847,14 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
       );
+    }
+    // A write that omits the fee would otherwise carry a stored one forward, including one set while
+    // the version was on a commercial base model.
+    if (!feeProvided) {
+      data.licensingFee = null;
+      data.licensingFeeType = null;
+      data.licensingFeeSettlementCurrency = null;
+      feeProvided = true;
     }
   }
 
@@ -2028,6 +2043,7 @@ export const publishModelVersionById = async ({
   assertBaseModelAttestations({
     versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
   });
+  await assertNonCommercialVersionsUnmonetized([currentVersion]);
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
@@ -2603,7 +2619,7 @@ const commercialUsePermissionContent: Record<CommercialUse, string> = {
 <b>Civitai Generation Services: Do not run the Model on the Civitai platform for generation (available at [${env.NEXTAUTH_URL}/generate](/generate)).</b>
 `,
   [CommercialUse.Sell]: `
-<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value. This restriction does not apply to a Merge.</b>
+<b>Sale of the Model: Do not sell or license the Model in exchange for a fee or something else of value. This restriction does not apply to a Merge.</b>
 `,
   [CommercialUse.SellMerge]: `
 <b>Sale of Merges: Do not sell or license a Merge in exchange for a fee or something else of value.</b>
@@ -2658,12 +2674,6 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (allowsDifferentLicenseOnMerges(options)) {
-    license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
-`;
-  }
-
   const additionalCommercialRestrictions = Object.entries(commercialUsePermissionContent)
     .map(([key, value]) => {
       if (options.allowCommercialUse.includes(key as CommercialUse)) return '';
@@ -2671,6 +2681,13 @@ You agree to the following with respect to the Model (each a “Permission”):
     })
     .join('');
   license += additionalCommercialRestrictions;
+
+  // Last on purpose: it grants against every restriction above it, so nothing may be appended after.
+  if (allowsDifferentLicenseOnMerges(options)) {
+    license += `
+<b>Changing Permissions: You may modify or eliminate any of the Permissions in this Attachment B when sharing or making available a Merge. This does not change the terms of the License itself, which continue to apply to the Merge.</b>
+`;
+  }
 
   return license;
 }
@@ -3030,20 +3047,14 @@ export const modelVersionDonationGoal = async ({
 
   // The caller MIGHT be privileged (owner or moderator) — resolve the version to learn the
   // owner and to 404 / fall back to the primary on replica lag.
-  const donationFindArgs = {
-    where: { id },
-    select: {
-      id: true,
-      modelId: true,
-      model: {
-        select: {
-          userId: true,
-        },
-      },
-    },
-  } as const;
-  const version = await dbRead.modelVersion
-    .findFirstOrThrow(donationFindArgs)
+  const donationFindArgs = donationGoalVersionFindArgs(id);
+  // `kysely-hot-reads-8` on: the replica read goes through Kysely, and a missing row rejects, as
+  // `findFirstOrThrow` does, so it reaches the same primary retry below.
+  const readReplica = async () =>
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
+      ? readDonationGoalVersionViaKysely((await loadKyselyDb()).kyselyRead, id)
+      : readDonationGoalVersionViaPrisma(dbRead, id);
+  const version = await readReplica()
     .catch(() => {
       // Replica miss (often replica lag) — retry against the primary before
       // deciding the record is truly gone.

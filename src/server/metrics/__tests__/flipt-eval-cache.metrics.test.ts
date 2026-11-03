@@ -24,6 +24,15 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptCacheStats: () => stats,
 }));
 
+// A scrape runs every gauge's `collect()`, and the challenge gauges query the database. Same stub
+// as metrics-endpoint-registry-failure.test.ts.
+const poolStub = () => ({ totalCount: 0, idleCount: 0, waitingCount: 0 });
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: poolStub(),
+  pgDbWrite: poolStub(),
+  pgDbReadLong: poolStub(),
+}));
+
 /**
  * Read one `{cache}` series' current value from the default registry.
  *

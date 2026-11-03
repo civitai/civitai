@@ -37,10 +37,11 @@ async function openContentModal() {
 }
 
 /** Walks the full flow end to end, choosing the given radio options on the content step. */
-async function completeFlow(modelsLabel: string, imagesLabel: string) {
+async function completeFlow(modelsLabel: string, imagesLabel: string, appData = false) {
   await openContentModal();
   await userEvent.click(page.getByLabelText(modelsLabel));
   await userEvent.click(page.getByLabelText(imagesLabel));
+  if (appData) await userEvent.click(page.getByLabelText('Also delete my data in apps'));
   await userEvent.click(page.getByRole('button', { name: 'Continue' }));
   await userEvent.fill(page.getByPlaceholder('Type DELETE to confirm'), 'DELETE');
   await userEvent.click(page.getByRole('button', { name: 'Delete my account' }));
@@ -146,27 +147,72 @@ describe('DeleteCard confirm step summary', () => {
         )
       )
       .toBeInTheDocument();
+    await expect.element(page.getByText('Your data in apps will be kept')).toBeInTheDocument();
+  });
+
+  // The summary line flips with the box (unticked: "will be kept", above).
+  test('says app data goes after the 7-day grace when the box is ticked', async () => {
+    await openContentModal();
+    await userEvent.click(page.getByLabelText('Keep them public'));
+    await userEvent.click(page.getByLabelText('Delete after 7 days'));
+    await userEvent.click(page.getByLabelText('Also delete my data in apps'));
+    await userEvent.click(page.getByRole('button', { name: 'Continue' }));
+
+    await expect
+      .element(page.getByText('Your data in apps will be deleted after 7 days'))
+      .toBeInTheDocument();
   });
 });
 
 describe('DeleteCard mutation polarity', () => {
   test('Delete them + Delete now -> removeModels: true, removeImages: true', async () => {
     await completeFlow('Delete them', 'Delete now');
-    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: true, removeImages: true });
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 7,
+      removeModels: true,
+      removeImages: true,
+      removeAppData: false,
+    });
   });
 
   test('Delete them + Delete after 7 days -> removeModels: true, removeImages: false', async () => {
     await completeFlow('Delete them', 'Delete after 7 days');
-    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: true, removeImages: false });
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 7,
+      removeModels: true,
+      removeImages: false,
+      removeAppData: false,
+    });
   });
 
   test('Keep them public + Delete now -> removeModels: false, removeImages: true', async () => {
     await completeFlow('Keep them public', 'Delete now');
-    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: false, removeImages: true });
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 7,
+      removeModels: false,
+      removeImages: true,
+      removeAppData: false,
+    });
   });
 
   test('Keep them public + Delete after 7 days -> removeModels: false, removeImages: false', async () => {
     await completeFlow('Keep them public', 'Delete after 7 days');
-    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: false, removeImages: false });
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 7,
+      removeModels: false,
+      removeImages: false,
+      removeAppData: false,
+    });
+  });
+
+  // The app-data box is opt-in: every case above leaves it unticked and sends false.
+  test('ticking "Also delete my data in apps" -> removeAppData: true', async () => {
+    await completeFlow('Keep them public', 'Delete after 7 days', true);
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: 7,
+      removeModels: false,
+      removeImages: false,
+      removeAppData: true,
+    });
   });
 });

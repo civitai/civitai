@@ -12,6 +12,16 @@ import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
+  storylineRootChapterSelect,
+  storylineTitleLevelSelect,
+} from '~/server/selectors/storyline.selector';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readStorylineChaptersForPostsViaKysely,
+  readStorylineChaptersForPostsViaPrisma,
+} from '~/server/services/hot-reads-8.reads';
+import {
   bustFetchThroughCache,
   fetchThroughCache,
   setFetchThroughCache,
@@ -147,33 +157,6 @@ const toCastUser = <T extends { bannedAt: Date | null; deletedAt: Date | null }>
   deletedAt: _deletedAt,
   ...user
 }: T) => user;
-
-/** The title's rating, as the text scan or a moderator set it. */
-const storylineTitleLevelSelect = {
-  nsfwLevel: true,
-  moderatorNsfwLevel: true,
-} satisfies Prisma.StorylineSelect;
-
-/**
- * Chapter 1, as `isStorylineHidden` judges it. Its level is also the story's level for the reader's
- * browsing-level gate.
- */
-const storylineRootChapterSelect = {
-  where: { depth: 0 },
-  select: {
-    id: true,
-    postId: true,
-    removedAt: true,
-    post: {
-      select: {
-        nsfwLevel: true,
-        publishedAt: true,
-        tosViolation: true,
-        user: { select: { bannedAt: true, deletedAt: true } },
-      },
-    },
-  },
-} satisfies Prisma.Storyline$chaptersArgs;
 
 /** What the read paths need to decide whether the storyline is hidden from a viewer. */
 const storylineReadSelect = {
@@ -3242,37 +3225,12 @@ export async function getStorylinesForPosts({
   browsingLevel: number;
 }) {
   if (!postIds.length) return {};
+  const readChapters = async () =>
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
+      ? readStorylineChaptersForPostsViaKysely((await loadKyselyDb()).kyselyRead, postIds)
+      : readStorylineChaptersForPostsViaPrisma(dbRead, postIds);
   const [chapters, blockedUserIds] = await Promise.all([
-    dbRead.storylineChapter.findMany({
-      where: { postId: { in: postIds } },
-      select: {
-        id: true,
-        postId: true,
-        depth: true,
-        removedAt: true,
-        post: {
-          select: {
-            nsfwLevel: true,
-            userId: true,
-            tosViolation: true,
-            user: { select: { bannedAt: true, deletedAt: true } },
-          },
-        },
-        storyline: {
-          select: {
-            id: true,
-            title: true,
-            userId: true,
-            maxNsfwLevel: true,
-            minorByScan: true,
-            tosViolation: true,
-            ...storylineTitleLevelSelect,
-            user: { select: { bannedAt: true, deletedAt: true } },
-            chapters: storylineRootChapterSelect,
-          },
-        },
-      },
-    }),
+    readChapters(),
     getViewerExcludedIds(viewer),
   ]);
 

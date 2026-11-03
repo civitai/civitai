@@ -1,10 +1,10 @@
 ---
 paths:
-  - "**/*.test.ts"
-  - "**/*.test.tsx"
-  - "**/__tests__/**"
-  - "vitest.config.mts"
-  - "scripts/test-cache/**"
+  - '**/*.test.ts'
+  - '**/*.test.tsx'
+  - '**/__tests__/**'
+  - 'vitest.config.mts'
+  - 'scripts/test-cache/**'
 ---
 
 # Testing
@@ -24,6 +24,7 @@ A test earns its place only if it can catch a bug a caller would notice: a user,
 ## Removing tests
 
 Delete a test when any of these hold, and list each deletion with its reason:
+
 1. No plausible mutation of its subject turns it red.
 2. Every mutation that turns it red also turns another kept test red.
 3. It restates the code or tests logging, metrics or wiring (above).
@@ -35,6 +36,7 @@ To measure a cleanup, run the full suite before and after on the same `origin/ma
 ## Running and reading suites
 
 - **CI coverage differs per suite.** See the job comments in `.github/workflows/lint.yml`; the `apps/*` suites are in `apps.yml`, which runs only when a PR touches what they read. **A draft PR runs ESLint only**: the other jobs start when it is marked ready, or dispatch one (`gh workflow run lint.yml --ref <branch> -f only=<job>`). The unit suite runs on pushes to `main` and on `workflow_dispatch` (`only: unit`), not on pull requests. **The `full-ci` label runs the full suite on a PR** (draft or not): `gh pr edit <n> --add-label full-ci`, or `gh pr create ... --label full-ci`; to have it on every PR, always add it. Adding it dispatches Lint (`only: all`) and the app suites on the branch head at once (`.github/workflows/full-ci.yml`; those runs are not in `gh pr checks`, open the `Start full CI on label` check's summary for links); every later push runs the shards in the PR's own Lint run while the label stays on (app suites still behind `apps.yml`'s `paths:` filter). Inside that job a PR runs the moderator suite only when something it reads changed (`scripts/ci/app-suite-scope.mjs`); push to `main` and dispatch always run it. Any other label starts only one skipped `Start full CI on label` check. Not for fork PRs. It covers Lint and the app suites, not schema drift, tRPC parity or the Windows smoke. `main` has no required status checks, so no suite blocks a merge, and a `continue-on-error` job doesn't even render red.
+- **Test files are not in `pnpm run typecheck`, and vitest strips types.** Their only typecheck is `pnpm run typecheck:tests` (TypeScript 7 from `tools/ts7`; install it once with `pnpm -C tools/ts7 install --ignore-workspace`), a ratchet that fails on a new or worsened file and runs on non-draft PRs (not on pushes to `main`). For a verdict before the PR, run it locally or dispatch it on your branch (`gh workflow run lint.yml --ref <branch> -f only=typecheck-tests`; prefer the dispatch on a shared box, since it is not queued). A mock or fixture typed against the real code is what notices the code changed shape.
 - **Example covering run:** `pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts`
 - **Why the final full run matters, and why not between edits:** a change in a widely imported service (`src/server/services/`) can surface failures anywhere; but the suite is ~41,600 tests serialised through the dev-server queue, so running it between edits blocks everyone else's runs.
 - **A green full run can still hide a failure you caused.** Read the failing-file list, not the count. If tests fail, re-run those same files on `main` (in a separate worktree; don't `git stash` here) to see whether they already failed.
@@ -104,6 +106,7 @@ Why: a hand-listed mock couples the test to the whole transitive import graph. A
 Awaiting a state to arrive is safe; awaiting one that will leave (a spinner on a ceiling, a debounce window, anything torn down on a timer) is a race `expect.element` cannot win. It polls every 50 ms against the test's remaining budget (browser-mode `testTimeout` defaults to 15 s; the `component` project does not override it), and once the state is gone it never returns. Such tests are green on a quiet box and red on a busy one.
 
 Fix it structurally, in this order:
+
 1. **Make the state absorbing.** Drive the component so nothing can take the state away (e.g. `rerender` with a window so large the timer can never fire), then assert it. Add a negative control proving the prop change alone did not produce the state.
 2. **Don't assert the transient at all.** Await the absorbing end-state and pin the intermediate step through a non-DOM observable (a mock call count).
 

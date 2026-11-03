@@ -91,7 +91,7 @@ export async function pollIterationWorkflow({
   userId,
   ctx,
 }: PollIterationArgs) {
-  const token = await getOrchestratorToken(userId, ctx);
+  const token = await getOrchestratorToken(userId, ctx, { allowRestricted: true });
   const workflow = await getWorkflow({
     token,
     path: { workflowId },

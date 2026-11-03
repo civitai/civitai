@@ -18,6 +18,7 @@ import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
   input,
@@ -70,6 +71,7 @@ export const getUserProfileHandler = async ({
           muted: false,
           links: [],
           cosmetics: [],
+          showcaseHat: null,
           rank: null,
           leaderboardShowcase: null,
           stats: null,
@@ -99,7 +101,7 @@ export const getUserProfileHandler = async ({
       }
     }
 
-    return user;
+    return { ...user, showcaseHat: await getShowcaseHatForUser(user.id) };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

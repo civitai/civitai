@@ -228,7 +228,7 @@ export function AppListingCardSkeleton() {
             on the left and the creator on the right, at the card's footer height. It is
             reserved unconditionally (the rollup half always renders on a card, and the play
             count shares its line). */}
-        <Divider mt="auto" />
+        <Divider mt="auto" style={{ marginInline: 'calc(var(--mantine-spacing-md) * -1)' }} />
         <Group
           gap="sm"
           wrap="nowrap"
