@@ -286,6 +286,18 @@ describe('stickers a push carries', () => {
     expect(h.fetch).not.toHaveBeenCalled();
   });
 
+  test('a read already in flight does not undo a push that landed during it', async () => {
+    let answer!: (v: Record<number, unknown[]>) => void;
+    h.fetch.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    await mount([1]);
+    send({}); // an older server's push: schedules a read
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    send({ stickers: hat });
+    await act(async () => answer({ 1: [] }));
+    expect(latest!.stickers[1]).toEqual(hat);
+  });
+
   test('a push with stickers cancels a read an older push scheduled', async () => {
     await mount([1]);
     send({}); // an older server's push: schedules a read
