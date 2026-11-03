@@ -170,12 +170,19 @@ const ALL_SUMMARY: Summary = Object.fromEntries(
  * one (`canBuild` / `canSeeStore`). That is what lets the red be measured by running this
  * exact text at `origin/main`.
  */
-function context(opts: { store: boolean; author: boolean; getStarted: boolean }): Context {
+function context(opts: {
+  store: boolean;
+  author: boolean;
+  getStarted: boolean;
+  /** Defaults to signed in, so every pre-existing case reads exactly as before. */
+  signedIn?: boolean;
+}): Context {
   return {
     isAuthor: opts.author,
     canSeeStore: opts.store,
     canGetStarted: opts.getStarted,
     canBuild: opts.store && (opts.author || opts.getStarted),
+    isSignedIn: opts.signedIn ?? true,
   };
 }
 
@@ -300,12 +307,12 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
 
   /**
    * THE "My apps" ROW (`/apps`, the viewer's app home). Its page answers `notFound` with the
-   * store gate and otherwise RENDERS or REDIRECTS to the store (signed out / old store link),
-   * so "admits" here is "does not 404" — a redirect is a working door, a `notFound` is the
-   * #3899 / #4668 class. Evaluated against the page's real resolver, for a signed-in viewer
-   * AND a signed-out one.
+   * store gate, REDIRECTS a signed-out viewer to the store, and otherwise RENDERS the home —
+   * so the tab must show exactly when the page RENDERS (`props`): never into a 404, and not
+   * as a redirect hop to the Marketplace entry beside it. Evaluated against the page's real
+   * resolver, for a signed-in viewer AND a signed-out one.
    */
-  it('My apps is visible exactly when /apps does not answer notFound', () => {
+  it('My apps is visible exactly when /apps RENDERS the home (store access AND signed in)', () => {
     const row = rows.find((r) => r.href === '/apps');
     expect(row, 'the My apps row is missing from appsSections').toBeDefined();
     expect(row!.label).toBe('My apps');
@@ -317,7 +324,7 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
             const tabVisible = evaluate(
               row!.visible,
               summary,
-              context({ store, author, getStarted: false })
+              context({ store, author, getStarted: false, signedIn: !!user })
             );
             const pageAnswers = resolveAppsHomeAccess({
               features: { appListings: store },
@@ -325,7 +332,7 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
               query: {},
             });
             expect(
-              !('notFound' in pageAnswers),
+              'props' in pageAnswers,
               `store=${store} author=${author} signedIn=${!!user}: the My apps TAB is ` +
                 `${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps\` answers ` +
                 `${JSON.stringify(pageAnswers)}.`

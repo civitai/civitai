@@ -451,25 +451,19 @@ describe('the rail — the Build tab keys off canAccessAppsBuild', () => {
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // hasPendingInvites: true
     await renderRail();
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual([
-      'My apps',
-      'Activity',
-      'Revenue',
-      'Marketplace',
-      'Build',
-      'Review',
-    ]);
+    // No "My apps" either: it is signed-in only (`/apps` redirects a signed-out viewer).
+    expect(renderedSections()).toEqual(['Activity', 'Revenue', 'Marketplace', 'Build', 'Review']);
     expect(link('Invites').elements()).toHaveLength(0);
   });
 
-  test('a logged-out viewer with no capability gets the two store entries and no Build', async () => {
+  test('a logged-out viewer with no capability gets no bar (Marketplace alone)', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = null;
     mocks.navSummary = undefined; // the summary query is protected — no data for anon
-    await renderRail();
-    // `canBuild` needs one of the two capability terms, so only the store rows qualify.
-    await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
+    await renderRail(); // barrier awaited inside — absence below is a real observation
+    // `canBuild` needs a capability term and "My apps" needs a session, so Marketplace
+    // alone qualifies and the `< 2` collapse removes the bar.
+    expect(renderedSections()).toEqual([]);
   });
 
   test('🔴 a logged-out viewer WITH appBlocksGetStarted does get Build (positive control)', async () => {
@@ -481,7 +475,7 @@ describe('the rail — the Build tab keys off canAccessAppsBuild', () => {
     mocks.navSummary = undefined;
     await renderRail();
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 });
 

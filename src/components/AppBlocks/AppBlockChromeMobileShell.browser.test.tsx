@@ -395,7 +395,7 @@ describe('AppBlockChrome mobile shell', () => {
     expect(sheet, 'the ⋮ must have opened SOME surface').not.toBeNull();
 
     const labels = rowLabels(sheet as HTMLElement);
-    for (const label of ['Marketplace', 'App activity', 'My apps']) {
+    for (const label of ['My apps', 'Marketplace', 'App activity', 'My builds']) {
       expect(
         labels,
         `at ${PHONE[0]}px "${label}" must be reachable from the ⋮ — the platform nav folds into ` +
@@ -509,7 +509,7 @@ describe('AppBlockChrome mobile shell', () => {
     // 🔴 THE ROW CLICKED IS AN ACTION, NOT A LINK, AND THAT IS FORCED RATHER THAN
     // ARBITRARY. `NextLink` renders a REAL anchor; clicking one in browser mode
     // navigates the test iframe and the run dies with "Cannot connect to the iframe"
-    // — measured, on the first draft of this test with "My apps". An action row
+    // — measured, on the first draft of this test with "My builds". An action row
     // ("Permissions & activity", which needs `appBlockId` threaded) exercises exactly
     // the same `ChromeSurfaceItem` close path with nothing to navigate to.
     await renderShell({ viewport: PHONE, expectCompact: true, appBlockId: 'ab_1' });

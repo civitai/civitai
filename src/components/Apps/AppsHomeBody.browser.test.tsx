@@ -17,14 +17,26 @@ const mocks = vi.hoisted(() => ({
   popularItems: [] as unknown[],
   popularInputs: [] as Record<string, unknown>[],
   flags: {} as Record<string, boolean>,
+  user: { id: 41, username: 'viewer' } as { id: number; username: string } | null,
+  detailIcons: {} as Record<string, string>,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({
     'appListings.listMyApps': {
       useQuery: () => ({ ...mocks.myApps, refetch: vi.fn() }),
+    },
+    // The live icon read a recents-only tile makes (the chrome's `useChromeListingDetail`).
+    'appListings.getAppDetail': {
+      useQuery: (input: { slug: string }) => ({
+        data: mocks.detailIcons[input.slug]
+          ? { iconUrl: mocks.detailIcons[input.slug] }
+          : undefined,
+        isLoading: false,
+        error: null,
+      }),
     },
     'appListings.listAvailable': {
       useQuery: (input: Record<string, unknown>) => {
@@ -40,6 +52,9 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 
 const { AppsHomeBody } = await import('./AppsHomeBody');
+const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
+  './recentlyOpenedAppsStore'
+);
 
 const PAGE_APP: MyAppRow = {
   listingId: 'apl_page1',
@@ -106,6 +121,9 @@ beforeEach(() => {
   mocks.popularItems = [];
   mocks.popularInputs = [];
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+  mocks.user = { id: 41, username: 'viewer' };
+  mocks.detailIcons = {};
+  clearRecentlyOpenedApps();
 });
 
 describe('the My apps grid', () => {
@@ -196,5 +214,92 @@ describe('loading', () => {
     renderWithProviders(<AppsHomeBody />);
     await expect.element(page.getByTestId('apps-home-skeleton')).toBeInTheDocument();
     expect(page.getByTestId('apps-home-tile').elements()).toHaveLength(0);
+  });
+});
+
+describe('recents on the home', () => {
+  /** Which of `names` each tile shows, in DOM order. */
+  const tileOrder = (names: string[]) =>
+    page
+      .getByTestId('apps-home-tile')
+      .elements()
+      .map((t) => names.find((n) => (t.textContent ?? '').includes(n)) ?? '?');
+
+  test('🔴 this account’s recents lead the grid, deduped against the server list', async () => {
+    // Recorded oldest-first, so the store holds [Prompt Lab, Neon Sketch] newest-first.
+    recordRecentlyOpenedApp(
+      {
+        id: 'ab_neon',
+        slug: 'neon-sketch',
+        blockId: 'neon-sketch',
+        kind: 'onsite',
+        hasPage: true,
+        name: 'Neon Sketch',
+      },
+      41
+    );
+    recordRecentlyOpenedApp(
+      {
+        id: 'apl_off1',
+        slug: 'prompt-lab',
+        kind: 'offsite',
+        name: 'Prompt Lab',
+        externalUrl: 'https://promptlab.example.org/app',
+      },
+      41
+    );
+    mocks.detailIcons = { 'neon-sketch': 'https://img.invalid/neon.png' };
+    renderWithProviders(<AppsHomeBody />);
+
+    await expect.element(page.getByText('Neon Sketch')).toBeVisible();
+    // Prompt Lab is BOTH a recent and a server row → one tile, placed by recents order;
+    // Pixel Forge (server only) follows.
+    expect(tileOrder(['Prompt Lab', 'Neon Sketch', 'Pixel Forge'])).toEqual([
+      'Prompt Lab',
+      'Neon Sketch',
+      'Pixel Forge',
+    ]);
+    // The recents-only tile launches from its stored fields and resolves its icon LIVE.
+    expect(launch('Neon Sketch').getAttribute('href')).toBe('/apps/run/neon-sketch');
+    const neonTile = launch('Neon Sketch').closest('[data-testid="apps-home-tile"]')!;
+    expect(neonTile.getAttribute('data-source')).toBe('recent');
+    expect(
+      neonTile.querySelector('[data-testid="apps-home-tile-icon"]')?.getAttribute('data-icon-src')
+    ).toBe('https://img.invalid/neon.png');
+  });
+
+  test('🔴 another account’s recents never appear', async () => {
+    recordRecentlyOpenedApp(
+      {
+        id: 'ab_neon',
+        slug: 'neon-sketch',
+        blockId: 'neon-sketch',
+        kind: 'onsite',
+        hasPage: true,
+        name: 'Neon Sketch',
+      },
+      73
+    );
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+    expect(page.getByText('Neon Sketch').elements()).toHaveLength(0);
+  });
+
+  test('🔴 recents alone keep the home out of its empty state', async () => {
+    mocks.myApps = { data: [], isLoading: false, isError: false };
+    recordRecentlyOpenedApp(
+      {
+        id: 'ab_neon',
+        slug: 'neon-sketch',
+        blockId: 'neon-sketch',
+        kind: 'onsite',
+        hasPage: true,
+        name: 'Neon Sketch',
+      },
+      41
+    );
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Neon Sketch')).toBeVisible();
+    expect(page.getByTestId('apps-home-empty').elements()).toHaveLength(0);
   });
 });

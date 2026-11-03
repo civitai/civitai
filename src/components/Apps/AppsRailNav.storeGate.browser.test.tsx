@@ -337,15 +337,17 @@ describe('the rail — a store-only viewer gets the two store entries, and no Bu
     expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
-  test('a logged-out viewer with the store flag gets the two store entries and no Build', async () => {
+  test('🔴 a logged-out viewer with the store flag gets NO bar: My apps is hidden signed out', async () => {
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: false };
     mocks.user = null;
-    await renderRail();
+    await renderRail(); // barrier awaited inside — absence below is a real observation
 
-    // No capability term holds, so `canBuild` is false. `/apps` redirects a signed-out
-    // viewer to the store, so the My apps entry is a working door (one redirect), never a 404.
-    await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
+    // No capability term holds (`canBuild` false), and "My apps" needs a signed-in viewer
+    // (`/apps` only redirects them to the store), so Marketplace alone qualifies and the
+    // `< 2` collapse removes the bar. The first arm of this describe — the same flags,
+    // signed in — is the positive control.
+    expect(renderedSections()).toEqual([]);
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
   });
 });
 

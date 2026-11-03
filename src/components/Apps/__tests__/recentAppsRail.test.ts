@@ -1130,36 +1130,4 @@ describe('reconcileRecentApps', () => {
       );
     });
   });
-
-  /**
-   * 🔴 The memo is an OPTIONAL parameter, so the un-healing bug is one deleted
-   * argument away and would pass every test above. This scans the one production
-   * call site, the same way the chrome-mount gate is scanned earlier in this file.
-   */
-  describe('the /apps store is actually WIRED to the monotonic form', () => {
-    const source = fs
-      .readFileSync(
-        path.resolve(__dirname, '../../..', 'components/Apps/AppListingsMarketplaceBody.tsx'),
-        'utf8'
-      )
-      // Strip comments — that file's prose names these symbols repeatedly, and
-      // matching prose would scope the assertion to a doc-comment, not to code.
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^[ \t]*\/\/.*$/gm, '');
-
-    it('found the call site (the scan itself must not silently match nothing)', () => {
-      expect(source.length).toBeGreaterThan(1000);
-      expect(source).toMatch(/reconcileRecentApps\(/);
-    });
-
-    it('🔴 passes a cross-render memo — a two-arg call restores the un-healing bug', () => {
-      expect(source).toMatch(/reconcileRecentApps\(\s*recents,\s*items,\s*[A-Za-z0-9_.]+\s*\)/);
-    });
-
-    it('🔴 holds that memo in a REF — module state would leak across mounts', () => {
-      // `useState`/a module-level Map would either not survive re-render or would
-      // outlive the mount and be shared between two stores.
-      expect(source).toMatch(/useRef<RecentHealMemo>\(\s*new Map\(\)\s*\)/);
-    });
-  });
 });

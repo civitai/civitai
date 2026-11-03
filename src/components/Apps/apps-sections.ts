@@ -141,6 +141,13 @@ export type AppsNavContext = {
    * by leaving an entry pointing at a page that answers `notFound`.
    */
   canSeeStore: boolean;
+  /**
+   * A signed-in viewer → "My apps" may show. The home is a per-user surface: `/apps`
+   * redirects a signed-out viewer to the store, so for them the entry would only ever be a
+   * redirect hop to the Marketplace entry beside it. Session-derived and SSR-seeded, so it
+   * is as hydration-safe as `isAuthor`.
+   */
+  isSignedIn: boolean;
 };
 
 /** No capabilities — the shape a viewer with no flags at all resolves to. */
@@ -148,6 +155,7 @@ export const NO_APPS_NAV_CAPABILITIES: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: false,
+  isSignedIn: false,
 };
 
 /**
@@ -237,23 +245,22 @@ export type AppsSection = {
  * outlier is still submit.tsx's body.
  *
  * The rail still hides itself entirely below two sections — a one-entry "navigation" is
- * chrome that navigates nowhere. ⚠️ The cohort that used to hit that floor with a store
- * entry — a store-visible non-author with no installs, who qualified for Marketplace ALONE —
- * no longer does: "My apps" is gated on the same store access, so every store-visible
- * viewer has at least two entries. The floor now bites only a viewer with no store access,
- * who has zero.
+ * chrome that navigates nowhere. ⚠️ Since "My apps" (store access AND signed in) joined
+ * the table, a SIGNED-IN store-visible viewer always has at least two entries. The floor
+ * still bites a SIGNED-OUT store-visible viewer with no build capability (Marketplace
+ * alone), and a viewer with one summary row and no store access.
  */
 export const appsSections: AppsSection[] = [
   /**
    * The viewer's app HOME (`/apps`). Gated on the SAME store access as Marketplace, because
    * `/apps` answers `notFound` with exactly the store gate (`resolveAppsHomeAccess` →
-   * `resolveAppsPageAccess`). A signed-out viewer the store admits is redirected to the
-   * store by that page, so offering them this entry costs one redirect, never a 404.
+   * `resolveAppsPageAccess`) — AND on a signed-in viewer, because `/apps` redirects a
+   * signed-out one to the store: for them this entry would only be a hop to Marketplace.
    *
-   * ⚠️ IT LIFTS THE `< 2` COLLAPSE FOR THE STORE-ONLY COHORT, deliberately. A store-visible
-   * viewer with nothing else used to qualify for Marketplace ALONE and get no rail; they now
-   * have two real destinations (their apps, the store), which is the floor the collapse
-   * exists to enforce, so the rail renders for them.
+   * ⚠️ IT LIFTS THE `< 2` COLLAPSE FOR THE SIGNED-IN STORE-ONLY COHORT, deliberately. Such a
+   * viewer used to qualify for Marketplace ALONE and get no rail; they now have two real
+   * destinations (their apps, the store). A SIGNED-OUT store-only viewer is back to
+   * Marketplace alone, and the collapse hides the rail for them again.
    */
   {
     id: 'my-apps',
@@ -261,7 +268,7 @@ export const appsSections: AppsSection[] = [
     label: 'My apps',
     icon: IconApps,
     group: 'yours',
-    visible: (_s, c) => c.canSeeStore,
+    visible: (_s, c) => c.canSeeStore && c.isSignedIn,
   },
   /**
    * 🔴 GATED ON STORE ACCESS — it was `() => true`, and that unconditional predicate was

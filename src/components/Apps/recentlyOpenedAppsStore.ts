@@ -288,8 +288,21 @@ function coerceEnvelope(raw: unknown): { ownerId: RecentsOwnerId; apps: RecentAp
 export function getRecentlyOpenedApps(ownerId: RecentsOwnerId): RecentApp[] {
   if (!isClient()) return [];
   try {
-    const raw = window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY);
-    if (!raw) return [];
+    return parseRecentsForOwner(window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY), ownerId);
+  } catch {
+    // A localStorage access that throws (private mode, a disabled store) → no recents.
+    return [];
+  }
+}
+
+/**
+ * The pure half of {@link getRecentlyOpenedApps}: the stored blob in, `ownerId`'s list out.
+ * Split out so the owner isolation and the corrupt-blob handling are testable without a
+ * browser (the `/apps` home's merge tests read recents through this). Never throws.
+ */
+export function parseRecentsForOwner(raw: string | null, ownerId: RecentsOwnerId): RecentApp[] {
+  if (!raw) return [];
+  try {
     const envelope = coerceEnvelope(JSON.parse(raw));
     // Unownable blob (legacy / unknown version / corrupt owner) → no recents.
     if (!envelope) return [];

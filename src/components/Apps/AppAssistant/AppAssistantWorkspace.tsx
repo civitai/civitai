@@ -453,7 +453,7 @@ export function AppAssistantWorkspace({
         },
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
         openApp: () => live.current.active?.app ?? null,
-        // The open app's review and user feedback, through My apps' own reads as the user; a status
+        // The open app's review and user feedback, through My builds' own reads as the user; a status
         // changes only when the user presses its card. (On the server runner the runner reads it.)
         feedback: {
           source: createAppFeedbackSource({

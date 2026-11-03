@@ -489,13 +489,6 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'deliberate, add it here WITH the reason; if it is not, add it to the chrome ' +
         '(the subnav is the source of truth, so the chrome follows).'
     ).toEqual([
-      // 🔴 `/apps` — the viewer's "My apps" HOME, added when the store moved to
-      // `/apps/store`. Excluded for a NAMING reason, not a scope one: the chrome already
-      // carries a "My apps" item for the author's app list (`/apps/build?view=apps`), and
-      // a second "My apps" with a different destination in the same menu would be worse
-      // than its absence. Which surface keeps the name is an open product decision; when
-      // it is made, this entry leaves the list by the home being added to the chrome.
-      '/apps',
       // Owner-management surfaces. Pre-existing exclusions: the chrome is navigation for
       // someone RUNNING an app, not managing one.
       //
@@ -511,21 +504,25 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     ]);
   });
 
-  it('the four shared destinations are the expected ones, drawn with the expected glyphs', () => {
+  it('the five shared destinations are the expected ones, drawn with the expected glyphs', () => {
     // The relationship test above is the real guard; this one names the resolved
     // values so a failure reads as a diff rather than sending you to two files.
     // It is NOT redundant coverage — it is what makes the other test's message
     // actionable, and it fails if the SHARED SET changes rather than just an icon.
     const nav = parsePlatformNav(code(read(CHROME)));
+    // 🔴 "My apps" is the `/apps` HOME (the viewer's launcher), leading as it does in the
+    // store rail; the author's app list is "My builds" (owner decision), so no two items
+    // share a label.
     expect(nav).toEqual([
+      { href: '/apps', label: 'My apps', icon: 'IconApps' },
       { href: '/apps/store', label: 'Marketplace', icon: 'IconBuildingStore' },
       { href: '/apps/activity', label: 'App activity', icon: 'IconPlugConnected' },
-      { href: '/apps/build?view=apps', label: 'My apps', icon: 'IconCode' },
+      { href: '/apps/build?view=apps', label: 'My builds', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
     ]);
   });
 
-  it('the marketplace LABEL is shared verbatim; the other three stay chrome-specific', () => {
+  it('the marketplace and home LABELS are shared verbatim; the other three stay chrome-specific', () => {
     const subnav = parseSubNav(code(read(SUBNAV)));
     const nav = parsePlatformNav(code(read(CHROME)));
     const navByHref = new Map(nav.map((e) => [e.href, e]));
@@ -538,6 +535,9 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       'the chrome and the subnav must call `/apps/store` the same thing'
     ).toBe(subByHref.get('/apps/store')?.label);
     expect(navByHref.get('/apps/store')?.label).toBe('Marketplace');
+    // …and so is the home's: the chrome and the rail call `/apps` "My apps".
+    expect(navByHref.get('/apps')?.label).toBe(subByHref.get('/apps')?.label);
+    expect(navByHref.get('/apps')?.label).toBe('My apps');
 
     // 🔴 THE OTHER THREE DELIBERATELY DIFFER, so this pins the chrome's own copy
     // rather than asserting equality. The subnav's tabs sit under an "Apps"
@@ -545,7 +545,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // stand alone in a dropdown over a running app and need the noun. Asserting
     // equality here would force a wrong "fix" in one file or the other.
     expect(navByHref.get('/apps/activity')?.label).toBe('App activity');
-    expect(navByHref.get('/apps/build?view=apps')?.label).toBe('My apps');
+    expect(navByHref.get('/apps/build?view=apps')?.label).toBe('My builds');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
     expect(subByHref.get('/apps/activity')?.label).toBe('Activity');
   });
@@ -681,6 +681,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'excluding it; adding it ungated is not. Removing one deletes a door out of a ' +
         'running app. Update this list deliberately, WITH the reason.'
     ).toEqual([
+      '/apps', // My apps — platform nav (the viewer's launcher home)
       // 🔴 REPOINTED TWICE, AND THE SORT POSITION MOVED BOTH TIMES — the list is
       // `.sort()`ed, so neither move is a second change to review. `/apps/mine` →
       // `/apps/build` (301) sorted it before `/apps/installed`; `/apps/installed` →
@@ -688,7 +689,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       '/apps/activity', // App activity — platform nav
       '/apps/activity', // Manage apps — ⋮ overflow; the pair (c) governs their labels
       // `?view=apps`: bare `/apps/build` opens the App Assistant for an author who holds it.
-      '/apps/build?view=apps', // My apps — platform nav; the store calls this row "Build"
+      '/apps/build?view=apps', // My builds — platform nav; the store calls this row "Build"
       '/apps/review', // Review — platform nav, moderator-gated
       // The three store doors, repointed from `/apps` when the store moved to `/apps/store`
       // (`/apps` became the viewer's "My apps" home). The sort moved them to the end.

@@ -56,7 +56,8 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 /**
  * This suite mounts ANONYMOUSLY (the mock above), and recents are ACCOUNT-scoped
  * (#4048) with `null` — signed out — as its own bucket, not a wildcard. Seeds
- * must therefore be written as `null`, or the body reads an empty rail.
+ * are therefore written as `null`, so the strip-absence test seeds a store the
+ * viewer could actually read.
  */
 const SESSION_OWNER_ID: number | null = null;
 
@@ -135,7 +136,7 @@ function StoreWithControls() {
     </>
   );
 }
-const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
+const { clearRecentlyOpenedApps, getRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
   './recentlyOpenedAppsStore'
 );
 
@@ -439,21 +440,13 @@ describe('AppListingsMarketplaceBody', () => {
     expect(grid.parentElement).not.toBe(grid);
   });
 
-  // ── "Recently opened" rail ──────────────────────────────────────────────────
-  // Selection/target logic is pinned in the CI-run node unit suite
-  // (__tests__/recentAppsRail.test.ts). What these assert is the WIRING: the
-  // page really reads the store after mount, really renders the rail BELOW the
-  // search/filter controls but ABOVE the result grid, and really renders NOTHING
-  // for a viewer with no recents.
+  // ── No "Recently opened" strip ─────────────────────────────────────────────
+  // The store (`/apps/store`) is pure discovery: recents moved to the viewer's
+  // "My apps" home (`AppsHomeBody`). The card CTAs still WRITE recents.
 
-  test('a viewer with NO recents sees no rail at all (no heading, no reserved space)', async () => {
-    renderWithProviders(<StoreWithControls />);
-    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
-    expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
-    expect(page.getByText('Recently opened').elements()).toHaveLength(0);
-  });
-
-  test('🔴 a viewer WITH recents sees the rail ABOVE the "App Marketplace" heading and the search, and ABOVE the grid', async () => {
+  test('🔴 the store renders NO recents strip, even for a viewer WITH recents', async () => {
+    // The seed is real and readable for this (signed-out) owner bucket — the control
+    // below proves it, so the absence is the strip being gone, not an empty store.
     recordRecentlyOpenedApp(
       {
         id: 'ab_1',
@@ -465,31 +458,12 @@ describe('AppListingsMarketplaceBody', () => {
       },
       SESSION_OWNER_ID
     );
+    expect(getRecentlyOpenedApps(SESSION_OWNER_ID).map((a) => a.slug)).toEqual(['gen-matrix']);
+
     renderWithProviders(<StoreWithControls />);
-
-    const rail = page.getByTestId('apps-recent-rail');
-    await expect.element(rail).toBeInTheDocument();
-    await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
-
-    // Document order, asserted on every side: rail, then heading, then search, then the first card.
-    const railEl = rail.element();
-    const heading = page.getByRole('heading', { name: 'App Marketplace' }).element();
-    const search = page.getByLabelText('Search').element();
-    const firstCard = page.getByTestId('apps-listing-grid-col').elements()[0];
-
-    const follows = (a: Element, b: Element) =>
-      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(follows(railEl, heading)).toBe(true);
-    expect(follows(heading, search)).toBe(true);
-    expect(follows(search, firstCard)).toBe(true);
-  });
-
-  test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {
-    recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' }, SESSION_OWNER_ID);
-    renderWithProviders(<StoreWithControls />);
-    const item = page.getByTestId('apps-recent-rail-item');
-    await expect.element(item).toBeInTheDocument();
-    // hasPage unknown for a legacy entry → the always-valid detail link.
-    await expect.element(item).toHaveAttribute('href', '/apps/store-preview/legacy-app');
+    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
+    expect(page.getByText('Recently opened').elements()).toHaveLength(0);
+    expect(page.getByText('Gen Matrix').elements()).toHaveLength(0);
   });
 });

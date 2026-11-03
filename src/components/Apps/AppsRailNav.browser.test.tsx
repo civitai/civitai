@@ -76,6 +76,7 @@ const AUTHOR: AppsNavContext = {
   isAuthor: true,
   canBuild: true,
   canSeeStore: true,
+  isSignedIn: true,
 };
 /**
  * A store-visible NON-author who may still reach `/apps/build`: `canAccessAppsBuild`'s
@@ -85,6 +86,7 @@ const BUILDER: AppsNavContext = {
   isAuthor: false,
   canBuild: true,
   canSeeStore: true,
+  isSignedIn: true,
 };
 /**
  * The widened store-visibility tester cohort: sees the store, cannot author and cannot
@@ -96,6 +98,7 @@ const NOT_AUTHOR: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: true,
+  isSignedIn: true,
 };
 /**
  * No store access at all. `canBuild` is `false` here BY CONSTRUCTION, not by choice:
@@ -106,6 +109,7 @@ const NO_STORE: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: false,
+  isSignedIn: true,
 };
 
 /**
@@ -517,6 +521,19 @@ describe('the collapse, and what clears it', () => {
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
+  });
+
+  test('🔴 a SIGNED-OUT store-visible non-author gets Marketplace alone, so NO rail', async () => {
+    await renderNav(NONE, { ...NOT_AUTHOR, isSignedIn: false }, '/apps/store');
+    await awaitCommit(); // without this the assertions below cannot fail — see RENDER_BARRIER
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+    expect(renderedSections()).toEqual([]);
+  });
+
+  test('POSITIVE CONTROL: the SAME viewer signed in gets My apps + Marketplace', async () => {
+    await renderNav(NONE, { ...NOT_AUTHOR, isSignedIn: true }, '/apps/store');
+    await expect.element(link('My apps')).toBeInTheDocument();
     expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
   });
 

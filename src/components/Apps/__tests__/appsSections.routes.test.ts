@@ -16,7 +16,8 @@ import {
  * "Marketplace". `current` is always a Next `router.pathname` (a ROUTE, no query string).
  */
 
-const STORE_ONLY = { ...NO_APPS_NAV_CAPABILITIES, canSeeStore: true };
+const STORE_ONLY = { ...NO_APPS_NAV_CAPABILITIES, canSeeStore: true, isSignedIn: true };
+const STORE_SIGNED_OUT = { ...STORE_ONLY, isSignedIn: false };
 
 describe('which section is lit', () => {
   it.each([
@@ -72,17 +73,25 @@ describe('the registry', () => {
 });
 
 describe('visibility', () => {
-  it('🔴 My apps and Marketplace are both visible whenever the store is, and neither without it', () => {
-    const ids = (c: typeof STORE_ONLY) =>
-      visibleAppsSections(EMPTY_APPS_NAV_SUMMARY, c).map((s) => s.id);
+  const ids = (c: typeof STORE_ONLY) =>
+    visibleAppsSections(EMPTY_APPS_NAV_SUMMARY, c).map((s) => s.id);
+
+  it('🔴 signed in with store access → My apps AND Marketplace', () => {
     expect(ids(STORE_ONLY)).toEqual(['my-apps', 'marketplace']);
+  });
+
+  it('🔴 signed OUT with store access → Marketplace only (no My apps)', () => {
+    expect(ids(STORE_SIGNED_OUT)).toEqual(['marketplace']);
+  });
+
+  it('no store access → neither, signed in or not', () => {
+    expect(ids({ ...NO_APPS_NAV_CAPABILITIES, isSignedIn: true })).toEqual([]);
     expect(ids(NO_APPS_NAV_CAPABILITIES)).toEqual([]);
   });
 
-  it('the store-only cohort now clears the rail floor (two destinations, not one)', () => {
-    expect(visibleAppsSections(EMPTY_APPS_NAV_SUMMARY, STORE_ONLY).length).toBeGreaterThanOrEqual(
-      APPS_NAV_MIN_SECTIONS
-    );
+  it('the signed-in store-only cohort clears the rail floor; the signed-out one does not', () => {
+    expect(ids(STORE_ONLY).length).toBeGreaterThanOrEqual(APPS_NAV_MIN_SECTIONS);
+    expect(ids(STORE_SIGNED_OUT).length).toBeLessThan(APPS_NAV_MIN_SECTIONS);
   });
 
   it('a viewer without store access but with installs still falls below the floor', () => {

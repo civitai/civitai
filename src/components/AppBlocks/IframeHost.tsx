@@ -642,8 +642,8 @@ export function AppBlockChrome({
           old href would have made every press from this menu a redirect hop, and
           removing the item outright would delete a door out of a running app for
           the app's own owner — which the ledger guard's own message warns against.
-          So it is repointed, keeping the label ("My apps" still names what an owner
-          arrives at: state C is their app list) and taking the subnav's glyph for
+          So it was repointed (and has since been RELABELLED "My builds" — see below) and
+          takes the subnav's glyph for
           the row it now shares, `IconCode`. It carries `?view=apps` (`MY_APPS_HREF`,
           spelled literally because the chrome-nav ledger parses literal hrefs): an author
           who also holds the App Assistant would otherwise land on the assistant.
@@ -668,11 +668,14 @@ export function AppBlockChrome({
           that.
 
           🔴 THE STORE MOVED TO `/apps/store`, and `/apps` is now the viewer's "My apps"
-          home. That home is deliberately NOT an item here (yet): this menu already has a
-          "My apps" item — the author's app list on `/apps/build` — and two items with one
-          label and two destinations is worse than a missing one. Which surface keeps the
-          name is a product decision; the exclusion is pinned in
-          `chromeNavAlignsWithSubNav.test.ts` with that reason. */}
+          home — the launcher of the apps they have, and so the natural way out of a
+          running app. It leads this section with the subnav's own label and glyph. The
+          author's app list on `/apps/build?view=apps` was "My apps" too; it is now
+          "My builds" everywhere (owner decision), so the two never share a name. The item
+          set is pinned in `chromeNavAlignsWithSubNav.test.ts`. */}
+      <ChromeSurfaceItem href="/apps" leftSection={<IconApps size={14} stroke={1.5} />}>
+        My apps
+      </ChromeSurfaceItem>
       <ChromeSurfaceItem
         href="/apps/store"
         leftSection={<IconBuildingStore size={14} stroke={1.5} />}
@@ -689,7 +692,7 @@ export function AppBlockChrome({
         href="/apps/build?view=apps"
         leftSection={<IconCode size={14} stroke={1.5} />}
       >
-        My apps
+        My builds
       </ChromeSurfaceItem>
       {isModerator && (
         <ChromeSurfaceItem href="/apps/review" leftSection={<IconGavel size={14} stroke={1.5} />}>

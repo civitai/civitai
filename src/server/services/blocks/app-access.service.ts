@@ -1314,11 +1314,11 @@ async function hydrateMyAppListings(
 /** The two booleans the `/apps/*` sub-nav needs in order to offer a route at all. */
 export type AppsNavAccess = {
   /**
-   * ≥1 listing OWNED or held via an ACCEPTED seat → the "My apps" route is non-empty.
+   * ≥1 listing OWNED or held via an ACCEPTED seat → the "My builds" route is non-empty.
    *
    * 🔴 A PENDING OWNERSHIP TRANSFER DELIBERATELY DOES **NOT** COUNT HERE. It confers ZERO
    * capability until accepted — the same consent principle as a pending seat invite, and
-   * `app-ownership-transfer.service` states it in as many words. Lighting "My apps" for an
+   * `app-ownership-transfer.service` states it in as many words. Lighting "My builds" for an
    * offer would advertise a page the recipient's every child query refuses.
    */
   hasEditableApps: boolean;

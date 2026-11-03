@@ -351,22 +351,22 @@ describe('the /apps rail — real SSR → hydrate', () => {
     expect(hydrationConsoleErrors()).toEqual([]);
   });
 
-  test('🔴 DISCRIMINATING CONTROL: the same logged-out viewer WITHOUT get-started server-renders no Build', async () => {
+  test('🔴 DISCRIMINATING CONTROL: the same logged-out viewer WITHOUT get-started server-renders nothing', async () => {
     // Only `appBlocksGetStarted` moves between this and the test above. Without it an
-    // anon non-author has `canBuild: false` and qualifies for the two store rows only —
-    // so the previous test's `toContain('/apps/build')` is attributable to the flag rather
-    // than to "the component renders a Build tab for everybody". (The bar itself still
-    // renders: My apps + Marketplace clear the `< 2` floor.)
+    // anon non-author has `canBuild: false`, and "My apps" is signed-in only, so Marketplace
+    // ALONE qualifies and the `< 2` collapse removes the bar — so the previous test's
+    // `toContain('/apps/build')` is attributable to the flag rather than to "the component
+    // renders a Build tab for everybody".
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: false };
     mocks.user = null;
     mocks.navSummary = undefined;
 
     const html = renderToString(subNav());
     expect(barMarkers(html)).toEqual({
-      landmark: true,
+      landmark: false,
       build: false,
-      myApps: true,
-      marketplace: true,
+      myApps: false,
+      marketplace: false,
     });
 
     await hydrateInto(html, subNav());

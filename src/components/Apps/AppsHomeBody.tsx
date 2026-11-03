@@ -22,12 +22,24 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
+import { chromeRecentAppIconSrc } from '~/components/AppBlocks/chromeRecentAppIconSrc';
+import { useChromeListingDetail } from '~/components/AppBlocks/useChromeListingDetail';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import {
+  mergeHomeApps,
+  type AppsHomeTile as AppsHomeTileModel,
+} from '~/components/Apps/appsHomeMerge';
+import {
+  getRecentlyOpenedApps,
+  recordRecentlyOpenedApp,
+  type RecentApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { activityTabQuery, isActivityTabVisible } from '~/components/Apps/appsActivityTabs';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { MyAppRow } from '~/server/services/blocks/my-apps.logic';
 import {
   appInitial,
   listingPlaceholderGradient,
@@ -39,7 +51,9 @@ import { trpc } from '~/utils/trpc';
 
 /**
  * `/apps` — the signed-in viewer's app HOME ("My apps"): a launcher grid of the apps they
- * have, derived server-side by `appListings.listMyApps`. The store is `/apps/store`.
+ * have — the server-derived list (`appListings.listMyApps`) merged with this browser's
+ * "Recently opened" store for the current account (`mergeHomeApps`, which owns the order and
+ * the dedupe). The store is `/apps/store`.
  *
  * The page (`pages/apps/index.tsx`) owns the gate: it renders this body only for a
  * signed-in viewer the store admits, so nothing here re-checks store access.
@@ -76,10 +90,15 @@ function TileGrid({ children, testId }: { children: ReactNode; testId: string })
   );
 }
 
-function AppIcon({ app }: { app: Pick<MyAppRow, 'iconUrl' | 'name' | 'slug' | 'category'> }) {
+type IconProps = { app: Pick<AppsHomeTileModel, 'name' | 'slug' | 'category'>; src: string | null };
+
+function AppIcon({ app, src }: IconProps) {
   return (
     <Avatar
-      src={app.iconUrl ?? undefined}
+      src={src ?? undefined}
+      data-testid="apps-home-tile-icon"
+      // The resolved source, readable even after a failed image load swaps in the monogram.
+      data-icon-src={src ?? ''}
       alt=""
       radius="md"
       size={APPS_HOME_ICON_PX}
@@ -102,18 +121,31 @@ function AppIcon({ app }: { app: Pick<MyAppRow, 'iconUrl' | 'name' | 'slug' | 'c
   );
 }
 
+/**
+ * A recents-only tile's icon, resolved LIVE: the recents store never persists an icon url, so
+ * this asks the server for the listing exactly as the app chrome's "Recently run" menu does
+ * (`useChromeListingDetail` + `chromeRecentAppIconSrc`) and falls back to the monogram while
+ * loading, on error, and whenever the media gate hides the icon from this viewer.
+ */
+function LiveAppIcon({ app }: { app: IconProps['app'] }) {
+  return <AppIcon app={app} src={chromeRecentAppIconSrc(useChromeListingDetail(app.slug))} />;
+}
+
 export function AppsHomeTile({
   app,
   canManagePermissions,
+  onLaunchExternal,
 }: {
-  app: MyAppRow;
+  app: AppsHomeTileModel;
   canManagePermissions: boolean;
+  /** Records an off-site launch — following the link leaves the SPA, so this is the only chance. */
+  onLaunchExternal?: (recent: RecentApp) => void;
 }) {
   // The primary click LAUNCHES: an in-site link for a page app, a new tab for an off-site
   // one. The menu is a sibling of the link, never inside it, so the tile nests no controls.
   const launchBody = (
     <Group gap="sm" wrap="nowrap">
-      <AppIcon app={app} />
+      {app.iconFromServer ? <AppIcon app={app} src={app.iconUrl} /> : <LiveAppIcon app={app} />}
       <Stack gap={2} style={{ minWidth: 0 }}>
         <Text fw={700} lineClamp={1}>
           {app.name}
@@ -131,7 +163,13 @@ export function AppsHomeTile({
   );
   const launchStyle = { flex: 1, minWidth: 0 };
   return (
-    <Card padding="sm" radius={0} className="rounded-md" data-testid="apps-home-tile">
+    <Card
+      padding="sm"
+      radius={0}
+      className="rounded-md"
+      data-testid="apps-home-tile"
+      data-source={app.source}
+    >
       <Group gap="sm" wrap="nowrap" align="center">
         {app.external ? (
           <Anchor
@@ -142,6 +180,7 @@ export function AppsHomeTile({
             c="inherit"
             aria-label={`Open ${app.name} (opens in a new tab)`}
             data-testid="apps-home-tile-launch"
+            onClick={() => onLaunchExternal?.(app.recent)}
             style={launchStyle}
           >
             {launchBody}
@@ -254,6 +293,7 @@ function EmptyState({ canOpenPage }: { canOpenPage: boolean }) {
 
 export function AppsHomeBody() {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const myApps = trpc.appListings.listMyApps.useQuery();
   // "Manage permissions" deep-links to a tab only the slot flag shows, on a page only the
   // activity gate admits. Offer it only where both would render it.
@@ -261,7 +301,27 @@ export function AppsHomeBody() {
     canAccessAppsActivity(features) &&
     isActivityTabVisible('permissions', { canSeeSlotGatedTabs: !!features.appBlocks });
   const canOpenPage = !!features.appBlocksPages;
-  const apps = myApps.data ?? [];
+
+  // "Recently opened" (client-only, from localStorage), read the way the store used to:
+  // SEEDED EMPTY so the server render and the first client render match — reading
+  // localStorage during render is a hydration mismatch — and loaded after mount. Keyed by
+  // ACCOUNT: the store returns only what the current viewer wrote, and `ownerId` is a dep so
+  // an in-SPA sign-in / switch re-reads rather than showing the previous account's apps.
+  const ownerId = currentUser?.id ?? null;
+  const [recents, setRecents] = useState<RecentApp[]>([]);
+  useEffect(() => {
+    setRecents(getRecentlyOpenedApps(ownerId));
+  }, [ownerId]);
+  // Following an off-site link leaves the SPA, so the click is the only chance to record it
+  // (an on-site launch is recorded by the run page itself). Moves the app to the front.
+  function handleLaunchExternal(recent: RecentApp) {
+    setRecents(recordRecentlyOpenedApp(recent, ownerId));
+  }
+
+  const tiles = useMemo(
+    () => mergeHomeApps({ server: myApps.data ?? [], recents, canOpenPage }),
+    [myApps.data, recents, canOpenPage]
+  );
 
   return (
     <Stack gap="lg">
@@ -272,30 +332,36 @@ export function AppsHomeBody() {
         <BrowseStoreButton testId="apps-home-browse" />
       </Group>
 
+      {myApps.isError && (
+        <Paper p="lg" radius="md" withBorder data-testid="apps-home-error">
+          <Stack gap="xs" align="flex-start">
+            <Text>We couldn&apos;t load all of your apps.</Text>
+            <Button variant="default" size="xs" onClick={() => void myApps.refetch()}>
+              Try again
+            </Button>
+          </Stack>
+        </Paper>
+      )}
+
       {myApps.isLoading ? (
         <TileGrid testId="apps-home-skeleton">
           {Array.from({ length: APPS_HOME_SKELETON_TILES }, (_, i) => (
             <Skeleton key={i} height={APPS_HOME_ICON_PX + 24} radius="md" />
           ))}
         </TileGrid>
-      ) : myApps.isError ? (
-        <Paper p="lg" radius="md" withBorder data-testid="apps-home-error">
-          <Stack gap="xs" align="flex-start">
-            <Text>We couldn&apos;t load your apps.</Text>
-            <Button variant="default" size="xs" onClick={() => void myApps.refetch()}>
-              Try again
-            </Button>
-          </Stack>
-        </Paper>
-      ) : apps.length === 0 ? (
-        <EmptyState canOpenPage={canOpenPage} />
+      ) : tiles.length === 0 ? (
+        // Empty only when BOTH sources are: nothing from the server AND no local recents.
+        myApps.isError ? null : (
+          <EmptyState canOpenPage={canOpenPage} />
+        )
       ) : (
         <TileGrid testId="apps-home-grid">
-          {apps.map((app) => (
+          {tiles.map((app) => (
             <AppsHomeTile
-              key={app.listingId}
+              key={app.key}
               app={app}
               canManagePermissions={canManagePermissions}
+              onLaunchExternal={handleLaunchExternal}
             />
           ))}
         </TileGrid>
