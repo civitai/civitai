@@ -129,6 +129,8 @@ function fakeStripe(
   const updates: Record<string, unknown>[] = [];
   let updated = false;
   const recorder = (path: string): unknown =>
+    // A function target, so the proxy is callable at any depth.
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     new Proxy(function () {}, {
       get: (_t, prop) => (prop === 'then' ? undefined : recorder(`${path}.${String(prop)}`)),
       apply: () => {
