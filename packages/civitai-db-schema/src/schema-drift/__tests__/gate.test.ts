@@ -7,16 +7,21 @@ import { runTsxCli, type CliRun } from './support/tsx-cli';
 import { compareSchemaToCatalog } from '../compare';
 import {
   absorbedEscalations,
+  acceptIntoBaseline,
   assertMeasuredSomething,
   blocking,
   buildBaseline,
   evaluateGate,
   fingerprint,
+  reasonProblems,
   referencedTarget,
   snapshotAge,
   STALE_AFTER_DAYS,
   tierOf,
+  validateReason,
+  validateRef,
   type Baseline,
+  type BaselineLike,
 } from '../gate';
 import { parsePrismaSchema } from '../parse-prisma-schema';
 import type { DbCatalog, DriftFinding } from '../types';
@@ -347,7 +352,7 @@ describe('evaluateGate against the real schema and the 2026-08-03 backlog', () =
   });
 
   it('blocks a NEW finding on a column the database already has', () => {
-    const trimmed: Baseline = {
+    const trimmed: BaselineLike = {
       catalog: legacySnapshotRelative,
       entries: baseline.entries.filter((e) => e.kind !== 'uniqueness'),
     };
@@ -358,7 +363,7 @@ describe('evaluateGate against the real schema and the 2026-08-03 backlog', () =
   });
 
   it('only warns about a NEW finding whose column is not in the snapshot', () => {
-    const trimmed: Baseline = {
+    const trimmed: BaselineLike = {
       catalog: legacySnapshotRelative,
       entries: baseline.entries.filter((e) => e.kind !== 'missing-column'),
     };
@@ -369,7 +374,7 @@ describe('evaluateGate against the real schema and the 2026-08-03 backlog', () =
   });
 
   it('lists a baseline entry the run no longer reports, without blocking', () => {
-    const withGhost: Baseline = {
+    const withGhost: BaselineLike = {
       catalog: legacySnapshotRelative,
       entries: [
         ...baseline.entries,
@@ -546,7 +551,7 @@ describe('absorbedEscalations', () => {
   it('reports a pending -> enforced transition a refresh would swallow', () => {
     const target = baseline.entries.find((e) => e.tier === 'enforced');
     expect(target).toBeDefined();
-    const previous: Baseline = {
+    const previous: BaselineLike = {
       catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === target?.fingerprint ? { ...e, tier: 'pending' as const } : e
@@ -562,7 +567,7 @@ describe('absorbedEscalations', () => {
   });
 
   it('does not report enforced -> pending, or an entry that is merely new', () => {
-    const flipped: Baseline = {
+    const flipped: BaselineLike = {
       catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) => ({ ...e, tier: 'enforced' as const })),
     };
@@ -584,20 +589,163 @@ describe('assertMeasuredSomething', () => {
   });
 
   it('rejects an empty baseline — a clean pass against it would prove nothing', () => {
-    const empty: Baseline = { catalog: snapshotRelative, entries: [] };
+    const empty: BaselineLike = { catalog: snapshotRelative, entries: [] };
     const problems = assertMeasuredSomething(evaluateGate(report, catalog, empty), empty);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(/baseline is empty/);
   });
 
   it('rejects a baseline that reproduced none of its entries', () => {
-    const alien: Baseline = {
+    const alien: BaselineLike = {
       catalog: snapshotRelative,
       entries: baseline.entries.map((e) => ({ ...e, fingerprint: `${e.fingerprint}-not-a-match` })),
     };
     const problems = assertMeasuredSomething(evaluateGate(report, catalog, alien), alien);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(/none of the .* baseline findings were reproduced/);
+  });
+});
+
+describe('baseline reasons', () => {
+  const committed = JSON.parse(
+    readFileSync(join(packageRoot, baselineRelative), 'utf8')
+  ) as Baseline;
+
+  describe('validateReason', () => {
+    it.each([
+      'Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.',
+      'Inert: ON UPDATE only, and ids are never updated.',
+      'Accepted because the column is written only by the backfill job.',
+    ])('accepts %s', (reason) => {
+      expect(validateReason(reason)).toBeNull();
+    });
+
+    it.each([
+      ['missing', undefined, /no reason/],
+      ['not a string', 42, /no reason/],
+      ['empty', '', /empty/],
+      ['whitespace', ' \t\n ', /empty/],
+      ['TODO', 'TODO', /placeholder/],
+      ['todo.', 'todo.', /placeholder/],
+      ['accepted', 'Accepted', /placeholder/],
+      ['n/a', 'n/a', /placeholder/],
+      ['TBD', 'TBD', /placeholder/],
+      ['pre-existing', 'pre-existing', /placeholder/],
+      ['a long TODO', 'TODO: explain why this is fine before merging', /placeholder/],
+      ['a long FIXME', 'FIXME - this needs a real reason from the author', /placeholder/],
+      ['too short', 'inert ON UPDATE', /shorter than 20/],
+      ['padding', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', /fewer than 4 distinct words/],
+      ['one word repeated', 'fine fine fine fine fine fine', /fewer than 4 distinct words/],
+    ])('refuses %s', (_label, reason, problem) => {
+      expect(validateReason(reason)).toMatch(problem);
+    });
+  });
+
+  describe('validateRef', () => {
+    it.each(['#6323', '#1', '20261220120000_event_turf'])('accepts %s', (ref) => {
+      expect(validateRef(ref)).toBeNull();
+    });
+    it.each([undefined, '', '6323', '#0', '#', 'see PR', 'https://example.invalid/pull/1'])(
+      'refuses %s',
+      (ref) => {
+        expect(validateRef(ref)).not.toBeNull();
+      }
+    );
+  });
+
+  describe('reasonProblems', () => {
+    // Positive control first: the committed file has entries and none of them is flagged.
+    it('passes every committed entry', () => {
+      expect(committed.entries.length).toBeGreaterThan(0);
+      expect(reasonProblems(committed)).toEqual([]);
+    });
+
+    it('names exactly the entry that lost its reason', () => {
+      const [first, ...rest] = committed.entries;
+      const { reason: _dropped, ...unreasoned } = first;
+      const problems = reasonProblems({ entries: [unreasoned, ...rest] });
+      expect(problems).toEqual([{ fingerprint: first.fingerprint, problem: 'has no reason' }]);
+    });
+  });
+
+  describe('acceptIntoBaseline', () => {
+    const findingOf = (e: (typeof committed.entries)[number]) => {
+      const { reason: _r, ref: _f, ...finding } = e;
+      return finding;
+    };
+    const candidate = { catalog: committed.catalog, entries: committed.entries.map(findingOf) };
+    const custom = 'a reason only this test writes, kept across the refresh';
+
+    it('carries every existing reason and ref over, verbatim, and needs no --reason', () => {
+      const previous = {
+        entries: committed.entries.map((e, i) =>
+          i === 0 ? { ...e, reason: custom, ref: '#7' } : e
+        ),
+      };
+      const result = acceptIntoBaseline(previous, candidate, {});
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.carried).toBe(committed.entries.length);
+      expect(result.accepted).toEqual([]);
+      expect(result.baseline.entries[0]).toMatchObject({ reason: custom, ref: '#7' });
+      expect(result.baseline.entries.slice(1)).toEqual(committed.entries.slice(1));
+    });
+
+    // Kills a writer that stamps --reason over every entry: the given reason differs from the
+    // carried one, so overwriting would show.
+    it('does not overwrite an existing reason when --reason is given for a new entry', () => {
+      const previous = { entries: committed.entries.slice(1) };
+      const result = acceptIntoBaseline(previous, candidate, {
+        reason: 'the newly accepted entry, and only that one',
+        ref: '#9',
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.accepted.map((e) => e.fingerprint)).toEqual([committed.entries[0].fingerprint]);
+      expect(result.baseline.entries[0]).toMatchObject({
+        reason: 'the newly accepted entry, and only that one',
+        ref: '#9',
+      });
+      expect(result.baseline.entries.slice(1)).toEqual(committed.entries.slice(1));
+    });
+
+    it('refuses a new entry without a reason, and returns nothing to write', () => {
+      const result = acceptIntoBaseline({ entries: committed.entries.slice(1) }, candidate, {});
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.needReason.map((e) => e.fingerprint)).toEqual([
+        committed.entries[0].fingerprint,
+      ]);
+      expect('baseline' in result).toBe(false);
+    });
+
+    it('treats an existing entry with a placeholder reason as needing one', () => {
+      const previous = {
+        entries: committed.entries.map((e, i) => (i === 0 ? { ...e, reason: 'TODO' } : e)),
+      };
+      expect(acceptIntoBaseline(previous, candidate, {}).ok).toBe(false);
+      const fixed = acceptIntoBaseline(previous, candidate, {
+        reason: 'replaced a placeholder reason with a real one',
+        ref: '#3',
+      });
+      expect(fixed.ok && fixed.baseline.entries[0].reason).toBe(
+        'replaced a placeholder reason with a real one'
+      );
+    });
+
+    it('refuses a placeholder --reason even when it is the only thing needed', () => {
+      const result = acceptIntoBaseline({ entries: committed.entries.slice(1) }, candidate, {
+        reason: 'accepted',
+        ref: '#3',
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.problems).toEqual([expect.stringMatching(/^--reason is a placeholder/)]);
+    });
+
+    it('treats a missing previous baseline as every entry being new', () => {
+      expect(acceptIntoBaseline(null, candidate, {}).ok).toBe(false);
+    });
   });
 });
 
@@ -844,9 +992,15 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       return path;
     };
 
+    // The schema on `main` is routinely AHEAD of the snapshot (fields waiting on a hand-applied
+    // migration), so a refresh from the committed baseline normally has new pending entries to
+    // accept and now needs a reason for them. These cases are about the writer's other
+    // behaviour, so they supply one; the reason-handling cases below are the ones that omit it.
+    const ACCEPT = ['--reason', 'probe acceptance written by the gate test suite', '--ref', '#1'];
+
     it('rewrites the baseline and reports what it compared against', async () => {
       const workBaseline = freshCopy(committed.entries);
-      const result = await gate(['--update-baseline', '--baseline', workBaseline]);
+      const result = await gate(['--update-baseline', '--baseline', workBaseline, ...ACCEPT]);
       expect(result.code).toBe(0);
       // One entry per finding, counted from the same schema+snapshot pair the CLI reads —
       // never a literal. The totals move whenever a field lands ahead of its migration, and
@@ -869,9 +1023,9 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       // the first. Comparing against the committed entries instead asserts that the schema
       // currently has no drift beyond the baseline, which is a fact about whatever else is in
       // flight rather than about the writer being idempotent.
-      await gate(['--update-baseline', '--baseline', path]);
+      await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
       const before = readFileSync(path, 'utf8');
-      await gate(['--update-baseline', '--baseline', path]);
+      await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
       expect(readFileSync(path, 'utf8')).toBe(before);
     });
 
@@ -887,7 +1041,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
         )
       );
 
-      const result = await gate(['--update-baseline', '--baseline', path]);
+      const result = await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
       expect(result.code).toBe(0);
       expect(result.stdout).toMatch(/1 finding\(s\) ROSE from pending to enforced/);
       expect(result.stdout).toContain(`${target?.table}.${target?.columns.join('+')}`);
@@ -906,7 +1060,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
       // baseline had already been written: a refresh reporting failure having succeeded.
       const path = join(dir, 'malformed-baseline.json');
       writeFileSync(path, '{}');
-      const result = await gate(['--update-baseline', '--baseline', path]);
+      const result = await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
 
       expect(result.code).toBe(0);
       expect(result.stdout).toMatch(/Escalation check SKIPPED/);
@@ -920,15 +1074,174 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
 
     it('says it SKIPPED when there was no previous baseline at all', async () => {
       const path = join(dir, 'does-not-exist-yet.json');
-      const result = await gate(['--update-baseline', '--baseline', path]);
+      const result = await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
       expect(result.code).toBe(0);
       expect(result.stdout).toMatch(/Escalation check SKIPPED: no previous baseline existed/);
     });
 
     it('prints the snapshot age, which is the command run right after a recapture', async () => {
       const path = freshCopy(committed.entries);
-      const result = await gate(['--update-baseline', '--baseline', path]);
+      const result = await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
       expect(result.stdout).toMatch(/catalog snapshot captured: 2026-10-20 \(\d+ day\(s\) old\)/);
+    });
+
+    // ---- reasons -------------------------------------------------------------------------
+
+    // One committed entry is removed from the copy, so a refresh must re-add it as a NEW delta.
+    // Picked from the committed file, not hardcoded, so the case survives baseline churn.
+    const dropOne = () => {
+      const victim = committed.entries[0];
+      return { victim, path: freshCopy(committed.entries.slice(1)) };
+    };
+
+    it('REFUSES a new delta without --reason, and writes nothing', async () => {
+      const { victim, path } = dropOne();
+      const before = readFileSync(path, 'utf8');
+      const result = await gate(['--update-baseline', '--baseline', path]);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toMatch(/Refusing to write the baseline/);
+      expect(result.stderr).toMatch(/--reason "<why this drift is accepted>" is required/);
+      expect(result.stderr).toMatch(/--ref <#PR or migration directory name> is required/);
+      // names the entry that would have been accepted silently
+      expect(result.stderr).toContain(
+        `${victim.kind}  ${victim.table}.${victim.columns.join('+')}`
+      );
+      // byte-for-byte untouched: a refusal that had already written would be no refusal
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+
+    it.each([
+      ['a placeholder reason', ['--reason', 'TODO', '--ref', '#1'], /--reason is a placeholder/],
+      ['an empty reason', ['--reason', '', '--ref', '#1'], /--reason is an empty reason/],
+      [
+        'a reason and no ref',
+        ['--reason', 'probe acceptance written by tests'],
+        /--ref .* is required/,
+      ],
+      [
+        'a free-text ref',
+        [...ACCEPT.slice(0, 2), '--ref', 'see the PR'],
+        /--ref is a ref that is neither/,
+      ],
+    ])('REFUSES a new delta given %s', async (_label, flags, message) => {
+      const { path } = dropOne();
+      const before = readFileSync(path, 'utf8');
+      const result = await gate(['--update-baseline', '--baseline', path, ...flags]);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toMatch(message);
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+
+    it('accepts a new delta WITH a reason, and every existing reason survives untouched', async () => {
+      // One existing entry carries a reason nobody else has, so "survives" is observable: a
+      // writer that stamped --reason over everything would replace it.
+      const keeper = committed.entries[1];
+      const kept = 'kept verbatim across a refresh by the gate test suite';
+      const { victim, path } = (() => {
+        const v = committed.entries[0];
+        return {
+          victim: v,
+          path: freshCopy(
+            committed.entries
+              .slice(1)
+              .map((e) =>
+                e.fingerprint === keeper.fingerprint ? { ...e, reason: kept, ref: '#4242' } : e
+              )
+          ),
+        };
+      })();
+
+      const result = await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
+      expect(result.code).toBe(0);
+      const written = JSON.parse(readFileSync(path, 'utf8')) as Baseline;
+      const byFp = new Map(written.entries.map((e) => [e.fingerprint, e]));
+
+      expect(byFp.get(keeper.fingerprint)).toMatchObject({ reason: kept, ref: '#4242' });
+      expect(byFp.get(victim.fingerprint)).toMatchObject({
+        reason: 'probe acceptance written by the gate test suite',
+        ref: '#1',
+      });
+      // every OTHER committed entry kept its committed reason and ref
+      for (const e of committed.entries.slice(2)) {
+        expect(byFp.get(e.fingerprint)).toMatchObject({ reason: e.reason, ref: e.ref });
+      }
+      expect(result.stdout).toMatch(
+        new RegExp(`reasons carried over: ${committed.entries.length - 1}\\n`)
+      );
+      // and the written file passes the gate's own reason check
+      expect(reasonProblems(written)).toEqual([]);
+    });
+
+    it('keeps the key order stable: the finding, then reason, then ref', async () => {
+      const path = freshCopy(committed.entries);
+      await gate(['--update-baseline', '--baseline', path, ...ACCEPT]);
+      const written = JSON.parse(readFileSync(path, 'utf8')) as Baseline;
+      const withField = written.entries.find((e) => e.field !== undefined);
+      expect(Object.keys(withField ?? {})).toEqual([
+        'fingerprint',
+        'kind',
+        'tier',
+        'table',
+        'columns',
+        'model',
+        'field',
+        'reason',
+        'ref',
+      ]);
+      // sorted by fingerprint, so a refresh diffs as entries added/removed, never reshuffled
+      const fps = written.entries.map((e) => e.fingerprint);
+      expect(fps).toEqual([...fps].sort((a, b) => a.localeCompare(b)));
+    });
+  });
+
+  describe('a baseline entry without an auditable reason', () => {
+    let committed: Baseline;
+    beforeAll(() => {
+      committed = JSON.parse(readFileSync(join(packageRoot, baselineRelative), 'utf8')) as Baseline;
+    });
+
+    const withEntry = (patch: Record<string, unknown>, drop?: 'reason' | 'ref'): string => {
+      const path = join(dir, `reason-${Math.random().toString(36).slice(2)}.json`);
+      const entries = committed.entries.map((e, i) => {
+        if (i !== 0) return e;
+        const next: Record<string, unknown> = { ...e, ...patch };
+        if (drop) delete next[drop];
+        return next;
+      });
+      writeFileSync(path, JSON.stringify({ ...committed, entries }));
+      return path;
+    };
+
+    // Positive control for every exit-1 case below: the committed baseline, every entry
+    // reasoned, passes — and says how many it checked, so the zero is visibly over the file.
+    it('the committed baseline passes and reports 0 of N unreasoned', async () => {
+      const result = await gate([]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toMatch(
+        new RegExp(`baseline entries without a valid reason: 0 of ${committed.entries.length}\\n`)
+      );
+    });
+
+    it.each([
+      ['missing', {}, 'reason' as const, /has no reason/],
+      ['empty', { reason: '' }, undefined, /has an empty reason/],
+      ['whitespace', { reason: '    ' }, undefined, /has an empty reason/],
+      ['a placeholder', { reason: 'accepted' }, undefined, /has a placeholder reason/],
+      [
+        'a TODO prefix',
+        { reason: 'TODO: write down why this one is fine' },
+        undefined,
+        /placeholder/,
+      ],
+      ['too short', { reason: 'inert on update' }, undefined, /shorter than 20/],
+      ['missing its ref', {}, 'ref' as const, /has no ref/],
+    ])('fails the gate when the reason is %s', async (_label, patch, drop, problem) => {
+      const result = await gate(['--baseline', withEntry(patch, drop)]);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toMatch(/baseline entries without a valid reason: 1 of /);
+      expect(result.stderr).toMatch(/BLOCKED: 1 baseline entry has no auditable reason/);
+      expect(result.stderr).toContain(committed.entries[0].fingerprint);
+      expect(result.stderr).toMatch(problem);
     });
   });
 

@@ -122,14 +122,40 @@ function emptyCounts(): DriftCounts {
   };
 }
 
+export interface CompareOptions {
+  /**
+   * Restrict the comparison to models whose table is in this set (`drift --tables` /
+   * `--migration`). Absent means every model.
+   *
+   * Applied to MODELS, before any check runs, rather than to findings afterwards — so the
+   * counters describe the scope too. Filtering findings alone would leave `relationsChecked`
+   * and `columnsChecked` counting the whole schema, and a scoped report would then carry the
+   * whole schema's coverage as its own positive control: "582 relations checked" next to a
+   * scope whose one table was never looked at.
+   *
+   * A finding belongs to the table it is ON. For a foreign key that is the REFERENCING
+   * (constrained) table, never the referenced one: scoping to `User` reports `User`'s own
+   * columns and relations, not the hundreds of relations elsewhere that point at it. The
+   * referenced side is still reached when it matters — a migration's `REFERENCES "X"` puts
+   * `X` into the scope as a table of its own — and the README states the rule.
+   *
+   * The model-name lookup used to resolve a relation's TARGET still spans the whole schema, so
+   * a scoped report names referenced tables exactly as an unscoped one does.
+   */
+  tables?: ReadonlySet<string>;
+}
+
 /**
  * Compare a parsed Prisma schema against a database catalog.
  *
- * Pure: no I/O, no database, no clock. Everything it knows comes from its two arguments,
- * which is what lets the tests drive it with a curated fixture and with a deliberately
- * damaged one.
+ * Pure: no I/O, no database, no clock. Everything it knows comes from its arguments, which is
+ * what lets the tests drive it with a curated fixture and with a deliberately damaged one.
  */
-export function compareSchemaToCatalog(schema: ParsedSchema, catalog: DbCatalog): DriftReport {
+export function compareSchemaToCatalog(
+  schema: ParsedSchema,
+  catalog: DbCatalog,
+  options: CompareOptions = {}
+): DriftReport {
   const live = indexCatalog(catalog);
   const counts = emptyCounts();
   const findings: DriftFinding[] = [];
@@ -139,6 +165,10 @@ export function compareSchemaToCatalog(schema: ParsedSchema, catalog: DbCatalog)
   const modelsByName = new Map(schema.models.map((m) => [m.name, m]));
 
   for (const model of schema.models) {
+    // Out of scope: not checked, not counted, not listed as skipped. A scoped report says
+    // nothing at all about these tables, in either direction.
+    if (options.tables && !options.tables.has(model.table)) continue;
+
     counts.declaredRelations += model.relations.length;
 
     // A model Prisma does not manage, or one backed by a view or a table that no longer

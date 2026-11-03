@@ -14,6 +14,9 @@ a long time without anything noticing. This tool makes that gap countable.
 pnpm --filter @civitai/db-schema drift             # text report
 pnpm --filter @civitai/db-schema drift --json      # machine-readable
 pnpm --filter @civitai/db-schema drift --verbose   # + the list of skipped models
+
+# only the tables one migration touches (see "Scoped checks" below)
+pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql
 ```
 
 The connection comes from `DATABASE_URL` in the environment. Nothing about where a
@@ -31,6 +34,9 @@ Other flags:
 | `--dump-catalog`     | Capture the catalog as JSON and exit (pairs with `--catalog`) |
 | `--db-schema <name>` | Postgres schema to introspect (default `public`)              |
 | `--strict`           | Exit 1 when any drift is found. Default is always exit 0      |
+| `--tables <A,B,…>`   | Compare only these tables (exact names). Repeatable           |
+| `--migration <sql>`  | Compare only the tables this file touches. Repeatable         |
+| `--allow-unparsed`   | Proceed past statements `--migration` cannot classify         |
 
 `--strict` is opt-in on purpose. The database carries a real backlog of drift today, so a
 gate that failed on any finding would be red on every run, and a permanently-red gate just
@@ -41,6 +47,121 @@ be compared also fails the run: "not measured" is not "clean".
 page as a healthy database — which is what a typo'd `--db-schema`, a wrong `DATABASE_URL`,
 or a role without catalog visibility produces. The CLI checks its own coverage and exits 2
 regardless of `--strict` rather than reporting a reassuring zero.
+
+## Scoped checks: one migration, one table set
+
+The whole-schema report carries the whole backlog. After applying one migration, what you want
+to know is narrower: did _this_ change land the way the schema says it should? A scoped run
+answers that and nothing else.
+
+```bash
+# DATABASE_URL points at the target, with a role that can read pg_catalog. Read-only.
+pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql
+pnpm --filter @civitai/db-schema drift --tables Image,ImageResource
+pnpm --filter @civitai/db-schema drift --migration <a.sql> --migration <b.sql> --tables Post
+```
+
+Paths are relative to the package directory, which is where `pnpm --filter` runs. Both flags
+take a comma-separated list and can be repeated; the scope is the union.
+
+**The report header prints the exact table set it covered and where each table came from** —
+`<- --tables`, or `<- <file> (CREATE TABLE, CREATE INDEX)` listing the statement kinds that
+named it — followed by a per-file count of statements read, statements that touch no table,
+and statements it could not classify. Read the header before believing anything below it.
+
+**Which findings a scope includes.** A finding belongs to the table it is _on_. For a foreign
+key that is the **referencing** (constrained) table, never the referenced one: scoping to `User`
+reports `User`'s own columns and relations, not the hundreds of relations elsewhere that point
+at it. The referenced side is still reached when a migration names it — `REFERENCES "X"` puts
+`X` in the scope as a table of its own. Every count in a scoped report (relations checked,
+columns checked) is the scope's, not the schema's, so the positive control on a clean scoped
+report is about the tables it names.
+
+**A scope it cannot vouch for exits 2,** before any comparison:
+
+- a requested table no model maps to (scopes name **tables**, as the catalog does: `posts`, not
+  `Post`, for a model with `@@map("posts")`), or whose model is `@@ignore`d;
+- a requested table that is not an ordinary table in the catalog — absent (the migration has not
+  been applied there) or a view;
+- a table the migration drops or renames away that is still in the catalog or the schema;
+- an empty scope (a migration that touches no table, and no `--tables`).
+
+Each of these would otherwise filter the report down to nothing and print a clean page. The
+one exception: a scope whose tables are _all_ expected absent, and are, exits 0 with nothing to
+compare.
+
+### What `--migration` reads
+
+It splits the file on top-level `;` — not inside strings, quoted identifiers, comments (nested
+`/* */` included) or dollar-quoted bodies — and classifies every statement into exactly one of
+three buckets:
+
+| Bucket         | Statements                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tables read    | `CREATE TABLE` (with `REFERENCES`, `PARTITION OF`, `INHERITS`, `LIKE`), `ALTER TABLE [IF EXISTS] [ONLY]` (with `REFERENCES` / `FOREIGN KEY`, `ATTACH`/`DETACH PARTITION`), `RENAME TO` (old name expected absent, new name present), `DROP TABLE` (expected absent), `CREATE [UNIQUE] INDEX [CONCURRENTLY] … ON`, `COMMENT ON TABLE / COLUMN / CONSTRAINT`, `INSERT INTO`, `UPDATE`, `DELETE FROM`, `TRUNCATE` |
+| touch no table | transaction control, `SET`/`RESET`, enum and domain types, sequences, extensions, `GRANT`/`REVOKE`, `ANALYZE`/`VACUUM`, `LOCK`, comments on other object kinds. Listed in the count, not dropped silently                                                                                                                                                                                                      |
+| NOT classified | `DO` blocks, functions and procedures, triggers, views and materialized views, rules, policies, a bare `SELECT`/`WITH`/`CALL`, `DROP INDEX` and `ALTER INDEX` (they name an index, not its table), any statement-level `CASCADE`, a name qualified with a schema other than `--db-schema`, temporary tables, and anything unrecognised                                                                         |
+
+Names follow Postgres: `"Image"` is `Image`, unquoted `Image` folds to `image`, and
+`"public"."Image"` is `Image`. A table's final state is what the file leaves it as, in order —
+created then dropped is expected absent.
+
+**An unclassified statement stops the run** with exit 2 and a list of each one: its file and
+line, why it could not be read, and which schema tables its text mentions. The run will not
+guess a subset. Read the statements, then re-run with `--allow-unparsed`, naming in `--tables`
+every table they touch. The mentions are a hint and are **never** added to the scope on their
+own — a quoted name inside a function body may be a column, a table, or neither. With
+`--allow-unparsed` the statements are still printed in the report, under the scope header.
+
+Measured on this repo's migrations at the time of writing: 763 of 1,016 classify completely;
+of the last 30, 17 do and 13 contain a `DO` block, a function, a trigger or a `DROP INDEX`. Those
+13 are refused, which is the intended outcome. `__tests__/migration-tables.test.ts` pins all 30,
+table by table.
+
+### Limitations
+
+What the parser cannot see:
+
+- anything inside procedural code — it refuses those statements rather than reading them;
+- the table a `DROP INDEX` / `ALTER INDEX` affects (pass it with `--tables`);
+- what a `CASCADE` reaches;
+- a `search_path` change: an unqualified name is assumed to resolve to `--db-schema`;
+- dynamic SQL, `\i` includes, or anything outside the file.
+
+What the detector does not check is listed under "What it does **not** check" below and applies
+to scoped runs unchanged: a clean scoped report says the scoped tables' foreign keys, columns,
+nullability and unique declarations match. It says nothing about the triggers, functions,
+views, check constraints, defaults, types or indexes a migration may also have changed.
+
+`drift:gate` (the CI half, below) takes no scope flags. It compares a frozen snapshot against a
+baseline of the whole schema, and a subset would turn every out-of-scope baseline entry into a
+"no longer seen" line without making the verdict any sharper.
+
+## After applying a migration
+
+Migrations here are applied by hand, per environment. For each writable environment:
+
+1. **Dry run** the migration inside a transaction that is rolled back, against the target:
+   `BEGIN;` … the migration … `ROLLBACK;`. (A file that contains `CREATE INDEX CONCURRENTLY`
+   cannot run in a transaction block; dry-run the rest and apply that statement on its own.)
+2. **A human applies it.**
+3. **Scoped drift check** against the same target, read-only:
+
+   ```bash
+   DATABASE_URL=<target, read-only role> \
+     pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql
+   ```
+
+   If it refuses unparsed statements, read them, then add `--allow-unparsed --tables <…>`
+   covering what they touch. Add `--strict` to make any finding exit 1.
+
+4. **Either it is clean, or accept the delta with a reason.** Clean means every scoped table's
+   declarations match. If it is not clean, fix the migration or the schema — or, when the gap is
+   deliberate, accept it in the baseline (below) with a reason and the PR or migration that
+   decided it.
+
+Repeat step 3 for every writable environment: one environment being clean says nothing about
+another.
 
 ## What it checks
 
@@ -125,13 +246,16 @@ The text report ends with this list for the same reason.
 
 ## Layout
 
-| File                     | Role                                                               |
-| ------------------------ | ------------------------------------------------------------------ |
-| `parse-prisma-schema.ts` | Schema → models, fields, mappings, relations, unique declarations  |
-| `catalog.ts`             | `pg_catalog` → `DbCatalog`. The only file that talks to a database |
-| `compare.ts`             | `(schema, catalog) → findings`. Pure: no I/O, no clock             |
-| `report.ts`              | Findings → text                                                    |
-| `cli.ts`                 | Argument handling and wiring                                       |
+| File                     | Role                                                                    |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `parse-prisma-schema.ts` | Schema → models, fields, mappings, relations, unique declarations       |
+| `catalog.ts`             | `pg_catalog` → `DbCatalog`. The only file that talks to a database      |
+| `compare.ts`             | `(schema, catalog[, tables]) → findings`. Pure: no I/O, no clock        |
+| `migration-tables.ts`    | Migration SQL → tables touched, statements ignored, statements refused  |
+| `scope.ts`               | `--tables` + `--migration` → the scope, its verification and its header |
+| `report.ts`              | Findings → text                                                         |
+| `cli.ts`                 | Argument handling and wiring                                            |
+| `gate.ts`, `gate-cli.ts` | The CI delta gate and the baseline writer (below)                       |
 
 The differ is pure so it can be driven from fixtures, including deliberately damaged ones.
 
@@ -439,6 +563,34 @@ It is checked against the catalog it was captured with. A baseline measured agai
 different snapshot describes a different database, so the gate exits 2 rather than comparing
 them.
 
+### Every accepted finding carries a reason
+
+Each entry has a `reason` (why the drift is accepted) and a `ref` (where that was decided: a PR,
+`#1234`, or a migration directory name, `20261220120000_event_turf`). Before these fields, the
+only record of why a finding passed was a PR description somewhere in the file's history, so
+"accepted for a reason" and "accepted because someone ran the refresh to turn the gate green"
+were the same line.
+
+- **The gate fails (exit 1) on any entry without a valid reason or ref**, and names it. It always
+  prints `baseline entries without a valid reason: N of M`, so a zero is visibly a zero over the
+  whole file.
+- **A valid reason** is at least 20 characters and 4 distinct words, and is not a placeholder —
+  `TODO`, `TBD`, `FIXME`, `accepted`, `n/a`, `pre-existing` and the like are refused, as is any
+  reason that starts with `TODO`/`TBD`/`FIXME`. A **valid ref** is `#<number>` or a migration
+  directory name; free text is refused, because a ref nobody can resolve is a second reason
+  field, not a pointer.
+- **The writer requires them for new entries and preserves old ones.** `drift:baseline` carries
+  every existing entry's reason and ref over by fingerprint, byte for byte — including across a
+  tier change. Any entry that needs one (a finding the previous baseline did not have, or one it
+  had without a valid reason) takes `--reason` and `--ref`; if either is missing or invalid the
+  writer refuses, lists the entries, exits 2 and **writes nothing**.
+- **The 112 entries present when this was introduced** share one honest reason — pre-existing at
+  the 2026-10-20 capture, accepted wholesale when the baseline was created, not reviewed entry by
+  entry — and the ref of the PR that last regenerated the entry set (#6323; the 2026-10-20
+  recapture, #6423, re-paired the file with the new catalog without changing an entry). Nobody
+  reviewed them one at a time, so no per-entry reason is claimed. Replacing that shared reason
+  with a specific one, entry by entry, is the way to pay this down.
+
 ### Two severities, and why the split is structural
 
 Migrations here are applied **by hand**, per environment. A declaration being ahead of the
@@ -513,10 +665,23 @@ the PR description.
 
 ### Refreshing
 
-- **Accepting a finding:** `drift:baseline`, commit the diff, say why in the PR.
+- **Accepting a finding:**
+
+  ```bash
+  pnpm --filter @civitai/db-schema drift:baseline \
+    --reason "<why this drift is acceptable, specifically>" --ref "#<this PR>"
+  ```
+
+  The new entries take that reason; every existing entry keeps its own. The diff is two added
+  lines (`reason`, `ref`) on each new entry, in fingerprint order, so a reviewer sees exactly
+  what was accepted and why. If the refresh would accept findings you did not intend to accept
+  — the schema is often ahead of the snapshot — they are listed, and they take the same reason:
+  read the list before passing one.
+
 - **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
-  without failing; `drift:baseline` prunes it.
-- **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
+  without failing; `drift:baseline` prunes it (no `--reason` needed when nothing is added).
+- **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit, with a
+  `--reason` and `--ref` for whatever the recapture adds. The
   catalog and the baseline are a pair and the gate enforces that they stay one. Diff the old
   baseline against the new one and list what dropped and what was added in the PR. Explain
   every addition: drift that appeared since the previous capture, drift the old capture

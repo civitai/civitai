@@ -42,7 +42,8 @@ import type { CatalogColumn, DbCatalog, DriftFinding, DriftReport } from './type
 
 export type GateTier = 'enforced' | 'pending';
 
-export interface BaselineEntry {
+/** What a baseline entry records about the finding itself. Derived; never hand-written. */
+export interface BaselineFinding {
   fingerprint: string;
   kind: DriftFinding['kind'];
   tier: GateTier;
@@ -50,6 +51,23 @@ export interface BaselineEntry {
   columns: string[];
   model: string;
   field?: string;
+}
+
+/**
+ * An ACCEPTED finding: the finding, plus why it was accepted and where that was decided.
+ *
+ * WHY A REASON IS REQUIRED. The baseline turns a finding into a pass. Before this field, the
+ * only record of WHY a given finding passes was a PR description somewhere in the history of a
+ * 112-entry JSON file — so "accepted for a reason" and "accepted because someone ran
+ * `drift:baseline` to make the gate green" were the same line in the same file. The reason
+ * lives on the entry now, the gate fails on an entry without a valid one (`reasonProblems`),
+ * and the writer refuses to add one without being told (`acceptIntoBaseline`).
+ */
+export interface BaselineEntry extends BaselineFinding {
+  /** Why this drift is accepted. See `validateReason` for what counts. */
+  reason: string;
+  /** Where it was decided: a PR (`#1234`) or a migration directory name. See `validateRef`. */
+  ref: string;
 }
 
 export interface Baseline {
@@ -60,6 +78,16 @@ export interface Baseline {
    */
   catalog: string;
   entries: BaselineEntry[];
+}
+
+/**
+ * The shape the gate's comparison logic actually reads: fingerprints and tiers. A freshly built
+ * baseline (`buildBaseline`, no reasons yet) and a committed one (`Baseline`) both satisfy it,
+ * so evaluating a candidate does not require inventing reasons for it first.
+ */
+export interface BaselineLike {
+  catalog: string;
+  entries: readonly BaselineFinding[];
 }
 
 export interface GateResult {
@@ -82,7 +110,7 @@ export interface GateResult {
    */
   escalated: EscalatedFinding[];
   /** Baseline entries the current run no longer reports — remediated, or gone stale. */
-  resolved: BaselineEntry[];
+  resolved: BaselineFinding[];
   /** Baseline entries the current run reproduced. The positive control on a zero. */
   matched: number;
   /** Every current finding, tiered. */
@@ -205,7 +233,7 @@ function tierWith(finding: DriftFinding, known: Set<string>): GateTier {
   }
 }
 
-export function toBaselineEntry(finding: DriftFinding, tier: GateTier): BaselineEntry {
+export function toBaselineEntry(finding: DriftFinding, tier: GateTier): BaselineFinding {
   return {
     fingerprint: fingerprint(finding),
     kind: finding.kind,
@@ -217,12 +245,15 @@ export function toBaselineEntry(finding: DriftFinding, tier: GateTier): Baseline
   };
 }
 
-/** Build a baseline from a report. Sorted, so a refresh produces a reviewable diff. */
+/**
+ * Build a CANDIDATE baseline from a report: every finding, no reasons. Sorted, so a refresh
+ * produces a reviewable diff. `acceptIntoBaseline` turns it into a committed `Baseline`.
+ */
 export function buildBaseline(
   report: DriftReport,
   catalog: DbCatalog,
   catalogPath: string
-): Baseline {
+): { catalog: string; entries: BaselineFinding[] } {
   const known = catalogColumns(catalog.columns);
   const entries = report.findings
     .map((f) => toBaselineEntry(f, tierWith(f, known)))
@@ -245,7 +276,10 @@ export function buildBaseline(
  * absorbed transitions VISIBLE at the moment they are absorbed, in the output of the command
  * doing the absorbing, so they land in the recapture commit's log rather than nowhere.
  */
-export function absorbedEscalations(previous: Baseline, next: Baseline): EscalatedFinding[] {
+export function absorbedEscalations(
+  previous: BaselineLike,
+  next: BaselineLike
+): EscalatedFinding[] {
   const before = new Map(previous.entries.map((e) => [e.fingerprint, e]));
   const out: EscalatedFinding[] = [];
   for (const entry of next.entries) {
@@ -272,7 +306,7 @@ export function absorbedEscalations(previous: Baseline, next: Baseline): Escalat
 export function evaluateGate(
   report: DriftReport,
   catalog: DbCatalog,
-  baseline: Baseline
+  baseline: BaselineLike
 ): GateResult {
   const known = catalogColumns(catalog.columns);
   const baselineByFingerprint = new Map(baseline.entries.map((e) => [e.fingerprint, e]));
@@ -331,7 +365,7 @@ export function evaluateGate(
  *
  * Returns an empty array when the verdict is meaningful.
  */
-export function assertMeasuredSomething(result: GateResult, baseline: Baseline): string[] {
+export function assertMeasuredSomething(result: GateResult, baseline: BaselineLike): string[] {
   const problems: string[] = [];
 
   if (baseline.entries.length === 0) {
@@ -437,7 +471,7 @@ function describe(finding: DriftFinding): string {
 
 export function formatGateResult(
   result: GateResult,
-  baseline: Baseline,
+  baseline: BaselineLike,
   age?: SnapshotAge
 ): string {
   const lines: string[] = [];
@@ -525,4 +559,229 @@ export function formatGateResult(
   }
 
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Baseline reasons
+// ---------------------------------------------------------------------------
+
+/**
+ * Shortest reason accepted, after trimming. Long enough that a reason has to say something —
+ * "inert ON UPDATE on an id" is 23 — and short enough not to demand an essay for an obvious
+ * case. A length floor alone is walkable by padding, which is why the word and placeholder
+ * checks below exist as well.
+ */
+export const MIN_REASON_LENGTH = 20;
+
+/** Fewest distinct words of two or more letters a reason must contain. */
+export const MIN_REASON_WORDS = 4;
+
+/**
+ * Words that are not a reason. Matched against the WHOLE normalised reason (so "accepted" is
+ * refused and "accepted because ids are never updated" is not) and against its FIRST word, so
+ * "TODO: explain why this is fine later" is refused however long it gets.
+ */
+const PLACEHOLDERS = new Set([
+  'todo',
+  'tbd',
+  'tba',
+  'fixme',
+  'xxx',
+  'wip',
+  'accepted',
+  'accept',
+  'ok',
+  'okay',
+  'fine',
+  'na',
+  'n/a',
+  'none',
+  'null',
+  'undefined',
+  'unknown',
+  'placeholder',
+  'reason',
+  'baseline',
+  'pre-existing',
+  'preexisting',
+  'legacy',
+  'see pr',
+  'see above',
+  'same as above',
+  'misc',
+  'temp',
+  'test',
+]);
+const PLACEHOLDER_PREFIXES = ['todo', 'tbd', 'tba', 'fixme', 'xxx', 'wip', 'placeholder'];
+
+/** Why `reason` is not an acceptable baseline reason, or `null` if it is. */
+export function validateReason(reason: unknown): string | null {
+  if (typeof reason !== 'string') return 'has no reason';
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) return 'has an empty reason';
+  const normalised = trimmed
+    .toLowerCase()
+    .replace(/[\s.!:;,'"`-]+$/g, '')
+    .replace(/\s+/g, ' ');
+  if (PLACEHOLDERS.has(normalised)) return `has a placeholder reason ("${trimmed}")`;
+  const first = normalised.split(/[^a-z/]+/).filter(Boolean)[0] ?? '';
+  if (PLACEHOLDER_PREFIXES.includes(first)) return `has a placeholder reason ("${trimmed}")`;
+  if (trimmed.length < MIN_REASON_LENGTH) {
+    return `has a reason shorter than ${MIN_REASON_LENGTH} characters ("${trimmed}")`;
+  }
+  const words = new Set((normalised.match(/[a-z]{2,}/g) ?? []).map((w) => w));
+  if (words.size < MIN_REASON_WORDS) {
+    return `has a reason with fewer than ${MIN_REASON_WORDS} distinct words ("${trimmed}")`;
+  }
+  return null;
+}
+
+/**
+ * A ref says where the acceptance was decided, so it has to be something a reader can look up:
+ * a pull request (`#1234`) or a migration directory name (`20261220120000_event_turf`).
+ * Free text is refused — a ref nobody can resolve is a second reason field, not a pointer.
+ */
+const REF_PATTERN = /^(#[1-9]\d*|\d{14}_[a-z0-9_]+)$/;
+
+export function validateRef(ref: unknown): string | null {
+  if (typeof ref !== 'string' || ref.trim().length === 0) return 'has no ref';
+  if (!REF_PATTERN.test(ref)) {
+    return `has a ref that is neither a PR (#1234) nor a migration directory name ("${ref}")`;
+  }
+  return null;
+}
+
+export interface ReasonProblem {
+  fingerprint: string;
+  problem: string;
+}
+
+/**
+ * Every entry of a committed baseline that does not carry an auditable reason and ref. The gate
+ * fails on any of these: an entry without a reason is a finding passing for no recorded cause.
+ *
+ * Reads the entries as `unknown`-shaped JSON on purpose — this is the guard on a hand-editable
+ * file, so it must not trust the type the file claims to have.
+ */
+export function reasonProblems(baseline: { entries: readonly unknown[] }): ReasonProblem[] {
+  const out: ReasonProblem[] = [];
+  for (const raw of baseline.entries) {
+    const entry = (raw ?? {}) as Partial<BaselineEntry>;
+    const fp = typeof entry.fingerprint === 'string' ? entry.fingerprint : '(no fingerprint)';
+    const problems = [validateReason(entry.reason), validateRef(entry.ref)].filter(
+      (p): p is string => p !== null
+    );
+    for (const problem of problems) out.push({ fingerprint: fp, problem });
+  }
+  return out;
+}
+
+export interface Acceptance {
+  reason?: string;
+  ref?: string;
+}
+
+export type AcceptResult =
+  | {
+      ok: true;
+      baseline: Baseline;
+      /** Entries whose reason and ref came from the previous baseline, unchanged. */
+      carried: number;
+      /** Entries that took `--reason` / `--ref` in this refresh. */
+      accepted: BaselineFinding[];
+    }
+  | {
+      ok: false;
+      /** Entries that needed a reason and could not be given one. */
+      needReason: BaselineFinding[];
+      problems: string[];
+    };
+
+/**
+ * Turn a candidate baseline into a committed one, carrying every existing reason over.
+ *
+ * Each candidate entry is matched to the previous baseline BY FINGERPRINT. A match whose
+ * previous reason and ref are valid keeps them, byte for byte — a refresh must never rewrite a
+ * reason someone wrote (a tier change, e.g. an absorbed escalation, keeps it too: the drift is
+ * the same drift). Everything else — a finding the previous baseline did not have, or one it
+ * had without a valid reason — needs `acceptance.reason` and `acceptance.ref`, and if either is
+ * missing or invalid NOTHING is returned to write. All or nothing: a partial write would commit
+ * a baseline the gate then fails.
+ */
+export function acceptIntoBaseline(
+  previous: { entries: readonly Partial<BaselineEntry>[] } | null,
+  candidate: { catalog: string; entries: readonly BaselineFinding[] },
+  acceptance: Acceptance
+): AcceptResult {
+  const before = new Map<string, Partial<BaselineEntry>>();
+  for (const e of previous?.entries ?? []) {
+    if (typeof e.fingerprint === 'string') before.set(e.fingerprint, e);
+  }
+
+  const needReason: BaselineFinding[] = [];
+  const entries: BaselineEntry[] = [];
+  let carried = 0;
+  const reasonProblem =
+    acceptance.reason === undefined ? 'no --reason' : validateReason(acceptance.reason);
+  const refProblem = acceptance.ref === undefined ? 'no --ref' : validateRef(acceptance.ref);
+
+  for (const finding of candidate.entries) {
+    const old = before.get(finding.fingerprint);
+    const keep = old && validateReason(old.reason) === null && validateRef(old.ref) === null;
+    if (keep) {
+      carried += 1;
+      entries.push(withReason(finding, old.reason as string, old.ref as string));
+    } else {
+      needReason.push(finding);
+      if (reasonProblem === null && refProblem === null) {
+        entries.push(
+          withReason(finding, (acceptance.reason as string).trim(), acceptance.ref as string)
+        );
+      }
+    }
+  }
+
+  if (needReason.length > 0 && (reasonProblem !== null || refProblem !== null)) {
+    const problems: string[] = [];
+    if (reasonProblem !== null) {
+      problems.push(
+        acceptance.reason === undefined
+          ? '--reason "<why this drift is accepted>" is required'
+          : `--reason ${reasonProblem.replace(/^has /, 'is ')}`
+      );
+    }
+    if (refProblem !== null) {
+      problems.push(
+        acceptance.ref === undefined
+          ? '--ref <#PR or migration directory name> is required'
+          : `--ref ${refProblem.replace(/^has /, 'is ')}`
+      );
+    }
+    return { ok: false, needReason, problems };
+  }
+
+  return {
+    ok: true,
+    baseline: { catalog: candidate.catalog, entries },
+    carried,
+    accepted: needReason,
+  };
+}
+
+/**
+ * Fixed key order — the finding's fields, then `reason`, then `ref` — so the committed file
+ * diffs as two added lines per entry rather than a reshuffle.
+ */
+function withReason(finding: BaselineFinding, reason: string, ref: string): BaselineEntry {
+  return {
+    fingerprint: finding.fingerprint,
+    kind: finding.kind,
+    tier: finding.tier,
+    table: finding.table,
+    columns: finding.columns,
+    model: finding.model,
+    ...(finding.field === undefined ? {} : { field: finding.field }),
+    reason,
+    ref,
+  };
 }
