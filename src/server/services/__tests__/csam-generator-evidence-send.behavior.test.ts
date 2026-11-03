@@ -98,7 +98,7 @@ import {
   excludeGeneratorEvidenceFile,
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
-import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
+import type { EvidenceStore as PreserveStore } from '~/server/services/generator-evidence/preserve-blob';
 import { buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { createHash } from 'crypto';
@@ -632,7 +632,7 @@ describe('a file a moderator excluded', () => {
       token: 'test-token',
     };
     const objects = new Map<string, Buffer>();
-    const store: EvidenceStore = {
+    const store: PreserveStore = {
       read: async (key) => new Uint8Array(objects.get(key) ?? Buffer.alloc(0)),
       upload: async (key, body) => {
         const chunks: Buffer[] = [];
@@ -670,8 +670,8 @@ describe('a file a moderator excluded', () => {
       return rows[0].id;
     }
     const outputStatus = async (id: number) =>
-      ((await readRow(id)).details as ReturnType<typeof evidenceDetails>).generatedImages[0]
-        .blobs[0].status;
+      ((await readRow(id)).details as unknown as ReturnType<typeof evidenceDetails>)
+        .generatedImages[0].blobs[0].status;
 
     beforeEach(() => {
       dbMock.dbWrite.csamReport.findFirst.mockImplementation(findById as never);
