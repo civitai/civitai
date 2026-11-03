@@ -7,3 +7,12 @@ export const KNIGHTS_NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
 export const KNIGHTS_STAGE_RANKS = ['Knight', 'Templar', 'Paladin'] as const;
 
 export const KNIGHTS_STAGE_TTL_HOURS = 72;
+
+/** Why a Knight blocks an image: the original game's `NewOrderDamnedReason` names and labels, in its order. */
+export const KNIGHTS_BLOCK_REASONS = [
+  { value: 'InappropriateMinors', label: 'Inappropriate Minors' },
+  { value: 'RealisticMinors', label: 'Realistic Minors' },
+  { value: 'DepictsRealPerson', label: 'Depicts Real Person' },
+  { value: 'Bestiality', label: 'Bestiality' },
+  { value: 'Other', label: 'Other' },
+] as const;
