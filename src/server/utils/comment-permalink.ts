@@ -3,7 +3,7 @@ import { threadUrlMap } from '~/server/notifications/comment.notifications';
 
 /**
  * What `/comments/<id>` reads: the comment's entity, plus the two addresses that are not the
- * entity id. A comic chapter is addressed by its project, and an app listing by its slug
+ * entity id. A comic chapter is addressed by its project and position, and an app listing by its slug
  * (`entityId` is `app_listings.serial_id`, an integer that appears nowhere in the URL). A deleted
  * comment has no permalink: a placeholder in a section is reached through its replies. Nor, but for
  * a moderator, does one hidden for ToS.
@@ -22,6 +22,7 @@ export const getCommentPermalinkRow = (commentId: number, { includeHidden = fals
       'c.entityType',
       'c.entityId',
       'cch.projectId as comicProjectId',
+      'cch.position as comicChapterPosition',
       'al.slug as appListingSlug',
     ])
     .where('c.id', '=', commentId)
@@ -81,10 +82,10 @@ export const buildCommentPermalink = (
     threadType: target.threadType,
     threadParentId: target.threadParentId,
     appListingSlug: target.appListingSlug,
+    comicChapterPosition: row.comicChapterPosition,
     commentId: row.id,
-    // Always pin the target comment as the thread root so it renders standalone via
-    // RootThreadProvider's activeComment path. Sidesteps cursor-paginated thread fetches
-    // (target may be on page N) and works uniformly for root and reply comments.
+    // Always pin the target comment as the thread root, so it renders standalone: no cursor-paginated
+    // thread fetch (the target may be on page N), and root and reply comments behave alike.
     commentParentType: 'comment',
     commentParentId: row.id,
   });

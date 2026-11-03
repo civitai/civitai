@@ -10,7 +10,6 @@ import { describe, expect, it } from 'vitest';
 const SRC = path.resolve(__dirname, '../../..');
 
 const OPTED_IN = [
-  'components/CommentsV2/Comment/Comment.tsx',
   'components/CommentsV3/CommentItem.tsx',
   'components/CommentSection/CommentSectionItem.tsx',
   'components/Model/Discussion/CommentThreadModal.tsx',

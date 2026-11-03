@@ -57,7 +57,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { ChapterComments } from '~/components/Comics/ChapterComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import {
   ChapterExportButton,
   ChapterDownloadButton,
@@ -1607,10 +1607,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             {/* user's choice across navigation via localStorage. */}
             {activeChapter && (commentsVisible || hasCommentHighlight) && (
               <Container size="sm" py="xl">
-                <ChapterComments
-                  projectId={project.id}
-                  chapterPosition={activeChapter.position}
-                  userId={project.user.id}
+                <CommentSection
+                  entityType="comicChapter"
+                  entityId={activeChapter.id}
+                  ownerId={project.user.id}
                 />
               </Container>
             )}
