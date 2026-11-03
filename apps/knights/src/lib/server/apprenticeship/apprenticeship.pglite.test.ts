@@ -582,22 +582,37 @@ describe('answers outlive their reference', () => {
 
   it('keeps the answer when the image of a yes/no pair is deleted, and the checkpoint does not move', async () => {
     await player(1);
-    for (let i = 0; i < 10; i++) await yesNo(i + 1, { explanation: `why ${i + 1}` });
+    for (let i = 0; i < 10; i++) await yesNo(i + 1, { answer: true, explanation: `why ${i + 1}` });
     for (let i = 0; i < 20; i++) await rating(100 + i, { answer: '2' });
-    const served = await play(1, 20, (n) => n !== 4);
-    const yesNoServed = served.filter((s) => s.kind === 'yesno').length;
-    expect(yesNoServed).toBeGreaterThan(0);
+    // Miss the first yes/no pair served, whichever the player's order puts first.
+    let missed: ApprenticeItem | null = null;
+    for (let n = 0; n < 20; n++) {
+      if ((await getApprentice(db, 1)).kind === 'checkpoint')
+        await acknowledgeCheckpoint(db, 1, now);
+      const { item } = question(await getApprentice(db, 1));
+      const miss = item.kind === 'yesno' && missed === null;
+      if (miss) missed = item;
+      await answerNext(1, !miss);
+    }
+    if (!missed) throw new Error('no yes/no pair was served');
+    // Pair n was seeded on image n.
+    await pg.query(`DELETE FROM "Image" WHERE "id"=$1`, [missed.referenceId]);
 
-    await pg.query(`DELETE FROM "Image" WHERE "id" <= 10`);
-
-    expect((await answerRows()).filter((r) => r.imageId !== null && r.imageId <= 10)).toHaveLength(
-      yesNoServed
-    );
+    expect((await answerRows()).filter((r) => r.imageId === missed!.referenceId)).toEqual([
+      expect.objectContaining({ yesNoReferenceId: null, questionKey: YESNO_Q }),
+    ]);
     const view = await getApprentice(db, 1);
     if (view.kind !== 'checkpoint') throw new Error('expected a checkpoint');
     expect(view.progress.answered).toBe(20);
     expect(view.checkpoint).toMatchObject({ total: 20, right: 19 });
-    const gone = view.checkpoint.missed.filter((m) => m.imageKey === null);
-    expect(gone.length).toBe(served[4].kind === 'yesno' ? 1 : 0);
+    expect(view.checkpoint.missed).toEqual([
+      expect.objectContaining({
+        kind: 'yesno',
+        imageKey: null,
+        answerLabel: 'No',
+        correctLabel: 'Yes',
+        explanation: null,
+      }),
+    ]);
   });
 });

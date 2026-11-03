@@ -135,6 +135,20 @@ describe('Knights of New Order yes/no reference actions', () => {
     expect(svc.update).toHaveBeenCalledTimes(1);
   });
 
+  it('saves an edit with no explanation field as an empty explanation', async () => {
+    svc.update.mockResolvedValueOnce({ ok: true });
+    await actions.updateYesNo(formEvent({ id: '5', answer: 'yes' }));
+    expect(svc.update).toHaveBeenCalledWith(5, { answer: true, explanation: '' });
+  });
+
+  it('shows the service refusal when a pair with answers is edited', async () => {
+    svc.update.mockResolvedValueOnce({ ok: false, error: 'Deactivate it instead.' });
+    expect(await actions.updateYesNo(formEvent({ id: '5', answer: 'no' }))).toMatchObject({
+      status: 409,
+      data: { error: 'Deactivate it instead.' },
+    });
+  });
+
   it('shows the service refusal when a pair with answers is deleted', async () => {
     svc.remove.mockResolvedValueOnce({ ok: false, error: 'Deactivate it instead.' });
     expect(await actions.deleteYesNo(formEvent({ id: '5' }))).toMatchObject({
