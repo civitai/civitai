@@ -14,12 +14,23 @@ import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfDraftLayer } from '~/components/HatTurf/HatTurfDraftLayer';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
 import clsx from 'clsx';
 
-export function ImageCard({ data }: Props) {
+export function ImageCard(props: Props) {
+  return (
+    <HatTurfCardProvider>
+      <ImageCardContent {...props} />
+    </HatTurfCardProvider>
+  );
+}
+
+function ImageCardContent({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
@@ -41,7 +52,12 @@ export function ImageCard({ data }: Props) {
         // Not mounted at all with the flag off. The overlay renders null there
         // anyway, but a card is rendered by the hundred and this keeps the
         // flag-off tree identical to what shipped before it.
-        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
+        safe && (
+          <>
+            {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
+            <HatTurfDraftLayer imageId={data.id} />
+          </>
+        )
       }
       header={
         <div className="flex w-full items-start justify-between">
@@ -115,6 +131,7 @@ function ImageCardActionRow({ data }: Props) {
         )}
         <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
+          <HatTurfButton ownerId={data.user.id} />
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>
               <ThemeIcon className={cardClasses.infoChip} variant="light">

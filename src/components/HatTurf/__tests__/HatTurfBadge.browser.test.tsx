@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
+import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 
@@ -69,7 +70,10 @@ vi.mock('~/components/Sticker/StickerPlacementCardBadge', () => ({
       </button>
     ) : null,
 }));
-vi.mock('~/components/Sticker/CardStickerOverlay', () => ({ CardStickerOverlay: () => null }));
+vi.mock('~/components/Sticker/CardStickerOverlay', async (importOriginal) => ({
+  ...(await importOriginal<typeof CardStickerOverlayModule>()),
+  CardStickerOverlay: () => null,
+}));
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
   InteractiveTipBuzzButton: ({ children }: { children: ReactNode }) => <>{children}</>,
   useBuzzTippingStore: () => 0,
@@ -81,11 +85,9 @@ import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
-import { page } from 'vitest/browser';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const PHONE_CARD = 171; // a 2-up grid on a 390px phone
-const DESKTOP_CARD = 300;
 
 const image = {
   id: 1,

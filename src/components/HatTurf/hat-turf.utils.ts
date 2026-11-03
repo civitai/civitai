@@ -72,3 +72,12 @@ export function standingsLabel(
     viewerTeam ? ` You are on ${viewerTeam}.` : ''
   }`;
 }
+
+/** A placed hat's width as a fraction of the drawn image (the sticker system's own default). */
+export const HAT_DEFAULT_SCALE = 0.22;
+
+/** Keeps a dragged hat's centre on the picture, a little inside the edge so the whole hat shows. */
+export function clampSpot(spot: { x: number; y: number }) {
+  const clamp = (n: number) => Math.min(0.92, Math.max(0.08, Number.isFinite(n) ? n : 0.5));
+  return { x: clamp(spot.x), y: clamp(spot.y) };
+}
