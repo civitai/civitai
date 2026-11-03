@@ -23,25 +23,40 @@ const user = (id: number, over: Partial<Klein9bUserRow> = {}): Klein9bUserRow =>
 });
 
 describe('classifyKlein9bAudience', () => {
-  it('sends the charged notice for a fee or open paid access in any status, listing only charged versions', () => {
+  it('sends the charged notice for a listed version with a fee or open paid access, listing only those', () => {
     const { recipients } = classifyKlein9bAudience(
       [
         version({ userId: 1, modelName: 'A', versionName: 'fee', licensingFee: 5 }),
         version({ userId: 1, modelName: 'A', versionName: 'free' }),
         version({
-          userId: 2,
-          modelName: 'B',
+          userId: 1,
+          modelName: 'A',
           versionName: 'gated draft',
           status: 'Draft',
           paidAccess: true,
         }),
+        version({ userId: 2, modelName: 'B', versionName: 'gated', paidAccess: true }),
       ],
       [user(1), user(2)]
     );
     expect(recipients.map((r) => [r.id, r.variant, r.versions])).toEqual([
       [1, 'charged', ['A: fee']],
-      [2, 'charged', ['B: gated draft']],
+      [2, 'charged', ['B: gated']],
     ]);
+  });
+
+  it('ignores deleted, unpublished and draft versions and versions on unlisted models: they are not "listed"', () => {
+    const { recipients } = classifyKlein9bAudience(
+      [
+        version({ userId: 1, licensingFee: 5, status: 'Deleted' }),
+        version({ userId: 2, paidAccess: true, modelStatus: 'Deleted' }),
+        version({ userId: 3, licensingFee: 5, status: 'Unpublished' }),
+        version({ userId: 4, paidAccess: true, status: 'Draft' }),
+        version({ userId: 4 }),
+      ],
+      [user(1), user(2), user(3), user(4)]
+    );
+    expect(recipients.map((r) => [r.id, r.variant])).toEqual([[4, 'uncharged']]);
   });
 
   it('sends the uncharged notice only for a published version on a published model, nothing charged', () => {

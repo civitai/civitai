@@ -3,7 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as EmailClient from '~/server/email/client';
 import type * as Klein9bNoticeEmail from '~/server/email/templates/klein9bNotice.email';
-import type * as NotificationService from '~/server/services/notification.service';
+import type * as NotificationsClient from '~/server/notifications/client';
 import { klein9bNoticeSchema } from '~/server/schema/klein9b-notice.schema';
 import { KLEIN9B_NOTICE } from '~/shared/constants/klein9b-notice.constants';
 
@@ -21,9 +21,9 @@ vi.mock('~/server/email/templates/klein9bNotice.email', async (importOriginal) =
   ...(await importOriginal<typeof Klein9bNoticeEmail>()),
   klein9bNoticeEmail: { send: sendMock },
 }));
-vi.mock('~/server/services/notification.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof NotificationService>()),
-  createNotification: notifyMock,
+vi.mock('~/server/notifications/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsClient>()),
+  notifications: { createNotification: notifyMock },
 }));
 
 const { sendKlein9bNotice } = await import('~/server/services/klein9b-notice.service');
@@ -51,7 +51,7 @@ const versions = [
 ];
 const users = [1, 2].map((id) => ({
   id,
-  email: `u${id}@example.com`,
+  email: `u${id}@example.com` as string | null,
   username: `u${id}`,
   bannedAt: null,
   deletedAt: null,
@@ -147,6 +147,34 @@ describe('sendKlein9bNotice', () => {
     expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ to: 'u2@example.com' }));
   });
 
+  it('a failed notification for a creator with no email is un-recorded and reported, not counted as sent', async () => {
+    users[1].email = null;
+    notifyMock.mockImplementation(async ({ userId }: { userId: number }) => {
+      if (userId === 2) throw new Error('notifications down');
+    });
+    try {
+      expect(await run(false)).toMatchObject({ sent: 1, failed: 1, failedUserIds: [2] });
+      expect([...ledger.keys()]).toEqual(['1']);
+    } finally {
+      users[1].email = 'u2@example.com';
+    }
+  });
+
+  it('sends at most `count` creators per call, and the next call sends the rest', async () => {
+    const first = (await sendKlein9bNotice({
+      dryRun: false,
+      count: 1,
+      batchSize: 25,
+      date: 'x',
+    })) as {
+      sent: number;
+      remaining: number;
+    };
+    expect(first).toMatchObject({ sent: 1, remaining: 1 });
+    expect(await run(false)).toMatchObject({ sent: 1, remaining: 0 });
+    expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
   it('refuses a real send with no email transport, before claiming anyone', async () => {
     emailConfiguredMock.mockReturnValue(false);
     await expect(run(false)).rejects.toThrow('Email is not configured');
@@ -163,5 +191,14 @@ describe('the route schema', () => {
       klein9bNoticeSchema.safeParse({ action: 'send', date: 'November 4th', dryRun: 'false' })
         .success
     ).toBe(false);
+  });
+
+  it('bounds count to 1-1000 (default 50) and batchSize to 1-50 (default 25)', () => {
+    const send = (extra: object) =>
+      klein9bNoticeSchema.safeParse({ action: 'send', date: 'November 4th', ...extra });
+    expect(send({}).data).toMatchObject({ count: 50, batchSize: 25 });
+    expect(send({ count: 1000, batchSize: 50 }).success).toBe(true);
+    for (const bad of [{ count: 0 }, { count: 1001 }, { batchSize: 0 }, { batchSize: 51 }])
+      expect(send(bad).success).toBe(false);
   });
 });

@@ -3,7 +3,8 @@ import { dbRead } from '~/server/db/client';
 import { isEmailConfigured } from '~/server/email/client';
 import { klein9bNoticeEmail } from '~/server/email/templates/klein9bNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { createNotification } from '~/server/services/notification.service';
+// The client throws on failure; the service wrapper swallows errors, which would record a failed send.
+import { notifications } from '~/server/notifications/client';
 import type { Klein9bNoticeVariant } from '~/shared/constants/klein9b-notice.constants';
 import {
   KLEIN9B_NOTICE,
@@ -39,24 +40,24 @@ export type Klein9bRecipient = Klein9bUserRow & {
 };
 
 /**
- * Charged: any 9B / 9B-base version, in any status, with a fee or open paid access (a draft can be
- * published later). Uncharged: a published 9B / 9B-base version on a published model, and nothing
- * charged. Charged wins.
+ * Only listed versions count (published, on a published model): both notices tell the creator the
+ * versions "stay listed" / "stay published". Charged: a listed version with a fee or open paid access.
+ * Uncharged: a listed version and nothing charged. Charged wins.
  */
 export function classifyKlein9bAudience(versions: Klein9bVersionRow[], users: Klein9bUserRow[]) {
-  const byUser = new Map<number, { charged: string[]; published: boolean }>();
+  const byUser = new Map<number, { charged: string[] }>();
   for (const v of versions) {
-    const entry = byUser.get(v.userId) ?? { charged: [], published: false };
+    if (v.status !== 'Published' || v.modelStatus !== 'Published') continue;
+    const entry = byUser.get(v.userId) ?? { charged: [] };
     if ((v.licensingFee ?? 0) > 0 || v.paidAccess)
       entry.charged.push(`${v.modelName}: ${v.versionName}`);
-    if (v.status === 'Published' && v.modelStatus === 'Published') entry.published = true;
     byUser.set(v.userId, entry);
   }
   const recipients: Klein9bRecipient[] = [];
   let excluded = 0;
   for (const user of users) {
     const entry = byUser.get(user.id);
-    if (!entry || (!entry.charged.length && !entry.published)) continue;
+    if (!entry) continue;
     if (user.bannedAt || user.deletedAt) {
       excluded++;
       continue;
@@ -87,6 +88,7 @@ export async function getKlein9bNoticeAudience() {
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE mv."baseModel" = ANY(${KLEIN9B_NOTICE_BASE_MODELS})
+      AND mv.status::text = 'Published' AND m.status::text = 'Published' AND m."deletedAt" IS NULL
   `;
   const userIds = [...new Set(versions.map((v) => v.userId))];
   const users = userIds.length
@@ -149,7 +151,7 @@ export async function sendKlein9bNotice({
           return;
         }
         try {
-          await createNotification({
+          await notifications.createNotification({
             userId: user.id,
             category: NotificationCategory.System,
             type: 'system-announcement',
