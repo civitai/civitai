@@ -212,6 +212,7 @@ beforeEach(() => {
   // The shared db mock is otherwise reset only between files; these tests must not share call
   // counts or implementations.
   resetSharedMocks();
+  for (const hook of Object.values(sparkHooks)) hook.mockClear();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
   hiddenUsersCached.mockReset();
@@ -4867,7 +4868,7 @@ describe('the title scan’s minor finding, beyond the scan', () => {
           details: { storylineId: 10, takenDown: true, title: 'T' },
         })
       );
-      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledWith(10);
+      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
@@ -4995,7 +4996,7 @@ describe('a storyline started from an image', () => {
         maxNsfwLevel: NsfwLevel.R,
         userId: OWNER,
       });
-      expect(sparkHooks.onStorySparked).toHaveBeenCalledWith(10);
+      expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('refuses a ceiling below the image rating, and accepts one above it', async () => {
