@@ -1,7 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as EmailClient from '~/server/email/client';
+import type * as Klein9bNoticeEmail from '~/server/email/templates/klein9bNotice.email';
 import { getKlein9bNoticeHtml } from '~/server/email/templates/klein9bNotice.email';
 import type { Klein9bUserRow, Klein9bVersionRow } from '~/server/services/klein9b-notice.service';
-import { classifyKlein9bAudience } from '~/server/services/klein9b-notice.service';
+import {
+  classifyKlein9bAudience,
+  sendKlein9bNotice,
+} from '~/server/services/klein9b-notice.service';
+
+const { sendMock, createNotificationMock } = vi.hoisted(() => ({
+  sendMock: vi.fn(),
+  createNotificationMock: vi.fn(),
+}));
+
+vi.mock('~/server/email/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof EmailClient>()),
+  isEmailConfigured: () => true,
+}));
+vi.mock('~/server/email/templates/klein9bNotice.email', async (importOriginal) => ({
+  ...(await importOriginal<typeof Klein9bNoticeEmail>()),
+  klein9bNoticeEmail: { send: sendMock },
+}));
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: createNotificationMock },
+}));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
 const version = (over: Partial<Klein9bVersionRow>): Klein9bVersionRow => ({
   userId: 1,
@@ -82,6 +107,42 @@ describe('classifyKlein9bAudience', () => {
     );
     expect(recipients.map((r) => r.id)).toEqual([8]);
     expect(excluded).toBe(2);
+  });
+});
+
+describe('sendKlein9bNotice', () => {
+  it('reports a failed send whose un-recording also failed as stuck, and finishes the run', async () => {
+    const ledger = new Map<string, string>();
+    dbMock.dbRead.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('"bannedAt"')
+        ? [user(1), user(2), user(3)]
+        : [version({ userId: 1 }), version({ userId: 2 }), version({ userId: 3 })]
+    );
+    const sys = redisMock.sysRedis;
+    sys.hmGet.mockImplementation(async (_key: string, fields: string[]) =>
+      fields.map((f) => ledger.get(f) ?? null)
+    );
+    sys.hSetNX.mockImplementation(async (_key: string, field: string, value: string) => {
+      if (ledger.has(field)) return false;
+      ledger.set(field, value);
+      return true;
+    });
+    sys.hDel.mockRejectedValue(new Error('redis down'));
+    sys.expireAt.mockResolvedValue(true);
+    createNotificationMock.mockResolvedValue(undefined);
+    sendMock.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === 'u2@example.com') throw new Error('rejected');
+    });
+
+    const result = await sendKlein9bNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 10,
+      date: 'November 4th',
+    });
+
+    expect(result).toMatchObject({ sent: 2, failedUserIds: [2], stuckUserIds: [2] });
+    expect(ledger.has('2')).toBe(true);
   });
 });
 

@@ -14,11 +14,10 @@
  *
  * Actions:
  *   send      - {date, dryRun?, count?, batchSize?}  Notify up to `count` (default 50, max 1000)
- *                                 not-yet-sent creators. The audience is recounted on every call:
- *                                 "charged" creators (a 9B / 9B-base version with a fee or open paid
- *                                 access, any status) and "uncharged" ones (a published 9B / 9B-base
- *                                 version, nothing charged); charged wins; banned or deleted accounts
- *                                 are skipped. `date` fills the copy ("November 4th"). dryRun defaults
+ *                                 not-yet-sent creators. The audience is recounted on every call; who
+ *                                 gets which notice is classifyKlein9bAudience in
+ *                                 klein9b-notice.service (listed 9B / 9B-base versions only).
+ *                                 `date` fills the copy ("November 4th"). dryRun defaults
  *                                 to TRUE and returns the counts only; pass `"dryRun": false` to send.
  *                                 Each creator is recorded before their notice goes out, so re-running
  *                                 never notifies anyone twice; a failed send is un-recorded and retried
