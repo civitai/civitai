@@ -199,6 +199,17 @@ describe('deleteStoryline', () => {
     ]);
   });
 
+  it('hands the spark it read before the delete to the points hook', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (900, ${CONTRIBUTOR}) ON CONFLICT DO NOTHING;
+      UPDATE "Storyline" SET "sparkImageId" = 900 WHERE id = 1;
+    `);
+
+    await deleteStoryline({ id: 1, userId: OWNER });
+
+    expect(sparkHooks.onStorySparkRemoved).toHaveBeenCalledWith({ actorId: OWNER, imageId: 900 });
+  });
+
   it('unlinks a chapter-1 draft, which stays an ordinary draft', async () => {
     await db.pg.exec(`
       INSERT INTO "Post" (id, "userId") VALUES (500, ${OWNER});

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { onStorySparkPostsHidden } from '~/server/events/points/hooks';
 import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
 import {
   contentKeptError,
@@ -2349,6 +2350,7 @@ export const unpublishModelVersionById = async ({
     where: { modelVersionId: version.id, userId: version.model.userId },
     select: { id: true },
   });
+  void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },

@@ -62,8 +62,21 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
 const events = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => events.list }));
 
-const { onPlacementsTakenDown, onStorySparked, onStorySparkLost, onStorySparkRemoved } =
-  await import('~/server/events/points/hooks');
+// unpublishPostAsModerator runs for real against Postgres; its index and cache steps are not points.
+vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+vi.mock('~/server/redis/caches', () => ({
+  userPostCountCache: { refresh: vi.fn() },
+  userImageVideoCountCaches: { refresh: vi.fn() },
+}));
+
+const {
+  onPlacementsTakenDown,
+  onStorySparked,
+  onStorySparkLost,
+  onStorySparkPostsHidden,
+  onStorySparkRemoved,
+} = await import('~/server/events/points/hooks');
+const { unpublishPostAsModerator } = await import('~/server/services/post.service');
 
 const pg = new PGlite();
 const OWNER = 1; // the image's creator
@@ -79,14 +92,15 @@ beforeAll(async () => {
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "tosViolation" boolean NOT NULL DEFAULT false,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "publishedAt" timestamp(3)
+      "nsfwLevel" int NOT NULL DEFAULT 1, "publishedAt" timestamp(3), "modelVersionId" int,
+      metadata jsonb
     );
     CREATE TABLE "Storyline" (
       id int PRIMARY KEY, "userId" int NOT NULL, "sparkImageId" int,
       "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "StorylineChapter" (
-      id serial PRIMARY KEY, "storylineId" int NOT NULL, "postId" int, depth int NOT NULL,
+      id serial PRIMARY KEY, "storylineId" int NOT NULL, "postId" int, "userId" int, depth int NOT NULL,
       "removedAt" timestamp(3), "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
     CREATE TABLE "Placement" (
@@ -121,6 +135,7 @@ beforeAll(async () => {
     );
     return rows[0] ?? null;
   }) as never);
+  dbMock.dbWrite.image.findMany.mockResolvedValue([]);
 });
 
 afterAll(async () => {
@@ -151,23 +166,25 @@ async function story({
   publishedAt = new Date(Date.now() - 60_000),
   startedAt = new Date(),
   takenDown = false,
+  modelVersionId = null,
 }: {
   spark?: number;
   writer?: number;
   publishedAt?: Date | null;
   startedAt?: Date;
   takenDown?: boolean;
+  modelVersionId?: number | null;
 } = {}) {
   const id = nextId++;
-  await pg.query(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES ($1, $2, $3)`, [
-    id,
-    writer,
-    publishedAt,
-  ]);
+  await pg.query(
+    `INSERT INTO "Post" (id, "userId", "publishedAt", "modelVersionId") VALUES ($1, $2, $3, $4)`,
+    [id, writer, publishedAt, modelVersionId]
+  );
   await pg.query(`INSERT INTO "Storyline" VALUES ($1, $2, $3, $4)`, [id, writer, spark, takenDown]);
   await pg.query(
-    `INSERT INTO "StorylineChapter" ("storylineId", "postId", depth, "createdAt") VALUES ($1, $1, 0, $2)`,
-    [id, startedAt]
+    `INSERT INTO "StorylineChapter" ("storylineId", "postId", "userId", depth, "createdAt")
+     VALUES ($1, $1, $2, 0, $3)`,
+    [id, writer, startedAt]
   );
   return id;
 }
@@ -258,6 +275,16 @@ describe('onStorySparked', () => {
     await onStorySparked(await story({ spark: 206 }));
     expect(engine.awardEventPoints).not.toHaveBeenCalled();
   });
+
+  it("a second story from an image already counted today does not use up another of the day's slots", async () => {
+    for (const id of [201, 202]) await image(id);
+    await story({ spark: 201 });
+    await story({ spark: 202 });
+    await story(); // earlier today, from the same image as the new one
+    // 201, 202 and HOST: three images, the limit, but HOST is the new story's own.
+    await onStorySparked(await story());
+    expect(engine.awardEventPoints).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('removal', () => {
@@ -335,5 +362,54 @@ describe('removal', () => {
     await pg.query(`UPDATE "Storyline" SET "tosViolation" = true WHERE id = $1`, [id]);
     await onStorySparkLost(id);
     expect(earning()).toBe(false);
+  });
+});
+
+// Moderation and account writes that stop chapter 1 being shown, without touching the storyline.
+describe('chapter 1 hidden by moderation', () => {
+  const sparked = async (opts: Parameters<typeof story>[0] = {}) => {
+    const id = await story(opts);
+    await onStorySparked(id);
+    expect(earning()).toBe(true);
+    return id;
+  };
+
+  it('takes it back when a moderator unpublishes chapter 1 (the CSAM hold decision)', async () => {
+    const id = await sparked();
+    await unpublishPostAsModerator({ id, userId: 99, reason: 'csam-text-hold' });
+    // The hook is fire-and-forget after the write.
+    await vi.waitFor(() => expect(earning()).toBe(false));
+  });
+
+  it('takes it back when chapter 1 is rated Blocked', async () => {
+    const id = await sparked();
+    await pg.query(`UPDATE "Post" SET "nsfwLevel" = 32 WHERE id = $1`, [id]);
+    await onStorySparkPostsHidden({ postIds: [id] });
+    expect(earning()).toBe(false);
+  });
+
+  it("takes it back when chapter 1's model version is unpublished", async () => {
+    await sparked({ modelVersionId: 77 });
+    await pg.query(`UPDATE "Post" SET "publishedAt" = NULL WHERE "modelVersionId" = 77`);
+    await onStorySparkPostsHidden({ modelVersionIds: [77] });
+    expect(earning()).toBe(false);
+  });
+
+  it.each([
+    ['banned', `"bannedAt"`],
+    ['deleted', `"deletedAt"`],
+  ])("takes it back when chapter 1's author is %s", async (_why, column) => {
+    await sparked();
+    await pg.query(`UPDATE "User" SET ${column} = now() WHERE id = $1`, [WRITER]);
+    await onStorySparkPostsHidden({ authorId: WRITER });
+    expect(earning()).toBe(false);
+  });
+
+  it('keeps it when the hidden post is not chapter 1 of the story that earns it', async () => {
+    const id = await sparked();
+    await onStorySparkPostsHidden({ postIds: [id] }); // nothing changed: still live
+    await onStorySparkPostsHidden({ postIds: [999] });
+    expect(engine.removeEventPoints).not.toHaveBeenCalled();
+    expect(earning()).toBe(true);
   });
 });

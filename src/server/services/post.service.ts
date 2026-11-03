@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { onStorySparkLost } from '~/server/events/points/hooks';
+import { onStorySparkLost, onStorySparkPostsHidden } from '~/server/events/points/hooks';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { uniq } from 'lodash-es';
@@ -1221,6 +1221,7 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },
     select: { id: true },

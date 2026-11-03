@@ -505,6 +505,36 @@ export async function onStorySparkLost(storylineId: number): Promise<void> {
     swallow('event-points:story-spark')(error);
   }
 }
+
+/**
+ * Chapter 1 of these sparked stories may no longer be shown: a moderation or account write hid it
+ * (unpublished, rated Blocked, its model taken down, its author banned or deleted). Call after the
+ * write commits, without awaiting: moderation never waits on or fails because of points. Each
+ * story's remix goes only if nothing else still earns it, so a story that is still live keeps it.
+ */
+export async function onStorySparkPostsHidden(
+  by: { postIds: number[] } | { modelVersionIds: number[] } | { authorId: number }
+): Promise<void> {
+  try {
+    const where =
+      'postIds' in by
+        ? by.postIds.length && Prisma.sql`rc."postId" = ANY(${by.postIds}::int[])`
+        : 'modelVersionIds' in by
+        ? by.modelVersionIds.length &&
+          Prisma.sql`rc."postId" IN (SELECT id FROM "Post" WHERE "modelVersionId" = ANY(${by.modelVersionIds}::int[]))`
+        : Prisma.sql`rc."userId" = ${by.authorId}`;
+    if (!where) return;
+    const sparks = await dbWrite.$queryRaw<{ actorId: number; imageId: number }[]>`
+      SELECT DISTINCT st."userId" AS "actorId", st."sparkImageId" AS "imageId"
+      FROM "StorylineChapter" rc
+      JOIN "Storyline" st ON st.id = rc."storylineId"
+      WHERE rc.depth = 0 AND st."sparkImageId" IS NOT NULL AND ${where}
+    `;
+    for (const spark of sparks) await onStorySparkRemoved(spark);
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
+  }
+}
 // #endregion
 
 // #region model reviews

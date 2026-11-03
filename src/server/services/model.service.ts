@@ -1,6 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
+import { onStorySparkPostsHidden } from '~/server/events/points/hooks';
 import {
   coverageColumn,
   coveragePair,
@@ -2225,6 +2226,8 @@ export const deleteModelById = async ({
   });
 
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  if (deletedVersionIds.length)
+    void onStorySparkPostsHidden({ modelVersionIds: deletedVersionIds });
   // Refunded before the cache and index steps below: the delete has committed, and a failure in one
   // of them must not leave the bids standing. Without `onBidRefundFailed` its error is thrown last.
   let refundError: unknown;
@@ -5112,6 +5115,7 @@ export const unpublishModelById = async ({
       where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
       select: { id: true },
     });
+    void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },
