@@ -22,9 +22,16 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { extendMembership, previewMembershipExtension, EXTEND_OUTCOME_UNKNOWN } = await import(
-  '../user-actions.service'
-);
+const {
+  extendMembership,
+  previewMembershipExtension,
+  EXTEND_OUTCOME_UNKNOWN,
+  setMembershipCancel,
+  previewMembershipCancel,
+  CANCEL_OUTCOME_UNKNOWN,
+  resyncMembership,
+  RESYNC_OUTCOME_UNKNOWN,
+} = await import('../user-actions.service');
 
 type Call = { url: string; init: RequestInit };
 let calls: Call[];
@@ -125,5 +132,54 @@ describe('previewMembershipExtension', () => {
     expect((calls[0].init.headers as Record<string, string>).cookie).toBe(
       'civ-token=the-moderators-session'
     );
+  });
+});
+
+describe('setMembershipCancel / previewMembershipCancel', () => {
+  const CANCEL = { userId: 8675309, cancelAtPeriodEnd: false, reason: 'Ticket 123: keep it' };
+
+  it('posts to /api/mod/user/membership-cancel as the moderator, with exactly the endpoint fields', async () => {
+    respond = () =>
+      new Response(JSON.stringify({ ok: true, changed: true, problems: [] }), { status: 200 });
+    await setMembershipCancel(CANCEL);
+    expect(calls[0].url).toBe('https://civitai.com/api/mod/user/membership-cancel');
+    expect((calls[0].init.headers as Record<string, string>).cookie).toBe(
+      'civ-token=the-moderators-session'
+    );
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(CANCEL);
+  });
+
+  it('a 502 reads as outcome unknown', async () => {
+    respond = () => new Response('bad gateway', { status: 502 });
+    expect(await setMembershipCancel(CANCEL)).toEqual({ ok: false, error: CANCEL_OUTCOME_UNKNOWN });
+  });
+
+  it('the preview sends the choice in the query string', async () => {
+    respond = () => new Response(JSON.stringify({ problems: [] }), { status: 200 });
+    await previewMembershipCancel({ userId: 8675309, cancelAtPeriodEnd: true });
+    expect(calls[0].url).toBe(
+      'https://civitai.com/api/mod/user/membership-cancel-preview?userId=8675309&cancelAtPeriodEnd=true'
+    );
+    expect(calls[0].init.method).toBe('GET');
+  });
+});
+
+describe('resyncMembership', () => {
+  const RESYNC = {
+    userId: 8675309,
+    reason: 'Ticket 123: webhook missed',
+    confirmEndBuzzMembership: true,
+  };
+
+  it('posts the confirm through to /api/mod/user/membership-resync', async () => {
+    respond = () => new Response(JSON.stringify({ ok: true, changes: [] }), { status: 200 });
+    expect((await resyncMembership(RESYNC)).ok).toBe(true);
+    expect(calls[0].url).toBe('https://civitai.com/api/mod/user/membership-resync');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(RESYNC);
+  });
+
+  it('a 200 that is not a result reads as outcome unknown', async () => {
+    respond = () => new Response('{}', { status: 200 });
+    expect(await resyncMembership(RESYNC)).toEqual({ ok: false, error: RESYNC_OUTCOME_UNKNOWN });
   });
 });

@@ -127,9 +127,21 @@ const previewMembershipExtension = vi.fn(async () => ({
 const extendMembership = vi.fn(async () => {
   throw new Error('the assistant must never extend');
 });
+const previewMembershipCancel = vi.fn();
+const previewMembershipResync = vi.fn();
+const mustNotWrite = (name: string) =>
+  vi.fn(async () => {
+    throw new Error(`the assistant must never call ${name}`);
+  });
+const setMembershipCancel = mustNotWrite('setMembershipCancel');
+const resyncMembership = mustNotWrite('resyncMembership');
 vi.mock('$lib/server/user-actions.service', () => ({
   previewMembershipExtension,
   extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
 }));
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
@@ -922,5 +934,79 @@ describe('membership extension: the assistant reads and proposes, a person exten
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/\bextendMembership\b|callModEndpoint|user\/membership-extend\b/);
+  });
+});
+
+describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a person writes', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('the cancel tools need the cancel grant; the extend grant alone does not offer them', () => {
+    const cancel = ['preview_membership_cancel', 'propose_membership_cancel'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).toEqual(
+      expect.arrayContaining(cancel)
+    );
+    for (const name of cancel)
+      expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).not.toContain(name);
+  });
+
+  it('the re-sync tools need the extend grant', () => {
+    const resync = ['preview_membership_resync', 'propose_membership_resync'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).toEqual(
+      expect.arrayContaining(resync)
+    );
+    for (const name of resync)
+      expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).not.toContain(name);
+  });
+
+  it('proposing a cancel change returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_cancel',
+      { userId: 5, cancelAtPeriodEnd: false, reason: 'Ticket 123: wants to keep it' },
+      LOOKUP_PAGE,
+      ['user.membership.cancel']
+    )) as { data: { changed: boolean; confirmAt: string } };
+    expect(out.data.changed).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&cancelAtPeriodEnd=false&cancelReason=Ticket+123%3A+wants+to+keep+it#membership-cancel'
+    );
+    expect(setMembershipCancel).not.toHaveBeenCalled();
+  });
+
+  it('the re-sync preview hands the model the differing fields and the Buzz verdict, no ids', async () => {
+    previewMembershipResync.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        ours: null,
+        stripe: null,
+        changes: [
+          { field: 'id', ours: 'sub_old_secret', stripe: 'sub_new_secret' },
+          { field: 'status', ours: 'past_due', stripe: 'active' },
+        ],
+        endsBuzzMembership: { id: 'buzz_secret', status: 'active', currentPeriodEnd: null },
+        problems: [],
+      },
+    });
+    const out = (await run('preview_membership_resync', { userId: 5 }, LOOKUP_PAGE, [
+      'user.membership.extend',
+    ])) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      changes: [{ field: 'status', ours: 'past_due', stripe: 'active' }],
+      idOrPlanDiffers: true,
+      endsBuzzMembership: { status: 'active', currentPeriodEnd: null },
+      problems: [],
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/secret/);
+    expect(resyncMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the cancel or re-sync writes', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(
+      /\bsetMembershipCancel\b|\bresyncMembership\b|user\/membership-cancel\b|user\/membership-resync\b/
+    );
   });
 });

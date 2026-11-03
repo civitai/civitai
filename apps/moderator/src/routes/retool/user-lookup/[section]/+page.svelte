@@ -36,6 +36,8 @@
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
   import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
+  import MembershipCancelPanel from '../MembershipCancelPanel.svelte';
+  import MembershipResyncPanel from '../MembershipResyncPanel.svelte';
   import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
@@ -99,6 +101,17 @@
           userId={result.identity.id}
           initialDays={page.url.searchParams.get('extendDays') ?? ''}
           initialReason={page.url.searchParams.get('extendReason') ?? ''}
+        />
+        <MembershipResyncPanel
+          userId={result.identity.id}
+          initialReason={page.url.searchParams.get('resyncReason') ?? ''}
+        />
+      {/if}
+      {#if data.grants['user.membership.cancel']}
+        <MembershipCancelPanel
+          userId={result.identity.id}
+          initialCancel={page.url.searchParams.get('cancelAtPeriodEnd') ?? ''}
+          initialReason={page.url.searchParams.get('cancelReason') ?? ''}
         />
       {/if}
       {#if data.grants['user.membership.code']}

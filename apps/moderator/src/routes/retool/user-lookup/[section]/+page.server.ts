@@ -24,6 +24,10 @@ import {
   mintMembershipCode,
   previewMembershipExtension,
   extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
   revokeMembershipCode,
   grantCreatorScore,
   revokeCreatorScoreGrant,
@@ -101,6 +105,10 @@ const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
 const membershipExtendFail = (message: string) =>
   fail(400, { scope: 'membershipExtend' as const, error: message });
+const membershipCancelFail = (message: string) =>
+  fail(400, { scope: 'membershipCancel' as const, error: message });
+const membershipResyncFail = (message: string) =>
+  fail(400, { scope: 'membershipResync' as const, error: message });
 const creatorScoreFail = (message: string) =>
   fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
@@ -626,6 +634,61 @@ export const actions: Actions = {
     const result = await extendMembership(input);
     if (!result.ok) return membershipExtendFail(result.error);
     return { success: true, extended: result.result };
+  }),
+
+  previewMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ cancelAtPeriodEnd: z.stringbool() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCancelFail(input);
+
+    const result = await previewMembershipCancel(input);
+    if (!result.ok) return membershipCancelFail(result.error);
+    return { success: true, cancelPreview: result.preview };
+  }),
+
+  setMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        cancelAtPeriodEnd: z.stringbool(),
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCancelFail(input);
+
+    const result = await setMembershipCancel(input);
+    if (!result.ok) return membershipCancelFail(result.error);
+    return { success: true, cancelChanged: result.result };
+  }),
+
+  previewMembershipResync: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return membershipResyncFail(input);
+
+    const result = await previewMembershipResync(input);
+    if (!result.ok) return membershipResyncFail(result.error);
+    return { success: true, resyncPreview: result.preview };
+  }),
+
+  resyncMembership: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+        // A checkbox: present means confirmed. The endpoint refuses when it is needed and missing.
+        confirmEndBuzzMembership: z
+          .literal('on')
+          .optional()
+          .transform((v) => v === 'on'),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipResyncFail(input);
+
+    const result = await resyncMembership(input);
+    if (!result.ok) return membershipResyncFail(result.error);
+    return { success: true, resynced: result.result };
   }),
 
   grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request, locals }) => {

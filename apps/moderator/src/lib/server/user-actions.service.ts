@@ -10,7 +10,14 @@ import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
-import type { MembershipExtensionPreview, MembershipExtensionResult } from '$lib/membership-extend';
+import type {
+  MembershipCancelPreview,
+  MembershipCancelResult,
+  MembershipExtensionPreview,
+  MembershipExtensionResult,
+  MembershipResyncPreview,
+  MembershipResyncResult,
+} from '$lib/membership-extend';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
@@ -284,7 +291,9 @@ export type ModEndpoint =
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
+  | 'user/membership-cancel'
   | 'user/membership-extend'
+  | 'user/membership-resync'
   | 'user/message-as-civitai'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
@@ -314,7 +323,9 @@ export type ModReadEndpoint =
   | 'messages/inbox'
   | 'messages/thread'
   | 'user/legal-hold'
+  | 'user/membership-cancel-preview'
   | 'user/membership-extend-preview'
+  | 'user/membership-resync-preview'
   | 'user/reactions';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
@@ -1755,6 +1766,77 @@ export async function extendMembership(input: {
   const body = result.body as unknown as MembershipExtensionResult;
   if (typeof body.ok !== 'boolean' || !Array.isArray(body.problems))
     return { ok: false, error: EXTEND_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
+}
+
+// CANCEL-AT-PERIOD-END and RE-SYNC. Like the extension, the endpoints write their own ModActivity
+// row and Axiom record.
+
+export const CANCEL_OUTCOME_UNKNOWN =
+  'Outcome unknown: the cancel setting may have changed. Preview again before retrying; a repeat to the same setting writes nothing.';
+export const RESYNC_OUTCOME_UNKNOWN =
+  'Outcome unknown: the row may have been re-synced. Preview again; a repeat is harmless.';
+
+export async function previewMembershipCancel(input: {
+  userId: number;
+  cancelAtPeriodEnd: boolean;
+}): Promise<{ ok: true; preview: MembershipCancelPreview } | { ok: false; error: string }> {
+  const result = await readModEndpoint(
+    'user/membership-cancel-preview',
+    { userId: input.userId, cancelAtPeriodEnd: String(input.cancelAtPeriodEnd) },
+    'Preview cancel change',
+    60_000
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, preview: result.body as unknown as MembershipCancelPreview };
+}
+
+export async function setMembershipCancel(input: {
+  userId: number;
+  cancelAtPeriodEnd: boolean;
+  reason: string;
+}): Promise<{ ok: true; result: MembershipCancelResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-cancel',
+    input,
+    'Change membership cancel',
+    EXTEND_TIMEOUT_MS
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, CANCEL_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as MembershipCancelResult;
+  if (typeof body.ok !== 'boolean' || !Array.isArray(body.problems))
+    return { ok: false, error: CANCEL_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
+}
+
+export async function previewMembershipResync(input: {
+  userId: number;
+}): Promise<{ ok: true; preview: MembershipResyncPreview } | { ok: false; error: string }> {
+  const result = await readModEndpoint(
+    'user/membership-resync-preview',
+    { userId: input.userId },
+    'Preview re-sync',
+    60_000
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, preview: result.body as unknown as MembershipResyncPreview };
+}
+
+export async function resyncMembership(input: {
+  userId: number;
+  reason: string;
+  confirmEndBuzzMembership: boolean;
+}): Promise<{ ok: true; result: MembershipResyncResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-resync',
+    input,
+    'Re-sync membership',
+    EXTEND_TIMEOUT_MS
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, RESYNC_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as MembershipResyncResult;
+  if (body.ok !== true || !Array.isArray(body.changes))
+    return { ok: false, error: RESYNC_OUTCOME_UNKNOWN };
   return { ok: true, result: body };
 }
 

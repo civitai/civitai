@@ -45,7 +45,7 @@ import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from 
 import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 
 // The assistant's tools. Every one but `propose_playbook` and `request_tool` is a READ: no tool bans,
-// mutes, strikes, removes, extends a membership, rules on a report or messages anyone. Those two
+// mutes, strikes, removes, extends or changes a membership, rules on a report or messages anyone. Those two
 // writes touch only the assistant's own tables.
 //
 // A moderator is offered only the tools whose `requires` pages they hold, so the assistant is never a
@@ -926,6 +926,116 @@ export const TOOLS = [
           proposed: true,
           extended: false,
           confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-extend`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
+  // Cancel-at-period-end and re-sync: read the verdict and prefill the panel, as for the extension.
+  // Never a tool that calls the write endpoints.
+  tool({
+    name: 'preview_membership_cancel',
+    description:
+      "What setting (true) or undoing (false) cancel-at-period-end on one account's Stripe membership would do: its status, period end and cancel state, and every reason it would be refused. Read-only.",
+    input: z.object({ userId, cancelAtPeriodEnd: z.boolean() }),
+    requires: [LOOKUP],
+    grant: 'user.membership.cancel',
+    timeoutMs: 65_000,
+    run: async ({ userId: id, cancelAtPeriodEnd }) => {
+      const { previewMembershipCancel } = await import('../user-actions.service');
+      const r = await previewMembershipCancel({ userId: id, cancelAtPeriodEnd });
+      if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
+      const { subscription: sub, problems, changed } = r.preview;
+      const data = {
+        cancelAtPeriodEnd,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        alreadySo: changed === false,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_cancel',
+    description:
+      "Hand the moderator a link to this account's Cancel at period end panel with the choice and reason filled in. Nothing is changed: the moderator previews and confirms it there. Only when the moderator asked for it.",
+    input: z.object({
+      userId,
+      cancelAtPeriodEnd: z.boolean(),
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.cancel',
+    run: async ({ userId: id, cancelAtPeriodEnd, reason }) => {
+      const params = new URLSearchParams({
+        cancelAtPeriodEnd: String(cancelAtPeriodEnd),
+        cancelReason: reason,
+      });
+      return {
+        data: {
+          proposed: true,
+          changed: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-cancel`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
+  tool({
+    name: 'preview_membership_resync',
+    description:
+      "Whether one account's membership record differs from its Stripe subscription, field by field, any Buzz-bought membership a re-sync would end, and every reason it would be refused. Read-only.",
+    input: z.object({ userId }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    timeoutMs: 65_000,
+    run: async ({ userId: id }) => {
+      const { previewMembershipResync } = await import('../user-actions.service');
+      const r = await previewMembershipResync({ userId: id });
+      if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
+      // Fields that differ and the verdict; Stripe ids stay out, as for the extension.
+      const { changes, endsBuzzMembership, problems } = r.preview;
+      const data = {
+        changes: changes.filter((c) => c.field !== 'id' && c.field !== 'priceId'),
+        idOrPlanDiffers: changes.some((c) => c.field === 'id' || c.field === 'priceId'),
+        endsBuzzMembership: endsBuzzMembership && {
+          status: endsBuzzMembership.status,
+          currentPeriodEnd: endsBuzzMembership.currentPeriodEnd,
+        },
+        problems,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_resync',
+    description:
+      "Hand the moderator a link to this account's Re-sync from Stripe panel with the reason filled in. Nothing is re-synced: the moderator previews and confirms it there. Only when the moderator asked for it.",
+    input: z.object({
+      userId,
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    run: async ({ userId: id, reason }) => {
+      const params = new URLSearchParams({ resyncReason: reason });
+      return {
+        data: {
+          proposed: true,
+          resynced: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-resync`,
         },
         rows: 1,
         truncated: false,

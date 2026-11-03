@@ -68,7 +68,16 @@ export const PERMISSIONS = [
   },
   // Money: free days on a member's Stripe subscription. The main app checks this literal
   // (`ModeratorGrantId`), so rename the two together.
-  { id: 'user.membership.extend', label: 'Extend a member’s Stripe membership by free days' },
+  {
+    id: 'user.membership.extend',
+    label: 'Extend a member’s Stripe membership by free days, or re-sync it from Stripe',
+  },
+  // Undoing a cancel arms the member's next renewal charge, so it is granted apart from extend. The main
+  // app checks this literal (`ModeratorGrantId`), so rename the two together.
+  {
+    id: 'user.membership.cancel',
+    label: 'Set or undo cancel-at-period-end on a member’s Stripe membership',
+  },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.

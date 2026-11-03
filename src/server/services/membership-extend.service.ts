@@ -90,6 +90,37 @@ export function cancelModeOf(
   return null;
 }
 
+/** That the Stripe subscription and customer are this user's. Shared with membership-cancel.service. */
+export function ownershipProblems({
+  userId,
+  row,
+  sub,
+  customer,
+}: {
+  userId: number;
+  row: { id: string; userCustomerId: string | null };
+  sub: Stripe.Subscription;
+  customer: Stripe.Customer | Stripe.DeletedCustomer | null;
+}) {
+  const problems: string[] = [];
+  if (sub.id !== row.id) problems.push(`Stripe returned ${sub.id}, not ${row.id}`);
+  // The app maps a subscription to a user by User.customerId (upsertSubscription).
+  if (!row.userCustomerId || row.userCustomerId !== sub.customer)
+    problems.push("the subscription's customer is not this user's Stripe customer");
+  // createCustomer stamps metadata.userId on every customer it makes.
+  if (!customer) problems.push('the Stripe customer was not found');
+  else if ('deleted' in customer && customer.deleted)
+    problems.push('the Stripe customer is deleted');
+  else if (
+    (customer as Stripe.Customer).metadata?.userId != null &&
+    String((customer as Stripe.Customer).metadata.userId) !== String(userId)
+  )
+    problems.push("the Stripe customer's metadata.userId is another user");
+  if (sub.metadata?.userId != null && String(sub.metadata.userId) !== String(userId))
+    problems.push("the subscription's metadata.userId is another user");
+  return problems;
+}
+
 export type ExtensionGuardInput = {
   userId: number;
   days: number;
@@ -137,23 +168,9 @@ export function checkExtension({
   if (!row || row.provider !== PaymentProvider.Stripe) return { problems };
   if (!sub) return { problems: [...problems, 'Stripe has no such subscription'] };
 
-  if (sub.id !== row.id) problems.push(`Stripe returned ${sub.id}, not ${row.id}`);
+  problems.push(...ownershipProblems({ userId, row, sub, customer }));
   if (!EXTENDABLE_STATUSES.includes(sub.status))
     problems.push(`status is ${sub.status}, not active or trialing`);
-  // The app maps a subscription to a user by User.customerId (upsertSubscription).
-  if (!row.userCustomerId || row.userCustomerId !== sub.customer)
-    problems.push("the subscription's customer is not this user's Stripe customer");
-  // createCustomer stamps metadata.userId on every customer it makes.
-  if (!customer) problems.push('the Stripe customer was not found');
-  else if ('deleted' in customer && customer.deleted)
-    problems.push('the Stripe customer is deleted');
-  else if (
-    (customer as Stripe.Customer).metadata?.userId != null &&
-    String((customer as Stripe.Customer).metadata.userId) !== String(userId)
-  )
-    problems.push("the Stripe customer's metadata.userId is another user");
-  if (sub.metadata?.userId != null && String(sub.metadata.userId) !== String(userId))
-    problems.push("the subscription's metadata.userId is another user");
   // A schedule owns the phases and can undo trial_end.
   if (sub.schedule) problems.push('the subscription is on a schedule');
   // Never stack on a live trial: ours, a gift's or a promotion's.
