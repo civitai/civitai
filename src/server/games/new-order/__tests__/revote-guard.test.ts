@@ -85,7 +85,8 @@ vi.mock('~/utils/signal-client', () => ({
   },
 }));
 
-import { addImageRating } from '~/server/services/games/new-order.service';
+import { handleLogError } from '~/server/utils/errorHandling';
+import { addImageRating, RATED_SET_COMPLETE } from '~/server/services/games/new-order.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -111,6 +112,10 @@ let chRows: ChRow[] = [];
 function runRatingsQuery(sql: string) {
   const rank = sql.match(/rank\s*=\s*'(\w+)'/)?.[1];
   const since = sql.match(/createdAt\s*>=\s*parseDateTimeBestEffort\('([^']+)'\)/)?.[1];
+  // Fail closed: a filter spelled any other way must not be silently ignored.
+  if ((/\brank\b/.test(sql) && !rank) || (/createdAt/.test(sql) && !since)) {
+    throw new Error(`unrecognised rank/createdAt predicate: ${sql}`);
+  }
   return chRows
     .filter((r) => !rank || r.rank === rank)
     .filter((r) => !since || new Date(r.createdAt) >= new Date(since))
@@ -213,7 +218,7 @@ async function castVote() {
 
 describe('refusing a second vote on an image the player already rated', () => {
   it('writes nothing and counts nothing for a re-queued image the player rated', async () => {
-    sets.set(ratedKey, new Set(['0', String(IMAGE)]));
+    sets.set(ratedKey, new Set([RATED_SET_COMPLETE, String(IMAGE)]));
 
     const { result, written } = await castVote();
 
@@ -251,7 +256,7 @@ describe('refusing a second vote on an image the player already rated', () => {
   });
 
   it('fails open: a Redis error on the check still lets the vote through', async () => {
-    sets.set(ratedKey, new Set(['0', String(IMAGE)]));
+    sets.set(ratedKey, new Set([RATED_SET_COMPLETE, String(IMAGE)]));
     redisMock.redis.sIsMember.mockRejectedValue(new Error('redis down'));
 
     const { written } = await castVote();
@@ -285,14 +290,26 @@ describe('warming the rated set', () => {
     await castVote();
 
     expect(mockCh.$query).toHaveBeenCalledTimes(1);
-    expect([...sets.get(ratedKey)!]).toEqual(expect.arrayContaining(['900', '2', '0']));
-    expect([...sets.get(ratedKey)!].indexOf('0')).toBeGreaterThan(
+    expect([...sets.get(ratedKey)!]).toEqual(
+      expect.arrayContaining(['900', '2', RATED_SET_COMPLETE])
+    );
+    expect([...sets.get(ratedKey)!].indexOf(RATED_SET_COMPLETE)).toBeGreaterThan(
       [...sets.get(ratedKey)!].indexOf('2')
     );
   });
 
+  it('rebuilds an old-format set that holds only the numeric sentinel', async () => {
+    sets.set(ratedKey, new Set(['0', '900']));
+    chRows = [{ imageId: IMAGE + 1, rank: 'Knight', createdAt: '2026-03-01T00:00:00Z' }];
+
+    await castVote();
+
+    expect(mockCh.$query).toHaveBeenCalledTimes(1);
+    expect([...sets.get(ratedKey)!]).toEqual(expect.arrayContaining(['2', RATED_SET_COMPLETE]));
+  });
+
   it('does not query ClickHouse again for a set that carries the sentinel', async () => {
-    sets.set(ratedKey, new Set(['0']));
+    sets.set(ratedKey, new Set([RATED_SET_COMPLETE]));
 
     await castVote();
 
@@ -310,7 +327,7 @@ describe('warming the rated set', () => {
     const { written } = await castVote();
 
     expect(sets.get(ratedKey)!.size).toBeGreaterThanOrEqual(1000);
-    expect(sets.get(ratedKey)!.has('0')).toBe(false);
+    expect(sets.get(ratedKey)!.has(RATED_SET_COMPLETE)).toBe(false);
     expect(written).toHaveLength(1);
   });
 
@@ -347,15 +364,51 @@ describe('recording a vote in the rated set', () => {
     chRows = [{ imageId: 50, rank: 'Knight', createdAt: '2026-03-01T00:00:00Z' }];
     await castVote();
 
-    expect([...sets.get(ratedKey)!]).toEqual(expect.arrayContaining([String(IMAGE), '50', '0']));
+    expect([...sets.get(ratedKey)!]).toEqual(
+      expect.arrayContaining([String(IMAGE), '50', RATED_SET_COMPLETE])
+    );
   });
 
   it('appends to a set that already exists', async () => {
-    sets.set(ratedKey, new Set(['0']));
+    sets.set(ratedKey, new Set([RATED_SET_COMPLETE]));
 
     await castVote();
     await flush();
 
     expect(sets.get(ratedKey)).toContain(String(IMAGE));
+  });
+});
+
+describe('the append after a vote', () => {
+  it('does not fail the vote when it rejects, and logs it', async () => {
+    sets.set(ratedKey, new Set([RATED_SET_COMPLETE]));
+    redisMock.redis.eval.mockRejectedValue(new Error('redis down'));
+
+    const { written } = await castVote();
+
+    expect(written).toHaveLength(1);
+    expect(handleLogError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'redis down' }),
+      'new-order-duplicate-vote-check',
+      { playerId: PLAYER, imageId: IMAGE }
+    );
+  });
+
+  it('completes before the per-image lock is released', async () => {
+    sets.set(ratedKey, new Set([RATED_SET_COMPLETE]));
+    const order: string[] = [];
+    redisMock.redis.eval.mockImplementation(async () => {
+      order.push('append');
+      return 1;
+    });
+    lockMock.mockImplementation(async (_opts: unknown, fn: () => unknown) => {
+      const result = await fn();
+      order.push('release');
+      return result;
+    });
+
+    await castVote();
+
+    expect(order).toEqual(['append', 'release']);
   });
 });

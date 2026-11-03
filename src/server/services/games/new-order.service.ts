@@ -837,7 +837,12 @@ async function processImageRating({
   }
 
   // Add newly rated image to cache incrementally (O(1) operation, no cache busting needed)
-  addRatedImage(playerId, imageId);
+  try {
+    await addRatedImage(playerId, imageId);
+  } catch (e) {
+    // The vote already landed; a lost append is the same accepted fail-open as the check.
+    handleLogError(e as Error, 'new-order-duplicate-vote-check', { playerId, imageId });
+  }
 
   // Increase all counters
   const stats = await withSpan('games:newOrder:updateStats', () =>
@@ -1532,9 +1537,11 @@ function ratedImagesKey(userId: number) {
  * On cache miss, fetches from ClickHouse and populates the Redis set.
  * Returns the Redis key for subsequent SMISMEMBER checks.
  *
- * Uses a sentinel member '0' (no real image has ID 0) to distinguish
- * "cache populated but user has no ratings" from "cache not populated".
+ * A set is complete only once it holds RATED_SET_COMPLETE, written after every chunk.
  */
+// Not '0': sets built before the full-history rebuild carry '0' but were filtered by startAt/rank.
+export const RATED_SET_COMPLETE = 'complete:v2';
+
 async function ensureRatedImagesCache({ userId }: { userId: number }) {
   if (!redis || !clickhouse) throw throwInternalServerError('Redis not available');
 
@@ -1542,7 +1549,7 @@ async function ensureRatedImagesCache({ userId }: { userId: number }) {
 
   // The sentinel is written last, so its presence means every chunk landed. A set without it
   // (a build that died, or one addRatedImage created) is completed by union below.
-  if (await redis.sIsMember(key, '0')) return key;
+  if (await redis.sIsMember(key, RATED_SET_COMPLETE)) return key;
 
   // Full history, no startAt or rank filter: resetPlayer moves startAt forward but the ratings
   // table still holds one row per (userId, imageId), and a vote at any rank counts as rated.
@@ -1565,8 +1572,7 @@ async function ensureRatedImagesCache({ userId }: { userId: number }) {
       .expire(key, CacheTTL.day)
       .exec();
   }
-  // Real image IDs are always > 0, so the sentinel never matches a rated image.
-  await redis.multi().sAdd(key, ['0']).expire(key, CacheTTL.day).exec();
+  await redis.multi().sAdd(key, [RATED_SET_COMPLETE]).expire(key, CacheTTL.day).exec();
 
   return key;
 }
