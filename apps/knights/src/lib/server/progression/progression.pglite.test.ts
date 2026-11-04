@@ -55,11 +55,15 @@ const ballot = async (itemId: number, userId: number) =>
     )
   ).rows[0];
 
+/**
+ * Settles an item at the Knight rule (4 unanimous votes). `losers: 1` adds a dissenter who votes fourth, so the
+ * item stays open until a fifth, agreeing vote settles it at 4 of 5.
+ */
 async function resolve(itemId: number, firstPlayer: number, winning: string, losers = 0) {
   const other = winning === '4' ? '8' : '4';
-  for (let i = 0; i < 5; i++) {
-    await vote(firstPlayer + i, itemId, i < 5 - losers ? winning : other);
-  }
+  for (let i = 0; i < 3; i++) await vote(firstPlayer + i, itemId, winning);
+  if (losers) await vote(firstPlayer + 4, itemId, other);
+  await vote(firstPlayer + 3, itemId, winning);
 }
 
 beforeAll(async () => {
@@ -167,7 +171,7 @@ describe('grading', () => {
     await image(11);
     const first = await item(10);
     const second = await item(11);
-    await resolve(first, 1, '4');
+    for (const userId of [1, 2, 3, 5]) await vote(userId, first, '4');
     await resolve(second, 1, '8', 1);
 
     expect(await fervorLedgerOf(db, 1, NOW)).toEqual({ correct: 2, graded: 2 });
@@ -272,11 +276,11 @@ describe('career reset (startAt)', () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);
     const id = await item(10);
-    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    for (let i = 1; i <= 3; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
     await pg.exec(
       `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-16', "goldPending"=0 WHERE "userId"=1`
     );
-    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+    await castVote(db, { userId: 4, itemId: id, answer: '4' }, deps);
 
     expect(await ballot(id, 1)).toMatchObject({ verdict: 'correct', gold: 0 });
     expect((await ballot(id, 1)).settledAt).not.toBeNull();
@@ -293,11 +297,11 @@ describe('career reset (startAt)', () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);
     const id = await item(10);
-    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    for (let i = 1; i <= 3; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
     await pg.exec(
       `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-16', "goldPending"=70 WHERE "userId"=1`
     );
-    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+    await castVote(db, { userId: 4, itemId: id, answer: '4' }, deps);
 
     expect(await who(1)).toMatchObject({ goldPending: 70, goldEarned: 0 });
   });
@@ -306,9 +310,9 @@ describe('career reset (startAt)', () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);
     const id = await item(10);
-    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    for (let i = 1; i <= 3; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
     const spy = vi.spyOn(pg, 'query');
-    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+    await castVote(db, { userId: 4, itemId: id, answer: '4' }, deps);
     const sqls = spy.mock.calls.map(([text]) => String(text));
     spy.mockRestore();
 
@@ -327,11 +331,11 @@ describe('career reset (startAt)', () => {
     await image(11);
     const before = await item(10);
     const after = await item(11);
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 4; i++) {
       await castVote(db, { userId: i, itemId: before, answer: '4' }, at('2026-12-10T10:00:00Z'));
     }
     await pg.exec(`UPDATE "NewOrderPlayer" SET "startAt"='2026-12-12' WHERE "userId"=1`);
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 4; i++) {
       await castVote(db, { userId: i, itemId: after, answer: '4' }, at('2026-12-15T10:00:00Z'));
     }
 
@@ -373,10 +377,10 @@ describe('write-back then payout', () => {
     await image(10);
     const id = await item(10);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    for (let i = 1; i <= 4; i++) await vote(i, id, '8');
+    for (let i = 1; i <= 3; i++) await vote(i, id, '8');
     await pg.exec(`ALTER TABLE "NewOrderPlayer" ADD CONSTRAINT no_gold CHECK ("goldEarned" = 0)`);
 
-    expect(await vote(5, id, '8')).toEqual({ status: 'resolved' });
+    expect(await vote(4, id, '8')).toEqual({ status: 'resolved' });
 
     expect(
       (await pg.query(`SELECT "appliedAt" FROM "KnightsQueueItem" WHERE id=$1`, [id])).rows[0]
@@ -385,7 +389,7 @@ describe('write-back then payout', () => {
 
     await pg.exec(`ALTER TABLE "NewOrderPlayer" DROP CONSTRAINT no_gold`);
     await applyPendingResolutions(db, deps);
-    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 5, failed: 0 });
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 4, failed: 0 });
     expect(applyConsensus).toHaveBeenCalledTimes(1);
     expect((await who(1)).goldEarned).toBe(PROGRESSION.baseGold);
   });

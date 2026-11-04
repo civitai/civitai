@@ -377,21 +377,21 @@ describe('question defaults', () => {
 });
 
 describe('resolution', () => {
-  it('resolves at five agreeing votes, grades every vote and applies the rating once', async () => {
+  it('resolves at four agreeing votes, grades every vote and applies the rating once', async () => {
     await fiveKnights();
     await image(10, 4);
     const id = await item(10);
 
-    for (const u of [1, 2, 3, 4]) expect((await vote(u, id, '4')).status).toBe('recorded');
+    for (const u of [1, 2, 3]) expect((await vote(u, id, '4')).status).toBe('recorded');
     expect(applyConsensus).not.toHaveBeenCalled();
-    expect((await vote(5, id, '4')).status).toBe('resolved');
+    expect((await vote(4, id, '4')).status).toBe('resolved');
 
     expect(applyConsensus).toHaveBeenCalledTimes(1);
     expect(applyConsensus).toHaveBeenCalledWith({
       questionKey: Q,
       imageId: 10,
       value: '4',
-      actorId: 5,
+      actorId: 4,
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '4' });
     expect((await verdicts(id)).every((v) => v.verdict === 'correct')).toBe(true);
@@ -467,7 +467,7 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 16);
     const id = await item(10);
-    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
 
     expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
     expect(applyConsensus).not.toHaveBeenCalled();
@@ -478,7 +478,7 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 8);
     const id = await item(10);
-    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved' });
   });
 
@@ -486,7 +486,7 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 16);
     const id = await item(10);
-    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '32');
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
 
     expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
     expect(applyConsensus).not.toHaveBeenCalled();
@@ -496,19 +496,19 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 4);
     const id = await item(10);
-    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
+    for (const u of [1, 2, 3]) await vote(u, id, '4');
 
     applyConsensus.mockRejectedValueOnce(new Error('main app down'));
     vi.spyOn(console, 'error').mockImplementationOnce(() => undefined);
-    expect((await vote(5, id, '4')).status).toBe('resolved');
+    expect((await vote(4, id, '4')).status).toBe('resolved');
     expect(await itemRow(id)).toMatchObject({
       status: 'Resolved',
       resolvedValue: '4',
-      resolvedBy: 5,
+      resolvedBy: 4,
       appliedAt: null,
     });
     const graded = await verdicts(id);
-    expect(graded.map((v) => v.verdict)).toEqual(Array(5).fill('correct'));
+    expect(graded.map((v) => v.verdict)).toEqual(Array(4).fill('correct'));
 
     expect(await applyPendingResolutions(db, deps())).toEqual({
       applied: 0,
@@ -525,7 +525,7 @@ describe('resolution', () => {
       questionKey: Q,
       imageId: 10,
       value: '4',
-      actorId: 5,
+      actorId: 4,
     });
     expect((await itemRow(id)).appliedAt).toEqual(afterMinutes(6));
     expect(await verdicts(id)).toEqual(graded);
@@ -542,14 +542,14 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 4);
     const id = await item(10);
-    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
+    for (const u of [1, 2, 3]) await vote(u, id, '4');
 
     let openDuringCall: number | undefined;
     applyConsensus.mockImplementationOnce(async () => {
       openDuringCall = transactions.open();
       return APPLIED;
     });
-    await vote(5, id, '4');
+    await vote(4, id, '4');
     expect(applyConsensus).toHaveBeenCalledTimes(1);
     expect(openDuringCall).toBe(0);
   });
@@ -558,7 +558,7 @@ describe('resolution', () => {
     await fiveKnights();
     await image(10, 4);
     const id = await item(10);
-    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
+    for (const u of [1, 2, 3]) await vote(u, id, '4');
 
     vi.spyOn(console, 'error').mockImplementationOnce(() => undefined);
     const now = vi
@@ -569,7 +569,7 @@ describe('resolution', () => {
       });
     const result = await castVote(
       db,
-      { userId: 5, itemId: id, answer: '4' },
+      { userId: 4, itemId: id, answer: '4' },
       { applyConsensus, now }
     );
 
@@ -609,7 +609,7 @@ describe('writing a settled rating back', () => {
     const id = await item(imageId);
     applyConsensus.mockRejectedValueOnce(new Error('main app down'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
     return id;
   }
   const pendingRun = (minutes: number) =>
@@ -783,7 +783,7 @@ describe('writing a settled rating back', () => {
         throw new Error('timed out after the main app wrote');
       });
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+      for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
       expect(await itemRow(id)).toMatchObject({ status: 'Resolved', appliedAt: null });
 
       applyConsensus.mockClear();
@@ -838,7 +838,7 @@ describe('writing a settled rating back', () => {
       await image(10, 4);
       const id = await item(10);
       applyConsensus.mockResolvedValue({ outcome: 'skipped', reason: 'locked', currentLevel: 8 });
-      for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+      for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
 
       expect(await itemRow(id)).toMatchObject({ status: 'Closed', reason: 'moderator-ruled' });
       expect((await verdicts(id)).every((v) => v.verdict === 'failed')).toBe(true);
