@@ -22,7 +22,8 @@
     </li>
     <li>
       You rise to a rank when you reach its level and your accuracy meets its bar, and you can skip
-      ranks when you meet both for a higher one.
+      ranks when you meet both for a higher one. The top rank also asks for days played: days
+      on which you cast at least one judgment since your career began.
     </li>
     <li>
       Below the bar of your own rank, your vote weight and gold are multiplied by {data.rules

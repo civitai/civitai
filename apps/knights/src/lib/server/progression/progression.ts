@@ -1,11 +1,11 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from './levels';
 import { finalItem } from '../queue/item-state';
 import { workOffSmites } from '../smites/smites.service';
 import { grantRankBadges } from './badges';
-import { PROGRESSION } from './config';
+import { PROGRESSION, RANK_LADDER } from './config';
 import { accuracyOf, earnedRank, type Ledger } from './rating';
 import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
 
@@ -36,8 +36,38 @@ export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> 
   return { correct: Number(totals.correct), graded: Number(totals.graded) };
 }
 
-const rankEarnedBy = (player: { rankType: string; exp: number }, ledger: Ledger) =>
-  earnedRank(player.rankType, getLevelProgression(player.exp).level, accuracyOf(ledger));
+/**
+ * Distinct UTC days since the career began on which the player cast a vote. `KnightsPlayerDay` has one row per
+ * player per day, so this is a count over at most a few hundred rows on its primary key, not over the vote ledger.
+ * The day of a reset counts, even for votes cast before it.
+ */
+export async function daysPlayedOf(db: Executor, playerId: number): Promise<number> {
+  const { n } = await db
+    .selectFrom('KnightsPlayerDay as d')
+    .select(sql<string>`count(*)`.as('n'))
+    .where('d.playerId', '=', playerId)
+    .where('d.votes', '>', 0)
+    .where(
+      sql<SqlBool>`d."day" >= COALESCE((SELECT "startAt"::date FROM "NewOrderPlayer" WHERE "userId" = d."playerId"), 'epoch')`
+    )
+    .executeTakeFirstOrThrow();
+  return Number(n);
+}
+
+/** Days are read only when level and accuracy already earn a rank that asks for them. */
+async function rankEarnedBy(
+  db: Executor,
+  playerId: number,
+  player: { rankType: string; exp: number },
+  ledger: Ledger
+) {
+  const level = getLevelProgression(player.exp).level;
+  const accuracy = accuracyOf(ledger);
+  const withoutDayGate = earnedRank(player.rankType, level, accuracy, Infinity);
+  const gated = RANK_LADDER.find((entry) => entry.rank === withoutDayGate)?.minDaysPlayed;
+  if (!gated) return withoutDayGate;
+  return earnedRank(player.rankType, level, accuracy, await daysPlayedOf(db, playerId));
+}
 
 /** Dev tools only: runs the settle-time rank-up on demand. */
 export async function applyRankUp(trx: Executor, playerId: number): Promise<string | null> {
@@ -48,7 +78,7 @@ export async function applyRankUp(trx: Executor, playerId: number): Promise<stri
     .forUpdate()
     .executeTakeFirst();
   if (!player) return null;
-  const earned = rankEarnedBy(player, await ledgerOf(trx, playerId));
+  const earned = await rankEarnedBy(trx, playerId, player, await ledgerOf(trx, playerId));
   if (!earned) return null;
   await trx
     .updateTable('NewOrderPlayer')
@@ -156,7 +186,7 @@ export async function payOutVotes(
       .executeTakeFirst();
     // Read only now: the update above took the row lock, so a settlement that committed first is in the ledger.
     const ledger = await ledgerOf(trx, playerId);
-    const earned = locked ? rankEarnedBy(locked, ledger) : null;
+    const earned = locked ? await rankEarnedBy(trx, playerId, locked, ledger) : null;
     if (earned) {
       await trx
         .updateTable('NewOrderPlayer')

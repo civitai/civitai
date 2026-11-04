@@ -540,14 +540,14 @@ describe('play load notices', () => {
   });
 
   it('carries what a new rank brings, so the notice can say it', async () => {
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 20, guide: true });
-    getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 21 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 50 });
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Templar',
-      level: 21,
-      levels: '21–40',
+      level: 50,
+      levels: '50–89',
       voteWeight: 1.5,
       goldMultiplier: 1.25,
     });

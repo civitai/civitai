@@ -5,7 +5,7 @@ Replaces the old Trial (a 12-item run with a pass mark and a cooldown). Code: `a
 ## What an Acolyte does
 
 - A continuous stream of graded items, never repeating for a player. The curated core set comes first; after that harvested rating images (`KnightsReferenceImage`, pool `trials`) are mixed with yes/no references (`KnightsYesNoReference`, active, on an active `bool` question) on a fixed rhythm. Either kind fills in when the other runs out.
-- Every answer is graded against the reference. A right answer pays 100 XP on the normal level curve; a wrong one pays nothing. Acolytes are never smitten, earn no gold, and their answers decide nothing.
+- Every answer is graded against the reference. A right answer pays 100 XP on the Knights level curve (the original game's curve up to level 20, where the apprenticeship ends); a wrong one pays nothing. Acolytes are never smitten, earn no gold, and their answers decide nothing.
 - Promotion to Knight happens on the answer that makes both true: level 20 and at least 75% right over the last 100 answers (a full window). A player at level 20 below the bar keeps playing; nothing resets.
 - `/play` shows level progress toward Knight and an accuracy meter, no verdict per answer (only the correct/wrong sound), a recap every 20 answers listing exactly those 20 answers' misses with the right answers, the rating guide offered as help when accuracy is low, and a short moment at levels 5, 10 and 15. With nothing left to serve it says to check back soon.
 

@@ -25,14 +25,29 @@ const deps: QueueDeps = {
   mirrorXp: vi.fn(async () => undefined),
 };
 
-type Setup = { level?: number; correct?: number; failed?: number };
-async function player(userId: number, rank: string, { level = 1, correct, failed }: Setup = {}) {
+type Setup = { level?: number; correct?: number; failed?: number; days?: number };
+
+/** `days` distinct UTC days with a vote, from 2026-01-01 on. */
+async function seedDays(userId: number, days: number, votes = 1) {
+  await pg.query(
+    `INSERT INTO "KnightsPlayerDay" ("playerId","day","votes")
+     SELECT $1, DATE '2026-01-01' + g, $3 FROM generate_series(0, $2::int - 1) g`,
+    [userId, days, votes]
+  );
+}
+
+async function player(
+  userId: number,
+  rank: string,
+  { level = 1, correct, failed, days }: Setup = {}
+) {
   await seedPlayer(pg, userId, rank);
   await pg.query(`UPDATE "NewOrderPlayer" SET "exp"=$2 WHERE "userId"=$1`, [
     userId,
     expForLevel(level),
   ]);
   if (correct || failed) await seedGradedVotes(pg, userId, { correct, failed });
+  if (days) await seedDays(userId, days);
 }
 
 const rankOf = async (userId: number) =>
@@ -77,46 +92,81 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 
 describe('rank-up when votes settle', () => {
   it('needs the level as well as the accuracy bar', async () => {
-    await player(1, 'Knight', { level: 20, correct: 100 });
+    await player(1, 'Knight', { level: 49, correct: 100 });
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Knight');
   });
 
   it('needs the accuracy bar as well as the level', async () => {
-    await player(1, 'Knight', { level: 25, correct: 30, failed: 30 });
+    await player(1, 'Knight', { level: 55, correct: 30, failed: 30 });
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Knight');
   });
 
   it('promotes when both are met, counting the XP that settle adds', async () => {
-    await player(1, 'Knight', { level: 21, correct: 100 });
+    await player(1, 'Knight', { level: 50, correct: 100 });
     await pg.query(`UPDATE "NewOrderPlayer" SET "exp"=$1 WHERE "userId"=1`, [
-      expForLevel(21) - PROGRESSION.voteXp - PROGRESSION.correctXp,
+      expForLevel(50) - PROGRESSION.voteXp - PROGRESSION.correctXp,
     ]);
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Templar');
   });
 
   it('can skip Templar', async () => {
-    await player(1, 'Knight', { level: 45, correct: 100 });
+    await player(1, 'Knight', { level: 95, correct: 100, days: 60 });
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Paladin');
   });
 
+  // The settled vote's own day counts, so these seed one day fewer than the total.
+  it('holds Paladin back at 59 days played', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 58 });
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Templar');
+  });
+
+  it('grants Paladin at 60 days played', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 59 });
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Paladin');
+  });
+
+  it('gives a Knight who has the level but not the days Templar, not Paladin', async () => {
+    await player(1, 'Knight', { level: 95, correct: 100, days: 10 });
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Templar');
+  });
+
+  it('does not count a day without a vote', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 58 });
+    await pg.query(
+      `INSERT INTO "KnightsPlayerDay" ("playerId","day","votes") VALUES (1,'2026-11-01',0)`
+    );
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Templar');
+  });
+
+  it('counts only the days since the career restarted', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 70 });
+    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"='2026-02-20' WHERE "userId"=1`);
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Templar');
+  });
+
   it('does not rank anyone up before the sample is big enough to rate them', async () => {
-    await player(1, 'Knight', { level: 30, correct: RATING.minGraded - 2 });
+    await player(1, 'Knight', { level: 60, correct: RATING.minGraded - 2 });
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Knight');
   });
 
   it('promotes a player already past the Templar level the first time they pass the bar', async () => {
-    await player(1, 'Knight', { level: 30, correct: RATING.minGraded - 1 });
+    await player(1, 'Knight', { level: 60, correct: RATING.minGraded - 1 });
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Templar');
   });
@@ -179,19 +229,39 @@ describe('status', () => {
   });
 
   it('shows what the next rank needs and how far the player is', async () => {
-    await player(1, 'Knight', { level: 18, correct: 45, failed: 5 });
+    await player(1, 'Knight', { level: 48, correct: 45, failed: 5 });
     expect((await getPlayerStatus(db, 1))?.nextRank).toEqual({
       rank: 'Templar',
-      fromLevel: 21,
+      fromLevel: 50,
       accuracyBar: 0.8,
-      levelsToGo: 3,
+      levelsToGo: 2,
       levelMet: false,
       accuracyMet: true,
+      minDaysPlayed: 0,
+      daysPlayed: 0,
+      daysToGo: 0,
+      daysMet: true,
+    });
+  });
+
+  it('shows the days played so far toward Paladin', async () => {
+    await player(1, 'Templar', { level: 90, correct: 45, failed: 5, days: 45 });
+    expect((await getPlayerStatus(db, 1))?.nextRank).toEqual({
+      rank: 'Paladin',
+      fromLevel: 90,
+      accuracyBar: 0.85,
+      levelsToGo: 0,
+      levelMet: true,
+      accuracyMet: true,
+      minDaysPlayed: 60,
+      daysPlayed: 45,
+      daysToGo: 15,
+      daysMet: false,
     });
   });
 
   it('has no next rank for a Paladin', async () => {
-    await player(1, 'Paladin', { level: 50 });
+    await player(1, 'Paladin', { level: 95 });
     expect((await getPlayerStatus(db, 1))?.nextRank).toBeNull();
   });
 });

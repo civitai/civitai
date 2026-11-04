@@ -14,6 +14,18 @@ describe('rulesFacts', () => {
     expect(facts.ranks.map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));
   });
 
+  it('quotes the level bands and the days played from the ladder', () => {
+    expect(rulesFacts(5).ranks).toEqual([
+      { rank: 'Knight', levels: '20–49', accuracyPercent: 70, minDaysPlayed: 0 },
+      { rank: 'Templar', levels: '50–89', accuracyPercent: 80, minDaysPlayed: 0 },
+      { rank: 'Paladin', levels: '90+', accuracyPercent: 85, minDaysPlayed: 60 },
+    ]);
+  });
+
+  it('starts the Knight band where the apprenticeship ends', () => {
+    expect(RANK_LADDER[0].fromLevel).toBe(APPRENTICE.knightLevel);
+  });
+
   it('quotes the hearts from the smite limit', () => {
     expect(rulesFacts(5).hearts).toBe(SMITES.max);
   });

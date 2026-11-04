@@ -71,7 +71,7 @@ describe('rank badges', () => {
     await seedPlayer(pg, 1, 'Knight');
     await seedGradedVotes(pg, 1, { correct: 100 });
     await pg.query(`UPDATE "NewOrderPlayer" SET "exp"=$1 WHERE "userId"=1`, [
-      expForLevel(21) - PROGRESSION.voteXp - PROGRESSION.correctXp,
+      expForLevel(50) - PROGRESSION.voteXp - PROGRESSION.correctXp,
     ]);
 
     await settleCorrect(1, 100);

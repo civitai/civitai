@@ -38,24 +38,31 @@ describe('standingOf', () => {
 
 describe('earnedRank', () => {
   const good = 0.9;
+  const veteran = 365;
 
   it('needs the level and the accuracy bar', () => {
-    expect(earnedRank('Knight', 25, null)).toBeNull();
-    expect(earnedRank('Knight', 25, 0.79)).toBeNull();
-    expect(earnedRank('Knight', 20, good)).toBeNull();
-    expect(earnedRank('Knight', 21, 0.8)).toBe('Templar');
+    expect(earnedRank('Knight', 60, null, veteran)).toBeNull();
+    expect(earnedRank('Knight', 60, 0.79, veteran)).toBeNull();
+    expect(earnedRank('Knight', 49, good, veteran)).toBeNull();
+    expect(earnedRank('Knight', 50, 0.8, veteran)).toBe('Templar');
   });
 
   it('skips ranks when both bars are met', () => {
-    expect(earnedRank('Knight', 45, good)).toBe('Paladin');
-    expect(earnedRank('Knight', 45, 0.82)).toBe('Templar');
-    expect(earnedRank('Templar', 41, 0.85)).toBe('Paladin');
+    expect(earnedRank('Knight', 95, good, veteran)).toBe('Paladin');
+    expect(earnedRank('Knight', 95, 0.82, veteran)).toBe('Templar');
+    expect(earnedRank('Templar', 90, 0.85, veteran)).toBe('Paladin');
+  });
+
+  it('holds back Paladin until the player has played enough days', () => {
+    expect(earnedRank('Templar', 90, good, 59)).toBeNull();
+    expect(earnedRank('Templar', 90, good, 60)).toBe('Paladin');
+    expect(earnedRank('Knight', 95, good, 59)).toBe('Templar');
   });
 
   it('never moves a rank down, nor touches Acolytes, Inquisitors or Paladins', () => {
-    expect(earnedRank('Paladin', 60, good)).toBeNull();
-    expect(earnedRank('Acolyte', 60, good)).toBeNull();
-    expect(earnedRank('Inquisitor', 60, good)).toBeNull();
+    expect(earnedRank('Paladin', 120, good, veteran)).toBeNull();
+    expect(earnedRank('Acolyte', 120, good, veteran)).toBeNull();
+    expect(earnedRank('Inquisitor', 120, good, veteran)).toBeNull();
   });
 });
 
@@ -64,24 +71,27 @@ describe('rankTable', () => {
     expect(rankTable()).toEqual([
       {
         rank: 'Knight',
-        levels: '1–20',
+        levels: '20–49',
         accuracyBar: 0.7,
+        minDaysPlayed: 0,
         voteWeight: 1,
         goldMultiplier: 1,
         dailyGoldCap: 5000,
       },
       {
         rank: 'Templar',
-        levels: '21–40',
+        levels: '50–89',
         accuracyBar: 0.8,
+        minDaysPlayed: 0,
         voteWeight: 1.5,
         goldMultiplier: 1.25,
         dailyGoldCap: 7500,
       },
       {
         rank: 'Paladin',
-        levels: '41+',
+        levels: '90+',
         accuracyBar: 0.85,
+        minDaysPlayed: 60,
         voteWeight: 2,
         goldMultiplier: 1.5,
         dailyGoldCap: 10000,
@@ -103,19 +113,27 @@ describe('nextLadderEntry', () => {
 });
 
 describe('progressToward', () => {
-  const templar = RANK_LADDER[1];
+  const [, templar, paladin] = RANK_LADDER;
 
   it('says how many levels are left and which requirements are met', () => {
-    expect(progressToward(templar, 18, 0.9)).toEqual({
-      levelsToGo: 3,
+    expect(progressToward(templar, 48, 0.9, 0)).toEqual({
+      levelsToGo: 2,
       levelMet: false,
       accuracyMet: true,
+      daysToGo: 0,
+      daysMet: true,
     });
-    expect(progressToward(templar, 21, 0.79)).toEqual({
+    expect(progressToward(templar, 50, 0.79, 0)).toMatchObject({
       levelsToGo: 0,
       levelMet: true,
       accuracyMet: false,
     });
-    expect(progressToward(templar, 21, null).accuracyMet).toBe(false);
+    expect(progressToward(templar, 50, null, 0).accuracyMet).toBe(false);
+  });
+
+  it('counts the days still to play for a rank that asks for them', () => {
+    expect(progressToward(paladin, 90, 0.9, 45)).toMatchObject({ daysToGo: 15, daysMet: false });
+    expect(progressToward(paladin, 90, 0.9, 60)).toMatchObject({ daysToGo: 0, daysMet: true });
+    expect(progressToward(paladin, 90, 0.9, 200)).toMatchObject({ daysToGo: 0, daysMet: true });
   });
 });

@@ -51,6 +51,9 @@ type Standing = {
     levelsToGo: number;
     levelMet: boolean;
     accuracyMet: boolean;
+    minDaysPlayed: number;
+    daysPlayed: number;
+    daysMet: boolean;
   } | null;
 };
 
@@ -70,9 +73,11 @@ export function nextRankLine({ nextRank }: Pick<Standing, 'nextRank'>): string |
   if (!nextRank) return null;
   const level = nextRank.levelMet ? ' (reached)' : `, ${nextRank.levelsToGo} to go`;
   const met = nextRank.accuracyMet ? ' (reached)' : '';
-  return `Next, ${nextRank.rank}: level ${nextRank.fromLevel}${level} and accuracy of ${percent(
-    nextRank.accuracyBar
-  )} or more${met}`;
+  const accuracy = `accuracy of ${percent(nextRank.accuracyBar)} or more${met}`;
+  const start = `Next, ${nextRank.rank}: level ${nextRank.fromLevel}${level}`;
+  if (nextRank.minDaysPlayed === 0) return `${start} and ${accuracy}`;
+  const days = nextRank.daysMet ? ' (reached)' : ` (have ${nextRank.daysPlayed})`;
+  return `${start}, ${accuracy} and ${nextRank.minDaysPlayed} days played${days}`;
 }
 
 /** What "Restart career" takes from this player, for the confirmation. Gold is the only money at stake, never smites. */
