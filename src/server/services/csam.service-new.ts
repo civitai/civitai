@@ -2488,6 +2488,12 @@ async function archiveAndUpload({
 const bigintReplacer: JsonReplacer = (_key, value) =>
   typeof value === 'bigint' ? value.toString() : value;
 
+/** The error's name and code without its message, which can quote a storage key or a URL. */
+const errorClass = (e: unknown) => ({
+  errorName: (e as Error | undefined)?.name,
+  errorCode: (e as { code?: unknown } | undefined)?.code,
+});
+
 export async function archiveCsamDataForReport(data: CsamReportProps) {
   const { userId } = data;
   if (!userId) {
@@ -2631,6 +2637,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-failed',
+      message: `archiving report ${report.id} failed after ${archived.length} object(s)`,
+      reportId: report.id,
+      stored: archived.map((object) => object.kind),
+      ...errorClass(e),
+    });
     if (e instanceof Error) {
       if (e.message === 'training data not found') {
         await dbWrite.csamReport.update({
@@ -2822,11 +2837,20 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           } catch (e) {
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
-            if (
-              !isEdgeUrlPassthrough(image.url) ||
-              hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS
-            )
-              throw e;
+            const retried =
+              !isEdgeUrlPassthrough(image.url) || hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS;
+            logToAxiom({
+              name: 'csam-report',
+              type: retried ? 'error' : 'info',
+              subType: 'archive-image-read',
+              message: `report ${report.id}: image ${image.id} could not be read`,
+              reportId: report.id,
+              imageId: image.id,
+              ...errorClass(e),
+              fullUrl: isEdgeUrlPassthrough(image.url),
+              retried,
+            });
+            if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
           }
           if (original.source === 'missing') {
