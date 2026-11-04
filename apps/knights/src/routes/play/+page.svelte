@@ -12,11 +12,11 @@
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
   import Countdown from '$lib/Countdown.svelte';
+  import RecapDialog from '$lib/RecapDialog.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
-  import { recapLines } from './recap-text';
   import { answerForKey, answerForKeyPress } from './keys';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
@@ -45,7 +45,11 @@
   let choosingReason = $derived(!!data.item && reasonItem === data.item.id);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
-  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
+  // The guide and the rank-up come first; the daily recap waits behind them and opens once they are dismissed.
+  let recapOpen = $derived(
+    data.mode === 'queue' && !!data.recap && !guideOpen && data.progress?.kind !== 'rank'
+  );
+  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank' || recapOpen);
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
@@ -247,22 +251,6 @@
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
 
-  {#if data.mode === 'queue' && data.recap}
-    <section class="recap" aria-label="Recap of your last play day">
-      <div>
-        {#each recapLines(data.recap) as line (line)}
-          <p>{line}</p>
-        {/each}
-        {#if form?.recapFailed}
-          <p class="notice" role="alert">{form.message}</p>
-        {/if}
-      </div>
-      <form method="POST" action="?/dismissRecap" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Dismiss</button>
-      </form>
-    </section>
-  {/if}
-
   {#if data.mode === 'apprentice'}
     {#if data.apprentice.kind === 'question'}
       <div class="column">
@@ -405,6 +393,16 @@
     {submitting}
     {submit}
   />
+{:else if recapOpen && data.mode === 'queue'}
+  <RecapDialog
+    recap={data.recap}
+    optOut={false}
+    watch={{ streak: data.daily.streak, size: data.daily.watchSize, done: data.daily.watchDone }}
+    action="?/dismissRecap"
+    message={form?.recapFailed ? form.message : null}
+    {submitting}
+    {submit}
+  />
 {/if}
 
 <style>
@@ -477,21 +475,6 @@
     max-width: 48rem;
     margin: 0 auto;
     padding: 1rem 1.5rem 2rem;
-  }
-  .recap {
-    display: flex;
-    flex: none;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 1rem;
-    width: 100%;
-    max-width: 48rem;
-    margin: 0 auto 0.5rem;
-    padding: 0 1.5rem 0 1rem;
-    border-left: 3px solid var(--gold);
-  }
-  .recap p {
-    margin: 0;
   }
   .flat {
     margin: 0;
@@ -745,10 +728,6 @@
     }
     .panel {
       padding: 0.5rem 1rem 1.5rem;
-    }
-    .recap {
-      padding-right: 1rem;
-      font-size: 0.85rem;
     }
   }
 </style>

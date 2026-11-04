@@ -29,6 +29,7 @@
       conversionOpen={data.conversionOpen}
       {status}
       {streak}
+      recapUnseen={data.recapUnseen}
     />
     <main>
       {@render children()}
