@@ -31,7 +31,7 @@
     {/each}
   </span>
   {@render links?.()}
-  · <a href="/rules">Rules</a>
+  · <a href="/codex#judging">Codex</a>
 </p>
 {#if status.rating.bar !== null}
   <p class="status">
@@ -43,7 +43,7 @@
         · <strong class="below">below it: reduced weight and gold</strong>
       {/if}
     {/if}
-    · <a href="/ranks">Ranks</a>
+    · <a href="/codex#ranks">Ranks</a>
   </p>
 {/if}
 {#if nextLine}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DAILY } from './daily/config';
-import { RANK_LADDER } from './progression/config';
+import { PROGRESSION, RANK_LADDER } from './progression/config';
 import { rulesFacts } from './rules';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
@@ -33,6 +33,14 @@ describe('rulesFacts', () => {
   it('keeps a vote worth its immediate and graded XP together', () => {
     const { xp } = rulesFacts(5);
     expect(xp.atVote + xp.onCorrect).toBe(100);
+  });
+
+  it('quotes the fervor formula from config, so the page never names a scale itself', () => {
+    expect(rulesFacts(5).fervor).toEqual({
+      scale: PROGRESSION.fervorScale,
+      windowDays: PROGRESSION.fervorWindowDays,
+      accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
+    });
   });
 
   it('quotes how many judges a yes/no question waits for', () => {

@@ -20,8 +20,7 @@
   const LINKS = [
     { href: '/judgments', icon: 'scroll-text', title: 'Judgments', note: 'Every verdict you have earned' },
     { href: '/gold', icon: 'coins', title: 'Gold', note: 'Convert earned gold to Buzz' },
-    { href: '/ranks', icon: 'shield', title: 'Ranks', note: 'The ladder and its bars' },
-    { href: '/rules', icon: 'book-open', title: 'Rules', note: 'How the Order judges' },
+    { href: '/codex', icon: 'book-open', title: 'Codex', note: 'Ranks, rules and how the Order judges' },
   ] as const;
 </script>
 
@@ -91,7 +90,7 @@
       <p class="vow">I will begin as an Acolyte, and earn my rank as an apprentice.</p>
       <p class="small muted">
         Knights judge how mature images should be rated. New members begin as Acolytes and prove
-        themselves as apprentices. <a href="/rules">Read the rules</a> first if you like.
+        themselves as apprentices. <a href="/codex#judging">Read the Codex</a> first if you like.
       </p>
       {#if !warning}
         <p><button type="button" class="btn primary" onclick={() => (warning = true)}>Join the Order</button></p>
