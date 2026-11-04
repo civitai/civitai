@@ -61,18 +61,6 @@ const baseProps = {
 
 const iframeEl = () => page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
 
-function postFromBlock(type: string, payload?: unknown) {
-  const cw = iframeEl().contentWindow;
-  if (!cw) throw new Error('iframe contentWindow missing');
-  window.dispatchEvent(
-    new MessageEvent('message', {
-      data: { type, payload },
-      origin: window.location.origin,
-      source: cw,
-    })
-  );
-}
-
 /**
  * The chrome's way out, whichever rendering the measured width gave it: the mobile back
  * chevron (named by `aria-label`) or the desktop breadcrumb's first crumb (named by its text).
@@ -106,7 +94,7 @@ afterEach(() => {
 
 describe('PageBlockHost — launch origin', () => {
   test('🔴 the chrome leads back to My apps, and the embedded app never sees the signal', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} launchOrigin="home" />);
+    await renderWithProviders(<PageBlockHost {...baseProps} launchOrigin="home" />);
     await vi.waitFor(() => {
       if (!iframeEl().contentWindow) throw new Error('not mounted yet');
     });
@@ -116,16 +104,17 @@ describe('PageBlockHost — launch origin', () => {
     expect(src.split('#')[0]).toBe(SAME_ORIGIN_SRC);
     expect(src).not.toContain('from');
 
-    // (2b) BLOCK_INIT: capture it on the frame's side.
+    // (2b) BLOCK_INIT: capture it on the frame's side. The host sends it on its own once the
+    // frame is mounted and a token is present (the same capture the BLOCK_INIT contract suite
+    // uses); posting BLOCK_READY first would mark the frame ready and race that send.
     const inits: unknown[] = [];
     const cw = iframeEl().contentWindow!;
     cw.addEventListener('message', (e: MessageEvent) => {
       const d = e.data as { type?: string; payload?: unknown } | null;
-      if (d?.type === 'BLOCK_INIT') inits.push(structuredClone(d.payload));
+      if (d?.type === 'BLOCK_INIT') inits.push(d.payload);
     });
     await vi.waitFor(() => {
-      postFromBlock('BLOCK_READY', {});
-      if (inits.length === 0) throw new Error('no BLOCK_INIT yet');
+      if (inits.length === 0) throw new Error('listener saw no BLOCK_INIT');
     });
     const init = inits[0] as { context?: { subPath?: string } };
     // Positive control: the router query DOES reach the block — its sub-path.
@@ -142,7 +131,7 @@ describe('PageBlockHost — launch origin', () => {
 
   test('without launchOrigin the host keeps the store — Marketplace → /apps/store', async () => {
     router.query = { slug: 'my-page-app' };
-    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await renderWithProviders(<PageBlockHost {...baseProps} />);
     await vi.waitFor(() => {
       expect(wayOut()).toEqual({ href: '/apps/store', name: 'Marketplace' });
     });
