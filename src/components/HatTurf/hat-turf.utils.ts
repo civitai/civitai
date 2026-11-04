@@ -128,9 +128,15 @@ export function readHatPose(data: unknown): HatPose | null {
   };
 }
 
-export function hatTone(team: string, leader: string | null): 'lead' | 'dim' | 'plain' {
+/** A viewer's own hat never dims: on a pale picture a dimmed hat reads as missing. */
+export function hatTone(
+  team: string,
+  leader: string | null,
+  own = false
+): 'lead' | 'dim' | 'plain' {
   if (!leader) return 'plain';
-  return team === leader ? 'lead' : 'dim';
+  if (team === leader) return 'lead';
+  return own ? 'plain' : 'dim';
 }
 
 /**

@@ -313,7 +313,8 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-stats')!.textContent).toMatch(/Blue/);
   });
 
-  test('a hat-protected image shows its hats muted', async () => {
+  test("a hat-protected image shows its hats muted, the viewer's own included", async () => {
+    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
     render({
       images: {
         9: {
@@ -325,9 +326,40 @@ describe('Hat Turf on image detail', () => {
         },
       },
     });
-    await vi.waitFor(() => expect(hats().length).toBe(3));
+    await vi.waitFor(() => expect(hats().length).toBe(4));
     for (const hat of hats()) expect(hat.getAttribute('data-tone')).toBe('muted');
+    const opacities = new Set([...hats()].map((hat) => getComputedStyle(hat).opacity));
+    expect(opacities.size).toBe(1);
+    expect(Number([...opacities][0])).toBeLessThan(1);
     expect(q('hat-turf-lock')).not.toBeNull();
+  });
+
+  test("the viewer's own hat never dims when their team is behind; other trailing hats do", async () => {
+    h.mine = { ...sticker(99, 'pink', 0.4, 0.4), userId: 1 };
+    render();
+    await vi.waitFor(() => expect(hats().length).toBe(4));
+    const tones = Object.fromEntries(
+      [...hats()].map((hat) => [hat.getAttribute('style'), hat.getAttribute('data-tone')])
+    );
+    const toneAt = (x: number, y: number) =>
+      Object.entries(tones).find(([style]) => style?.includes(`left: ${x}%; top: ${y}%`))?.[1];
+    expect(toneAt(40, 40)).toBe('plain');
+    expect(toneAt(60, 50)).toBe('dim');
+    expect(toneAt(30, 30)).toBe('lead');
+  });
+
+  test("the viewer's own-hat dot sits on the cone, not off in the hat's padding", async () => {
+    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
+    render({}, 900);
+    await vi.waitFor(() => expect(hats().length).toBe(4));
+    const own = [...hats()].find((hat) => hat.querySelector('i'))!;
+    const svg = own.querySelector('svg')!.getBoundingClientRect();
+    const dot = own.querySelector('i')!.getBoundingClientRect();
+    // The cone's bottom-right corner in TeamHat's 24-unit viewBox is (18, 17).
+    const cornerX = svg.left + (svg.width * 18) / 24;
+    const cornerY = svg.top + (svg.height * 17) / 24;
+    expect(Math.abs(dot.left + dot.width / 2 - cornerX)).toBeLessThan(4);
+    expect(Math.abs(dot.top + dot.height / 2 - cornerY)).toBeLessThan(4);
   });
 
   test('past the draw cap a "more" button asks for the next hats', async () => {
