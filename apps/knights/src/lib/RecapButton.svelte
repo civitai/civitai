@@ -82,6 +82,7 @@
     {message}
     {submitting}
     {submit}
+    manual
   />
 {/if}
 

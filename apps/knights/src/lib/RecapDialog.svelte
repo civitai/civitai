@@ -18,6 +18,7 @@
     message,
     submitting,
     submit,
+    manual = false,
   }: {
     /** Null when the player has no play day to recap yet. */
     recap: Recap | null;
@@ -29,10 +30,13 @@
     message: string | null;
     submitting: boolean;
     submit: SubmitFunction;
+    /** Opened from the header rather than shown on arrival: no opt-out checkbox and no call to begin the Watch. */
+    manual?: boolean;
   } = $props();
 
   let form = $state<HTMLFormElement>();
   let checked = $state(untrack(() => optOut));
+  let showDaily = $state(false);
   let view = $derived(recap ? recapView(recap) : null);
   let headline = $derived(
     view?.headline ?? (message ? 'Your verdicts could not be loaded' : 'No verdicts yet')
@@ -85,19 +89,28 @@
       {/if}
 
       <button type="submit" name="begin" value="1" class="ov-primary begin" disabled={submitting} data-autofocus>
-        {watch?.done ? 'Keep judging' : "Begin today's Watch"}
+        {manual ? 'Back to judging' : watch?.done ? 'Keep judging' : "Begin today's Watch"}
       </button>
-      {#if watch && !watch.done}
+      {#if !manual && watch && !watch.done}
         <p class="hint">
           {watch.streak > 0
             ? `Finish it to keep your ${watch.streak}-day streak`
             : `${watch.size} judgments to complete it`}
         </p>
       {/if}
-      <label class="optout">
-        <input type="checkbox" name="optOut" bind:checked />
-        Don't show this again
-      </label>
+      {#if !manual}
+        <label class="optout">
+          <input type="checkbox" name="optOut" bind:checked />
+          Don't show this again
+        </label>
+      {:else if optOut}
+        <!-- An opted-out player turns the daily popup back on here; otherwise the stored opt-out is resent unchanged. -->
+        {#if !showDaily}<input type="hidden" name="optOut" value="on" />{/if}
+        <label class="optout">
+          <input type="checkbox" bind:checked={showDaily} />
+          Show this every day
+        </label>
+      {/if}
     </form>
   </div>
 </div>
