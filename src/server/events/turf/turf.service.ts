@@ -33,8 +33,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 
-// The opt-in lives in User.settings, per event name: placing needs it, and only images of owners
-// who have it are turf (see inTurf).
+// The opt-in lives in User.settings, per event name: placing needs it (see inTurf). Any visible,
+// non-contest image is turf, whether or not its owner opted in.
 export const TURF_SETTING = 'eventTurfOptIn';
 
 /**
@@ -165,20 +165,18 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
         LIMIT 1) AS team
     FROM "User" u WHERE u.id = ${userId}
   `;
-  if (!placer?.optedIn)
-    throw throwBadRequestError('Turn on "accept team hat stickers" to place hat stickers');
+  if (!placer?.optedIn) throw throwBadRequestError('Join Hat Turf to place hat stickers');
   if (!placer.team) throw throwBadRequestError("You don't have that hat");
   const team = await event.getUserTeam(userId, { strict: true });
   if (!team) throw throwBadRequestError("You aren't on a team yet");
 
   const [image] = await dbWrite.$queryRaw<
-    { ownerId: number; visible: boolean; contest?: boolean; ownerOptedIn: boolean | null }[]
+    { ownerId: number; visible: boolean; contest?: boolean }[]
   >`
     SELECT i."userId" AS "ownerId",
       COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
-      ${contestEntry(Prisma.sql`i.id`)} AS contest,
-      ${inTurf('o', event.name)} AS "ownerOptedIn"
-    FROM "Image" i JOIN "User" o ON o.id = i."userId"
+      ${contestEntry(Prisma.sql`i.id`)} AS contest
+    FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
   `;
@@ -186,7 +184,6 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!image.visible)
     throw throwBadRequestError('Hat stickers only go on images in a published post');
   if (image.contest) throw throwBadRequestError("Hat stickers don't go on contest entries");
-  if (!image.ownerOptedIn) throw throwBadRequestError("This creator doesn't accept hat stickers");
   // The same refusals as a regular sticker: a block either way, or a suspended placer. Neither
   // applies to an owner's own image.
   if (image.ownerId !== userId)
@@ -279,8 +276,8 @@ type StickerRow = TurfStickerRow & {
   contest?: boolean;
 };
 
-// The live stickers on images anyone may see (imageVisible), oldest first per image. The owner's opt-in only gates
-// new placements: an opt-out leaves what was placed counting. A placer earns with an account from
+// The live stickers on images anyone may see (imageVisible), oldest first per image. Neither the owner's
+// opt-in nor the placer's is read here: a placer who opts out leaves what they placed counting. A placer earns with an account from
 // before the event start, or one that has since reached the Spark tier's threshold, read from its
 // CreatorMilestone row so the tier stays the one source (compared as
 // creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
@@ -487,7 +484,7 @@ export function requestTurfSync(event: TurfEvent, imageId: number): Promise<void
   return state.done;
 }
 
-/** Rebuilds the whole turf map and counts for an event: hides, bans, opt-outs and cap changes. */
+/** Rebuilds the whole turf map and counts for an event: hides, bans and cap changes. */
 export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const cosmetics = await teamCosmetics(event);
   const entries = new Map<string, TurfEntry>();
@@ -592,9 +589,9 @@ export async function reconcileAllTurf(now = new Date()) {
 /**
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
  * protects the image, so its stickers earn nothing until the hat comes off; `hattedTeam` is that hat's
- * team. `open`: for every image
- * asked about, whether it can take a new sticker now (visible, owner in Hat Turf); owners may sticker
- * their own. `mine`: whether the viewer has already stickered it, so cannot again. `hidden`: contest
+ * team. `open`: for every image asked about, whether it can take a new sticker now (visible; the
+ * owner need not be in Hat Turf); owners may sticker their own. `mine`: whether the viewer has
+ * already stickered it, so cannot again. `hidden`: contest
  * entries, which show no Hat Turf at all (no counts, closed).
  */
 export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
@@ -608,9 +605,7 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
     dbRead.$queryRaw<{ id: number }[]>`
       SELECT i.id FROM "Image" i
       JOIN "Post" p ON p.id = i."postId"
-      JOIN "User" o ON o.id = i."userId"
       WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible}
-        AND ${inTurf('o', event.name)}
     `,
     // Removed ones too: the unique key refuses a second sticker either way.
     viewerId

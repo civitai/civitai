@@ -10,6 +10,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * Who is in Hat Turf, run on a real Postgres through the service's own SQL: only an explicit opt-in
  * counts. Hat Turf was announced as opt-in only; a short-lived opt-out default (placing a hat put you
  * in) was reverted, so the fixture keeps hat placers who never chose, to prove they stay out.
+ * Joining is for players only: any owner's image is turf, opted in or not.
  */
 
 const START = new Date('2026-11-01T00:00:00Z');
@@ -31,6 +32,10 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// Blocks and suspensions have their own tests; nobody here is blocked.
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  assertCanPlace: () => Promise.resolve(),
+}));
 
 const { getTurfStock, getTurfSummaries, placeTurfSticker, setTurfOptIn } = await import(
   '~/server/events/turf/turf.service'
@@ -120,9 +125,11 @@ describe('who is in Hat Turf', () => {
     expect(await inTurf(OPTED_IN)).toBe(true);
   });
 
-  it('only an owner who opted in has open images', async () => {
+  // Deliberate (event owner's call, 2026-11-04): turf is played on anyone's image. An owner need not
+  // join for their images to take stickers. Gating on the owner again is a product decision.
+  it('every visible image is open, whatever its owner chose', async () => {
     const { open } = await getTurfSummaries('e', [101, 102, 103, 104]);
-    expect(open).toEqual({ 101: false, 102: false, 103: true, 104: false });
+    expect(open).toEqual({ 101: true, 102: true, 103: true, 104: true });
   });
 
   it('turning it on writes an explicit true, and turning it off takes the user out again', async () => {
@@ -156,14 +163,18 @@ describe('placing a hat sticker', () => {
   });
 
   it('a placer who placed hats but never opted in may not', async () => {
-    await expect(place(NEVER_SET, 103)).rejects.toThrow('Turn on "accept team hat stickers"');
+    await expect(place(NEVER_SET, 103)).rejects.toThrow('Join Hat Turf');
   });
 
   it('a placer who opted out may not', async () => {
-    await expect(place(OPTED_OUT, 102)).rejects.toThrow('Turn on "accept team hat stickers"');
+    await expect(place(OPTED_OUT, 102)).rejects.toThrow('Join Hat Turf');
   });
 
-  it("an owner who never opted in doesn't take stickers, even from someone in", async () => {
-    await expect(place(OPTED_IN, 101)).rejects.toThrow("This creator doesn't accept");
+  it('an owner who never opted in still takes stickers from someone in', async () => {
+    await expect(place(OPTED_IN, 101)).rejects.toThrow('passed the checks');
+  });
+
+  it('an owner who opted out still takes stickers from someone in', async () => {
+    await expect(place(OPTED_IN, 102)).rejects.toThrow('passed the checks');
   });
 });

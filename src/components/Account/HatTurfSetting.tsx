@@ -8,7 +8,7 @@ import { trpc } from '~/utils/trpc';
 
 export const HAT_TURF_SETTING_LABEL = 'Take part in Hat Turf';
 const HAT_TURF_SETTING_DESCRIPTION =
-  'Others can stick team hats on your images. Hats already there keep counting if you turn this off.';
+  "Place your team's hats on images and see everyone's. Hats you placed keep counting if you turn this off.";
 
 /** In account settings, while Hat Turf runs on any surface this viewer can see. */
 export function HatTurfSetting() {
