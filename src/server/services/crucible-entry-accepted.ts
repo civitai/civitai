@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
@@ -43,24 +43,50 @@ async function crucibleTags(crucibleId: number) {
 const interested = (subscribers: readonly CrucibleEntrySubscriber[], tags: string[]) =>
   subscribers.filter((s) => s.eventTags.some((tag) => tags.includes(tag)));
 
+/** Read from the primary, so a withdraw or removal that just committed is seen. */
+async function isStillAcceptable(entryId: number) {
+  const [row] = await dbWrite.$queryRaw<{ ok: boolean }[]>`
+    SELECT true AS ok
+    FROM "CrucibleEntry" ce
+    JOIN "Crucible" c ON c.id = ce."crucibleId"
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE ce.id = ${entryId}
+      AND c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
+      AND c."endAt" > now()
+      AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
+  `;
+  return !!row?.ok;
+}
+
 /**
  * Accepts an entry: every interested subscriber runs, and only once all of them succeed is the
  * entry recorded as accepted. A failure throws and leaves it unrecorded for the next sweep.
- * Returns false when it was already accepted.
+ * Returns false when it was already accepted, or is no longer in the crucible.
+ *
+ * A removal or withdrawal commits before it revokes, so the entry is checked on the primary before
+ * the subscribers run and again once it is recorded: a revoke that landed in between, before a
+ * subscriber had granted anything, is repeated.
  */
 export async function acceptCrucibleEntry(
   entry: CrucibleEntryRef,
   subscribers: readonly CrucibleEntrySubscriber[] = CRUCIBLE_ENTRY_SUBSCRIBERS
 ) {
   const key = acceptedKey(entry.crucibleId);
-  if (await sysRedis.hExists(key, String(entry.entryId))) return false;
+  const field = String(entry.entryId);
+  if (await sysRedis.hExists(key, field)) return false;
+  if (!(await isStillAcceptable(entry.entryId))) return false;
 
   const acceptedAt = new Date();
   const targets = interested(subscribers, await crucibleTags(entry.crucibleId));
   for (const subscriber of targets) await subscriber.accept({ ...entry, acceptedAt });
 
-  await sysRedis.hSet(key, String(entry.entryId), acceptedAt.toISOString());
+  await sysRedis.hSet(key, field, acceptedAt.toISOString());
   await sysRedis.expire(key, ACCEPTED_TTL_SECONDS);
+  if (!(await isStillAcceptable(entry.entryId))) {
+    await revokeCrucibleEntry(entry, subscribers);
+    return false;
+  }
+
   logToAxiom({
     type: 'info',
     name: 'crucible-entry-accepted',

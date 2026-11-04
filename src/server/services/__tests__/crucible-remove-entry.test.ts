@@ -154,6 +154,7 @@ describe('removeCrucibleEntry', () => {
   it('takes the removed entry back from whatever accepted it', async () => {
     await remove();
 
+    expect(revokeCrucibleEntry).toHaveBeenCalledTimes(1);
     expect(revokeCrucibleEntry).toHaveBeenCalledWith({ entryId: 5, crucibleId: 7, userId: 42 });
   });
 

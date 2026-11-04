@@ -49,7 +49,18 @@ beforeEach(() => {
   sysRedis.expire.mockResolvedValue(true);
   dbMock.dbRead.crucible.findUnique.mockResolvedValue({ eventTags: [TAG] });
   dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+  // The entry is still in its crucible unless a test says otherwise.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ ok: true }]);
 });
+
+/** A subscriber that keeps what it has granted, the way an award table would. */
+const granting = () => {
+  const granted = new Set<number>();
+  const sub = subscriber();
+  sub.accept.mockImplementation(async ({ entryId }) => void granted.add(entryId));
+  sub.revoke.mockImplementation(async ({ entryId }) => void granted.delete(entryId));
+  return { sub, granted };
+};
 
 describe('acceptCrucibleEntry', () => {
   it('tells an interested subscriber once, however often it is called', async () => {
@@ -88,6 +99,42 @@ describe('acceptCrucibleEntry', () => {
   });
 });
 
+describe('acceptCrucibleEntry racing a removal', () => {
+  it('grants nothing for an entry withdrawn after the sweep listed it', async () => {
+    const { sub, granted } = granting();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+
+    expect(await acceptCrucibleEntry(entry(1), [sub])).toBe(false);
+
+    expect(sub.accept).not.toHaveBeenCalled();
+    expect(granted.size).toBe(0);
+  });
+
+  it('grants nothing when the revoke lands while the subscribers are running', async () => {
+    const { sub, granted } = granting();
+    const grant = sub.accept.getMockImplementation()!;
+    sub.accept.mockImplementation(async (accepted) => {
+      // The entrant withdraws mid-run: its revoke finishes before this grant is written.
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+      await revokeCrucibleEntry(entry(1), [sub]);
+      await grant(accepted);
+    });
+
+    expect(await acceptCrucibleEntry(entry(1), [sub])).toBe(false);
+
+    expect(granted.size).toBe(0);
+  });
+
+  it('takes the grant back when the entry leaves just after it was recorded', async () => {
+    const { sub, granted } = granting();
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ ok: true }]).mockResolvedValue([]);
+
+    expect(await acceptCrucibleEntry(entry(1), [sub])).toBe(false);
+
+    expect(granted.size).toBe(0);
+  });
+});
+
 describe('revokeCrucibleEntry', () => {
   it('takes the entry back and lets it be accepted again, without throwing on a failure', async () => {
     const sub = subscriber();
@@ -108,6 +155,18 @@ describe('sweepAcceptedCrucibleEntries', () => {
     expect(await sweepAcceptedCrucibleEntries([sub])).toMatchObject({ accepted: 3, failed: 0 });
     expect(await sweepAcceptedCrucibleEntries([sub])).toMatchObject({ accepted: 0 });
     expect(sub.accept).toHaveBeenCalledTimes(3);
+  });
+
+  it('counts an entry whose subscriber failed, and still accepts the rest', async () => {
+    const sub = subscriber();
+    sub.accept.mockImplementation(async ({ entryId }) => {
+      if (entryId === 2) throw new Error('down');
+    });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([entry(1), entry(2), entry(3)]);
+
+    expect(await sweepAcceptedCrucibleEntries([sub])).toMatchObject({ accepted: 2, failed: 1 });
+    sub.accept.mockResolvedValue(undefined);
+    expect(await sweepAcceptedCrucibleEntries([sub])).toMatchObject({ accepted: 1, failed: 0 });
   });
 
   it('leaves a crucible with an AI theme review to the review', async () => {

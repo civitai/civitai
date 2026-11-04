@@ -80,6 +80,7 @@ describe('withdrawCrucibleEntry', () => {
 
   it('takes the withdrawn entry back from whatever accepted it, and only once it is withdrawn', async () => {
     await withdraw();
+    expect(revokeCrucibleEntry).toHaveBeenCalledTimes(1);
     expect(revokeCrucibleEntry).toHaveBeenCalledWith({
       entryId: 5,
       crucibleId: 7,
