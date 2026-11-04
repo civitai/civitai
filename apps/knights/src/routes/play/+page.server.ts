@@ -2,15 +2,12 @@ import { fail } from '@sveltejs/kit';
 import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
-import { imageUrl } from '$lib/server/image-url';
-import { openItem, sealItem } from '$lib/server/feed-token';
+import { openItem } from '$lib/server/feed-token';
 import {
   answerHiddenCheck,
-  pickHiddenCheck,
   dismissHiddenNotices,
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
-import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
@@ -20,13 +17,11 @@ import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
-import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
+import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
-import { pickYesNo } from '$lib/server/yesno/feed';
-import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
@@ -36,6 +31,7 @@ import {
   answerApprentice,
   getApprentice,
 } from '$lib/server/apprenticeship/apprenticeship.service';
+import { pickItem } from './next-item.server';
 import { apprenticePayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -132,100 +128,27 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
       : null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
-  const [feed, daily, recap] = await Promise.all([
-    lockedUntil || muted
-      ? null
-      : getFeed(db, locals.user.id, { limit: 1, exclude: skipped?.queue }),
+  const resetPending = status.smites >= status.maxSmites;
+  const [picked, daily, recap] = await Promise.all([
+    lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
-  const resetPending = status.smites >= status.maxSmites;
   const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
     ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
     : null;
-  const page = {
+  return {
     mode: 'queue' as const,
-    banner: null as { heading: string } | null,
+    banner: picked?.banner ?? null,
     ...common,
     daily,
     recap,
     resetPending,
     conversionOpen,
     lockoutSeconds,
-  };
-  if (resetPending || lockedUntil || muted) return { ...page, question: null, item: null };
-
-  // A hidden check comes first, so its rate holds whatever the yes/no share is; it only ever rides on a rating question.
-  if (feed) {
-    const secret = feedSecret();
-    const hidden = await pickHiddenCheck(db, {
-      userId: locals.user.id,
-      rank: status.rank,
-      secret,
-      questionKey: feed.question.key,
-      rate: hiddenSettings().rate,
-      exclude: skipped?.hidden,
-    });
-    if (hidden) {
-      return {
-        ...page,
-        question: hidden.question,
-        item: {
-          id: sealItem(secret, locals.user.id, { kind: 'hidden', id: hidden.referenceId }),
-          src: imageUrl(hidden.imageKey),
-          width: hidden.width,
-          height: hidden.height,
-        },
-      };
-    }
-  }
-
-  // A yes/no question is rolled for next; with no rating to show, one is shown whenever there is one. A share of 0 switches them off.
-  const yesNo = yesNoConfig();
-  const offer =
-    yesNo.share <= 0
-      ? null
-      : await pickYesNo(db, {
-          userId: locals.user.id,
-          rank: status.rank,
-          secret: feedSecret(),
-          share: yesNo.share,
-          stretch: yesNo.stretch,
-          force: !feed,
-          exclude: skipped?.yesno,
-        });
-  if (offer) {
-    return {
-      ...page,
-      banner: offer.banner,
-      question: {
-        key: 'yesno',
-        kind: 'bool',
-        prompt: offer.prompt,
-        options: YESNO_ANSWERS.map((answer) => ({ ...answer })),
-      },
-      item: {
-        id: sealItem(feedSecret(), locals.user.id, { kind: 'yesno', id: offer.itemId }),
-        src: imageUrl(offer.imageKey),
-        width: offer.width,
-        height: offer.height,
-      },
-    };
-  }
-  if (!feed) return { ...page, question: null, item: null };
-
-  const secret = feedSecret();
-  const [item] = feed.items;
-  return {
-    ...page,
-    question: feed.question,
-    item: {
-      id: sealItem(secret, locals.user.id, { kind: 'queue', id: item.id }),
-      src: imageUrl(item.imageKey),
-      width: item.width,
-      height: item.height,
-    },
+    question: picked?.question ?? null,
+    item: picked?.item ?? null,
   };
 };
 

@@ -99,6 +99,8 @@ export async function pickYesNo(
     force?: boolean;
     /** Question ids the player has skipped. */
     exclude?: number[];
+    /** Rolls for an item the player has not reached yet; unset, the roll is fixed by their last vote. */
+    slot?: number;
   }
 ): Promise<YesNoOffer | null> {
   if (!isRank(input.rank)) return null;
@@ -108,7 +110,7 @@ export async function pickYesNo(
   if (!input.force) {
     if (input.share <= 0) return null;
     const digest = createHash('sha256')
-      .update(`${input.secret}:yesno:${input.userId}:${await slotOf(db, input.userId)}`)
+      .update(`${input.secret}:yesno:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`)
       .digest();
     if (unit(digest, 0) >= input.share) return null;
   }

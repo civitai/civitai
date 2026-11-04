@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { applyAction, deserialize, enhance } from '$app/forms';
   import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
@@ -18,6 +18,7 @@
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { answerForKey, answerForKeyPress } from './keys';
+  import { createVoteTracker, describeOutcome, type PickedItem } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
 
@@ -25,9 +26,19 @@
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
+  // What is on screen. Right after a vote it is the item fetched ahead (`local`), not what `load` returns, so the next
+  // image never waits for the vote to land; `local` is dropped whenever the page must show the server's own view.
+  let local = $state<PickedItem | null>(null);
+  let view = $derived.by((): PickedItem | null => {
+    if (data.mode !== 'queue') return null;
+    if (local) return local;
+    return data.item && data.question
+      ? { item: data.item, question: data.question, banner: data.banner }
+      : null;
+  });
   let yesNo = $derived(
     data.mode === 'queue'
-      ? data.question?.kind === 'bool'
+      ? view?.question.kind === 'bool'
       : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
@@ -40,9 +51,9 @@
   // The answer being sent, kept highlighted until the next item arrives.
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
-  let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
+  let imageFailed = $derived(!!view && failedItem === view.item.id);
   let reasonItem = $state<string | null>(null);
-  let choosingReason = $derived(!!data.item && reasonItem === data.item.id);
+  let choosingReason = $derived(!!view && reasonItem === view.item.id);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   // The guide and the rank-up come first; the daily recap waits behind them and opens once they are dismissed.
@@ -60,7 +71,7 @@
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
       return;
     }
-    if (dialogOpen || data.mode !== 'queue' || !data.item || submitting) return;
+    if (event.repeat || dialogOpen || !view || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable], header')) return;
@@ -69,8 +80,8 @@
       skipForm?.requestSubmit();
       return;
     }
-    if (imageFailed || !data.question) return;
-    const value = answerForKeyPress(data.question.options, event.key, yesNo);
+    if (imageFailed) return;
+    const value = answerForKeyPress(view.question.options, event.key, yesNo);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
@@ -148,6 +159,96 @@
     };
   };
 
+  // The next item, fetched while this one is judged, so a vote can move on at once.
+  let ahead = $state<PickedItem | null>(null);
+  let note = $state<string | null>(null);
+  let cooling = $state(false);
+  let noteTimer: ReturnType<typeof setTimeout> | undefined;
+  const tracker = createVoteTracker();
+  // A new image takes this long to be seen; an answer sooner than that is a stray press, not a judgment of it.
+  type FinishOptions = Parameters<Exclude<Awaited<ReturnType<SubmitFunction>>, void>>[0];
+  const SETTLE_MS = 250;
+  const NOTE_MS = 5000;
+
+  $effect(() => {
+    const current = view?.item.id;
+    ahead = null;
+    if (!current || data.lockoutSeconds || data.muted || data.resetPending) return;
+    const controller = new AbortController();
+    const after = tracker.excluded(current).map((token) => `after=${encodeURIComponent(token)}`);
+    fetch(`/play/next?${after.join('&')}`, { signal: controller.signal, headers: { accept: 'application/json' } })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { next?: PickedItem | null } | null) => {
+        if (controller.signal.aborted || !body?.next) return;
+        ahead = body.next;
+        new Image().src = body.next.item.src;
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  });
+
+  // The server's own view wins whenever it has something to say instead of an item.
+  $effect(() => {
+    if (data.lockoutSeconds || data.muted || data.resetPending) local = null;
+  });
+
+  function tell(message: string) {
+    note = message;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => (note = null), NOTE_MS);
+  }
+
+  async function post(action: URL, body: FormData) {
+    let outcome = describeOutcome(null);
+    try {
+      const response = await fetch(action, {
+        method: 'POST',
+        body,
+        headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+      });
+      const result = deserialize(await response.text());
+      outcome = describeOutcome(result);
+      if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
+    } catch {
+      // Keeps the lost-connection notice.
+    }
+    tracker.settle();
+    if (!outcome.ok) {
+      tell(outcome.message);
+      if (outcome.resync) local = null;
+    }
+    // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+    await invalidate('app:play').catch(() => {});
+  }
+
+  // The plain form post: once the page has the server's next item, what was on screen ahead of it goes.
+  const submitAndResync: SubmitFunction = (input) => {
+    const finish = submit(input) as (options: FinishOptions) => Promise<void>;
+    return async (options) => {
+      await finish(options);
+      local = null;
+    };
+  };
+
+  // A vote or a skip moves on at once to the item fetched ahead and posts in the background. Without that item (or without
+  // JS) the form posts and the page reloads as before.
+  const submitJudgment: SubmitFunction = (input) => {
+    const next = ahead;
+    const token = String(input.formData.get('item') ?? '');
+    if (!next || !token) return submitAndResync(input);
+    input.cancel();
+    if (cooling || !tracker.claim(token)) return;
+    const answer = answerOf(input.submitter);
+    if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
+    blockReason = null;
+    if (answer) sound.play('press');
+    local = next;
+    ahead = null;
+    cooling = true;
+    setTimeout(() => (cooling = false), SETTLE_MS);
+    void post(input.action, input.formData);
+  };
+
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
   let hearts = $derived(heartsLeft(data.status));
   let formMessage = $derived(
@@ -175,7 +276,7 @@
     onclick={asksReason && option.value === BLOCKED_ANSWER
       ? (event) => {
           event.preventDefault();
-          reasonItem = data.item?.id ?? null;
+          reasonItem = view?.item.id ?? null;
         }
       : undefined}
   >
@@ -320,38 +421,41 @@
         <p class="muted">Judging resumes by itself.</p>
       </section>
     </div>
-  {:else if data.item && data.question}
+  {:else if view}
     <div class="column">
-      {#if data.banner}
-        <p class="banner" role="status">New questions: {data.banner.heading}</p>
+      {#if view.banner}
+        <p class="banner" role="status">New questions: {view.banner.heading}</p>
       {/if}
-      <p class="question" title={data.question.prompt}>
+      <p class="question" title={view.question.prompt}>
         <span class="eyebrow">Question ·</span>
-        <span class="text">{data.question.prompt}</span>
+        <span class="text">{view.question.prompt}</span>
       </p>
       <div class="stagewrap">
-        {#key data.item.id}
-          {@const itemId = data.item.id}
+        {#key view.item.id}
+          {@const itemId = view.item.id}
           <ImageStage
-            src={data.item.src}
-            width={data.item.width}
-            height={data.item.height}
+            src={view.item.src}
+            width={view.item.width}
+            height={view.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
             onfail={() => (failedItem = itemId)}
           />
         {/key}
         {@render levelToast(true)}
+        {#if note}
+          <p class="nudge" role="status">{note}</p>
+        {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
-        <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
-          <input type="hidden" name="item" value={data.item.id} />
-          {#each data.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(data.question.key))}
+        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
+          <input type="hidden" name="item" value={view.item.id} />
+          {#each view.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed, asksBlockReason(view.question.key))}
           {/each}
         </form>
-        <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
-          <input type="hidden" name="item" value={data.item.id} />
+        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
+          <input type="hidden" name="item" value={view.item.id} />
           <button type="submit" class="quiet" disabled={submitting}>
             Skip<span class="space">&nbsp;·&nbsp;Space</span>
           </button>
@@ -457,6 +561,24 @@
     grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     flex: 1 1 0;
     min-height: 0;
+  }
+
+  /* A refused or lost vote, over the stage so it never moves the pills. */
+  .nudge {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    z-index: 4;
+    max-width: calc(100% - 2rem);
+    margin: 0;
+    padding: 8px 14px;
+    transform: translateX(-50%);
+    border: 1px solid var(--io-crimson);
+    border-radius: 8px;
+    background: #14110dee;
+    color: var(--io-parchment);
+    font: 400 13px/1.3 var(--io-font-ui);
+    text-align: center;
   }
 
   .column {
