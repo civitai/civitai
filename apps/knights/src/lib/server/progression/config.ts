@@ -10,6 +10,8 @@ export const PROGRESSION = {
   accuracyWindow: 500,
   /** Fervor counts votes cast in this many days (by createdAt), with no cap. */
   fervorWindowDays: 7,
+  /** Presentation only: scales every player's fervor alike, so it never changes the order. */
+  fervorScale: 100,
   fervorAccuracyFloor: 0.1,
 } as const;
 

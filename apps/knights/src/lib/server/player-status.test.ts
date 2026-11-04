@@ -18,7 +18,7 @@ describe('statusFrom', () => {
         goldPending: 100,
         goldEarned: 25,
       })
-    ).toMatchObject({ fervor: 2, goldPending: 100, goldEarned: 25 });
+    ).toMatchObject({ fervor: 256, goldPending: 100, goldEarned: 25 });
     expect(statusFrom('Acolyte', 0)).toMatchObject({ fervor: 0, goldPending: 0, goldEarned: 0 });
   });
 });

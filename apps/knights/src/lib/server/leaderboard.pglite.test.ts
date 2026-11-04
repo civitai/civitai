@@ -71,7 +71,7 @@ describe('queryBoard', () => {
     expect(rows.map((r) => [r.userId, r.rankType, r.level, r.fervor])).toEqual([
       [2, 'Paladin', 45, calculateFervor({ correct: 9, graded: 9 })],
       [3, 'Templar', 25, calculateFervor({ correct: 4, graded: 5 })],
-      [1, 'Knight', 3, 1],
+      [1, 'Knight', 3, 100],
     ]);
     expect(rows[0]).toMatchObject({ username: 'user2', image: 'img-2' });
   });

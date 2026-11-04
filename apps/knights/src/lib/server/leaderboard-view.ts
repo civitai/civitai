@@ -11,16 +11,16 @@ export const nextTally = (now: Date): string =>
 
 /** The "How fervor works" panel text; every number is read from the config the formula runs on. */
 export function fervorCopy() {
-  const { fervorWindowDays: days, fervorAccuracyFloor: floor } = PROGRESSION;
+  const { fervorScale: scale, fervorWindowDays: days, fervorAccuracyFloor: floor } = PROGRESSION;
   const correct = 400;
   const graded = 500;
   return {
-    formula: 'Correct judgments × your accuracy × your accuracy',
+    formula: `Correct judgments × ${scale} × your accuracy × your accuracy`,
     window: `Counts judgments you cast in the last ${days} days once their verdict is in. Older ones fall away, so fervor fades when you rest.`,
     accuracy: `Accuracy is the share you judged rightly. It never counts below ${percent(
       floor
     )}, and inconclusive images don't count either way. It counts twice, so careful judging beats guessing fast, and there is no cap on how many judgments count.`,
-    example: `Example: ${correct} right of ${graded} judged is ${correct} × ${percent(
+    example: `Example: ${correct} right of ${graded} judged is ${correct} × ${scale} × ${percent(
       correct / graded
     )} × ${percent(correct / graded)} = ${count(calculateFervor({ correct, graded }))} fervor.`,
   };
