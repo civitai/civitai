@@ -297,22 +297,35 @@ describe('onStorySparked', () => {
     expect(engine.awardEventPoints).not.toHaveBeenCalled();
   });
 
-  it("stops at the day's limit, counting only today's stories that scored and are still live", async () => {
-    for (const id of [201, 202, 203, 205, 206]) await image(id);
+  it("stops at the day's limit, counting every story that scored today", async () => {
+    for (const id of [201, 202, 203, 205]) await image(id);
     await image(204, { hatted: false });
     await onStorySparked(await story({ spark: 201 }));
-    await onStorySparked(await story({ spark: 202 }));
     await onStorySparked(await story({ spark: 204 })); // no hat: did not score, so does not count
-    const down = await story({ spark: 203 });
+    const down = await story({ spark: 202 });
     await onStorySparked(down);
     await pg.query(`UPDATE "Storyline" SET "tosViolation" = true WHERE id = $1`, [down]);
-    await onStorySparkLost(down); // scored, then not live: frees its slot
-    await onStorySparked(await story({ spark: 205 }));
-    expect(engine.adds).toEqual([201, 202, 203, 205].map((id) => remixSource(id)));
+    await onStorySparkLost(down); // scored, then taken down: its slot stays used
+    await onStorySparked(await story({ spark: 203 }));
+    expect(engine.adds).toEqual([201, 202, 203].map((id) => remixSource(id)));
 
-    // 201, 202 and 205: the limit is reached.
-    await onStorySparked(await story({ spark: 206 }));
-    expect(earning(206)).toBe(false);
+    // 201, 202 and 203: the limit is reached.
+    await onStorySparked(await story({ spark: 205 }));
+    expect(earning(205)).toBe(false);
+  });
+
+  it('deleting a story that scored does not free its slot while the remix it earned stays', async () => {
+    events.list = [{ scoring: { storySparksPerActorPerDay: 1 } }];
+    await image(201);
+    const a = await story();
+    await onStorySparked(a); // HOST scores: the day's one slot
+    await onStorySparked(await story()); // HOST again: a repeat, no slot
+    await pg.query(`DELETE FROM "StorylineChapter" WHERE "storylineId" = $1`, [a]);
+    await pg.query(`DELETE FROM "Storyline" WHERE id = $1`, [a]);
+    await onStorySparkRemoved({ actorId: WRITER, imageId: HOST });
+    expect(earning()).toBe(true); // the second story still earns it
+    await onStorySparked(await story({ spark: 201 }));
+    expect(earning(201)).toBe(false);
   });
 
   it("parallel stories from one writer score no more than the day's limit", async () => {
@@ -520,7 +533,6 @@ describe('chapter 1 shown again', () => {
     );
     expect(awards).toHaveLength(3); // the first spark, then each restore
     expect(awards[2]).toEqual(awards[1]);
-    expect(await engine.awardEventPoints.mock.results[2].value).toBe(0);
   });
 
   it('gives nothing back while chapter 1 is still hidden', async () => {
@@ -529,8 +541,20 @@ describe('chapter 1 shown again', () => {
     expect(earning()).toBe(false);
   });
 
-  it("gives nothing back once the day's limit is used", async () => {
+  it('gives it back on the same day, on the slot it already used', async () => {
     const id = await hidden();
+    for (const spark of [201, 202]) {
+      await image(spark);
+      await onStorySparked(await story({ spark }));
+    }
+    await republish(id);
+    await onStorySparkPostsRestored({ postIds: [id] });
+    expect(earning()).toBe(true);
+  });
+
+  it("gives nothing back on a later day once that day's limit is used", async () => {
+    const id = await hidden();
+    sets.clear(); // a new UTC day: a fresh scored set
     for (const spark of [201, 202, 203]) {
       await image(spark);
       await onStorySparked(await story({ spark }));

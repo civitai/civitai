@@ -454,8 +454,9 @@ const STORY_SPARKS_SCORED_TTL = 2 * 24 * 60 * 60;
 /**
  * Chapter 1 of a storyline was just written, or the storyline came back up. Call after the write
  * commits. Scores the spark if the story is live and its owner has not used up the day's scoring
- * sparks: their stories that scored today and are still live. A repeat (the remix already held,
- * a second restore) records nothing and uses no slot.
+ * sparks: their stories that scored today. A slot stays used when its story is later hidden or
+ * deleted, since the remix it earned can outlive it. A repeat (the remix already held, a second
+ * restore) records nothing and uses no slot.
  */
 export async function onStorySparked(storylineId: number): Promise<void> {
   const time = new Date();
@@ -471,12 +472,7 @@ export async function onStorySparked(storylineId: number): Promise<void> {
     await withDistributedLock(
       { key: `story-spark-cap:${story.actorId}:${day}`, maxRetries: 50, autoRenew: true },
       async () => {
-        const scoredIds = (await sysRedis.sMembers(key))
-          .map(Number)
-          .filter((id) => id && id !== storylineId);
-        const scored = scoredIds.length
-          ? await liveSparkedStories(Prisma.sql`st.id = ANY(${scoredIds}::int[])`)
-          : [];
+        const scored = (await sysRedis.sMembers(key)).filter((id) => id !== String(storylineId));
         if (scored.length >= perDay) return;
         // Reserve the slot before awarding; give it back if the award records nothing.
         const reserved = (await sysRedis.sAdd(key, String(storylineId))) === 1;
