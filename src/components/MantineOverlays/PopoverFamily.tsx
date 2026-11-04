@@ -80,7 +80,8 @@ type FamilyKind = {
   useLiteTarget: (ctx: LiteCtxValue, targetProps: AnyProps, ref: Ref<unknown>) => ReactElement;
 };
 
-// The props Mantine 7.17.8 `Popover` destructures; the rest is `others`, handed to the target.
+// The props Mantine's `Popover` destructures; the rest is `others`, handed to the target. This list
+// and the Menu and HoverCard lists below mirror Mantine: re-check all three on a Mantine upgrade.
 const POPOVER_KNOWN = new Set([
   'children',
   'position',
@@ -127,7 +128,7 @@ const POPOVER_KNOWN = new Set([
   'withOverlay',
   'overlayProps',
 ]);
-// The props Mantine 7.17.8 `Menu` destructures; the rest goes to its Popover.
+// The props Mantine's `Menu` destructures; the rest goes to its Popover.
 const MENU_KNOWN = new Set([
   'children',
   'onOpen',
@@ -151,7 +152,7 @@ const MENU_KNOWN = new Set([
   'keepMounted',
   'withInitialFocusPlaceholder',
 ]);
-// The props Mantine 7.17.8 `HoverCard` destructures; the rest goes to its Popover.
+// The props Mantine's `HoverCard` destructures; the rest goes to its Popover.
 const HOVERCARD_KNOWN = new Set([
   'children',
   'onOpen',
@@ -445,7 +446,7 @@ function createFamily(kind: FamilyKind, staticKeys: readonly string[]) {
   function OverlayRoot(props: AnyProps) {
     const enabled = useContext(OverlayFastPathContext);
     const theme = useOptionalMantineTheme();
-    // Decided once, at mount: a flag that changes later never swaps this overlay's tree.
+    // Read once, at mount: swapping trees later would remount the trigger, losing its focus and state.
     const [lite] = useState(() => enabled && theme !== null && kind.eligible(props, theme));
     if (lite) return <FamilyLite kind={kind} rootProps={props} />;
     return <kind.Ctx.Provider value={null}>{createElement(kind.Root(), props)}</kind.Ctx.Provider>;

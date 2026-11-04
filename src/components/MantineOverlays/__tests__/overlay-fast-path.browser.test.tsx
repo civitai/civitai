@@ -135,15 +135,18 @@ describe.each([
   test('Tooltip: openDelay holds the first hover back for the delay', async () => {
     await mount(
       fast,
-      <Tooltip label="Delayed tip" openDelay={600} withinPortal>
+      <Tooltip label="Delayed tip" openDelay={1500} withinPortal>
         <button type="button">Delayed</button>
       </Tooltip>,
       1
     );
     await userEvent.hover(page.getByRole('button', { name: 'Delayed' }));
+    // The delay dwarfs the sleep, so a slow CI box cannot open it before the absence check.
     await sleep(200);
     expect(document.querySelector('[role="tooltip"]')).toBeNull();
-    await expect.element(page.getByRole('tooltip')).toHaveTextContent('Delayed tip');
+    await expect
+      .element(page.getByRole('tooltip'), { timeout: 5_000 })
+      .toHaveTextContent('Delayed tip');
   });
 
   test('Tooltip with focus events: the first Tab opens it', async () => {
@@ -381,7 +384,7 @@ describe.each([
   test('HoverCard: the first hover opens it after openDelay, leaving closes it', async () => {
     await mount(
       fast,
-      <HoverCard openDelay={300} closeDelay={50} withinPortal>
+      <HoverCard openDelay={1500} closeDelay={50} withinPortal>
         <HoverCard.Target>
           <a href="#user">Some user</a>
         </HoverCard.Target>
@@ -392,7 +395,7 @@ describe.each([
     await userEvent.hover(page.getByRole('link', { name: 'Some user' }));
     await sleep(120);
     expect(document.body.textContent).not.toContain('Card body');
-    await expect.element(page.getByText('Card body')).toBeVisible();
+    await expect.element(page.getByText('Card body'), { timeout: 5_000 }).toBeVisible();
     await userEvent.hover(page.elementLocator(park));
     await expect.poll(() => document.body.textContent?.includes('Card body')).toBe(false);
   });

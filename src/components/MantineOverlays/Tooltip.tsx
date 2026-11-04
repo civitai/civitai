@@ -140,7 +140,7 @@ function TooltipLite({
 const TooltipImpl = forwardRef<unknown, AnyProps>(function OverlayTooltip(props, ref) {
   const enabled = useContext(OverlayFastPathContext);
   const theme = useOptionalMantineTheme();
-  // Decided once, at mount: a flag that changes later never swaps this tooltip's tree.
+  // Read once, at mount: swapping trees later would remount the trigger, losing its focus and state.
   const [lite] = useState(() => enabled && theme !== null && tooltipEligible(props, theme));
   if (lite) return <TooltipLite tooltipProps={props} forwardedRef={ref} />;
   return createElement(MantineTooltip as unknown as ComponentType<AnyProps>, {
