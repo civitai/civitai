@@ -17,12 +17,14 @@
   let loading = $state(false);
   let submitting = $state(false);
   let message = $state<string | null>(null);
+  let failed = $state(false);
 
   // The recap is read when the button is clicked, not with every page, so it is always today's figures.
   async function show() {
     if (loading) return;
     loading = true;
     message = null;
+    failed = false;
     try {
       const response = await fetch('/recap');
       if (!response.ok) throw new Error(String(response.status));
@@ -30,6 +32,7 @@
     } catch {
       loaded = { recap: null, optOut: false, watch: null };
       message = 'Try again in a moment.';
+      failed = true;
     } finally {
       loading = false;
     }
@@ -39,6 +42,12 @@
   const submit: SubmitFunction = ({ cancel, formData, submitter }) => {
     cancel();
     const begin = submitter?.getAttribute('name') === 'begin';
+    // Nothing was loaded, so nothing was seen: closing must not dismiss the day or overwrite the stored opt-out.
+    if (failed) {
+      loaded = null;
+      if (begin && page.url.pathname !== '/play') void goto('/play');
+      return;
+    }
     submitting = true;
     fetch('/recap', { method: 'POST', body: formData })
       .then(async (response) => {
@@ -57,7 +66,7 @@
   class="recap-button"
   aria-label={unseen ? 'Daily recap, not yet seen' : 'Daily recap'}
   title="Daily recap"
-  disabled={loading}
+  aria-busy={loading}
   onclick={show}
 >
   <Icon name="scroll-text" size={18} />
@@ -90,7 +99,7 @@
     background: var(--io-bg);
     color: var(--io-gold);
   }
-  .recap-button:hover:not(:disabled) {
+  .recap-button:hover {
     background: var(--io-surface);
   }
   .dot {
