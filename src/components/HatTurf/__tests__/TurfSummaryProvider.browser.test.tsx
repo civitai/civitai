@@ -217,16 +217,21 @@ describe('TurfSummaryProvider', () => {
   });
 
   test('cards mounting over a scroll burst are marked in one request', async () => {
-    await mount([1]);
-    const stops: (() => void)[] = [];
-    for (const id of [11, 12, 13, 14, 15]) {
-      stops.push(latest!.watch(id));
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    vi.useFakeTimers();
+    try {
+      await mount([1]);
+      const stops: (() => void)[] = [];
+      for (const id of [11, 12, 13, 14, 15]) {
+        stops.push(latest!.watch(id));
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(h.mark).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
+      stops.forEach((stop) => stop());
+    } finally {
+      vi.useRealTimers();
     }
-    await vi.waitFor(() => expect(h.mark).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
-    stops.forEach((stop) => stop());
   });
 });
 

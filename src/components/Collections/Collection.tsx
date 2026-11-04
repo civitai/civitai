@@ -94,6 +94,7 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
@@ -379,12 +380,11 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            {/* Hat counts on entries whose reaction counts are hidden could sway judging. */}
             <ImagesInfinite
               filters={filters}
               disableStoreFilters
               collectionId={collection.id}
-              hideHatTurf={isContestCollection}
+              hideHatTurf={collectionHidesHatTurf(collection)}
             />
           </ReactionSettingsProvider>
         </IsClient>

@@ -139,7 +139,8 @@ import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { CollectionMode, MediaType } from '~/shared/utils/prisma/enums';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 
 const image = {
   id: 77,
@@ -218,6 +219,8 @@ describe('Hat Turf on the /images feed card', () => {
   test.each([
     ['a feed', false, true],
     ['the sticker book (hideHatTurf)', true, false],
+    ['a bookmark collection', collectionHidesHatTurf({ mode: CollectionMode.Bookmark }), true],
+    ['a contest collection', collectionHidesHatTurf({ mode: CollectionMode.Contest }), false],
   ])('under ImagesProvider, %s shows Hat Turf: %s → %s', async (_, hideHatTurf, shown) => {
     renderWithProviders(
       <ImagesProvider images={[image]} hideHatTurf={hideHatTurf}>
