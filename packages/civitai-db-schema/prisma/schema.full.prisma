@@ -10781,13 +10781,17 @@ model StorylineCoverUpload {
   @@index([imageId])
 }
 
+/// A report outlives its storyline: the delete sets `storylineId` NULL and fills the snapshot.
 model StorylineReport {
-  storylineId Int
-  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
-  reportId    Int       @unique
-  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId        Int        @id
+  report          Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  storylineId     Int?
+  storyline       Storyline? @relation(fields: [storylineId], references: [id], onDelete: SetNull)
+  /// The storyline's id once deleted, when a held copy of it was kept ("HeldStoryline").
+  heldStorylineId Int?
+  /// The storyline's title when it was deleted.
+  storylineTitle  String?
 
-  @@id([reportId, storylineId])
   @@index([storylineId], type: Hash)
 }
 

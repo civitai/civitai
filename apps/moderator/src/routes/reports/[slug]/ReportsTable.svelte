@@ -1,6 +1,6 @@
 <script lang="ts">
   import { dateTime } from '$lib/format';
-  import { entityUrl } from '$lib/entity-url';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -481,7 +481,21 @@
                 {/if}
               </p>
             {:else}
-              <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+              {@const deleted = data.deletedStorylines.find((d) => d.reportId === selected.id)}
+              {#if deleted?.held}
+                <p class="mb-2 text-sm" title={fmtDate(deleted.held.deletedAt)}>
+                  <span class="font-medium">{deleted.title}</span> was deleted by
+                  {deleted.held.deletedByOwner ? 'its owner' : 'a moderator'}. A copy of it and its
+                  {deleted.held.chapters} chapters is kept for records.
+                  <a href={userLookupUrl(deleted.held.userId, 'reports')} class="underline">Owner</a>
+                </p>
+              {:else if deleted?.title}
+                <p class="mb-2 text-sm text-muted-foreground">
+                  <span class="font-medium">{deleted.title}</span> was deleted.
+                </p>
+              {:else}
+                <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+              {/if}
             {/if}
             {#if storyline && !storyline.tosViolationByModerator}
               <p class="mb-2 text-sm">
