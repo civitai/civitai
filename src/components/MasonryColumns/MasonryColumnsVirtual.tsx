@@ -137,7 +137,7 @@ function VirtualColumn<TData>({
 
   return (
     <div
-      className={className}
+      className={clsx(styles.column, className)}
       style={{
         width: '100%',
         ...style,

@@ -26,7 +26,7 @@
 }
 
 // A wide item overlays the next column, whose box comes later in the DOM and would otherwise sit
-// on top of the wide card's right half and take its pointer events.
-.item[data-span] {
-  z-index: 1;
+// on top of the wide card's right half and take its pointer events. Only the cards take them.
+.column {
+  pointer-events: none;
 }
