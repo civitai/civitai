@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { Sleep } from '~/server/services/notice-ledger.service';
 import { OnboardingSteps } from '~/server/common/enums';
+import { bankingChangeNoticeSchema } from '~/server/schema/banking-change-notice.schema';
 import type * as EmailClient from '~/server/email/client';
 import type * as BankingChangeNoticeEmail from '~/server/email/templates/bankingChangeNotice.email';
 import type * as CreatorMembershipService from '~/server/services/creator-membership.service';
@@ -149,8 +150,19 @@ describe('getBankingChangeNoticeAudience', () => {
   });
 });
 
+// Sends paced on a frozen clock: each wait is the full gap to the send's reserved slot.
+const pacedSleeps = async (go: (sleep: Sleep) => Promise<unknown>) => {
+  const sleep = vi.fn<Sleep>(async () => undefined);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+  try {
+    await go(sleep);
+  } finally {
+    now.mockRestore();
+  }
+  return sleep.mock.calls.map(([ms]) => ms);
+};
+
 describe('sendBankingChangeNotice', () => {
-  // The pace and the throttle backoff wait on this, so the tests run without real delays.
   const sleep = vi.fn<Sleep>(async () => undefined);
   beforeEach(() => {
     bankers = [1, 2, 3];
@@ -172,6 +184,19 @@ describe('sendBankingChangeNotice', () => {
     expect(sendMock).not.toHaveBeenCalled();
     expect(redisMock.sysRedis.hSetNX).not.toHaveBeenCalled();
     expect(ledger.size).toBe(0);
+  });
+
+  it('counts a dry run against `count`', async () => {
+    expect(
+      await sendBankingChangeNotice({ dryRun: true, count: 2, batchSize: 1, minIntervalMs: 0 })
+    ).toMatchObject({ wouldSend: 2 });
+  });
+
+  it('paces its sends', async () => {
+    const waits = await pacedSleeps((sleep) =>
+      sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 1, minIntervalMs: 500, sleep })
+    );
+    expect(waits).toEqual([500, 1_000]);
   });
 
   it('refuses to send, and records nobody, when email is not configured', async () => {
@@ -315,5 +340,15 @@ describe('sendBankingChangeNotice', () => {
     });
 
     expect(result).toMatchObject({ sent: 2, failedUserIds: [2], stuckUserIds: [2] });
+  });
+});
+
+describe('the route schema', () => {
+  const send = (extra: object) => bankingChangeNoticeSchema.safeParse({ action: 'send', ...extra });
+
+  it('makes a send a one-at-a-time dry run by default, at most 5 at once', () => {
+    expect(send({}).data).toMatchObject({ dryRun: true, count: 50, batchSize: 1 });
+    expect(send({ batchSize: 5 }).success).toBe(true);
+    expect(send({ batchSize: 6 }).success).toBe(false);
   });
 });

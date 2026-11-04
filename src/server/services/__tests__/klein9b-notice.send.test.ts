@@ -6,7 +6,7 @@ import type * as EmailClient from '~/server/email/client';
 import type * as Klein9bNoticeEmail from '~/server/email/templates/klein9bNotice.email';
 import type * as NotificationsClient from '~/server/notifications/client';
 import { klein9bNoticeSchema } from '~/server/schema/klein9b-notice.schema';
-import { KLEIN9B_NOTICE } from '~/shared/constants/klein9b-notice.constants';
+import { KLEIN9B_NOTICE, getKlein9bNoticeUrl } from '~/shared/constants/klein9b-notice.constants';
 
 const { emailConfiguredMock, sendMock, notifyMock } = vi.hoisted(() => ({
   emailConfiguredMock: vi.fn(),
@@ -28,8 +28,19 @@ vi.mock('~/server/notifications/client', async (importOriginal) => ({
 }));
 
 const { sendKlein9bNotice } = await import('~/server/services/klein9b-notice.service');
-// The pace and the throttle backoff wait on this, so the tests run without real delays.
 const sleep = vi.fn<Sleep>(async () => undefined);
+
+// Sends paced on a frozen clock: each wait is the full gap to the send's reserved slot.
+const pacedSleeps = async (go: (sleep: Sleep) => Promise<unknown>) => {
+  const sleep = vi.fn<Sleep>(async () => undefined);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+  try {
+    await go(sleep);
+  } finally {
+    now.mockRestore();
+  }
+  return sleep.mock.calls.map(([ms]) => ms);
+};
 
 // User 1 is charged (a fee), user 2 is uncharged (a published free version).
 const versions = [
@@ -222,6 +233,30 @@ describe('sendKlein9bNotice', () => {
     } finally {
       users[0].username = 'u1';
     }
+  });
+
+  it('counts a dry run against `count`', async () => {
+    expect(
+      await sendKlein9bNotice({ dryRun: true, count: 1, batchSize: 1, date: 'x', minIntervalMs: 0 })
+    ).toMatchObject({ wouldSend: 1 });
+  });
+
+  it('paces its sends', async () => {
+    const waits = await pacedSleeps((sleep) =>
+      sendKlein9bNotice({
+        dryRun: false,
+        count: 50,
+        batchSize: 1,
+        date: 'x',
+        minIntervalMs: 500,
+        sleep,
+      })
+    );
+    expect(waits).toEqual([500]);
+  });
+
+  it('encodes the username into the models link', () => {
+    expect(getKlein9bNoticeUrl('a b/c')).toBe('/user/a%20b%2Fc/models');
   });
 
   it('refuses a real send with no email transport, before claiming anyone', async () => {

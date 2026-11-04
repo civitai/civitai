@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type { Sleep } from '~/server/services/notice-ledger.service';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import type * as EmailClient from '~/server/email/client';
 import type * as NcEarningsNoticeEmail from '~/server/email/templates/ncEarningsNotice.email';
@@ -263,6 +264,17 @@ describe('sendNcEarningsNotice', () => {
     );
   });
 
+  it('paces its sends', async () => {
+    const sleep = vi.fn<Sleep>(async () => undefined);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    try {
+      await run({ minIntervalMs: 500, sleep });
+    } finally {
+      now.mockRestore();
+    }
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500, 1_000]);
+  });
+
   it('sends at most `count` per run', async () => {
     expect(await run({ count: 1 })).toMatchObject({ sent: 1, remaining: 2 });
     expect(createNotificationMock).toHaveBeenCalledTimes(1);
@@ -315,7 +327,9 @@ describe('sendNcEarningsNotice', () => {
         });
       }
     });
-    expect(await run({ sleep: async () => undefined })).toMatchObject({ sent: 3, failed: 0 });
+    const sleep = vi.fn<Sleep>(async () => undefined);
+    expect(await run({ sleep })).toMatchObject({ sent: 3, failed: 0 });
+    expect(sleep).toHaveBeenCalledWith(2_000);
     expect(createNotificationMock.mock.calls.map(([n]) => n.userId).sort()).toEqual([1, 2, 3]);
     expect(sendMock.mock.calls.map(([d]) => d.to).sort()).toEqual([
       'u1@example.com',
@@ -346,7 +360,7 @@ describe('sendNcEarningsNotice', () => {
 describe('ncEarningsNoticeSchema send', () => {
   const send = { action: 'send', notice: 'nc-older', userIds: [1], date: 'November 5th' };
 
-  it('sends one creator at a time by default, so a run stays under the SES sending rate', () => {
+  it('defaults to batchSize 1 and dryRun true', () => {
     expect(ncEarningsNoticeSchema.parse(send)).toMatchObject({ batchSize: 1, dryRun: true });
   });
 

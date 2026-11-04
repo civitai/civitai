@@ -8,7 +8,7 @@ import rehypeStringify from 'rehype-stringify';
 /**
  * Renders a notice email's markdown to HTML. Email clients drop <style> blocks, so lists are styled
  * inline; margin rather than padding, as Outlook ignores list padding and client defaults indent
- * ~40px. `gfm` adds tables.
+ * ~40px.
  */
 export function renderNoticeMarkdown(markdown: string, { gfm = false } = {}) {
   const processor = unified().use(remarkParse);

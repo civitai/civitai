@@ -6,7 +6,6 @@ export type Klein9bNoticeVariant = 'charged' | 'uncharged';
 
 export const KLEIN9B_NOTICE_BASE_MODELS = ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'];
 
-/** The notification links to the creator's own models list; the email carries the detail. */
 export const getKlein9bNoticeUrl = (username: string | null) =>
   username ? `/user/${encodeURIComponent(username)}/models` : '/user/account';
 
