@@ -40,9 +40,7 @@ import {
   getCommentsThreadDetails2,
   getCommentsInfinite,
   getCommentThreadBounty,
-  isCommentDetached,
   isCommentGoneForMembers,
-  isThreadDetached,
   getCommentCrucibleId,
   getCommentStorylineId,
   getCommentThreadStorylineId,
@@ -82,12 +80,10 @@ export async function assertCommentEntityVisible(
   if (input.entityType === 'storyline') return assertStorylineThreadVisible(input.entityId, ctx);
   let crucibleId = input.entityType === 'crucible' ? input.entityId : null;
   if (input.entityType === 'comment') {
-    const [detached, storylineId, replyCrucibleId] = await Promise.all([
-      !user?.isModerator && isCommentDetached(input.entityId),
+    const [storylineId, replyCrucibleId] = await Promise.all([
       getCommentStorylineId(input.entityId),
       user?.isModerator ? null : getCommentCrucibleId(input.entityId),
     ]);
-    if (detached) throw throwNotFoundError();
     if (storylineId) return assertStorylineThreadVisible(storylineId, ctx);
     crucibleId = replyCrucibleId;
   }
@@ -149,13 +145,11 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     if (!ctx.user?.isModerator) {
-      const [detached, bounty, crucibleId, storylineId] = await Promise.all([
-        isThreadDetached(comment.threadId),
+      const [bounty, crucibleId, storylineId] = await Promise.all([
         getCommentThreadBounty(comment.threadId),
         getCommentCrucibleId(comment.id),
         getCommentThreadStorylineId(comment.threadId),
       ]);
-      if (detached) throw throwNotFoundError(`No comment with id ${input.id}`);
       if (bounty) await assertBountyVisible(bounty, ctx.user);
       if (crucibleId)
         await assertCommentEntityVisible({ entityType: 'crucible', entityId: crucibleId }, ctx);
@@ -271,10 +265,9 @@ export const deleteCommentV2Handler = async ({
   input: GetByIdInput;
 }) => {
   try {
-    // A detached or hidden comment is kept content: only a moderator removes it.
     if (!ctx.user.isModerator && (await isCommentGoneForMembers(input.id)))
       throw throwNotFoundError(`No comment with id ${input.id}`);
-    const deleted = await deleteComment({ ...input, byAuthor: !ctx.user.isModerator });
+    const deleted = await deleteComment(input);
     if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id }).catch(handleLogError);
@@ -355,8 +348,6 @@ export const toggleThreadMuteHandler = async ({
   input: ToggleThreadMuteInput;
 }) => {
   try {
-    if (!ctx.user.isModerator && (await isCommentDetached(input.commentId)))
-      throw throwNotFoundError();
     return await toggleThreadMute({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

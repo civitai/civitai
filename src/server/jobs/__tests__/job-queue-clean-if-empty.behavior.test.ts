@@ -127,22 +127,21 @@ describe('job-queue-clean-if-empty', () => {
     expect(await remainingPostIds()).toEqual([1]);
   });
 
-  it.each([
-    ['keeps', HELD, [1]],
-    ['keeps', MARKED, [1]],
-    ['takes, as a control,', OWNER, []],
-  ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
-    await holder.db.exec(`
+  it.each([HELD, MARKED, OWNER])(
+    "takes a comment on the deleted post's thread (author %i)",
+    async (author) => {
+      await holder.db.exec(`
       INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER});
       INSERT INTO "Thread" (id, "postId") VALUES (100, 1);
       INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
     `);
-    queuePosts(1);
+      queuePosts(1);
 
-    await runJob();
+      await runJob();
 
-    expect(await remainingPostIds()).toEqual([]);
-    const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
-    expect(rows.map((r) => r.id)).toEqual(left);
-  });
+      expect(await remainingPostIds()).toEqual([]);
+      const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
+      expect(rows).toEqual([]);
+    }
+  );
 });
