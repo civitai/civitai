@@ -11,7 +11,7 @@
 }
 
 .sheetBody {
-  padding: 0 0 env(safe-area-inset-bottom);
+  padding: 0;
 }
 
 .panel {
