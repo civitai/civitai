@@ -17,7 +17,6 @@ import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
 import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.service';
-import { isMyAppHidden } from '~/server/services/blocks/my-apps-hidden.service';
 import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag';
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -183,11 +182,18 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // page rendered it.
     // The third read is "opening clears the hide" (`openingClearsHide`): keyed on the slug like
     // the beta read, so it adds no round trip, cached, and fail-open to `false` (never a 500 on
-    // the launch). Signed-out viewers have no hides and skip it.
+    // the launch). Signed-out viewers have no hides and skip it. The service is imported
+    // LAZILY, like the router does: its static chain (user.service → the db clients and the
+    // server env) would otherwise load for every importer of this page module, signed in or not.
+    const viewerId = session?.user?.id;
     const [page, beta, hiddenForViewer] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
-      session?.user ? isMyAppHidden({ userId: session.user.id, slug }) : false,
+      viewerId != null
+        ? import('~/server/services/blocks/my-apps-hidden.service')
+            .then(({ isMyAppHidden }) => isMyAppHidden({ userId: viewerId, slug }))
+            .catch(() => false)
+        : false,
     ]);
 
     // ── PRIVATE RUN — THE DELISTED/SUSPENDED FALLBACK ──────────────────────────
