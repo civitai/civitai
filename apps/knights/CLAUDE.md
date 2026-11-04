@@ -98,7 +98,7 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal, popup opt-out) and `Kn
 
 ## Conversion (`src/lib/server/conversion`)
 
-Gold -> Buzz, the label pass and the tick's retries. `KNIGHTS_CONVERSION_ENABLED` (`conversionEnabled()`) is off by default; `/gold` refuses Convert unless it is exactly `true`. Apply by hand, in order: `20261213120000_knights_v2_progression`, `20261218120000_knights_v2_conversion`, deploy Knights, then the main app, then `20261223120000_knights_v2_drop_gold_clearing`. Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md).
+Gold -> Buzz, the label pass and the tick's retries. Conversion is on by default; the kill switch `KNIGHTS_CONVERSION_DISABLED` (`conversionEnabled()`) set to exactly `true` turns it off, and `/gold` then refuses Convert. Apply by hand, in order: `20261213120000_knights_v2_progression`, `20261218120000_knights_v2_conversion`, deploy Knights, then the main app, then `20261223120000_knights_v2_drop_gold_clearing`. Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md).
 
 ## Reference images and the apprenticeship (`src/lib/server/trials`, `src/lib/server/apprenticeship`)
 

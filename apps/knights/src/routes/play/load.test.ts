@@ -94,19 +94,19 @@ beforeEach(() => {
 });
 
 describe('play load and the conversion switch', () => {
-  it('hides the Convert link unless conversion is switched on', async () => {
+  it('shows the Convert link unless the kill switch is set to exactly true', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
-    const previous = process.env.KNIGHTS_CONVERSION_ENABLED;
+    const previous = process.env.KNIGHTS_CONVERSION_DISABLED;
     try {
-      delete process.env.KNIGHTS_CONVERSION_ENABLED;
-      expect((await run()).conversionOpen).toBe(false);
-      process.env.KNIGHTS_CONVERSION_ENABLED = 'yes';
-      expect((await run()).conversionOpen).toBe(false);
-      process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
+      delete process.env.KNIGHTS_CONVERSION_DISABLED;
       expect((await run()).conversionOpen).toBe(true);
+      process.env.KNIGHTS_CONVERSION_DISABLED = 'yes';
+      expect((await run()).conversionOpen).toBe(true);
+      process.env.KNIGHTS_CONVERSION_DISABLED = 'true';
+      expect((await run()).conversionOpen).toBe(false);
     } finally {
-      if (previous === undefined) delete process.env.KNIGHTS_CONVERSION_ENABLED;
-      else process.env.KNIGHTS_CONVERSION_ENABLED = previous;
+      if (previous === undefined) delete process.env.KNIGHTS_CONVERSION_DISABLED;
+      else process.env.KNIGHTS_CONVERSION_DISABLED = previous;
     }
   });
 });

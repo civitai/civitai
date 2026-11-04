@@ -31,7 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   playerRow.value = undefined;
   delete process.env.CIVITAI_APP_URL;
-  delete process.env.KNIGHTS_CONVERSION_ENABLED;
+  delete process.env.KNIGHTS_CONVERSION_DISABLED;
 });
 
 describe('layout load', () => {
@@ -53,10 +53,10 @@ describe('layout load', () => {
     expect(await load(event())).toMatchObject({ userId: null });
   });
 
-  it('offers "Convert gold" only while conversion is on', async () => {
-    expect(await load(event())).toMatchObject({ conversionOpen: false });
-    process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
+  it('offers "Convert gold" unless the kill switch is on', async () => {
     expect(await load(event())).toMatchObject({ conversionOpen: true });
+    process.env.KNIGHTS_CONVERSION_DISABLED = 'true';
+    expect(await load(event())).toMatchObject({ conversionOpen: false });
   });
   it('hands the header the Buzz rate, the rank badge images and the ladder rows from config', async () => {
     const data = await run();
