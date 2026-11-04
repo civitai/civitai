@@ -42,7 +42,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     trpc: makeTrpcProxy(
       {
         'hatTurf.watch': { useMutation: () => ({ mutate: h.mark }) },
-        'hatTurf.getStock': { useQuery: () => ({ data: h.stock }) },
+        'hatTurf.getStock': {
+          useQuery: (_input: unknown, opts: { enabled?: boolean }) => ({
+            data: opts.enabled === false ? undefined : h.stock,
+          }),
+        },
       },
       {
         // Answer each chunk's query by the procedure and input the provider asked for.
@@ -172,7 +176,8 @@ describe('TurfSummaryProvider', () => {
     { who: 'joined', user: { id: 1 }, stock: { available: 3, optedIn: true }, joined: true },
     { who: 'not joined', user: { id: 1 }, stock: { available: 3, optedIn: false }, joined: false },
     { who: 'stock not loaded', user: { id: 1 }, stock: undefined, joined: false },
-    { who: 'signed out', user: null, stock: undefined, joined: false },
+    // Stock that says joined: only the signed-in check can keep turf hidden here.
+    { who: 'signed out', user: null, stock: { available: 3, optedIn: true }, joined: false },
   ])('$who: hats, counts and pushes only when joined', async ({ user, stock, joined }) => {
     h.user = user;
     h.stock = stock;

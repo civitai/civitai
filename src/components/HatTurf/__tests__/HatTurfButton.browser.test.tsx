@@ -30,7 +30,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => features,
 }));
 const h = vi.hoisted(() => ({
-  stock: { available: 3, optedIn: true },
+  stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -173,7 +173,7 @@ function renderCard(ctx: Ctx = {}, ownerId = 2, width = PHONE_CARD) {
         images: {},
         open: {},
         stickers: {},
-        joined: h.stock.optedIn,
+        joined: h.stock?.optedIn === true,
         watch: () => () => undefined,
         ...ctx,
       }}
@@ -388,7 +388,18 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(q('hat-turf-button')).toBeNull();
   });
 
-  test('not joined: an image whose owner has not joined still offers Join', async () => {
+  // Until the stock is read, the card cannot tell a joined viewer's hat from the join invite, and a
+  // hat press there would start a placement that no layer draws.
+  test('no button until the viewer’s stock is read', async () => {
+    h.stock = undefined;
+    renderCard();
+    // The card mounts its footer after a commit or two; the other tests find the button well inside
+    // this wait, which is what makes its absence here mean something.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(q('hat-turf-button')).toBeNull();
+  });
+
+  test('not joined: a closed image still offers Join', async () => {
     h.stock = { available: 3, optedIn: false };
     renderCard({ open: { 77: false } });
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());

@@ -52,8 +52,9 @@ function HatTurfButtonContent({
     onError: (error) => showErrorNotification({ title: "Couldn't join Hat Turf", error }),
   });
 
-  if (!feed || !card || !user || feed.hidden?.[imageId]) return null;
-  const joined = stock?.optedIn !== false;
+  // Until the viewer's stock is read, neither the hat nor the invite is known to be right.
+  if (!feed || !card || !user || !stock || feed.hidden?.[imageId]) return null;
+  const joined = stock.optedIn;
   // Closed images must still offer Join: a viewer who has not joined has no other way to opt in.
   if (joined && feed.open[imageId] === false) return null;
 

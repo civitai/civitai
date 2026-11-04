@@ -183,7 +183,7 @@ describe('Hat Turf on image detail', () => {
     );
   });
 
-  test('not joined: an image whose owner has not joined still invites', async () => {
+  test('not joined: a closed image still invites', async () => {
     h.stock = { available: 3, optedIn: false, mode: 'live' };
     render({ open: { 9: false } });
     await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
@@ -194,19 +194,17 @@ describe('Hat Turf on image detail', () => {
     );
   });
 
-  test('joined: an image whose owner has not joined has no hat to place, and the card says why', async () => {
+  test('joined: a closed image has no hat to place, and the card says so', async () => {
     render({ open: { 9: false } });
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     expect(q('hat-turf-detail-hat')).toBeNull();
     click(q('hat-turf-detail-badge'));
     await vi.waitFor(() =>
-      expect(q('hat-turf-detail-closed')?.textContent).toBe(
-        "This creator hasn't joined Hat Turf yet"
-      )
+      expect(q('hat-turf-detail-closed')?.textContent).toBe("Hats can't go on this picture")
     );
   });
 
-  test('joined: an open image says nothing about the creator', async () => {
+  test('joined: an open image says nothing about being closed', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     click(q('hat-turf-detail-badge'));
@@ -448,6 +446,16 @@ describe('Hat Turf on image detail', () => {
     expect(hats().length).toBe(0);
     click(q('hat-turf-detail-hat'));
     await vi.waitFor(() => expect(text(/^Join$/)).toBeTruthy());
+  });
+
+  test('signed out: the badge stays, and its card invites them to sign in and join', async () => {
+    h.user = null;
+    render({ joined: false, images: {} });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(hats().length).toBe(0);
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-empty')).not.toBeNull());
+    expect(q('hat-turf-detail-empty')!.textContent).toMatch(/Sign in and join Hat Turf/);
   });
 
   test.each([
