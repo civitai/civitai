@@ -72,7 +72,8 @@ export type TurfEvent = EventDef & { turf: EventTurfConfig };
 const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> 'Private'
   AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL`;
-// The image's owner `o` is neither banned nor deleted: turf takes any owner's image but theirs.
+// The image's owner `o` is neither banned nor deleted. ownerAllowsTurf covers this too; placement reads
+// it apart only to refuse a banned owner's image without blaming the owner's switch.
 const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
 // Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
 const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
@@ -697,9 +698,7 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
     dbRead.$queryRaw<{ id: number }[]>`
       SELECT i.id FROM "Image" i
       JOIN "Post" p ON p.id = i."postId"
-      JOIN "User" o ON o.id = i."userId"
-      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerActive}
-        AND ${ownerAllowsTurf(event.name)}
+      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
     `,
     // Removed ones too: the unique key refuses a second sticker either way.
     viewerId

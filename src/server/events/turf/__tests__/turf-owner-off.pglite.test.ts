@@ -206,7 +206,8 @@ describe("a banned or deleted owner's images", () => {
     await db.exec(`UPDATE "User" SET ${column} = now() WHERE id = ${ALLOWS}`);
     expect(await drawnOn(IMAGES[0])).toBe(0);
     expect(await countedImages()).toEqual([]);
-    await expect(place(IMAGES[0])).rejects.toThrow('keeps Hat Turf off their images');
+    // Not blamed on the owner's switch, which they never touched.
+    await expect(place(IMAGES[0])).rejects.toThrow("You can't put hat stickers on this image");
   });
 });
 
@@ -235,12 +236,12 @@ describe('who may use the switch', () => {
     expect((await getTurfStock('e', ALLOWS)).ownerOff).toBe(false);
   });
 
-  // Equipping an event hat writes a placement row (a trigger), which used to make a user who never
-  // chose a player. With the switch off first, that must not make them one.
-  it('a user who turned it off and then places an event hat is still not in Hat Turf', async () => {
-    await setTurfOwnerOff('e', NEVER_CHOSE, true);
+  // The switch and joining each refuse the other, so both set at once only comes from a race or a
+  // hand edit. The switch wins: a player cannot wall their own images off.
+  it('a user whose settings say both joined and off is not in Hat Turf', async () => {
     await db.exec(
-      `INSERT INTO "EventCosmeticPlacement" (event, "userId") VALUES ('e', ${NEVER_CHOSE})`
+      `UPDATE "User" SET settings = '{"eventTurfOptIn":{"e":true},"eventTurfOwnerOff":{"e":true}}'
+       WHERE id = ${NEVER_CHOSE}`
     );
     expect((await getTurfStock('e', NEVER_CHOSE)).optedIn).toBe(false);
     await expect(
@@ -251,7 +252,7 @@ describe('who may use the switch', () => {
         cosmeticId: 11,
         data: { x: 0.5, y: 0.5, scale: 0.22, rotation: 0, flip: false },
       })
-    ).rejects.toThrow('accept team hat stickers');
+    ).rejects.toThrow('Join Hat Turf to place hat stickers');
   });
 
   it('with it off, joining is refused until it is back on', async () => {
