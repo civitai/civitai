@@ -35,7 +35,7 @@
 }
 
 .dim {
-  opacity: 0.38;
+  opacity: 0.55;
   filter: saturate(0.25) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 

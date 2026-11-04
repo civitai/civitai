@@ -330,6 +330,20 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-lock')).not.toBeNull();
   });
 
+  test("the viewer's own hat never dims when their team is behind; other trailing hats do", async () => {
+    h.mine = { ...sticker(99, 'pink', 0.4, 0.4), userId: 1 };
+    render();
+    await vi.waitFor(() => expect(hats().length).toBe(4));
+    const tones = Object.fromEntries(
+      [...hats()].map((hat) => [hat.getAttribute('style'), hat.getAttribute('data-tone')])
+    );
+    const toneAt = (x: number, y: number) =>
+      Object.entries(tones).find(([style]) => style?.includes(`left: ${x}%; top: ${y}%`))?.[1];
+    expect(toneAt(40, 40)).toBe('plain');
+    expect(toneAt(60, 50)).toBe('dim');
+    expect(toneAt(30, 30)).toBe('lead');
+  });
+
   test('past the draw cap a "more" button asks for the next hats', async () => {
     h.stickers = Array.from({ length: 12 }, (_, i) => sticker(i + 1, 'blue', 0.1 + i * 0.07, 0.5));
     render({
