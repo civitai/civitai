@@ -6,6 +6,7 @@ import {
   getCsamsToRemoveContent,
   getCsamsToReport,
   logBlockedCsamReports,
+  logOverdueEvidenceApprovals,
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
@@ -55,6 +56,17 @@ const sendCsamReportsJob = createJob(
 
     try {
       await logBlockedCsamReports(reports.map((report) => report.id));
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-blocked-check',
+        message: errorMessage(e),
+      });
+    }
+
+    try {
+      await logOverdueEvidenceApprovals();
     } catch (e) {
       logToAxiom({
         name: 'csam-report',

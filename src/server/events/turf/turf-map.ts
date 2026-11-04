@@ -89,7 +89,8 @@ export function computeImageTurf(
     .filter((r) => r.eligible && r.team === leader)
     .slice(0, creditedPlayers)
     .map((r) => r.userId);
-  const lastAt = Math.max(...rows.map((r) => r.createdAt.getTime()));
+  // Not Math.max(...rows): spreading past ~125k arguments overflows the stack on a busy image.
+  const lastAt = rows.reduce((max, r) => Math.max(max, r.createdAt.getTime()), 0);
   return { counts, entry: { team: leader, cosmeticId, players, lastAt } };
 }
 

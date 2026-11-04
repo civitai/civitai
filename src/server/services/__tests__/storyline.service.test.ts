@@ -2129,8 +2129,7 @@ describe('getStoryline: page fields', () => {
     ] as never);
   });
 
-  // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
-  // else is told which chapters were paid for, not even that none were.
+  // Others are not told even that none were.
   it("tells only the owner which of the main route's chapters someone paid to add", async () => {
     const answer = r.$queryRaw.getMockImplementation()!;
     r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
@@ -3929,7 +3928,6 @@ describe('covers and cast', () => {
     });
   });
 
-  // As on the page's main route: the owner alone is told which chapters someone paid to add.
   it("tells only the owner which of the map's chapters someone paid to add", async () => {
     r.storylineChapter.findMany.mockResolvedValue([
       { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },

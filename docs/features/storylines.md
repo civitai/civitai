@@ -89,10 +89,11 @@ section).
   choosing the main route of chapters. Setting the price, endorsing collaborators and answering
   continuations stay the creator's. Each such edit is recorded in the moderator activity log.
 - **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
-  post stays published; the storyline, its chapter order and its comments go. It is refused while a
-  paid continuation is pending or its Buzz has not settled. Only a moderator can delete one that
-  has approved a paid continuation, is under an open report, or was taken down (and not while the
-  creator's appeal is open).
+  post stays published; the storyline, its chapter order and its comments go, and the creator sees
+  the same result whatever else is true of it. Reports on it stay in the moderator queue under its
+  title, and a copy may be kept for moderators' records. It is refused while a paid continuation is
+  pending or its Buzz has not settled. Only a moderator can delete one that has approved a paid
+  continuation or was taken down (and not while the creator's appeal is open).
 - **Removing a chapter.** The creator, the chapter's author or a moderator removes a chapter from the
   storyline, from its menu on the storyline page or in the image menu while reading; its post stays
   published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a
