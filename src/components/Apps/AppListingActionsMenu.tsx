@@ -23,6 +23,7 @@ import {
   type DetailTakedownAction,
 } from '~/components/Apps/appListingDetailModActions';
 import { canOwnerEditListing, getOwnerEditHref } from '~/components/Apps/appListingCardView';
+import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import { ListingTakedownModal } from '~/components/Apps/ListingTakedownModal';
 import { ListingVisibilityMenuModal } from '~/components/Apps/ListingVisibilityMenuModal';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
@@ -201,8 +202,12 @@ function useAppListingMenuGates(
   // returns null when there is no editable target (an on-site listing with no
   // backing appBlockId).
   const isOwner = !!currentUser?.id && currentUser.id === listing.creatorUserId;
-  const editHref = getOwnerEditHref(listing.kindData, listing.id);
-  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+  // A moderator edits someone else's listing on the listing-keyed editor directly.
+  const isModeratorEditor = !isOwner && isAppReviewer(currentUser);
+  const editHref = isModeratorEditor
+    ? listingEditHref(listing.id)
+    : getOwnerEditHref(listing.kindData, listing.id);
+  const showEdit = (canOwnerEditListing({ isOwner }) || isModeratorEditor) && !!editHref;
   // Owner "Visibility" item. 🔴 GATED ON `isOwner` ALONE BECAUSE THE REST OF THE
   // PREDICATE CANNOT BE EVALUATED HERE: `showVisibility` also needs the listing's status,
   // which neither DTO carries. `ListingVisibilityMenuModal` fetches the authoring context
@@ -370,9 +375,7 @@ export function AppListingActionsMenu({
             <Menu.Target>{trigger}</Menu.Target>
           )}
           <Menu.Dropdown onClick={stop}>
-            {/* Owner-only "Edit" deep-link, gated by owner + editable status
-                (mod-removed listings hide it). Routes by kind (manifest editor for
-                on-site, submit editor for off-site). */}
+            {/* "Edit" deep-link for the owner (editable status only) or a moderator. */}
             {showEdit && editHref && (
               <Menu.Item
                 component={Link}

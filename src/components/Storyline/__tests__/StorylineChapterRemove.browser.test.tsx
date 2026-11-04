@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   confirmBody: '' as string,
   currentUser: null as null | { id: number; isModerator?: boolean },
   childCount: 0,
+  paid: undefined as boolean | undefined,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 // Confirms at once, keeping what the dialog said.
@@ -51,18 +52,20 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ user }: { user: { username: string } }) => <span>{user.username}</span>,
 }));
 
-const storyline = (viewerRole: string | null) =>
+const storyline = (viewerRole: string | null, tosViolation = false) =>
   ({
     id: 2,
     userId: OWNER,
     viewerRole,
+    tosViolation,
     chapterCount: 2,
-    mainPath: [chapter(0, OWNER, 1), chapter(1, CONTRIBUTOR, mocks.childCount)],
+    mainPath: [
+      chapter(0, OWNER, 1),
+      { ...chapter(1, CONTRIBUTOR, mocks.childCount), paid: mocks.paid },
+    ],
     collaborators: [],
   } as never);
 const optionsOf = (n: number) => page.getByRole('button', { name: `Chapter ${n} options` });
-const hasOptions = (n: number) =>
-  !!document.querySelector(`button[aria-label="Chapter ${n} options"]`);
 const removeItem = () => page.getByRole('menuitem', { name: /Remove from storyline/ });
 
 beforeEach(() => {
@@ -70,6 +73,7 @@ beforeEach(() => {
   mocks.confirmBody = '';
   mocks.currentUser = null;
   mocks.childCount = 0;
+  mocks.paid = undefined;
 });
 
 describe('removing a chapter from the storyline page', () => {
@@ -85,11 +89,34 @@ describe('removing a chapter from the storyline page', () => {
     expect(mocks.confirmBody).not.toContain('not returned');
   });
 
-  test('chapter 1 is never offered', async () => {
+  test('chapter 1 is shown disabled, pointing to deleting the storyline', async () => {
     mocks.currentUser = { id: OWNER };
     renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
-    await expect.element(optionsOf(2)).toBeInTheDocument();
-    expect(hasOptions(1)).toBe(false);
+
+    await optionsOf(1).click();
+    await expect.element(removeItem()).toBeDisabled();
+    await expect
+      .element(removeItem())
+      .toHaveTextContent("Chapter 1 can't be removed. Delete the storyline instead");
+  });
+
+  // Its owner can't delete a taken-down storyline, so it must not send them looking for Delete.
+  test('on a taken-down storyline, chapter 1 does not point to deleting it', async () => {
+    mocks.currentUser = { id: OWNER };
+    renderWithProviders(<StorylineChapterLanes storyline={storyline('owner', true)} />);
+
+    await optionsOf(1).click();
+    await expect.element(removeItem()).toBeDisabled();
+    await expect.element(removeItem()).toHaveTextContent("Chapter 1 can't be removed");
+    expect(document.body.textContent).not.toContain('Delete the storyline');
+  });
+
+  test("chapter 1 offers nothing to a reader who can't remove it", async () => {
+    mocks.currentUser = { id: CONTRIBUTOR };
+    renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
+    await optionsOf(1).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Report chapter' })).toBeVisible();
+    expect(document.body.textContent).not.toContain('Remove from storyline');
   });
 
   test('its author removes their own chapter and is told the Buzz is not returned', async () => {
@@ -114,7 +141,6 @@ describe('removing a chapter from the storyline page', () => {
   test('a reader who is neither is not offered removal', async () => {
     mocks.currentUser = { id: 77 };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
-    // The menu is there for reporting the chapter.
     await optionsOf(2).click();
     await expect.element(page.getByRole('menuitem', { name: 'Report chapter' })).toBeVisible();
     expect(document.body.textContent).not.toContain('Remove from storyline');
@@ -128,6 +154,20 @@ describe('removing a chapter from the storyline page', () => {
     await optionsOf(2).click();
     await expect.element(removeItem()).toBeDisabled();
     await expect.element(removeItem()).toHaveTextContent('Other chapters continue from this one');
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  test('the owner is not offered removal of a chapter someone paid to add', async () => {
+    mocks.currentUser = { id: OWNER };
+    mocks.paid = true;
+    renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
+
+    await optionsOf(2).click();
+    await expect.element(removeItem()).toBeDisabled();
+    await expect
+      .element(removeItem())
+      .toHaveTextContent("Someone paid to add this chapter, so it can't be removed");
+    await removeItem().click({ force: true });
     expect(mocks.remove).not.toHaveBeenCalled();
   });
 });

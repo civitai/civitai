@@ -238,6 +238,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // but only for an https, non-loopback redirect_uri exactly as registered, and never when the request asks
   // for the consent screen (prompt=consent or select_account). Otherwise it gets the usual consent flow.
   const isFirstParty = client.isFirstParty;
+  // A grant to a registered app carries no impersonation marker and would outlive the impersonation.
+  if (!isFirstParty && locals.impersonatedBy != null) {
+    return failToClient('access_denied', 'Not available while impersonating', 403);
+  }
   const skipsConsent = isFirstParty
     ? client.skipConsent
     : client.skipConsent &&

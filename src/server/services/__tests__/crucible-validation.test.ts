@@ -32,7 +32,8 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
-  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
+  CRUCIBLE_MIN_VIEW_SECONDS_MAX,
+  CRUCIBLE_MIN_VIEW_SECONDS_MIN,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
@@ -842,7 +843,7 @@ describe('createCrucibleInputSchema — video settings', () => {
   it('accepts a video crucible carrying both settings', () => {
     const result = createCrucibleInputSchema.safeParse({
       ...videoInput,
-      minViewSeconds: 6,
+      minViewSeconds: 7,
       maxClipSeconds: 120,
     });
 
@@ -890,17 +891,32 @@ describe('createCrucibleInputSchema — video settings', () => {
     ['a zero minimum — absent is how "no rule" is spelled', { minViewSeconds: 0 }],
     ['a zero maximum, which would forbid every entry', { maxClipSeconds: 0 }],
     ['a fractional minimum', { minViewSeconds: 6.5 }],
-    ['an unlisted minimum', { minViewSeconds: 7 }],
+    ['a minimum below the bound', { minViewSeconds: 2 }],
+    ['a minimum above the bound', { minViewSeconds: 31 }],
     ['an unlisted maximum', { maxClipSeconds: 1 }],
     ['a maximum longer than any uploadable video', { maxClipSeconds: 600 }],
   ])('rejects %s', (_label, settings) => {
     expect(createCrucibleInputSchema.safeParse({ ...videoInput, ...settings }).success).toBe(false);
   });
 
-  it.each(CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS)('accepts the listed %ss minimum', (minViewSeconds) => {
-    expect(createCrucibleInputSchema.safeParse({ ...videoInput, minViewSeconds }).success).toBe(
-      true
-    );
+  it.each([CRUCIBLE_MIN_VIEW_SECONDS_MIN, 20, CRUCIBLE_MIN_VIEW_SECONDS_MAX])(
+    'accepts a %ss minimum',
+    (minViewSeconds) => {
+      expect(createCrucibleInputSchema.safeParse({ ...videoInput, minViewSeconds }).success).toBe(
+        true
+      );
+    }
+  );
+
+  it.each([
+    [20, true],
+    [3, true],
+    [30, true],
+    [2, false],
+    [31, false],
+    [6.5, false],
+  ])('update schema: a %s second minimum is accepted=%s', (minViewSeconds, valid) => {
+    expect(updateCrucibleSchema.safeParse({ id: 1, minViewSeconds }).success).toBe(valid);
   });
 
   it.each(CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS)('accepts the listed %ss maximum', (maxClipSeconds) => {

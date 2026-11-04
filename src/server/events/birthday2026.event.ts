@@ -130,6 +130,7 @@ export const birthday2026 = createEvent(name, {
   badgePrefix: 'Birthday 2026',
   scoring: {
     capPerActorPerOwnerPerDay: 50,
+    teamRemixWaiver: { perPlacerPerDay: 10 },
     types: {
       view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
       reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
@@ -140,5 +141,18 @@ export const birthday2026 = createEvent(name, {
     },
     newAccountDays: 7,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
+    // The Crucible seed: 1M per music-video Crucible, 50/30/20 to the teams of its top three, dated
+    // to the Crucible's end.
+    teamAwards: [],
+  },
+  turf: {
+    mode: 'shadow',
+    testerFlag: 'birthday2026-turf',
+    // Launch values only. Later steps are set through the live override (turf/config.ts) and are
+    // not announced ahead of time.
+    supply: [{ from: new Date('2026-11-01T00:00:00Z'), perHour: 5, cap: 50 }],
+    creditedPlayers: [{ from: new Date('2026-11-01T00:00:00Z'), players: 25 }],
+    renderLimit: 12,
+    mapMaxEntries: 50_000,
   },
 });

@@ -18,7 +18,7 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
 import { FlagAppealAlert } from '~/components/Moderation/FlagAppealAlert';
-import { EntityDiscussion } from '~/components/CommentsV2/EntityDiscussion';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
@@ -44,6 +44,7 @@ import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read
 import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
+import { StorylineSparkCredit } from '~/components/Storyline/StorylineSparkCredit';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
@@ -126,17 +127,15 @@ export function StorylinePage({ id }: { id: number }) {
           </div>
           {/* A storyline with no chapter 1 yet is its owner's draft, with nothing to discuss. */}
           {mainPath.length > 0 && (
-            // The thread brings its own "Comments" heading; the card only names the region.
-            // The thread keeps its own top margin for the pages it stands alone on; here the card's
-            // padding is the only space above it.
-            <section
-              aria-label="Discussion"
-              className={clsx(storylineCardClass, 'p-3.5 sm:p-5 [&>.mantine-Stack-root]:!mt-0')}
-            >
-              <EntityDiscussion
+            <section aria-label="Discussion" className={clsx(storylineCardClass, 'p-3.5 sm:p-5')}>
+              <CommentSection
                 entityType="storyline"
                 entityId={storyline.id}
-                userId={storyline.user.id}
+                ownerId={storyline.user.id}
+                ownerModerates={false}
+                title={<Title order={2}>Discussion</Title>}
+                hideWhenLocked
+                anchorId="comments"
               />
             </section>
           )}
@@ -316,6 +315,7 @@ function Section({
 function StorylineChapters({ storyline }: { storyline: Storyline }) {
   return (
     <Section icon={<IconBook2 size={20} />} title="Chapters" id="storyline-chapters">
+      {storyline.spark && <StorylineSparkCredit spark={storyline.spark} />}
       <StorylineChapterLanes storyline={storyline} />
     </Section>
   );

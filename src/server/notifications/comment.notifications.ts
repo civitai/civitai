@@ -48,7 +48,7 @@ export const deepLinkParentId = (alias: string) =>
 
 /**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
- * project, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
+ * project and position, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
  * nowhere in the URL). LEFT joins, paired with `v3AppListingResolved`: an app-listing comment whose
  * listing does not resolve is dropped rather than emitted with a `/apps/store-preview/undefined` link.
  */
@@ -85,6 +85,7 @@ export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'threadParentId', ${v3ThreadParentId('c')},
             'threadType', ${v3ThreadType('c')},
             'appListingSlug', al.slug,
+            'comicChapterPosition', cch.position,
             'commentParentId', COALESCE(${deepLinkParentId('c')}, ${v3ThreadParentId('c')}),
             'commentParentType', CASE WHEN c."parentId" IS NULL THEN ${v3ThreadType(
               'c'
@@ -179,6 +180,11 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     commentParentId: details.commentParentId,
     threadId: details.threadId,
   });
+  // The reader takes the chapter from the second path segment and ignores the slug before it.
+  const comicUrl =
+    details.comicChapterPosition != null
+      ? `/comics/${threadParentId}/comic/${details.comicChapterPosition + 1}?${queryString}`
+      : `/comics/${threadParentId}?${queryString}`;
 
   return {
     model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,
@@ -191,8 +197,8 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     challenge: `/challenges/${threadParentId}?${queryString}`,
     crucible: `/crucibles/${threadParentId}?${queryString}`,
     storyline: `${storylineUrl(threadParentId)}?${queryString}`,
-    comicChapter: `/comics/${threadParentId}?${queryString}`,
-    comicProject: `/comics/${threadParentId}?${queryString}`,
+    comicChapter: comicUrl,
+    comicProject: comicUrl,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
     // The one SLUG-addressed entry — see `v3EntityJoins`. `threadParentId` is NOT the
     // address here (it is `app_listings.serial_id`, which the URL never contains), so this
@@ -206,8 +212,6 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     appListing: details.appListingSlug
       ? `${getListingDetailHref(details.appListingSlug)}?${queryString}`
       : undefined,
-    // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
-    // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
 };
 

@@ -6,10 +6,14 @@ import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const assertCanPlace = vi.fn();
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The Kysely reads the real space resolver makes. Their rows, against a real database, are pinned
+// in placement-reads.kysely-parity.test.ts.
+const placementReads = vi.hoisted(() => ({
+  getChapterPlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/placement-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementModeration>()),
   assertCanPlace,
@@ -25,7 +29,16 @@ const OWNER = 10;
 const PLACER = 20;
 const CHAPTER = 77;
 
-const givenStoryline = (status: 'Ongoing' | 'Complete') =>
+/** The parent chapter, as the submit's transaction reads it and as the space resolver reads it. */
+const givenStoryline = (status: 'Ongoing' | 'Complete') => {
+  placementReads.getChapterPlacementTarget.mockResolvedValue({
+    removedAt: null,
+    storylineId: 31,
+    storylineUserId: OWNER,
+    storylineStatus: status,
+    storylineTosViolation: false,
+    username: 'o',
+  });
   dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({
     id: 1,
     storylineId: 31,
@@ -54,6 +67,7 @@ const givenStoryline = (status: 'Ongoing' | 'Complete') =>
       ],
     },
   });
+};
 
 const submit = () =>
   createStorylinePlacement({
@@ -79,7 +93,8 @@ beforeEach(() => {
       { ingestion: 'Scanned', tosViolation: false, minor: false, poi: false, needsReview: null },
     ],
   });
-  dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([]);
+  placementReads.listPlacementSpacesFor.mockResolvedValue([]);
+  placementReads.countPlacements.mockResolvedValue(0);
   dbMock.dbWrite.placement.count.mockResolvedValue(0);
   dbMock.dbWrite.placement.create.mockResolvedValue({ id: 1 });
   // The submit's storyline lock finds the storyline.

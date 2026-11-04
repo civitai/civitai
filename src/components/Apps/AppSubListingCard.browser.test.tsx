@@ -3,6 +3,13 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type { SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
+// The creator is the shared `UserAvatar` (hover card), which needs providers the component setup does
+// not mount. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 const { AppSubListingCard, getSubListingHref } = await import('./AppSubListingCard');
@@ -32,8 +39,8 @@ describe('AppSubListingCard', () => {
       .element(page.getByTestId('apps-sub-listing-parent-chip'))
       .toHaveTextContent('in Custom Generators');
     const author = page.getByTestId('apps-sub-listing-author');
-    await expect.element(author).toHaveTextContent('by pixelwitch');
-    expect(hrefOf(author.element())).toBe('/user/pixelwitch');
+    await expect.element(author).toHaveTextContent('pixelwitch');
+    expect(author.element().querySelector('a')?.getAttribute('href')).toBe('/user/pixelwitch');
     expect(hrefOf(page.getByTestId('apps-sub-listing-parent-chip').element())).toBe(
       '/apps/store-preview/custom-generators'
     );
@@ -50,11 +57,38 @@ describe('AppSubListingCard', () => {
   test("otherwise sends the viewer to the app's store page", async () => {
     renderWithProviders(<AppSubListingCard card={CARD} canOpenPage={false} />);
     const cta = page.getByTestId('apps-sub-listing-cta');
-    await expect.element(cta).toHaveTextContent('View Custom Generators');
+    await expect.element(cta).toHaveTextContent('View');
     expect(hrefOf(cta.element())).toBe('/apps/store-preview/custom-generators');
     expect(hrefOf(page.getByText('Neon Portraits').element())).toBe(
       '/apps/store-preview/custom-generators'
     );
+  });
+
+  test('🔴 lays out like the app card: Open right of the title, then a full-width divider, then the creator', async () => {
+    renderWithProviders(
+      <div style={{ width: 360 }}>
+        <AppSubListingCard card={CARD} canOpenPage />
+      </div>
+    );
+    const card = page.getByTestId('apps-sub-listing-card');
+    await expect.element(card).toBeInTheDocument();
+    const rect = (el: Element) => el.getBoundingClientRect();
+    const title = page.getByText('Neon Portraits', { exact: true }).element();
+    const cta = page.getByTestId('apps-sub-listing-cta').element();
+    const author = page.getByTestId('apps-sub-listing-author').element();
+    const divider = page.getByTestId('apps-sub-listing-divider').element();
+    expect(divider, 'the card must render a divider').not.toBeNull();
+    expect(rect(cta).left).toBeGreaterThanOrEqual(rect(title).right - 1);
+    expect(
+      Math.abs(rect(cta).top + rect(cta).height / 2 - (rect(title).top + rect(title).height / 2))
+    ).toBeLessThanOrEqual(2);
+    // The component tier loads no stylesheet (the Stack's padding and the spacing variable are
+    // both absent), so the bleed is pinned as the divider's own inline negative margin. That it
+    // meets the card edges in the real layout is measured in the browser, not here.
+    expect(divider.getAttribute('style')).toContain(
+      'margin-inline: calc(var(--mantine-spacing-md) * -1)'
+    );
+    expect(rect(author).top).toBeGreaterThanOrEqual(rect(divider).bottom - 1);
   });
 
   test('falls back to the placeholder cover when there is no image', async () => {
@@ -81,7 +115,7 @@ describe('AppSubListingCard', () => {
       async (canOpenPage) => {
         renderWithProviders(<AppSubListingCard card={EXTERNAL} canOpenPage={canOpenPage} />);
         const cta = page.getByTestId('apps-sub-listing-cta');
-        await expect.element(cta).toHaveTextContent('Play');
+        await expect.element(cta).toHaveTextContent('Open');
         for (const el of [cta.element(), page.getByText('Neon Portraits').element()]) {
           const a = el.closest('a');
           expect(a?.getAttribute('href')).toBe(EXTERNAL.runHref);

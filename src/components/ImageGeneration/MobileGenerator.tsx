@@ -79,13 +79,6 @@ export function MobileGenerator({ form, onClose, closeLabel }: Props) {
     return () => useMobileGeneratorStore.setState({ showing: false });
   }, []);
 
-  const submittedAt = useMobileGeneratorStore((state) => state.submittedAt);
-  useEffect(() => {
-    if (!submittedAt) return;
-    generationGraphPanel.setView(resultsViewRef.current);
-    resultsRef.current?.querySelector('.scroll-area')?.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [submittedAt]);
-
   // The iOS keyboard shrinks only the visual viewport; lifting the bottom edge by it keeps the open
   // form's footer above the keyboard.
   const keyboardInset = useVisualViewportBottomInset();
@@ -273,15 +266,7 @@ function FormSheet({
             <div className="flex shrink-0 items-center gap-1">
               {presets && <PresetHeaderButton />}
               <RenderTitleActions className="contents" />
-              <LegacyActionIcon
-                aria-label="Close the form"
-                variant="subtle"
-                color="gray"
-                size="lg"
-                onClick={onClose}
-              >
-                <IconChevronDown size={20} />
-              </LegacyActionIcon>
+              <CloseFormButton onClose={onClose} />
             </div>
           </div>
         ) : (
@@ -345,6 +330,29 @@ function DensityToggle({ value }: { value: GenerationResultsView }) {
       onClick={() => generationGraphPanel.setView(next)}
     >
       <Icon size={20} />
+    </LegacyActionIcon>
+  );
+}
+
+/** The open form's down chevron. While jobs run it spins and counts them: closing shows them. */
+function CloseFormButton({ onClose }: { onClose: () => void }) {
+  const running = useGenerationContext((state) => state.queued.length);
+  return (
+    <LegacyActionIcon
+      aria-label={running ? `Close the form, ${running} generating` : 'Close the form'}
+      variant="subtle"
+      color="gray"
+      size="lg"
+      onClick={onClose}
+      className={classes.closeForm}
+      data-running={running || undefined}
+    >
+      <IconChevronDown size={20} />
+      {running > 0 && (
+        <span className={classes.runningCount} aria-hidden>
+          {running}
+        </span>
+      )}
     </LegacyActionIcon>
   );
 }

@@ -68,6 +68,7 @@ export function AppsPageLayout({
   subtitle,
   actions,
   measure,
+  align = 'start',
   railFooter,
   children,
 }: {
@@ -102,15 +103,29 @@ export function AppsPageLayout({
    * is stated here rather than discovered: it is the one geometry change on the measured
    * routes that is NOT the rail's own width.
    *
-   * 🔴 LEFT-ALIGNED, NOT CENTRED, and that is load-bearing rather than taste: a
+   * 🔴 LEFT-ALIGNED BY DEFAULT, NOT CENTRED, and that is load-bearing rather than taste: a
    * centred body would put its left edge at a different x on every route, which is
    * the same defect as the per-page container one level out — the page content
    * would stop lining up with the rail beside it. The body column's `Stack` is a
    * column flexbox with the default `align="stretch"`, so a `maw` alone resolves to a
    * left-aligned capped box; no auto margins, and nothing here may introduce
-   * `margin-inline: auto`.
+   * `margin-inline: auto` — except through {@link align} below, which is the one
+   * declared, per-page opt-out.
    */
   measure?: AppsMeasure;
+  /**
+   * Where a MEASURED body sits in the column: `'start'` (the default — every route above)
+   * or `'center'`. Ignored without a `measure`, since an unbounded body fills the column.
+   *
+   * ⚠️ `'center'` GIVES UP THE CROSS-ROUTE LEFT EDGE FOR THAT PAGE, deliberately. The
+   * listing DETAIL page (`/apps/store-preview/[slug]`) uses it: a product decision to
+   * centre the detail page the way the site's other detail pages are centred, taken
+   * knowing its content will no longer start at the same x as the store grid's. The rail
+   * is in a different column and does not move. A NAMED prop rather than a wrapper the
+   * page adds itself, so the exception is visible at the call site and in one place here
+   * — not a second centring mechanism the alignment guards cannot see.
+   */
+  align?: 'start' | 'center';
   /** Rendered at the foot of the rail (and of the mobile drawer); told whether the rail is collapsed. */
   railFooter?: (state: { collapsed: boolean }) => ReactNode;
   children: ReactNode;
@@ -216,14 +231,28 @@ export function AppsPageLayout({
    * left and right edges. It never wraps the rail: the chrome is in a different column
    * entirely, which is the strongest form the original fix can take.
    *
-   * No auto margins, deliberately. The body column's `Stack` is a column flexbox with
-   * the default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED; anything that
-   * re-centres it puts each route's content at a different x and re-creates the defect
-   * one level down. Pinned structurally in `__tests__/appsPageLayoutRender.test.ts` and
-   * on resolved geometry in `AppsPageLayout.chromeAlignment.browser.test.tsx`.
+   * No auto margins by default, deliberately. The body column's `Stack` is a column
+   * flexbox with the default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED;
+   * anything that re-centres it puts each route's content at a different x and re-creates
+   * the defect one level down. Pinned structurally in
+   * `__tests__/appsPageLayoutRender.test.ts` and on resolved geometry in
+   * `AppsPageLayout.chromeAlignment.browser.test.tsx`. The only centring is the explicit
+   * `align="center"` opt-out (see the prop), which adds `mx="auto"` here and nowhere else.
    */
   const bounded = (node: ReactNode) =>
-    measure != null ? <Box maw={appsMeasureCss(measure)}>{node}</Box> : node;
+    measure != null ? (
+      // Auto margins make a flex item shrink-wrap to its content, which on a phone is wider than
+      // the column and pushes the page past the screen; `w="100%"` keeps it to the column.
+      <Box
+        maw={appsMeasureCss(measure)}
+        mx={align === 'center' ? 'auto' : undefined}
+        w={align === 'center' ? '100%' : undefined}
+      >
+        {node}
+      </Box>
+    ) : (
+      node
+    );
 
   // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts
   // directly under the global header instead of 16px below it; the BOTTOM pad
@@ -372,34 +401,36 @@ export function AppsPageLayout({
               floating; the vertical padding around the band is free to move, these two
               are not.
             */}
-            <Stack gap="md" data-apps-chrome="band">
-              {hasRail && (
-                <div className={classes.railDrawerTrigger} data-apps-chrome="drawer-trigger">
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    leftSection={<IconMenu2 size={16} />}
-                    onClick={drawer.open}
-                  >
-                    App sections
-                  </Button>
-                </div>
-              )}
-              {hasHeader &&
-                bounded(
-                  <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
-                    <Stack gap={4} style={{ minWidth: 0 }}>
-                      {title && <Title order={2}>{title}</Title>}
-                      {subtitle && (
-                        <Text c="dimmed" size="sm">
-                          {subtitle}
-                        </Text>
-                      )}
-                    </Stack>
-                    {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
-                  </Group>
+            <div className={hasHeader ? undefined : classes.bandBare}>
+              <Stack gap="md" data-apps-chrome="band">
+                {hasRail && (
+                  <div className={classes.railDrawerTrigger} data-apps-chrome="drawer-trigger">
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      leftSection={<IconMenu2 size={16} />}
+                      onClick={drawer.open}
+                    >
+                      App sections
+                    </Button>
+                  </div>
                 )}
-            </Stack>
+                {hasHeader &&
+                  bounded(
+                    <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
+                      <Stack gap={4} style={{ minWidth: 0 }}>
+                        {title && <Title order={2}>{title}</Title>}
+                        {subtitle && (
+                          <Text c="dimmed" size="sm">
+                            {subtitle}
+                          </Text>
+                        )}
+                      </Stack>
+                      {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
+                    </Group>
+                  )}
+              </Stack>
+            </div>
 
             {/*
               The BODY, optionally capped. 🔴 THE CAP IS HERE, INSIDE THE `Stack gap="xl"`,

@@ -99,3 +99,9 @@ export const remixMenuZIndex = 310;
  * `var(--mb-z-index)`. A sheet styled that way reads as lifted and is not.
  */
 export const mobileMenuSheetZIndex = 400;
+
+/**
+ * The phone sheets sit as high as a modal's default layer, so anything opened from one (a modal, a
+ * portalled dropdown) passes this, or it can open behind the sheet.
+ */
+export const overMobileSheetZIndex = mobileMenuSheetZIndex + 1;

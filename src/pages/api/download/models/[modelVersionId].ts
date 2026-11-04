@@ -19,7 +19,7 @@ import {
   shouldResolveDirect,
 } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { resolveActorFor } from '~/utils/resolve-attribution';
+import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
@@ -296,10 +296,10 @@ export default PublicEndpoint(
         const now = new Date();
 
         // An unpublished version is only reachable by its owner and by internal services — the scanner
-        // fetches the file minutes after upload, which was landing a Download event (userId -1,
-        // `civitai-spine` UA) and leaving every draft showing 1 download before it went live.
+        // fetches the file minutes after upload, which was landing a Download event and leaving every
+        // draft showing 1 download before it went live.
         const tracker = new Tracker(req, res);
-        if (fileResult.published)
+        if (fileResult.published && countsAsPublicDownload(session?.user))
           await tracker.modelVersionEvent({
             type: 'Download',
             modelId: fileResult.modelId,

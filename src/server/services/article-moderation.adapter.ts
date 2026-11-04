@@ -5,7 +5,7 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
+import { applyRatingFloor, readRatedEntity } from '~/server/services/text-scan/rated-entities';
 import { isPublicArticle } from '~/server/services/text-scan/public-content';
 import {
   submitTextModerationOrScan,
@@ -105,4 +105,5 @@ export const articleModerationAdapter: ModerationAdapter = {
     await applyRatingFloor('Article', args);
     await recomputeArticleIngestion(args.entityId);
   }),
+  readRating: (entityId) => readRatedEntity('Article', entityId),
 };

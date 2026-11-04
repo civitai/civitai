@@ -27,21 +27,6 @@ export function keepHeldReviewsCte(reviews: Prisma.Sql, markerView: boolean): Pr
   )`;
 }
 
-/** As `keepHeldReviewsCte`, for "Answer" rows ahead of a "Question" DELETE, into "HeldAnswer". */
-export function keepHeldAnswersCte(answers: Prisma.Sql, markerView: boolean): Prisma.Sql {
-  const author = Prisma.raw('a."userId"');
-  return Prisma.sql`held_answers AS (
-    INSERT INTO "HeldAnswer" (
-      id, "questionId", "userId", content, "createdAt", "updatedAt", "holdReasons"
-    )
-    SELECT a.id, a."questionId", a."userId", a.content, a."createdAt", a."updatedAt",
-      ${accountHoldReasonsSql(author, markerView)}
-    FROM "Answer" a
-    WHERE a.id IN (${answers}) AND ${accountHoldSql(author, markerView)}
-    ON CONFLICT (id) DO NOTHING
-  )`;
-}
-
 /**
  * Whether a held author has an entry under the bounty `bountyId` (an int SQL expression): the bounty
  * is kept, hidden, instead of deleted, so the entry is not cascaded away.
@@ -51,10 +36,6 @@ export const heldEntryOnBountySql = (bountyId: Prisma.Sql, markerView: boolean) 
     SELECT 1 FROM "BountyEntry" he
     WHERE he."bountyId" = ${bountyId} AND ${accountHoldSql(Prisma.raw('he."userId"'), markerView)}
   )`;
-
-/** The answers to the questions `questions` selects. */
-export const answersToQuestionsSql = (questions: Prisma.Sql) =>
-  Prisma.sql`SELECT aa.id FROM "Answer" aa WHERE aa."questionId" IN (${questions})`;
 
 /** The reviews on the models `models` selects, or on their versions: the two can disagree. */
 export const reviewsOnModelsSql = (models: Prisma.Sql) =>
@@ -66,12 +47,42 @@ export const reviewsOnModelsSql = (models: Prisma.Sql) =>
 export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>
   Prisma.sql`SELECT rr.id FROM "ResourceReview" rr WHERE rr."modelVersionId" IN (${versions})`;
 
-/** Drops the copies whose author is no longer held. Returns how many went from each table. */
+/**
+ * A storyline copy is kept while either user it records is held. The reader on a branch choice or
+ * create click never releases one, even once their account is gone. Unlike a kept model, no
+ * storyline or chapter passes to the placeholder owner, so every copy is released with its holds.
+ */
+const storylineCopyReleasedSql = (markerView: boolean) =>
+  Prisma.sql`NOT ${accountHoldSql(Prisma.raw('h."ownerId"'), markerView)}
+    AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
+
+/** Drops the copies whose users are no longer held. Returns how many went. */
 export async function purgeReleasedHeldCopies() {
   const markerView = await holdMarkerViewExists();
   const released = accountHoldSql(Prisma.raw('h."userId"'), markerView);
   const reviews = await dbWrite.$executeRaw`
     DELETE FROM "HeldResourceReview" h WHERE NOT ${released}`;
-  const answers = await dbWrite.$executeRaw`DELETE FROM "HeldAnswer" h WHERE NOT ${released}`;
-  return { reviews, answers };
+  // One statement, so a hold placed meanwhile cannot leave a chapter's copy without its edges.
+  const storylineReleased = storylineCopyReleasedSql(markerView);
+  const [storyline] = await dbWrite.$queryRaw<
+    { chapters: number; edges: number; choices: number; clicks: number }[]
+  >`
+    WITH chapters AS (
+      DELETE FROM "HeldStorylineChapter" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    edges AS (
+      DELETE FROM "HeldStorylineChapterEdge" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    choices AS (
+      DELETE FROM "HeldStorylineBranchChoice" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    clicks AS (
+      DELETE FROM "HeldStorylineCreateClick" h WHERE ${storylineReleased} RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM chapters)::int AS chapters,
+      (SELECT count(*) FROM edges)::int AS edges,
+      (SELECT count(*) FROM choices)::int AS choices,
+      (SELECT count(*) FROM clicks)::int AS clicks
+  `;
+  return { reviews, storyline };
 }

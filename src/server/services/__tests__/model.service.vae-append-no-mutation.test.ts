@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
-import type * as RedisClient from '~/server/redis/client';
 
 /**
  * 🔴 CALL-SITE coverage for the VAE-append mutation — the half of this fix that the
@@ -104,14 +103,14 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: { fetch: vi.fn().mockResolvedValue({}), bust: vi.fn() },
   userModelCountCache: { fetch: vi.fn(), bust: vi.fn() },
 }));
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClient>();
-  return {
-    ...actual,
-    redis: { packed: { get: async () => null, set: async () => undefined } },
-    sysRedis: {},
-  };
-});
+// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
+// the global mock in src/__tests__/setup.ts.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
+  ...(await import('~/server/redis/sys-read-deadline')),
+  redis: { packed: { get: async () => null, set: async () => undefined } },
+  sysRedis: {},
+}));
 
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { dataForModelsCache } from '~/server/redis/caches';
