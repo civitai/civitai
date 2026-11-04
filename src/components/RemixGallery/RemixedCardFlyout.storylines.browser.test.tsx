@@ -131,13 +131,14 @@ describe('storylines in the remix flyout', () => {
       count: 0,
       entries: [],
       storylines: {
-        count: 1,
-        entries: [story(1, [{ url: 'mature.jpg', type: 'image', nsfwLevel: 4 }])],
+        count: 2,
+        entries: [story(1, [{ url: 'mature.jpg', type: 'image', nsfwLevel: 4 }]), story(2)],
       },
     };
     await renderOpen();
 
-    await expect.element(storyTile(1)).toBeVisible();
+    // The PG tile beside it does render its image, so the blurred one can only pass by blurring.
+    await expect.poll(() => storyTile(2).element().querySelector('img, video')).not.toBeNull();
     expect(storyTile(1).element().querySelector('img, video')).toBeNull();
   });
 
