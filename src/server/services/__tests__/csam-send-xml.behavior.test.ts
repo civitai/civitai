@@ -743,17 +743,37 @@ describe('a downloaded archive', () => {
       seen.push(zipsUnder(scratch));
       return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
     });
+  // The archive's bytes, then what is on disk once they are written: the zip being downloaded, in
+  // the send's own `<reportId>-<claimId>` directory. Shows `zipsUnder` reads the root the send uses.
+  const downloading = (bytes: Buffer, scratch: string, during: string[][]) => {
+    let sent = false;
+    return new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (!sent) {
+          sent = true;
+          return controller.enqueue(new Uint8Array(bytes));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        during.push(zipsUnder(scratch));
+        controller.close();
+      },
+    });
+  };
+  const inSendDir = (zip: string) => expect.stringMatching(new RegExp(`^1-[0-9a-f-]{36}/${zip}$`));
 
   it('is off disk before the next archive downloads, and before any upload', async () => {
-    serveCsamBucket({
+    serveCsamBucket({});
+    const zips: Record<string, Buffer> = {
       'evidence-key': await zipOf(['a.png']),
       'supplemental-key': await zipOf(['b.png']),
-    });
+    };
     const seen: string[][] = [];
-    const serve = csamBucketObject.getMockImplementation()!;
+    const during: string[][] = [];
     csamBucketObject.mockImplementation(async (key: string) => {
       seen.push(zipsUnder('external-send'));
-      return serve(key);
+      return {
+        Body: Readable.fromWeb(downloading(zips[key], 'external-send', during) as never),
+      };
     });
     uploadsSeeing('external-send', seen);
 
@@ -766,17 +786,24 @@ describe('a downloaded archive', () => {
     );
 
     expect(markedSent()).toBe(true);
+    expect(during).toEqual([[inSendDir('evidence.zip')], [inSendDir('supplemental.zip')]]);
     expect(seen).toEqual([[], [], [], []]);
   });
 
   it('of training data is off disk before any upload', async () => {
-    serveTrainingData(await zipOf(['a.png']));
+    const zip = await zipOf(['a.png']);
+    serveTrainingData(zip);
+    const during: string[][] = [];
+    vi.mocked(globalThis.fetch).mockImplementation(
+      async () => new Response(downloading(zip, 'training-data', during))
+    );
     const seen: string[][] = [];
     uploadsSeeing('training-data', seen);
 
     await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
 
     expect(markedSent()).toBe(true);
+    expect(during).toEqual([[expect.stringMatching(/^1-[0-9a-f-]{36}\/\w+_training-data\.zip$/)]]);
     expect(seen).toEqual([[]]);
   });
 });
