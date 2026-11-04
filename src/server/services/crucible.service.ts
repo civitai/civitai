@@ -3860,7 +3860,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
 
   // Elo stays the fallback: the fit is used only when every vote is accounted for.
   const fittedScores = usesBradleyTerryRanking(crucible)
-    ? await fitCrucibleScoresForPrizes(crucibleId)
+    ? await fitCrucibleScoresForPrizes(crucibleId, { endedAt: crucible.endAt })
     : null;
   const ranking = rankEntries(allEntries, {
     redisElos: fittedScores ? Object.fromEntries(fittedScores) : redisElos,

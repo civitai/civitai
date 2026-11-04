@@ -115,29 +115,30 @@ async function countRedisJudgedPairs(crucibleId: number) {
   return counts.reduce((sum, n) => sum + n, 0);
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** How long after a crucible ends finalize waits for ClickHouse to catch up before paying by Elo. */
+export const BRADLEY_TERRY_INGEST_WAIT_MS = 10 * 60 * 1000;
+
+/** ClickHouse is still short of Redis: finalize stops before writing anything, and the next run retries. */
+export class CrucibleRankingDeferredError extends Error {}
 
 /**
  * The fit prizes are paid from, or null to pay from Elo. Fits only once ClickHouse holds exactly
- * the votes Redis says were cast: fewer is ingest lag, so it re-reads a few times; more, or either
- * store unreachable, never converges and falls back. A judge set gone with its 30-day TTL also
- * falls back, by mismatch.
+ * the votes Redis says were cast. Fewer is ingest lag: within `BRADLEY_TERRY_INGEST_WAIT_MS` of the
+ * end it throws `CrucibleRankingDeferredError` so the every-minute job tries again, never sleeping
+ * inside finalize. Past that, more votes in ClickHouse than Redis, or either store unreachable, falls
+ * back. A judge set gone with its 30-day TTL also falls back, by mismatch.
  */
 export async function fitCrucibleScoresForPrizes(
   crucibleId: number,
-  { attempts = 4, retryMs = 5_000 }: { attempts?: number; retryMs?: number } = {}
+  { endedAt, now = new Date() }: { endedAt: Date | null; now?: Date }
 ): Promise<Map<number, number> | null> {
   let clickhouseVotes = 0;
   let redisVotes = 0;
   try {
     redisVotes = await countRedisJudgedPairs(crucibleId);
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      const tallies = await fetchDedupedTallies(crucibleId);
-      clickhouseVotes = tallies.reduce((sum, t) => sum + t.votes, 0);
-      if (clickhouseVotes === redisVotes) return fitBradleyTerry(tallies);
-      if (clickhouseVotes > redisVotes || attempt === attempts) break;
-      await sleep(retryMs);
-    }
+    const tallies = await fetchDedupedTallies(crucibleId);
+    clickhouseVotes = tallies.reduce((sum, t) => sum + t.votes, 0);
+    if (clickhouseVotes === redisVotes) return fitBradleyTerry(tallies);
   } catch (error) {
     logToAxiom({
       type: 'warning',
@@ -148,6 +149,13 @@ export async function fitCrucibleScoresForPrizes(
     }).catch();
     return null;
   }
+  const lagging =
+    clickhouseVotes < redisVotes &&
+    now.getTime() - (endedAt ?? now).getTime() < BRADLEY_TERRY_INGEST_WAIT_MS;
+  if (lagging)
+    throw new CrucibleRankingDeferredError(
+      `Crucible ${crucibleId}: ClickHouse has ${clickhouseVotes} of ${redisVotes} votes, waiting`
+    );
   logToAxiom({
     type: 'warning',
     name: 'crucible-bradley-terry-fallback',

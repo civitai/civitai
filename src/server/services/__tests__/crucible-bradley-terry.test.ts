@@ -10,9 +10,12 @@ vi.mock('~/server/logging/client', async (importOriginal) => ({
   logToAxiom,
 }));
 
-const { fitBradleyTerry, fitCrucibleScoresForPrizes } = await import(
-  '~/server/services/crucible-bradley-terry'
-);
+const {
+  BRADLEY_TERRY_INGEST_WAIT_MS,
+  CrucibleRankingDeferredError,
+  fitBradleyTerry,
+  fitCrucibleScoresForPrizes,
+} = await import('~/server/services/crucible-bradley-terry');
 
 describe('fitBradleyTerry', () => {
   it('orders a consistent set of votes the way they point', () => {
@@ -95,7 +98,10 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
       key.endsWith(':7') ? a : key.endsWith(':8') ? b : 0
     );
   };
-  const fit = () => fitCrucibleScoresForPrizes(1, { attempts: 3, retryMs: 0 });
+  const now = new Date('2026-12-01T12:00:00Z');
+  const endedAgo = (ms: number) => new Date(now.getTime() - ms);
+  const fit = (endedAt = endedAgo(BRADLEY_TERRY_INGEST_WAIT_MS + 1)) =>
+    fitCrucibleScoresForPrizes(1, { endedAt, now });
   const warned = () =>
     logToAxiom.mock.calls.map(([entry]) => (entry as { message: string }).message);
 
@@ -112,35 +118,32 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     expect(logToAxiom).not.toHaveBeenCalled();
   });
 
-  it('falls back to Elo and names both counts when they never match', async () => {
+  it('defers while ClickHouse is short and the crucible ended moments ago (ingest lag)', async () => {
     withRedisPairs(2, 2);
-    expect(await fit(), 'scores on a mismatch').toBeNull();
-    expect(chQuery, 'ClickHouse re-read for lag').toHaveBeenCalledTimes(3);
-    expect(warned()).toEqual(['Crucible 1 ranks by Elo: ClickHouse has 3 votes, Redis 4']);
+    await expect(fit(endedAgo(60_000))).rejects.toBeInstanceOf(CrucibleRankingDeferredError);
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 
-  it('waits out ingest lag: a short first read that then catches up still fits', async () => {
-    withRedisPairs(2, 1);
-    chQuery.mockResolvedValueOnce(tallies.slice(0, 1));
-    expect(await fit(), 'scores after a lagging read').not.toBeNull();
-    expect(chQuery).toHaveBeenCalledTimes(2);
+  it('falls back to Elo and names both counts once the wait is over', async () => {
+    withRedisPairs(2, 2);
+    expect(await fit(), 'scores on a mismatch').toBeNull();
+    expect(warned()).toEqual(['Crucible 1 ranks by Elo: ClickHouse has 3 votes, Redis 4']);
   });
 
   it('does not wait when ClickHouse holds more votes than Redis: lag cannot explain that', async () => {
     withRedisPairs(1, 1);
-    expect(await fit()).toBeNull();
-    expect(chQuery).toHaveBeenCalledTimes(1);
+    expect(await fit(endedAgo(60_000))).toBeNull();
   });
 
   it('falls back to Elo when ClickHouse is unreachable', async () => {
     withRedisPairs(2, 1);
     chQuery.mockRejectedValue(new Error('connect ECONNREFUSED'));
-    expect(await fit()).toBeNull();
+    expect(await fit(endedAgo(60_000))).toBeNull();
     expect(warned()).toEqual(['Crucible 1 ranks by Elo: could not read its votes']);
   });
 
   it('falls back to Elo when Redis is unreachable', async () => {
     redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
-    expect(await fit()).toBeNull();
+    expect(await fit(endedAgo(60_000))).toBeNull();
   });
 });
