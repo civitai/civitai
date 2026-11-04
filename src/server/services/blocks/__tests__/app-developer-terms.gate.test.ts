@@ -129,10 +129,11 @@ const TERMS_BODY_SHA256_BY_VERSION: Record<string, string> = {
 
 describe('App Developer Terms text is pinned to its version', () => {
   it('the published terms body is the text of the current version', () => {
+    // A Windows checkout may carry CRLF; the text is the same.
     const md = readFileSync(
       join(process.cwd(), 'src/static-content/app-developer-terms.md'),
       'utf8'
-    );
+    ).replace(/\r\n/g, '\n');
     const body = md.slice(md.indexOf('\n', md.indexOf('Last updated:')) + 1);
     const sha = createHash('sha256').update(body).digest('hex');
     expect(sha).toBe(TERMS_BODY_SHA256_BY_VERSION[APP_DEVELOPER_TERMS_VERSION]);
