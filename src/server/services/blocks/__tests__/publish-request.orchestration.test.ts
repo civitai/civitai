@@ -117,6 +117,8 @@ const {
         updateMany: vi.fn(),
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY).
+        findMany: vi.fn<DelegateMock>(async () => []),
       },
       // `findUnique` added (W13 auto-create-on-approve): approveRequest re-reads
       // the freshly-approved AppBlock's own columns off the PRIMARY to map it into
@@ -130,6 +132,8 @@ const {
         update: vi.fn(),
         updateMany: vi.fn(),
         findUnique: vi.fn(),
+        // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+        findFirst: vi.fn<DelegateMock>(async () => null),
       },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
