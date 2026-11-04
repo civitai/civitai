@@ -392,6 +392,15 @@ describe('resolveRestrictedNsfwVerdict', () => {
     expect(await row()).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
   });
 
+  it.each(['minor', 'poi'] as const)(
+    'keep turns nsfw off on an unlocked %s model that still has it on',
+    async (flag) => {
+      await seed({ nsfw: true, [flag]: true, sfwOnly: false, meta: lead(flag) });
+      await rule('keep');
+      expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
+    }
+  );
+
   it("keep leaves the owner's own NSFW rating on a model no longer restricted", async () => {
     await seed({ nsfw: true, sfwOnly: false, meta: lead('poi') });
     await rule('keep');

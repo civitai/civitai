@@ -117,7 +117,7 @@ export async function resolveRestrictedNsfwVerdict({
         // Nothing of the scan's to undo: an owner who has since unrestricted the model and rated it
         // NSFW keeps that rating.
         next = {
-          nsfw: sfwOnly ? false : row.nsfw,
+          nsfw: row.minor || row.poi || sfwOnly ? false : row.nsfw,
           sfwOnly,
           lockedProperties: locked,
         };
