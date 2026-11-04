@@ -26,6 +26,20 @@ export function getColumnCount(
   return Number.isFinite(count) ? Math.max(1, count) : 1;
 }
 
+/** Gap between cards, matching the virtualizer's `gap` in MasonryColumnsVirtual. */
+export const MASONRY_GAP = 16;
+
+export type MasonrySpanOptions = {
+  /** Smallest width/height an item needs to span two columns. */
+  minRatio: number;
+  /** Cap on a two-wide item's total height (footer included). */
+  maxHeight: number;
+};
+
+export const MASONRY_SPAN_MIN_RATIO = 1.3;
+/** A two-wide item needs three columns: two to span, one to keep a normal feed beside it. */
+const SPAN_MIN_COLUMNS = 3;
+
 export function useMasonryColumns<TData>(
   data: TData[],
   columnWidth: number,
@@ -33,12 +47,15 @@ export function useMasonryColumns<TData>(
   imageDimensions: MasonryImageDimensionsFn<TData>,
   adjustDimensions?: MasonryAdjustHeightFn<TData>,
   maxItemHeight?: number,
-  withAds?: boolean
+  withAds?: boolean,
+  span?: MasonrySpanOptions
 ) {
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
   const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
   const createAdFeed = useCreateAdFeed();
+  const spanMinRatio = span?.minRatio;
+  const spanMaxHeight = span?.maxHeight;
 
   return useMemo(() => {
     // 0 = not laid out yet. Anything else non-positive/fractional is a bad measurement; render
@@ -59,50 +76,139 @@ export function useMasonryColumns<TData>(
         : undefined,
     });
 
-    const columnHeights: number[] = Array(columnCount).fill(0);
-    const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array(columnCount).fill([]);
+    const itemHeight = (item: AdFeedItem<TData>, width: number, cap: number | undefined) => {
+      if (item.type === 'ad') return item.data.height;
+      const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
+      const ratioHeight = (originalHeight / originalWidth) * width;
+      const adjustedHeight =
+        adjustDimensions?.(
+          { imageRatio: width / ratioHeight, width, height: ratioHeight },
+          item.data
+        ) ?? ratioHeight;
+      return Math.floor(cap ? Math.min(adjustedHeight, cap) : adjustedHeight);
+    };
+
+    if (
+      spanMinRatio === undefined ||
+      spanMaxHeight === undefined ||
+      columnCount < SPAN_MIN_COLUMNS
+    ) {
+      const columnHeights: number[] = Array(columnCount).fill(0);
+      const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array.from(
+        { length: columnCount },
+        () => []
+      );
+
+      for (const item of feed) {
+        const height = itemHeight(item, columnWidth, maxItemHeight);
+
+        // look for the shortest column on each iteration
+        let shortest = 0;
+        for (let j = 1; j < columnCount; ++j) {
+          if (columnHeights[j] < columnHeights[shortest]) {
+            shortest = j;
+          }
+        }
+        columnHeights[shortest] += height;
+        columnItems[shortest].push({ height, data: item });
+      }
+
+      return columnItems;
+    }
+
+    // Spanning layout. `ends` is where each column's last item stops; the next item starts a gap
+    // below it, so two columns line up only if their gaps are counted too.
+    const spanWidth = columnWidth * 2 + MASONRY_GAP;
+    const ends: number[] = Array(columnCount).fill(0);
+    const counts: number[] = Array(columnCount).fill(0);
+    const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array.from(
+      { length: columnCount },
+      () => []
+    );
+    const nextStart = (c: number) => (counts[c] ? ends[c] + MASONRY_GAP : 0);
 
     for (const item of feed) {
-      let height = 0;
-      if (item.type === 'ad') {
-        height = item.data.height;
-      } else {
-        const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
-
-        const ratioHeight = (originalHeight / originalWidth) * columnWidth;
-        const adjustedHeight =
-          adjustDimensions?.(
-            {
-              imageRatio: columnWidth / ratioHeight,
-              width: columnWidth,
-              height: ratioHeight,
-            },
-            item.data
-          ) ?? ratioHeight;
-        height = Math.floor(
-          maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight
-        );
+      let spans = false;
+      if (item.type === 'data') {
+        const { width, height } = imageDimensions(item.data);
+        spans = height > 0 && width / height >= spanMinRatio;
       }
 
-      // look for the shortest column on each iteration
-      let shortest = 0;
-      for (let j = 1; j < columnCount; ++j) {
-        if (columnHeights[j] < columnHeights[shortest]) {
-          shortest = j;
+      if (!spans) {
+        const height = itemHeight(item, columnWidth, maxItemHeight);
+        let shortest = 0;
+        for (let j = 1; j < columnCount; ++j) {
+          if (nextStart(j) < nextStart(shortest)) shortest = j;
+        }
+        const start = nextStart(shortest);
+        columnItems[shortest].push({ height, data: item });
+        ends[shortest] = start + height;
+        counts[shortest]++;
+        continue;
+      }
+
+      // The adjacent pair that can begin lowest; ties go to the smaller hole, then the left.
+      let pair = 0;
+      let pairStart = Infinity;
+      let pairHole = Infinity;
+      for (let j = 0; j < columnCount - 1; ++j) {
+        let start = Math.max(nextStart(j), nextStart(j + 1));
+        // A spacer is at least a gap tall, so a shorter lead column cannot be padded by less.
+        if (nextStart(j) < start && start - nextStart(j) < MASONRY_GAP) {
+          start = nextStart(j) + MASONRY_GAP;
+        }
+        const hole = Math.abs(nextStart(j) - nextStart(j + 1));
+        if (start < pairStart || (start === pairStart && hole < pairHole)) {
+          pair = j;
+          pairStart = start;
+          pairHole = hole;
         }
       }
-      columnHeights[shortest] += height;
-      columnItems[shortest] = [...columnItems[shortest], { height, data: item }];
+
+      const height = itemHeight(item, spanWidth, spanMaxHeight);
+      const partner = pair + 1;
+      const leadGap = pairStart - nextStart(pair);
+      if (leadGap > 0) {
+        columnItems[pair].push({ height: leadGap - MASONRY_GAP, spacer: true });
+        counts[pair]++;
+      }
+      columnItems[pair].push({ height, data: item, span: 2 });
+      counts[pair]++;
+      ends[pair] = pairStart + height;
+
+      // One spacer holds the partner's whole stretch under the wide item, lead included.
+      columnItems[partner].push({ height: pairStart + height - nextStart(partner), spacer: true });
+      counts[partner]++;
+      ends[partner] = pairStart + height;
     }
 
     return columnItems;
-  }, [data, columnWidth, columnCount, maxItemHeight, adsReallyAreEnabled]);
+  }, [
+    data,
+    columnWidth,
+    columnCount,
+    maxItemHeight,
+    adsReallyAreEnabled,
+    spanMinRatio,
+    spanMaxHeight,
+  ]);
 }
 
-export type ColumnItem<TData> = {
-  height: number;
-  data: TData;
-};
+export type ColumnItem<TData> =
+  | {
+      height: number;
+      data: TData;
+      /** Columns the item covers; absent means one. */
+      span?: number;
+      spacer?: undefined;
+    }
+  | {
+      /** Blank room under (or before) a wide item that spans into this column. */
+      height: number;
+      spacer: true;
+      data?: undefined;
+      span?: undefined;
+    };
 
 // const getMasonryColumns = <TData>(
 //   data: TData[],
