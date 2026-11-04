@@ -20,56 +20,60 @@
 </svelte:head>
 
 <div class="welcome">
-  <header>
-    <Icon name="shield" size={22} />
-    <span>Knights of New Order</span>
-  </header>
+  <div class="frame">
+    <header>
+      <Icon name="shield" size={22} />
+      <span>Knights of New Order</span>
+    </header>
 
-  <div class="body">
-    <section class="pitch">
-      <p class="kicker">A Civitai game</p>
-      <h1>Judge the image.<br />Rise in the Order.</h1>
-      <p class="lede long">
-        Knights of New Order rate how mature images should be, so the site can show each one to the right
-        people. Begin as an Acolyte, prove yourself as an apprentice, and earn rank, glory and gold for every
-        judgment that holds.
-      </p>
-      <p class="lede short">
-        Rate how mature images should be. Begin as an Acolyte, prove yourself as an apprentice, and earn rank and
-        gold for every judgment that holds.
-      </p>
-      <div class="pillars short">
+    <div class="stage">
+      <div class="body">
+        <section class="pitch">
+          <p class="kicker">A Civitai game</p>
+          <h1>Judge the image.<br />Rise in the Order.</h1>
+          <p class="lede long">
+            Knights of New Order rate how mature images should be, so the site can show each one to the right
+            people. Begin as an Acolyte, prove yourself as an apprentice, and earn rank, glory and gold for every
+            judgment that holds.
+          </p>
+          <p class="lede short">
+            Rate how mature images should be. Begin as an Acolyte, prove yourself as an apprentice, and earn rank and
+            gold for every judgment that holds.
+          </p>
+          <div class="pillars short">
+            {#each pillars as pillar (pillar.label)}
+              <div class="pillar">
+                <Icon name={pillar.icon} size={18} />
+                <div><strong>{pillar.label}</strong><span>{pillar.short}</span></div>
+              </div>
+            {/each}
+          </div>
+          <div class="actions">
+            <a class="primary" href={data.signInUrl} data-sveltekit-reload>Sign in with Civitai</a>
+            <a class="secondary" href={data.civitaiUrl}>Back to Civitai</a>
+          </div>
+          <p class="age">Members must be 18 or older. Images may be mature.</p>
+        </section>
+
+        <aside class="banner" aria-label="The Order awaits">
+          <p class="kicker">The Order awaits</p>
+          <span class="crest"><Icon name="flame" size={36} /></span>
+          <strong class="rank">Acolyte</strong>
+          <span class="levels">Your first rank</span>
+          <p class="begin">Begin as an apprentice</p>
+          <p class="sub">Every Knight was once an Acolyte.</p>
+        </aside>
+      </div>
+
+      <div class="pillars long">
         {#each pillars as pillar (pillar.label)}
           <div class="pillar">
-            <Icon name={pillar.icon} size={18} />
-            <div><strong>{pillar.label}</strong><span>{pillar.short}</span></div>
+            <Icon name={pillar.icon} size={24} />
+            <div><strong>{pillar.label}</strong><span>{pillar.long}</span></div>
           </div>
         {/each}
       </div>
-      <div class="actions">
-        <a class="primary" href={data.signInUrl} data-sveltekit-reload>Sign in with Civitai</a>
-        <a class="secondary" href={data.civitaiUrl}>Back to Civitai</a>
-      </div>
-      <p class="age">Members must be 18 or older. Images may be mature.</p>
-    </section>
-
-    <aside class="banner" aria-label="The Order awaits">
-      <p class="kicker">The Order awaits</p>
-      <span class="crest"><Icon name="flame" size={36} /></span>
-      <strong class="rank">Acolyte</strong>
-      <span class="levels">Your first rank</span>
-      <p class="begin">Begin as an apprentice</p>
-      <p class="sub">Every Knight was once an Acolyte.</p>
-    </aside>
-  </div>
-
-  <div class="pillars long">
-    {#each pillars as pillar (pillar.label)}
-      <div class="pillar">
-        <Icon name={pillar.icon} size={24} />
-        <div><strong>{pillar.label}</strong><span>{pillar.long}</span></div>
-      </div>
-    {/each}
+    </div>
   </div>
 </div>
 
@@ -85,6 +89,22 @@
       linear-gradient(180deg, var(--io-matte), var(--io-bg));
     padding: 0 64px 48px;
   }
+  .frame {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .stage {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: 64px;
+    padding-bottom: 40px;
+  }
   header {
     display: flex;
     align-items: center;
@@ -97,16 +117,15 @@
   }
   .body {
     display: flex;
-    flex: 1;
     align-items: center;
     justify-content: space-between;
-    gap: 48px;
-    padding: 40px 0;
+    gap: 64px;
   }
   .pitch {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
+    flex: 1;
     gap: 22px;
     max-width: 680px;
     min-width: 0;
@@ -256,9 +275,12 @@
       font-size: 14px;
       letter-spacing: 1px;
     }
+    .stage {
+      justify-content: flex-end;
+      padding-bottom: 20px;
+    }
     .body {
       align-items: flex-end;
-      padding: 24px 0 20px;
     }
     .pitch {
       width: 100%;
