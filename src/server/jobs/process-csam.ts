@@ -50,6 +50,8 @@ const sendCsamReportsJob = createJob(
           type: 'error',
           subType: 'send-report',
           message: errorMessage(e),
+          reportId: report.id,
+          ncmecReportId: report.reportId ?? undefined,
         });
       }
     }

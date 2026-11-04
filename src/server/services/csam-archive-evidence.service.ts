@@ -7,7 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { setCsamArchiveIncomplete } from '~/server/metrics/csam-archive.metrics';
 import type { CsamArchiveIncompleteReason } from '~/server/metrics/csam-archive.metrics';
 import type { CsamArchiveObjectKind } from '~/server/services/csam.service-new';
-import { getCsamS3Client } from '~/server/services/csam.service-new';
+import { getCsamS3Client } from '~/server/services/csam-bucket';
 
 type S3 = Pick<S3Client, 'send'>;
 

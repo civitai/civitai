@@ -1,5 +1,6 @@
 import type { SubmitFileDetails } from '@civitai/cybertipline-tools';
 import { FileDetailType } from '@civitai/cybertipline-tools';
+import { createHash } from 'crypto';
 import type {
   GeneratorEvidenceDetails,
   StoredEvidenceJob,
@@ -146,8 +147,13 @@ export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
 }
 
 export type VerifiedEvidence =
-  | { ok: true; bytes: Uint8Array; contentType?: string }
+  | { ok: true; body: Blob; contentType: string }
   | { ok: false; reason: string; shaMismatch?: boolean };
+
+export type EvidenceObjectStream = {
+  chunks: AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
+  contentType?: string;
+};
 
 /** Whether the preserved copy still hashes to what was recorded, without holding the file. */
 export async function verifyStoredEvidence(
@@ -175,30 +181,49 @@ export async function verifyStoredEvidence(
   return { ok: true };
 }
 
-/** The preserved copy, only if it still hashes to what was recorded at preserve time. */
+/**
+ * The preserved copy, only if it still hashes to what was recorded at preserve time. Each chunk is
+ * copied into its own Blob as it is hashed, and Node composes Blobs without copying them again, so a
+ * file is held once rather than once per buffer it passes through.
+ */
 export async function readVerifiedEvidence(
   blob: StoredEvidenceBlob,
-  read: (key: string) => Promise<{ bytes: Uint8Array; contentType?: string }>,
-  sha256Hex: (bytes: Uint8Array) => string
+  open: (key: string) => Promise<EvidenceObjectStream>
 ): Promise<VerifiedEvidence> {
   if (!blob.evidenceKey || !blob.sha256) return { ok: false, reason: 'no preserved copy recorded' };
-  let object: { bytes: Uint8Array; contentType?: string };
+  const hash = createHash('sha256');
+  const parts: Blob[] = [];
+  let storedType: string | undefined;
   try {
-    object = await read(blob.evidenceKey);
+    const object = await open(blob.evidenceKey);
+    storedType = object.contentType;
+    let size = 0;
+    for await (const chunk of object.chunks) {
+      size += chunk.byteLength;
+      // Whatever now sits at the key is read only as far as the size the copy was recorded at.
+      if (blob.bytes !== undefined && size > blob.bytes)
+        return {
+          ok: false,
+          reason: `the preserved copy is larger than the ${blob.bytes} bytes recorded`,
+          shaMismatch: true,
+        };
+      hash.update(chunk);
+      parts.push(new Blob([chunk as Uint8Array<ArrayBuffer>]));
+    }
   } catch (e) {
     return { ok: false, reason: `read failed: ${(e as Error).message}` };
   }
-  if (sha256Hex(object.bytes) !== blob.sha256)
+  if (hash.digest('hex') !== blob.sha256)
     return {
       ok: false,
       reason: 'the preserved copy no longer matches its sha256',
       shaMismatch: true,
     };
-  const contentType = blob.contentType ?? object.contentType;
+  const contentType = blob.contentType ?? storedType;
   if (!contentType || !EVIDENCE_MEDIA_TYPES.has(contentType.toLowerCase()))
     return {
       ok: false,
       reason: `${contentType ?? 'an unknown type'} is not an evidence media type`,
     };
-  return { ok: true, bytes: object.bytes, contentType };
+  return { ok: true, body: new Blob(parts, { type: contentType }), contentType };
 }

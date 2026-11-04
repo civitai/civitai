@@ -35,7 +35,7 @@ const {
   getObject,
   submitReport,
   submitFileDetails,
-  readEvidenceObject,
+  streamEvidenceObject,
   hashEvidenceObject,
 } = vi.hoisted(() => ({
   uploadFile: vi.fn(),
@@ -44,7 +44,7 @@ const {
   getObject: vi.fn(),
   submitReport: vi.fn(),
   submitFileDetails: vi.fn(),
-  readEvidenceObject: vi.fn(),
+  streamEvidenceObject: vi.fn(),
   hashEvidenceObject: vi.fn(),
 }));
 
@@ -81,7 +81,7 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 
 vi.mock('~/server/services/generator-evidence/evidence-store', async (importOriginal) => ({
   ...(await importOriginal<typeof EvidenceStore>()),
-  readEvidenceObject,
+  streamEvidenceObject,
   hashEvidenceObject,
 }));
 
@@ -247,13 +247,15 @@ beforeEach(() => {
     refuseIllFormed(buildSubmitFileDetails(details));
     return { data: { responseCode: 0 } };
   });
-  readEvidenceObject
+  streamEvidenceObject
     .mockReset()
-    .mockImplementation(async () => ({ bytes: new Uint8Array(stored) }));
+    .mockImplementation(async () => ({ chunks: [new Uint8Array(stored)] }));
   // The streamed hash of whatever the store holds now, without counting as a read of the file.
   hashEvidenceObject.mockReset().mockImplementation(async (key: string) => {
-    const { bytes } = await readEvidenceObject.getMockImplementation()!(key);
-    return createHash('sha256').update(bytes).digest('hex');
+    const hash = createHash('sha256');
+    for (const chunk of (await streamEvidenceObject.getMockImplementation()!(key)).chunks)
+      hash.update(chunk);
+    return hash.digest('hex');
   });
   // A view of the output on THIS report; views of the input on another report or entity, which must not count.
   const views = [
@@ -371,11 +373,15 @@ describe('sending a report of preserved generator evidence', () => {
   it('sends each preserved file from its evidence copy, inputs first, and marks the report sent', async () => {
     const id = await sendEvidenceReport(evidenceDetails());
 
-    expect([...new Set(readEvidenceObject.mock.calls.map(([key]) => key))].sort()).toEqual([
+    expect([...new Set(streamEvidenceObject.mock.calls.map(([key]) => key))].sort()).toEqual([
       `generator-evidence/20/${WORKFLOW}/${INPUT}`,
       `generator-evidence/20/${WORKFLOW}/${OUTPUT}`,
     ]);
     expect(uploadFile).toHaveBeenCalledTimes(2);
+    for (const [{ file }] of uploadFile.mock.calls)
+      expect(Buffer.from(await (file as File).arrayBuffer()).equals(Buffer.from(stored))).toBe(
+        true
+      );
     expect(submitFileDetails.mock.calls[0][0].originalFileName).toBe(INPUT);
     expect((await readRow(id)).reportSentAt).not.toBeNull();
   });
@@ -384,9 +390,9 @@ describe('sending a report of preserved generator evidence', () => {
     let held = 0;
     let mostHeld = 0;
     hashEvidenceObject.mockResolvedValue(sha);
-    readEvidenceObject.mockImplementation(async () => {
+    streamEvidenceObject.mockImplementation(async () => {
       mostHeld = Math.max(mostHeld, ++held);
-      return { bytes: new Uint8Array(stored) };
+      return { chunks: [new Uint8Array(stored)] };
     });
     uploadFile.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -397,7 +403,7 @@ describe('sending a report of preserved generator evidence', () => {
     const id = await sendEvidenceReport(evidenceDetails());
 
     expect(hashEvidenceObject).toHaveBeenCalledTimes(2);
-    expect(readEvidenceObject).toHaveBeenCalledTimes(2);
+    expect(streamEvidenceObject).toHaveBeenCalledTimes(2);
     expect(mostHeld).toBe(1);
     expect((await readRow(id)).reportSentAt).not.toBeNull();
   });
@@ -437,8 +443,8 @@ describe('sending a report of preserved generator evidence', () => {
     const OTHER = new Uint8Array([9, 9, 9]);
     submitReport.mockImplementationOnce(async (report) => {
       refuseIllFormed(buildReport(report));
-      readEvidenceObject.mockImplementation(async (key: string) => ({
-        bytes: key.endsWith(OUTPUT) ? OTHER : new Uint8Array(stored),
+      streamEvidenceObject.mockImplementation(async (key: string) => ({
+        chunks: [key.endsWith(OUTPUT) ? OTHER : new Uint8Array(stored)],
       }));
       return { data: { reportId: 900 } };
     });

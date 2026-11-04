@@ -39,13 +39,18 @@ export async function readManifest(store: EvidenceStore, key: string, userId: nu
   if (manifestUserId(key)?.userId !== userId) throw notThisUsers();
   const head = await store.head(key);
   if (!head) throw new TRPCError({ code: 'NOT_FOUND', message: 'No manifest at this key.' });
-  if (head.bytes > MAX_MANIFEST_BYTES)
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `This manifest is over ${MAX_MANIFEST_BYTES / 1024 / 1024} MiB.`,
-    });
-  return new TextDecoder().decode(await store.read(key));
+  if (head.bytes > MAX_MANIFEST_BYTES) throw tooLarge();
+  // The object can change after its HEAD, so the read is bounded too.
+  const bytes = await store.read(key, MAX_MANIFEST_BYTES);
+  if (bytes.length > MAX_MANIFEST_BYTES) throw tooLarge();
+  return new TextDecoder().decode(bytes);
 }
+
+const tooLarge = () =>
+  new TRPCError({
+    code: 'BAD_REQUEST',
+    message: `This manifest is over ${MAX_MANIFEST_BYTES / 1024 / 1024} MiB.`,
+  });
 
 /**
  * What a preserve run's manifest offers for one user: the copies it made, by blob id, and the
