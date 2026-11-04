@@ -5,6 +5,10 @@ import {
   accountHoldSql,
   holdMarkerViewExists,
 } from '~/server/services/legal-hold.service';
+import { ReportStatus } from '~/shared/utils/prisma/enums';
+
+/** A report still open, as `r.status IN ${openReportStatusesSql}`. */
+export const openReportStatusesSql = Prisma.sql`(${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
 
 /**
  * A `WITH` entry, ahead of a DELETE that cascades "ResourceReview", that copies each review a held
@@ -77,7 +81,7 @@ const heldStorylineReleasedSql = (markerView: boolean) => {
     )
     AND NOT EXISTS (
       SELECT 1 FROM "Report" r
-      WHERE r.status IN ('Pending'::"ReportStatus", 'Processing'::"ReportStatus")
+      WHERE r.status IN ${openReportStatusesSql}
         AND (
           r.id = ANY(hs."reportIds")
           OR r.id IN (SELECT sr."reportId" FROM "StorylineReport" sr WHERE sr."heldStorylineId" = hs.id)

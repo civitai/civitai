@@ -21,6 +21,9 @@ overrides:
   ws@7: ^7.5.11
 
 patchedDependencies:
+  '@civitai/cybertipline-tools@0.1.0':
+    hash: b5c92914227f8e97ba962a6763022ab306cdab165a2c34a834b4d182e51a8846
+    path: patches/@civitai__cybertipline-tools@0.1.0.patch
   '@mantine/core@7.17.8':
     hash: 76351dce330ccc18991cfc3c340cf4add166d227b3ce959d7a64fd1d314a9f4f
     path: patches/@mantine__core@7.17.8.patch
@@ -79,7 +82,7 @@ importers:
         version: 0.35.1(@civitai/sdk@0.24.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
-        version: 0.1.0
+        version: 0.1.0(patch_hash=b5c92914227f8e97ba962a6763022ab306cdab165a2c34a834b4d182e51a8846)
       '@civitai/db-queries':
         specifier: workspace:*
         version: link:packages/civitai-db-queries
@@ -469,7 +472,7 @@ importers:
         version: 11.2.2
       mantine-react-table:
         specifier: ^2.0.0-beta.9
-        version: 2.0.0-beta.9(be749f7ad460d53b639f4d21d2fc05ad)
+        version: 2.0.0-beta.9(f9d0fda811c1be3a41e3eac75f2d989f)
       meilisearch:
         specifier: 0.33.0
         version: 0.33.0
@@ -13530,7 +13533,7 @@ snapshots:
     optionalDependencies:
       '@civitai/sdk': 0.24.0
 
-  '@civitai/cybertipline-tools@0.1.0':
+  '@civitai/cybertipline-tools@0.1.0(patch_hash=b5c92914227f8e97ba962a6763022ab306cdab165a2c34a834b4d182e51a8846)':
     dependencies:
       fast-xml-parser: 5.10.1
 
@@ -21364,7 +21367,7 @@ snapshots:
   make-error@1.3.6:
     optional: true
 
-  mantine-react-table@2.0.0-beta.9(be749f7ad460d53b639f4d21d2fc05ad):
+  mantine-react-table@2.0.0-beta.9(f9d0fda811c1be3a41e3eac75f2d989f):
     dependencies:
       '@mantine/core': 7.17.8(patch_hash=76351dce330ccc18991cfc3c340cf4add166d227b3ce959d7a64fd1d314a9f4f)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
       '@mantine/dates': 7.17.8(@mantine/core@7.17.8(patch_hash=76351dce330ccc18991cfc3c340cf4add166d227b3ce959d7a64fd1d314a9f4f)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1))(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(dayjs@1.11.13)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)

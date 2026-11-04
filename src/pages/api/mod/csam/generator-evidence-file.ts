@@ -53,10 +53,12 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const contentType = blob.contentType?.toLowerCase() ?? '';
   if (!EVIDENCE_MEDIA_TYPES.has(contentType))
     return void res.status(415).json({ error: 'This file cannot be shown here' });
-  if ((blob.bytes ?? 0) > MAX_VIEW_BYTES)
-    return void res.status(413).json({ error: 'This file is too large to show here' });
+  const tooLarge = () =>
+    void res.status(413).json({ error: 'This file is too large to show here' });
+  if (blob.bytes !== undefined && blob.bytes > MAX_VIEW_BYTES) return tooLarge();
 
-  const read = await readVerifiedEvidence(blob, streamEvidenceObject);
+  const read = await readVerifiedEvidence(blob, streamEvidenceObject, MAX_VIEW_BYTES);
+  if (!read.ok && read.overLimit) return tooLarge();
   if (!read.ok) {
     console.error('[generator-evidence-file] read refused', read.reason);
     return void res.status(502).json({ error: 'The preserved copy could not be read' });

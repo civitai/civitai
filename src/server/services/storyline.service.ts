@@ -63,6 +63,7 @@ import {
   getStorylineAppealRefusal,
 } from '~/shared/utils/appeal';
 import { logToAxiom } from '~/server/logging/client';
+import { openReportStatusesSql } from '~/server/services/held-review.service';
 import {
   getAllHiddenForUser,
   getBlockedPairIds,
@@ -1149,16 +1150,10 @@ function storylineCommentersSql(id: number) {
     WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}`;
 }
 
-const openReportStatusesSql = Prisma.sql`(${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
-
 /**
  * The delete of storyline `id`, as ONE statement, so a hold placed while it runs cannot leave a
- * partial copy. When anything must be kept for records (an open report, a held owner, chapter
- * author, commenter or draft author, or a moderator's tombstone), the same statement first copies
- * the storyline, with its pictures and drafts, into "HeldStoryline" and every chapter, edge, branch
- * choice and create click into the "HeldStorylineChapter*" tables. Either way it detaches the threads holding a held commenter's
- * words, so they outlive it, and stamps its reports with the title (and the copy) before their link
- * is set NULL. A moderator's delete also answers the open reports. Returns how many it deleted.
+ * partial copy, and its reports are stamped before their link is set NULL. Returns how many it
+ * deleted.
  */
 function deleteStorylineStatement(
   tx: Pick<Prisma.TransactionClient, '$executeRaw'>,
@@ -1231,6 +1226,7 @@ function deleteStorylineStatement(
       FROM "Storyline" s WHERE s.id = ${id} AND (SELECT keep FROM keep)
     ),
     chapters AS (
+      -- Its columns change together with the chapter copy in removeStorylineChapter.
       INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
         "placementId", "createdAt", "removedAt", "ownerId", "authorId")
       SELECT c.id, c."storylineId", c."postId", c."userId", c.depth, c."placementId", c."createdAt",
@@ -1322,7 +1318,6 @@ export async function deleteStoryline({
       SELECT "userId", "sparkImageId" FROM "Storyline" WHERE id = ${id}
     `;
     const asModerator = owned?.userId !== userId;
-    // Anyone else is answered as if it did not exist, as after a delete.
     if (!owned || (asModerator && !isModerator)) throw throwNotFoundError('Storyline not found');
     spark = { actorId: owned.userId, imageId: owned.sparkImageId };
     // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
@@ -1533,11 +1528,11 @@ export async function removeStorylineChapter({
             await tx.$queryRaw<{ id: number }[]>`
               SELECT r.id FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
               WHERE pr."postId" = ${chapter.postId}
-                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+                AND r.status IN ${openReportStatusesSql}
               UNION
               SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
               WHERE sr."storylineId" = ${storylineId}
-                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+                AND r.status IN ${openReportStatusesSql}
             `
           ).map((r) => r.id);
 
@@ -1570,6 +1565,7 @@ export async function removeStorylineChapter({
       await tx.$executeRaw`
         WITH kept AS (SELECT ${kept} AS kept),
         chapter AS (
+          -- Its columns change together with the chapter copy in deleteStorylineStatement.
           INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
             "placementId", "createdAt", "removedAt", "ownerId", "authorId")
           SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",

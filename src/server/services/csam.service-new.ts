@@ -6,7 +6,7 @@ import type {
   GetImageResourcesOutput,
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
-import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
+import { csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
   getImageUploadIpEvents,
@@ -70,6 +70,7 @@ import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-arc
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
+import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
 import {
   isAwaitingEvidenceApproval,
   isGeneratorEvidenceDetails,
@@ -88,7 +89,8 @@ import {
   streamEvidenceObject,
 } from '~/server/services/generator-evidence/evidence-store';
 import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
-import { fileDetailsXmlProblem, reportXmlProblem, xmlText } from '~/server/services/ncmec-xml';
+import type { FileDetailsXml } from '~/server/services/ncmec-xml';
+import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import {
@@ -445,131 +447,6 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       return res.success ? data : null;
     })
     .filter(isDefined);
-}
-
-async function constructReportPayload({
-  reportedById,
-  userId,
-  reportDetails,
-  modelVersions,
-  incidentDateTime,
-}: {
-  reportedById: number;
-  userId: number | null;
-  reportDetails: CsamReportDetails;
-  modelVersions: AsyncReturnType<typeof getModelVersions>;
-  incidentDateTime: Date;
-}) {
-  const reportingUser = await getReportingUser(reportedById);
-  const reportedUser = userId ? await getReportedUser(userId) : null;
-  // const ipAddresses = userId ? await getUserIpInfo({ userId }) : null;
-
-  const additionalInfo: string[] = [];
-
-  const { minorDepiction, capabilities, contents, userActivity } = reportDetails;
-
-  const section2 = modelVersions.length
-    ? `\nModels format: [modelId:modelName]:[modelVersionId:modelVersionName]\n${modelVersions
-        .map(({ id, name, model }) => `  - [${model.id}:${model.name}]:[${id}:${name}]\n`)
-        .join('')}
-    `
-    : '';
-
-  if (reportedUser) {
-    if (minorDepiction === 'non-real')
-      additionalInfo.push(
-        `${reportedUser.username as string} (${
-          reportedUser.id
-        }), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.`
-      );
-    else if (minorDepiction === 'real')
-      additionalInfo.push(
-        `${reportedUser.username as string} (${
-          reportedUser.id
-        }), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.`
-      );
-
-    additionalInfo.push(section2);
-  } else {
-    additionalInfo.push(`
-      The images/videos in this report were unintentionally and inadvertently generated or manipulated, during testing that is part of Civitai's trust and safety program, by the following models, one or more artificial intelligence-powered image/video generator.
-      `);
-    additionalInfo.push(section2);
-
-    if (capabilities?.length) {
-      additionalInfo.push(`The aforementioned model(s) can do the following:
-        ${capabilities
-          .map((key) => {
-            const capability = csamCapabilitiesDictionary[key];
-            return capability ? `  - ${capability}\n` : undefined;
-          })
-          .filter(isDefined)
-          .join('')}
-        `);
-    }
-  }
-
-  if (contents?.length) {
-    additionalInfo.push(`The images/videos in this report may involve:
-    ${contents
-      .map((key) => {
-        const content = csamContentsDictionary[key];
-        return content ? `  - ${content}\n` : undefined;
-      })
-      .filter(isDefined)
-      .join('')}
-    `);
-  }
-
-  additionalInfo.push('All evidence in this report should be independently verified.');
-
-  return {
-    report: {
-      incidentSummary: {
-        incidentType: 'Child Pornography (possession, manufacture, and distribution)',
-        incidentDateTime: incidentDateTime.toISOString(),
-      },
-      reporter: {
-        reportingPerson: {
-          firstName: reportingUser?.name,
-          email: reportingUser?.email,
-        },
-        contactPerson: {
-          email: CYBERTIP_CONTACT_EMAIL,
-        },
-      },
-      personOrUserReported: userId
-        ? removeEmpty({
-            espIdentifier: userId,
-            screenName: reportedUser?.username,
-            // personOrUserReportedPerson: {
-            //   firstName: reportedUser?.name,
-            //   email: reportedUser?.email,
-            // },
-            ipCaptureEvent: userActivity?.map((activity) => {
-              const [year, month, day, hour, minute, second] = activity.time
-                .split(/[-: ]/)
-                .map(Number);
-              return {
-                ipAddress: activity.ip,
-                eventName: activity.type,
-                dateTime: new Date(
-                  Date.UTC(year, month - 1, day, hour, minute, second)
-                ).toISOString(),
-              };
-            }),
-            additionalInfo: `
-              Email: ${reportedUser?.email ?? 'NA'}
-              Name: ${reportedUser?.name ?? 'NA'}
-            `,
-          })
-        : undefined,
-      additionalInfo: `${additionalInfo
-        .join('\n\n')
-        .replace(/\n\s*\n\s*\n/g, '\n\n')
-        .trim()}`,
-    },
-  };
 }
 
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
@@ -1020,6 +897,18 @@ function logNoFiles(claim: SendClaim, message: string) {
     );
 }
 
+/**
+ * XML NCMEC refuses would open and cancel a CyberTip on every run, and no retry changes it: the report
+ * waits for a decision from the first run on.
+ */
+function logXmlProblem(claim: SendClaim, problem: string) {
+  const hoursPending = hoursSinceFiled(claim.report);
+  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const message = `report ${claim.report.id} would not be well-formed XML: ${problem}`;
+  logSendLine(claim, 'send-xml', { message, hoursPending, ...stored }, 'error');
+  logSendLine(claim, 'send-decision-needed', { message, hoursPending, ...stored }, 'error');
+}
+
 /** Sends files two at a time; once one fails, none still queued goes to the CyberTip being cancelled. */
 function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>, concurrency = 2) {
   const limit = plimit(concurrency);
@@ -1053,22 +942,32 @@ async function uploadToCyberTip(claim: SendClaim, file: File) {
  * A run that dies between opening the CyberTip and storing its id leaves an open CyberTip no run
  * knows of; the next run opens another.
  *
+ * The report and every file's details are checked as the XML NCMEC is sent before anything is opened.
+ *
  * Resolves to whether NCMEC has the finished CyberTip.
  */
 async function sendCyberTip(
   claim: SendClaim,
   cyberTip: Report,
   {
+    fileDetails,
     sendFiles,
     beforeCancel,
     failureSubType = 'archive-data',
   }: {
+    /** The details each file will be sent with, but for its fileId. */
+    fileDetails: FileDetailsXml[];
     /** Resolves to the details keys the report is marked sent with. */
     sendFiles: (ncmecReportId: number) => Promise<Record<string, unknown> | void>;
     beforeCancel?: () => Promise<void>;
     failureSubType?: string;
   }
 ) {
+  const xmlProblem = cyberTipXmlProblem(cyberTip, fileDetails);
+  if (xmlProblem) {
+    logXmlProblem(claim, xmlProblem);
+    return false;
+  }
   if ((await cancelStoredCyberTip(claim)) === 'lost') return false;
 
   const {
@@ -1154,10 +1053,6 @@ async function reportImages(claim: SendClaim) {
   const images = await getImages(report.images.map((x) => x.id));
   if (!images.length)
     return logNoFiles(claim, `report ${report.id} names no image that still exists`);
-
-  const modelVersions = await getModelVersions([
-    ...new Set([...images.map((x) => x.modelVersionId).filter(isDefined)]),
-  ]);
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
@@ -1252,6 +1147,44 @@ async function reportImages(claim: SendClaim) {
       `${noLongerStored} file(s) named in this report are no longer stored and are not included.`,
   ].filter(Boolean);
 
+  const fileDetailsOf = new Map<
+    number,
+    { fileDetails: FileDetailsXml; fileAnnotations: Ncmec.FileAnnotationsSchema }
+  >();
+  for (const image of images) {
+    const imageReportInfo = report.images.find((x) => x.id === image.id);
+    if (!imageReportInfo) continue;
+    const fileAnnotations = imageReportInfo.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
+    const tags = image.tags.map((x) => x.tag.name);
+    if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
+      fileAnnotations.animeDrawingVirtualHentai = true;
+    }
+    if (
+      tags.some((tag) =>
+        [
+          'violence',
+          'explosions and blasts',
+          'physical violence',
+          'weapon violence',
+          'graphic violence or gore',
+          'hanging',
+        ].includes(tag)
+      )
+    ) {
+      fileAnnotations.physicalHarm = true;
+    }
+    const originalFileName = image.name?.split('?')[0];
+    fileDetailsOf.set(image.id, {
+      fileDetails: {
+        originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
+        locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
+        fileViewedByEsp: viewed.has(image.id),
+        fileAnnotations,
+      },
+      fileAnnotations,
+    });
+  }
+
   let uploaded = 0;
   let failedAfterOpen = false;
   const started: Promise<unknown>[] = [];
@@ -1260,34 +1193,9 @@ async function reportImages(claim: SendClaim) {
     const limit = plimit(2);
     const sendFile = async (image: (typeof images)[number]) => {
       const imageReportInfo = report.images.find((x) => x.id === image.id);
-      if (!imageReportInfo) return;
-
-      const imageUrl = getEdgeUrl(image.url, { type: image.type });
-      const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
-      const modelVersion = modelVersions.find((x) => x.id === image.modelVersionId);
-      const modelId = modelVersion?.model.id;
-      const modelVersionId = modelVersion?.id;
-
-      const fileAnnotations =
-        imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
-      const tags = image.tags.map((x) => x.tag.name);
-      if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
-        fileAnnotations.animeDrawingVirtualHentai = true;
-      }
-      if (
-        tags.some((tag) =>
-          [
-            'violence',
-            'explosions and blasts',
-            'physical violence',
-            'weapon violence',
-            'graphic violence or gore',
-            'hanging',
-          ].includes(tag)
-        )
-      ) {
-        fileAnnotations.physicalHarm = true;
-      }
+      const described = fileDetailsOf.get(image.id);
+      if (!imageReportInfo || !described) return;
+      const { fileDetails, fileAnnotations } = described;
 
       const check = checks.get(image.id);
       if (check && 'failed' in check)
@@ -1327,14 +1235,7 @@ async function reportImages(claim: SendClaim) {
 
       const viewRendition = viewed.get(image.id);
       const viewedByEsp = !!viewRendition;
-      await cybertipClient.submitFileDetails({
-        reportId: ncmecReportId,
-        fileId,
-        originalFileName: image.name?.split('?')[0] ?? undefined,
-        locationOfFile: imageUrl,
-        fileViewedByEsp: viewedByEsp,
-        fileAnnotations,
-      });
+      await cybertipClient.submitFileDetails({ reportId: ncmecReportId, fileId, ...fileDetails });
 
       uploaded++;
       return {
@@ -1390,6 +1291,7 @@ async function reportImages(claim: SendClaim) {
       }),
     },
     {
+      fileDetails: [...fileDetailsOf.values()].map(({ fileDetails }) => fileDetails),
       sendFiles,
       // A file already being sent finishes before the cancel, so its read failure is counted too.
       beforeCancel: async () => {
@@ -1450,6 +1352,11 @@ export async function getViewedImageIds(
   return viewed;
 }
 
+const GENERATED_FILE_DETAILS = {
+  fileViewedByEsp: false,
+  publiclyAvailable: false,
+} satisfies FileDetailsXml;
+
 async function reportGenerationData(claim: SendClaim) {
   const { report } = claim;
   if (isGeneratorEvidenceDetails(report.details)) return reportPreservedEvidence(claim);
@@ -1505,6 +1412,7 @@ async function reportGenerationData(claim: SendClaim) {
       }),
     },
     {
+      fileDetails: [GENERATED_FILE_DETAILS],
       sendFiles: async (reportId) => {
         sending = sendEach(
           fetched,
@@ -1526,8 +1434,7 @@ async function reportGenerationData(claim: SendClaim) {
             await cybertipClient.submitFileDetails({
               fileId,
               reportId,
-              fileViewedByEsp: false,
-              publiclyAvailable: false,
+              ...GENERATED_FILE_DETAILS,
               // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
             });
             return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
@@ -1626,18 +1533,9 @@ async function reportPreservedEvidence(claim: SendClaim) {
     }),
     ...(notCarried.length && { additionalInfo: xmlText(notCarried.join('\n')) }),
   };
-  // Checked before the CyberTip is opened: XML NCMEC refuses would cancel it on every run.
-  const xmlProblem =
-    reportXmlProblem(cyberTip) ??
-    toSend.map(({ fileDetails }) => fileDetailsXmlProblem(fileDetails)).find(Boolean);
-  if (xmlProblem)
-    return logSendFailure(
-      report,
-      new Error(`the CyberTip would not be well-formed XML: ${xmlProblem}`),
-      'evidence-xml'
-    );
   let sending: ReturnType<typeof sendEach> | undefined;
   await sendCyberTip(claim, cyberTip, {
+    fileDetails: toSend.map(({ fileDetails }) => fileDetails),
     sendFiles: async (reportId) => {
       sending = sendEach(
         toSend,
@@ -1658,7 +1556,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
 /** The verified copy as the File NCMEC's upload takes, built on the read's Blob without a copy. */
 async function readEvidenceFile(blob: StoredEvidenceBlob) {
-  const read = await readVerifiedEvidence(blob, streamEvidenceObject);
+  const read = await readVerifiedEvidence(blob, streamEvidenceObject, MAX_EVIDENCE_BYTES);
   if (!read.ok) throw new Error(`preserved file ${blob.blobId} failed its re-read: ${read.reason}`);
   return new File([read.body], blob.blobId, { type: read.contentType });
 }
@@ -1701,19 +1599,17 @@ async function reportTrainingData(claim: SendClaim) {
     }
     if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
 
+    const fileDetailsOf = (filename: string) =>
+      ({ originalFileName: xmlText(filename), fileViewedByEsp: false } satisfies FileDetailsXml);
     let sending: ReturnType<typeof sendEach> | undefined;
     await sendCyberTip(claim, initialReport, {
+      fileDetails: files.map(({ filename }) => fileDetailsOf(filename)),
       sendFiles: async (reportId) => {
         sending = sendEach(files, async ({ imgBlob, filename }) => {
           const {
             data: { fileId, hash },
           } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-          await cybertipClient.submitFileDetails({
-            reportId,
-            fileId,
-            originalFileName: filename,
-            fileViewedByEsp: false,
-          });
+          await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetailsOf(filename) });
           return { filename, fileId, hash };
         });
         return { trainingData: await sending.sent };
@@ -1771,6 +1667,55 @@ async function reportExternalLink(claim: SendClaim) {
   if (details.additionalInfo) reportInfo.push(details.additionalInfo);
   reportInfo.push('All evidence in this report should be independently verified.');
 
+  // Read before the CyberTip is opened, so a report whose evidence cannot be read opens none.
+  type ZipFile = { imgBlob: Blob; filename: string };
+  const readZip = async (key: string) =>
+    unzipTrainingData(
+      await getCsamBucketZip(key),
+      ({ imgBlob, filename }): ZipFile => ({
+        imgBlob,
+        filename,
+      })
+    );
+  let evidenceFiles: ZipFile[] = [];
+  let supplementalFiles: ZipFile[] = [];
+  try {
+    if (details.evidence?.bucketKey) evidenceFiles = await readZip(details.evidence.bucketKey);
+    if (details.supplementalEvidence?.bucketKey)
+      supplementalFiles = await readZip(details.supplementalEvidence.bucketKey);
+  } catch (e) {
+    return logSendFailure(report, e, 'archive-data');
+  }
+
+  // External CSAM is usually real (non-AI) imagery, so generativeAi is
+  // opt-in here rather than defaulted to true like the in-app flows.
+  const fileAnnotations: Record<string, boolean> = {
+    generativeAi: details.fileAnnotations?.generativeAi ?? false,
+  };
+  if (details.fileAnnotations?.infant) fileAnnotations.infant = true;
+  if (details.fileAnnotations?.bestiality) fileAnnotations.bestiality = true;
+  if (details.fileAnnotations?.violenceGore) fileAnnotations.violenceGore = true;
+  if (details.fileAnnotations?.physicalHarm) fileAnnotations.physicalHarm = true;
+  const locationOfFile = details.externalUrls?.[0];
+  const evidenceDetails = (filename: string) =>
+    ({
+      originalFileName: xmlText(filename),
+      locationOfFile: locationOfFile && xmlText(locationOfFile),
+      fileViewedByEsp: false,
+      publiclyAvailable: false,
+      fileAnnotations,
+    } satisfies FileDetailsXml);
+  // Chat-log screenshots are contextual evidence, not the reported abuse
+  // material: upload them as SupplementalReported with no CSAM annotations.
+  const supplementalDetails = (filename: string) =>
+    ({
+      originalFileName: xmlText(filename),
+      fileViewedByEsp: false,
+      publiclyAvailable: false,
+      fileRelevance: FileRelevance.SupplementalReported,
+      additionalInfo: ['Chat log screenshot / supplemental evidence'],
+    } satisfies FileDetailsXml);
+
   // incidentDateTime round-trips through the JSON `details` column, so it
   // arrives here as a string. The cybertip client calls .toISOString() on it
   // unconditionally, so coerce back to a Date (falling back to createdAt).
@@ -1783,12 +1728,15 @@ async function reportExternalLink(claim: SendClaim) {
   const incidentDetails: NonNullable<Report['incidentDetails']> = {};
   if (details.externalUrls?.length) {
     incidentDetails.webPageIncidents = [
-      { url: details.externalUrls, thirdPartyHostedContent: true },
+      { url: details.externalUrls.map(xmlText), thirdPartyHostedContent: true },
     ];
   }
   if (details.chatLogs || details.chatPlatform) {
     incidentDetails.chatImIncidents = [
-      { chatClient: details.chatPlatform, content: details.chatLogs },
+      {
+        chatClient: details.chatPlatform && xmlText(details.chatPlatform),
+        content: details.chatLogs && xmlText(details.chatLogs),
+      },
     ];
   }
 
@@ -1800,8 +1748,8 @@ async function reportExternalLink(claim: SendClaim) {
     incidentDetails: Object.keys(incidentDetails).length ? incidentDetails : undefined,
     reporter: {
       reportingPerson: {
-        email: [{ email: reportingUser.email }],
-        firstName: reportingUser.name ?? undefined,
+        email: [{ email: xmlText(reportingUser.email) }],
+        firstName: reportingUser.name ? xmlText(reportingUser.name) : undefined,
       },
       contactPerson: {
         email: [{ email: CYBERTIP_CONTACT_EMAIL }],
@@ -1809,82 +1757,39 @@ async function reportExternalLink(claim: SendClaim) {
     },
     personOrUserReported: {
       espIdentifier: report.userId.toString(),
-      screenName: details.screenName,
+      screenName: details.screenName && xmlText(details.screenName),
       personOrUserReportedPerson: {
-        firstName: details.reportedName,
-        email: [{ email: details.email }],
+        firstName: details.reportedName && xmlText(details.reportedName),
+        email: [{ email: xmlText(details.email) }],
       },
-      profileUrl: details.profileUrls,
+      profileUrl: details.profileUrls?.map(xmlText),
       ipCaptureEvent,
-      additionalInfo: reportedInfo.join('\n'),
+      additionalInfo: xmlText(reportedInfo.join('\n')),
     },
-    additionalInfo: reportInfo.join('\n\n'),
+    additionalInfo: xmlText(reportInfo.join('\n\n')),
   } satisfies Report;
 
   await sendCyberTip(claim, initialReport, {
     failureSubType: 'send-report',
+    fileDetails: [
+      ...evidenceFiles.map(({ filename }) => evidenceDetails(filename)),
+      ...supplementalFiles.map(({ filename }) => supplementalDetails(filename)),
+    ],
     sendFiles: async (reportId) => {
-      if (details.evidence?.bucketKey) {
-        const zData = await getCsamBucketZip(details.evidence.bucketKey);
-        const limit = plimit(2);
-
-        // External CSAM is usually real (non-AI) imagery, so generativeAi is
-        // opt-in here rather than defaulted to true like the in-app flows.
-        const fileAnnotations: Record<string, boolean> = {
-          generativeAi: details.fileAnnotations?.generativeAi ?? false,
-        };
-        if (details.fileAnnotations?.infant) fileAnnotations.infant = true;
-        if (details.fileAnnotations?.bestiality) fileAnnotations.bestiality = true;
-        if (details.fileAnnotations?.violenceGore) fileAnnotations.violenceGore = true;
-        if (details.fileAnnotations?.physicalHarm) fileAnnotations.physicalHarm = true;
-
-        const locationOfFile = details.externalUrls?.[0];
-
-        await unzipTrainingData(zData, ({ imgBlob, filename }) =>
-          limit(async () => {
-            const file = blobToFile(imgBlob, filename);
-            const {
-              data: { fileId },
-            } = await uploadToCyberTip(claim, file);
-
-            await cybertipClient.submitFileDetails({
-              reportId,
-              fileId,
-              originalFileName: filename,
-              locationOfFile,
-              fileViewedByEsp: false,
-              publiclyAvailable: false,
-              fileAnnotations,
-            });
-          })
+      const limit = plimit(2);
+      const upload = (files: ZipFile[], detailsOf: (filename: string) => FileDetailsXml) =>
+        Promise.all(
+          files.map(({ imgBlob, filename }) =>
+            limit(async () => {
+              const {
+                data: { fileId },
+              } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
+              await cybertipClient.submitFileDetails({ reportId, fileId, ...detailsOf(filename) });
+            })
+          )
         );
-      }
-
-      // Chat-log screenshots are contextual evidence, not the reported abuse
-      // material: upload them as SupplementalReported with no CSAM annotations.
-      if (details.supplementalEvidence?.bucketKey) {
-        const zData = await getCsamBucketZip(details.supplementalEvidence.bucketKey);
-        const limit = plimit(2);
-
-        await unzipTrainingData(zData, ({ imgBlob, filename }) =>
-          limit(async () => {
-            const file = blobToFile(imgBlob, filename);
-            const {
-              data: { fileId },
-            } = await uploadToCyberTip(claim, file);
-
-            await cybertipClient.submitFileDetails({
-              reportId,
-              fileId,
-              originalFileName: filename,
-              fileViewedByEsp: false,
-              publiclyAvailable: false,
-              fileRelevance: FileRelevance.SupplementalReported,
-              additionalInfo: ['Chat log screenshot / supplemental evidence'],
-            });
-          })
-        );
-      }
+      await upload(evidenceFiles, evidenceDetails);
+      await upload(supplementalFiles, supplementalDetails);
     },
   });
 }

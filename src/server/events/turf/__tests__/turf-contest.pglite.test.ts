@@ -4,6 +4,7 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
@@ -136,8 +137,8 @@ describe('Hat Turf on contest entries', () => {
     ['a sync', async () => syncTurfImages((await getTurfEvent('e'))!, [CONTEST_ENTRY, BOOKMARKED])],
     ['a reconcile', async () => reconcileTurf((await getTurfEvent('e'))!)],
   ])('%s pushes nothing about a contest entry', async (_, run) => {
-    redisMock.sysRedis.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
-      fields.map(() => null)) as never);
+    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
+    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
     redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await run();

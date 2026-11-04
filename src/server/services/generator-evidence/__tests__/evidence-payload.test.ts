@@ -16,6 +16,8 @@ const blob: StoredEvidenceBlob = {
   contentType: 'image/png',
 };
 
+const LIMIT = 1024;
+
 async function* streamed(parts: Uint8Array[], failAfter = Infinity) {
   for (const [i, part] of parts.entries()) {
     if (i >= failAfter) throw new Error('connection reset');
@@ -25,7 +27,11 @@ async function* streamed(parts: Uint8Array[], failAfter = Infinity) {
 
 describe('readVerifiedEvidence', () => {
   it('returns every byte of a copy streamed in several chunks, once its hash matches', async () => {
-    const read = await readVerifiedEvidence(blob, async () => ({ chunks: streamed(chunks) }));
+    const read = await readVerifiedEvidence(
+      blob,
+      async () => ({ chunks: streamed(chunks) }),
+      LIMIT
+    );
 
     expect(read.ok).toBe(true);
     if (!read.ok) return;
@@ -36,7 +42,11 @@ describe('readVerifiedEvidence', () => {
   it('refuses a copy whose last chunk changed', async () => {
     const changed = [...chunks.slice(0, -1), Buffer.from('LAST')];
 
-    const read = await readVerifiedEvidence(blob, async () => ({ chunks: streamed(changed) }));
+    const read = await readVerifiedEvidence(
+      blob,
+      async () => ({ chunks: streamed(changed) }),
+      LIMIT
+    );
 
     expect(read).toMatchObject({ ok: false, shaMismatch: true });
   });
@@ -50,16 +60,41 @@ describe('readVerifiedEvidence', () => {
       }
     }
 
-    const read = await readVerifiedEvidence({ ...blob, bytes: chunks[0].length }, async () => ({
-      chunks: counted(),
-    }));
+    const read = await readVerifiedEvidence(
+      { ...blob, bytes: chunks[0].length },
+      async () => ({ chunks: counted() }),
+      LIMIT
+    );
 
     expect(read).toMatchObject({ ok: false, shaMismatch: true });
     expect(pulled).toBe(2);
   });
 
+  it('stops reading a copy with no recorded size once it runs past the limit', async () => {
+    let pulled = 0;
+    async function* long() {
+      for (let i = 0; i < 10; i++) {
+        pulled++;
+        yield chunks[0];
+      }
+    }
+
+    const read = await readVerifiedEvidence(
+      { ...blob, bytes: undefined },
+      async () => ({ chunks: long() }),
+      chunks[0].length * 3
+    );
+
+    expect(read).toMatchObject({ ok: false, overLimit: true });
+    expect(pulled).toBe(4);
+  });
+
   it('refuses a copy whose stream fails part way, as a failed read', async () => {
-    const read = await readVerifiedEvidence(blob, async () => ({ chunks: streamed(chunks, 1) }));
+    const read = await readVerifiedEvidence(
+      blob,
+      async () => ({ chunks: streamed(chunks, 1) }),
+      LIMIT
+    );
 
     expect(read).toEqual({ ok: false, reason: 'read failed: connection reset' });
   });
