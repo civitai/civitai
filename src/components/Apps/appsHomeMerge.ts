@@ -24,7 +24,7 @@ import type { MyAppRow } from '~/server/services/blocks/my-apps.logic';
  * the server sent them (`lastUsedAt` desc, nulls last, then name).
  *
  * ── A RECENTS ENTRY THE SERVER DOES NOT LIST STILL RENDERS ─────────────────────
- * From its stored name / slug / external URL, with the store rail's own launch target
+ * From its stored name / slug / external URL, with the recents launch target
  * (`getRecentRailTarget`). Its name is publisher-controlled text laundered through
  * localStorage, so it goes through the same sanitizer the app chrome uses for it. It has NO
  * icon: the store never persists one, so the tile resolves it live (`iconFromServer: false`).

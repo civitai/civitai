@@ -4,7 +4,6 @@ import {
   Avatar,
   Button,
   Card,
-  Grid,
   Group,
   Menu,
   Paper,
@@ -26,7 +25,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { chromeRecentAppIconSrc } from '~/components/AppBlocks/chromeRecentAppIconSrc';
 import { useChromeListingDetail } from '~/components/AppBlocks/useChromeListingDetail';
-import { AppListingCard } from '~/components/Apps/AppListingCard';
 import {
   mergeHomeApps,
   type AppsHomeTile as AppsHomeTileModel,
@@ -44,7 +42,6 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
-import { onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
 import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { canAccessAppsActivity } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
@@ -63,8 +60,6 @@ import { trpc } from '~/utils/trpc';
 export const APPS_HOME_TILE_MIN_WIDTH = 220;
 /** Skeleton tiles shown while the list loads. */
 const APPS_HOME_SKELETON_TILES = 8;
-/** Popular apps offered on the empty state — a small strip, not a second store. */
-export const APPS_HOME_POPULAR_LIMIT = 3;
 const APPS_HOME_ICON_PX = 56;
 
 /** The deep link to the viewer's permissions for their apps. */
@@ -248,46 +243,21 @@ function BrowseStoreButton({ testId }: { testId: string }) {
   );
 }
 
-function PopularStrip({ canOpenPage }: { canOpenPage: boolean }) {
-  // The store's own list read, popular-first, a handful of cards. No new query.
-  const popular = trpc.appListings.listAvailable.useQuery({
-    sort: 'popular',
-    limit: APPS_HOME_POPULAR_LIMIT,
-  });
-  const cards = onlyListingCards(popular.data?.items ?? []).slice(0, APPS_HOME_POPULAR_LIMIT);
-  if (!cards.length) return null;
+function EmptyState() {
   return (
-    <Stack gap="xs" component="section" aria-label="Popular apps" data-testid="apps-home-popular">
-      <Title order={4}>Popular apps</Title>
-      <Grid gutter="md">
-        {cards.map((card) => (
-          <Grid.Col key={card.id} span={{ base: 12, sm: 6, md: 4 }}>
-            <AppListingCard card={card} canOpenPage={canOpenPage} />
-          </Grid.Col>
-        ))}
-      </Grid>
-    </Stack>
-  );
-}
-
-function EmptyState({ canOpenPage }: { canOpenPage: boolean }) {
-  return (
-    <Stack gap="xl">
-      <Paper p="xl" radius="md" withBorder data-testid="apps-home-empty">
-        <Stack align="center" gap="sm">
-          <IconBuildingStore size={40} stroke={1.5} />
-          <Title order={3} ta="center">
-            No apps yet
-          </Title>
-          <Text c="dimmed" ta="center" maw={480}>
-            Apps you open, connect or buy show up here, so you can get back to them in one click.
-            Find something to try in the store.
-          </Text>
-          <BrowseStoreButton testId="apps-home-empty-browse" />
-        </Stack>
-      </Paper>
-      <PopularStrip canOpenPage={canOpenPage} />
-    </Stack>
+    <Paper p="xl" radius="md" withBorder data-testid="apps-home-empty">
+      <Stack align="center" gap="sm">
+        <IconBuildingStore size={40} stroke={1.5} />
+        <Title order={3} ta="center">
+          No apps yet
+        </Title>
+        <Text c="dimmed" ta="center" maw={480}>
+          Apps you open, connect or buy show up here, so you can get back to them in one click. Find
+          something to try in the store.
+        </Text>
+        <BrowseStoreButton testId="apps-home-empty-browse" />
+      </Stack>
+    </Paper>
   );
 }
 
@@ -352,7 +322,7 @@ export function AppsHomeBody() {
       ) : tiles.length === 0 ? (
         // Empty only when BOTH sources are: nothing from the server AND no local recents.
         myApps.isError ? null : (
-          <EmptyState canOpenPage={canOpenPage} />
+          <EmptyState />
         )
       ) : (
         <TileGrid testId="apps-home-grid">

@@ -19,8 +19,8 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   // GATING INVARIANT (F-E E1): the flag gate is the ONLY access control; no
   // session→login redirect, so the marketplace renders for a session-less
-  // request BEHIND the flag (dark today; lit when the segment widens). See
-  // resolveAppsPageAccess for the full invariant + `deIndex` note.
+  // request BEHIND the flag. See resolveAppsPageAccess for the full invariant
+  // (including who the flags reach) + the `deIndex` note.
   resolver: async ({ features }) => resolveAppsPageAccess({ features }),
 });
 
@@ -39,32 +39,16 @@ export default function AppsStorePage() {
           the marketplace title/subtitle were removed for the page-apps-only
           launch (the sub-nav supplies the wayfinding), so no header props.
 
-          W13 P2d CUTOVER: the store (then at `/apps`) now reads the unified
-          `AppListing` record (both on-site App Blocks AND off-site OAuth apps)
-          via `AppListingsMarketplaceBody` (the P2a `appListings.listAvailable`
-          read path). Still dark/mod-only — the page gate is UNCHANGED
-          (`resolveAppsPageAccess` → the shared `hasAppsStoreAccess` predicate,
-          i.e. `appListings || appBlocks`, both mod-segmented in Flipt today;
-          `deIndex`), this only swaps WHICH grid renders.
-
-          ROLLBACK = one-line revert: the legacy AppBlock path
-          (`MarketplaceBody` → `AppBlockCard`) is intentionally retained in the
-          tree; swap this back to `<MarketplaceBody />` (re-import it) to fall
-          back to the AppBlock-backed grid.
-          ⚠️ That rollback is now PARTIAL: `AppBlockCard`'s title/description link
-          to `/apps/<appBlockId>`, which is retired and redirects to the store
-          detail. Restoring the old grid therefore no longer restores the old
-          detail surface — undo the route retirement too if that is the intent.
-          ⚠️ It is also partial in a second way now: the legacy grid's 5-star
-          rating chip, its "Top rated" sort option and the whole `AppBlockReview`
-          system behind them were removed. `blocks.listAvailable` now defaults to
-          `popular` and exposes no rating at all, so the rollback restores the
-          old grid WITHOUT the old ranking.
+          The store reads the unified `AppListing` record (both on-site App Blocks
+          AND off-site OAuth apps) via `AppListingsMarketplaceBody` (the
+          `appListings.listAvailable` read path). The page gate is the shared
+          `hasAppsStoreAccess` predicate (via `resolveAppsPageAccess`, which owns
+          the who-can-see-it invariant); `deIndex` stays on.
 
           The grid will be EMPTY until the mod-only backfills run on prod
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
           a separate post-deploy op step) — the empty state renders sanely
-          ("No apps yet"); expected + fine while dark. */}
+          ("No apps yet"). */}
       <AppsPageLayout railFooter={({ collapsed }) => <AppsFeedbackNotice collapsed={collapsed} />}>
         {/* The container is `APPS_PAGE_CONTAINER_WIDTH` (2560), applied by
             `AppsPageLayout` — not by anything on this page. This route takes no body

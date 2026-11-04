@@ -14,8 +14,8 @@ import type { MyAppRow } from '~/server/services/blocks/my-apps.logic';
 
 const mocks = vi.hoisted(() => ({
   myApps: { data: undefined as unknown, isLoading: false, isError: false },
-  popularItems: [] as unknown[],
-  popularInputs: [] as Record<string, unknown>[],
+  listAvailableItems: [] as unknown[],
+  listAvailableInputs: [] as Record<string, unknown>[],
   flags: {} as Record<string, boolean>,
   user: { id: 41, username: 'viewer' } as { id: number; username: string } | null,
   detailIcons: {} as Record<string, string>,
@@ -38,10 +38,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         error: null,
       }),
     },
+    // The home makes NO store list read; this stub records any call so a test can say so.
     'appListings.listAvailable': {
       useQuery: (input: Record<string, unknown>) => {
-        mocks.popularInputs.push(input);
-        return { data: { items: mocks.popularItems }, isPending: false };
+        mocks.listAvailableInputs.push(input);
+        return { data: { items: mocks.listAvailableItems }, isPending: false };
       },
     },
   }),
@@ -81,7 +82,7 @@ const OFFSITE_APP: MyAppRow = {
   lastUsedAt: new Date('2026-10-10T00:00:00.000Z'),
 };
 
-function popularCard(id: string, name: string): ListingCard {
+function listingCard(id: string, name: string): ListingCard {
   return {
     id,
     slug: `slug-${id}`,
@@ -118,8 +119,8 @@ function launch(name: string): HTMLAnchorElement {
 
 beforeEach(() => {
   mocks.myApps = { data: [PAGE_APP, OFFSITE_APP], isLoading: false, isError: false };
-  mocks.popularItems = [];
-  mocks.popularInputs = [];
+  mocks.listAvailableItems = [];
+  mocks.listAvailableInputs = [];
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
   mocks.user = { id: 41, username: 'viewer' };
   mocks.detailIcons = {};
@@ -183,28 +184,34 @@ describe('the My apps grid', () => {
 });
 
 describe('the empty state', () => {
-  test('🔴 no apps → friendly copy, a store CTA, and a strip of popular apps', async () => {
+  test('🔴 no apps → friendly copy and a store CTA to /apps/store, and NO popular strip or store read', async () => {
     mocks.myApps = { data: [], isLoading: false, isError: false };
-    mocks.popularItems = [popularCard('p1', 'Neon Sketch'), popularCard('p2', 'Tag Wizard')];
+    // Seeded so a store read, if one were made, WOULD have cards to render: the absence
+    // assertions below then observe the strip's removal, not an empty response.
+    mocks.listAvailableItems = [listingCard('p1', 'Neon Sketch'), listingCard('p2', 'Tag Wizard')];
     renderWithProviders(<AppsHomeBody />);
 
     await expect.element(page.getByTestId('apps-home-empty')).toBeVisible();
-    expect(page.getByTestId('apps-home-empty-browse').element().getAttribute('href')).toBe(
-      '/apps/store'
-    );
-    await expect.element(page.getByText('Neon Sketch')).toBeVisible();
-    await expect.element(page.getByText('Tag Wizard')).toBeVisible();
-    // The strip reuses the store's own read, popular-first and small.
-    expect(mocks.popularInputs[0]).toEqual({ sort: 'popular', limit: 3 });
+    await expect.element(page.getByRole('heading', { name: 'No apps yet' })).toBeVisible();
+    await expect
+      .element(page.getByText('Apps you open, connect or buy show up here', { exact: false }))
+      .toBeVisible();
+    const cta = page.getByTestId('apps-home-empty-browse');
+    await expect.element(cta).toHaveTextContent('Browse the store');
+    expect(cta.element().getAttribute('href')).toBe('/apps/store');
+
+    // The "Popular apps" strip and its second `listAvailable` read are gone.
+    expect(page.getByTestId('apps-home-popular').elements()).toHaveLength(0);
+    expect(page.getByRole('heading', { name: 'Popular apps' }).elements()).toHaveLength(0);
+    expect(page.getByText('Neon Sketch').elements()).toHaveLength(0);
+    expect(mocks.listAvailableInputs).toHaveLength(0);
     expect(page.getByTestId('apps-home-tile').elements()).toHaveLength(0);
   });
 
-  test('with apps, there is no empty state and no popular strip', async () => {
-    mocks.popularItems = [popularCard('p1', 'Neon Sketch')];
+  test('with apps, there is no empty state', async () => {
     renderWithProviders(<AppsHomeBody />);
     await expect.element(page.getByText('Pixel Forge')).toBeVisible();
     expect(page.getByTestId('apps-home-empty').elements()).toHaveLength(0);
-    expect(page.getByTestId('apps-home-popular').elements()).toHaveLength(0);
   });
 });
 

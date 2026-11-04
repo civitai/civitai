@@ -125,7 +125,7 @@ export type RecentAppKind = 'onsite' | 'offsite';
  * entry (it has no AppBlock, so `blockId` cannot stand in), `blockId` OR `slug`
  * otherwise. An entry that fails that could only ever render a dead link, so it
  * is DROPPED (see `coerce`) — on the WRITE path as well as the read, which is
- * why nothing can be persisted that the rail's `resolveRecentApp` then discards.
+ * why nothing can be persisted that `resolveRecentApp` then discards.
  *
  * Field meanings:
  *  - `blockId` — the AppBlock slug (`block_id`); backs `/apps/run/<blockId>` and
@@ -142,8 +142,8 @@ export type RecentAppKind = 'onsite' | 'offsite';
  *  - `name` — a display enrichment so a consumer can render the entry WITHOUT
  *    re-fetching the listing.
  *  - `iconUrl` — 🔴 NEVER PERSISTED AND NEVER READ BACK (see `coerce`). It exists
- *    on the type only for an IN-MEMORY entry that the `/apps` rail has just
- *    reconciled against a live, server-gated card (`reconcileRecentApps`).
+ *    on the type only for an IN-MEMORY entry built from a live, server-gated card
+ *    (`toRecentAppFromListing`); the write path strips it.
  *
  * 🔴 WHY A STORED ICON IS DROPPED. A listing icon is gated per image, per viewer
  * and per host on the server, at render time (`listing-media-audience.ts`), so an
@@ -151,9 +151,10 @@ export type RecentAppKind = 'onsite' | 'offsite';
  * flagged, or above a browsing level the viewer has since lowered — and entries
  * written before that gate existed hold raw, ungated urls, so a stored url would
  * be shown with no gate in front of it. Each consumer takes its icon from a live,
- * server-gated read instead — the `/apps` rail from its card, the app-chrome
- * "Recently run" menu from `appListings.getAppDetail` per slug
- * (`ChromeRecentAppIcon`) — and draws a placeholder while it has none.
+ * server-gated read instead — the `/apps` My apps home from its server row or, for a
+ * recents-only tile, `appListings.getAppDetail` per slug, as the app-chrome
+ * "Recently run" menu does (`ChromeRecentAppIcon`) — and draws a placeholder while
+ * it has none.
  */
 export type RecentApp = {
   id: string;
