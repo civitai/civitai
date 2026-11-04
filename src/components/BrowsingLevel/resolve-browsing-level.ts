@@ -1,4 +1,8 @@
 import { NsfwLevel } from '~/server/common/enums';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -22,6 +26,22 @@ type BrowsingLevelInputs = {
   override?: number;
   user?: number;
 };
+
+/**
+ * The cap the domain puts on a viewer, mirroring the server middleware (`applyDomainFeature`):
+ * anonymous is PG anywhere, logged-in where mature content is not allowed (civitai.com) is
+ * PG+PG-13, and nothing is capped where it is allowed.
+ */
+export function domainForcedBrowsingLevel({
+  canViewNsfw,
+  loggedIn,
+}: {
+  canViewNsfw: boolean;
+  loggedIn: boolean;
+}) {
+  if (canViewNsfw) return undefined;
+  return loggedIn ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+}
 
 /** The level a page asked for, falling back to the viewer's own. */
 export function resolvePageBrowsingLevel({ forced, override, user }: BrowsingLevelInputs) {
