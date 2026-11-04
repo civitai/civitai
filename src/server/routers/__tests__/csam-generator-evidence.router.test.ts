@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EvidenceService from '~/server/services/generator-evidence/generator-evidence.service';
+import type * as CsamService from '~/server/services/csam.service';
+import type * as UnconfirmedOpen from '~/server/services/csam-unconfirmed-open';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/** Who may preserve and approve generator evidence. Ids are invented. */
+/** Who may preserve, approve and send CSAM evidence, and read the reports. Ids are invented. */
 
 const {
   preserveGeneratorEvidence,
@@ -12,6 +14,9 @@ const {
   getGeneratorEvidenceReport,
   recopyGeneratorEvidenceFile,
   excludeGeneratorEvidenceFile,
+  clearUnconfirmedOpens,
+  getCsamReportsPaged,
+  getCsamReportStats,
 } = vi.hoisted(() => ({
   preserveGeneratorEvidence: vi.fn(async () => ({ reportId: 1, refused: [], counts: {} })),
   approveGeneratorEvidenceReport: vi.fn(async () => ({ approved: true })),
@@ -20,6 +25,9 @@ const {
   getGeneratorEvidenceReport: vi.fn(async () => null),
   recopyGeneratorEvidenceFile: vi.fn(async () => ({ status: 'preserved' })),
   excludeGeneratorEvidenceFile: vi.fn(async () => ({ version: 'v' })),
+  clearUnconfirmedOpens: vi.fn(async () => ({ cleared: true })),
+  getCsamReportsPaged: vi.fn(async () => ({ items: [] })),
+  getCsamReportStats: vi.fn(async () => ({})),
 }));
 vi.mock(
   '~/server/services/generator-evidence/generator-evidence.service',
@@ -34,6 +42,16 @@ vi.mock(
     excludeGeneratorEvidenceFile,
   })
 );
+
+vi.mock('~/server/services/csam-unconfirmed-open', async (importOriginal) => ({
+  ...(await importOriginal<typeof UnconfirmedOpen>()),
+  clearUnconfirmedOpens,
+}));
+vi.mock('~/server/services/csam.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CsamService>()),
+  getCsamReportsPaged,
+  getCsamReportStats,
+}));
 
 const { csamRouter } = await import('~/server/routers/csam.router');
 
@@ -127,5 +145,35 @@ describe('generator evidence procedures', () => {
       expect(service).toHaveBeenCalledTimes(1);
       expect(service).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, moderatorId: 5 }));
     }
+  });
+});
+
+describe('CSAM report reads and clearing an unconfirmed open', () => {
+  const clear = () => ({ reportId: 3, note: 'checked with NCMEC' });
+
+  it('refuse a member, and a moderator without CSAM reporting access', async () => {
+    for (const refused of [
+      caller({ id: 5, isModerator: false }, true),
+      caller({ id: 5, isModerator: true }, false),
+    ]) {
+      expect(await codeOf(refused.getCsamReports({ page: 1, limit: 20 }))).toBe('FORBIDDEN');
+      expect(await codeOf(refused.getCsamReportsStats())).toBe('FORBIDDEN');
+      expect(await codeOf(refused.clearUnconfirmedOpen(clear()))).toBe('FORBIDDEN');
+    }
+    expect(getCsamReportsPaged).not.toHaveBeenCalled();
+    expect(getCsamReportStats).not.toHaveBeenCalled();
+    expect(clearUnconfirmedOpens).not.toHaveBeenCalled();
+  });
+
+  it('let a moderator with CSAM reporting access through, clearing as that moderator', async () => {
+    const moderator = caller({ id: 5, isModerator: true }, true);
+    expect(await codeOf(moderator.getCsamReports({ page: 1, limit: 20 }))).toBe('ok');
+    expect(await codeOf(moderator.getCsamReportsStats())).toBe('ok');
+    expect(
+      await codeOf(moderator.clearUnconfirmedOpen({ ...clear(), moderatorId: 99 } as never))
+    ).toBe('ok');
+    expect(clearUnconfirmedOpens).toHaveBeenCalledWith(
+      expect.objectContaining({ ...clear(), moderatorId: 5 })
+    );
   });
 });

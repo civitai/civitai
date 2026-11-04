@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { isGeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
+import { GENERATOR_EVIDENCE_VERSION } from '~/server/services/generator-evidence/evidence-meta';
 import { CsamReportType } from '~/shared/utils/prisma/enums';
 
 export const evidenceViewActivity = (blobId: string) => `generatorEvidence:view:${blobId}` as const;
@@ -41,23 +41,31 @@ export async function getViewedEvidence(
       rows.flatMap(({ entityId }) => (entityId && entityId !== report.id ? [entityId] : []))
     ),
   ];
+  const prefix = evidenceViewActivity('');
   const earlierSha = new Map<string, string>();
   if (earlierIds.length) {
-    const earlier = await dbWrite.csamReport.findMany({
-      where: { id: { in: earlierIds } },
-      select: { id: true, details: true },
-    });
-    for (const { id, details } of earlier) {
-      if (!isGeneratorEvidenceDetails(details)) continue;
-      for (const job of details.generatedImages)
-        for (const blob of job.blobs)
-          if (blob.status === 'preserved' && blob.sha256)
-            earlierSha.set(`${id}|${blob.blobId}`, blob.sha256);
-    }
+    const viewedBlobIds = [...new Set(rows.map(({ activity }) => activity.slice(prefix.length)))];
+    // Only the viewed files' hashes: an earlier report's details also hold its whole activity log.
+    const earlier = await dbWrite.$queryRaw<{ id: number; blobId: string; sha256: string }[]>`
+      SELECT r.id, b->>'blobId' AS "blobId", b->>'sha256' AS sha256
+      FROM "CsamReport" r
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(r.details->'generatedImages') = 'array'
+          THEN r.details->'generatedImages' ELSE '[]'::jsonb END
+      ) j
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(j->'blobs') = 'array' THEN j->'blobs' ELSE '[]'::jsonb END
+      ) b
+      WHERE r.id = ANY(${earlierIds}::int[])
+        AND r.details->'generatorEvidence'->'version' = to_jsonb(${GENERATOR_EVIDENCE_VERSION}::int)
+        AND b->>'status' = 'preserved'
+        AND b->>'blobId' = ANY(${viewedBlobIds}::text[])
+        AND coalesce(b->>'sha256', '') <> ''
+    `;
+    for (const { id, blobId, sha256 } of earlier) earlierSha.set(`${id}|${blobId}`, sha256);
   }
 
   const shaOf = new Map(blobs.map(({ blobId, sha256 }) => [blobId, sha256]));
-  const prefix = evidenceViewActivity('');
   for (const { activity, userId, entityId } of rows) {
     const blobId = activity.slice(prefix.length);
     if (entityId !== report.id) {

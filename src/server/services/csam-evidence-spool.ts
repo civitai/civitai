@@ -84,8 +84,9 @@ export async function spooledFile({ path: file, filename, type }: SpooledFile) {
 }
 
 /**
- * A URL's body written to `file`, typed as the response says, or null for an error response. A
- * request that fails, or a body cut short, throws.
+ * A URL's body written to `file`, or null for an error response. A URL ending in .mp4, .jpg or .jpeg
+ * is typed by that extension, any other as the response says. A request that fails, or a body cut
+ * short, throws.
  */
 export async function spoolUrl(url: string, file: string, budget: SpoolBudget) {
   const response = await fetch(url, {

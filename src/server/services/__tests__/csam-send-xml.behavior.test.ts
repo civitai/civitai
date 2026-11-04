@@ -1,5 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { PGlite } from '@electric-sql/pglite';
+import fs from 'fs';
 import JSZip from 'jszip';
 import { Readable } from 'stream';
 import { Parser } from 'xml2js';
@@ -649,6 +650,39 @@ describe('a report whose files pass what one send may write', () => {
     refused();
   });
 
+  it('waits for every fetch before giving up, and starts none once past it', async () => {
+    let slowAnswered = false;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      if (String(input) === 'blob-big') return new Response(new Uint8Array(CAP + 1));
+      if (String(input) !== 'blob-slow') return new Response(new Uint8Array(8));
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          slowAnswered = true;
+          controller.enqueue(new Uint8Array(8));
+          controller.close();
+        },
+      });
+      return new Response(body);
+    });
+
+    await processCsamReport(
+      report('GeneratedImage', {
+        generatedImages: [
+          { jobId: 'job-1', blobs: [{ url: 'blob-big' }] },
+          { jobId: 'job-2', blobs: [{ url: 'blob-slow' }] },
+          { jobId: 'job-3', blobs: [{ url: 'blob-late' }] },
+        ],
+      })
+    );
+
+    expect(slowAnswered).toBe(true);
+    expect(vi.mocked(globalThis.fetch).mock.calls.map(([url]) => String(url))).not.toContain(
+      'blob-late'
+    );
+    refused();
+  });
+
   it('uploads external files one at a time, since each upload holds its file whole', async () => {
     spoolCap.bytes = undefined;
     serveCsamBucket({
@@ -691,5 +725,58 @@ describe('a report whose files pass what one send may write', () => {
     expect(uploadFile).toHaveBeenCalledTimes(2);
     for (const [{ file }] of uploadFile.mock.calls) expect((file as File).size).toBe(CAP / 2 - 1);
     expect(lines('evidence-too-large')).toEqual([]);
+  });
+});
+
+describe('a downloaded archive', () => {
+  // The send's scratch root, as `isProd` (mocked on) resolves it.
+  const zipsUnder = (scratch: string) => {
+    const root = `${env.DIRNAME || process.cwd()}/csam/${scratch}`;
+    if (!fs.existsSync(root)) return [];
+    return fs
+      .readdirSync(root, { recursive: true })
+      .map(String)
+      .filter((name) => name.endsWith('.zip'));
+  };
+  const uploadsSeeing = (scratch: string, seen: string[][]) =>
+    uploadFile.mockImplementation(async () => {
+      seen.push(zipsUnder(scratch));
+      return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+    });
+
+  it('is off disk before the next archive downloads, and before any upload', async () => {
+    serveCsamBucket({
+      'evidence-key': await zipOf(['a.png']),
+      'supplemental-key': await zipOf(['b.png']),
+    });
+    const seen: string[][] = [];
+    const serve = csamBucketObject.getMockImplementation()!;
+    csamBucketObject.mockImplementation(async (key: string) => {
+      seen.push(zipsUnder('external-send'));
+      return serve(key);
+    });
+    uploadsSeeing('external-send', seen);
+
+    await processCsamReport(
+      report('ExternalLink', {
+        email: 'x@example.invalid',
+        evidence: { bucketKey: 'evidence-key', filename: 'evidence.zip' },
+        supplementalEvidence: { bucketKey: 'supplemental-key', filename: 'chat.zip' },
+      })
+    );
+
+    expect(markedSent()).toBe(true);
+    expect(seen).toEqual([[], [], [], []]);
+  });
+
+  it('of training data is off disk before any upload', async () => {
+    serveTrainingData(await zipOf(['a.png']));
+    const seen: string[][] = [];
+    uploadsSeeing('training-data', seen);
+
+    await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
+
+    expect(markedSent()).toBe(true);
+    expect(seen).toEqual([[]]);
   });
 });

@@ -470,6 +470,42 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
     .filter(isDefined);
 }
 
+/** The scratch roots of the legacy sends, each holding one `<reportId>-<claimId>` directory per run. */
+const SEND_SCRATCH_ROOTS = ['generated-send', 'training-data', 'external-send'];
+const SEND_SCRATCH_NAME = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+/**
+ * Removes the send scratch directories no live claim owns: a run that died never reached its own
+ * cleanup. Run at the start of the send job, before any claim is taken. Archive directories in the
+ * same roots, named by report id alone, are not send directories and are left.
+ */
+export async function sweepStaleSendDirs(root = baseDir) {
+  const found: { path: string; reportId: number; claimId: string }[] = [];
+  for (const scratch of SEND_SCRATCH_ROOTS) {
+    const rootDir = `${root}/${scratch}`;
+    if (!fs.existsSync(rootDir)) continue;
+    for (const name of fs.readdirSync(rootDir)) {
+      const match = SEND_SCRATCH_NAME.exec(name);
+      if (match)
+        found.push({ path: `${rootDir}/${name}`, reportId: Number(match[1]), claimId: match[2] });
+    }
+  }
+  if (!found.length) return [];
+
+  const live = await dbWrite.csamReport.findMany({
+    where: {
+      id: { in: [...new Set(found.map(({ reportId }) => reportId))] },
+      sendClaimId: { not: null },
+      sendClaimedAt: { gte: csamSendClaimCutoff() },
+    },
+    select: { id: true, sendClaimId: true },
+  });
+  const liveDirs = new Set(live.map(({ id, sendClaimId }) => `${id}-${sendClaimId}`));
+  const stale = found.filter(({ reportId, claimId }) => !liveDirs.has(`${reportId}-${claimId}`));
+  for (const { path } of stale) fs.rmSync(path, { recursive: true, force: true });
+  return stale.map(({ path }) => path);
+}
+
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
 export async function processCsamReport(runStart: CsamReportProps) {
   const status = await cybertipClient.getStatus();
@@ -1477,27 +1513,30 @@ async function sendGenerationData(
   // that cannot be fetched is held for and sent without as an image's is.
   const budget = spoolBudget();
   let n = 0;
-  let blobs: { job: CsamReportGeneratedImages; url: string; file: SpooledFile | null }[];
-  try {
-    blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
-      Promise.all(
-        job.blobs.map(async ({ url }) => {
-          const path = `${dir}/file-${n++}`;
-          // An error response is not the file, and a fetch that throws is one that failed. A report
-          // past the cap fails whole.
-          const fetched = await spoolUrl(url, path, budget).catch((e) => {
-            if (e instanceof SpoolLimitError) throw e;
-            return null;
-          });
-          const file = fetched && { path, filename: `${Date.now()}`, type: fetched.type };
-          return { job, url, file };
-        })
-      )
+  // A report past the cap fails whole. No fetch rejects, so every one has settled before the caller
+  // removes `dir`, and none starts once the cap is passed.
+  const cap: { passed?: SpoolLimitError } = {};
+  const blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
+    Promise.all(
+      job.blobs.map(async ({ url }) => {
+        if (cap.passed) return { job, url, file: null };
+        const path = `${dir}/file-${n++}`;
+        // An error response is not the file, and a fetch that throws is one that failed.
+        const fetched = await spoolUrl(url, path, budget).catch((e) => {
+          if (e instanceof SpoolLimitError) cap.passed ??= e;
+          return null;
+        });
+        const file = fetched && { path, filename: `${Date.now()}`, type: fetched.type };
+        return { job, url, file };
+      })
+    )
+  );
+  if (cap.passed)
+    return logSendFailure(
+      report,
+      new Error(spoolLimitMessage(report.id, cap.passed)),
+      'evidence-too-large'
     );
-  } catch (e) {
-    if (!(e instanceof SpoolLimitError)) throw e;
-    return logSendFailure(report, new Error(spoolLimitMessage(report.id, e)), 'evidence-too-large');
-  }
   // One filing can name a URL twice: it is one file, counted and sent once, and a copy that was
   // fetched wins over one whose fetch failed.
   const byUrl = new Map<string, (typeof blobs)[number]>();
@@ -1714,6 +1753,8 @@ async function reportTrainingData(claim: SendClaim) {
       );
       createDir(`${dir}/entries`);
       files = await spoolZip(outPath, `${dir}/entries`, inflated);
+      // Removed once its entries are spooled, so it is not held on disk through the send.
+      fs.rmSync(outPath, { force: true });
     } catch (e) {
       if (e instanceof SpoolLimitError)
         return logSendFailure(
@@ -1845,7 +1886,12 @@ async function sendExternalLink(
     const zipFile = `${dir}/${name}.zip`;
     await downloadCsamBucketObject(key, zipFile);
     createDir(`${dir}/${name}`);
-    return spoolZip(zipFile, `${dir}/${name}`, inflated);
+    // Removed once its entries are spooled, so the next archive is not on disk beside it.
+    try {
+      return await spoolZip(zipFile, `${dir}/${name}`, inflated);
+    } finally {
+      fs.rmSync(zipFile, { force: true });
+    }
   };
   let evidenceFiles: SpooledFile[] = [];
   let supplementalFiles: SpooledFile[] = [];
