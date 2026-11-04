@@ -16,6 +16,7 @@ export const POST: RequestHandler = async ({ locals }) => {
 
   const moderator = await getOrProduceSessionUser(modId);
   if (!moderator) error(404, 'moderator not found');
+  if (moderator.bannedAt || moderator.deletedAt) error(403, 'moderator account is not active');
 
   const token = await mintUserSession(moderator, {
     parent: locals.session,

@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // Exit hands back the moderator's own session in the same family, and leaves the hub's own cookie alone.
 
 const h = vi.hoisted(() => ({
+  getOrProduceSessionUser: vi.fn(async (id: number): Promise<Record<string, unknown>> => ({ id })),
   mintUserSession: vi.fn(async () => 'mod-token'),
   setSessionCookie: vi.fn(),
   trackImpersonation: vi.fn(),
@@ -13,7 +14,7 @@ vi.mock('$lib/server/auth/session', () => ({
   setSessionCookie: h.setSessionCookie,
 }));
 vi.mock('$lib/server/auth/session-producer', () => ({
-  getOrProduceSessionUser: async (id: number) => ({ id }),
+  getOrProduceSessionUser: h.getOrProduceSessionUser,
 }));
 vi.mock('$lib/server/auth/mod-activity', () => ({ trackImpersonation: h.trackImpersonation }));
 
@@ -34,5 +35,22 @@ describe('POST /api/auth/impersonate/exit', () => {
     );
     expect(h.setSessionCookie).not.toHaveBeenCalled();
     expect(h.trackImpersonation).toHaveBeenCalledWith(100, 200, 'off');
+  });
+
+  it('403s and mints nothing when the impersonating moderator is no longer active', async () => {
+    h.mintUserSession.mockClear();
+    h.getOrProduceSessionUser.mockResolvedValueOnce({ id: 100, bannedAt: new Date('2026-01-01') });
+    const session = { sub: '200', jti: 'j', sid: 'family-m', impersonatedBy: 100 };
+    const status = await Promise.resolve(
+      POST({
+        cookies: {},
+        locals: { user: { id: 200 }, impersonatedBy: 100, session },
+      } as never)
+    ).then(
+      (r) => r.status,
+      (e: { status: number }) => e.status
+    );
+    expect(status).toBe(403);
+    expect(h.mintUserSession).not.toHaveBeenCalled();
   });
 });
