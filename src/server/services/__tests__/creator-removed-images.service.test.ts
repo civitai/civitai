@@ -145,25 +145,31 @@ describe('getMyRemovedImages', () => {
     expect(comparable(2)).toStrictEqual(comparable(3));
   });
 
-  it('lists an owner the appeal flow excludes exactly as it lists anyone else', async () => {
+  it('lists an owner the appeal flow excludes like anyone else, with no appeal', async () => {
     const setup = {
       events: [
+        { imageId: 3, removedAt: 3 },
         { imageId: 2, removedAt: 2 },
         { imageId: 1, removedAt: 1 },
       ],
-      states: [{ imageId: 1 }, { imageId: 2 }],
+      // 3 is an ordinary removal no appeal is offered for: blocked by a scan, not a moderator.
+      states: [{ imageId: 1 }, { imageId: 2 }, { imageId: 3, blockedFor: 'tos' }],
     };
     given(setup);
     const normal = await getMyRemovedImages(USER, EARLY);
     given({ ...setup, excludedOwners: [USER] });
     const excluded = await getMyRemovedImages(USER, EARLY);
 
-    expect(normal.items.map((i) => i.imageId)).toEqual([2, 1]);
-    expect(excluded).toEqual(normal);
-    const ownerLookups = dbMock.dbWrite.$queryRaw.mock.calls.filter((call) =>
-      sqlOf(call).sql.includes('"UserReport"')
-    );
-    expect(ownerLookups).toEqual([]);
+    expect(normal.items.map((i) => i.canAppeal)).toEqual([false, true, true]);
+    expect(excluded.items.map((i) => i.imageId)).toEqual([3, 2, 1]);
+    expect(excluded.total).toBe(normal.total);
+    const comparable = (item: (typeof excluded.items)[number]) => ({
+      ...item,
+      imageId: 0,
+      removedAt: null,
+    });
+    for (const item of excluded.items)
+      expect(comparable(item)).toStrictEqual(comparable(normal.items[0]));
   });
 
   it('leaves out a removal it could not check', async () => {

@@ -575,6 +575,25 @@ describe('an image a CSAM report names, against Postgres', () => {
     expect(await isImageAppealRefused({ imageId: 1003, userId: 71 })).toBe(false);
     expect(await canAppealOwnImage({ imageId: 1003, userId: 71 })).toBe(true);
   });
+
+  // 21 is filed on and 23 reported for the reason; neither is held. 71 is the control owner.
+  it('refuses an ordinary moderator block of an owner the appeal flow excludes', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "needsReview" text;
+      INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
+        (7001, 21, 'moderated'), (7002, 23, 'moderated'), (7003, 71, 'moderated');
+    `);
+
+    for (const [imageId, userId] of [
+      [7001, 21],
+      [7002, 23],
+    ]) {
+      expect(await isImageAppealRefused({ imageId, userId })).toBe(true);
+      expect(await canAppealOwnImage({ imageId, userId })).toBe(false);
+    }
+    expect(await isImageAppealRefused({ imageId: 7003, userId: 71 })).toBe(false);
+    expect(await canAppealOwnImage({ imageId: 7003, userId: 71 })).toBe(true);
+  });
 });
 
 // A decided appeal shows the same prompt (which then says the decision stands) whether or not the

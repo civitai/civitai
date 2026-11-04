@@ -125,10 +125,11 @@ beforeEach(() => {
 
   // The image row the appeal flags; refusing a flagged image is image-appeal-review-flag's subject.
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
-  // No hold marker on the owner or the image (one row per image asked about), and no report names it.
+  // No hold marker on the owner or the image (one row per image asked about), and the appeal flow
+  // excludes neither the image nor its owner.
   dbMock.dbWrite.$queryRaw.mockImplementation(((sql: TemplateStringsArray, ...values: unknown[]) =>
     Promise.resolve(
-      sql.join('').includes('"CsamReport"')
+      /"CsamReport"|"UserReport"/.test(sql.join(''))
         ? []
         : ((values.find(Array.isArray) ?? []) as number[]).map((id) => ({ id, blocked: false }))
     )) as never);

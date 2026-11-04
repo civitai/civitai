@@ -105,7 +105,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   const imageIds = events.map((e) => Number(e.imageId));
   const [states, excludedIds] = await Promise.all([
     getImageStates(userId, imageIds),
-    getAppealExcludedIds({ imageIds, userIds: [] }),
+    getAppealExcludedIds({ imageIds, userIds: [userId] }),
   ]);
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
@@ -131,6 +131,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
       state.owned &&
       isAppealableImage(state) &&
       !excludedIds.images.has(id) &&
+      !excludedIds.users.has(userId) &&
       !holdBlocked.has(id) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));

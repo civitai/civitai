@@ -1210,8 +1210,7 @@ export async function getAppealExcludedIds({
           )
         `
       : [],
-    userIds.length
-      ? dbWrite.$queryRaw<{ id: number }[]>`
+    dbWrite.$queryRaw<{ id: number }[]>`
       SELECT c.id FROM unnest(${userIds}::int[]) AS c(id)
       WHERE EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = c.id)
         OR EXISTS (
@@ -1221,8 +1220,7 @@ export async function getAppealExcludedIds({
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
         -- A hold marker's kept image reads as a moderator block, so an appeal would tip them off.
         OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c.id)
-    `
-      : [],
+    `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
 }
@@ -1261,9 +1259,9 @@ export async function isAppealBlockedByHoldMarker({
 }
 
 /**
- * Whether an appealable-looking image is refused anyway: a hold marker keeps it, or a CSAM report
- * names it. Used by the appeal endpoint and the owner's image page. getMyRemovedImages composes the
- * same two checks by hand, so change them together.
+ * Whether an appealable-looking image is refused anyway: a hold marker keeps it, or the appeal flow
+ * excludes the image or its owner. Used by the appeal endpoint and the owner's image page.
+ * getMyRemovedImages composes the same checks by hand, so change them together.
  */
 export async function isImageAppealRefused({
   imageId,
@@ -1274,15 +1272,15 @@ export async function isImageAppealRefused({
 }) {
   const [held, excluded] = await Promise.all([
     isAppealBlockedByHoldMarker({ imageId, userId }),
-    getAppealExcludedIds({ imageIds: [imageId], userIds: [] }),
+    getAppealExcludedIds({ imageIds: [imageId], userIds: [userId] }),
   ]);
-  return held || excluded.images.has(imageId);
+  return held || excluded.images.has(imageId) || excluded.users.has(userId);
 }
 
 /**
- * Whether the owner's page shows the appeal prompt, in the order `createEntityAppealHandler`
- * refuses on. An image whose appeal was already decided shows it, and the prompt then says the
- * decision stands, as the endpoint would. Anyone else's image reads as no.
+ * Whether the owner's page shows the appeal prompt. An image whose appeal was already decided shows
+ * it; the prompt then says the decision stands, as the endpoint's refusal does. Anyone else's image
+ * reads as no.
  */
 export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
   const [image] = await dbWrite.$queryRaw<

@@ -170,12 +170,17 @@ describe('the removed-images list', () => {
     expect(comparable(held)).toStrictEqual(comparable(ordinary));
   });
 
-  it('lists an owner a CSAM report names exactly as before the report', async () => {
+  it('lists an owner a CSAM report names as before the report, with no appeal', async () => {
     const before = await getMyRemovedImages(OWNER, NOW);
     await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`);
 
+    const after = await getMyRemovedImages(OWNER, NOW);
+
     expect(before.items.some((i) => i.canAppeal)).toBe(true);
-    expect(await getMyRemovedImages(OWNER, NOW)).toStrictEqual(before);
+    expect(after).toStrictEqual({
+      ...before,
+      items: before.items.map((i) => ({ ...i, canAppeal: false })),
+    });
   });
 
   // A hold's kept image stays refused until it is purged or released, even after the hold ends.
