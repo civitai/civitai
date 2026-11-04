@@ -1834,7 +1834,12 @@ export const updateCollectionCoverImage = async ({
     throw throwAuthorizationError('You do not have permission to manage this collection');
   }
 
-  await assertImageVisibleToViewer({ id: imageId, userId, isModerator });
+  await assertImageVisibleToViewer({
+    id: imageId,
+    userId,
+    isModerator,
+    confirmBlockOnPrimary: true,
+  });
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },

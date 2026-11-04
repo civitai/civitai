@@ -1,5 +1,15 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
+
+const { getCached } = vi.hoisted(() => ({
+  getCached: vi.fn(async (): Promise<{ id: number; username: string }[]> => []),
+}));
+
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof UserPreferences>();
+  return { ...actual, BlockedByUsers: { ...actual.BlockedByUsers, getCached } };
+});
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -37,6 +47,7 @@ function arrangeCollection({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getCached.mockResolvedValue([]);
 });
 
 describe('updateCollectionCoverImage authorization', () => {
@@ -68,5 +79,29 @@ describe('updateCollectionCoverImage authorization', () => {
         data: { image: { connect: { id: IMAGE_ID } } },
       })
     );
+  });
+
+  it('refuses an image whose owner has blocked the manager, even before the cache knows', async () => {
+    const BLOCKER = 4_321;
+    arrangeCollection();
+    // The permissions read keeps the collection row; the next read is the image's visibility.
+    const collectionRow = vi.mocked(mockDbRead.$queryRaw).getMockImplementation();
+    mockDbRead.$queryRaw
+      .mockImplementationOnce(collectionRow!)
+      .mockResolvedValueOnce([{ id: IMAGE_ID, userId: BLOCKER, nsfwLevel: 1, postId: null }]);
+    // The block is on the primary only; the cache and the replica have not caught up.
+    mockDbRead.userEngagement.findFirst.mockResolvedValue(null);
+    mockDbWrite.userEngagement.findFirst.mockResolvedValue({
+      userId: BLOCKER,
+      targetUserId: OWNER_ID,
+      type: 'Block',
+    } as never);
+
+    await expect(
+      updateCollectionCoverImage({
+        input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
   });
 });

@@ -345,6 +345,18 @@ export const updateUserProfile = async ({
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });
 
+  // A cover with no `id` is created from its client url below. Checked before any write, so a
+  // refused cover leaves the whole save unapplied.
+  const newCoverUrls = [coverImage, sfwCoverImage].map((image) =>
+    image && !image.id ? image.url : null
+  );
+  await assertClientImageUrlsUsable({ urls: newCoverUrls, userId });
+  await assertClientKeysIssuedToCaller({
+    urls: newCoverUrls,
+    userId,
+    alsoIssuedTo: sessionUserId,
+  });
+
   // We can safely update creatorCardStatsPreferences out of the transaction as it's not critical
   if (creatorCardStatsPreferences) {
     // Parameterised: the payload is bound, not spliced into a string literal.
@@ -365,16 +377,6 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
-  // A cover with no `id` is created from its client url below.
-  const newCoverUrls = [coverImage, sfwCoverImage].map((image) =>
-    image && !image.id ? image.url : null
-  );
-  await assertClientImageUrlsUsable({ urls: newCoverUrls, userId });
-  await assertClientKeysIssuedToCaller({
-    urls: newCoverUrls,
-    userId,
-    alsoIssuedTo: sessionUserId,
-  });
   const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
     image !== undefined && !image?.id
       ? image === null
