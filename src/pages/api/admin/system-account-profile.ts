@@ -2,6 +2,7 @@ import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
+import { MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
 import { resemblesReservedModerationUsername } from '~/server/auth/moderation-account';
 import {
   systemAccountRefusal,
@@ -10,6 +11,7 @@ import {
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { chatDmPolicy } from '~/server/schema/chat.schema';
+import { foldConfusables } from '~/server/utils/confusable-fold';
 import { displayName } from '~/server/schema/moderator/user';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { forceUpdateUserIdentity, patchUserSettings } from '~/server/services/user.service';
@@ -22,17 +24,26 @@ import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
 
 const SYSTEM_ACTOR_ID = -1;
 
-// Lookalikes the shared fold misses: NFKC turns lunate sigma into Σ, and the strip below would
-// delete the bar-like ones outright.
-const LUNATE_SIGMA = /[\u03F2\u03F9]/gu;
-const EXTRA_I_LOOKALIKES = /[\u00A1\u01C0\u01C3\u2223\u2502\u2758\uFFE8]/gu;
-const DIGIT_LOOKALIKES: Record<string, string> = {
-  '0': 'o',
-  '3': 'e',
-  '4': 'a',
-  '5': 's',
-  '7': 't',
-};
+const RESERVED_NAME = MODERATION_ACCOUNT_USERNAME.toLowerCase();
+
+// After folding, any character that isn't a plain letter may stand for any letter of the reserved
+// name: listing lookalikes one by one never ends. Capped at a third so a name of only digits or
+// symbols isn't refused for its length alone.
+function masksReservedName(value: string) {
+  const form = Array.from(
+    foldConfusables(value)
+      .replace(/[\s\p{M}\p{Pc}\p{Pd}.\u00B7]/gu, '')
+      .replace(/[1l]/g, 'i')
+  );
+  if (form.length !== RESERVED_NAME.length) return false;
+  let wildcards = 0;
+  for (const [i, char] of form.entries()) {
+    if (char === RESERVED_NAME[i]) continue;
+    if (/[a-z]/.test(char)) return false;
+    wildcards++;
+  }
+  return wildcards <= Math.floor(RESERVED_NAME.length / 3);
+}
 
 const schema = z
   .object({
@@ -46,13 +57,8 @@ const schema = z
       .refine(
         (value) =>
           !resemblesReservedModerationUsername(
-            value
-              .replace(LUNATE_SIGMA, 'c')
-              .normalize('NFKC')
-              .replace(/[03457]/g, (d) => DIGIT_LOOKALIKES[d])
-              .replace(EXTRA_I_LOOKALIKES, 'i')
-              .replace(/[^\p{L}\p{N}|!]/gu, '')
-          ),
+            value.normalize('NFKC').replace(/[^\p{L}\p{N}|!]/gu, '')
+          ) && !masksReservedName(value),
         'name is reserved'
       )
       .optional(),

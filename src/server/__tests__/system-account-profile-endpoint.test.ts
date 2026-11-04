@@ -168,6 +168,10 @@ describe('POST /api/admin/system-account-profile', () => {
     ['symbol-for-letter', 'C|vitai Moderation'],
     ['zero-for-o', 'Civitai M0derati0n'],
     ['digits-for-letters', 'C1v174i Mod3r4tion'],
+    ['box-drawing-bar-for-i', 'C\u2503vitai Moderation'],
+    ['Cyrillic-yi-for-i', 'C\u0457vitai Moderation'],
+    ['Greek-iota-dialytika-for-i', 'C\u03CAvitai Moderation'],
+    ['mixed l and 0', 'Clvitai M0deration'],
     ['capital lunate sigma', '\u03F9ivitai Moderation'],
     ['divides-sign-for-i', 'C\u2223vitai Moderation'],
     ['inverted-exclamation-for-i', 'C\u00A1vitai Moderation'],
@@ -179,6 +183,11 @@ describe('POST /api/admin/system-account-profile', () => {
       body: expect.stringContaining('name is reserved'),
     });
     expect(wrote()).toBe(0);
+  });
+
+  it('admits a name of only digits as long as the reserved one', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: '12345678901234567' });
+    expect(status).toBe(200);
   });
 
   it('admits a name that only shares words with the reserved one', async () => {
