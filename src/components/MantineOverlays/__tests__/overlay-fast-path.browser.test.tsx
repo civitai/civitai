@@ -445,6 +445,28 @@ describe.each([
   });
 });
 
+// Each wrapper re-exposes Mantine's statics through `defineLazyStatics`, from a string list, and is
+// exported cast to Mantine's type: a key missing from that list still typechecks, but reads
+// `undefined` at runtime (`<Tooltip.Group>` then throws "Element type is invalid"). The keys are
+// written out here, not read from the wrappers, so dropping one from a list fails this test.
+describe.each<[string, () => unknown, string[]]>([
+  ['Tooltip', () => Tooltip, ['Group', 'Floating', 'classes', 'extend', 'withProps']],
+  ['Popover', () => Popover, ['extend']],
+  ['Menu', () => Menu, ['extend', 'withProps', 'classes', 'Item', 'Label', 'Divider']],
+  ['HoverCard', () => HoverCard, ['extend']],
+])("%s mirrors Mantine's statics", (name, wrapper, keys) => {
+  test.each(keys)("%s is Mantine's own reference", async (key) => {
+    const Mantine = (await import('@mantine/core')) as unknown as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const own = Mantine[name][key];
+    // Control: Mantine has the static, so the identity below cannot pass as undefined === undefined.
+    expect(own, `Mantine.${name}.${key}`).toBeDefined();
+    expect((wrapper() as unknown as Record<string, unknown>)[key], `${name}.${key}`).toBe(own);
+  });
+});
+
 function IdProbe({ name }: { name: string }) {
   const id = React.useId();
   return <i data-probe={name} data-id={id} />;
