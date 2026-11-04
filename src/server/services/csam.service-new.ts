@@ -69,6 +69,7 @@ import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import {
   isAwaitingEvidenceApproval,
   isGeneratorEvidenceDetails,
@@ -217,6 +218,35 @@ export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
 const baseDir = `${isProd && env.DIRNAME ? env.DIRNAME : process.cwd()}/csam`;
 
 const IMAGES_ARCHIVE_MANIFEST_NAME = 'manifest.json';
+
+/** Each file of a report filed with preserved generator evidence, once, by blob id. */
+function uniqueEvidenceBlobs(details: unknown): StoredEvidenceBlob[] {
+  if (!isGeneratorEvidenceDetails(details)) return [];
+  const byId = new Map<string, StoredEvidenceBlob>();
+  for (const job of details.generatedImages)
+    for (const blob of job.blobs) {
+      // The same file can appear in more than one job; the occurrence holding a copy wins.
+      const seen = byId.get(blob.blobId);
+      if (!seen || (!seen.evidenceKey && blob.evidenceKey)) byId.set(blob.blobId, blob);
+    }
+  return [...byId.values()];
+}
+
+/** The files that have a preserved copy, a moderator-excluded one included: its copy is retained. */
+const preservedEvidenceBlobs = (details: unknown) =>
+  uniqueEvidenceBlobs(details).filter((blob) => !!blob.evidenceKey);
+
+const zipSafeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'unnamed';
+
+/** One file of `generated-images.zip`'s manifest, for a report filed with preserved evidence. */
+type PreservedArchiveRecord = {
+  blobId: string;
+  source: 'preserved' | 'missing';
+  sha256?: string;
+  bytes?: number;
+  contentType?: string;
+  reason?: string;
+};
 
 export async function getImageResources({ ids }: GetImageResourcesOutput) {
   return await dbRead.imageResourceHelper.findMany({
@@ -2926,6 +2956,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     ];
     const appendedUrls = new Set<string>();
     let entries = 0;
+    // A report filed with preserved generator evidence names its files by the copy kept in the
+    // evidence store (`evidenceKey`), not by a URL, so the URL list above never sees them.
+    const preserved = preservedEvidenceBlobs(report.details);
+    const appendedBlobIds = new Set<string>();
 
     const stored = await archiveAndUpload({
       userId,
@@ -2934,7 +2968,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       stream: streamArchivesToStorage,
       // Known upfront here, unlike `archiveImages` — no extra round trip needed. This is an upper
       // bound: a URL whose fetch returns nothing is skipped, so the real archive can be smaller.
-      expectedBytes: imageUrls.length * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+      expectedBytes: (imageUrls.length + preserved.length) * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
       append: async (boundedArchive) => {
         // concurrency limiter
         const limit = plimit(10);
@@ -2958,6 +2992,49 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             });
           })
         );
+
+        if (!isGeneratorEvidenceDetails(report.details)) return;
+        // One file at a time: a verified read holds the whole file until it is appended.
+        const manifest: PreservedArchiveRecord[] = [];
+        for (const blob of preserved) {
+          const read = await readVerifiedEvidence(blob, streamEvidenceObject, MAX_EVIDENCE_BYTES);
+          if (!read.ok) {
+            // A copy that no longer matches what was recorded will never match: archive the rest
+            // and say so. Anything else (a storage read failing) is retried with the report.
+            if (!read.shaMismatch && !read.overLimit)
+              throw new Error(`preserved file ${blob.blobId} could not be read: ${read.reason}`);
+            manifest.push({ blobId: blob.blobId, source: 'missing', reason: read.reason });
+            continue;
+          }
+          const name = `evidence/${zipSafeName(blob.blobId)}.${extensionForContentType(
+            read.contentType
+          )}`;
+          let written!: () => void;
+          const done = new Promise<void>((resolve) => (written = resolve));
+          await boundedArchive.append(
+            Readable.fromWeb(read.body.stream() as NodeReadableStream<Uint8Array>),
+            { name },
+            () => written()
+          );
+          await done;
+          entries += 1;
+          appendedBlobIds.add(blob.blobId);
+          manifest.push({
+            blobId: blob.blobId,
+            source: 'preserved',
+            sha256: blob.sha256,
+            bytes: read.body.size,
+            contentType: read.contentType,
+          });
+        }
+        // Files the report names but holds no copy of, listed so the archive shows every one.
+        for (const blob of uniqueEvidenceBlobs(report.details))
+          if (!blob.evidenceKey)
+            manifest.push({ blobId: blob.blobId, source: 'missing', reason: blob.status });
+        await boundedArchive.append(Buffer.from(JSON.stringify({ files: manifest }, null, 2)), {
+          name: IMAGES_ARCHIVE_MANIFEST_NAME,
+        });
+        entries += 1;
       },
     });
 
@@ -2965,8 +3042,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       kind: 'generatedImages',
       ...stored,
       entries,
-      namedExpected: namedUrls.size,
-      namedMissing: [...namedUrls].filter((url) => !appendedUrls.has(url)).length,
+      namedExpected: namedUrls.size + preserved.length,
+      namedMissing:
+        [...namedUrls].filter((url) => !appendedUrls.has(url)).length +
+        preserved.filter((blob) => !appendedBlobIds.has(blob.blobId)).length,
     });
   }
 
