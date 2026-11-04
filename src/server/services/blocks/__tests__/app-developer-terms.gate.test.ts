@@ -3,40 +3,26 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
 
-const accepted = vi.hoisted(() => new Set<string>());
-const db = vi.hoisted(() => ({
-  pubReqFindFirst: vi.fn(),
-  pubReqUpdateMany: vi.fn(),
-  pubReqUpdate: vi.fn(),
-  pubReqCreate: vi.fn(),
-  appBlockFindUnique: vi.fn(),
-}));
+const accepted = new Set<string>();
+const termsFindUnique = async ({
+  where,
+}: {
+  where: { userId_version: { userId: number; version: string } };
+}) => {
+  const { userId, version } = where.userId_version;
+  return accepted.has(`${userId}:${version}`) ? { userId, acceptedAt: new Date() } : null;
+};
+const db = {
+  pubReqFindFirst: dbMock.dbWrite.appBlockPublishRequest.findFirst,
+  pubReqUpdateMany: dbMock.dbWrite.appBlockPublishRequest.updateMany,
+  pubReqUpdate: dbMock.dbWrite.appBlockPublishRequest.update,
+  pubReqCreate: dbMock.dbWrite.appBlockPublishRequest.create,
+  appBlockFindUnique: dbMock.dbRead.appBlock.findUnique,
+};
 
-vi.mock('~/server/db/client', () => {
-  const termsFindUnique = async ({
-    where,
-  }: {
-    where: { userId_version: { userId: number; version: string } };
-  }) => {
-    const { userId, version } = where.userId_version;
-    return accepted.has(`${userId}:${version}`) ? { userId, acceptedAt: new Date() } : null;
-  };
-  const appDeveloperTermsAcceptance = { findUnique: termsFindUnique };
-  return {
-    dbRead: { appDeveloperTermsAcceptance, appBlock: { findUnique: db.appBlockFindUnique } },
-    dbWrite: {
-      appDeveloperTermsAcceptance,
-      appBlockPublishRequest: {
-        findFirst: db.pubReqFindFirst,
-        updateMany: db.pubReqUpdateMany,
-        update: db.pubReqUpdate,
-        create: db.pubReqCreate,
-      },
-    },
-  };
-});
 vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://civitai.com' } }));
 const listingOwner = vi.hoisted(() => ({ id: 0 }));
 // Hand-listed: the real module needs a database at load, and this is its only export reached here.
@@ -50,6 +36,10 @@ const OWNER = 7;
 beforeEach(() => {
   accepted.clear();
   vi.clearAllMocks();
+  dbMock.dbRead.appDeveloperTermsAcceptance.findUnique.mockImplementation(termsFindUnique as never);
+  dbMock.dbWrite.appDeveloperTermsAcceptance.findUnique.mockImplementation(
+    termsFindUnique as never
+  );
   db.pubReqFindFirst.mockResolvedValue(null);
   db.appBlockFindUnique.mockResolvedValue({ app: { userId: OWNER } });
 });
