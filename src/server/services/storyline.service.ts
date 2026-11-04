@@ -1883,11 +1883,11 @@ async function assertStorylinePicks(
 }
 
 /**
- * A lowered ceiling may not drop below chapter 1's rating: that would tombstone the story's
- * opening for every reader. Later chapters may fall above it and are hidden. When chapter 1 is
- * gone, taken down, blocked or not yet rated there is nothing to keep, so any valid ceiling is
- * accepted. Only lowering is checked, so an owner whose chapter 1 was re-rated upwards can still
- * raise the ceiling towards it.
+ * A lowered ceiling may not drop below chapter 1's rating, nor below the spark image's: the first
+ * would tombstone the story's opening for every reader, the second would drop its credited source.
+ * Later chapters may fall above it and are hidden. When chapter 1 or the spark is gone, taken
+ * down, blocked or not yet rated it holds no floor. Only lowering is checked, so an owner whose
+ * chapter 1 or spark was re-rated upwards can still raise the ceiling towards it.
  */
 async function assertCeilingKeepsFloor(storylineId: number, maxNsfwLevel: number) {
   // The primary: the write that follows must not be judged on a replica's older rating.
