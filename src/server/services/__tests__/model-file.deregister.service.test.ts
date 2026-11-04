@@ -198,7 +198,7 @@ const deleteSql = () => {
 
 // Decision (2026-10-18): a dataset under review or denied stays on record; only a moderator may
 // remove it.
-describe('deleteFile — a dataset under review or denied', () => {
+describe('deleteFile — a dataset awaiting an epoch pick, under review or denied', () => {
   it.each(['Denied', 'Paused'])(
     'refuses the owner on a %s run, and deletes nothing',
     async (status) => {
@@ -212,6 +212,18 @@ describe('deleteFile — a dataset under review or denied', () => {
     }
   );
 
+  // Without its dataset a finished run with no epoch picked is lost, even once another version of
+  // the model is published.
+  it('refuses the owner on an InReview run of a published model, and deletes nothing', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'InReview' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+      "Training data for a training run that hasn't been published yet can't be deleted."
+    );
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+  });
+
   // The status can change between the check and the DELETE, so the DELETE carries it too; a NULL
   // status must not make the condition NULL and drop the row.
   it("repeats the check inside an owner's DELETE, NULL-safe", async () => {
@@ -221,9 +233,9 @@ describe('deleteFile — a dataset under review or denied', () => {
 
     const { sql, values } = deleteSql();
     expect(sql.replace(/\s+/g, ' ')).toContain(
-      `AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (?,?))`
+      `AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (?,?,?))`
     );
-    expect(values).toEqual([FILE_ID, 'Paused', 'Denied']);
+    expect(values).toEqual([FILE_ID, 'Paused', 'Denied', 'InReview']);
   });
 
   it("leaves a moderator's DELETE without the check", async () => {

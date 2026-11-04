@@ -654,10 +654,8 @@ function FileCard({
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
       removeFile(versionFile.uuid);
     },
-    onError() {
-      showErrorNotification({
-        error: new Error('Could not delete file, please try again'),
-      });
+    onError(error) {
+      showErrorNotification({ title: 'Could not delete file', error: new Error(error.message) });
     },
   });
 

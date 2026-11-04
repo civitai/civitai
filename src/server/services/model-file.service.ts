@@ -464,7 +464,13 @@ function fileOwnerSql(id: number, userId?: number) {
   `;
 }
 
-const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
+// InReview: the run finished but no epoch is picked yet; without its dataset the run is lost.
+// Only the owner is held off: the training-data purge job still removes it 30 days after the run.
+const ownerLockedDatasetStatuses: TrainingStatus[] = [
+  TrainingStatus.Paused,
+  TrainingStatus.Denied,
+  TrainingStatus.InReview,
+];
 
 export async function deleteFile({
   id,
@@ -492,15 +498,19 @@ export async function deleteFile({
 
   if (!file) throw throwNotFoundError();
 
-  // A dataset under review, or denied, stays on record for moderators; only they may remove it.
+  // A dataset awaiting an epoch pick, under review, or denied stays on record; only moderators may
+  // remove it.
+  const trainingStatus = file.modelVersion.trainingStatus;
   if (
     file.type === 'Training Data' &&
-    file.modelVersion.trainingStatus &&
-    reviewedDatasetStatuses.includes(file.modelVersion.trainingStatus) &&
+    trainingStatus &&
+    ownerLockedDatasetStatuses.includes(trainingStatus) &&
     !isModerator
   )
     throw throwBadRequestError(
-      "Training data for a training run under review or denied can't be deleted."
+      trainingStatus === TrainingStatus.InReview
+        ? "Training data for a training run that hasn't been published yet can't be deleted. Publish this version first."
+        : "Training data for a training run under review or denied can't be deleted."
     );
 
   const modelStatus = file.modelVersion.model.status;
@@ -527,12 +537,12 @@ export async function deleteFile({
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
     AND NOT ${modelRowHeldSql()}
     ${
-      // Repeats the check above at delete time, in case the run was moved to review in between.
+      // Repeats the check above at delete time, in case the run reached one of those statuses in between.
       isModerator
         ? Prisma.empty
         : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
           Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
-            reviewedDatasetStatuses
+            ownerLockedDatasetStatuses
           )}))`
     }
     RETURNING
