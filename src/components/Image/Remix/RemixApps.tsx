@@ -10,6 +10,7 @@ import {
   IconPencil,
   IconSparkles,
 } from '@tabler/icons-react';
+import { getQueryKey } from '@trpc/react-query';
 import { useMemo } from 'react';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -22,7 +23,7 @@ import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { showErrorNotification } from '~/utils/notifications';
-import { trpc, trpcVanilla } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 
 export const CONFIRMED_KEY = 'remix-apps:confirmed';
 
@@ -78,6 +79,13 @@ async function submitRemixApp(
 ) {
   try {
     await trpcVanilla.remixApp.run.mutate({ slug: app.slug, imageId, nonce });
+    // The queue's status signals skip a workflow it has never listed, so it must refetch.
+    queryClient
+      .invalidateQueries({
+        queryKey: getQueryKey(trpc.orchestrator.queryGeneratedImages),
+        exact: false,
+      })
+      .catch(() => null);
     showNotification({
       icon: <IconCheck size={18} />,
       color: 'teal',

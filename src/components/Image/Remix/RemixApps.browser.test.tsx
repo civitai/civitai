@@ -46,29 +46,36 @@ vi.mock('@mantine/modals', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  const original = await importOriginal<{ trpc: { orchestrator: unknown } }>();
   return {
-    ...(await importOriginal<object>()),
-    trpc: makeTrpcProxy({
-      'remixApp.quote': {
-        useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
-          h.quoteEnabled.push(opts.enabled);
-          const quote = h.quote ?? {
-            isLoading: false,
-            prices: [{ slug: 'anime-it', cost: 25, ready: true }],
-          };
-          return {
-            data: opts.enabled && quote.prices ? { prices: quote.prices } : undefined,
-            isLoading: quote.isLoading,
-            isError: false,
-          };
+    ...original,
+    trpc: makeTrpcProxy(
+      {
+        'remixApp.quote': {
+          useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
+            h.quoteEnabled.push(opts.enabled);
+            const quote = h.quote ?? {
+              isLoading: false,
+              prices: [{ slug: 'anime-it', cost: 25, ready: true }],
+            };
+            return {
+              data: opts.enabled && quote.prices ? { prices: quote.prices } : undefined,
+              isLoading: quote.isLoading,
+              isError: false,
+            };
+          },
         },
       },
-    }),
+      // The real router, so the queue's query key is the one the generator caches under.
+      { orchestrator: original.trpc.orchestrator }
+    ),
     trpcVanilla: { remixApp: { run: { mutate: h.run } } },
   };
 });
 
 import { Menu } from '@mantine/core';
+import { getQueryKey } from '@trpc/react-query';
+import { queryClient, trpc } from '~/utils/trpc';
 import { RemixAppsSection } from '~/components/Image/Remix/RemixApps';
 import { RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import type { RemixSourceImage } from '~/components/Image/Remix/remix.utils';
@@ -258,5 +265,28 @@ describe('Remix apps in the Remix menu', () => {
       renderWithProviders(lastConfirm().children);
       await expect.element(page.getByText('for 25 Buzz')).toBeInTheDocument();
     });
+  });
+
+  test('a started run refetches the generation queue, so the new job shows', async () => {
+    localStorage.setItem('remix-apps:confirmed', '1');
+    const queueKey = getQueryKey(
+      trpc.orchestrator.queryGeneratedImages,
+      { ascending: false },
+      'infinite'
+    );
+    queryClient.setQueryData(queueKey, {
+      pages: [{ items: [], nextCursor: null }],
+      pageParams: [],
+    });
+    const invalidated = () => queryClient.getQueryState(queueKey)?.isInvalidated;
+    // POSITIVE CONTROL: the seeded list is live, so a refetch mark can only come from the run.
+    expect(invalidated()).toBe(false);
+
+    renderMenu(video);
+    await page.getByRole('button', { name: 'Remix' }).click();
+    await page.getByRole('menuitem', { name: firstApp.name }).click();
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(invalidated()).toBe(true));
+    queryClient.removeQueries({ queryKey: queueKey });
   });
 });
