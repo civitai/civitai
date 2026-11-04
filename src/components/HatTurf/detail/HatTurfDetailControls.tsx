@@ -11,7 +11,7 @@ import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import classes from '~/components/HatTurf/detail/HatTurfDetailControls.module.css';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
-import { badgeLeader, orderedTeams } from '~/components/HatTurf/hat-turf.utils';
+import { badgeLeader, teamStandings } from '~/components/HatTurf/hat-turf.utils';
 import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -237,9 +237,9 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
 
   const counted = summary?.counted ?? {};
   const leader = summary ? badgeLeader(summary) : null;
-  const teams = orderedTeams(counted)
-    .filter((team) => (counted[team] ?? 0) > 0)
-    .sort((a, b) => (counted[b] ?? 0) - (counted[a] ?? 0) || a.localeCompare(b));
+  const teams = teamStandings({ counted, leader: summary?.leader ?? null }, null)
+    .rows.filter((row) => row.count > 0)
+    .map((row) => row.team);
   const color = (team: string) => teamColor(team) ?? FALLBACK;
   const activeIndex = hats?.findIndex((hat) => hat.cosmeticId === cosmeticId) ?? -1;
   const activeName =

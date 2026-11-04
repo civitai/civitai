@@ -282,6 +282,27 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-stats')!.textContent).toMatch(/Blue/);
   });
 
+  test('the badge card ranks teams like the feed popover: most hats first, ties by name, none at 0', async () => {
+    const counted = { pink: 2, blue: 2, green: 3, yellow: 0 };
+    render({
+      images: {
+        9: { shown: counted, counted, leader: 'green', leaderCosmeticId: 11, hatted: false },
+      },
+    });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-stats')).not.toBeNull());
+    const rows = [...document.body.querySelectorAll('[data-testid="hat-turf-detail-team"]')].map(
+      (row) => row.textContent
+    );
+    const names = ['Blue', 'Green', 'Pink', 'Yellow'];
+    expect(rows.map((row) => names.find((name) => row?.startsWith(name)))).toEqual([
+      'Green',
+      'Blue',
+      'Pink',
+    ]);
+  });
+
   test('a hat-protected image shows its hats muted', async () => {
     render({
       images: {

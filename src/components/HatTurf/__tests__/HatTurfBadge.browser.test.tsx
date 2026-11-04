@@ -41,12 +41,14 @@ vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtilsModule>()),
   useTrackEvent: () => ({ trackAction }),
 }));
+// The viewer's assigned arm; each test sets it to match the feed arm it renders.
+const assigned = vi.hoisted(() => ({ variant: 'control' }));
 vi.mock('~/components/Experiments/useExperiment', async (importOriginal) => ({
   ...(await importOriginal<typeof UseExperimentModule>()),
   useExperiment: (_key: string, opts?: { enabled?: boolean }) =>
     opts?.enabled === false
       ? { ready: false, variant: undefined, assignment: undefined }
-      : { ready: true, variant: 'control', assignment: 'rule' },
+      : { ready: true, variant: assigned.variant, assignment: 'rule' },
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
@@ -180,6 +182,7 @@ afterEach(() => {
   trackAction.mockClear();
   onCardClick.mockClear();
   resetExperimentExposuresForTests();
+  assigned.variant = 'control';
   localStorage.removeItem('experiment-exposures');
   document.documentElement.removeAttribute('data-mantine-color-scheme');
 });
@@ -278,6 +281,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
   test.each(['control', 'badge-popover'] as const)(
     '%s arm: logs one exposure from the badge, even on a card with no hat button',
     async (arm) => {
+      assigned.variant = arm;
       renderCard({ feed: feedWith({ 1: standing() }, 'pink', arm, { 1: false }) });
       await vi.waitFor(() => expect(badge()).not.toBeNull());
       expect(document.body.querySelector('[data-testid="hat-turf-button"]')).toBeNull();
@@ -287,7 +291,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
             type: 'Experiment_Exposure',
             details: {
               exp: 'hatTurfFeedCard',
-              variant: 'control',
+              variant: arm,
               assignment: 'rule',
               surface: 'feed-card',
             },
