@@ -345,9 +345,16 @@
     .stats {
       gap: 8px;
     }
-    .wide,
-    .rank-name {
+    .wide {
       display: none;
+    }
+    /* The level pill keeps its rank (design: "12 Knight"); on the narrowest phones it truncates instead of pushing the avatar off. */
+    .rank-name {
+      min-width: 0;
+      max-width: 7ch;
+      overflow: hidden;
+      font-size: 12px;
+      text-overflow: ellipsis;
     }
   }
 </style>

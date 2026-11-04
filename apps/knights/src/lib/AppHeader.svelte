@@ -352,8 +352,8 @@
   @media (max-width: 40rem) {
     header {
       height: 52px;
-      gap: 8px;
-      padding: 0 16px;
+      gap: 6px;
+      padding: 0 12px;
     }
     .brand {
       gap: 8px;
@@ -368,8 +368,8 @@
     }
     .wordmark {
       display: inline;
-      font-size: 14px;
-      letter-spacing: 1px;
+      font-size: 13px;
+      letter-spacing: 0.5px;
     }
     .trigger {
       min-width: 44px;
