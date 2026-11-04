@@ -5036,6 +5036,25 @@ describe('a storyline started from an image', () => {
         spark({ post: { publishedAt: new Date(0), availability: 'Private', tosViolation: false } }),
       ],
       ['by a banned account', spark({ user: { bannedAt: new Date(), deletedAt: null } })],
+      ['by a deleted account', spark({ user: { bannedAt: null, deletedAt: new Date() } })],
+      [
+        'scheduled',
+        spark({
+          post: {
+            publishedAt: new Date(Date.now() + 86_400_000),
+            availability: 'Public',
+            tosViolation: false,
+          },
+        }),
+      ],
+      [
+        'on a taken-down post',
+        spark({ post: { publishedAt: new Date(0), availability: 'Public', tosViolation: true } }),
+      ],
+      ['an acceptable minor', spark({ acceptableMinor: true })],
+      ['blocked at ingestion', spark({ ingestion: 'Blocked' })],
+      ['failed at ingestion', spark({ ingestion: 'Error' })],
+      ['missing at ingestion', spark({ ingestion: 'NotFound' })],
     ])('refuses an image that is %s', async (_name, image) => {
       w.image.findUnique.mockResolvedValue(image as never);
       await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.cannotUse });

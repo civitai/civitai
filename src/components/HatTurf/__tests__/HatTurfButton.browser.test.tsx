@@ -354,10 +354,27 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
   });
 
-  test('no button when the image cannot take a hat (owner not opted in)', async () => {
+  test('joined: no button on an image that cannot take a hat (owner not opted in)', async () => {
     renderCard({ open: { 77: false } });
     await cardRendered();
     expect(q('hat-turf-button')).toBeNull();
+  });
+
+  test('not joined: an image whose owner has not joined still offers Join', async () => {
+    h.stock = { available: 3, optedIn: false };
+    renderCard({ open: { 77: false } });
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    expect(q('hat-turf-stock')!.textContent).toBe('+');
+    await press();
+    const join = await vi.waitFor(() => {
+      const button = [...document.body.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Join Hat Turf'
+      );
+      expect(button).toBeDefined();
+      return button as HTMLElement;
+    });
+    join.click();
+    expect(h.optIn).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: true });
   });
 
   test('no button when signed out', async () => {

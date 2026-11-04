@@ -7,6 +7,9 @@
  *   POST /api/admin/nc-earnings-notice
  *   Body: { "action": "<action>", "notice": "nc-recent" | "nc-older", ...params }
  *
+ * Sends are paced (NOTICE_MIN_INTERVAL_MS in notice-ledger.service) and one call sends at most
+ * `count` (max 100), so send a larger audience in several calls.
+ *
  * Actions:
  *   send      - {userIds, date, dryRun?, count?, batchSize?}  Notify up to `count` not-yet-sent
  *               creators. dryRun defaults to TRUE (counts only); pass `"dryRun": false` to send.
@@ -20,7 +23,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isEmailConfigured } from '~/server/email/client';
 import { ncEarningsNoticeEmail } from '~/server/email/templates/ncEarningsNotice.email';
-import { sysRedis } from '~/server/redis/client';
+import { countNoticeSent, removeNoticeSent } from '~/server/services/notice-ledger.service';
 import { ncEarningsNoticeSchema as schema } from '~/server/schema/nc-earnings-notice.schema';
 import {
   ncEarningsNoticeLedger,
@@ -59,11 +62,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       return res.status(200).json({ sent: input.email });
     }
     case 'sent': {
-      const all = await sysRedis.hGetAll(key);
-      return res.status(200).json({ sent: Object.keys(all).length });
+      return res.status(200).json({ sent: await countNoticeSent(key) });
     }
     case 'unmark': {
-      const removed = await sysRedis.hDel(key, String(input.userId));
+      const removed = await removeNoticeSent(key, input.userId);
       return res.status(200).json({ removed });
     }
   }

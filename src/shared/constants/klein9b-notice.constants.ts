@@ -6,7 +6,8 @@ export type Klein9bNoticeVariant = 'charged' | 'uncharged';
 
 export const KLEIN9B_NOTICE_BASE_MODELS = ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'];
 
-export const KLEIN9B_NOTICE_URL = '/user/account';
+export const getKlein9bNoticeUrl = (username: string | null) =>
+  username ? `/user/${encodeURIComponent(username)}/models` : '/user/account';
 
 export const KLEIN9B_NOTICE: Record<
   Klein9bNoticeVariant,
@@ -15,7 +16,7 @@ export const KLEIN9B_NOTICE: Record<
   charged: {
     subject: 'Your paid Flux.2 Klein 9B models are no longer for sale',
     message:
-      'Flux.2 Klein 9B is licensed for non-commercial use only, so your paid Flux.2 Klein 9B versions can no longer be bought or charge a generation fee. You can make them free, unpublish them, or leave them as they are. Tap for details.',
+      'Flux.2 Klein 9B is licensed for non-commercial use only, so your paid Flux.2 Klein 9B versions can no longer be bought or charge a generation fee. You can make them free, unpublish them, or leave them as they are.',
     markdown: `Hi {username},
 
 Flux.2 Klein 9B and Flux.2 Klein 9B-base are released by Black Forest Labs under the FLUX Non-Commercial License v2.1, which doesn't allow charging for models built on them. As of {date}, here's what has changed for your versions on these base models:
@@ -40,7 +41,7 @@ The Civitai Team`,
   uncharged: {
     subject: 'Generation earnings have stopped on your Flux.2 Klein 9B models',
     message:
-      'Flux.2 Klein 9B is licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your Flux.2 Klein 9B models. They stay published and free to use. Tap for details.',
+      'Flux.2 Klein 9B is licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your Flux.2 Klein 9B models. They stay published and free to use.',
     markdown: `Hi {username},
 
 Flux.2 Klein 9B and Flux.2 Klein 9B-base are released by Black Forest Labs under the FLUX Non-Commercial License v2.1, which doesn't allow earning from models built on them. As of {date}:

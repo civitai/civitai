@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   leave: vi.fn(),
   removed: null as null | (() => void),
   remove: vi.fn(),
+  takenDown: false,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
@@ -33,7 +34,7 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
     leave: mocks.leave,
     chapterIdOfImage: (imageId: number) => 99 + imageId,
     path: {
-      storyline: { id: 2, userId: OWNER, tosViolation: false },
+      storyline: { id: 2, userId: OWNER, tosViolation: mocks.takenDown },
       chapters: [
         { chapterId: 100, depth: 0, childCount: 2, post: { id: 500, title: 'One', userId: OWNER } },
         {
@@ -80,6 +81,7 @@ beforeEach(() => {
   mocks.leave.mockReset();
   mocks.removed = null;
   mocks.remove.mockReset();
+  mocks.takenDown = false;
 });
 
 describe('Remove from storyline in the reader', () => {
@@ -123,6 +125,17 @@ describe('Remove from storyline in the reader', () => {
     await expect
       .element(item)
       .toHaveTextContent("Chapter 1 can't be removed. Delete the storyline");
+  });
+
+  // Its owner can't delete a taken-down storyline, so it must not send them looking for Delete.
+  test('for chapter 1 of a taken-down storyline, does not point to deleting it', async () => {
+    mocks.currentUser = { id: OWNER };
+    mocks.takenDown = true;
+    renderItem(1);
+    const item = page.getByRole('menuitem', { name: /Remove from storyline/ });
+    await expect.element(item).toBeDisabled();
+    await expect.element(item).toHaveTextContent("Chapter 1 can't be removed");
+    expect(document.body.textContent).not.toContain('Delete the storyline');
   });
 
   test('for a chapter someone paid to add, is disabled for the owner and says why', async () => {

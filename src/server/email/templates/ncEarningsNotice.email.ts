@@ -1,9 +1,5 @@
 import { escape as escapeHtml } from 'he';
-import { unified } from 'unified';
-import remarkBreaks from 'remark-breaks';
-import remarkParse from 'remark-parse';
-import remarkRehype from 'remark-rehype';
-import rehypeStringify from 'rehype-stringify';
+import { renderNoticeMarkdown } from '~/server/email/notice-markdown';
 import { createEmail } from '~/server/email/templates/base.email';
 import { simpleEmailWithTemplate } from '~/server/email/templates/util';
 import type { NcEarningsNotice } from '~/shared/constants/nc-earnings-notice.constants';
@@ -44,19 +40,7 @@ export function getNcEarningsNoticeHtml({
     baseModels,
     versions.length > 0
   );
-  const html = String(
-    unified()
-      .use(remarkParse)
-      .use(remarkBreaks)
-      .use(remarkRehype)
-      .use(rehypeStringify)
-      .processSync(markdown)
-  ).replace(
-    // Email clients drop <style> blocks, so lists are styled inline.
-    /<(ul|ol)>/g,
-    (_, tag: string) => `<${tag} style="margin: 8px 0 8px 20px; padding: 0;">`
-  );
-  return html
+  return renderNoticeMarkdown(markdown)
     .replace(/\{versions\}/g, () => versions.map((v) => escapeHtml(v)).join(', '))
     .replace(/\{username\}/g, () => escapeHtml(username))
     .replace(/\{date\}/g, () => escapeHtml(date));

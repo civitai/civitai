@@ -42,6 +42,7 @@ import {
 } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { RemixGalleryMenuItems } from '~/components/RemixGallery/RemixGalleryMenuItems';
+import { StartStorylineFromImageMenuItem } from '~/components/Storyline/StartStorylineFromImageMenuItem';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -147,6 +148,21 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
         isOwner={!!isOwner}
         published={!!image.publishedAt}
       />
+      {isImage && image.type === 'image' && (
+        <StartStorylineFromImageMenuItem
+          image={{
+            id: imageId,
+            url: image.url,
+            type: image.type,
+            nsfwLevel: image.nsfwLevel,
+            hash: image.hash,
+            width: image.width,
+            height: image.height,
+            userId: _userId,
+            username: user?.username ?? null,
+          }}
+        />
+      )}
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">

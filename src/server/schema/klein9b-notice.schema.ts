@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { noticeSendFields } from '~/server/schema/notice-send.schema';
 
 const variant = z.enum(['charged', 'uncharged']);
 const date = z.string().min(3).max(40);
@@ -6,9 +7,7 @@ export const klein9bNoticeSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('send'),
     date,
-    dryRun: z.boolean().default(true),
-    count: z.coerce.number().int().min(1).max(1000).default(50),
-    batchSize: z.coerce.number().int().min(1).max(50).default(25),
+    ...noticeSendFields,
   }),
   z.object({
     action: z.literal('send-test'),
