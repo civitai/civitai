@@ -27,15 +27,20 @@ export type RankBadgeUrls = { small: Record<string, string>; large: Record<strin
 const SMALL_PX = 48;
 const LARGE_PX = 450;
 const TTL_MS = 10 * 60_000;
+const FAILURE_BACKOFF_MS = 60_000;
 let held: { at: number; urls: RankBadgeUrls } | undefined;
+let failedAt: number | undefined;
+const EMPTY = (): RankBadgeUrls => ({ small: {}, large: {} });
 
 /**
  * Badge image addresses at two sizes, resolved the way the leaderboard does (a Trophy cosmetic's `data.url` key through
  * the CDN). Held in this process for ten minutes since cosmetics rarely change, and never throws: on a failed read the
- * pages show the crest.
+ * pages show the crest (or the last urls read), and the read is not retried for a minute so a degraded database is not hit
+ * by every page load.
  */
 export async function rankBadgeUrls(db: Kysely<DB>, now = Date.now()): Promise<RankBadgeUrls> {
   if (held && now - held.at < TTL_MS) return held.urls;
+  if (failedAt !== undefined && now - failedAt < FAILURE_BACKOFF_MS) return held?.urls ?? EMPTY();
   try {
     const rows = await db
       .selectFrom('Cosmetic')
@@ -50,9 +55,11 @@ export async function rankBadgeUrls(db: Kysely<DB>, now = Date.now()): Promise<R
       urls.large[rank] = imageUrl(key, LARGE_PX);
     }
     held = { at: now, urls };
+    failedAt = undefined;
     return urls;
   } catch (error) {
     console.error('knights: could not read the rank badges', { error });
-    return held?.urls ?? { small: {}, large: {} };
+    failedAt = now;
+    return held?.urls ?? EMPTY();
   }
 }
