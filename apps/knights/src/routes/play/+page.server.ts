@@ -17,6 +17,7 @@ import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
+import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -129,10 +130,11 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       : null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
-  const [picked, daily, recap] = await Promise.all([
+  const [picked, daily, recap, rail] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
+    railFor(locals.user.id, now),
   ]);
   const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
@@ -144,6 +146,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     ...common,
     daily,
     recap,
+    rail,
     resetPending,
     conversionOpen,
     lockoutSeconds,

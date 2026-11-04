@@ -5,6 +5,7 @@ const getApprentice = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const getRecap = vi.hoisted(() => vi.fn());
+const railFor = vi.hoisted(() => vi.fn());
 const dismissRecap = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
@@ -23,6 +24,7 @@ vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
+vi.mock('$lib/server/rail-runtime', () => ({ railFor }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus, getRecap, dismissRecap }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/smites/smites.service', () => ({
@@ -80,6 +82,8 @@ beforeEach(() => {
   getDailyStatus.mockResolvedValue({ votes: 3 });
   getRecap.mockReset();
   getRecap.mockResolvedValue(null);
+  railFor.mockReset();
+  railFor.mockResolvedValue({ standing: null, activity: null });
   dismissRecap.mockReset();
   pickHiddenCheck.mockReset();
   pickHiddenCheck.mockResolvedValue(null);
@@ -249,6 +253,22 @@ describe('play load', () => {
       now: NOW,
     });
     expect(getRecap).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
+  });
+
+  it("gives a Knight the rail: board position, gap and the Order's activity, read at the injected clock", async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
+    const rail = { standing: { position: 14, total: 312, gap: 38 }, activity: 1240 };
+    railFor.mockResolvedValue(rail);
+
+    expect((await run()).rail).toEqual(rail);
+    expect(railFor).toHaveBeenCalledWith(7, NOW);
+  });
+
+  it('reads no rail for the apprenticeship, which has no board', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    expect((await run()).rail).toBeUndefined();
+    expect(railFor).not.toHaveBeenCalled();
   });
 
   it('keeps the daily loop off the apprenticeship page', async () => {

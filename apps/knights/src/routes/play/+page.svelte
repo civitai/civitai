@@ -19,7 +19,8 @@
   import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
-    import { answerForKey, answerForKeyPress } from './keys';
+  import PlayRail from './PlayRail.svelte';
+  import { answerForKey, answerForKeyPress } from './keys';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
@@ -497,6 +498,8 @@
     />
   {/if}
 
+  <div class="body">
+  <div class="main">
   {#if data.notices.length > 0}
     <section class="toast" role="status" aria-label="Sanity check">
       <Icon name="triangle-alert" size={18} />
@@ -643,6 +646,11 @@
     {@render levelToast(false)}
     <QueueClear daily={data.daily} />
   {/if}
+  </div>
+  {#if data.mode === 'queue'}
+    <PlayRail status={data.status} daily={data.daily} rail={data.rail} ladder={data.ladder} />
+  {/if}
+  </div>
   {/if}
 </div>
 
@@ -684,6 +692,20 @@
     flex: 1 1 auto;
     flex-direction: column;
     min-height: 0;
+  }
+  /* The image column, and from 1200px the single right rail beside it. */
+  .body {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  .main {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
