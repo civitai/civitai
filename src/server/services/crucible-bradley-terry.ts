@@ -158,18 +158,18 @@ export function usesBradleyTerryRanking(
 async function fetchJudgeVotes(crucibleId: number): Promise<JudgeVote[]> {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const rows = await clickhouse.$query<JudgeVote>`
-    SELECT userId, winnerEntryId, loserEntryId
+    SELECT judgeId AS userId, winner AS winnerEntryId, loser AS loserEntryId
     FROM (
       SELECT
-        userId,
-        any(winnerEntryId) AS winnerEntryId,
-        any(loserEntryId) AS loserEntryId,
+        userId AS judgeId,
+        any(winnerEntryId) AS winner,
+        any(loserEntryId) AS loser,
         min(createdAt) AS votedAt
       FROM crucible_votes
       WHERE crucibleId = ${crucibleId}
       GROUP BY userId, least(winnerEntryId, loserEntryId), greatest(winnerEntryId, loserEntryId)
     )
-    ORDER BY userId, votedAt
+    ORDER BY judgeId, votedAt
   `;
   return rows.map((row) => ({
     userId: Number(row.userId),

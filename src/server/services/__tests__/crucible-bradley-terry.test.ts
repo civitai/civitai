@@ -155,12 +155,20 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
   it('counts every judge when there are more than one batch of them', async () => {
     const judges = Array.from({ length: 250 }, (_, i) => i + 1);
     redisMock.sysRedis.sMembers.mockResolvedValue(judges.map(String));
-    redisMock.sysRedis.sCard.mockResolvedValue(1);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    redisMock.sysRedis.sCard.mockImplementation(async () => {
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight--;
+      return 1;
+    });
     chQuery.mockResolvedValue(
       judges.map((userId) => ({ userId, winnerEntryId: 1, loserEntryId: 2 }))
     );
     expect(await fit(), 'fit over 250 judges').not.toBeNull();
     expect(redisMock.sysRedis.sCard).toHaveBeenCalledTimes(250);
+    expect(maxInFlight, 'SCARDs in flight at once').toBe(100);
   });
 
   it('falls back to Elo when Redis is unreachable', async () => {
