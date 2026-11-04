@@ -14,17 +14,16 @@ import { renderWithProviders } from '../../../../test/component-setup';
 vi.mock('~/components/Image/Detail/ImageDetailModal', async () => {
   const { createElement } = await import('react');
   const { useBrowserRouter } = await import('~/components/BrowserRouter/BrowserRouterProvider');
-  return {
-    default: ({ imageId, images }: { imageId: number; images?: { id: number }[] }) => {
-      const { query } = useBrowserRouter();
-      return createElement('div', {
-        'data-testid': 'detail',
-        'data-image-id': String(query.imageId ?? imageId),
-        'data-list': images?.length ?? 0,
-        'data-sheet': query.active ? 'expanded' : 'collapsed',
-      });
-    },
-  };
+  function Detail({ imageId, images }: { imageId: number; images?: { id: number }[] }) {
+    const { query } = useBrowserRouter();
+    return createElement('div', {
+      'data-testid': 'detail',
+      'data-image-id': String(query.imageId ?? imageId),
+      'data-list': images?.length ?? 0,
+      'data-sheet': query.active ? 'expanded' : 'collapsed',
+    });
+  }
+  return { default: Detail };
 });
 vi.mock('~/hooks/useCurrentUser', async (o) => ({
   ...(await o<object>()),
