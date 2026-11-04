@@ -344,6 +344,20 @@ describe('Hat Turf on image detail', () => {
     expect(toneAt(30, 30)).toBe('lead');
   });
 
+  test("the viewer's own-hat dot sits on the cone, not off in the hat's padding", async () => {
+    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
+    render({}, 900);
+    await vi.waitFor(() => expect(hats().length).toBe(4));
+    const own = [...hats()].find((hat) => hat.querySelector('i'))!;
+    const svg = own.querySelector('svg')!.getBoundingClientRect();
+    const dot = own.querySelector('i')!.getBoundingClientRect();
+    // The cone's bottom-right corner in TeamHat's 24-unit viewBox is (18, 17).
+    const cornerX = svg.left + (svg.width * 18) / 24;
+    const cornerY = svg.top + (svg.height * 17) / 24;
+    expect(Math.abs(dot.left + dot.width / 2 - cornerX)).toBeLessThan(4);
+    expect(Math.abs(dot.top + dot.height / 2 - cornerY)).toBeLessThan(4);
+  });
+
   test('past the draw cap a "more" button asks for the next hats', async () => {
     h.stickers = Array.from({ length: 12 }, (_, i) => sticker(i + 1, 'blue', 0.1 + i * 0.07, 0.5));
     render({
