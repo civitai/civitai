@@ -65,6 +65,8 @@ export function useGetAnnouncementsAsNotifications({
               type: 'announcement',
               category: 'announcement' as any,
               createdAt: announcement.startsAt,
+              // Announcements are not paged, so they carry no list cursor position.
+              cursorAt: '',
               read: announcement.dismissed,
               details: {
                 url: announcement.metadata?.actions?.[0]?.link,
