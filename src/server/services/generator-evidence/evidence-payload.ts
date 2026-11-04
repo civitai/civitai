@@ -15,6 +15,22 @@ export type EvidenceFile = { job: StoredEvidenceJob; blob: StoredEvidenceBlob };
  * The preserved files a send uploads, inputs first: a possible real photo is the most urgent. A file
  * that any workflow of the report produced is that output, wherever else it was used as an input.
  */
+/** One CyberTip must finish sending inside the send job's run lock. */
+export const MAX_EVIDENCE_FILES_PER_REPORT = 1_000;
+
+/** Why the report can never be sent as it stands, or null. */
+export function evidenceSizeProblem(details: GeneratorEvidenceDetails) {
+  const count = evidenceFilesToSend(details).length;
+  if (count <= MAX_EVIDENCE_FILES_PER_REPORT) return null;
+  return `This report holds ${count.toLocaleString(
+    'en-US'
+  )} files to send; one report can send at most ${MAX_EVIDENCE_FILES_PER_REPORT.toLocaleString(
+    'en-US'
+  )}. Exclude files until it holds ${MAX_EVIDENCE_FILES_PER_REPORT.toLocaleString(
+    'en-US'
+  )} or fewer; splitting a larger report is not available yet.`;
+}
+
 export function evidenceFilesToSend(details: GeneratorEvidenceDetails): EvidenceFile[] {
   const producers = new Map<string, StoredEvidenceJob>();
   const excluded = new Set<string>();
@@ -132,6 +148,32 @@ export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
 export type VerifiedEvidence =
   | { ok: true; bytes: Uint8Array; contentType?: string }
   | { ok: false; reason: string; shaMismatch?: boolean };
+
+/** Whether the preserved copy still hashes to what was recorded, without holding the file. */
+export async function verifyStoredEvidence(
+  blob: StoredEvidenceBlob,
+  hashObject: (key: string) => Promise<string>
+): Promise<{ ok: true } | { ok: false; reason: string; shaMismatch?: boolean }> {
+  if (!blob.evidenceKey || !blob.sha256) return { ok: false, reason: 'no preserved copy recorded' };
+  if (!blob.contentType || !EVIDENCE_MEDIA_TYPES.has(blob.contentType.toLowerCase()))
+    return {
+      ok: false,
+      reason: `${blob.contentType ?? 'an unknown type'} is not an evidence media type`,
+    };
+  let sha256: string;
+  try {
+    sha256 = await hashObject(blob.evidenceKey);
+  } catch (e) {
+    return { ok: false, reason: `read failed: ${(e as Error).message}` };
+  }
+  if (sha256 !== blob.sha256)
+    return {
+      ok: false,
+      reason: 'the preserved copy no longer matches its sha256',
+      shaMismatch: true,
+    };
+  return { ok: true };
+}
 
 /** The preserved copy, only if it still hashes to what was recorded at preserve time. */
 export async function readVerifiedEvidence(

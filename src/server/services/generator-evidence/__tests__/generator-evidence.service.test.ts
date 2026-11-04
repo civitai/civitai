@@ -30,11 +30,14 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 import {
   approveGeneratorEvidenceReport,
   excludeGeneratorEvidenceFile,
+  getGeneratorEvidenceReport,
   preserveGeneratorEvidence,
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
 import { evidenceVersion } from '~/server/services/generator-evidence/evidence-meta';
+import { MAX_EVIDENCE_FILES_PER_REPORT } from '~/server/services/generator-evidence/evidence-payload';
+import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 
 const config = {
   base: 'https://orchestrator.example.invalid',
@@ -373,6 +376,30 @@ describe('preserveGeneratorEvidence', () => {
       expect(blobs[0].evidenceKey).not.toBe(COPY);
     });
 
+    it("refuses a request over the workflow limit, counting the manifest's, before reading any", async () => {
+      const posted = Array.from(
+        { length: MAX_WORKFLOWS_PER_PRESERVE },
+        (_, i) => `${USER}-202611010000000000${String(i + 1).padStart(2, '0')}`
+      );
+      const store = memoryStore({ [MANIFEST]: Buffer.from(row() + '\n'), [COPY]: bytes });
+
+      await expect(
+        preserveGeneratorEvidence(
+          {
+            userId: USER,
+            moderatorId: 1,
+            workflowIds: posted,
+            triggers: [],
+            manifestKey: MANIFEST,
+          },
+          { config, store }
+        )
+      ).rejects.toThrow(/at most 10 can be preserved at once/);
+      expect(fetched).toEqual([]);
+      expect(store.upload).not.toHaveBeenCalled();
+      expect(createCsamReport).not.toHaveBeenCalled();
+    });
+
     it("refuses another user's manifest", async () => {
       const other = `case-a/${USER + 1}/manifest-20261103T000000Z.jsonl`;
       const store = memoryStore({ [other]: Buffer.from(row({ userId: USER + 1 }) + '\n') });
@@ -441,6 +468,44 @@ describe('preserveGeneratorEvidence', () => {
       await expect(
         approveGeneratorEvidenceReport({ reportId: 3, userId: USER, moderatorId: 1, version: seen })
       ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('a report over the file limit says so on the review page and cannot be approved', async () => {
+      const tooMany = {
+        ...preservedDetails,
+        generatedImages: [
+          {
+            jobId: WORKFLOW,
+            blobs: Array.from({ length: MAX_EVIDENCE_FILES_PER_REPORT + 1 }, (_, i) => ({
+              blobId: `B${i}`,
+              role: 'output',
+              status: 'preserved',
+            })),
+          },
+        ],
+      };
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({
+        id: 3,
+        createdAt: new Date(),
+        reportedById: 1,
+        details: tooMany,
+      } as never);
+      dbMock.dbWrite.modActivity.findMany.mockResolvedValueOnce([] as never);
+      const page = await getGeneratorEvidenceReport(USER, 1);
+      expect(page?.sendProblem).toMatch(
+        /holds 1,001 files to send; one report can send at most 1,000/
+      );
+
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: tooMany }] as never);
+      await expect(
+        approveGeneratorEvidenceReport({
+          reportId: 3,
+          userId: USER,
+          moderatorId: 1,
+          version: evidenceVersion(tooMany as never),
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: page?.sendProblem });
       expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     });
 

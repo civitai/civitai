@@ -35,6 +35,16 @@ export function sha256Hex(bytes: Uint8Array) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+/** The object's sha256, hashed as it streams: the file is never held whole. */
+export async function hashEvidenceObject(key: string) {
+  const { client, Bucket } = evidenceBucket();
+  const res = await client.send(new GetObjectCommand({ Bucket, Key: key }));
+  if (!res.Body) throw new Error('the evidence object has no body');
+  const hash = createHash('sha256');
+  for await (const chunk of res.Body as AsyncIterable<Uint8Array>) hash.update(chunk);
+  return hash.digest('hex');
+}
+
 export function csamEvidenceStore(): EvidenceStore {
   const { client, Bucket } = evidenceBucket();
   return {
@@ -52,12 +62,6 @@ export function csamEvidenceStore(): EvidenceStore {
       const res = await client.send(new HeadObjectCommand({ Bucket, Key: key }));
       return typeof res.ContentLength === 'number' ? { bytes: res.ContentLength } : null;
     },
-    async sha256(key: string) {
-      const res = await client.send(new GetObjectCommand({ Bucket, Key: key }));
-      if (!res.Body) throw new Error('the evidence object has no body');
-      const hash = createHash('sha256');
-      for await (const chunk of res.Body as AsyncIterable<Uint8Array>) hash.update(chunk);
-      return hash.digest('hex');
-    },
+    sha256: hashEvidenceObject,
   };
 }

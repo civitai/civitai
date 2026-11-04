@@ -68,6 +68,7 @@ import { supplementalReportText } from '~/server/services/csam-supplemental-text
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
+import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import {
   isAwaitingEvidenceApproval,
   isGeneratorEvidenceDetails,
@@ -77,9 +78,15 @@ import {
   evidenceFileDetails,
   evidenceFilesToSend,
   evidenceReportInfo,
+  evidenceSizeProblem,
   readVerifiedEvidence,
+  verifyStoredEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
-import { readEvidenceObject, sha256Hex } from '~/server/services/generator-evidence/evidence-store';
+import {
+  hashEvidenceObject,
+  readEvidenceObject,
+  sha256Hex,
+} from '~/server/services/generator-evidence/evidence-store';
 import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
 import { fileDetailsXmlProblem, reportXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
@@ -1014,8 +1021,8 @@ function logNoFiles(claim: SendClaim, message: string) {
 }
 
 /** Sends files two at a time; once one fails, none still queued goes to the CyberTip being cancelled. */
-function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>) {
-  const limit = plimit(2);
+function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>, concurrency = 2) {
+  const limit = plimit(concurrency);
   const started: Promise<unknown>[] = [];
   const sent = Promise.all(
     items.map((item) =>
@@ -1564,14 +1571,21 @@ async function reportPreservedEvidence(claim: SendClaim) {
   const files = evidenceFilesToSend(details);
   if (!files.length)
     return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+  if (evidenceSizeProblem(details))
+    return logSendFailure(
+      report,
+      new Error(`report ${report.id} holds ${files.length} files to send`),
+      'evidence-too-large'
+    );
 
-  // Each file is read again for its upload, so a send holds at most the two files in flight.
-  const reads = await Limiter({ batchSize: 1, limit: 2 }).process(files, ([file]) =>
-    readVerifiedEvidence(file.blob, readEvidenceObject, sha256Hex).then((read) => ({
-      file,
-      read: read.ok ? { ok: true as const } : read,
-    }))
-  );
+  // A report can hold thousands of files: verified by streaming, then uploaded one at a time, so a
+  // send holds at most one file.
+  const reads: {
+    file: (typeof files)[number];
+    read: Awaited<ReturnType<typeof verifyStoredEvidence>>;
+  }[] = [];
+  for (const file of files)
+    reads.push({ file, read: await verifyStoredEvidence(file.blob, hashEvidenceObject) });
   const mismatched = reads.filter(({ read }) => !read.ok && read.shaMismatch);
   if (mismatched.length)
     return logSendFailure(
@@ -1625,24 +1639,28 @@ async function reportPreservedEvidence(claim: SendClaim) {
   let sending: ReturnType<typeof sendEach> | undefined;
   await sendCyberTip(claim, cyberTip, {
     sendFiles: async (reportId) => {
-      sending = sendEach(toSend, async ({ file, viewedByEsp, fileDetails }) => {
-        const read = await readVerifiedEvidence(file.blob, readEvidenceObject, sha256Hex);
-        if (!read.ok)
-          throw new Error(`preserved file ${file.blob.blobId} failed its re-read: ${read.reason}`);
-        const bytes = read.bytes as Uint8Array<ArrayBuffer>;
-        const {
-          data: { fileId, hash },
-        } = await uploadToCyberTip(
-          claim,
-          blobToFile(new Blob([bytes], { type: read.contentType }), file.blob.blobId)
-        );
-        await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetails });
-        return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
-      });
+      sending = sendEach(
+        toSend,
+        async ({ file, viewedByEsp, fileDetails }) => {
+          const {
+            data: { fileId, hash },
+          } = await uploadToCyberTip(claim, await readEvidenceFile(file.blob));
+          await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetails });
+          return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
+        },
+        1
+      );
       return { generatedImageUploads: await sending.sent };
     },
     beforeCancel: async () => sending?.settled(),
   });
+}
+
+/** The verified copy as the File NCMEC's upload takes; the read bytes are not kept past the File's own copy. */
+async function readEvidenceFile(blob: StoredEvidenceBlob) {
+  const read = await readVerifiedEvidence(blob, readEvidenceObject, sha256Hex);
+  if (!read.ok) throw new Error(`preserved file ${blob.blobId} failed its re-read: ${read.reason}`);
+  return new File([read.bytes as Uint8Array<ArrayBuffer>], blob.blobId, { type: read.contentType });
 }
 
 async function reportTrainingData(claim: SendClaim) {

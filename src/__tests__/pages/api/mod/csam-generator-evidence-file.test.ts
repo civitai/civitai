@@ -40,7 +40,7 @@ const BLOB = 'OUTPUT000000001.png';
 const bytes = Buffer.from('preserved bytes');
 const sha = createHash('sha256').update(bytes).digest('hex');
 
-const report = (sha256 = sha) => ({
+const report = (sha256 = sha, blob: Record<string, unknown> = {}) => ({
   details: {
     generatorEvidence: { version: 1 },
     generatedImages: [
@@ -54,6 +54,7 @@ const report = (sha256 = sha) => ({
             evidenceKey: `generator-evidence/1/wf/${BLOB}`,
             sha256,
             contentType: 'image/png',
+            ...blob,
           },
         ],
       },
@@ -63,11 +64,11 @@ const report = (sha256 = sha) => ({
 
 let served: { headers: Record<string, string>; body?: Buffer };
 
-async function get() {
+async function get(blobId = BLOB) {
   const req = Object.assign(new EventEmitter(), {
     method: 'GET',
-    url: `/api/mod/csam/generator-evidence-file?reportId=3&blobId=${BLOB}`,
-    query: { reportId: '3', blobId: BLOB },
+    url: `/api/mod/csam/generator-evidence-file?reportId=3&blobId=${blobId}`,
+    query: { reportId: '3', blobId },
     headers: {},
   }) as unknown as NextApiRequest;
   const res = Object.assign(new EventEmitter(), {
@@ -139,6 +140,20 @@ describe('generator evidence file route', () => {
   it('serves nothing and records no view when the copy no longer matches its sha256', async () => {
     dbMock.dbRead.csamReport.findFirst.mockResolvedValue(report('f'.repeat(64)) as never);
     expect(await get()).toBe(502);
+    expect(served.body).toBeUndefined();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an excluded file', report(sha, { status: 'excluded' }), BLOB, 404],
+    ['a file that was not preserved', report(sha, { status: 'blocked-unreadable' }), BLOB, 404],
+    ['a blob the report does not name', report(), 'OTHER0000000001.png', 404],
+    ['a file that is not media', report(sha, { contentType: 'text/html' }), BLOB, 415],
+    ['a file over the viewing limit', report(sha, { bytes: 64 * 1024 * 1024 + 1 }), BLOB, 413],
+  ])('serves nothing and records no view for %s', async (_name, row, blobId, status) => {
+    dbMock.dbRead.csamReport.findFirst.mockResolvedValue(row as never);
+    expect(await get(blobId)).toBe(status);
+    expect(readEvidenceObject).not.toHaveBeenCalled();
     expect(served.body).toBeUndefined();
     expect(trackModActivity).not.toHaveBeenCalled();
   });

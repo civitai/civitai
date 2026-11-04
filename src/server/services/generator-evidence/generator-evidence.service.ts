@@ -29,6 +29,8 @@ import type {
 } from '~/server/services/generator-evidence/evidence-meta';
 import type { AdoptableCopy } from '~/server/services/generator-evidence/evidence-manifest';
 import { adoptCopy, parseManifest } from '~/server/services/generator-evidence/evidence-manifest';
+import { evidenceSizeProblem } from '~/server/services/generator-evidence/evidence-payload';
+import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 import {
   evidenceVersion,
   GENERATOR_EVIDENCE_VERSION,
@@ -205,6 +207,12 @@ export async function preserveGeneratorEvidence(
       triggers: [...input.triggers, ...manifest.triggers],
     };
   }
+  const workflowCount = new Set(input.workflowIds).size;
+  if (workflowCount > MAX_WORKFLOWS_PER_PRESERVE)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `This request covers ${workflowCount} workflows; at most ${MAX_WORKFLOWS_PER_PRESERVE} can be preserved at once. Preserve them in batches of ${MAX_WORKFLOWS_PER_PRESERVE} or fewer; filing a whole preserve run's manifest larger than that is not available yet.`,
+    });
   const { jobs, refused } = await loadJobs(deps, input);
   if (!jobs.length) return { reportId: null, refused, counts: {} as Record<string, number> };
 
@@ -334,6 +342,7 @@ export async function getGeneratorEvidenceReport(userId: number, viewerId: numbe
     createdAt: report.createdAt,
     version: evidenceVersion(report.details),
     meta: report.details.generatorEvidence,
+    sendProblem: evidenceSizeProblem(report.details),
     jobs: report.details.generatedImages.map((job) => ({
       jobId: job.jobId,
       source: job.source,
@@ -389,6 +398,8 @@ export async function approveGeneratorEvidenceReport(input: {
         code: 'BAD_REQUEST',
         message: 'No file of this report was preserved.',
       });
+    const sendProblem = evidenceSizeProblem(locked.details);
+    if (sendProblem) throw new TRPCError({ code: 'BAD_REQUEST', message: sendProblem });
     const details: GeneratorEvidenceDetails = {
       ...locked.details,
       generatorEvidence: {

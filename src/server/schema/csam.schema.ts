@@ -119,6 +119,9 @@ export const createExternalCsamReportSchema = z.object({
 });
 // #endregion
 
+/** A preserve request reads every workflow and copies every file inside one API call. */
+export const MAX_WORKFLOWS_PER_PRESERVE = 10;
+
 const cyberTipNumber = z.number().int().positive().max(9_999_999_999);
 const priorCTReportsSchema = cyberTipNumber.array().max(20).optional();
 

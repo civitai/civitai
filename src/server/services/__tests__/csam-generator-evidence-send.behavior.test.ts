@@ -36,6 +36,7 @@ const {
   submitReport,
   submitFileDetails,
   readEvidenceObject,
+  hashEvidenceObject,
 } = vi.hoisted(() => ({
   uploadFile: vi.fn(),
   finishReport: vi.fn(),
@@ -44,6 +45,7 @@ const {
   submitReport: vi.fn(),
   submitFileDetails: vi.fn(),
   readEvidenceObject: vi.fn(),
+  hashEvidenceObject: vi.fn(),
 }));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
@@ -80,6 +82,7 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 vi.mock('~/server/services/generator-evidence/evidence-store', async (importOriginal) => ({
   ...(await importOriginal<typeof EvidenceStore>()),
   readEvidenceObject,
+  hashEvidenceObject,
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
@@ -91,6 +94,7 @@ import {
 } from '~/server/services/csam.service-new';
 import {
   EXCLUDED_FILES_NOTICE,
+  MAX_EVIDENCE_FILES_PER_REPORT,
   MAX_GENERATION_LINE_CHARS,
   TRUNCATION_MARKER,
 } from '~/server/services/generator-evidence/evidence-payload';
@@ -244,6 +248,11 @@ beforeEach(() => {
   readEvidenceObject
     .mockReset()
     .mockImplementation(async () => ({ bytes: new Uint8Array(stored) }));
+  // The streamed hash of whatever the store holds now, without counting as a read of the file.
+  hashEvidenceObject.mockReset().mockImplementation(async (key: string) => {
+    const { bytes } = await readEvidenceObject.getMockImplementation()!(key);
+    return createHash('sha256').update(bytes).digest('hex');
+  });
   // A view of the output on THIS report; views of the input on another report or entity, which must not count.
   const views = [
     { entityType: 'csamReport', onThisReport: true, activity: `generatorEvidence:view:${OUTPUT}` },
@@ -367,6 +376,51 @@ describe('sending a report of preserved generator evidence', () => {
     expect(uploadFile).toHaveBeenCalledTimes(2);
     expect(submitFileDetails.mock.calls[0][0].originalFileName).toBe(INPUT);
     expect((await readRow(id)).reportSentAt).not.toBeNull();
+  });
+
+  it('holds at most one file at a time: checked by streaming, then read once for its upload', async () => {
+    let held = 0;
+    let mostHeld = 0;
+    hashEvidenceObject.mockResolvedValue(sha);
+    readEvidenceObject.mockImplementation(async () => {
+      mostHeld = Math.max(mostHeld, ++held);
+      return { bytes: new Uint8Array(stored) };
+    });
+    uploadFile.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      held--;
+      return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+    });
+
+    const id = await sendEvidenceReport(evidenceDetails());
+
+    expect(hashEvidenceObject).toHaveBeenCalledTimes(2);
+    expect(readEvidenceObject).toHaveBeenCalledTimes(2);
+    expect(mostHeld).toBe(1);
+    expect((await readRow(id)).reportSentAt).not.toBeNull();
+  });
+
+  it('opens no CyberTip for a report over the file limit, and reads none of its files', async () => {
+    loggingMock.logToAxiom.mockClear();
+    const details = evidenceDetails();
+    const [output] = details.generatedImages[0].blobs;
+    details.generatedImages.push({
+      ...details.generatedImages[0],
+      jobId: 'more',
+      blobs: Array.from({ length: MAX_EVIDENCE_FILES_PER_REPORT }, (_, i) => ({
+        ...output,
+        blobId: `MORE${String(i).padStart(11, '0')}.png`,
+      })),
+    });
+
+    const id = await sendEvidenceReport(details);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(hashEvidenceObject).not.toHaveBeenCalled();
+    expect((await readRow(id)).reportSentAt).toBeNull();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ subType: 'evidence-too-large', reportId: id })
+    );
   });
 
   it('opens no CyberTip when a preserved copy no longer matches its sha256', async () => {

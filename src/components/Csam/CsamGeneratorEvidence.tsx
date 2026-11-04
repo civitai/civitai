@@ -13,6 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
+import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 import { trpc } from '~/utils/trpc';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -298,11 +299,12 @@ function PendingReport({ userId }: { userId: number }) {
               onChange={(e) => setTips(e.currentTarget.value)}
               error={parsedTips === null ? 'Numbers only, separated by commas' : undefined}
             />
+            {report.sendProblem && <Alert color="red">{report.sendProblem}</Alert>}
             {approve.error && <Alert color="red">{approve.error.message}</Alert>}
             <ConfirmButton
               label="Approve for sending"
               confirmLabel="Confirm: send this report to NCMEC"
-              disabled={parsedTips === null}
+              disabled={parsedTips === null || !!report.sendProblem}
               loading={approve.isPending}
               onConfirm={() =>
                 approve.mutate({
@@ -439,6 +441,12 @@ function AddEvidence({
           onChange={(e) => setTips(e.currentTarget.value)}
           error={parsedTips === null ? 'Numbers only, separated by commas' : undefined}
         />
+        {pickedWorkflows.size > MAX_WORKFLOWS_PER_PRESERVE && (
+          <Alert color="yellow">
+            {pickedWorkflows.size} workflows picked; preserve at most {MAX_WORKFLOWS_PER_PRESERVE}{' '}
+            at once.
+          </Alert>
+        )}
         {preserve.error && <Alert color="red">{preserve.error.message}</Alert>}
         {preserve.data && (
           <Alert color={preserve.data.reportId ? 'green' : 'yellow'}>
@@ -457,7 +465,11 @@ function AddEvidence({
             manifest ? ' and the manifest' : ''
           } to the report`}
           confirmLabel={`Confirm: preserve ${count} item(s)${manifest ? ' and the manifest' : ''}`}
-          disabled={(count === 0 && !manifest) || parsedTips === null}
+          disabled={
+            (count === 0 && !manifest) ||
+            parsedTips === null ||
+            pickedWorkflows.size > MAX_WORKFLOWS_PER_PRESERVE
+          }
           loading={preserve.isPending}
           onConfirm={() =>
             preserve.mutate({
