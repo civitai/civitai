@@ -3,6 +3,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import {
   listRemixApps,
   quoteRemixApps,
+  quoteTeamRemix,
   runRemixApp,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
@@ -34,6 +35,10 @@ export const remixAppRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ imageId }))
     .query(async ({ ctx, input }) => quoteRemixApps({ ...input, caller: await getCaller(ctx) })),
+  teamQuote: remixAppProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId }))
+    .query(async ({ ctx, input }) => quoteTeamRemix({ ...input, caller: await getCaller(ctx) })),
   run: guardedProcedure
     .use(isFlagProtected('remixApps'))
     .meta({ requiredScope: TokenScope.AIServicesWrite })

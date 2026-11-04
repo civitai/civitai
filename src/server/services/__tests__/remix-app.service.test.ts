@@ -14,7 +14,15 @@ const h = vi.hoisted(() => ({
   whatIfFromGraph: vi.fn(async () => ({ cost: { total: 30 }, ready: true })),
   assertInputs: vi.fn(async () => undefined),
   cache: new Map<string, unknown>(),
+  findTeam: vi.fn<
+    (args: { userId: number; hostImageId: number; db: unknown }) => Promise<{
+      event: string;
+      team: string;
+    } | null>
+  >(async () => null),
 }));
+
+vi.mock('~/server/events/team-remix-waiver', () => ({ findTeamRemixTeam: h.findTeam }));
 
 vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageVisibility>()),
@@ -55,16 +63,19 @@ import {
   buildRemixAppRun,
   remixAppExternalId,
   quoteRemixApps,
+  quoteTeamRemix,
   runRemixApp,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
 import {
   getSystemRemixApp,
   SYSTEM_REMIX_APPS,
+  TEAM_REMIX_SLUG,
   type RemixAppDefinition,
 } from '~/shared/constants/remix-apps.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { dbRead, dbWrite } from '~/server/db/client';
 
 const USER_ID = 42;
 const SAFE = 1;
@@ -348,5 +359,69 @@ describe('remixApp.quote', () => {
       await quoteRemixApps({ imageId, caller: who });
       expect(h.whatIfFromGraph.mock.calls.length - before).toBe(perOpen);
     }
+  });
+});
+
+describe('team remix', () => {
+  const joined = (team: string) => h.findTeam.mockResolvedValue({ event: 'party', team });
+  const runTeam = (imageId: number, who = caller()) =>
+    runRemixApp({ slug: TEAM_REMIX_SLUG, imageId, nonce: `nonce-team-${imageId}`, caller: who });
+
+  beforeEach(() => {
+    h.findTeam.mockResolvedValue(null);
+  });
+
+  it("submits the prompt with the viewer's server-resolved team, on the Edit safe engine", async () => {
+    addImage(30, { ownerId: USER_ID + 1 });
+    joined('Green');
+    await runTeam(30);
+
+    const [args] = submitted();
+    const prompt = args.input.prompt as string;
+    expect(prompt).toContain('Team Green.');
+    expect(prompt).toContain('festive Green-colored party hat');
+    expect(prompt).not.toContain('{{');
+    expect(args.input).toMatchObject({
+      ecosystem: REMIX_ENGINES.edit.safe.ecosystemKey,
+      model: { id: REMIX_ENGINES.edit.safe.modelVersionId },
+    });
+    expect(args.remixOfId).toBe(30);
+    expect(args.tags).toContain(`remix-app:${TEAM_REMIX_SLUG}`);
+    // Read on the primary before the charge, for this viewer and this image.
+    expect(h.findTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, hostImageId: 30, db: dbWrite })
+    );
+  });
+
+  it('refuses a viewer with no team on this image, and charges nothing', async () => {
+    addImage(31, { ownerId: USER_ID + 1 });
+    await expect(runTeam(31)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.generateFromGraph).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mature source even off the green domain', async () => {
+    addImage(32, { ownerId: USER_ID + 1, nsfwLevel: MATURE });
+    joined('Pink');
+    await expect(runTeam(32)).rejects.toThrow(/does not run on mature/);
+    expect(h.generateFromGraph).not.toHaveBeenCalled();
+  });
+
+  it('offers nothing, and loads and prices nothing, without a team', async () => {
+    addImage(33, { ownerId: USER_ID + 1 });
+    await expect(quoteTeamRemix({ imageId: 33, caller: caller() })).resolves.toBeNull();
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+    expect(h.whatIfFromGraph).not.toHaveBeenCalled();
+  });
+
+  it('quotes the input the run submits, with the team', async () => {
+    addImage(34, { ownerId: USER_ID + 1 });
+    joined('Yellow');
+    const quote = await quoteTeamRemix({ imageId: 34, caller: caller() });
+    expect(quote).toMatchObject({ team: 'Yellow', price: { cost: 30 } });
+    expect(h.findTeam).toHaveBeenCalledWith(expect.objectContaining({ db: dbRead }));
+
+    await runTeam(34);
+    const whatIf = (h.whatIfFromGraph.mock.calls as unknown as [SubmitArgs][])[0][0].input;
+    expect(whatIf).toEqual(submitted()[0].input);
   });
 });

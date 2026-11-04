@@ -37,7 +37,9 @@ vi.mock('~/server/events/event-access', async (importOriginal) => ({
   getEventAccess: async () => access.value,
 }));
 
-const { findTeamRemixWaiver } = await import('~/server/events/team-remix-waiver');
+const { findTeamRemixTeam, findTeamRemixWaiver } = await import(
+  '~/server/events/team-remix-waiver'
+);
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -70,6 +72,7 @@ beforeAll(async () => {
   `);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
 });
 
 afterAll(async () => {
@@ -232,5 +235,47 @@ describe('findTeamRemixWaiver', () => {
     await expect(
       findTeamRemixWaiver({ placerId: OWNER, ownerId: OWNER, hostImageId: HOST })
     ).resolves.toBeNull();
+  });
+});
+
+describe('findTeamRemixTeam', () => {
+  const team = (userId = PLACER) => findTeamRemixTeam({ userId, hostImageId: HOST });
+
+  it("names the viewer's own team on an owner-hatted image, whatever the owner's team", async () => {
+    await hold(PLACER, JOIN.Blue);
+    await place(OWNER, SHOP_HAT);
+    await expect(team()).resolves.toEqual({ event: EVENT, team: 'Blue' });
+  });
+
+  it('refuses a viewer who has not joined, and offers once they join', async () => {
+    await place(OWNER, SHOP_HAT);
+    await hold(PLACER, SHOP_HAT, 'claimed');
+    await expect(team()).resolves.toBeNull();
+    await hold(PLACER, JOIN.Pink);
+    await expect(team()).resolves.toEqual({ event: EVENT, team: 'Pink' });
+  });
+
+  it('refuses a host image with no hat', async () => {
+    await hold(PLACER, JOIN.Pink);
+    await expect(team()).resolves.toBeNull();
+  });
+
+  it("refuses a hat someone else put on the owner's image", async () => {
+    await hold(PLACER, JOIN.Pink);
+    await place(STRANGER, SHOP_HAT);
+    await expect(team()).resolves.toBeNull();
+  });
+
+  it('refuses the owner on their own image', async () => {
+    await hold(OWNER, JOIN.Pink);
+    await place(OWNER, SHOP_HAT);
+    await expect(team(OWNER)).resolves.toBeNull();
+  });
+
+  it('refuses while the event is closed', async () => {
+    await hold(PLACER, JOIN.Pink);
+    await place(OWNER, SHOP_HAT);
+    access.value = 'closed';
+    await expect(team()).resolves.toBeNull();
   });
 });

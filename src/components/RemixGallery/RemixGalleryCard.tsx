@@ -32,6 +32,7 @@ import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExp
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
 import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
+import { TeamRemixButton } from '~/components/RemixGallery/TeamRemixButton';
 import {
   dedupeGalleryItems,
   galleryDialogImages,
@@ -425,6 +426,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
           Show more
         </Button>
       )}
+
+      {visibility.open && !isOwner && <TeamRemixButton imageId={imageId} />}
 
       {/* Wrapped rather than hidden. A signed-out visitor could open the modal
           and be told the gallery was closed — it is open, they are signed out,
