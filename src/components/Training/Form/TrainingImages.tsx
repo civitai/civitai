@@ -23,9 +23,9 @@ import {
   TextInput,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import type { NotificationData } from '@mantine/notifications';

@@ -1,4 +1,5 @@
-import { HoverCard, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import {
   IconMaximize,
   IconMinimize,

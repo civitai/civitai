@@ -1,5 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Group, Input, LoadingOverlay, Paper, Text, Tooltip } from '@mantine/core';
+import { Group, Input, LoadingOverlay, Paper, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';

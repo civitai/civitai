@@ -1,5 +1,6 @@
 import type { ActionIconProps, MenuProps } from '@mantine/core';
-import { Loader, Menu } from '@mantine/core';
+import { Loader } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconLock, IconLockOpen } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';

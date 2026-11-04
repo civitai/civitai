@@ -1,4 +1,5 @@
-import { Popover, Text, UnstyledButton } from '@mantine/core';
+import { Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';

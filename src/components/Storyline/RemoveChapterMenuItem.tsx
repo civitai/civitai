@@ -1,4 +1,5 @@
-import { Menu, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconTrash } from '@tabler/icons-react';
 import { useRemoveStorylineChapter } from '~/components/Storyline/storyline.data';

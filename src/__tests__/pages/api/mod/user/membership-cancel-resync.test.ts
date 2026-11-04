@@ -247,7 +247,6 @@ const ROW = {
   priceId: 'price_gold',
   cancelAtPeriodEnd: false,
   cancelAt: null,
-  // As the upsert stores it (toDateTime is offset from the epoch).
   currentPeriodEnd: toDateTime(PERIOD_END),
   product: { provider: 'Stripe' },
 };
@@ -786,7 +785,7 @@ describe('re-sync: what it refuses', () => {
     grantRow.path = 'grant:user.membership.extend';
   });
 
-  it('control: a row that matches Stripe previews as no changes (the stored-date offset is not a diff)', async () => {
+  it('control: a row that matches Stripe previews as no changes', async () => {
     fakeStripe();
     const { body } = await previewResync();
     expect(body).toMatchObject({ problems: [], changes: [] });
@@ -1037,55 +1036,20 @@ describe('re-sync: final-head lanes', () => {
     expect((await previewResync()).status).toBe(403);
   });
 
-  // vitest pins TZ=UTC, where toDateTime's offset is a flat 30 min. These run the process in a
-  // daylight-saving zone, where it moves with the date and two seconds can store as one time.
-  it.each([
-    ['a summer date', Math.floor(Date.UTC(2026, 6, 15, 2, 22) / 1000)],
-    // toDateTime stores these two an hour apart as one time; only the forward match tells them apart.
-    ['the spring-forward hour', 1772951400],
-    ['the hour after it', 1772955000],
-  ])('a matching row previews as no changes in America/New_York: %s', async (_label, secs) => {
-    const tz = process.env.TZ;
-    process.env.TZ = 'America/New_York';
-    try {
-      fakeStripe(liveSub({ current_period_end: secs }));
-      dbMock.dbWrite.customerSubscription.findUnique.mockResolvedValue({
-        ...ROW,
-        currentPeriodEnd: toDateTime(secs),
-      });
-      const { body } = await previewResync();
-      expect(body).toMatchObject({
-        problems: [],
-        changes: [],
-        ours: { currentPeriodEnd: new Date(secs * 1000).toISOString() },
-      });
-      expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
-      expect(trackModActivity).not.toHaveBeenCalled();
-    } finally {
-      process.env.TZ = tz;
-    }
-  });
-
-  it('a row that differs shows its own time with the offset undone, in America/New_York', async () => {
-    const tz = process.env.TZ;
-    process.env.TZ = 'America/New_York';
-    try {
-      const secs = Math.floor(Date.UTC(2026, 6, 15, 2, 22) / 1000);
-      fakeStripe(liveSub({ current_period_end: secs + 86_400 }));
-      dbMock.dbWrite.customerSubscription.findUnique.mockResolvedValue({
-        ...ROW,
-        currentPeriodEnd: toDateTime(secs),
-      });
-      const { body } = await previewResync();
-      expect(body.changes).toEqual([
-        {
-          field: 'currentPeriodEnd',
-          ours: new Date(secs * 1000).toISOString(),
-          stripe: new Date((secs + 86_400) * 1000).toISOString(),
-        },
-      ]);
-    } finally {
-      process.env.TZ = tz;
-    }
+  it('a row written 30 min late (before toDateTime was fixed) previews as a change', async () => {
+    fakeStripe();
+    const late = new Date((PERIOD_END + 1800) * 1000);
+    dbMock.dbWrite.customerSubscription.findUnique.mockResolvedValue({
+      ...ROW,
+      currentPeriodEnd: late,
+    });
+    const { body } = await previewResync();
+    expect(body.changes).toEqual([
+      {
+        field: 'currentPeriodEnd',
+        ours: late.toISOString(),
+        stripe: new Date(PERIOD_END * 1000).toISOString(),
+      },
+    ]);
   });
 });

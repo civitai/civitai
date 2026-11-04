@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBadge, IconExternalLink } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

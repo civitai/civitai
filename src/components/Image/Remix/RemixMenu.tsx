@@ -1,4 +1,5 @@
-import { Menu, Text, ThemeIcon } from '@mantine/core';
+import { Text, ThemeIcon } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { cloneElement, isValidElement, useEffect, useRef, useState } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';

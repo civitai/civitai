@@ -6,10 +6,10 @@ import {
   Group,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconCategory, IconCheck, IconChevronDown, IconDownload } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';

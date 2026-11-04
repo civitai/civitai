@@ -9,10 +9,10 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconCategory,
   IconFileText,

@@ -1,4 +1,5 @@
-import { Checkbox, Menu, Stack, Text } from '@mantine/core';
+import { Checkbox, Stack, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconSticker, IconBan } from '@tabler/icons-react';
 import { useRef } from 'react';

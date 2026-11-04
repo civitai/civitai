@@ -18,8 +18,8 @@ import {
   Text,
   Textarea,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCheck,

@@ -1,15 +1,5 @@
-import {
-  Badge,
-  Card,
-  Divider,
-  Group,
-  Select,
-  Stack,
-  Switch,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Badge, Card, Divider, Group, Select, Stack, Switch, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconDiamond } from '@tabler/icons-react';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';

@@ -24,8 +24,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconCopy, IconFileSearch, IconPlus } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 
