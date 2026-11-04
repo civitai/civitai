@@ -8,7 +8,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 /**
  * Runs tests/lighthouse-mint-cookie.cjs exactly as the Lighthouse task does (plain `node`, in a
  * cwd holding lighthouserc.json), then decrypts the minted cookie and reads its claims back.
- * Pins the session lifetime with a literal: the cookie only needs to outlive one pipeline run.
  */
 
 const SCRIPT = resolve(__dirname, '../../tests/lighthouse-mint-cookie.cjs');
