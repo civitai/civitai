@@ -4,10 +4,11 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
 import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
 import { StorylineSparkCreditText } from '~/components/Storyline/StorylineSparkCredit';
+import type { StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
+import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import {
   StorylineClosedChip,
   StorylineOpenToAnyoneChip,
@@ -28,10 +29,8 @@ export function openStartStorylineModal(post?: StorylineSourcePost) {
 }
 
 /** Someone's image a storyline starts from: credited above chapter 1, and its rating is the floor. */
-export type StorylineSparkImage = {
-  id: number;
-  url: string;
-  nsfwLevel: number;
+export type StorylineSparkImage = StorylineThumbImage & {
+  /** Null when the image source carried only `userId`; it is then looked up. */
   username: string | null;
 };
 
@@ -88,15 +87,21 @@ export function StartStorylineModal({
 
   const trimmed = title.trim();
 
+  const sparkUserId = sparkImage?.userId;
+  const { data: sparkUser } = trpc.user.getById.useQuery(
+    { id: sparkUserId as number },
+    {
+      enabled: !!sparkImage && !sparkImage.username && !!sparkUserId && sparkUserId > -1,
+      gcTime: Infinity,
+      staleTime: Infinity,
+    }
+  );
+  const sparkUsername = sparkImage?.username ?? sparkUser?.username ?? null;
+
   const credit = sparkImage && (
     <div className="flex items-center gap-3" data-testid="storyline-spark-credit">
-      <EdgeMedia
-        src={sparkImage.url}
-        type="image"
-        width={96}
-        className="size-12 shrink-0 rounded object-cover"
-      />
-      <StorylineSparkCreditText username={sparkImage.username} />
+      <StorylineThumb image={sparkImage} width={48} className="shrink-0 rounded" />
+      <StorylineSparkCreditText username={sparkUsername} />
     </div>
   );
 

@@ -92,6 +92,7 @@ describe("the image page's remix gallery lists the stories started from it", () 
 
     await expect.element(page.getByText('Remix gallery')).toBeVisible();
     expect(document.body.textContent).not.toContain('started here');
+    expect(mocks.summaryCalls.length).toBeGreaterThan(0);
     expect(mocks.summaryCalls.every((call) => !call.enabled)).toBe(true);
   });
 });
