@@ -4,17 +4,18 @@
   gap: 8px;
 }
 
+/* The reaction buttons' height and fill, so the row keeps their height. */
 .hat {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   flex: none;
   border: 0;
   border-radius: 50%;
   cursor: pointer;
-  background-color: rgba(55, 58, 64, 0.9);
+  background-color: rgba(52, 58, 64, 0.4);
   color: var(--mantine-color-white);
 }
 
@@ -31,8 +32,11 @@
   opacity: 0.55;
 }
 
+/* The 48px standings ring overflows this 30px box instead of growing the reaction row. */
 .badgeButton {
   display: inline-flex;
+  align-items: center;
+  height: 30px;
   padding: 0;
   border: 0;
   background: none;
@@ -44,8 +48,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background-color: var(--mantine-color-blue-6);
   color: var(--mantine-color-white);
@@ -116,7 +120,23 @@
 
 .stats {
   width: 230px;
+  padding: 0;
+}
+
+.statsBody {
   padding: 10px 12px;
+}
+
+/* Full width: the negative margin cancels .statsBody's side padding. */
+.divider {
+  margin: 8px -12px;
+  border: 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+
+.footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--mantine-color-default-border);
 }
 
 .row {

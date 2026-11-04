@@ -31,9 +31,10 @@ const COVER_HATS = [
 
 const capitalise = (team: string) => team[0].toUpperCase() + team.slice(1);
 
-/** The hat button and the standings badge for the picture on screen. Nothing when Hat Turf is off. */
+/** The hat button and the standings badge for the picture on screen. Nothing when Hat Turf is off or the picture is a contest entry. */
 export function HatTurfDetailControls({ imageId }: { imageId: number }) {
-  return useTurfFeed() ? (
+  const feed = useTurfFeed();
+  return feed && !feed.hidden?.[imageId] ? (
     <div className={classes.group} data-testid="hat-turf-detail-controls">
       <HatTurfDetailBadge imageId={imageId} />
       <HatButton imageId={imageId} />
@@ -124,7 +125,7 @@ function HatButton({ imageId }: { imageId: number }) {
           aria-pressed={joined ? !!card.draft : undefined}
           onClick={press}
         >
-          <HatIcon size={18} />
+          <HatIcon size={16} />
         </button>
       </Popover.Target>
       <Popover.Dropdown className={classes.invite} data-testid="hat-turf-detail-invite">
@@ -242,6 +243,7 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
   const join = useJoin();
   if (!feed) return null;
 
+  const closed = feed.open[imageId] === false;
   const counted = summary?.counted ?? {};
   const leader = summary ? badgeLeader(summary) : null;
   const teams = orderedTeams(counted)
@@ -254,53 +256,75 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
     (activeIndex >= 0 ? `Hat ${activeIndex + 1}` : null);
 
   return (
-    <div>
-      {user && stock?.optedIn && feed.open[imageId] === false && (
-        <Text size="xs" c="dimmed" data-testid="hat-turf-detail-closed">
-          This creator hasn&apos;t joined Hat Turf yet
-        </Text>
-      )}
-      {!teams.length && <Text size="xs">No hats on this image yet.</Text>}
-      {teams.map((team) => (
-        <div key={team} className={classes.row} data-testid="hat-turf-detail-team">
-          {summary?.hatted && team === leader && <IconLock size={12} />}
-          <i className={classes.dot} style={{ backgroundColor: color(team) }} />
-          {capitalise(team)}
-          {team === leader && (
-            <span className={classes.tag}>{summary?.hatted ? 'would lead' : 'leads'}</span>
-          )}
-          <span className={classes.count}>{counted[team]}</span>
-        </div>
-      ))}
-      {summary?.hatted && leader && (
-        <Text size="xs" c="dimmed" mt={4}>
-          Protected by the owner&apos;s hat. {capitalise(leader)} takes the image if it comes off.
-        </Text>
-      )}
-      <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
-      {user && stock?.optedIn && (
-        <>
-          <div className={classes.row}>
-            <span className={classes.tag} data-testid="hat-turf-detail-left">
-              {stock.available} {stock.available === 1 ? 'hat' : 'hats'} left
-            </span>
-          </div>
-          <Text size="xs" c="dimmed">
-            Your supply grows during the event.
+    <>
+      <div className={classes.statsBody}>
+        {user && stock?.optedIn && closed && (
+          <Text size="xs" c="dimmed" data-testid="hat-turf-detail-closed">
+            This creator hasn&apos;t joined Hat Turf yet
           </Text>
-          <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
-        </>
-      )}
-      {user && stock?.optedIn && activeName && (
-        <div className={classes.row}>
-          <TeamHat color={(feed.team && color(feed.team)) || FALLBACK} size={16} />
-          {activeName}
-          <button type="button" className={classes.link} onClick={onChange}>
-            change ▸
-          </button>
-        </div>
-      )}
-      <div className={classes.row}>
+        )}
+        {!teams.length && (
+          <EmptyStandings
+            closed={closed}
+            joined={!!stock?.optedIn}
+            signedIn={!!user}
+            outOfHats={stock?.available === 0}
+            joining={join.isPending}
+            onJoin={() => join.mutate({ event: feed.event, optedIn: true })}
+          />
+        )}
+        {teams.map((team) => (
+          <div key={team} className={classes.row} data-testid="hat-turf-detail-team">
+            {summary?.hatted && team === leader && <IconLock size={12} />}
+            <i className={classes.dot} style={{ backgroundColor: color(team) }} />
+            {capitalise(team)}
+            {team === leader && (
+              <span className={classes.tag}>{summary?.hatted ? 'would lead' : 'leads'}</span>
+            )}
+            <span className={classes.count}>{counted[team]}</span>
+          </div>
+        ))}
+        {summary?.hatted && leader && (
+          <Text size="xs" c="dimmed" mt={4}>
+            Protected by the owner&apos;s hat. {capitalise(leader)} takes the image if it comes off.
+          </Text>
+        )}
+        {user && stock?.optedIn && (
+          <>
+            <hr className={classes.divider} />
+            <div className={classes.row}>
+              <span className={classes.tag} data-testid="hat-turf-detail-left">
+                {stock.available} {stock.available === 1 ? 'hat' : 'hats'} left
+              </span>
+            </div>
+            <Text size="xs" c="dimmed">
+              Your supply grows during the event.
+            </Text>
+            {activeName && (
+              <div className={classes.row}>
+                <TeamHat color={(feed.team && color(feed.team)) || FALLBACK} size={16} />
+                {activeName}
+                <button type="button" className={classes.link} onClick={onChange}>
+                  change ▸
+                </button>
+              </div>
+            )}
+            <hr className={classes.divider} />
+            <button
+              type="button"
+              className={classes.link}
+              disabled={join.isPending}
+              onClick={() => join.mutate({ event: feed.event, optedIn: false })}
+            >
+              Leave Hat Turf
+            </button>
+            <Text size="xs" c="dimmed">
+              Hats already on your images keep counting. No new ones can be placed.
+            </Text>
+          </>
+        )}
+      </div>
+      <div className={classes.footer}>
         <Switch
           size="xs"
           label="Show hats"
@@ -310,21 +334,56 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
           styles={{ root: { width: '100%' }, body: { justifyContent: 'space-between' } }}
         />
       </div>
-      {user && stock?.optedIn && (
-        <>
-          <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
-          <button
-            type="button"
-            className={classes.link}
-            disabled={join.isPending}
-            onClick={() => join.mutate({ event: feed.event, optedIn: false })}
-          >
-            Leave Hat Turf
-          </button>
-          <Text size="xs" c="dimmed">
-            Hats already on your images keep counting. No new ones can be placed.
-          </Text>
-        </>
+    </>
+  );
+}
+
+function EmptyStandings({
+  closed,
+  joined,
+  signedIn,
+  outOfHats,
+  joining,
+  onJoin,
+}: {
+  closed: boolean;
+  joined: boolean;
+  signedIn: boolean;
+  outOfHats: boolean;
+  joining: boolean;
+  onJoin: () => void;
+}) {
+  const next = closed
+    ? null
+    : !signedIn
+    ? "Sign in and join Hat Turf to put your team's hat on it first."
+    : !joined
+    ? "Join Hat Turf to put your team's hat on it first."
+    : outOfHats
+    ? "You're out of hats for now. You get more as the event goes on."
+    : "Be the first: tap the hat button to put your team's hat on it.";
+
+  return (
+    <div data-testid="hat-turf-detail-empty">
+      <Text size="xs" fw={600}>
+        No hats on this image yet
+      </Text>
+      {next && (
+        <Text size="xs" c="dimmed">
+          {next}
+        </Text>
+      )}
+      {signedIn && !joined && !closed && (
+        <Button
+          size="compact-xs"
+          color="yellow"
+          radius="xl"
+          mt={6}
+          loading={joining}
+          onClick={onJoin}
+        >
+          Join Hat Turf
+        </Button>
       )}
     </div>
   );

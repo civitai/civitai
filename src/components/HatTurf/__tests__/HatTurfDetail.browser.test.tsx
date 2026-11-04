@@ -375,6 +375,50 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-more')).toBeNull();
   });
 
+  // Controls render on the first commit (context and mocks are synchronous), so the not-hidden
+  // rows are the positive control for the hidden ones at the same moment.
+  test.each([
+    { who: 'joined', optedIn: true, hidden: false },
+    { who: 'not joined', optedIn: false, hidden: false },
+    { who: 'joined', optedIn: true, hidden: true },
+    { who: 'not joined', optedIn: false, hidden: true },
+  ])(
+    '$who viewer, contest entry $hidden: detail controls only off contests',
+    async ({ optedIn, hidden }) => {
+      h.stock = { available: 3, optedIn, mode: 'live' };
+      render(hidden ? { hidden: { 9: true } } : {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(q('hat-turf-detail-controls') === null).toBe(hidden);
+    }
+  );
+
+  test('the hat controls fit the 30px reaction row, standings ring included', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(q('hat-turf-detail-controls')!.getBoundingClientRect().height).toBeLessThanOrEqual(30);
+    expect(q('hat-turf-detail-hat')!.getBoundingClientRect().height).toBe(30);
+  });
+
+  test.each([
+    ['not joined', { available: 3, optedIn: false }, /Join Hat Turf to put/, true],
+    ['joined', { available: 3, optedIn: true }, /tap the hat button/, false],
+    ['joined, out of hats', { available: 0, optedIn: true }, /out of hats for now/, false],
+  ])('no hats yet, %s: the card says what to do', async (_, stock, says, joinButton) => {
+    h.stock = { ...stock, mode: 'live' };
+    localStorage.setItem('hat-turf-detail-invite-dismissed', String(Date.now()));
+    render({ images: {} });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-empty')).not.toBeNull());
+    expect(q('hat-turf-detail-empty')!.textContent).toMatch(says);
+    const join = text(/^Join Hat Turf$/);
+    expect(!!join).toBe(joinButton);
+    if (join) {
+      click(join);
+      expect(h.optIn).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: true });
+    }
+  });
+
   test('Leave Hat Turf turns it off', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());

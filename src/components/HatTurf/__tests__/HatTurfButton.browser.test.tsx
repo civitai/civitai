@@ -360,6 +360,13 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(q('hat-turf-button')).toBeNull();
   });
 
+  test('not joined: a contest entry offers no Join either', async () => {
+    h.stock = { available: 3, optedIn: false };
+    renderCard({ open: { 77: false }, hidden: { 77: true } });
+    await cardRendered();
+    expect(q('hat-turf-button')).toBeNull();
+  });
+
   test('not joined: an image whose owner has not joined still offers Join', async () => {
     h.stock = { available: 3, optedIn: false };
     renderCard({ open: { 77: false } });

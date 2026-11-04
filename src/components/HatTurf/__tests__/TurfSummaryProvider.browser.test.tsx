@@ -67,6 +67,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                         .map((id: number) => [id, summary('blue', id === 1)])
                     ),
                     open: Object.fromEntries(input.imageIds.map((id: number) => [id, id !== 4])),
+                    hidden: input.imageIds.includes(6) ? { 6: true } : {},
                   }
                 : Object.fromEntries(
                     input.imageIds.map((id: number) => [
@@ -175,6 +176,23 @@ describe('TurfSummaryProvider', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(h.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('a contest entry (hidden) keeps no hats and no counts, even from a push', async () => {
+    await mount([5, 6]);
+    await vi.waitFor(() => expect(latest!.stickers[5]).toBeDefined());
+    expect(latest!.hidden).toEqual({ 6: true });
+    expect(latest!.stickers[6]).toBeUndefined();
+    const counts = {
+      shown: { pink: 5 },
+      counted: { pink: 5 },
+      leader: 'pink',
+      leaderCosmeticId: 12,
+    };
+    act(() => h.push!({ event: 'birthday2026', imageId: 6, counts }));
+    act(() => h.push!({ event: 'birthday2026', imageId: 5, counts }));
+    await vi.waitFor(() => expect(latest!.images[5].leader).toBe('pink'));
+    expect(latest!.images[6]).toBeUndefined();
   });
 
   test('loading another page does not wipe the pushes already applied to the first', async () => {

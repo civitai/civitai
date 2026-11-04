@@ -61,6 +61,9 @@ beforeAll(async () => {
     );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
+    -- Read by the contest-entry rule; empty, so no image here is a contest entry.
+    CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
+    CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
     INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event":"e","team":"Blue"}');
   `);
 });
