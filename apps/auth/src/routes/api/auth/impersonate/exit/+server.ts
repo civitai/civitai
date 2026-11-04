@@ -16,9 +16,9 @@ export const POST: RequestHandler = async ({ locals }) => {
   const targetId = locals.user?.id; // the user being impersonated (the current session's subject)
 
   const moderator = await getOrProduceSessionUser(modId);
-  if (!moderator) error(404, 'moderator not found');
-  if (moderator.bannedAt || moderator.deletedAt) {
-    if (locals.tokenId && targetId) await sessions.invalidateToken(locals.tokenId, targetId);
+  // A deleted moderator isn't produced at all. Either way, cut every session they hold or impersonate.
+  if (!moderator || moderator.bannedAt) {
+    await sessions.invalidateUserSessions(modId);
     error(403, 'moderator account is not active');
   }
 

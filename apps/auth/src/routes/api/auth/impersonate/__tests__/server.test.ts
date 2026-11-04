@@ -139,5 +139,6 @@ describe('POST /api/auth/impersonate — from an impersonation session', () => {
     h.getOrProduceSessionUser.mockResolvedValue({ id: ORIGINAL_MOD });
     const res = await EXIT(event);
     expect(await res.json()).toEqual({ token: 'imp-token', userId: ORIGINAL_MOD });
+    expect(h.trackImpersonation).toHaveBeenCalledWith(ORIGINAL_MOD, MOD, 'off');
   });
 });

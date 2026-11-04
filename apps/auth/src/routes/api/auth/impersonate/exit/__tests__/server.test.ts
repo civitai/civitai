@@ -7,7 +7,7 @@ const h = vi.hoisted(() => ({
   mintUserSession: vi.fn(async () => 'mod-token'),
   setSessionCookie: vi.fn(),
   trackImpersonation: vi.fn(),
-  invalidateToken: vi.fn(),
+  invalidateUserSessions: vi.fn(),
 }));
 
 vi.mock('$lib/server/auth/session', () => ({
@@ -19,7 +19,7 @@ vi.mock('$lib/server/auth/session-producer', () => ({
 }));
 vi.mock('$lib/server/auth/mod-activity', () => ({ trackImpersonation: h.trackImpersonation }));
 vi.mock('$lib/server/auth/registry', () => ({
-  sessions: { invalidateToken: h.invalidateToken },
+  sessions: { invalidateUserSessions: h.invalidateUserSessions },
 }));
 
 import { POST } from '../+server';
@@ -42,12 +42,12 @@ describe('POST /api/auth/impersonate/exit', () => {
   });
 
   it.each([
-    ['banned', { bannedAt: new Date('2026-01-01') }],
-    ['deleted', { deletedAt: new Date('2026-01-01') }],
-  ])('ends the session and mints nothing when the moderator is %s', async (_, state) => {
+    ['banned', { id: 100, bannedAt: new Date('2026-01-01') }],
+    ['deleted, so not produced', null],
+  ])("cuts the moderator's sessions and mints nothing when the moderator is %s", async (_, mod) => {
     h.mintUserSession.mockClear();
-    h.invalidateToken.mockClear();
-    h.getOrProduceSessionUser.mockResolvedValueOnce({ id: 100, ...state });
+    h.invalidateUserSessions.mockClear();
+    h.getOrProduceSessionUser.mockResolvedValueOnce(mod as Record<string, unknown>);
     const session = { sub: '200', jti: 'j', sid: 'family-m', impersonatedBy: 100 };
     const status = await Promise.resolve(
       POST({
@@ -60,6 +60,6 @@ describe('POST /api/auth/impersonate/exit', () => {
     );
     expect(status).toBe(403);
     expect(h.mintUserSession).not.toHaveBeenCalled();
-    expect(h.invalidateToken).toHaveBeenCalledWith('j', 200);
+    expect(h.invalidateUserSessions).toHaveBeenCalledWith(100);
   });
 });
