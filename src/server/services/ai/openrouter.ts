@@ -306,7 +306,12 @@ function createOpenRouterClient() {
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
-      console.error('Failed to parse JSON from content:', content);
+      // Never the content: a model can be led to repeat the prompts it was sent.
+      console.error('Failed to parse JSON from completion', {
+        model,
+        length: content.length,
+        fenced: jsonBlockMatch !== undefined,
+      });
       throw new Error('Failed to parse JSON from completion');
     }
   };

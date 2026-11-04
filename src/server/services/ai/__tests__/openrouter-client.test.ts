@@ -54,3 +54,17 @@ describe('getJsonCompletionWithUsage', () => {
     expect(send.mock.calls[0][1]).toBeUndefined();
   });
 });
+
+describe('an unparseable completion', () => {
+  it('logs the failure without the model output', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    send.mockResolvedValue(replyWith('PROMPT_ECHO not json'));
+
+    await expect(
+      openrouter!.getJsonCompletionWithUsage({ messages: [{ role: 'user', content: 'x' }] })
+    ).rejects.toThrow('Failed to parse JSON from completion');
+
+    expect(consoleError).toHaveBeenCalled();
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain('PROMPT_ECHO');
+  });
+});
