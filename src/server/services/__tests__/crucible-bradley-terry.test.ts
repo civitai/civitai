@@ -15,6 +15,7 @@ const {
   CrucibleRankingDeferredError,
   fitBradleyTerry,
   fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
 } = await import('~/server/services/crucible-bradley-terry');
 
 describe('fitBradleyTerry', () => {
@@ -145,5 +146,28 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
   it('falls back to Elo when Redis is unreachable', async () => {
     redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
     expect(await fit(endedAgo(60_000))).toBeNull();
+  });
+});
+
+describe('usesBradleyTerryRanking — which crucibles the fit ranks', () => {
+  const from = new Date('2026-12-01T00:00:00Z');
+  const crucible = (startAt: string | null, createdAt = '2026-11-01T00:00:00Z') => ({
+    startAt: startAt ? new Date(startAt) : null,
+    createdAt: new Date(createdAt),
+  });
+
+  // Deliberately off: the fit must honour the per-judge, per-entry cap before it pays prizes.
+  it('ranks no crucible while the switch date is unset', () => {
+    expect(usesBradleyTerryRanking(crucible('2030-01-01T00:00:00Z'))).toBe(false);
+  });
+
+  it('ranks crucibles starting on or after the date, and leaves earlier ones on Elo', () => {
+    expect(usesBradleyTerryRanking(crucible('2026-12-01T00:00:00Z'), from)).toBe(true);
+    expect(usesBradleyTerryRanking(crucible('2026-11-30T23:59:00Z'), from)).toBe(false);
+  });
+
+  it('goes by creation time for a crucible with no start time', () => {
+    expect(usesBradleyTerryRanking(crucible(null, '2026-12-02T00:00:00Z'), from)).toBe(true);
+    expect(usesBradleyTerryRanking(crucible(null), from)).toBe(false);
   });
 });

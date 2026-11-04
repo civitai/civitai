@@ -30,6 +30,7 @@ const afterPostsPublish = vi.fn();
 const createPrizes = vi.fn();
 const voidPrizes = vi.fn();
 const fitCrucibleScoresForPrizes = vi.fn();
+const usesBradleyTerryRanking = vi.fn(() => false);
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -59,6 +60,7 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
 vi.mock('~/server/services/crucible-bradley-terry', async (importOriginal) => ({
   ...(await importOriginal<typeof BradleyTerry>()),
   fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
 }));
 
 vi.mock('~/server/services/prize.service', async (importOriginal) => ({
@@ -80,7 +82,6 @@ type AwardedPrize = {
 const awarded = (call = 0) => createPrizes.mock.calls[call][0] as AwardedPrize[];
 
 const { finalizeCrucible } = await import('~/server/services/crucible.service');
-const { BRADLEY_TERRY_RANKING_FROM } = await import('~/server/services/crucible-bradley-terry');
 
 const dbEntry = (
   id: number,
@@ -1303,32 +1304,36 @@ describe('finalizeCrucible — Bradley-Terry ranking', () => {
     awarded()
       .sort((a, b) => a.position - b.position)
       .map((prize) => prize.subjectId);
-  const startedAfterSwitch = () => new Date(BRADLEY_TERRY_RANKING_FROM!.getTime() + 1000);
-  const voteCounts = { 1: 20, 2: 20, 3: 20 };
-
-  it('pays by the fit for a crucible started after the switch', async () => {
-    setupCrucible({ startAt: startedAfterSwitch(), voteCounts, seededPrizePool: 1000 });
+  beforeEach(() => {
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000 });
     fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+  });
+
+  it('pays by the fit for a crucible the switch covers', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
     await finalizeCrucible(1);
     expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
   });
 
   it('pays by Elo when the guard falls back', async () => {
-    setupCrucible({ startAt: startedAfterSwitch(), voteCounts, seededPrizePool: 1000 });
+    usesBradleyTerryRanking.mockReturnValue(true);
     fitCrucibleScoresForPrizes.mockResolvedValue(null);
     await finalizeCrucible(1);
     expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
   });
 
-  it('pays a crucible started before the switch by Elo without fitting', async () => {
-    setupCrucible({
-      startAt: new Date(BRADLEY_TERRY_RANKING_FROM!.getTime() - 1000),
-      voteCounts,
-      seededPrizePool: 1000,
-    });
-    fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+  it('pays by Elo without fitting when the switch does not cover the crucible', async () => {
+    usesBradleyTerryRanking.mockReturnValue(false);
     await finalizeCrucible(1);
     expect(fitCrucibleScoresForPrizes).not.toHaveBeenCalled();
     expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('writes and pays nothing while the guard defers for ingest lag', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockRejectedValue(new Error('waiting'));
+    await expect(finalizeCrucible(1)).rejects.toThrow('waiting');
+    expect(entryWrites()).toHaveLength(0);
+    expect(createPrizes).not.toHaveBeenCalled();
   });
 });

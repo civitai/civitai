@@ -61,15 +61,18 @@ export function fitBradleyTerry(tallies: PairTally[]): Map<number, number> {
 }
 
 /**
- * When the fit, not Elo, ranks a crucible (display and prizes). Crucibles running at deploy finish
- * on Elo: switching mid-run would reorder a leaderboard judges have already seen. Set the date no
- * earlier than the deploy. To switch every crucible, return true; to switch none, set it to null.
+ * When the fit, not Elo, ranks a crucible (display and prizes). Off (null) until the fit honours the
+ * per-judge, per-entry vote cap the way Elo's frozen side does; then set it no earlier than that
+ * deploy, so crucibles running at deploy finish on Elo. To switch every crucible, return true.
  */
-export const BRADLEY_TERRY_RANKING_FROM: Date | null = new Date('2026-11-06T00:00:00Z');
+export const BRADLEY_TERRY_RANKING_FROM: Date | null = null;
 
-export function usesBradleyTerryRanking(crucible: { startAt: Date | null; createdAt: Date }) {
-  if (!BRADLEY_TERRY_RANKING_FROM) return false;
-  return (crucible.startAt ?? crucible.createdAt) >= BRADLEY_TERRY_RANKING_FROM;
+export function usesBradleyTerryRanking(
+  crucible: { startAt: Date | null; createdAt: Date },
+  from = BRADLEY_TERRY_RANKING_FROM
+) {
+  if (!from) return false;
+  return (crucible.startAt ?? crucible.createdAt) >= from;
 }
 
 /**
