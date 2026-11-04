@@ -37,17 +37,17 @@
 // stands for every array element (`items`) or every undeclared property (an
 // `additionalProperties` schema).
 
-import { firstSchemaFailure } from '~/server/services/apps/doc-store-schema';
+import { firstSchemaFailure, jsonEqual } from '~/server/services/apps/doc-store-schema';
 import type {
   AppStorageBreakingKeyword,
   AppStorageCollectionSchema,
-  AppStorageFeature,
   DeclaredStorageCollection,
   StorageMigrationOp,
 } from '~/shared/constants/block-storage.constants';
 import {
-  APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_ALL_FEATURES_ON,
   APP_STORAGE_MIGRATION_ANY_SEGMENT,
+  escapeJsonPointerSegment,
   jsonPointerCovers,
   jsonPointerSegments,
   parseManifestStorage,
@@ -91,28 +91,8 @@ type Node = Record<string, unknown>;
 const isObj = (v: unknown): v is Node => typeof v === 'object' && v !== null && !Array.isArray(v);
 const ANY: Node = Object.freeze({}) as Node;
 
-/** Every phased feature ON: an approved manifest is compared for its SHAPE, as the store reads it. */
-const ALL_FEATURES = Object.fromEntries(
-  Object.keys(APP_STORAGE_ENABLED_FEATURES).map((f) => [f, true])
-) as Record<AppStorageFeature, boolean>;
-
-const escapeSegment = (k: string) => k.replace(/~/g, '~0').replace(/\//g, '~1');
-const child = (pointer: string, segment: string) => `${pointer}/${escapeSegment(segment)}`;
-
-function jsonEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (Array.isArray(a)) {
-    return Array.isArray(b) && a.length === b.length && a.every((x, i) => jsonEqual(x, b[i]));
-  }
-  if (isObj(a) && isObj(b)) {
-    const keys = Object.keys(a);
-    return (
-      keys.length === Object.keys(b).length &&
-      keys.every((k) => Object.hasOwn(b, k) && jsonEqual(a[k], b[k]))
-    );
-  }
-  return false;
-}
+const child = (pointer: string, segment: string) =>
+  `${pointer}/${escapeJsonPointerSegment(segment)}`;
 
 const ALL_TYPES = ['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'];
 
@@ -388,9 +368,9 @@ export function checkStorageMigrations(
     warnings: [],
     plans: new Map(),
   };
-  const after = parseManifestStorage(next, ALL_FEATURES);
+  const after = parseManifestStorage(next, APP_STORAGE_ALL_FEATURES_ON);
   if (after.errors.length > 0) return check;
-  const before = prev === null ? null : parseManifestStorage(prev, ALL_FEATURES);
+  const before = prev === null ? null : parseManifestStorage(prev, APP_STORAGE_ALL_FEATURES_ON);
   if (before && before.errors.length > 0) {
     check.warnings.push(
       'storage: the previous approved version declares storage that no longer parses, so its collection schemas were not compared with this version'
@@ -432,7 +412,7 @@ export function checkStorageMigrations(
   for (const [name, now] of after.collections) {
     if (prevCollections.has(name)) continue;
     older ??= history
-      .map((m) => parseManifestStorage(m, ALL_FEATURES))
+      .map((m) => parseManifestStorage(m, APP_STORAGE_ALL_FEATURES_ON))
       .filter((h) => h.errors.length === 0)
       .map((h) => h.collections);
     const was = older.find((c) => c.has(name))?.get(name);
@@ -574,7 +554,11 @@ export const COLLECTION_STORAGE_FIELDS = [
   'exportable',
 ] as const;
 
-/** JSON with object keys sorted at every depth, so equal values compare equal as text. */
+/**
+ * JSON with object keys sorted at every depth, so equal values compare equal as text. Not
+ * `stableJsonStringify` (publish-request.service.ts): that is private to a module this pure one must
+ * not import, and it prints a top-level `undefined` as `undefined`, where this prints `null`.
+ */
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (isObj(value)) {

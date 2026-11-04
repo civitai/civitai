@@ -328,6 +328,11 @@ export type StorageMigrationOp =
   | { op: 'remove'; path: string }
   | { op: 'acknowledge'; path: string; keyword: AppStorageAcknowledgeableKeyword };
 
+/** One JSON Pointer segment, escaped (RFC 6901): `~` as `~0`, then `/` as `~1`. */
+export function escapeJsonPointerSegment(segment: string): string {
+  return segment.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
 /** The segments of a JSON Pointer, unescaped; `[]` for the root `""`. */
 export function jsonPointerSegments(pointer: string): string[] {
   if (pointer === '') return [];
@@ -384,6 +389,19 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     ttl: false,
     perAuthorWriteBudget: false,
   });
+
+/**
+ * Every phased feature ON — for reading an APPROVED manifest for its SHAPE (the store, imports,
+ * schema migrations): what was approved stays declared even when a feature it uses is switched
+ * off today, and each consumer refuses an unsupported collection at use. Never for submit.
+ */
+export const APP_STORAGE_ALL_FEATURES_ON: Readonly<Record<AppStorageFeature, boolean>> =
+  Object.freeze(
+    Object.fromEntries(Object.keys(APP_STORAGE_ENABLED_FEATURES).map((f) => [f, true])) as Record<
+      AppStorageFeature,
+      boolean
+    >
+  );
 
 export type DeclaredStorageCollection = {
   kind: AppStorageKind;

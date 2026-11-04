@@ -6,10 +6,8 @@
 -- version that plans a migration, and every other approve proceeds as before.
 --
 -- Written and read by raw SQL only (`storage-migration-run.service.ts`); the Prisma model is
--- `@no-type`. Additive and idempotent, and SAFE TO RE-RUN over an earlier draft of this file: the
--- table is created with its full current shape, then the columns and the index that changed
--- since are brought up to date one by one. Bounded by lock_timeout (the foreign keys lock the two
--- referenced tables); re-run the file on a timeout.
+-- `@no-type`. Additive and idempotent; safe to re-run. Bounded by lock_timeout (the foreign keys
+-- lock the two referenced tables); re-run the file on a timeout.
 
 SET lock_timeout = '5s';
 
@@ -50,12 +48,12 @@ CREATE TABLE IF NOT EXISTS "app_storage_migration_runs" (
       FOREIGN KEY ("app_block_id") REFERENCES "app_blocks"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- Columns added after the first draft of this file (no-ops on a table created above).
+-- Idempotent; safe to re-run (no-ops on the table created above).
 ALTER TABLE "app_storage_migration_runs" ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "app_storage_migration_runs" ADD COLUMN IF NOT EXISTS "claim_token" TEXT;
 
--- The resume job's read: the runs still to do, least recently touched first. Recreated, because
--- the first draft of this file created an index of this name on ("created_at") alone.
+-- The resume job's read: the runs still to do, least recently touched first. Idempotent; safe to
+-- re-run.
 DROP INDEX IF EXISTS "app_storage_migration_runs_open_idx";
 CREATE INDEX IF NOT EXISTS "app_storage_migration_runs_open_idx"
   ON "app_storage_migration_runs"("heartbeat_at" NULLS FIRST, "created_at")

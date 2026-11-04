@@ -41,9 +41,8 @@ import {
   applyMigrationOps,
   collectionStorageKey,
 } from '~/server/services/apps/storage-schema-migrations';
-import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
 import {
-  APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_ALL_FEATURES_ON,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
 
@@ -113,10 +112,6 @@ type RawClient = {
   $executeRawUnsafe: (query: string) => Promise<unknown>;
 };
 const raw = () => dbWrite as unknown as RawClient;
-
-const ALL_FEATURES = Object.fromEntries(
-  Object.keys(APP_STORAGE_ENABLED_FEATURES).map((f) => [f, true])
-) as Record<AppStorageFeature, boolean>;
 
 /** The hand-applied runs table is absent. `app-access.service` is loaded lazily, as elsewhere. */
 async function isRunsTableMissing(err: unknown): Promise<boolean> {
@@ -476,7 +471,9 @@ async function loadTarget(
     }
     manifest = latest.manifest;
   }
-  const config = parseManifestStorage(manifest, ALL_FEATURES).collections.get(run.collection);
+  const config = parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).collections.get(
+    run.collection
+  );
   return { collection: config ? { name: run.collection, config } : null, superseded: false };
 }
 

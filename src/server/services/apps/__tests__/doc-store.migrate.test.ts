@@ -95,6 +95,9 @@ afterAll(async () => {
   await h?.close();
 });
 
+/** The most pages {@link runAll} reads before failing: far above any fixture here. */
+const MAX_PAGES = 1000;
+
 /** Every page, until the cursor runs out; the summed counts. */
 async function runAll(app: string, coll: DocCollection, limit: number) {
   const total = { scanned: 0, migrated: 0, unchanged: 0, failed: 0, invalid: 0, pages: 0 };
@@ -108,6 +111,8 @@ async function runAll(app: string, coll: DocCollection, limit: number) {
     total.invalid += r.invalid;
     total.pages += 1;
     if (r.next === null) return total;
+    // A cursor that never reaches the end (a regression in the keyset) fails here, not by timeout.
+    expect(total.pages).toBeLessThan(MAX_PAGES);
     after = r.next;
   }
 }
