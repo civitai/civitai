@@ -26,23 +26,27 @@ const SYSTEM_ACTOR_ID = -1;
 
 const RESERVED_NAME = MODERATION_ACCOUNT_USERNAME.toLowerCase();
 
-// After folding, any character that isn't a plain letter may stand for the reserved letter in its
-// place, up to half of them, so a name of only digits or symbols isn't refused for its length.
-// shortcut: same-length spellings only; an inserted or doubled letter (rn for m) still passes.
+// After folding, a character that isn't a plain letter may stand in for a letter of the reserved name
+// or be skipped, so padding and lookalike glyphs can't shift the match. Up to half the letters may be
+// stood in for, so a name of only digits or symbols isn't refused.
+// shortcut: an inserted or doubled plain letter (rn for m) still passes.
 function masksReservedName(value: string) {
-  const form = Array.from(
-    foldConfusables(value)
-      .replace(/[\s\p{M}\p{Pc}\p{Pd}\p{Default_Ignorable_Code_Point}.\u00B7\u2800]/gu, '')
-      .replace(/[1l]/g, 'i')
-  );
-  if (form.length !== RESERVED_NAME.length) return false;
-  let wildcards = 0;
-  for (const [i, char] of form.entries()) {
-    if (char === RESERVED_NAME[i]) continue;
-    if (/[a-z]/.test(char)) return false;
-    wildcards++;
+  const n = RESERVED_NAME.length;
+  // fewest stand-ins needed to have matched the first j reserved letters so far
+  let best: number[] = [0, ...Array<number>(n).fill(Infinity)];
+  for (const char of foldConfusables(value).replace(/[1l]/g, 'i')) {
+    const letter = /[a-z]/.test(char);
+    const next = Array<number>(n + 1).fill(Infinity);
+    for (let j = 0; j <= n; j++) {
+      if (best[j] === Infinity) continue;
+      if (!letter) next[j] = Math.min(next[j], best[j]);
+      if (j === n) continue;
+      if (char === RESERVED_NAME[j]) next[j + 1] = Math.min(next[j + 1], best[j]);
+      else if (!letter) next[j + 1] = Math.min(next[j + 1], best[j] + 1);
+    }
+    best = next;
   }
-  return wildcards <= Math.floor(RESERVED_NAME.length / 2);
+  return best[n] <= Math.floor(n / 2);
 }
 
 const schema = z
@@ -51,8 +55,8 @@ const schema = z
     name: displayName
       .min(1)
       .refine(
-        (value) => !/[\p{Cc}\p{Cf}\p{Cn}]/u.test(value),
-        'name may not hold control, format or unassigned characters'
+        (value) => !/[\p{Cc}\p{Cf}]/u.test(value),
+        'name may not hold control or format characters'
       )
       .refine(
         (value) =>

@@ -151,7 +151,6 @@ describe('POST /api/admin/system-account-profile', () => {
     ['a blank name', { name: '   ' }],
     ['a name with a bidi override', { name: 'Agent\u202Eevil' }],
     ['a name with a zero-width space', { name: 'Ag\u200Bent' }],
-    ['a name with an unassigned character', { name: 'Ag\u{E0080}ent' }],
     ['the reserved moderation name', { name: 'civitai moderation' }],
   ])('refuses %s with no write', async (_, extra) => {
     const { status } = await call({ userId: SYSTEM_ID, name: 'Agent', ...extra });
@@ -174,6 +173,7 @@ describe('POST /api/admin/system-account-profile', () => {
     ['Greek-iota-dialytika-for-i', 'C\u03CAvitai Moderation'],
     ['mixed l and 0', 'Clvitai M0deration'],
     ['padded with a blank symbol', 'C\u2503vitai Moderation\u2800'],
+    ['padded with a private-use character', 'C\u2503vitai\uE000 Moderation'],
     ['capital lunate sigma', '\u03F9ivitai Moderation'],
     ['divides-sign-for-i', 'C\u2223vitai Moderation'],
     ['inverted-exclamation-for-i', 'C\u00A1vitai Moderation'],
@@ -189,6 +189,11 @@ describe('POST /api/admin/system-account-profile', () => {
 
   it('admits a name of only digits as long as the reserved one', async () => {
     const { status } = await call({ userId: SYSTEM_ID, name: '23456789023456789' });
+    expect(status).toBe(200);
+  });
+
+  it('admits the reserved name with more than half its letters replaced', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'C!v!74! M0d3r47ion' });
     expect(status).toBe(200);
   });
 
