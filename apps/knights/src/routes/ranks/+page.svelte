@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageNav from '$lib/PageNav.svelte';
   import RankCards from '$lib/RankCards.svelte';
   import type { PageData } from './$types';
 
@@ -6,6 +7,7 @@
 </script>
 
 <div class="page-wide">
+  <PageNav />
   <p class="eyebrow">Knights of New Order</p>
   <h1 class="page-title">Ranks of the Order</h1>
 
@@ -28,7 +30,6 @@
     </li>
   </ul>
 
-  <p><a href="/play" data-sveltekit-preload-data="off">Back</a></p>
 </div>
 
 <style>

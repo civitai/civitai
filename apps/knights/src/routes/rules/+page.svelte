@@ -1,5 +1,6 @@
 <script lang="ts">
   import { count } from '$lib/format';
+  import PageNav from '$lib/PageNav.svelte';
   import RankCards from '$lib/RankCards.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import type { PageData } from './$types';
@@ -9,6 +10,7 @@
 </script>
 
 <div class="page-wide rules">
+  <PageNav />
   <header class="head">
     <div>
       <p class="eyebrow">Knights of New Order</p>
@@ -16,7 +18,7 @@
     </div>
     <p class="lede">
       Knights of New Order judge how mature images should be rated, so the site can show each image
-      to the right people. <a href="/play" data-sveltekit-preload-data="off">Back to judging</a>
+      to the right people.
     </p>
   </header>
 

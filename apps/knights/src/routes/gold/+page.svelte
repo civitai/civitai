@@ -3,6 +3,7 @@
   import type { ComponentProps } from 'svelte';
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
+  import PageNav from '$lib/PageNav.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -43,6 +44,7 @@
 </script>
 
 <div class="page-wide gold">
+<PageNav />
   <div class="ledger">
     <p class="eyebrow">Your ledger</p>
     <h1 class="page-title">Gold</h1>
