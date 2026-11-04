@@ -2,7 +2,6 @@ import * as z from 'zod';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
-// How a crucible's AI theme review treats an off-theme entry.
 export const THEME_REVIEW_MODES = ['shadow', 'flag', 'enforce'] as const;
 export type ThemeReviewMode = (typeof THEME_REVIEW_MODES)[number];
 

@@ -4464,7 +4464,8 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
 
 type EntryRemover =
   | { role: 'moderator'; userId: number }
-  | { role: 'owner'; userId: number; reasonText: string };
+  | { role: 'owner'; userId: number; reasonText: string }
+  | { role: 'review'; userId: number; reasonText: string };
 
 const OWNER_CAP_REACHED = `You've already removed ${CRUCIBLE_OWNER_REMOVAL_CAP} entries from this crucible, the most an owner can. Ask a moderator to remove any others.`;
 
@@ -4494,9 +4495,23 @@ export const removeCrucibleEntryAsOwner = async ({
   });
 };
 
+/** The AI theme review removes an off-theme entry: a moderator's removal, with its reason shown. */
+export const removeCrucibleEntryForThemeReview = ({
+  entryId,
+  reasonText,
+}: {
+  entryId: number;
+  reasonText: string;
+}) => removeEntry(entryId, { role: 'review', userId: constants.system.user.id, reasonText });
+
 async function removeEntry(entryId: number, remover: EntryRemover) {
   const isOwnerRemoval = remover.role === 'owner';
-  const actor = isOwnerRemoval ? { ownerId: remover.userId } : { moderatorId: remover.userId };
+  const actor =
+    remover.role === 'owner'
+      ? { ownerId: remover.userId }
+      : remover.role === 'review'
+      ? { reviewerId: remover.userId }
+      : { moderatorId: remover.userId };
   const moderatorId = remover.userId;
   const entry = await dbWrite.crucibleEntry.findUnique({
     where: { id: entryId },
@@ -4657,7 +4672,7 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
       crucibleId,
       crucibleName: getCruciblePublishableName(crucible),
       refundedAmount: fee,
-      ...(isOwnerRemoval && { removedBy: 'owner' as const, reason: remover.reasonText }),
+      ...(remover.role !== 'moderator' && { removedBy: remover.role, reason: remover.reasonText }),
     },
   });
 
