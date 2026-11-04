@@ -1819,6 +1819,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 disableStoreFilters
                 judgeInfo={judgeInfo}
                 judgingCategories={challenge.judgingCategories}
+                hideHatTurf
               />
             )}
           </Stack>

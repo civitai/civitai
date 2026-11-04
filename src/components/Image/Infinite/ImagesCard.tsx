@@ -18,6 +18,11 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
@@ -48,7 +53,11 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
 }
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  return <ImagesCardContent data={data} height={height} />;
+  return (
+    <HatTurfCardProvider>
+      <ImagesCardContent data={data} height={height} />
+    </HatTurfCardProvider>
+  );
 }
 
 function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
@@ -157,8 +166,10 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     revealStickers={contextProps.revealStickers}
                   />
                 )}
+                {safe && <HatTurfLayer imageId={image.id} />}
                 {/* Steps clear of an event decoration sitting on the corner. */}
-                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2">
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-col items-start gap-1">
+                  <HatTurfBadge imageId={image.id} />
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
                     {safe && storyline && (
@@ -213,7 +224,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                   </div>
                 </div>
                 {safe && (
-                  <div className="absolute right-2 top-2 flex flex-col gap-2">
+                  <div className="absolute right-2 top-2 z-[4] flex flex-col gap-2">
                     {!isBlocked && <ImageContextMenu image={image} />}
                     {features.imageGeneration && isRemixMenuVisible(image) && (
                       <RemixMenu
@@ -352,6 +363,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                   image={image}
                   readonly={!safe || (isScanned && isBlocked)}
                   showStickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
+                  safe={safe}
                 />
               )}
             </>
@@ -369,11 +381,16 @@ function ImageReactions({
   image,
   readonly,
   showStickerBadge,
+  safe,
 }: {
   image: ImagesInfiniteModel;
   readonly: boolean;
   showStickerBadge: boolean;
+  /** The hat layer only draws over shown media, so a blurred card gets no hat button either. */
+  safe: boolean;
 }) {
+  // Read here, not in the card, so a live hat push re-renders this row only.
+  const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
   return (
     <Metrics
@@ -441,6 +458,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
+                  {turf && <HatTurfButton imageId={image.id} surface="panel" />}
                 </div>
               </div>
             </div>
