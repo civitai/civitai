@@ -134,20 +134,22 @@ export function SearchableMultiSelectRefinementList({
     (items ?? []).filter((item) => item.isRefined) ?? []
   );
 
-  // `items` becomes the remote search result while typing. The facet index matches word prefixes
-  // only, so a miss there must not remove an option the MultiSelect's substring filter matches.
+  // The facet index matches word prefixes only; keep the idle list so a remote miss doesn't hide
+  // substring matches the MultiSelect would show.
   const [loadedItems, setLoadedItems] = useState<typeof items>([]);
   const isSearching = searchValue !== '' || debouncedSearchValue !== '';
   useEffect(() => {
     if (remoteSearch && !isSearching) setLoadedItems(items);
   }, [items, isSearching, remoteSearch]);
 
+  const selectableItems = uniqBy([...refinedItems, ...loadedItems, ...items], 'value');
+
   const onUpdateSelection = (updatedSelectedItems: string[]) => {
     const addedItems = updatedSelectedItems.length > refinedItems.length;
     if (addedItems) {
       // Get the last item:
       const lastAddedValue = updatedSelectedItems[updatedSelectedItems.length - 1];
-      const item = items.find((item) => item.value === lastAddedValue);
+      const item = selectableItems.find((item) => item.value === lastAddedValue);
 
       if (!item) {
         return;
@@ -188,7 +190,7 @@ export function SearchableMultiSelectRefinementList({
     }
   }, [items, refinedItems]);
 
-  const data = uniqBy([...refinedItems, ...loadedItems, ...items], 'value').map((item) => ({
+  const data = selectableItems.map((item) => ({
     label: item.label,
     value: item.value,
   }));

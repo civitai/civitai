@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   loaded: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
   remoteResult: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
   searchForItems: vi.fn(),
-  // Lets a test change `items` the way another refinement does.
+  refine: vi.fn(),
   swapItems: null as null | ((items: Array<Item>) => void),
 }));
 
@@ -22,7 +22,7 @@ vi.mock('react-instantsearch', async (importOriginal) => ({
     mocks.swapItems = setItems;
     return {
       items,
-      refine: vi.fn(),
+      refine: mocks.refine,
       searchForItems: (query: string) => {
         mocks.searchForItems(query);
         if (query) setItems(mocks.remoteResult);
@@ -40,6 +40,7 @@ beforeEach(() => {
   mocks.loaded = toItems(['Flux.1 D', 'MiniMax H3', 'SDXL 1.0']);
   mocks.remoteResult = [];
   mocks.searchForItems.mockClear();
+  mocks.refine.mockClear();
 });
 
 describe('SearchableMultiSelectRefinementList', () => {
@@ -55,7 +56,7 @@ describe('SearchableMultiSelectRefinementList', () => {
     const input = page.getByPlaceholder('Search Filter by Base Model');
     await input.fill('h3');
     // Outlast the 300ms debounce so a remote search would have fired by now.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await expect.element(page.getByRole('option', { name: 'MiniMax H3' })).toBeInTheDocument();
     expect(mocks.searchForItems).not.toHaveBeenCalledWith('h3');
   });
@@ -79,7 +80,7 @@ describe('SearchableMultiSelectRefinementList', () => {
       renderWithProviders(
         <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       );
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 1000));
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 500));
 
     test('a substring match survives a remote miss', async () => {
       mocks.loaded = toItems(['alexds9', 'RisingV']);
@@ -88,6 +89,9 @@ describe('SearchableMultiSelectRefinementList', () => {
       await vi.waitFor(() => expect(mocks.searchForItems).toHaveBeenCalledWith('ingV'));
       await settle();
       await expect.element(page.getByRole('option', { name: 'RisingV' })).toBeInTheDocument();
+      // The match came from the loaded list, so selecting it must still refine.
+      await page.getByRole('option', { name: 'RisingV' }).click();
+      expect(mocks.refine).toHaveBeenCalledWith('RisingV');
     });
 
     test('a remote-only hit is added to the loaded matches', async () => {
@@ -111,6 +115,9 @@ describe('SearchableMultiSelectRefinementList', () => {
       await vi.waitFor(() => expect(mocks.searchForItems).toHaveBeenCalledWith('alpha'));
       await settle();
       await expect.element(page.getByRole('option', { name: 'alpha' })).not.toBeInTheDocument();
+      // The dropdown is still working: the current list still matches.
+      await page.getByPlaceholder('Search Users').fill('gam');
+      await expect.element(page.getByRole('option', { name: 'gamma' })).toBeInTheDocument();
     });
   });
 });
