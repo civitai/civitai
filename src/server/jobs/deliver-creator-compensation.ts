@@ -93,7 +93,9 @@ export async function payDueCompensation(now: Date) {
     log(`Paid ${dateStr}, updated last payout date`);
 
     try {
-      await clickhouse.$query`
+      // $exec, not $query: $query appends FORMAT JSONEachRow, and ClickHouse then accepts this
+      // INSERT ... VALUES while writing 0 rows, so the event never reaches Kafka.
+      await clickhouse.$exec`
         INSERT INTO kafka.manual_events VALUES
           (now(), 'update-compensation', '{"date":"${dateStr}"}');
       `;
