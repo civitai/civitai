@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { applyPendingResolutions, castVote, type QueueDeps } from '../queue/queue.service';
 import { settleFinalItems } from '../progression/progression';
@@ -23,7 +23,7 @@ export type SimulatableItem = {
 export async function listSimulatableItems(
   db: Kysely<DB>,
   callerId: number,
-  limit = 20
+  limit = 50
 ): Promise<SimulatableItem[]> {
   const rows = await db
     .selectFrom('KnightsQueueItem as i')
@@ -37,17 +37,15 @@ export async function listSimulatableItems(
         .whereRef('v.itemId', '=', 'i.id')
         .as('votes'),
       eb
-        .exists(
-          eb
-            .selectFrom('KnightsVote as mine')
-            .select('mine.itemId')
-            .whereRef('mine.itemId', '=', 'i.id')
-            .where('mine.playerId', '=', callerId)
-        )
-        .as('votedByMe'),
+        .selectFrom('KnightsVote as mine')
+        .select((v) => v.fn.max('mine.createdAt').as('at'))
+        .whereRef('mine.itemId', '=', 'i.id')
+        .where('mine.playerId', '=', callerId)
+        .as('myLastVote'),
     ])
     .where('i.status', '=', 'Open')
-    .orderBy('votedByMe', 'desc')
+    // The items just voted on come first; older open votes would otherwise fill the list.
+    .orderBy(sql`"myLastVote" desc nulls last`)
     .orderBy('i.id', 'asc')
     .limit(limit)
     .execute();
@@ -59,7 +57,7 @@ export async function listSimulatableItems(
     options: r.options as SimulatableItem['options'],
     stage: r.minRank,
     votes: Number(r.votes),
-    votedByMe: Boolean(r.votedByMe),
+    votedByMe: r.myLastVote !== null,
   }));
 }
 
