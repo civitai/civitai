@@ -231,10 +231,15 @@ describe('updateUserProfile — a new cover image', () => {
       it(`refuses ${slot} before writing`, async () => {
         mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
 
-        await expect(updateUserProfile({ userId: USER_ID, [slot]: cover })).rejects.toMatchObject({
-          code: 'BAD_REQUEST',
-        });
+        await expect(
+          updateUserProfile({
+            userId: USER_ID,
+            [slot]: cover,
+            creatorCardStatsPreferences: ['downloadCount'],
+          })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
         expect(tx.userProfile.update).not.toHaveBeenCalled();
+        expect(statements).toHaveLength(0);
       });
 
       it(`leaves ${slot} unchecked when it names an existing image by id`, async () => {
@@ -267,9 +272,15 @@ describe('updateUserProfile — a new cover image', () => {
         redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
 
         await expect(
-          updateUserProfile({ userId: USER_ID, sessionUserId: USER_ID, [slot]: cover })
+          updateUserProfile({
+            userId: USER_ID,
+            sessionUserId: USER_ID,
+            [slot]: cover,
+            creatorCardStatsPreferences: ['downloadCount'],
+          })
         ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
         expect(tx.userProfile.update).not.toHaveBeenCalled();
+        expect(statements).toHaveLength(0);
       });
 
       it(`writes ${slot} when that user saved it for the profile`, async () => {
