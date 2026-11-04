@@ -10,6 +10,7 @@ import type {
   CreateNotificationRow,
   MarkReadInput,
   NotificationCategory,
+  NotificationListCursor,
   NotificationRow,
 } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
@@ -75,7 +76,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
 export async function queryNotifications(input: {
   userId: number;
   limit: number;
-  cursor?: Date;
+  cursor?: NotificationListCursor | Date;
   category?: NotificationCategory | null;
   unread?: boolean;
 }): Promise<NotificationRow[]> {
@@ -87,9 +88,16 @@ export async function queryNotifications(input: {
     params.push(category);
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
-  if (cursor) {
+  if (cursor instanceof Date) {
+    // Legacy cursor: strict, because `<=` would refetch the same page forever once equal timestamps
+    // fill one.
     params.push(cursor);
     where.push(`un."createdAt" < $${params.length}`);
+  } else if (cursor) {
+    params.push(cursor.createdAt, cursor.id);
+    const [at, id] = [params.length - 1, params.length];
+    // The bare `<=` lets the ("userId", "createdAt" DESC) index bound the scan.
+    where.push(`un."createdAt" <= $${at} AND (un."createdAt" < $${at} OR un.id < $${id})`);
   }
   params.push(limit);
 
@@ -99,7 +107,7 @@ export async function queryNotifications(input: {
      FROM "UserNotification" un
        JOIN "Notification" n ON n."id" = un."notificationId"
      WHERE ${where.join(' AND ')}
-     ORDER BY un."createdAt" DESC
+     ORDER BY un."createdAt" DESC, un.id DESC
      LIMIT $${params.length}`,
     params
   );

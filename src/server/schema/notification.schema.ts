@@ -1,10 +1,22 @@
 import * as z from 'zod';
+import { CURSOR_MAX_DATE, CURSOR_MIN_DATE, parseNotificationCursor } from '@civitai/notifications';
 import { NotificationCategory } from '~/server/common/enums';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const getUserNotificationsSchema = getAllQuerySchema.extend({
-  cursor: z.date(),
+  // A Date is a cursor issued before the keyset cursor, still held by an open tab.
+  cursor: z.union([
+    z.date().min(CURSOR_MIN_DATE).max(CURSOR_MAX_DATE),
+    z.string().transform((value, ctx) => {
+      const cursor = parseNotificationCursor(value);
+      if (!cursor) {
+        ctx.addIssue({ code: 'custom', message: 'Invalid cursor' });
+        return z.NEVER;
+      }
+      return cursor;
+    }),
+  ]),
   unread: z.boolean().default(false),
   category: z.enum(NotificationCategory).nullish(),
 });

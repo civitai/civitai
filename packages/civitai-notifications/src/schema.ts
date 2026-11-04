@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { notificationCategories } from './constants';
+import { cursorDate, notificationListCursor } from './cursor';
 
 // The notification producer contract — the single source of truth the notifications app validates
 // POST bodies against and that every caller types against. Moved here (from the monolith's
@@ -79,7 +80,8 @@ export type NotificationCategoryCount = z.infer<typeof notificationCategoryCount
 export const queryNotificationsInput = z.object({
   userId: z.number(),
   limit: z.number().optional(),
-  cursor: z.coerce.date().optional(),
+  // A bare date is the cursor of callers built before the keyset cursor; drop it once none is deployed.
+  cursor: z.union([notificationListCursor, cursorDate]).optional(),
   category: notificationCategory.nullish(),
   unread: z.boolean().optional(),
 });
