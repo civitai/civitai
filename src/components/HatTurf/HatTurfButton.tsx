@@ -8,13 +8,12 @@ import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfButton.module.css';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
-import { HatTurfPanelPopover } from '~/components/HatTurf/HatTurfPanel';
+import { DEFAULT_SPOT, HatTurfPanelPopover, useSetOptIn } from '~/components/HatTurf/HatTurfPanel';
 import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
+import { showInfoNotification } from '~/utils/notifications';
 import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
-import { trpc } from '~/utils/trpc';
 
 /** Hidden when signed out or the image can't take a hat. */
 export function HatTurfButton({ imageId }: { imageId: number }) {
@@ -25,20 +24,11 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const user = useCurrentUser();
   const card = useHatTurfCard();
-  const teamColor = useTeamColor();
   const stock = useHatStock();
   const { cosmeticId } = useChosenHat();
   const [join, setJoin] = useState(false);
   const track = useHatTurfAction('feed-card');
-  const utils = trpc.useUtils();
-  const setOptIn = trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => {
-      setJoin(false);
-      void utils.hatTurf.getStock.invalidate();
-      void utils.hatTurf.getSummaries.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: "Couldn't join Hat Turf", error }),
-  });
+  const setOptIn = useSetOptIn(() => setJoin(false));
 
   // Until the viewer's stock is read, neither the hat nor the invite is known to be right.
   if (!feed || !card || !user || !stock || feed.hidden?.[imageId]) return null;
@@ -75,34 +65,21 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
         message: 'Out of hats. You get more as the event goes on.',
       });
     if (!cosmeticId || draft) return;
-    setDraft({ x: 0.5, y: 0.4 });
+    setDraft(DEFAULT_SPOT);
     track('feed_place_start', feed.event);
   };
 
   return (
     <div className={classes.wrap} data-testid="hat-turf-button">
-      <button
-        type="button"
-        className={clsx(
-          classes.button,
-          !joined && classes.invite,
-          empty && classes.empty,
-          !!draft && classes.active
-        )}
-        style={
-          joined && !empty && feed.team ? { backgroundColor: teamColor(feed.team) } : undefined
-        }
+      <HatButtonFace
+        joined={joined}
+        empty={empty}
+        active={!!draft}
+        placed={!!placed}
         aria-label={label}
         aria-pressed={!!draft}
         onClick={press}
-      >
-        <HatIcon size={17} />
-        {placed && (
-          <span className={classes.tick} data-testid="hat-turf-placed">
-            <IconCheck size={8} stroke={4} />
-          </span>
-        )}
-      </button>
+      />
       <Popover
         opened={join}
         onChange={setJoin}
@@ -172,5 +149,44 @@ export function HatTurfGear({
         </button>
       }
     />
+  );
+}
+
+/** The square hat button: the viewer's team colour while they can place, an outline until they join. */
+export function HatButtonFace({
+  joined,
+  empty,
+  active,
+  placed,
+  className,
+  ...props
+}: {
+  joined: boolean;
+  empty: boolean;
+  active: boolean;
+  placed: boolean;
+} & React.ButtonHTMLAttributes<HTMLButtonElement> & { 'data-testid'?: string }) {
+  const feed = useTurfFeed();
+  const teamColor = useTeamColor();
+  return (
+    <button
+      type="button"
+      {...props}
+      className={clsx(
+        classes.button,
+        !joined && classes.invite,
+        empty && classes.empty,
+        active && classes.active,
+        className
+      )}
+      style={joined && !empty && feed?.team ? { backgroundColor: teamColor(feed.team) } : undefined}
+    >
+      <HatIcon size={17} />
+      {placed && (
+        <span className={classes.tick} data-testid="hat-turf-placed">
+          <IconCheck size={8} stroke={4} />
+        </span>
+      )}
+    </button>
   );
 }

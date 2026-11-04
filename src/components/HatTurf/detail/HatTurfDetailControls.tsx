@@ -2,13 +2,10 @@ import { useState } from 'react';
 import { Button } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconCheck } from '@tabler/icons-react';
-import clsx from 'clsx';
-import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import buttonClasses from '~/components/HatTurf/HatTurfButton.module.css';
-import { HatTurfGear } from '~/components/HatTurf/HatTurfButton';
+import { HatButtonFace, HatTurfGear } from '~/components/HatTurf/HatTurfButton';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import { DEFAULT_SPOT, HatTurfPanelPopover, useSetOptIn } from '~/components/HatTurf/HatTurfPanel';
 import { TeamHat } from '~/components/HatTurf/TeamHat';
@@ -50,7 +47,6 @@ function HatButton({ imageId }: { imageId: number }) {
   });
   const [inviteOpen, setInviteOpen] = useState<boolean | undefined>(undefined);
   const join = useSetOptIn();
-  const teamColor = useTeamColor();
   const placed = usePlacedHere(imageId);
 
   // Closed images still invite: an unjoined viewer has no other way to opt in.
@@ -92,30 +88,17 @@ function HatButton({ imageId }: { imageId: number }) {
     >
       <Popover.Target>
         <span className={buttonClasses.wrap}>
-          <button
-            type="button"
-            className={clsx(
-              buttonClasses.button,
-              classes.hat,
-              !joined && buttonClasses.invite,
-              empty && buttonClasses.empty,
-              !!card.draft && buttonClasses.active
-            )}
-            style={
-              joined && !empty && feed.team ? { backgroundColor: teamColor(feed.team) } : undefined
-            }
+          <HatButtonFace
+            joined={joined}
+            empty={empty}
+            active={!!card.draft}
+            placed={placed}
+            className={classes.hat}
             data-testid="hat-turf-detail-hat"
             aria-label={joined ? 'Place your cap' : 'Join Hat Turf'}
             aria-pressed={joined ? !!card.draft : undefined}
             onClick={press}
-          >
-            <HatIcon size={17} />
-            {placed && (
-              <span className={buttonClasses.tick} data-testid="hat-turf-placed">
-                <IconCheck size={8} stroke={4} />
-              </span>
-            )}
-          </button>
+          />
           {joined && <HatTurfGear imageId={imageId} surface="image-detail" placed={placed} />}
         </span>
       </Popover.Target>

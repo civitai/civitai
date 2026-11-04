@@ -74,7 +74,8 @@ export function HatTurfPanelPopover({
       }}
     />
   );
-  const trayEl = (
+  // Mounted only while open: every feed card has a gear, and a closed tray would still cost each one.
+  const trayEl = tray && (
     <HatTurfTray
       opened={tray}
       onClose={() => setTray(false)}
@@ -89,26 +90,29 @@ export function HatTurfPanelPopover({
     return (
       <>
         {target}
-        <Drawer
-          opened={opened}
-          onClose={() => onOpenChange(false)}
-          position="bottom"
-          withCloseButton={false}
-          // The image modal is a PageModal; at Mantine's default the sheet opens hidden under it.
-          zIndex={PAGE_MODAL_Z_INDEX + 1}
-          classNames={{ content: classes.sheet, body: classes.sheetBody }}
-        >
-          {/* Focus lands on the sheet, not on its first button, so nothing shows a focus ring on open. */}
-          <div
-            data-autofocus
-            tabIndex={-1}
-            className="outline-none"
-            onClick={(event) => event.stopPropagation()}
+        {/* Portalled, but React still bubbles its clicks (overlay, close) to the card around the gear. */}
+        <span className="contents" onClick={(event) => event.stopPropagation()}>
+          <Drawer
+            opened={opened}
+            onClose={() => onOpenChange(false)}
+            position="bottom"
+            withCloseButton={false}
+            // The image modal is a PageModal; at Mantine's default the sheet opens hidden under it.
+            zIndex={PAGE_MODAL_Z_INDEX + 1}
+            classNames={{ content: classes.sheet, body: classes.sheetBody }}
           >
-            {panel}
-          </div>
-        </Drawer>
-        {trayEl}
+            {/* Focus lands on the sheet, not on its first button, so nothing shows a focus ring on open. */}
+            <div
+              data-autofocus
+              tabIndex={-1}
+              className="outline-none"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {panel}
+            </div>
+          </Drawer>
+          {trayEl}
+        </span>
       </>
     );
 
@@ -132,7 +136,9 @@ export function HatTurfPanelPopover({
           {panel}
         </Popover.Dropdown>
       </Popover>
-      {trayEl}
+      <span className="contents" onClick={(event) => event.stopPropagation()}>
+        {trayEl}
+      </span>
     </>
   );
 }
@@ -160,9 +166,11 @@ export function HatTurfPanel({
   const showHats = useHatTurfStore((state) => state.showHats);
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
   const optIn = useSetOptIn();
+  const { cosmeticId } = useChosenHat();
   if (!feed) return null;
 
   const joined = !!user && stock?.optedIn === true;
+  const noHat = !cosmeticId;
   const closed = feed.open[imageId] === false;
   const color = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
 
@@ -194,7 +202,7 @@ export function HatTurfPanel({
                 className={classes.place}
                 style={{ backgroundColor: feed.team ? color(feed.team) : undefined }}
                 leftSection={<HatIcon size={16} />}
-                disabled={placed || stock.available === 0}
+                disabled={placed || stock.available === 0 || noHat}
                 data-testid="hat-turf-panel-place"
                 onClick={() => {
                   card.setDraft(card.draft ?? DEFAULT_SPOT);
@@ -304,12 +312,14 @@ function Supply({
 }) {
   const utils = trpc.useUtils();
   // Reread when the next hat is due, so the count and the countdown move on together.
+  // Keyed on the time, not the Date: the hook builds a new Date every render.
+  const due = nextAt?.getTime();
   useEffect(() => {
-    if (!nextAt) return;
-    const wait = Math.max(0, nextAt.getTime() - Date.now()) + 500;
+    if (!due) return;
+    const wait = Math.max(0, due - Date.now()) + 500;
     const timer = window.setTimeout(() => void utils.hatTurf.getStock.invalidate(), wait);
     return () => window.clearTimeout(timer);
-  }, [nextAt, utils]);
+  }, [due, utils]);
 
   return (
     <div className={classes.supply} data-testid="hat-turf-panel-supply">

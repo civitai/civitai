@@ -12,6 +12,7 @@ import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import {
+  FALLBACK_COLOR,
   HAT_DEFAULT_SCALE,
   badgeLeader,
   clampSpot,
@@ -155,8 +156,7 @@ function HatTurfLayerContent({
 
   if (!card || !feed) return null;
   const { draft, setDraft, placed, setPlaced } = card;
-  const colorOf = (team: string | null | undefined) =>
-    (team && teamColor(team)) || 'var(--mantine-color-gray-6)';
+  const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
   const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
@@ -227,6 +227,8 @@ function HatTurfLayerContent({
   return (
     <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
       <HatTurfLive imageId={imageId} />
+      {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
+      {!box && corner && <div className={classes.corner}>{corner}</div>}
       {box && (
         <div
           className={classes.box}

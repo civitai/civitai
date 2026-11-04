@@ -7,6 +7,7 @@ import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
+  FALLBACK_COLOR,
   RING_LENGTH,
   RING_RADIUS,
   badgeLeader,
@@ -17,8 +18,6 @@ import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { abbreviateNumber } from '~/utils/number-helpers';
-
-const FALLBACK = 'var(--mantine-color-gray-6)';
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId }: { imageId: number }) {
@@ -50,7 +49,7 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
   if (!summary || !feed) return null;
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
-  const colorOf = (team: string) => teamColor(team) ?? FALLBACK;
+  const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
   // A protected image is held by its hat's team, whoever leads the count.
   const holder = summary.hatted && summary.hattedTeam ? summary.hattedTeam : leader;
   const discColor = holder ? colorOf(holder) : undefined;

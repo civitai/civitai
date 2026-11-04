@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(async () => undefined),
   user: { id: 1 } as { id: number } | null,
   mine: null as unknown,
+  noHats: false,
   trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
@@ -48,10 +49,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         'hatTurf.getMyStickerHats': {
           useQuery: () => ({
-            data: [
-              { cosmeticId: 11, usageCount: 3, lastUsedAt: null },
-              { cosmeticId: 12, usageCount: 9, lastUsedAt: null },
-            ],
+            data: h.noHats
+              ? []
+              : [
+                  { cosmeticId: 11, usageCount: 3, lastUsedAt: null },
+                  { cosmeticId: 12, usageCount: 9, lastUsedAt: null },
+                ],
           }),
         },
         'event.getMyHats': {
@@ -163,6 +166,7 @@ beforeEach(() => {
   ];
   h.user = { id: 1 };
   h.mine = null;
+  h.noHats = false;
   h.place.mockReset();
   h.info.mockReset();
   h.nextCursor = null;
@@ -314,6 +318,19 @@ describe('Hat Turf on image detail', () => {
         [...q('hat-turf-tray')!.querySelectorAll('button[aria-pressed]')].map((b) => b.textContent)
       ).toEqual(['Top Hat'])
     );
+  });
+
+  test('with no hats to place, Place hat is off and drops nothing', async () => {
+    h.noHats = true;
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-place')).not.toBeNull());
+    expect(q('hat-turf-panel')!.textContent).toContain('You have no hats to place yet.');
+    expect((q('hat-turf-panel-place') as HTMLButtonElement).disabled).toBe(true);
+    click(q('hat-turf-panel-place'));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(q('hat-turf-draft')).toBeNull();
   });
 
   test('Place hat in the panel drops your hat as a draft and closes the panel', async () => {
