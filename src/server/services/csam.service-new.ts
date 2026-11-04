@@ -14,7 +14,7 @@ import {
 } from '~/server/services/image-upload-action.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
-import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
+import { blobToFile, fetchBlob } from '~/utils/file-utils';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -32,9 +32,7 @@ import { getPagination, getPagingData } from '~/server/utils/pagination-helpers'
 import type { PaginationInput } from '~/server/schema/base.schema';
 import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isDev, isProd } from '~/env/other';
-import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
-import JSZip from 'jszip';
 import { CYBERTIP_CONTACT_EMAIL } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { Report } from '@civitai/cybertipline-tools';
@@ -94,6 +92,15 @@ import type {
   UnconfirmedOpen,
 } from '~/server/services/csam-unconfirmed-open';
 import { isUnreadableAnswer } from '~/server/services/csam-unconfirmed-open';
+import type { SpooledFile } from '~/server/services/csam-evidence-spool';
+import {
+  SpoolLimitError,
+  spoolBudget,
+  spooledFile,
+  spoolStream,
+  spoolUrl,
+  spoolZip,
+} from '~/server/services/csam-evidence-spool';
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
@@ -1419,18 +1426,49 @@ async function reportGenerationData(claim: SendClaim) {
   if (!generatedImages?.length)
     return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
-  // Fetched before the CyberTip is opened, so a report that cannot be sent opens none. A file that
-  // cannot be fetched is held for and sent without as an image's is.
-  const blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
-    Promise.all(
-      job.blobs.map(async ({ url }) => ({
-        job,
-        url,
-        // An error response is not the file, and a fetch that throws is one that failed.
-        file: await fetchBlobAsFile(url, undefined, { requireOk: true }).catch(() => null),
-      }))
-    )
-  );
+  // Each run's own, so no run reads or removes another's.
+  const dir = `${baseDir}/generated-send/${report.id}-${claim.claimId}`;
+  createDir(dir);
+  try {
+    await sendGenerationData(claim, initialReport, generatedImages, dir);
+  } finally {
+    // A scratch copy of the fetched files: every run fetches its own.
+    if (fs.existsSync(dir)) removeDir(dir);
+  }
+}
+
+async function sendGenerationData(
+  claim: SendClaim,
+  initialReport: Report,
+  generatedImages: CsamReportGeneratedImages[],
+  dir: string
+) {
+  const { report } = claim;
+  // Fetched to disk before the CyberTip is opened, so a report that cannot be sent opens none. A file
+  // that cannot be fetched is held for and sent without as an image's is.
+  const budget = spoolBudget();
+  let n = 0;
+  let blobs: { job: CsamReportGeneratedImages; url: string; file: SpooledFile | null }[];
+  try {
+    blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
+      Promise.all(
+        job.blobs.map(async ({ url }) => {
+          const path = `${dir}/file-${n++}`;
+          // An error response is not the file, and a fetch that throws is one that failed. A report
+          // past the cap fails whole.
+          const fetched = await spoolUrl(url, path, budget).catch((e) => {
+            if (e instanceof SpoolLimitError) throw e;
+            return null;
+          });
+          const file = fetched && { path, filename: `${Date.now()}`, type: fetched.type };
+          return { job, url, file };
+        })
+      )
+    );
+  } catch (e) {
+    if (!(e instanceof SpoolLimitError)) throw e;
+    return logSendFailure(report, new Error(spoolLimitMessage(report.id, e)), 'evidence-too-large');
+  }
   // One filing can name a URL twice: it is one file, counted and sent once, and a copy that was
   // fetched wins over one whose fetch failed.
   const byUrl = new Map<string, (typeof blobs)[number]>();
@@ -1470,7 +1508,7 @@ async function reportGenerationData(claim: SendClaim) {
           async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
             const {
               data: { fileId, hash },
-            } = await uploadToCyberTip(claim, file);
+            } = await uploadToCyberTip(claim, await spooledFile(file));
 
             const valuePair: Array<{ name: string; value: string }> = [];
             if (prompt)
@@ -1489,7 +1527,9 @@ async function reportGenerationData(claim: SendClaim) {
               // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
             });
             return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
-          }
+          },
+          // The upload reads each file whole: one at a time.
+          1
         );
         return {
           ...(failed.length > 0 && { readFailures }),
@@ -1625,27 +1665,29 @@ async function reportTrainingData(claim: SendClaim) {
   if (!version)
     return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
-  const dir = `${baseDir}/training-data/${report.id}`;
+  // Each run's own, so no run (nor the archive's copy) reads or removes another's.
+  const dir = `${baseDir}/training-data/${report.id}-${claim.claimId}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
 
   createDir(dir);
   try {
     // Downloaded and read before the CyberTip is opened, so a report that cannot be sent opens none.
-    let files: { imgBlob: Blob; filename: string }[];
+    let files: SpooledFile[];
     try {
       const zipStream = await getTrainingDataZipStream({
         reportedById: report.reportedById,
         versionId: version.id,
       });
-      await fsAsync.writeFile(outPath, zipStream);
-      const zData = await new Promise<Buffer>((resolve, reject) => {
-        fs.readFile(outPath, function (err, data) {
-          if (err) reject(err);
-          else resolve(data);
-        });
-      }).then((data) => new JSZip().loadAsync(new Uint8Array(data)));
-      files = await unzipTrainingData(zData, ({ imgBlob, filename }) => ({ imgBlob, filename }));
+      await spoolStream(Readable.from(zipStream), outPath, spoolBudget());
+      createDir(`${dir}/entries`);
+      files = await spoolZip(outPath, `${dir}/entries`, spoolBudget());
     } catch (e) {
+      if (e instanceof SpoolLimitError)
+        return logSendFailure(
+          report,
+          new Error(spoolLimitMessage(report.id, e)),
+          'evidence-too-large'
+        );
       return logSendFailure(report, e, 'archive-data');
     }
     if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
@@ -1656,13 +1698,22 @@ async function reportTrainingData(claim: SendClaim) {
     await sendCyberTip(claim, initialReport, {
       fileDetails: files.map(({ filename }) => fileDetailsOf(filename)),
       sendFiles: async (reportId) => {
-        sending = sendEach(files, async ({ imgBlob, filename }) => {
-          const {
-            data: { fileId, hash },
-          } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-          await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetailsOf(filename) });
-          return { filename, fileId, hash };
-        });
+        sending = sendEach(
+          files,
+          async (file) => {
+            const { filename } = file;
+            const {
+              data: { fileId, hash },
+            } = await uploadToCyberTip(claim, await spooledFile(file));
+            await cybertipClient.submitFileDetails({
+              reportId,
+              fileId,
+              ...fileDetailsOf(filename),
+            });
+            return { filename, fileId, hash };
+          },
+          1
+        );
         return { trainingData: await sending.sent };
       },
       beforeCancel: async () => sending?.settled(),
@@ -1718,23 +1769,67 @@ async function reportExternalLink(claim: SendClaim) {
   if (details.additionalInfo) reportInfo.push(details.additionalInfo);
   reportInfo.push('All evidence in this report should be independently verified.');
 
-  // Read before the CyberTip is opened, so a report whose evidence cannot be read opens none.
-  type ZipFile = { imgBlob: Blob; filename: string };
-  const readZip = async (key: string) =>
-    unzipTrainingData(
-      await getCsamBucketZip(key),
-      ({ imgBlob, filename }): ZipFile => ({
-        imgBlob,
-        filename,
-      })
-    );
-  let evidenceFiles: ZipFile[] = [];
-  let supplementalFiles: ZipFile[] = [];
+  // Each run's own, so no run reads or removes another's.
+  const dir = `${baseDir}/external-send/${report.id}-${claim.claimId}`;
+  createDir(dir);
   try {
-    if (details.evidence?.bucketKey) evidenceFiles = await readZip(details.evidence.bucketKey);
+    await sendExternalLink(claim, dir, {
+      details,
+      reportInfo,
+      reportedInfo,
+      ipCaptureEvent,
+      reportingUser: { email: reportingUser.email, name: reportingUser.name },
+      userId: report.userId,
+    });
+  } finally {
+    // A scratch copy of the stored zips: every run downloads its own.
+    if (fs.existsSync(dir)) removeDir(dir);
+  }
+}
+
+async function sendExternalLink(
+  claim: SendClaim,
+  dir: string,
+  {
+    details,
+    reportInfo,
+    reportedInfo,
+    ipCaptureEvent,
+    reportingUser,
+    userId,
+  }: {
+    details: ExternalCsamReportDetails;
+    reportInfo: string[];
+    reportedInfo: string[];
+    ipCaptureEvent: NonNullable<Report['personOrUserReported']>['ipCaptureEvent'];
+    reportingUser: { email: string; name: string | null };
+    userId: number;
+  }
+) {
+  const { report } = claim;
+
+  // Read before the CyberTip is opened, so a report whose evidence cannot be read opens none.
+  const inflated = spoolBudget();
+  const readZip = async (key: string, name: string) => {
+    const zipFile = `${dir}/${name}.zip`;
+    await downloadCsamBucketObject(key, zipFile);
+    createDir(`${dir}/${name}`);
+    return spoolZip(zipFile, `${dir}/${name}`, inflated);
+  };
+  let evidenceFiles: SpooledFile[] = [];
+  let supplementalFiles: SpooledFile[] = [];
+  try {
+    if (details.evidence?.bucketKey)
+      evidenceFiles = await readZip(details.evidence.bucketKey, 'evidence');
     if (details.supplementalEvidence?.bucketKey)
-      supplementalFiles = await readZip(details.supplementalEvidence.bucketKey);
+      supplementalFiles = await readZip(details.supplementalEvidence.bucketKey, 'supplemental');
   } catch (e) {
+    if (e instanceof SpoolLimitError)
+      return logSendFailure(
+        report,
+        new Error(spoolLimitMessage(report.id, e)),
+        'evidence-too-large'
+      );
     return logSendFailure(report, e, 'archive-data');
   }
 
@@ -1807,7 +1902,7 @@ async function reportExternalLink(claim: SendClaim) {
       },
     },
     personOrUserReported: {
-      espIdentifier: report.userId.toString(),
+      espIdentifier: userId.toString(),
       screenName: details.screenName && xmlText(details.screenName),
       personOrUserReportedPerson: {
         firstName: details.reportedName && xmlText(details.reportedName),
@@ -1827,15 +1922,20 @@ async function reportExternalLink(claim: SendClaim) {
       ...supplementalFiles.map(({ filename }) => supplementalDetails(filename)),
     ],
     sendFiles: async (reportId) => {
-      const limit = plimit(2);
-      const upload = (files: ZipFile[], detailsOf: (filename: string) => FileDetailsXml) =>
+      // The upload reads each file whole: one at a time.
+      const limit = plimit(1);
+      const upload = (files: SpooledFile[], detailsOf: (filename: string) => FileDetailsXml) =>
         Promise.all(
-          files.map(({ imgBlob, filename }) =>
+          files.map((file) =>
             limit(async () => {
               const {
                 data: { fileId },
-              } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-              await cybertipClient.submitFileDetails({ reportId, fileId, ...detailsOf(filename) });
+              } = await uploadToCyberTip(claim, await spooledFile(file));
+              await cybertipClient.submitFileDetails({
+                reportId,
+                fileId,
+                ...detailsOf(file.filename),
+              });
             })
           )
         );
@@ -1870,13 +1970,16 @@ export async function uploadExternalCsamEvidence({
   return { bucketKey, filename };
 }
 
-async function getCsamBucketZip(key: string) {
+/** An object in the CSAM bucket written to `file`, under its own cap. */
+async function downloadCsamBucketObject(key: string, file: string) {
   const { client, Bucket } = getCsamBucket();
   const response = await client.send(new GetObjectCommand({ Bucket, Key: key }));
-  const byteArray = await response.Body?.transformToByteArray();
-  if (!byteArray) throw new Error('failed to download evidence from CSAM bucket');
-  return await new JSZip().loadAsync(byteArray);
+  if (!response.Body) throw new Error('failed to download evidence from CSAM bucket');
+  await spoolStream(response.Body as Readable, file, spoolBudget());
 }
+
+const spoolLimitMessage = (reportId: number, e: SpoolLimitError) =>
+  `report ${reportId} cannot be sent: ${e.message}`;
 
 async function getTrainingDataZipStream({
   reportedById,

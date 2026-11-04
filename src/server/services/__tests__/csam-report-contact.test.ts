@@ -20,11 +20,6 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   },
 }));
 
-vi.mock('~/utils/file-utils', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  fetchBlobAsFile: async () => new File(['generated'], 'generated.png'),
-}));
-
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: undefined,
@@ -47,6 +42,7 @@ function makeReport(overrides: Partial<CsamReportProps>) {
 
 describe('CyberTipline report contact person', () => {
   beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('generated'));
     submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
     dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
       where.id === 10

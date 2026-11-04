@@ -678,6 +678,14 @@ export const trainingModelInfo: {
 
 export const rapidEta = 5;
 
+/** The image and video entries a training-data zip is read for. */
+export function isTrainingMediaEntry(zname: string) {
+  if (zname.endsWith('/') || zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE'))
+    return false;
+  const mimeType = getMimeTypeFromExt(getFileExtension(zname));
+  return !!mimeType && !!MEDIA_TYPE[mimeType];
+}
+
 export async function unzipTrainingData<T = void>(
   zData: JSZip,
   cb: (args: { imgBlob: Blob; filename: string; fileExt: string }) => Promise<T> | T
@@ -685,12 +693,9 @@ export async function unzipTrainingData<T = void>(
   return (
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
-        if (zf.dir) return;
-        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+        if (zf.dir || !isTrainingMediaEntry(zname)) return;
 
         const fileExt = getFileExtension(zname);
-        const mimeType = getMimeTypeFromExt(fileExt);
-        if (!MEDIA_TYPE[mimeType as any]) return;
         const imgBlob = await zf.async('blob');
         return cb({ imgBlob, filename: zname, fileExt });
       })
