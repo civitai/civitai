@@ -27,6 +27,10 @@ export function civitaiUrl(path: string, entity: { nsfw?: boolean; nsfwLevel?: n
   return `https://${domain}/${path.replace(/^\//, '')}`;
 }
 
+export function siteModelUrl(site: 'com' | 'red', modelId: number): string {
+  return `https://civitai.${site}/models/${modelId}`;
+}
+
 export function modelUrl(modelId: number, model: { nsfw?: boolean; nsfwLevel?: number }): string {
   return civitaiUrl(`models/${modelId}`, model);
 }
