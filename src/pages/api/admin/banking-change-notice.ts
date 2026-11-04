@@ -10,6 +10,9 @@
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
  *
+ * One call sends at most `count` (max 1000), about 2 a second (~8 min for 1000), so send a
+ * larger audience in several calls.
+ *
  * Actions:
  *   send      - {dryRun?, count?, batchSize?}  Email up to `count` (default 50, max 1000) of the
  *                                 audience who have not been sent it yet: accounts that banked in the
@@ -32,6 +35,7 @@ import * as z from 'zod';
 import { isEmailConfigured } from '~/server/email/client';
 import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { countNoticeSent } from '~/server/services/notice-ledger.service';
 import { sendBankingChangeNotice } from '~/server/services/banking-change-notice.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -42,7 +46,8 @@ const schema = z.discriminatedUnion('action', [
     action: z.literal('send'),
     dryRun: z.boolean().default(true),
     count: z.coerce.number().int().min(1).max(1000).default(50),
-    batchSize: z.coerce.number().int().min(1).max(50).default(25),
+    // SES's sending rate is account-wide: parallel batches got throttled and refused other site emails.
+    batchSize: z.coerce.number().int().min(1).max(5).default(1),
   }),
   z.object({
     action: z.literal('send-test'),
@@ -76,8 +81,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         .send(bankingChangeNoticeEmail.getHtml({ to: '', username: input.username }));
     }
     case 'sent': {
-      const all = await sysRedis.hGetAll(KEY);
-      return res.status(200).json({ sent: Object.keys(all).length });
+      return res.status(200).json({ sent: await countNoticeSent(KEY) });
     }
     case 'unmark': {
       const removed = await sysRedis.hDel(KEY, String(input.userId));

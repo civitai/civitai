@@ -202,6 +202,7 @@ describe('sendNcEarningsNotice', () => {
       count: 50,
       batchSize: 10,
       date: 'November 5th',
+      minIntervalMs: 0,
       ...over,
     });
 

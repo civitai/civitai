@@ -12,6 +12,9 @@
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
  *
+ * One call sends at most `count` (max 1000), about 2 a second (~8 min for 1000), so send a
+ * larger audience in several calls.
+ *
  * Actions:
  *   send      - {date, dryRun?, count?, batchSize?}  Notify up to `count` (default 50, max 1000)
  *                                 not-yet-sent creators. The audience is recounted on every call; who
@@ -36,6 +39,7 @@ import { klein9bNoticeSchema as schema } from '~/server/schema/klein9b-notice.sc
 import { isEmailConfigured } from '~/server/email/client';
 import { klein9bNoticeEmail } from '~/server/email/templates/klein9bNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { countNoticeSent } from '~/server/services/notice-ledger.service';
 import { sendKlein9bNotice } from '~/server/services/klein9b-notice.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -76,8 +80,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       );
     }
     case 'sent': {
-      const all = await sysRedis.hGetAll(KEY);
-      return res.status(200).json({ sent: Object.keys(all).length });
+      return res.status(200).json({ sent: await countNoticeSent(KEY) });
     }
     case 'unmark': {
       const removed = await sysRedis.hDel(KEY, String(input.userId));

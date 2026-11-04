@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type { Sleep } from '~/server/services/notice-ledger.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import type * as EmailClient from '~/server/email/client';
 import type * as BankingChangeNoticeEmail from '~/server/email/templates/bankingChangeNotice.email';
@@ -149,6 +150,8 @@ describe('getBankingChangeNoticeAudience', () => {
 });
 
 describe('sendBankingChangeNotice', () => {
+  // The pace and the throttle backoff wait on this, so the tests run without real delays.
+  const sleep = vi.fn<Sleep>(async () => undefined);
   beforeEach(() => {
     bankers = [1, 2, 3];
     rows = [user(1), user(2), user(3), user(4, { email: null })];
@@ -157,7 +160,13 @@ describe('sendBankingChangeNotice', () => {
   });
 
   it('a dry run sends nothing and records nothing', async () => {
-    const result = await sendBankingChangeNotice({ dryRun: true, count: 50, batchSize: 10 });
+    const result = await sendBankingChangeNotice({
+      dryRun: true,
+      count: 50,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
 
     expect(result).toMatchObject({ dryRun: true, eligible: 4, noEmail: 1, wouldSend: 3 });
     expect(sendMock).not.toHaveBeenCalled();
@@ -169,14 +178,20 @@ describe('sendBankingChangeNotice', () => {
     emailConfiguredMock.mockReturnValue(false);
 
     await expect(
-      sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 })
+      sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10, minIntervalMs: 0, sleep })
     ).rejects.toThrow('Email is not configured');
     expect(sendMock).not.toHaveBeenCalled();
     expect(ledger.size).toBe(0);
   });
 
   it('sends each recipient once, and a second run sends nobody', async () => {
-    const first = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 2 });
+    const first = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 2,
+      minIntervalMs: 0,
+      sleep,
+    });
     expect(first).toMatchObject({ sent: 3, failed: 0, remaining: 0 });
     expect(sentTo()).toEqual(['u1@example.com', 'u2@example.com', 'u3@example.com']);
     expect(redisMock.sysRedis.expireAt).toHaveBeenCalledTimes(1);
@@ -186,7 +201,13 @@ describe('sendBankingChangeNotice', () => {
     );
 
     sendMock.mockClear();
-    const second = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 2 });
+    const second = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 2,
+      minIntervalMs: 0,
+      sleep,
+    });
     expect(second).toMatchObject({ sent: 0, alreadySent: 3 });
     expect(sendMock).not.toHaveBeenCalled();
   });
@@ -197,18 +218,36 @@ describe('sendBankingChangeNotice', () => {
     );
     ledger.set('2', 'claimed elsewhere');
 
-    const result = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 });
+    const result = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
 
     expect(result).toMatchObject({ sent: 2, skipped: 1 });
     expect(sentTo()).toEqual(['u1@example.com', 'u3@example.com']);
   });
 
   it('sends at most `count`, and the next run picks up the rest', async () => {
-    const first = await sendBankingChangeNotice({ dryRun: false, count: 2, batchSize: 10 });
+    const first = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 2,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
     expect(first).toMatchObject({ sent: 2, remaining: 1 });
 
     sendMock.mockClear();
-    const second = await sendBankingChangeNotice({ dryRun: false, count: 2, batchSize: 10 });
+    const second = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 2,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
     expect(second).toMatchObject({ sent: 1, remaining: 0 });
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
@@ -218,14 +257,47 @@ describe('sendBankingChangeNotice', () => {
       if (to === 'u2@example.com') throw new Error('rejected');
     });
 
-    const first = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 });
+    const first = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
     expect(first).toMatchObject({ sent: 2, failed: 1, failedUserIds: [2] });
     expect(ledger.has('2')).toBe(false);
 
     sendMock.mockReset().mockResolvedValue(undefined);
-    const second = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 });
+    const second = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
     expect(second).toMatchObject({ sent: 1 });
     expect(sentTo()).toEqual(['u2@example.com']);
+  });
+
+  it('retries a throttled send, and counts it sent', async () => {
+    let throttled = false;
+    sendMock.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === 'u2@example.com' && !throttled) {
+        throttled = true;
+        throw Object.assign(new Error('454 Throttling failure: Maximum sending rate exceeded'), {
+          responseCode: 454,
+        });
+      }
+    });
+    const result = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 1,
+      minIntervalMs: 0,
+      sleep,
+    });
+    expect(result).toMatchObject({ sent: 3, failed: 0 });
+    expect(sleep).toHaveBeenCalledWith(2_000);
   });
 
   it('reports a failed send whose release also failed as stuck, and finishes the run', async () => {
@@ -234,7 +306,13 @@ describe('sendBankingChangeNotice', () => {
     });
     redisMock.sysRedis.hDel.mockRejectedValue(new Error('redis down'));
 
-    const result = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 });
+    const result = await sendBankingChangeNotice({
+      dryRun: false,
+      count: 50,
+      batchSize: 10,
+      minIntervalMs: 0,
+      sleep,
+    });
 
     expect(result).toMatchObject({ sent: 2, failedUserIds: [2], stuckUserIds: [2] });
   });
