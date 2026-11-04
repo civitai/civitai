@@ -15,7 +15,8 @@ function pairKey(a: number, b: number) {
  * A pair their votes reach both ways (a cycle, A>B, B>C, C>A, makes A-C both A>C and C>A) is not
  * decided and stays servable: the judge contradicted themself, so asking again is how it resolves.
  *
- * O(V·E) over this judge's votes in one crucible, which the per-entry vote cap keeps small.
+ * O(V·E) over this judge's votes, and the result can grow with the square of the entries they
+ * judged, so `decidedPairKeys` only runs it up to `MAX_CLOSURE_VOTES`.
  */
 export function impliedPairKeys(outcomes: string[]): Set<string> {
   const beats = new Map<number, number[]>();
@@ -50,9 +51,17 @@ export function impliedPairKeys(outcomes: string[]): Set<string> {
   return implied;
 }
 
+/**
+ * Recomputed on every serve and status read, so it is capped: past this many votes in one crucible
+ * the judge is served as before the skip (directly voted pairs only). The skip is for small
+ * crucibles, where a judge reaches the end; 200 votes keeps the closure to a few ms.
+ * shortcut: a judge past the cap loses the skip; cache the closure per judge if big crucibles need it.
+ */
+export const MAX_CLOSURE_VOTES = 200;
+
 /** Pairs this judge is not served again: voted directly, or decided by their votes. */
 export function decidedPairKeys(votedPairKeys: string[], outcomes: string[]): string[] {
-  if (!outcomes.length) return votedPairKeys;
+  if (!outcomes.length || outcomes.length > MAX_CLOSURE_VOTES) return votedPairKeys;
   const decided = impliedPairKeys(outcomes);
   for (const key of votedPairKeys) decided.add(key);
   return [...decided];

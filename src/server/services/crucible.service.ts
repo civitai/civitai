@@ -3414,10 +3414,6 @@ export const submitVote = async ({
         'You have already voted on this pair. Please wait for the next pair to load.'
       );
     }
-    const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-    await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
-    await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
-
     ({ winnerElo, loserElo } = await processEloVote(
       crucibleId,
       winnerEntryId,
@@ -3440,7 +3436,12 @@ export const submitVote = async ({
     throw error;
   }
 
+  // Only once the vote has counted: a refused or failed vote must not decide pairs for this judge.
+  const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
   await Promise.all([
+    sysRedis
+      .sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId))
+      .then(() => sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS)),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
     crucible.minViewSeconds &&

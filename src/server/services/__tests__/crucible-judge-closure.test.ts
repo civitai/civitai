@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decidedPairKeys, impliedPairKeys } from '~/server/services/crucible-judge-closure';
+import {
+  decidedPairKeys,
+  impliedPairKeys,
+  MAX_CLOSURE_VOTES,
+} from '~/server/services/crucible-judge-closure';
 import { fitBradleyTerry } from '~/server/services/crucible-bradley-terry';
 
 const sorted = (keys: Iterable<string>) => [...keys].sort();
@@ -37,6 +41,15 @@ describe('decidedPairKeys', () => {
   it('keeps every directly voted pair, including those inside a contradiction', () => {
     const decided = decidedPairKeys(['1:2', '2:3', '1:3'], ['1>2', '2>3', '3>1']);
     expect(sorted(decided)).toEqual(['1:2', '1:3', '2:3']);
+  });
+
+  // Deliberate cost cap: the closure runs on every serve and feed read. Raising or removing it
+  // needs the closure cached per judge first.
+  it('skips nothing past MAX_CLOSURE_VOTES votes, so a heavy judge costs what it did before', () => {
+    const chain = Array.from({ length: MAX_CLOSURE_VOTES + 1 }, (_, i) => `${i + 1}>${i + 2}`);
+    const voted = chain.map((_, i) => `${i + 1}:${i + 2}`);
+    expect(decidedPairKeys(voted, chain)).toEqual(voted);
+    expect(decidedPairKeys(voted.slice(0, 2), chain.slice(0, 2))).toContain('1:3');
   });
 
   it('is the voted pairs alone when no outcomes are stored (votes cast before the skip)', () => {

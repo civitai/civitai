@@ -561,6 +561,23 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     expect([['10', '30'].join(), ['20', '40'].join()]).toContain(String(await serve()));
   });
 
+  const outcomes = () =>
+    redisMock.sysRedis.sMembers(`${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE}`);
+
+  it('records no outcome for a vote that was refused or failed', async () => {
+    withEntries(10, 20, 30);
+    // Refused: 10-30 was never served.
+    await redisMock.sysRedis.set(`${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`, '10:20');
+    await expect(vote(10, 30)).rejects.toThrow('no longer available');
+    // Failed: the rating update throws.
+    processVote.mockRejectedValueOnce(new Error('redis down'));
+    await expect(judge(10, 20)).rejects.toThrow('redis down');
+
+    expect(await outcomes(), 'outcomes after a refused and a failed vote').toEqual([]);
+    await judge(20, 30);
+    expect(await outcomes(), 'outcomes after a counted vote').toEqual(['20>30']);
+  });
+
   it('decides only from this judge’s votes, never another judge’s', async () => {
     withEntries(10, 20, 30);
     await redisMock.sysRedis.sAdd(
