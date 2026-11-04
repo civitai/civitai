@@ -51,6 +51,11 @@ export async function applySystemModelNsfwFlag({
   heldLead?: boolean;
 }): Promise<ModelTextModerationOutcome> {
   const stored = model.lockedProperties ?? [];
+  // A moderator who ruled on the lead since it was read has decided it: the flip must not undo that.
+  const heldLeadGuard = heldLead
+    ? Prisma.sql`AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')`
+    : Prisma.empty;
   // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
   if (stored.includes('nsfw')) {
     // A prior callback may have written nsfw:true and died before recomputing levels —
@@ -107,6 +112,7 @@ export async function applySystemModelNsfwFlag({
     WHERE m.id = ${model.id}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
       AND NOT (m.minor OR m.poi)
+      ${heldLeadGuard}
   `;
   if (!flipped)
     return (await holdRestrictedVerdict(model.id, source)) ? 'held_restricted' : 'declined_race';

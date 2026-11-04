@@ -62,7 +62,7 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
     decision: { kind: 'sets' },
   },
   'src/server/services/text-scan/actions/restricted-nsfw-verdict.ts': {
-    lockWrites: 7,
+    lockWrites: 8,
     decision: { kind: 'clears' },
   },
   'src/server/services/text-scan/actions/model-poi-minor.ts': {

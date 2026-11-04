@@ -107,14 +107,17 @@ export async function resolveRestrictedNsfwVerdict({
       const lockAt = Date.parse(row.systemNsfwLock?.at ?? '');
       const lockIsLeads = !!row.systemNsfwLock && lockAt <= leadAt;
       const sfwOnly = verdict.applied?.prior.sfwOnly ?? row.sfwOnly;
-      if (lockIsLeads) {
+      if (verdict.applied && (row.minor || row.poi)) {
+        // Re-ticked since the scan applied: the flag holds the rating now, and its locks stand.
+        next = { nsfw: false, sfwOnly: row.sfwOnly, lockedProperties: locked };
+      } else if (lockIsLeads) {
         next = { nsfw: false, sfwOnly, lockedProperties: locked.filter((p) => p !== 'nsfw') };
         dropSystemLock = true;
       } else if (!locked.includes('nsfw')) {
         // Nothing of the scan's to undo: an owner who has since unrestricted the model and rated it
         // NSFW keeps that rating.
         next = {
-          nsfw: row.minor || row.poi || sfwOnly ? false : row.nsfw,
+          nsfw: sfwOnly ? false : row.nsfw,
           sfwOnly,
           lockedProperties: locked,
         };

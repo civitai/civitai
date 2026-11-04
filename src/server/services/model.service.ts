@@ -4416,8 +4416,14 @@ export const upsertModel = async (
       );
       await settleFlagAppealsAfterModeratorLift({ modelId: result.id, userId, liftedLabels });
     }
-    // A scan verdict held because the model was minor or POI applies once the save clears both flags.
-    if ((beforeUpdate.minor || beforeUpdate.poi) && !result.minor && !result.poi) {
+    // A scan verdict held because the model was minor or POI applies once the save clears both flags;
+    // a later save retries one still held on an unrestricted model (an earlier apply failed).
+    const heldLead = (beforeUpdate.meta as ModelMeta | null)?.restrictedNsfwVerdict;
+    if (
+      (beforeUpdate.minor || beforeUpdate.poi || (heldLead && !heldLead.applied)) &&
+      !result.minor &&
+      !result.poi
+    ) {
       const { applyHeldRestrictedVerdict } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
       );

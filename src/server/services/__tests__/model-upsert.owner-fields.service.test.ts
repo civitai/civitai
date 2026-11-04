@@ -1037,6 +1037,24 @@ describe('a held scan verdict', () => {
     }
   );
 
+  it('is retried by a later save while it is still held on an unrestricted model', async () => {
+    mockStored({
+      meta: { restrictedNsfwVerdict: { source: 'text-scan', at: 'x', restriction: 'poi' } },
+    });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID });
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('is not retried once applied', async () => {
+    mockStored({
+      meta: {
+        restrictedNsfwVerdict: { source: 'text-scan', at: 'x', restriction: 'poi', applied: {} },
+      },
+    });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID });
+    expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
+  });
+
   it('is left held while the save keeps the flag (control)', async () => {
     mockStored({ minor: true });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true });

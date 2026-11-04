@@ -475,6 +475,39 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     }
   );
 
+  it('writes nothing once a moderator ruled on the lead after it was read', async () => {
+    await seed({});
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned(), source: 'text-scan', heldLead: true })
+    ).toBe('declined_race');
+    await seed({
+      meta: { restrictedNsfwVerdict: { ...lead('poi').restrictedNsfwVerdict, applied: {} } },
+    });
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned(), source: 'text-scan', heldLead: true })
+    ).toBe('declined_race');
+    expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
+  });
+
+  it("keep after the owner re-ticks minor leaves the flag's locks and SFW-only", async () => {
+    await seed({ meta: lead('minor') });
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
+    // The re-tick: the minor flag forces the rating off and locks it.
+    await db.query(
+      `UPDATE "Model" SET minor = true, "sfwOnly" = true, nsfw = false,
+         "lockedProperties" = ARRAY['nsfw', 'minor', 'sfwOnly'] WHERE id = $1`,
+      [MODEL]
+    );
+    await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
+    const after = await row();
+    expect(after).toMatchObject({
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['nsfw', 'minor', 'sfwOnly'],
+    });
+    expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+
   it('does nothing without a lead', async () => {
     await seed({});
     expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
