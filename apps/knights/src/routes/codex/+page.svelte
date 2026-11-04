@@ -202,7 +202,7 @@
 
   <section id="fervor" aria-labelledby="fervor-title">
     <p class="kicker">04 · Fervor &amp; leaderboard</p>
-    <h2 id="fervor-title" class="with-icon"><Icon name="zap" size={26} />Fervor: your week in the Order</h2>
+    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your week in the Order</h2>
     <div class="formula">
       <p class="small-caps">Fervor =</p>
       <p class="expr">correct judgments × {facts.fervor.scale} × accuracy²</p>

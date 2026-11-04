@@ -74,7 +74,7 @@
   </section>
 
   <section aria-labelledby="rail-fervor">
-    <h2 id="rail-fervor" class="with-icon"><Icon name="zap" size={13} />This week's fervor</h2>
+    <h2 id="rail-fervor" class="with-icon"><Icon name="sparkles" size={13} />This week's fervor</h2>
     <p class="big">{count(status.fervor)}</p>
     {#if standing}
       <p class="sub">Board position #{count(standing.position)} of {count(standing.total)}</p>

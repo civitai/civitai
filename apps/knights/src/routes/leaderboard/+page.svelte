@@ -84,7 +84,7 @@
       </span>
     </span>
     <span class="fervor">
-      <b><Icon name="zap" size={14} />{count(entry.fervor)}</b>
+      <b><Icon name="sparkles" size={14} />{count(entry.fervor)}</b>
       <span>{behind ? `${count(behind.gap)} behind #${behind.place}` : 'fervor'}</span>
     </span>
   </div>
@@ -112,7 +112,7 @@
       <h1 class="heading">Most devoted</h1>
     </div>
     <p class="meta">
-      <span class="fz"><Icon name="zap" size={14} />Fervor from judgments cast in the last {data.windowDays} days</span>
+      <span class="fz"><Icon name="sparkles" size={14} />Fervor from judgments cast in the last {data.windowDays} days</span>
       <span class="tally"
         ><Icon name="hourglass" size={14} />
         {tally ? `Tallied daily · next tally in ${tally}` : 'New tally ready, refresh'}</span
@@ -159,7 +159,7 @@
                 >{compact(entry.fervor)}</span
               ></b
             >
-            <span class="label"><Icon name="zap" size={11} />fervor</span>
+            <span class="label"><Icon name="sparkles" size={11} />fervor</span>
           </span>
         </li>
       {/each}

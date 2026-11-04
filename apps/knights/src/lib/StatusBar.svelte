@@ -19,7 +19,7 @@
   {@render position?.()}
 </p>
 <p class="status">
-  <span class="fz"><Icon name="zap" size={13} />Fervor {status.fervor}</span> · Gold {status.goldEarned} earned, {status.goldPending} pending
+  <span class="fz"><Icon name="sparkles" size={13} />Fervor {status.fervor}</span> · Gold {status.goldEarned} earned, {status.goldPending} pending
   ·
   <span
     class="hearts"
