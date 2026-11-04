@@ -12,9 +12,9 @@ import {
   Stack,
   Text,
   TextInput,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
   IconAlertTriangle,

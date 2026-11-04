@@ -1,6 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
 import {
-  Popover,
   Indicator,
   Button,
   Stack,
@@ -9,6 +8,7 @@ import {
   Group,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';

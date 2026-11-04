@@ -1,16 +1,7 @@
 import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
 import type { TooltipProps } from '@mantine/core';
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Button,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertCircle, IconClock, IconTrash } from '@tabler/icons-react';
 import { showNotification } from '@mantine/notifications';
 import { useIsMutating } from '@tanstack/react-query';

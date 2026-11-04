@@ -7,18 +7,16 @@ import {
   Checkbox,
   Divider,
   Group,
-  HoverCard,
   Loader,
   Modal,
-  Popover,
   ScrollArea,
   Select,
   Stack,
   Switch,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { HoverCard, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue, useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {

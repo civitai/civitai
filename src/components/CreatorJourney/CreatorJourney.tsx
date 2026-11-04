@@ -1,4 +1,5 @@
-import { Anchor, Card, Collapse, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Anchor, Card, Collapse, Loader, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowRight,
   IconChevronDown,

@@ -21,7 +21,6 @@ import {
   Chip,
   Code,
   Group,
-  HoverCard,
   MultiSelect,
   Select,
   Text,
@@ -29,6 +28,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import React, {
   forwardRef,
   useEffect,

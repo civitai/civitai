@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBooks, IconPlaylistAdd } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { openAddToStorylineModal } from '~/components/Storyline/AddToStorylineModal';

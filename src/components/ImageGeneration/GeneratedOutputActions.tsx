@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDownload, IconHeart, IconThumbDown, IconThumbUp, IconWand } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';

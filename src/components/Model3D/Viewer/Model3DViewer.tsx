@@ -1,4 +1,5 @@
-import { Alert, Box, Button, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
+import { Alert, Box, Button, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCubeOff,

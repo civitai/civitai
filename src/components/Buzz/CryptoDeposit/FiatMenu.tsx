@@ -1,4 +1,5 @@
-import { Menu, Text, UnstyledButton } from '@mantine/core';
+import { Text, UnstyledButton } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { FIAT_OPTIONS, FIAT_SYMBOLS } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
 /**

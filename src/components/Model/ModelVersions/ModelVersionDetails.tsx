@@ -11,16 +11,14 @@ import {
   Card,
   Group,
   Loader,
-  Menu,
   Modal,
-  Popover,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import {
   IconBellCheck,

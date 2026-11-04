@@ -1,4 +1,5 @@
-import { Anchor, Menu, Text, Tooltip } from '@mantine/core';
+import { Anchor, Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconLock } from '@tabler/icons-react';
 import { useLockReviewAction } from '~/components/Model/LockReview/useLockReviewAction';
 

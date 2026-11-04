@@ -1,4 +1,5 @@
-import { Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
+import { Divider, Drawer, Group, Indicator, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';

@@ -6,7 +6,6 @@ import {
   Center,
   Group,
   Loader,
-  Menu,
   Paper,
   Progress,
   Stack,
@@ -14,6 +13,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';

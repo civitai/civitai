@@ -8,7 +8,8 @@
  * depending on whether the preprocessor honors alpha.
  */
 
-import { ActionIcon, Button, Modal, SegmentedControl, Slider, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Modal, SegmentedControl, Slider, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useHotkeys } from '@mantine/hooks';
 import { IconArrowBackUp, IconTrash } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';

@@ -1,4 +1,4 @@
-import { Tooltip } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { MonthPickerInput } from '@mantine/dates';
 import { IconCalendarMonth } from '@tabler/icons-react';
 import { useIsMobile } from '~/hooks/useIsMobile';

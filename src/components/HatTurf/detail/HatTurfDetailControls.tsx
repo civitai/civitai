@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Button, Drawer, Popover, Switch, Text } from '@mantine/core';
+import { Button, Drawer, Switch, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';

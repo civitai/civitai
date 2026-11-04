@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Button, Popover, Switch, Text } from '@mantine/core';
+import { Button, Switch, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconCheck, IconSettings } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';

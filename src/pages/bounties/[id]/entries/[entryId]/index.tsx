@@ -20,16 +20,15 @@ import {
   Group,
   Loader,
   MantineProvider,
-  Menu,
   Paper,
   ScrollArea,
   SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

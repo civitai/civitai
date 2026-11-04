@@ -8,8 +8,8 @@ import {
   SimpleGrid,
   Stack,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useReducedMotion } from '@mantine/hooks';
 import Link from 'next/link';
 import clsx from 'clsx';

@@ -1,16 +1,5 @@
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Container,
-  Group,
-  Loader,
-  Menu,
-  Popover,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Alert, Button, Container, Group, Loader, Text, Title } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useReducedMotion } from '@mantine/hooks';
 import { keepPreviousData } from '@tanstack/react-query';
 import { LazyMotion } from 'motion/react';

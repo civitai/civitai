@@ -1,4 +1,5 @@
-import { Checkbox, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Checkbox, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import {
