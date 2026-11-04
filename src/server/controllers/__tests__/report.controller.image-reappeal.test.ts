@@ -28,7 +28,11 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 
 import { createEntityAppealHandler } from '../report.controller';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_DECIDED, APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
+import {
+  APPEAL_ALREADY_DECIDED,
+  APPEAL_ALREADY_PENDING,
+  IMAGE_NOT_APPEALABLE,
+} from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const OWNER = 602767;
@@ -256,7 +260,7 @@ describe('a second appeal on the same image', () => {
 
     await expect(appeal()).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: 'Only an image blocked by moderators can be appealed',
+      message: IMAGE_NOT_APPEALABLE,
     });
 
     expect(mockCharge).not.toHaveBeenCalled();
