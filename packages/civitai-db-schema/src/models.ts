@@ -5131,6 +5131,7 @@ export interface KnightsPlayer {
   shieldWeek: Date;
   recapDismissedFor: Date | null;
   startAtSeen: Date | null;
+  recapPopupOptOut: boolean;
 }
 
 export interface KnightsPlayerDay {

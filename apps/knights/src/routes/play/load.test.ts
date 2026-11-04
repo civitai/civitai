@@ -495,11 +495,28 @@ describe('play load yes/no questions', () => {
 });
 
 describe('dismissRecap action', () => {
-  const run = () => actions.dismissRecap({ locals: { user: { id: 7 } } } as never);
+  const run = (fields: Record<string, string> = {}) =>
+    actions.dismissRecap({
+      locals: { user: { id: 7 } },
+      request: { formData: async () => new URLSearchParams(fields) },
+    } as never);
 
-  it('stores the dismissal for the caller at the injected clock', async () => {
+  it('stores the dismissal for the caller at the injected clock, and clears the opt-out when the box is unticked', async () => {
     await run();
-    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
+    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), {
+      playerId: 7,
+      now: NOW,
+      optOut: false,
+    });
+  });
+
+  it('opts the player out of the popup when the box was ticked at close', async () => {
+    await run({ optOut: 'on' });
+    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), {
+      playerId: 7,
+      now: NOW,
+      optOut: true,
+    });
   });
 
   it('tells the player when it could not be stored', async () => {

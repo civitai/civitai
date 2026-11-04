@@ -4,6 +4,7 @@
   import { afterNavigate } from '$app/navigation';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
+  import RecapButton from './RecapButton.svelte';
   import { count } from './format';
   import { rankPill } from './chrome';
   import { tween } from './motion';
@@ -20,6 +21,7 @@
     conversionOpen,
     status,
     streak,
+    recapUnseen = false,
   }: {
     player: PlayerBadge | null;
     /** Keys this player's sound setting in the browser. */
@@ -28,6 +30,8 @@
     conversionOpen: boolean;
     status?: PlayerStatus;
     streak?: Streak;
+    /** Today's recap has not been seen: the recap button wears a dot. */
+    recapUnseen?: boolean;
   } = $props();
 
   let open = $state(false);
@@ -155,6 +159,7 @@
   {/if}
 
   {#if player}
+    <RecapButton unseen={recapUnseen} />
     <div class="account" bind:this={wrapper} {onfocusout}>
       <button
         type="button"

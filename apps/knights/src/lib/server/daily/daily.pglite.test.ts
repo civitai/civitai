@@ -13,7 +13,14 @@ import {
 } from '../queue/queue.service';
 import { RANK_RULES } from '../ranks';
 import { DAILY } from './config';
-import { dismissRecap, getDailyStatus, getRecap, recordVoteDay } from './daily.service';
+import {
+  dismissRecap,
+  findRecap,
+  getDailyStatus,
+  getRecap,
+  getRecapState,
+  recordVoteDay,
+} from './daily.service';
 
 const Q = 'knights.image.nsfwLevel';
 const NOON = (day: string) => new Date(`${day}T12:00:00Z`);
@@ -611,5 +618,90 @@ describe('the recap', () => {
     await ledger(1, D1, { correct: 1 });
     await ledger(2, D1, { correct: 9 });
     expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ cast: 1 });
+  });
+
+  describe('the popup opt-out', () => {
+    it('has the popup due until the player opts out, and getRecap then returns nothing', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 2 });
+      await dismissRecap(db, { playerId: 1, now: NOON(D1), optOut: true });
+      expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toBeNull();
+      expect(await findRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ cast: 2 });
+    });
+
+    it('can be cleared again', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 2 });
+      await dismissRecap(db, { playerId: 1, now: NOON(D1), optOut: true });
+      await dismissRecap(db, { playerId: 1, now: NOON(D1), optOut: false });
+      expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ cast: 2 });
+    });
+
+    it('is stored for a player who has no keeper row yet', async () => {
+      await dismissRecap(db, { playerId: 9, now: NOON(D1), optOut: true });
+      expect(await getRecapState(db, { playerId: 9, now: NOON(D2) })).toMatchObject({
+        optedOut: true,
+      });
+    });
+
+    it('is set by a dismissal that carries it, and left alone by one that does not', async () => {
+      await seedPlayer(pg, 1);
+      await dismissRecap(db, { playerId: 1, now: NOON(D2), optOut: true });
+      expect((await getRecapState(db, { playerId: 1, now: NOON(D2) })).optedOut).toBe(true);
+      await dismissRecap(db, { playerId: 1, now: NOON(D3) });
+      expect((await getRecapState(db, { playerId: 1, now: NOON(D3) })).optedOut).toBe(true);
+      await dismissRecap(db, { playerId: 1, now: NOON(D3), optOut: false });
+      expect((await getRecapState(db, { playerId: 1, now: NOON(D3) })).optedOut).toBe(false);
+    });
+  });
+
+  describe('findRecap', () => {
+    it('still returns the recap after it was dismissed today', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 2 });
+      await dismissRecap(db, { playerId: 1, now: NOON(D2) });
+      expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toBeNull();
+      expect(await findRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ cast: 2 });
+    });
+
+    it('is the same data getRecap returns', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 3, failed: 1, pending: 2 });
+      expect(await findRecap(db, { playerId: 1, now: NOON(D2) })).toEqual(
+        await getRecap(db, { playerId: 1, now: NOON(D2) })
+      );
+    });
+  });
+
+  describe('getRecapState (the header dot)', () => {
+    const state = (day: string) => getRecapState(db, { playerId: 1, now: NOON(day) });
+
+    it('is unseen once there is an earlier play day and nothing was dismissed today', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 1 });
+      expect(await state(D2)).toEqual({ optedOut: false, dismissedToday: false, hasHistory: true });
+    });
+
+    it('has no history for a new player, or one who only played today', async () => {
+      await seedPlayer(pg, 1);
+      expect((await state(D2)).hasHistory).toBe(false);
+      await ledger(1, D2, { correct: 1 });
+      expect((await state(D2)).hasHistory).toBe(false);
+    });
+
+    it('marks the recap seen for the rest of the day, and unseen the next', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 1 });
+      await dismissRecap(db, { playerId: 1, now: NOON(D2) });
+      expect((await state(D2)).dismissedToday).toBe(true);
+      expect((await state(D3)).dismissedToday).toBe(false);
+    });
+
+    it('ignores play days before a career reset', async () => {
+      await seedPlayer(pg, 1);
+      await ledger(1, D1, { correct: 1 });
+      await setStart(1, `${D2} 00:00:00`);
+      expect((await state(D2)).hasHistory).toBe(false);
+    });
   });
 });

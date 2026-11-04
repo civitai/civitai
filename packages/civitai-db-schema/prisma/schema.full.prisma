@@ -8121,6 +8121,8 @@ model KnightsPlayer {
   recapDismissedFor DateTime? @db.Date
   /// The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
   startAtSeen DateTime?
+  /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
+  recapPopupOptOut Boolean @default(false)
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;

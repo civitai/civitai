@@ -327,9 +327,11 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  dismissRecap: async ({ locals }) => {
+  // Closing the popup dismisses today's recap; the checkbox state at that moment is the player's opt-out.
+  dismissRecap: async ({ request, locals }) => {
+    const optOut = (await request.formData()).get('optOut') === 'on';
     try {
-      await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now() });
+      await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now(), optOut });
     } catch (error) {
       console.error('knights: could not store the recap dismissal', { error });
       return fail(500, { message: 'Could not dismiss the recap. Try again.', recapFailed: true });

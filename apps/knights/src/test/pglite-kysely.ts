@@ -34,6 +34,7 @@ const MIGRATIONS = [
   '20261229120000_knights_v2_answer_snapshot',
   '20261230120000_knights_v2_vote_player_image_idx',
   '20261231120000_knights_v2_queue_stages',
+  '20270101120000_knights_v2_recap_opt_out',
 ].map((name) =>
   fileURLToPath(
     new URL(
