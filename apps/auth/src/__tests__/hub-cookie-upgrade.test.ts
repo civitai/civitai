@@ -85,6 +85,7 @@ import { GET as authorizeGet } from '../routes/api/auth/oauth/authorize/+server'
 import { POST as switchPost } from '../routes/api/auth/switch/+server';
 import { GET as accountsGet } from '../routes/api/auth/accounts/+server';
 import { establishSession } from '$lib/server/auth/session';
+import { deviceFamiliesKey } from '$lib/server/auth/lineage';
 
 const CALLBACK = 'https://civitai.com/api/auth/callback';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -702,6 +703,31 @@ describe('an account change at the hub in host mode, before the shared-slot sess
     });
     expect(sharedExpiredAt(cookies)).toEqual(['.civitai.com', 'host-only']);
     expect(h.sys.hashes.get(TOKEN_STATE)?.has('j0')).toBeFalsy();
+    expect(cookies.get(SHARED_DEVICE())).toBe('dev-d');
+    expect(after.deviceId).toBe('dev-d');
+  });
+
+  it('a sign-in that moves the browser to a new device id keeps it after a rollback to shared mode', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    expect((await visit(cookies)).deviceId).toBe('dev-d');
+    h.sys.sets.set(deviceFamiliesKey('dev-d'), new Set(['other-fam']));
+    cookies.values.delete(SHARED());
+    cookies.values.delete(HOST());
+
+    await establishSession(cookies as never, asUser(300));
+    const moved = cookies.get(HOST_DEVICE());
+    setMode('shared');
+    const after = await visit(cookies);
+
+    expect(moved).not.toBe('dev-d');
+    expect(after.deviceId).toBe(moved);
+    expect(
+      cookies.deletes
+        .filter((d) => d.name === SHARED_DEVICE())
+        .map((d) => d.opts.domain ?? 'host-only')
+        .sort()
+    ).toEqual(['.civitai.com', 'host-only']);
   });
 
   it('an account switch at the hub clears the shared-slot session of the other account', async () => {

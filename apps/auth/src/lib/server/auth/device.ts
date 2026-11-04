@@ -49,7 +49,8 @@ const cookieOpts = {
 
 /**
  * Write the device cookie (30-day rolling) into `slot`; the host-only slot carries no Domain. A shared-slot write
- * also replaces a different host-only device id, so host mode can't bring back an id the hub moved off.
+ * also replaces a different host-only device id, so host mode can't bring back an id the hub moved off. In host
+ * mode, a host-only write expires a different shared-slot device id, so shared mode can't bring one back either.
  */
 export function setDeviceCookie(
   cookies: Cookies,
@@ -57,6 +58,13 @@ export function setDeviceCookie(
   slot: CookieSlot = sessionCookieMode()
 ): void {
   const name = deviceCookieNameForSlot(slot);
+  const shared = deviceCookieNameForSlot('shared');
+  const staleShared =
+    slot === 'host' &&
+    sessionCookieMode() === 'host' &&
+    shared !== name &&
+    cookies.get(shared) !== undefined &&
+    cookies.get(shared) !== deviceId;
   cookies.set(name, deviceId, {
     ...cookieOpts,
     domain: slot === 'host' ? undefined : cookieOpts.domain,
@@ -66,6 +74,11 @@ export function setDeviceCookie(
   if (slot === 'shared' && host !== name) {
     const held = cookies.get(host);
     if (held !== undefined && held !== deviceId) setDeviceCookie(cookies, deviceId, 'host');
+  }
+  if (staleShared) {
+    const domain = cookieDomain();
+    cookies.delete(shared, { path: '/', secure: true });
+    if (domain) cookies.delete(shared, { path: '/', secure: true, domain });
   }
 }
 
