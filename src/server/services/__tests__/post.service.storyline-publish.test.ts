@@ -15,6 +15,7 @@ const { prepareStorylinePublish, finishStorylinePublish } = vi.hoisted(() => ({
 vi.mock('~/server/events/points/hooks', () => ({
   onStorySparkLost: vi.fn(),
   onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
 }));
 vi.mock('~/server/services/storyline-publish.service', () => ({
   prepareStorylinePublish,

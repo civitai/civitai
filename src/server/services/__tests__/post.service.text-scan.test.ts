@@ -9,6 +9,7 @@ import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 vi.mock('~/server/events/points/hooks', () => ({
   onStorySparkLost: vi.fn(),
   onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
 }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
