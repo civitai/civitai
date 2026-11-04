@@ -1,4 +1,4 @@
-import { ChatError } from '@openrouter/sdk/models/errors';
+import { ChatError, RequestTimeoutError } from '@openrouter/sdk/models/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionReviewService from '~/server/services/ai/collection-review.service';
 import type * as CollectionService from '~/server/services/collection.service';
@@ -141,6 +141,20 @@ describe('reviewCollection: a failed model call', () => {
       expect(claimCalls()).toHaveLength(0);
     }
   );
+
+  it('leaves a timed-out call for a later run, never deciding it', async () => {
+    queuePending([pendingItem()]);
+    reviewImage.mockRejectedValue(new RequestTimeoutError('Request timed out'));
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(claimCalls()).toHaveLength(0);
+    expect(updateCollectionItemsStatus).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('error=RequestTimeoutError') })
+    );
+  });
 
   it('stamps the item for a human once the attempts run out', async () => {
     queuePending([pendingItem()]);
@@ -590,6 +604,9 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
   it.each([
     ['real person likeness', { depictsRealPerson: true }],
     ['photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
+    ['minor depicted inappropriately', { depictsMinor: true, minorInappropriate: true }],
+    ['suggestive styling', { suggestiveStyling: true }],
+    ['an unrecognized category', { otherViolations: ['something new'] }],
   ])('still rejects %s escalated alongside a missing label', async (_label, observations) => {
     queuePending([pendingItem()]);
     modelSees({ nsfwEstimate: undefined, ...observations });

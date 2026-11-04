@@ -181,6 +181,37 @@ describe('Hat Turf on image detail', () => {
     );
   });
 
+  test('not joined: an image whose owner has not joined still invites', async () => {
+    h.stock = { available: 3, optedIn: false, mode: 'live' };
+    render({ open: { 9: false } });
+    await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
+    click(text(/^Join$/));
+    expect(h.optIn).toHaveBeenCalledWith(
+      { event: 'birthday2026', optedIn: true },
+      expect.anything()
+    );
+  });
+
+  test('joined: an image whose owner has not joined has no hat to place, and the card says why', async () => {
+    render({ open: { 9: false } });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(q('hat-turf-detail-hat')).toBeNull();
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() =>
+      expect(q('hat-turf-detail-closed')?.textContent).toBe(
+        "This creator hasn't joined Hat Turf yet"
+      )
+    );
+  });
+
+  test('joined: an open image says nothing about the creator', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-stats')).not.toBeNull());
+    expect(q('hat-turf-detail-closed')).toBeNull();
+  });
+
   test('Not now closes the invite and records the dismissal', async () => {
     h.stock = { available: 3, optedIn: false, mode: 'live' };
     render();

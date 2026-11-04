@@ -50,6 +50,18 @@ function safeStringify(value: unknown): string {
 // keeps up with, so the log line is built only from short scalars under these fixed keys.
 const SCALAR = /^[\w.:/-]{1,40}$/;
 const NAME_SCALAR = /^[\w .:/()-]{1,40}$/;
+// A scheme-less host/path (cdn.example/a.jpg) still passes: it has the shape of a model slug.
+const NOT_A_SCALAR = /:\/\/|^(basic|bearer|token)\s/i;
+
+/** Messages the app's own AI clients throw, logged by tag since no other message text is. */
+export const APP_ERROR_MESSAGES = {
+  no_content: 'No content in response',
+  json_parse: 'Failed to parse JSON from completion',
+  no_choice: 'No choice in agent loop response',
+} as const;
+const APP_ERROR_TAGS = new Map<unknown, string>(
+  Object.entries(APP_ERROR_MESSAGES).map(([tag, message]) => [message, tag])
+);
 
 export const PROVIDER_ERROR_LOG_LIMIT = 1024;
 const SECRET_WINDOW = 16;
@@ -62,7 +74,9 @@ const asBag = (value: unknown): Bag | undefined =>
 
 function scalar(value: unknown, shape = SCALAR): string | undefined {
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return typeof value === 'string' && shape.test(value) ? value : undefined;
+  return typeof value === 'string' && shape.test(value) && !NOT_A_SCALAR.test(value)
+    ? value
+    : undefined;
 }
 
 function parseBag(text: unknown): Bag | undefined {
@@ -94,6 +108,10 @@ function bodyFacts(body: Bag | undefined, prefix: string): [string, string | und
   return facts;
 }
 
+// String codes only: a DOMException's numeric legacy code says nothing its name does not.
+const socketCode = (bag: Bag | undefined) =>
+  typeof bag?.code === 'string' ? scalar(bag.code) : undefined;
+
 const normalize = (text: string) =>
   text
     .normalize('NFKC')
@@ -102,15 +120,21 @@ const normalize = (text: string) =>
     .replace(/\s+/g, ' ');
 
 // The backstop for a provider that puts prompt text in one of the kept fields: any 16-character
-// stretch of a text we sent condemns the whole line.
+// stretch of a text we sent condemns the whole line. Not redactKnownValues: the allowlist already
+// keeps whole prompts out, so what is left to catch is a fragment, which exact matching misses.
 function echoesSecret(output: string, secrets: (string | null | undefined)[]) {
   const haystack = normalize(output);
+  // The line is short and a sent text may not be, so the line's windows are the ones indexed.
+  const windows = new Set<string>();
+  for (let i = 0; i + SECRET_WINDOW <= haystack.length; i++)
+    windows.add(haystack.slice(i, i + SECRET_WINDOW));
   return secrets.some((secret) => {
-    const needle = normalize(typeof secret === 'string' ? secret : '').trim();
+    const text = typeof secret === 'string' ? secret.slice(0, SCAN_LIMIT) : '';
+    const needle = normalize(text).trim();
     if (needle.length < SECRET_MIN) return false;
     if (needle.length <= SECRET_WINDOW) return haystack.includes(needle);
     for (let i = 0; i + SECRET_WINDOW <= needle.length; i++)
-      if (haystack.includes(needle.slice(i, i + SECRET_WINDOW))) return true;
+      if (windows.has(needle.slice(i, i + SECRET_WINDOW))) return true;
     return false;
   });
 }
@@ -131,18 +155,29 @@ export function describeProviderError(
   try {
     const e = asBag(error);
     const body = parseBag(e?.body) ?? parseBag(asBag(e?.data$)?.body$) ?? asBag(e?.error);
+    // The SDK's ConnectionError wraps fetch's TypeError, which wraps the socket error's code.
+    const cause = asBag(e?.cause);
     const facts: [string, string | undefined][] = [
       ['error', scalar(e?.name) ?? (error === undefined || error === null ? 'none' : typeof error)],
+      ['reason', APP_ERROR_TAGS.get(e?.message)],
       ['http', scalar(e?.statusCode)],
       ['errno', scalar(e?.code)],
+      ['cause', socketCode(cause) ?? socketCode(asBag(cause?.cause)) ?? scalar(cause?.name)],
       ...bodyFacts(body, ''),
     ];
-    const line = facts
-      .filter((fact): fact is [string, string] => fact[1] !== undefined)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(' ')
-      .slice(0, maxLength);
-    return echoesSecret(line, sent) ? 'provider error that echoed the request (redacted)' : line;
+    const kept = facts.filter((fact): fact is [string, string] => fact[1] !== undefined);
+    const join = (pairs: [string, string][]) =>
+      pairs
+        .map(([key, value]) => `${key}=${value}`)
+        .join(' ')
+        .slice(0, maxLength);
+    const line = join(kept);
+    if (!echoesSecret(line, sent)) return line;
+    // Too short to be a stretch of a sent text, so these survive the redaction.
+    const numeric = kept.filter(([, value]) => /^\d{1,6}$/.test(value));
+    return ['provider error that echoed the request (redacted)', join(numeric)]
+      .filter(Boolean)
+      .join(' ');
   } catch {
     // A log line must not take down the error path that wanted it.
     return 'unreadable provider error';

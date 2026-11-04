@@ -150,7 +150,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       const writeSlot = slot && rollSlot({ slot });
       if (!internal && writeSlot && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
-        if (fresh) setSessionCookie(event.cookies, fresh, writeSlot);
+        if (fresh) setSessionCookie(event.cookies, fresh, writeSlot, { roll: true });
         if (fresh && event.locals.deviceId) await touchAccount(event.locals.deviceId, userId);
       }
     }

@@ -39,7 +39,13 @@ vi.mock('~/components/Storyline/StartStorylineModal', () => ({
   openStartStorylineFromImageModal: mocks.openFromImage,
 }));
 
-const image = { id: 77, url: 'spark.jpg', nsfwLevel: 4, username: 'painter' };
+const image = {
+  id: 77,
+  url: 'spark.jpg',
+  type: 'image' as const,
+  nsfwLevel: 4,
+  username: 'painter',
+};
 const ITEM = 'Start a story from this image';
 
 const renderItem = () =>
@@ -82,6 +88,7 @@ describe('Start a story from this image', () => {
       renderItem();
       await expect.element(page.getByRole('menuitem', { name: 'Other' })).toBeVisible();
       expect(offered()).toBe(false);
+      expect(mocks.queried).toHaveBeenCalled();
       expect(mocks.queried.mock.calls.every(([, options]) => options.enabled === false)).toBe(true);
     });
 });
