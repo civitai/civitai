@@ -48,10 +48,13 @@ export const setTurfOptInSchema = z.object({ event: eventName, optedIn: z.boolea
 
 export const removeTurfStickerSchema = z.object({ id: z.coerce.bigint().positive() });
 
+/** Hats a feed card draws per image: what the feed reads, and what a turf push carries. */
+export const TURF_FEED_STICKERS = 5;
+
 export const turfStickersForImagesSchema = z.object({
   event: eventName,
   imageIds: z.array(z.number().int().positive()).max(100),
-  perImage: z.number().int().min(1).max(5).default(5),
+  perImage: z.number().int().min(1).max(TURF_FEED_STICKERS).default(TURF_FEED_STICKERS),
 });
 
 export const watchTurfImagesSchema = z.object({

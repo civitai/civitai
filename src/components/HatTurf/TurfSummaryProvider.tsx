@@ -12,17 +12,19 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
 import { SignalMessages } from '~/server/common/enums';
+import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `turfSummariesSchema`. */
 const SUMMARY_CHUNK = 100;
-/** Hats read per image. */
-const STICKERS_PER_IMAGE = 5;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
-const STICKER_REFRESH_DEBOUNCE_MS = 800;
+// Only for a push that carries no stickers (an older server): every viewer of a hot image reads, so
+// each reads at most this often per image, spread so they do not arrive together.
+const STICKER_REREAD_MIN_MS = 10_000;
+const STICKER_REREAD_JITTER_MS = 750;
 
 export type TurfSummaries = {
   event: string;
@@ -74,7 +76,7 @@ export function TurfSummaryProvider({
   const stickerQueries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
       t.hatTurf.getStickersForImages(
-        { event: event ?? '', imageIds: chunk, perImage: STICKERS_PER_IMAGE },
+        { event: event ?? '', imageIds: chunk, perImage: TURF_FEED_STICKERS },
         { staleTime: 30_000 }
       )
     )
@@ -115,22 +117,31 @@ export function TurfSummaryProvider({
   }, [stickerStamp]);
 
   const refreshTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const lastReread = useRef(new Map<number, number>());
   const refresh = useCallback(
     (imageId: number) => {
-      if (!event) return;
-      clearTimeout(refreshTimers.current.get(imageId));
+      if (!event || refreshTimers.current.has(imageId)) return;
+      const wait = Math.max(
+        0,
+        (lastReread.current.get(imageId) ?? -Infinity) + STICKER_REREAD_MIN_MS - Date.now()
+      );
       refreshTimers.current.set(
         imageId,
         setTimeout(async () => {
+          refreshTimers.current.delete(imageId);
+          const started = Date.now();
+          lastReread.current.set(imageId, started);
           const read = await utils.hatTurf.getStickersForImages
-            .fetch({ event, imageIds: [imageId], perImage: STICKERS_PER_IMAGE })
+            .fetch({ event, imageIds: [imageId], perImage: TURF_FEED_STICKERS })
             .catch(() => null);
           if (read)
-            setReread((current) => ({
-              ...current,
-              [imageId]: { at: Date.now(), stickers: read[imageId] ?? [] },
-            }));
-        }, STICKER_REFRESH_DEBOUNCE_MS)
+            setReread((current) =>
+              // A push that landed while this was in flight is newer than it.
+              (current[imageId]?.at ?? 0) > started
+                ? current
+                : { ...current, [imageId]: { at: Date.now(), stickers: read[imageId] ?? [] } }
+            );
+        }, wait + Math.random() * STICKER_REREAD_JITTER_MS)
       );
     },
     [event, utils]
@@ -144,8 +155,14 @@ export function TurfSummaryProvider({
     (raw: unknown) => {
       const push = event ? readTurfPush(raw, event) : null;
       if (!push) return;
-      setPushed((current) => ({ ...current, [push.imageId]: { ...push, at: Date.now() } }));
-      refresh(push.imageId);
+      const at = Date.now();
+      const { imageId, stickers } = push;
+      setPushed((current) => ({ ...current, [imageId]: { ...push, at } }));
+      if (stickers === undefined) return refresh(imageId);
+      if (stickers === null) return;
+      clearTimeout(refreshTimers.current.get(imageId));
+      refreshTimers.current.delete(imageId);
+      setReread((current) => ({ ...current, [imageId]: { at, stickers } }));
     },
     [event, refresh]
   );
