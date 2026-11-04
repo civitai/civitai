@@ -3,17 +3,20 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FileService from '../file.service';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
+import type * as HotReads5Reads from '~/server/services/hot-reads-5.reads';
 import * as queries from '@civitai/db-queries/hot-reads-6';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 
 /**
- * The download path's file list (`getFileForModelVersion`) behind `kysely-hot-reads-6`, on its two
- * paths (by file id, and by type). OFF: the Prisma read on the replica, with the same `where` as
- * before. ON: the Kysely read on the replica, whose file is the one resolved (the Prisma stub holds
- * a different one). The module setup below is file-download-lookup.test.ts's.
+ * The download path's file list (`getFileForModelVersion`), on its two paths (by file id, and by
+ * type): the Kysely read on the replica, with the filters the Prisma `where` had, whose file is the
+ * one resolved (the Prisma stub holds a different one). The module setup below is
+ * file-download-lookup.test.ts's.
  */
 
+// Mocked for the invariant guard that no flag check remains on this read (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -64,7 +67,13 @@ vi.mock('@prisma/client', () => {
   );
 });
 
-const modelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
+// The version and its model, in the Prisma shape the Kysely reader returns; its rows are pinned in
+// hot-reads-5.kysely-parity.test.ts.
+const { versionRead } = vi.hoisted(() => ({ versionRead: vi.fn() }));
+vi.mock('~/server/services/hot-reads-5.reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5Reads>()),
+  readModelVersionForFileViaKysely: versionRead,
+}));
 const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
 const modelFileFindFirst = dbMock.dbRead.modelFile.findFirst;
 const recommendedResourceFindFirst = dbMock.dbRead.recommendedResource.findFirst;
@@ -130,25 +139,24 @@ function publishedModelVersion(overrides: Record<string, unknown> = {}) {
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
-const FLAG = 'kysely-hot-reads-6';
-const setFlag = (on: boolean) => flag.mockImplementation(async (key) => on && key === FLAG);
 
-const offFile = {
+/** What the Prisma file stub holds, so a file served from it is told apart from the Kysely one. */
+const prismaFile = {
   id: 9455,
-  url: 'https://files.example/off.safetensors',
-  name: 'off.safetensors',
+  url: 'https://files.example/prisma.safetensors',
+  name: 'prisma.safetensors',
   overrideName: null,
   type: 'Model',
   metadata: { format: 'SafeTensor' },
   sizeKB: 10,
-  hashes: [{ hash: 'off' }],
+  hashes: [{ hash: 'prisma' }],
 };
-const onFile = {
-  ...offFile,
+const kyselyFile = {
+  ...prismaFile,
   id: 9456,
-  url: 'https://files.example/on.safetensors',
-  name: 'on.safetensors',
-  hashes: [{ hash: 'on' }],
+  url: 'https://files.example/kysely.safetensors',
+  name: 'kysely.safetensors',
+  hashes: [{ hash: 'kysely' }],
 };
 
 describe("getFileForModelVersion (the version's files)", () => {
@@ -158,72 +166,60 @@ describe("getFileForModelVersion (the version's files)", () => {
   }, 60000);
 
   beforeEach(() => {
-    modelVersionFindFirst.mockReset().mockResolvedValue(publishedModelVersion());
-    modelFileFindMany.mockReset().mockResolvedValue([offFile]);
+    versionRead.mockReset().mockResolvedValue(publishedModelVersion());
+    modelFileFindMany.mockReset().mockResolvedValue([prismaFile]);
     hasEntityAccessMock.mockReset().mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
     getPaidAccessMock.mockReset().mockResolvedValue({});
     resolveDownloadUrlMock
       .mockReset()
       .mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
     q.listDownloadFiles.mockReset();
-    setFlag(false);
+    flag.mockReset().mockResolvedValue(false);
   });
 
   const viewer = { id: 1, isModerator: false };
   const resolvedFileIds = () => resolveDownloadUrlMock.mock.calls.map((call) => call[0]);
 
-  it('OFF, by type: the Prisma read on the replica, with the same where', async () => {
-    await getFileForModelVersion({ modelVersionId: 1, type: 'Model', noAuth: true, user: viewer });
-    expect(modelFileFindMany.mock.calls[0][0].where).toEqual({
-      modelVersionId: 1,
-      replacedAt: null,
-      type: 'Model',
-      visibility: 'Public',
-    });
-    expect(resolvedFileIds()).toEqual([offFile.id]);
-    expect(flag.mock.calls.filter(([key]) => key === FLAG)).toEqual([[FLAG]]);
-    expect(q.listDownloadFiles).not.toHaveBeenCalled();
-  });
-
-  it('OFF, by id: the Prisma read on the replica, with the same where', async () => {
-    await getFileForModelVersion({
-      modelVersionId: 1,
-      fileId: offFile.id,
-      noAuth: true,
-      user: viewer,
-    });
-    expect(modelFileFindMany.mock.calls[0][0].where).toEqual({
-      modelVersionId: 1,
-      visibility: 'Public',
-    });
-    expect(resolvedFileIds()).toEqual([offFile.id]);
-  });
-
-  it('ON, by type: the Kysely read on the replica, whose file is served', async () => {
-    setFlag(true);
-    q.listDownloadFiles.mockResolvedValue([onFile] as never);
+  it('by type: the Kysely read on the replica, whose file is served (invariant: no flag check remains)', async () => {
+    q.listDownloadFiles.mockResolvedValue([kyselyFile] as never);
     await getFileForModelVersion({ modelVersionId: 1, type: 'Model', noAuth: true, user: viewer });
     expect(q.listDownloadFiles.mock.calls).toEqual([
       [kyselyRead, { modelVersionId: 1, notReplaced: true, type: 'Model', publicOnly: true }],
     ]);
     expect(q.listDownloadFiles.mock.calls[0][0]).toBe(kyselyRead);
-    expect(resolvedFileIds()).toEqual([onFile.id]);
+    expect(resolvedFileIds()).toEqual([kyselyFile.id]);
+    expect(modelFileFindMany).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
+  });
+
+  it('by id: the Kysely read on the replica, public files only', async () => {
+    q.listDownloadFiles.mockResolvedValue([kyselyFile] as never);
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      fileId: kyselyFile.id,
+      noAuth: true,
+      user: viewer,
+    });
+    expect(q.listDownloadFiles.mock.calls).toEqual([
+      [kyselyRead, { modelVersionId: 1, publicOnly: true }],
+    ]);
+    expect(q.listDownloadFiles.mock.calls[0][0]).toBe(kyselyRead);
+    expect(resolvedFileIds()).toEqual([kyselyFile.id]);
     expect(modelFileFindMany).not.toHaveBeenCalled();
   });
 
-  it('ON, by id, as a moderator: the Kysely read, every visibility', async () => {
-    setFlag(true);
-    q.listDownloadFiles.mockResolvedValue([onFile] as never);
+  it('by id, as a moderator: the Kysely read, every visibility', async () => {
+    q.listDownloadFiles.mockResolvedValue([kyselyFile] as never);
     await getFileForModelVersion({
       modelVersionId: 1,
-      fileId: onFile.id,
+      fileId: kyselyFile.id,
       noAuth: true,
       user: { id: 1, isModerator: true },
     });
     expect(q.listDownloadFiles.mock.calls).toEqual([
       [kyselyRead, { modelVersionId: 1, publicOnly: false }],
     ]);
-    expect(resolvedFileIds()).toEqual([onFile.id]);
+    expect(resolvedFileIds()).toEqual([kyselyFile.id]);
     expect(modelFileFindMany).not.toHaveBeenCalled();
   });
 });

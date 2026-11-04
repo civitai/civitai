@@ -51,28 +51,6 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
-  // The reads in packages/civitai-db-queries/src/hot-reads-5.db.ts, through Kysely instead of Prisma.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // several of these reads run on most page views.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_5 = 'kysely-hot-reads-5',
-  // The reads in packages/civitai-db-queries/src/hot-reads-6.db.ts, through Kysely instead of Prisma.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // several of these reads run on most page views.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_6 = 'kysely-hot-reads-6',
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing

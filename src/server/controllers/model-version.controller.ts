@@ -50,7 +50,6 @@ import type {
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
@@ -1341,13 +1340,13 @@ export const modelVersionDonationGoalHandler = async ({
 };
 
 export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+  // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
+  // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
   const version =
-    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readModelVersionOwnerViaKysely(
-          await getKyselyWithoutLag('modelVersion', input.id),
-          input.id
-        )
-      : undefined) ??
+    (await readModelVersionOwnerViaKysely(
+      await getKyselyWithoutLag('modelVersion', input.id),
+      input.id
+    )) ??
     (await getVersionById({
       ...input,
       select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },

@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 // Where the Kysely placement reads reach, not what the ports return (that is
-// placement-reads.kysely-flag.test.ts): as an invariant guard, no placement flag check remains in a space resolution, and nothing
-// outside the placement read chain moves onto Kysely with it.
+// placement-reads.kysely.test.ts): as an invariant guard, no flag check remains in a space
+// resolution, and nothing outside the placement read chain moves onto Kysely with it.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -13,6 +14,12 @@ vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
   const actual = await importOriginal<typeof PlacementQueries>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
+// `getPlacementConfig`'s KeyValue read: no stored row, so the compiled defaults apply.
+const { getKeyValue } = vi.hoisted(() => ({ getKeyValue: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue,
+}));
 
 import * as queries from '@civitai/db-queries/placement';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
@@ -60,6 +67,7 @@ beforeEach(() => {
   resetSharedMocks();
   for (const fn of Object.values(q)) if (vi.isMockFunction(fn)) fn.mockReset();
   flag.mockReset().mockResolvedValue(false);
+  getKeyValue.mockReset().mockResolvedValue(undefined);
   dbMock.dbWrite.customerSubscription.findMany.mockResolvedValue([goldSubscription]);
   q.getImagePlacementTarget.mockResolvedValue({
     id: IMAGE,
@@ -74,21 +82,16 @@ beforeEach(() => {
 });
 
 describe('Kysely placement reads scope', () => {
-  it('invariant: no placement flag check remains in a space resolution; the price range reads Kysely once each', async () => {
+  it('invariant: no flag check remains in a space resolution; the price range reads Kysely once each', async () => {
     const space = await resolvePlacementSpaceFor({
       surface: 'sticker',
       targetType: 'image',
       targetId: IMAGE,
     });
 
-    // The only key this path evaluates is `kysely-hot-reads-5` (`getPlacementConfig`'s KeyValue
-    // read), by key alone. It is also the positive control that the flag mock is reached at all.
-    const keys = flag.mock.calls.map((call) => {
-      expect(call).toHaveLength(1);
-      return call[0];
-    });
-    expect(keys).toContain('kysely-hot-reads-5');
-    for (const key of keys) expect(key).toBe('kysely-hot-reads-5');
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
+    // The config's KeyValue read, by its key alone.
+    expect(getKeyValue.mock.calls.map((call) => call[1])).toEqual(['placement:config']);
     expect(q.getUserPlacementScore).toHaveBeenCalledTimes(1);
     expect(q.listUserSubscriptionRows).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.customerSubscription.findMany).not.toHaveBeenCalled();

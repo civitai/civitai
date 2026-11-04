@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as SubscriptionsService from '~/server/services/subscriptions.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -21,6 +22,15 @@ const placementReads = vi.hoisted(() => ({
   getUserPlacementScore: vi.fn(),
 }));
 vi.mock('@civitai/db-queries/placement', () => placementReads);
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
 const hostImageRead = placementReads.getImagePlacementTarget;
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),

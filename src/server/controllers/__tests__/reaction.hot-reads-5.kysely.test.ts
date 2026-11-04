@@ -6,6 +6,8 @@ import type * as CommonService from '~/server/services/common.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
+// Mocked for the invariant guard that no flag check remains on these reads (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -48,10 +50,10 @@ import { kyselyRead } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 
 /**
- * `reaction.toggle`'s two image reads behind `kysely-hot-reads-5` (reaction.controller.ts): the
- * access check's `postId` and the tracker event's `nsfwLevel` and owner. OFF reads through Prisma
- * only, ON through Kysely on the replica only; a missing image ON still runs the Prisma read, so its
- * error is unchanged. Row parity is in services/__tests__/hot-reads-5.kysely-parity.test.ts.
+ * `reaction.toggle`'s two image reads (reaction.controller.ts): the access check's `postId` and the
+ * tracker event's `nsfwLevel` and owner, both through Kysely on the replica. A missing image still
+ * runs the Prisma read, so its error is unchanged. Their rows, against a real database, are pinned
+ * in services/__tests__/hot-reads-5.kysely-parity.test.ts.
  */
 
 const flag = vi.mocked(isFlipt);
@@ -81,28 +83,8 @@ beforeEach(() => {
   updateEntityMetric.mockReset().mockResolvedValue(undefined);
 });
 
-describe('toggleReactionHandler behind kysely-hot-reads-5', () => {
-  it('OFF: both image reads through Prisma on the replica', async () => {
-    dbMock.dbRead.image.findUniqueOrThrow.mockResolvedValue({ id: IMAGE, postId: POST });
-    dbMock.dbRead.image.findFirst.mockResolvedValue({ nsfwLevel: 4, userId: OWNER });
-    const c = ctx() as { track: { reaction: ReturnType<typeof vi.fn> } };
-    await toggleReactionHandler({ ctx: c as never, input });
-
-    expect(flag.mock.calls).toEqual([['kysely-hot-reads-5'], ['kysely-hot-reads-5']]);
-    expect(dbMock.dbRead.image.findUniqueOrThrow.mock.calls).toEqual([[{ where: { id: IMAGE } }]]);
-    expect(dbMock.dbRead.image.findFirst.mock.calls).toEqual([
-      [{ where: { id: IMAGE }, select: { nsfwLevel: true, userId: true } }],
-    ]);
-    expect(hasEntityAccess.mock.calls[0][0].entityIds).toEqual([POST]);
-    expect(c.track.reaction.mock.calls[0][0]).toMatchObject({
-      type: 'Image_Delete',
-      ownerId: OWNER,
-    });
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-
-  it('ON: both image reads through Kysely on the replica, with the same outcome', async () => {
-    flag.mockResolvedValue(true);
+describe('toggleReactionHandler image reads', () => {
+  it('both image reads through Kysely on the replica (invariant: no flag check remains)', async () => {
     q.getImagePostId.mockResolvedValue({ postId: POST } as never);
     q.getImageNsfwLevelAndOwner.mockResolvedValue({ nsfwLevel: 4, userId: OWNER } as never);
     const c = ctx() as { track: { reaction: ReturnType<typeof vi.fn> } };
@@ -119,18 +101,17 @@ describe('toggleReactionHandler behind kysely-hot-reads-5', () => {
     });
     expect(dbMock.dbRead.image.findUniqueOrThrow).not.toHaveBeenCalled();
     expect(dbMock.dbRead.image.findFirst).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: an image in no post skips the access check, as Prisma did', async () => {
-    flag.mockResolvedValue(true);
+  it('an image in no post skips the access check, as Prisma did', async () => {
     q.getImagePostId.mockResolvedValue({ postId: null } as never);
     await toggleReactionHandler({ ctx: ctx(), input });
     expect(hasEntityAccess).not.toHaveBeenCalled();
     expect(dbMock.dbRead.image.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
-  it('ON: a missing image runs the Prisma read, so its error is the one it always was', async () => {
-    flag.mockResolvedValue(true);
+  it('a missing image runs the Prisma read, so its error is the one it always was', async () => {
     q.getImagePostId.mockResolvedValue(undefined as never);
     const notFound = new Error('No Image found');
     dbMock.dbRead.image.findUniqueOrThrow.mockRejectedValue(notFound);

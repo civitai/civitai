@@ -6,14 +6,16 @@ import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 /**
  * The metric-privacy read of `prepareModelVersionResponse` (GET /api/v1/model-versions/[id] and
- * the by-hash routes) behind `kysely-hot-reads-6`. OFF: the Prisma read on the replica. ON: the
- * Kysely read on the replica, whose row alone decides: its version `meta` hides downloads and its
- * owner is the one whose membership is checked (the Prisma stub would hide nothing and name
- * another owner).
+ * the by-hash routes): the Kysely read on the replica, whose row alone decides: its version `meta`
+ * hides downloads and its owner is the one whose membership is checked (the Prisma stub would hide
+ * nothing and name another owner). An orphaned row (model or user gone) still runs the Prisma read
+ * on the replica.
  */
 
 const { mockMembership } = vi.hoisted(() => ({ mockMembership: vi.fn() }));
 
+// Mocked for the invariant guard that no flag check remains on this read (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -53,10 +55,9 @@ const flag = vi.mocked(isFlipt);
 // `~/server/db/client` is the canonical shared mock (src/__tests__/mocks/db.mock.ts).
 const mockFindUnique = dbMock.dbRead.modelVersion.findUnique;
 const q = vi.mocked(queries);
-const FLAG = 'kysely-hot-reads-6';
 const VERSION = 9242;
-const OFF_OWNER = 9307;
-const ON_OWNER = 9308;
+const PRISMA_OWNER = 9307;
+const KYSELY_OWNER = 9308;
 
 function modelVersion() {
   return {
@@ -109,46 +110,30 @@ beforeEach(() => {
   mockMembership.mockReset().mockResolvedValue(true);
   mockFindUnique.mockReset().mockResolvedValue({
     meta: {},
-    model: { meta: {}, userId: OFF_OWNER, user: { settings: {} } },
+    model: { meta: {}, userId: PRISMA_OWNER, user: { settings: {} } },
   });
 });
 
 describe('prepareModelVersionResponse (the metric-privacy inputs)', () => {
-  it('OFF: the Prisma read on the replica, which hides nothing', async () => {
-    const body = await prepare();
-    expect(body!.stats.downloadCount).toBe(5);
-    expect(flag.mock.calls.filter(([key]) => key === FLAG)).toEqual([[FLAG]]);
-    expect(mockFindUnique.mock.calls[0][0]).toEqual({
-      where: { id: VERSION },
-      select: {
-        meta: true,
-        model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
-      },
-    });
-    expect(q.getModelVersionPrivacyRow).not.toHaveBeenCalled();
-    expect(mockMembership).not.toHaveBeenCalled();
-  });
-
-  it('ON: the Kysely read on the replica, whose meta hides downloads for its owner', async () => {
-    flag.mockImplementation(async (key) => key === FLAG);
+  it('the Kysely read on the replica, whose meta hides downloads for its owner (invariant: no flag check remains)', async () => {
     q.getModelVersionPrivacyRow.mockResolvedValue({
       meta: { hideDownloads: true },
       modelRowId: 9277,
       modelMeta: {},
-      modelUserId: ON_OWNER,
-      userRowId: ON_OWNER,
+      modelUserId: KYSELY_OWNER,
+      userRowId: KYSELY_OWNER,
       userSettings: {},
     } as never);
     const body = await prepare();
     expect(body!.stats.downloadCount).toBeNull();
-    expect(mockMembership.mock.calls).toEqual([[ON_OWNER]]);
+    expect(mockMembership.mock.calls).toEqual([[KYSELY_OWNER]]);
     expect(q.getModelVersionPrivacyRow.mock.calls).toEqual([[kyselyRead, VERSION]]);
     expect(q.getModelVersionPrivacyRow.mock.calls[0][0]).toBe(kyselyRead);
     expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: an orphaned row runs the Prisma read instead', async () => {
-    flag.mockImplementation(async (key) => key === FLAG);
+  it('an orphaned row runs the Prisma read on the replica instead, which hides nothing', async () => {
     q.getModelVersionPrivacyRow.mockResolvedValue({
       meta: { hideDownloads: true },
       modelRowId: null,
@@ -159,6 +144,14 @@ describe('prepareModelVersionResponse (the metric-privacy inputs)', () => {
     } as never);
     const body = await prepare();
     expect(mockFindUnique).toHaveBeenCalledTimes(1);
+    expect(mockFindUnique.mock.calls[0][0]).toEqual({
+      where: { id: VERSION },
+      select: {
+        meta: true,
+        model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
+      },
+    });
     expect(body!.stats.downloadCount).toBe(5);
+    expect(mockMembership).not.toHaveBeenCalled();
   });
 });

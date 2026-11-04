@@ -78,10 +78,7 @@ import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelVersionEngagementsViaKysely,
-  readModelVersionEngagementsViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readModelVersionEngagementsViaKysely } from '~/server/services/hot-reads-6.reads';
 import {
   readUserCosmeticsViaKysely,
   readUserCosmeticsViaPrisma,
@@ -762,12 +759,10 @@ export async function getUserEngagedModelVersions({
 }) {
   const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
 
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-    return readModelVersionEngagementsViaKysely(kyselyRead, {
-      userId,
-      modelVersionIds: versionIds,
-    });
-  return readModelVersionEngagementsViaPrisma(dbRead, { userId, modelVersionIds: versionIds });
+  return readModelVersionEngagementsViaKysely(kyselyRead, {
+    userId,
+    modelVersionIds: versionIds,
+  });
 }
 
 export async function getUserDownloadedModelVersions({

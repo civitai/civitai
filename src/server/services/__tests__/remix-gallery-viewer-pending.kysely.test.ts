@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as SubscriptionsService from '~/server/services/subscriptions.service';
@@ -15,6 +16,15 @@ const placementReads = vi.hoisted(() => ({
   getUserPlacementScore: vi.fn(),
 }));
 vi.mock('@civitai/db-queries/placement', () => placementReads);
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
 // Every server flag on this path reads off.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),

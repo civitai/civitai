@@ -326,10 +326,7 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
-import {
-  readUserIdByUsernameViaKysely,
-  readUserIdByUsernameViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readUserIdByUsernameViaKysely } from '~/server/services/hot-reads-6.reads';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -3267,9 +3264,7 @@ type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
 };
 export async function findUserIdByUsername(username: string) {
   const user =
-    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readUserIdByUsernameViaKysely(kyselyRead, username)
-      : await readUserIdByUsernameViaPrisma(dbRead, username)) ??
+    (await readUserIdByUsernameViaKysely(kyselyRead, username)) ??
     (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
   return user?.id;
 }

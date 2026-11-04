@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as StorylineService from '~/server/services/storyline.service';
 import type * as StorylineReaderLevel from '~/server/utils/storyline-reader-level';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -20,6 +21,13 @@ const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate } 
 );
 
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
+// An image's two reads, through Kysely: an image in no post (so no access check), whose owner row
+// is not found (so no tracker row).
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImagePostId: vi.fn(async () => ({ postId: null })),
+  getImageNsfwLevelAndOwner: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ storylines: true }),

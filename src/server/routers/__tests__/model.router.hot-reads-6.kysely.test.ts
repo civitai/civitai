@@ -7,6 +7,8 @@ import type * as ModelController from '~/server/controllers/model.controller';
 import type * as SystemCache from '~/server/services/system-cache';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+// Mocked for the invariant guard that no flag check remains on this read (not regression
+// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -34,14 +36,12 @@ import { isFlipt } from '~/server/flipt/client';
 import { modelRouter } from '~/server/routers/model.router';
 
 /**
- * The POI check of the `model.*` visibility middleware (`modelVisibleToViewer`) behind
- * `kysely-hot-reads-6`: OFF, the Prisma read on the replica; ON, the Kysely read on the replica,
- * whose row alone decides (the Prisma stub, if it were read, would say the opposite).
+ * The POI check of the `model.*` visibility middleware (`modelVisibleToViewer`): the Kysely read on
+ * the replica, whose row alone decides (the Prisma stub, if it were read, would say the opposite).
  */
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
-const FLAG = 'kysely-hot-reads-6';
 const OWNER = 9107;
 const OTHER = { id: 9108, isModerator: false };
 
@@ -74,36 +74,23 @@ beforeEach(() => {
 });
 
 describe('modelVisibleToViewer', () => {
-  it('OFF: the Prisma read on the replica decides', async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue({ poi: true, userId: OWNER });
-    expect(await getOwner()).toBe('not-found');
-    expect(flag.mock.calls.filter(([key]) => key === FLAG)).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.model.findUnique.mock.calls[0][0]).toEqual({
-      where: { id: 9101 },
-      select: { poi: true, userId: true },
-    });
-    expect(q.getModelPoiAndOwner).not.toHaveBeenCalled();
-  });
-
-  it('ON: the Kysely read on the replica decides a POI model is hidden', async () => {
-    flag.mockImplementation(async (key) => key === FLAG);
+  it('the Kysely read on the replica decides a POI model is hidden (invariant: no flag check remains)', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({ poi: false, userId: OWNER });
     q.getModelPoiAndOwner.mockResolvedValue({ poi: true, userId: OWNER } as never);
     expect(await getOwner()).toBe('not-found');
     expect(q.getModelPoiAndOwner.mock.calls).toEqual([[kyselyRead, 9101]]);
     expect(q.getModelPoiAndOwner.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
-  it('ON: the Kysely read on the replica decides a plain model is served', async () => {
-    flag.mockImplementation(async (key) => key === FLAG);
+  it('the Kysely read on the replica decides a plain model is served', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({ poi: true, userId: OWNER });
     q.getModelPoiAndOwner.mockResolvedValue({ poi: false, userId: OWNER } as never);
     expect(await getOwner()).toBe('served');
   });
 
-  it('ON: a missing model is served to the handler, as before', async () => {
-    flag.mockImplementation(async (key) => key === FLAG);
+  it('a missing model is served to the handler, as the Prisma null was', async () => {
     q.getModelPoiAndOwner.mockResolvedValue(undefined as never);
     expect(await getOwner()).toBe('served');
   });
