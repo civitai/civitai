@@ -25,7 +25,14 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(async () => undefined),
   user: { id: 1 } as { id: number } | null,
   mine: null as unknown,
+  topHatUrl: undefined as string | undefined,
   trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
+}));
+// EdgeMedia would rewrite the url for the CDN; the tray only needs a load or an error.
+vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
+  EdgeMedia: ({ src, onError }: { src: string; onError?: () => void }) => (
+    <img src={src} onError={onError} alt="" />
+  ),
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtilsModule>()),
@@ -56,7 +63,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: () => ({
             data: [
               { cosmeticId: 11, name: 'Party Cap' },
-              { cosmeticId: 12, name: 'Top Hat' },
+              {
+                cosmeticId: 12,
+                name: 'Top Hat',
+                data: h.topHatUrl && { type: 'hat', event: 'birthday2026', url: h.topHatUrl },
+              },
             ],
           }),
         },
@@ -149,6 +160,7 @@ const text = (re: RegExp) =>
   );
 
 beforeEach(() => {
+  h.topHatUrl = undefined;
   h.trackAction.mockClear();
   h.stock = { available: 3, optedIn: true, mode: 'live' };
   h.stickers = [
@@ -294,6 +306,40 @@ describe('Hat Turf on image detail', () => {
     click(q('hat-turf-detail-tray')!.querySelectorAll('button')[0]);
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
     expect(useHatTurfStore.getState().cosmeticId).toBe(12);
+  });
+
+  async function openTray() {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(text(/change/)).toBeTruthy());
+    click(text(/change/));
+    await vi.waitFor(() => expect(q('hat-turf-detail-tray')).not.toBeNull());
+    return (name: string) =>
+      [...q('hat-turf-detail-tray')!.querySelectorAll('button')].find((b) =>
+        b.textContent?.includes(name)
+      )!;
+  }
+  const art = (tile: Element) => tile.querySelector('[data-testid="hat-turf-detail-tray-art"]');
+
+  test("the switcher shows each hat's art badged with the team cone it places", async () => {
+    h.topHatUrl = LOADABLE_IMAGE_DATA_URI;
+    const tile = await openTray();
+    expect(q('hat-turf-detail-tray')!.textContent).toContain(
+      'Every hat places a Blue sticker for your team.'
+    );
+    await vi.waitFor(() => expect(art(tile('Top Hat'))?.querySelector('img')).toBeTruthy());
+    // The art and its badge cone; Party Cap has no art, so only its cone.
+    expect(tile('Top Hat').querySelectorAll('svg')).toHaveLength(1);
+    expect(art(tile('Party Cap'))).toBeNull();
+    expect(tile('Party Cap').querySelectorAll('svg')).toHaveLength(1);
+  });
+
+  test('art that fails to load falls back to the team cone', async () => {
+    h.topHatUrl = 'http://127.0.0.1:9/missing-hat.png';
+    const tile = await openTray();
+    await vi.waitFor(() => expect(art(tile('Top Hat'))).toBeNull());
+    expect(tile('Top Hat').querySelectorAll('svg')).toHaveLength(1);
   });
 
   test('the badge card shows every team count, never supply, and Show hats hides the hats only', async () => {

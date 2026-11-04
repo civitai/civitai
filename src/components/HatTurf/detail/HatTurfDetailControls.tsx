@@ -5,6 +5,7 @@ import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
@@ -17,7 +18,9 @@ import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
+import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 const DEFAULT_SPOT = { x: 0.5, y: 0.4 };
 const INVITE_SNOOZE_MS = 24 * 60 * 60 * 1000;
@@ -417,28 +420,34 @@ function HatTray({
   );
   const body = (
     <div data-testid="hat-turf-detail-tray">
+      {feed.team && (
+        <Text size="xs">Every hat places a {capitalize(feed.team)} sticker for your team.</Text>
+      )}
       <Text size="xs" c="dimmed">
         Most used first
       </Text>
       {!ordered.length && <Text size="sm">You have no hats to place yet.</Text>}
       <div className={classes.tiles}>
-        {ordered.map((hat, index) => (
-          <button
-            type="button"
-            key={hat.cosmeticId}
-            aria-pressed={hat.cosmeticId === cosmeticId}
-            className={clsx(classes.tile, hat.cosmeticId === cosmeticId && classes.tileActive)}
-            onClick={() => {
-              pick(hat.cosmeticId);
-              card.setDraft(card.draft ?? DEFAULT_SPOT);
-              onClose();
-            }}
-          >
-            <TeamHat color={color} size={34} />
-            {named?.find((h) => h.cosmeticId === hat.cosmeticId)?.name ?? `Hat ${index + 1}`}
-            <span>{hat.usageCount} used</span>
-          </button>
-        ))}
+        {ordered.map((hat, index) => {
+          const owned = named?.find((h) => h.cosmeticId === hat.cosmeticId);
+          return (
+            <button
+              type="button"
+              key={hat.cosmeticId}
+              aria-pressed={hat.cosmeticId === cosmeticId}
+              className={clsx(classes.tile, hat.cosmeticId === cosmeticId && classes.tileActive)}
+              onClick={() => {
+                pick(hat.cosmeticId);
+                card.setDraft(card.draft ?? DEFAULT_SPOT);
+                onClose();
+              }}
+            >
+              <TrayHatArt data={owned?.data} color={color} />
+              {owned?.name ?? `Hat ${index + 1}`}
+              <span>{hat.usageCount} used</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -456,5 +465,25 @@ function HatTray({
     >
       {body}
     </Drawer>
+  );
+}
+
+/** The hat's own art with the team cone it places as a badge; the cone alone without art. */
+function TrayHatArt({ data, color }: { data?: EventDecorationData; color: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!data?.url || failed) return <TeamHat color={color} size={34} />;
+  return (
+    <span className={classes.tileArt} data-testid="hat-turf-detail-tray-art">
+      <HatArt
+        url={data.url}
+        fit={data.fit}
+        width={96}
+        className="!bg-transparent"
+        onError={() => setFailed(true)}
+      />
+      <span className={classes.tileBadge}>
+        <TeamHat color={color} size={16} />
+      </span>
+    </span>
   );
 }

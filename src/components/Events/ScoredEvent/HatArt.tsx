@@ -15,6 +15,7 @@ export function HatArt({
   className,
   width = 256,
   fit,
+  onError,
 }: {
   url: string;
   color?: string;
@@ -22,6 +23,7 @@ export function HatArt({
   /** Source width in px; about twice the displayed size. */
   width?: number;
   fit?: EventDecorationFit;
+  onError?: () => void;
 }) {
   const box = getHatPreviewBox(fit);
   return (
@@ -59,6 +61,7 @@ export function HatArt({
         }
         loading="lazy"
         alt=""
+        onError={onError}
       />
     </div>
   );
