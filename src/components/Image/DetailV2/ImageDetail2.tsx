@@ -87,10 +87,7 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
-import {
-  HatTurfDetailBadge,
-  HatTurfDetailControls,
-} from '~/components/HatTurf/detail/HatTurfDetailControls';
+import { HatTurfDetailControls } from '~/components/HatTurf/detail/HatTurfDetailControls';
 import {
   HatTurfDetailProvider,
   HatTurfDetailReset,
@@ -365,7 +362,7 @@ function ImageDetail2Content() {
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[60px]">
+              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
@@ -587,6 +584,7 @@ function ImageDetail2Content() {
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
+                data-testid="image-detail-sheet"
               >
                 {/* The padding is on the `!active` branch only. Expanded, this row
                     is at the TOP of the panel and the inset below it would be a
@@ -604,11 +602,6 @@ function ImageDetail2Content() {
                 </div>
                 <ScrollArea className="flex-1 p-3 py-0">
                   <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
-                    {takesHats(image) && (
-                      <div className="flex @md:hidden">
-                        <HatTurfDetailBadge imageId={image.id} />
-                      </div>
-                    )}
                     <SmartCreatorCard
                       user={image.user}
                       subText={
