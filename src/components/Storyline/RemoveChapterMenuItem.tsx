@@ -5,7 +5,7 @@ import { useRemoveStorylineChapter } from '~/components/Storyline/storyline.data
 
 /**
  * Who is offered the removal, chapter 1 included so they are told why it can't go; the server
- * decides the rest (a paid chapter, a pending continuation).
+ * decides the rest (a pending continuation, a payment still settling).
  */
 export const canRemoveStorylineChapter = ({
   authorId,
@@ -18,8 +18,9 @@ export const canRemoveStorylineChapter = ({
 }) => !!viewer && (viewer.id === authorId || viewer.id === ownerId || !!viewer.isModerator);
 
 /**
- * Takes a chapter out of its storyline; its post stays published. Chapter 1 and a chapter others
- * continue from can't go, so for those the item is disabled and says why.
+ * Takes a chapter out of its storyline; its post stays published. Chapter 1, a chapter others
+ * continue from and, for the owner, a chapter someone paid to add can't go, so for those the item
+ * is disabled and says why.
  */
 export function RemoveChapterMenuItem({
   chapterId,
@@ -28,6 +29,7 @@ export function RemoveChapterMenuItem({
   takenDown,
   hasChildren,
   byAuthor,
+  paid,
   onRemoved,
 }: {
   chapterId: number;
@@ -38,6 +40,8 @@ export function RemoveChapterMenuItem({
   hasChildren: boolean;
   /** The viewer wrote the chapter, so any Buzz paid to add it was theirs. */
   byAuthor: boolean;
+  /** Someone paid the owner to add it, so the owner may not take it out; sent only to the owner. */
+  paid?: boolean;
   onRemoved?: () => void;
 }) {
   const remove = useRemoveStorylineChapter({ onSuccess: onRemoved });
@@ -64,6 +68,8 @@ export function RemoveChapterMenuItem({
         : "Chapter 1 can't be removed. Delete the storyline instead"
       : hasChildren
       ? 'Other chapters continue from this one'
+      : paid
+      ? "Someone paid to add this chapter, so it can't be removed"
       : null;
 
   return (

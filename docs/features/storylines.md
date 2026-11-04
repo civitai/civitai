@@ -97,7 +97,8 @@ section).
   storyline, from its menu on the storyline page or in the image menu while reading; its post stays
   published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a
   continuation of it waits for review or its own payment has not settled. The creator cannot remove
-  a chapter someone paid to add; its author can, and their Buzz is not returned. A taken-down
+  a chapter someone paid to add, and their menu shows it disabled with the reason; its author can,
+  and their Buzz is not returned. A taken-down
   storyline's chapters are left to moderators. A moderator's removal leaves a removed placeholder,
   as a takedown does, so the post cannot be submitted again; a removed chapter cannot be removed.
   A creator's or author's removal during an open report is removed as usual and recorded for

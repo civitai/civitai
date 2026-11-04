@@ -11,6 +11,7 @@ import { DeleteCard } from '~/components/Account/DeleteCard';
 import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
+import { ShowcaseHatSetting } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
@@ -50,6 +51,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
       return (
         <SettingsStack>
           <ProfileCard flat />
+          <ShowcaseHatSetting />
           <SocialProfileCard flat />
           {features.strikes && <StrikesCard flat />}
           <div className="flex flex-col gap-3">

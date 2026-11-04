@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   confirmBody: '' as string,
   currentUser: null as null | { id: number; isModerator?: boolean },
   childCount: 0,
+  paid: undefined as boolean | undefined,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 // Confirms at once, keeping what the dialog said.
@@ -58,7 +59,10 @@ const storyline = (viewerRole: string | null, tosViolation = false) =>
     viewerRole,
     tosViolation,
     chapterCount: 2,
-    mainPath: [chapter(0, OWNER, 1), chapter(1, CONTRIBUTOR, mocks.childCount)],
+    mainPath: [
+      chapter(0, OWNER, 1),
+      { ...chapter(1, CONTRIBUTOR, mocks.childCount), paid: mocks.paid },
+    ],
     collaborators: [],
   } as never);
 const optionsOf = (n: number) => page.getByRole('button', { name: `Chapter ${n} options` });
@@ -69,6 +73,7 @@ beforeEach(() => {
   mocks.confirmBody = '';
   mocks.currentUser = null;
   mocks.childCount = 0;
+  mocks.paid = undefined;
 });
 
 describe('removing a chapter from the storyline page', () => {
@@ -149,6 +154,20 @@ describe('removing a chapter from the storyline page', () => {
     await optionsOf(2).click();
     await expect.element(removeItem()).toBeDisabled();
     await expect.element(removeItem()).toHaveTextContent('Other chapters continue from this one');
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  test('the owner is not offered removal of a chapter someone paid to add', async () => {
+    mocks.currentUser = { id: OWNER };
+    mocks.paid = true;
+    renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
+
+    await optionsOf(2).click();
+    await expect.element(removeItem()).toBeDisabled();
+    await expect
+      .element(removeItem())
+      .toHaveTextContent("Someone paid to add this chapter, so it can't be removed");
+    await removeItem().click({ force: true });
     expect(mocks.remove).not.toHaveBeenCalled();
   });
 });
