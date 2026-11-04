@@ -66,6 +66,11 @@ let apiKeys: KeyRow[];
 let access: AccessRow[];
 
 const SYSTEM_ID = 1001;
+// Every single-bit scope inside Full except VaultWrite: OR'd with VaultWrite they make Full.
+const ALL_BUT_VAULT_WRITE = Object.entries(TokenScope)
+  .filter(([name, bit]) => bit !== 0 && name !== 'Full' && name !== 'VaultWrite')
+  .filter(([, bit]) => (TokenScope.Full & bit) === bit)
+  .map(([name]) => name);
 const systemUser = (overrides: Partial<UserRow> = {}): UserRow => ({
   id: SYSTEM_ID,
   username: 'TestAgent',
@@ -286,8 +291,8 @@ describe('POST /api/admin/system-account-api-key', () => {
     ['a write scope', ['UserRead', 'ModelsWrite'], TokenScope.UserRead | TokenScope.ModelsWrite],
     ['a delete scope', ['MediaDelete'], TokenScope.MediaDelete],
     ['a tipping scope', ['SocialTip'], TokenScope.SocialTip],
-    ['Full', ['Full'], TokenScope.Full],
     ['a repeated scope', ['VaultWrite', 'VaultWrite'], TokenScope.VaultWrite],
+    ['every scope in Full but one', ALL_BUT_VAULT_WRITE, TokenScope.Full & ~TokenScope.VaultWrite],
   ])('grants %s', async (_label, scopes, mask) => {
     const { status } = await call({ userId: SYSTEM_ID, scopes });
     expect(status).toBe(201);
@@ -295,7 +300,10 @@ describe('POST /api/admin/system-account-api-key', () => {
   });
 
   it.each([
+    ['Full', ['Full']],
+    ['scopes that add up to Full', [...ALL_BUT_VAULT_WRITE, 'VaultWrite']],
     ['an opt-in scope', ['AppBlocksSubmit']],
+    ['the dev-tunnel opt-in scope', ['AppBlocksDevTunnel']],
     ['an opt-in scope beside a granted one', ['UserRead', 'LinkConnect']],
     ['the worker-only scope', ['WorkerRegister']],
     ['the client-credentials-only scope', ['AppStoreCatalogWrite']],

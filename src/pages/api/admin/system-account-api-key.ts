@@ -22,12 +22,16 @@ import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 const SYSTEM_ACTOR_ID = -1;
 const MAX_EXPIRY_DAYS = 365;
 
-// Any named scope inside Full, Full itself included: the same bound a user's own API key has
-// (api-key.schema). The opt-in bits above Full are left out; NON_USER_SCOPES among them may only
-// be minted by their own grants, never onto a User key.
+// Any named scope inside Full. The opt-in bits above Full are left out; NON_USER_SCOPES among them
+// may only be minted by their own grants, never onto a User key.
 const GRANTABLE_SCOPES = Object.fromEntries(
-  Object.entries(TokenScope).filter(([, bit]) => bit !== 0 && (TokenScope.Full & bit) === bit)
+  Object.entries(TokenScope).filter(
+    ([name, bit]) => bit !== 0 && name !== 'Full' && (TokenScope.Full & bit) === bit
+  )
 ) as Record<string, number>;
+
+const scopeMask = (names: string[]) =>
+  names.reduce((mask, name) => mask | (GRANTABLE_SCOPES[name] ?? 0), 0);
 
 // Without `scopes` a key stays read-only.
 const DEFAULT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
@@ -46,6 +50,11 @@ const schema = z.object({
     .min(1)
     .refine((names) => names.every((name) => Object.hasOwn(GRANTABLE_SCOPES, name)), {
       message: `scopes must be named from: ${Object.keys(GRANTABLE_SCOPES).join(', ')}`,
+    })
+    // A key of exactly Full counts as a full user credential (isFullScopeUserKey), which may mint
+    // further keys outside this route's expiry, rotation and audit.
+    .refine((names) => scopeMask(names) !== TokenScope.Full, {
+      message: 'scopes must not add up to Full',
     })
     .optional(),
   expiresInDays: z.coerce
@@ -85,9 +94,7 @@ export default HeaderTokenSecuredEndpoint(
     const refused = await refusal(userId);
     if (refused) return res.status(refused.status).json({ error: refused.error });
 
-    const tokenScope = scopes
-      ? scopes.reduce((mask, scope) => mask | GRANTABLE_SCOPES[scope], 0)
-      : DEFAULT_SCOPE;
+    const tokenScope = scopes ? scopeMask(scopes) : DEFAULT_SCOPE;
 
     // Generated here so that a failure inside the insert can still be revoked by hash.
     const key = generateKey();
