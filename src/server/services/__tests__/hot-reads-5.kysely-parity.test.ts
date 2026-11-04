@@ -251,18 +251,19 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('ModelVersion')} (id, name, "modelId", "trainedWords", "createdAt", status,
-        "requireAuth", "usageControl") VALUES
+        "requireAuth", "usageControl", "baseModel") VALUES
         (${MV_A1}, 'v1', ${MODEL_A}, '{alpha,"two words"}', '2026-04-02 00:00:00.123', 'Published',
-          false, 'Download'),
-        (${MV_A2}, 'v2', ${MODEL_A}, '{}', '2026-04-03 00:00:00.000', 'Draft', true, 'Generation'),
+          false, 'Download', 'SDXL 1.0'),
+        (${MV_A2}, 'v2', ${MODEL_A}, '{}', '2026-04-03 00:00:00.000', 'Draft', true, 'Generation',
+          'SDXL 1.0'),
         (${MV_A3}, 'v3', ${MODEL_A}, '{x}', '2026-04-04 00:00:00.000', 'Scheduled', false,
-          'InternalGeneration'),
+          'InternalGeneration', 'SDXL 1.0'),
         (${MV_TAKEN_DOWN}, 'td', ${MODEL_TAKEN_DOWN}, '{y}', '2026-04-05 00:00:00.000',
-          'UnpublishedViolation', true, 'ExternalGeneration'),
+          'UnpublishedViolation', true, 'ExternalGeneration', 'Flux.2 Klein 9B'),
         (${MV_NULL_WORDS}, 'nw', ${MODEL_TAKEN_DOWN}, NULL, '2026-04-06 00:00:00.000', 'Published',
-          false, 'Download'),
+          false, 'Download', 'SDXL 1.0'),
         (${MV_ORPHAN}, 'orphan', 5898, '{z}', '2026-04-07 00:00:00.000', 'Published', false,
-          'Download')
+          'Download', 'SDXL 1.0')
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('ResourceReview')} (id, "modelId", "modelVersionId", "userId", recommended,
@@ -596,6 +597,7 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
         createdAt: new Date('2026-04-05T00:00:00.000Z'),
         requireAuth: true,
         usageControl: 'ExternalGeneration',
+        baseModel: 'Flux.2 Klein 9B',
       });
       expect((await readModelVersionForFileViaKysely(kysely, MV_A1))?.trainedWords).toStrictEqual([
         'alpha',
