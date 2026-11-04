@@ -1044,6 +1044,8 @@ describe('upsertModel — content flags the row ends up with', () => {
             restrictedNsfwVerdict: { source: 'text-scan', at: scanLock.at, restriction },
           })
         );
+        // In the save itself, not a write of its own.
+        expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
       }
     );
 

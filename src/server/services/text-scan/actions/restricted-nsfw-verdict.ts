@@ -167,6 +167,9 @@ export async function resolveRestrictedNsfwVerdict({
       'restrictedNsfwVerdict',
       'restrictedNsfwVerdictDormant',
       ...(dropSystemLock ? ['systemNsfwLock'] : []),
+      // The owner's flag cleared a scan's rating and kept it to restore when the flag lifts: a Keep or
+      // Dismiss has ruled on that rating, so a later lift must not bring it back.
+      ...(ruling === 'rateNsfw' ? [] : ['ownerFlagOverride']),
     ];
     // Guarded on the lead still being there: the row lock makes a second ruling wait, then fail here.
     const written = await tx.$executeRaw`

@@ -661,6 +661,38 @@ describe('a Private model, which must stay SFW-only', () => {
   });
 });
 
+describe("a lead from the owner's flag over the scan's rating", () => {
+  const override = {
+    at: '2026-11-02T00:00:00.000Z',
+    flags: ['minor'],
+    prevNsfw: true,
+    prevSfwOnly: false,
+    prevLockedProperties: ['nsfw'],
+    prevGalleryLevel: 1,
+  };
+
+  it.each([
+    ['keep', undefined],
+    ['dismiss', 'Checked the gallery'],
+  ] as const)(
+    '%s settles the flag record, so a later lift restores nothing',
+    async (ruling, reason) => {
+      await seed({
+        minor: true,
+        locked: ['nsfw', 'minor', 'sfwOnly'],
+        meta: { systemNsfwLock: SYSTEM_LOCK, ownerFlagOverride: override, ...lead('minor') },
+      });
+      const before = await row();
+      expect(before.meta).toHaveProperty('ownerFlagOverride');
+      await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling, reason, userId: MODERATOR });
+      const after = await row();
+      expect(after.meta).not.toHaveProperty('ownerFlagOverride');
+      expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
+      expect(after.nsfw).toBe(false);
+    }
+  );
+});
+
 describe('a stuck minor or POI model whose scan lock time cannot be read', () => {
   it.each(['minor', 'poi'] as const)(
     '%s: Keep still ends it SFW; Dismiss is refused',
@@ -672,6 +704,7 @@ describe('a stuck minor or POI model whose scan lock time cannot be read', () =>
         locked: ['nsfw'],
         meta: { systemNsfwLock: { source: 'text-scan', at: 'bad' }, ...lead(flag) },
       });
+      const before = await row();
       await expect(
         resolveRestrictedNsfwVerdict({
           modelId: MODEL,
@@ -680,6 +713,7 @@ describe('a stuck minor or POI model whose scan lock time cannot be read', () =>
           userId: MODERATOR,
         })
       ).rejects.toThrow(/can't be saved as it is/);
+      expect(await row()).toEqual(before);
       await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
       const after = await row();
       expect(after.nsfw).toBe(false);

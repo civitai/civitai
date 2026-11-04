@@ -323,11 +323,18 @@ describe('privateModelFromTraining — a held scan verdict', () => {
       return { count: 1 };
     }) as never);
     mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
-    mockLeavingPrivate.mockRejectedValueOnce(new Error('apply failed'));
+    mockLeavingPrivate.mockImplementationOnce(async () => {
+      writesInTransaction.push(inTransaction);
+      throw new Error('apply failed');
+    });
 
-    // A failed apply is not swallowed: the transaction, revert included, fails with it.
-    await expect(privateFromTraining({ user: owner })).rejects.toThrow('apply failed');
-    expect(writesInTransaction).toEqual([true]);
+    // The apply's failure rolls the revert back with it: the model stays Private, its versions stay
+    // with it, and the caller sees the flow's own error.
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow('write failed');
+    expect(writesInTransaction).toEqual([true, true]);
+    expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
+    );
     expect(mockFinishApply).not.toHaveBeenCalled();
   });
 });

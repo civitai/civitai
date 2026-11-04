@@ -53,7 +53,8 @@ Notes on the tabs:
   - Ruled under `modelFlags.detections.decide` through `model/resolve-restricted-nsfw-verdict`: **Keep owner's
     rating** (nsfw off, SFW-only restored where the scan cleared it, and the scan's own lock for the lead
     lifted; a moderator's or a later scan's lock stands; on a model still minor or a real person the verdict is
-    kept, server-owned, and applies if the owner later clears the flag), **Dismiss** (a minor lead needs a
+    kept, server-owned, and applies if the owner later clears the flag; Keep and Dismiss also settle the
+    owner's flag record, so a later lift of the flag does not restore the scan's rating), **Dismiss** (a minor lead needs a
     reason; refused while the model is NSFW and SFW-only, which its owner cannot save, or NSFW and minor or a
     real person) or **Rate NSFW** (refused
     while the model is minor, a real person or Private; a lead held as minor needs a reason).

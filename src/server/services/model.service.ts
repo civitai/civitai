@@ -7162,12 +7162,26 @@ export const privateModelFromTraining = async ({
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
-    await leavePrivateWithHeldVerdict(id, (tx) =>
+    const reverted = await leavePrivateWithHeldVerdict(id, (tx) =>
       tx.model.updateMany({
         where: { id, ...keepDowned },
         data: { status: ModelStatus.Draft, availability: Availability.Public },
       })
+    ).then(
+      () => true,
+      (revertError: Error) =>
+        logToAxiom({
+          name: 'private-model-from-training',
+          type: 'error',
+          message: 'revert left the model Private: held scan verdict not applied',
+          modelId: id,
+          error: revertError.message,
+        })
+          .catch(() => null)
+          .then(() => false)
     );
+    // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
+    if (!reverted) throw throwDbError(error);
 
     await dbWrite.modelVersion.updateMany({
       where: { modelId: id, ...keepDowned },
