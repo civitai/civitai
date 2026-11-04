@@ -8,6 +8,7 @@ import {
   logBlockedCsamReports,
   logOverdueEvidenceApprovals,
   processCsamReport,
+  sweepStaleSendDirs,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { checkCsamArchiveEvidence } from '~/server/services/csam-archive-evidence.service';
@@ -38,6 +39,24 @@ const sendCsamReportsJob = createJob(
   'send-csam-reports',
   '0 */1 * * *',
   async () => {
+    try {
+      const removed = await sweepStaleSendDirs();
+      if (removed.length)
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          subType: 'send-scratch-sweep',
+          message: `removed ${removed.length} stale send scratch dir(s)`,
+        });
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-scratch-sweep',
+        message: errorMessage(e),
+      });
+    }
+
     const reports = await getCsamsToReport();
     // wait for each process to finish before going to the next
     for (const report of reports) {
