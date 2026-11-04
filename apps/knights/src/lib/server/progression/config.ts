@@ -10,7 +10,6 @@ export const PROGRESSION = {
   accuracyWindow: 500,
   /** Fervor counts votes cast in this many days (by createdAt), with no cap. */
   fervorWindowDays: 7,
-  fervorPerCorrect: 100,
   fervorAccuracyFloor: 0.1,
 } as const;
 

@@ -58,13 +58,11 @@ describe('fervorCopy', () => {
   it('builds the formula and the example from the config', () => {
     const copy = fervorCopy();
 
-    expect(copy.formula).toBe(
-      `Correct judgments × ${PROGRESSION.fervorPerCorrect} × your accuracy`
-    );
+    expect(copy.formula).toBe('Correct judgments × your accuracy × your accuracy');
     expect(copy.window).toContain(`last ${PROGRESSION.fervorWindowDays} days`);
     expect(copy.accuracy).toContain(`${PROGRESSION.fervorAccuracyFloor * 100}%`);
     expect(copy.example).toBe(
-      'Example: 400 right of 500 judged is 400 × 100 × 80% = 32,000 fervor.'
+      'Example: 400 right of 500 judged is 400 × 80% × 80% = 256 fervor.'
     );
   });
 });

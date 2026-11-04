@@ -69,7 +69,7 @@ describe('leaderboard load', () => {
     ]);
     expect(data.self).toMatchObject({ userId: 7, position: 4, behind: { place: 3, gap: 0 } });
     expect(data.nextTally).toMatch(/^\d+h \d+m$/);
-    expect(data.copy.formula).toContain('× 100 ×');
+    expect(data.copy.formula).toContain('accuracy × your accuracy');
     expect(data.entries[0]).not.toHaveProperty('image');
     expect(data.windowDays).toBe(7);
     expect(new Date(data.nextTallyAt).getTime()).toBeGreaterThan(Date.now());
