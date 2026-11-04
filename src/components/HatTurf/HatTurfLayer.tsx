@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconCheck, IconLock, IconX } from '@tabler/icons-react';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
@@ -60,6 +60,8 @@ export type HatTurfLayerProps = {
   moreLoading?: boolean;
   /** After a hat is saved, for a surface that reads its hats itself. */
   onPlaced?: () => void;
+  /** Pinned to the picture's own top-left corner, not the frame's, on a letterboxed picture. */
+  corner?: React.ReactNode;
 };
 
 export function HatTurfLayer(props: HatTurfLayerProps) {
@@ -75,6 +77,7 @@ function HatTurfLayerContent({
   onMore,
   moreLoading,
   onPlaced,
+  corner,
 }: HatTurfLayerProps) {
   const card = useHatTurfCard();
   const feed = useTurfFeed();
@@ -89,7 +92,7 @@ function HatTurfLayerContent({
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
   const stickers = stickersProp ?? feed?.stickers[imageId];
-  const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length);
+  const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length || !!corner);
 
   const seen = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -229,6 +232,7 @@ function HatTurfLayerContent({
           className={classes.box}
           style={{ width: box.width, height: box.height, left: box.left, top: box.top }}
         >
+          {corner && <div className={classes.corner}>{corner}</div>}
           {drawn.map((sticker) => {
             const pose = readHatPose(sticker.data);
             if (!pose) return null;
@@ -350,11 +354,6 @@ function HatTurfLayerContent({
                 <HatIcon size={14} />+{overflow}
               </div>
             ))}
-          {showHats && protectedImage && leader && (
-            <div className={classes.lock} data-testid="hat-turf-lock">
-              <IconLock size={11} /> {leader[0].toUpperCase() + leader.slice(1)} would take it
-            </div>
-          )}
         </div>
       )}
     </div>

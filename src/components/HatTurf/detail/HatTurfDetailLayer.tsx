@@ -1,4 +1,5 @@
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { HatTurfDetailBadge } from '~/components/HatTurf/detail/HatTurfDetailControls';
 import { useImageTurfStickers } from '~/components/HatTurf/detail/useImageTurfStickers';
 import { trpc } from '~/utils/trpc';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
@@ -23,6 +24,7 @@ function Content({ imageId }: { imageId: number }) {
       onMore={loadMore}
       moreLoading={loading}
       onPlaced={() => void utils.hatTurf.getImageStickers.invalidate()}
+      corner={<HatTurfDetailBadge imageId={imageId} />}
     />
   );
 }

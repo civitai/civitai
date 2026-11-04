@@ -10,6 +10,15 @@
   position: absolute;
 }
 
+/* Above the hats, so they never take its taps. */
+.corner {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  pointer-events: auto;
+}
+
 .draft {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -88,22 +97,6 @@
   cursor: progress;
 }
 
-.lock {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 8px;
-  border-radius: 99px;
-  background-color: rgba(0, 0, 0, 0.65);
-  color: var(--mantine-color-white);
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
-  transform: translateX(-50%);
-}
 
 .actions {
   position: absolute;

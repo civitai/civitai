@@ -8,6 +8,9 @@ import {
 
 export type TurfCounted = Record<string, number>;
 
+/** A team colour the theme does not know. */
+export const FALLBACK_COLOR = 'var(--mantine-color-gray-6)';
+
 export type TurfSummary = {
   shown: TurfCounted;
   counted: TurfCounted;

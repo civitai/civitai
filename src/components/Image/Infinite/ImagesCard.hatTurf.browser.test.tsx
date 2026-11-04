@@ -207,7 +207,7 @@ describe('Hat Turf on the /images feed card', () => {
   test('a joined player on a flagged feed gets the hat button, the standings badge and the hat layer', async () => {
     renderCard(turf());
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('3');
+    expect(q('hat-turf-gear')).not.toBeNull();
     expect(q('hat-turf-badge')).not.toBeNull();
     expect(q('hat-turf-layer')).not.toBeNull();
   });

@@ -459,7 +459,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
-                  {turf && <HatTurfButton imageId={image.id} surface="panel" />}
+                  {turf && <HatTurfButton imageId={image.id} />}
                 </div>
               </div>
             </div>
