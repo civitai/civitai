@@ -25,5 +25,12 @@ export function xmlProblem(xml: string): string | null {
 
 export const reportXmlProblem = (report: Report) => xmlProblem(buildReport(report));
 
-export const fileDetailsXmlProblem = (details: Omit<SubmitFileDetails, 'reportId' | 'fileId'>) =>
+/** A file's details as known before its upload gives it a fileId. */
+export type FileDetailsXml = Omit<SubmitFileDetails, 'reportId' | 'fileId'>;
+
+export const fileDetailsXmlProblem = (details: FileDetailsXml) =>
   xmlProblem(buildSubmitFileDetails({ reportId: 0, fileId: '0', ...details }));
+
+/** Why NCMEC would refuse the report or any of its files' details as not well-formed, or null. */
+export const cyberTipXmlProblem = (report: Report, fileDetails: FileDetailsXml[]) =>
+  reportXmlProblem(report) ?? fileDetails.map(fileDetailsXmlProblem).find(Boolean) ?? null;
