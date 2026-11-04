@@ -8,6 +8,8 @@ export const FEED = {
   escalationPriorityHours: 24,
   /** How many of the player's latest judged items the next pick tries to differ from. */
   recentJudged: 3,
+  /** Only judgments this recent count toward `recentJudged`; the bound also keeps the read on the newest ledger partitions. */
+  recentJudgedHours: 24,
   /** Share of picks that take the oldest candidate instead of the mixed pick, so no item waits behind the mix forever. */
   starvationShare: 0.1,
 } as const;

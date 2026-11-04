@@ -56,10 +56,12 @@ describe('stage rules', () => {
     expect(at('Knight', ['4', '4', '2', '2', '8'])).toEqual({ kind: 'pending' });
   });
 
-  it('Templars settle three votes at 67%, so two of three is not enough', () => {
+  it('Templars settle three votes at two-thirds, so two of three is enough', () => {
     expect(at('Templar', ['4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
-    expect(at('Templar', ['4', '4', '2'])).toEqual({ kind: 'pending' });
-    expect(at('Templar', ['4', '4', '2', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Templar', ['4', '4', '2'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Templar', ['4', '2', '8'])).toEqual({ kind: 'pending' });
+    expect(at('Templar', ['4', '2', '8', '4', '4'])).toEqual({ kind: 'pending' });
+    expect(at('Templar', ['4', '2', '8', '4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
   });
 
   it('gives up on a Templar split at six votes', () => {

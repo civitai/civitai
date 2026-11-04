@@ -11,6 +11,7 @@ import {
   getFeed,
   type QueueDeps,
 } from './queue.service';
+import { FEED } from './feed';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -139,15 +140,14 @@ describe('stage consensus and escalation', () => {
     });
   });
 
-  it('settles a Templar stage at three votes with 67% agreement', async () => {
-    await players('Templar', 1, 4);
+  it('settles a Templar stage at three votes with two-thirds agreement', async () => {
+    await players('Templar', 1, 3);
     await image(10);
     const id = await item(10, { minRank: 'Templar' });
 
     expect((await vote(1, id, '4')).status).toBe('recorded');
-    expect((await vote(2, id, '4')).status).toBe('recorded');
-    expect((await vote(3, id, '8')).status).toBe('recorded');
-    expect((await vote(4, id, '4')).status).toBe('resolved');
+    expect((await vote(2, id, '8')).status).toBe('recorded');
+    expect((await vote(3, id, '4')).status).toBe('resolved');
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '4' });
   });
 
@@ -331,6 +331,24 @@ describe('feed serving rules', () => {
       const x = await item(12, { at: hoursAfter(-1) });
 
       expect(await feedIds(1, { limit: 1 })).toEqual([x]);
+    });
+
+    it('mixes only by buckets judged within the recent window', async () => {
+      await player(1, 'Knight');
+      await image(10, 4);
+      await image(11, 4);
+      await image(12, 8);
+      await item(10, { at: hoursAfter(-3) });
+      await item(11, { at: hoursAfter(-2) });
+      const x = await item(12, { at: hoursAfter(-1) });
+      const unmixed = await feedIds(1, { limit: 1 });
+      expect(unmixed).not.toEqual([x]);
+
+      for (const imageId of [90, 91, 92]) {
+        await image(imageId, 4);
+        await judged(1, imageId, (FEED.recentJudgedHours + 1) * 60);
+      }
+      expect(await feedIds(1, { limit: 1 })).toEqual(unmixed);
     });
 
     it('buckets an item by its prediction before the image level', async () => {

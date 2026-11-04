@@ -18,7 +18,7 @@ export type StageRule = {
 
 export const STAGE_RULES = {
   Knight: { needed: 5, max: 10, threshold: 0.6 },
-  Templar: { needed: 3, max: 6, threshold: 0.67 },
+  Templar: { needed: 3, max: 6, threshold: 2 / 3 },
   Paladin: { needed: 2, max: 4, threshold: 0.75, unanimousAtNeeded: true },
 } as const satisfies Partial<Record<Rank, StageRule>>;
 

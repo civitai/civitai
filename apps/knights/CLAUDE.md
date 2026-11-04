@@ -35,7 +35,7 @@ SQL on PGlite.
   served again, at any stage or earlier item (served by the `("playerId","imageId")` index). `canVote` (`ranks.ts`, shared with `castVote`) says which ranks judge a stage; Inquisitors and Acolytes get no feed. It never selects the
   rating or a hidden check, and serves only images the public feeds would show (`servableImage` in `@civitai/db/knights`).
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote that would weigh 0 (`no-weight`), writes the ledger row, and decides the votes cast at the item's current stage
-  only, by `STAGE_RULES` (`stage-rules.ts`): Knight 5 votes at 60% (to 10), Templar 3 at 67% (to 6), Paladin 2 unanimous, then 75% (to 4). No agreement at the maximum moves `minRank` Knight -> Templar -> Paladin -> Inquisitor
+  only, by `STAGE_RULES` (`stage-rules.ts`): Knight 5 votes at 60% (to 10), Templar 3 at two-thirds (to 6), Paladin 2 unanimous, then 75% (to 4). No agreement at the maximum moves `minRank` Knight -> Templar -> Paladin -> Inquisitor
   (`ESCALATION_PATH`, stamps `escalatedAt`, migration `20261231120000_knights_v2_queue_stages`, by hand); `status = 'Inquisitor'` is what the moderator app reads. A rating far below the image's, or a Blocked consensus, also goes
   there. Earlier-stage votes stay `pending`, graded by the final value.
 - A settled rating is written by `main-app.ts` via the main app's `/api/mod/image/kono-set-nsfw-level` (activity
