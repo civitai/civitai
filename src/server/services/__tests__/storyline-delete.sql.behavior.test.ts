@@ -102,6 +102,14 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
+    -- Its pictures, as the cover, hero, spark and cover-upload migrations add them.
+    ALTER TABLE "Storyline" ADD COLUMN "coverImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
+      ADD COLUMN "heroImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
+      ADD COLUMN "sparkImageId" int REFERENCES "Image"(id) ON DELETE SET NULL;
+    CREATE TABLE "StorylineCoverUpload" (
+      "storylineId" int NOT NULL REFERENCES "Storyline"(id) ON DELETE CASCADE,
+      "imageId" int NOT NULL REFERENCES "Image"(id) ON DELETE CASCADE,
+      PRIMARY KEY ("storylineId", "imageId"));
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE VIEW "EvidenceHeldUser" AS
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";

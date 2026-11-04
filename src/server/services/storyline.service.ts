@@ -1148,9 +1148,9 @@ const openReportStatusesSql = Prisma.sql`(${ReportStatus.Pending}::"ReportStatus
 /**
  * The delete of storyline `id`, as ONE statement, so a hold placed while it runs cannot leave a
  * partial copy. When anything must be kept for records (an open report, a held owner, chapter
- * author or commenter, or a moderator's tombstone), the same statement first copies the storyline
- * into "HeldStoryline" and every chapter, edge, branch choice and create click into the
- * "HeldStorylineChapter*" tables. Either way it detaches the threads holding a held commenter's
+ * author, commenter or draft author, or a moderator's tombstone), the same statement first copies
+ * the storyline, with its pictures and drafts, into "HeldStoryline" and every chapter, edge, branch
+ * choice and create click into the "HeldStorylineChapter*" tables. Either way it detaches the threads holding a held commenter's
  * words, so they outlive it, and stamps its reports with the title (and the copy) before their link
  * is set NULL. A moderator's delete also answers the open reports. Returns how many it deleted.
  */
@@ -1167,6 +1167,9 @@ function deleteStorylineStatement(
   const owner = Prisma.sql`${ownerId}::int`;
   return tx.$executeRaw`
     WITH commenters AS MATERIALIZED (${storylineCommentersSql(id)}),
+    pending AS MATERIALIZED (
+      SELECT "postId", "userId" FROM "StorylinePendingChapter" WHERE "storylineId" = ${id}
+    ),
     open_reports AS MATERIALIZED (
       SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
       WHERE sr."storylineId" = ${id} AND r.status IN ${openReportStatusesSql}
@@ -1183,31 +1186,43 @@ function deleteStorylineStatement(
           SELECT 1 FROM commenters a WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
         ) AS commenter_held,
         EXISTS (
+          SELECT 1 FROM pending p WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
+        ) AS pending_author_held,
+        EXISTS (
           SELECT 1 FROM "StorylineChapter" c
           WHERE c."storylineId" = ${id} AND c."removedAt" IS NOT NULL
         ) AS tombstoned
     ),
     keep AS MATERIALIZED (
-      SELECT (reported OR owner_held OR author_held OR commenter_held OR tombstoned) IS NOT FALSE
-          AS keep,
+      SELECT (
+          reported OR owner_held OR author_held OR commenter_held OR pending_author_held OR tombstoned
+        ) IS NOT FALSE AS keep,
         array_remove(ARRAY[
           CASE WHEN reported THEN 'open-report' END,
           CASE WHEN owner_held THEN 'owner' END,
           CASE WHEN author_held THEN 'chapter-author' END,
           CASE WHEN commenter_held THEN 'commenter' END,
+          CASE WHEN pending_author_held THEN 'pending-author' END,
           CASE WHEN tombstoned THEN 'tombstone' END
         ], NULL) AS reasons
       FROM facts
     ),
     held_storyline AS (
       INSERT INTO "HeldStoryline" (id, "userId", title, "createdAt", "deletedAt", "deletedById",
-        "reportIds", "commenterIds", "holdReasons")
+        "reportIds", "commenterIds", "pendingPostIds", "pendingAuthorIds", "coverImageId",
+        "heroImageId", "sparkImageId", "coverUploadImageIds", "holdReasons")
       SELECT s.id, s."userId", s.title, s."createdAt", now(), ${deletedById},
         ARRAY(SELECT id FROM open_reports ORDER BY id),
         ARRAY(SELECT DISTINCT "userId" FROM commenters ORDER BY "userId"),
+        ARRAY(SELECT "postId" FROM pending ORDER BY "postId"),
+        ARRAY(SELECT DISTINCT "userId" FROM pending ORDER BY "userId"),
+        s."coverImageId", s."heroImageId", s."sparkImageId",
+        ARRAY(
+          SELECT u."imageId" FROM "StorylineCoverUpload" u WHERE u."storylineId" = s.id
+          ORDER BY u."imageId"
+        ),
         (SELECT reasons FROM keep)
       FROM "Storyline" s WHERE s.id = ${id} AND (SELECT keep FROM keep)
-      ON CONFLICT (id) DO NOTHING
     ),
     chapters AS (
       INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,

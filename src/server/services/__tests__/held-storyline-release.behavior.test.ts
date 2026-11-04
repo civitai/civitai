@@ -18,6 +18,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const OWNER = 1;
 const AUTHOR = 2;
 const COMMENTER = 3;
+const DRAFTER = 4; // wrote a chapter-1 draft the delete unlinked
 const SENT_LONG_AGO = 6; // named on a report sent and archived over a year ago
 
 let db: PGlite;
@@ -54,7 +55,8 @@ beforeEach(async () => {
       "HeldStorylineChapterEdge", "HeldStorylineBranchChoice", "HeldStorylineCreateClick",
       "StorylineReport", "Report";
     INSERT INTO "HeldStoryline" (id, "userId", title, "createdAt", "deletedAt", "deletedById",
-      "commenterIds") VALUES (1, ${OWNER}, 'Kept', now(), now(), ${OWNER}, ARRAY[${COMMENTER}]);
+      "commenterIds", "pendingAuthorIds")
+      VALUES (1, ${OWNER}, 'Kept', now(), now(), ${OWNER}, ARRAY[${COMMENTER}], ARRAY[${DRAFTER}]);
     INSERT INTO "HeldStorylineChapter" (id, "storylineId", "userId", depth, "createdAt", "ownerId",
       "authorId") VALUES (10, 1, ${OWNER}, 0, now(), ${OWNER}, ${OWNER}),
       (11, 1, ${AUTHOR}, 1, now(), ${OWNER}, ${AUTHOR});
@@ -99,6 +101,7 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
     ['its owner', OWNER],
     ['a chapter author', AUTHOR],
     ['a commenter', COMMENTER],
+    ["a draft's author", DRAFTER],
   ] as const)
     it(`keeps it all while ${who} is held, and releases it once they are not`, async () => {
       await hold(userId);
@@ -109,15 +112,23 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
       expect(await left()).toEqual(none);
     });
 
-  it('keeps it while a report on it is open, through the report link or the recorded ids', async () => {
+  it('keeps it while a report linked to the copy is open', async () => {
     await db.exec(`
-      INSERT INTO "Report" (id, status) VALUES (70, 'Pending'), (71, 'Processing');
+      INSERT INTO "Report" (id, status) VALUES (70, 'Pending');
       INSERT INTO "StorylineReport" ("reportId", "storylineId", "heldStorylineId") VALUES (70, NULL, 1);
-      UPDATE "HeldStoryline" SET "reportIds" = ARRAY[71];
     `);
     await purgeReleasedHeldCopies();
     expect(await left()).toEqual(all);
     await db.exec(`UPDATE "Report" SET status = 'Actioned' WHERE id = 70`);
+    await purgeReleasedHeldCopies();
+    expect(await left()).toEqual(none);
+  });
+
+  it('keeps it while a report it recorded is open', async () => {
+    await db.exec(`
+      INSERT INTO "Report" (id, status) VALUES (71, 'Processing');
+      UPDATE "HeldStoryline" SET "reportIds" = ARRAY[71];
+    `);
     await purgeReleasedHeldCopies();
     expect(await left()).toEqual(all);
     await db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 71`);

@@ -96,6 +96,14 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
+    -- Its pictures, as the cover, hero, spark and cover-upload migrations add them.
+    ALTER TABLE "Storyline" ADD COLUMN "coverImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
+      ADD COLUMN "heroImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
+      ADD COLUMN "sparkImageId" int REFERENCES "Image"(id) ON DELETE SET NULL;
+    CREATE TABLE "StorylineCoverUpload" (
+      "storylineId" int NOT NULL REFERENCES "Storyline"(id) ON DELETE CASCADE,
+      "imageId" int NOT NULL REFERENCES "Image"(id) ON DELETE CASCADE,
+      PRIMARY KEY ("storylineId", "imageId"));
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE VIEW "EvidenceHeldUser" AS
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
@@ -130,6 +138,7 @@ beforeEach(async () => {
   await db.pg.exec(`
     DELETE FROM "Appeal";
     DELETE FROM "EvidenceHold";
+    DELETE FROM "StorylineCoverUpload";
     DELETE FROM "Image";
     DELETE FROM "StorylineCreateClick";
     DELETE FROM "StorylineBranchChoice";
@@ -169,8 +178,8 @@ describe('deleteStoryline under a real account hold', () => {
   const READER = 5;
   // Two chapters (1 by the owner, 2 by CONTRIBUTOR) on published posts with images, a reader's
   // branch choice and create click, and a thread with a comment and a reply thread by REPLIER.
-  beforeEach(async () => {
-    await db.pg.exec(`
+  const seedStoryline = () =>
+    db.pg.exec(`
       INSERT INTO "User" (id) VALUES (4), (5), (6), (7), (8), (9) ON CONFLICT DO NOTHING;
       INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
         (501, ${OWNER}, '2026-10-01'), (502, ${CONTRIBUTOR}, '2026-10-02');
@@ -187,7 +196,7 @@ describe('deleteStoryline under a real account hold', () => {
       INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (2, 1, 1, 1);
       INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (2, 2, ${REPLIER});
     `);
-  });
+  beforeEach(seedStoryline);
   const hold = (userId: number) =>
     db.pg.exec(`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${userId}, NULL)`);
   const reportIt = (id = 70) =>
@@ -265,12 +274,49 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
     expect(await storylineIds()).toEqual([2]);
     expect(await heldCopy()).toEqual(fullCopy(['owner', 'chapter-author']));
+    // Its comments are by unheld accounts, so they go: only a held commenter's thread is kept.
+    expect(await comments()).toEqual([]);
+    expect(await rows(`SELECT id FROM "Thread"`)).toEqual([]);
     expect(before.posts).toHaveLength(2);
     expect(before.images).toHaveLength(2);
     expect({
       posts: await rows(`SELECT * FROM "Post" ORDER BY id`),
       images: await rows(`SELECT * FROM "Image" ORDER BY id`),
     }).toEqual(before);
+  });
+
+  it("records its pictures and drafts in the copy, and keeps one for a held draft's author", async () => {
+    await db.pg.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (503, 9);
+      INSERT INTO "Image" (id, "userId") VALUES (603, ${OWNER}), (604, ${OWNER});
+      UPDATE "Storyline" SET "coverImageId" = 601, "heroImageId" = 603, "sparkImageId" = 604 WHERE id = 1;
+      INSERT INTO "StorylineCoverUpload" ("storylineId", "imageId") VALUES (1, 603), (1, 604);
+      INSERT INTO "StorylinePendingChapter" ("postId", "storylineId", "userId") VALUES (503, 1, 9);
+    `);
+    await hold(9);
+    await deleteStoryline({ id: 1, userId: OWNER });
+    expect(
+      await rows(`SELECT "pendingPostIds", "pendingAuthorIds", "coverImageId", "heroImageId",
+        "sparkImageId", "coverUploadImageIds", "holdReasons" FROM "HeldStoryline"`)
+    ).toEqual([
+      {
+        pendingPostIds: [503],
+        pendingAuthorIds: [9],
+        coverImageId: 601,
+        heroImageId: 603,
+        sparkImageId: 604,
+        coverUploadImageIds: [603, 604],
+        holdReasons: ['pending-author'],
+      },
+    ]);
+    // The draft and the pictures stay.
+    expect(await rows(`SELECT id FROM "Post" WHERE id = 503`)).toEqual([{ id: 503 }]);
+    expect(await rows(`SELECT id FROM "Image" ORDER BY id`)).toEqual([
+      { id: 601 },
+      { id: 602 },
+      { id: 603 },
+      { id: 604 },
+    ]);
   });
 
   it("copies everything when only a chapter's author is held", async () => {
@@ -390,8 +436,7 @@ describe('deleteStoryline under a real account hold', () => {
       'UPDATE "StorylineReport"',
     ])
       expect(touchingCopies[0]).toContain(part);
-    // The thread detach is interpolated just before it.
-    expect(touchingCopies[0]).toMatch(/\?\s*DELETE FROM "Storyline" WHERE id = \?\s*$/);
+    expect(touchingCopies[0]).toContain('DELETE FROM "Storyline" WHERE id =');
   });
 
   describe('the owner cannot tell what was kept', () => {
@@ -405,25 +450,28 @@ describe('deleteStoryline under a real account hold', () => {
       const plain = await ownerSees();
       expect(await heldCopy()).toEqual(noCopy);
 
+      // The whole storyline again: chapters, readers' rows, threads and comments.
       const seeds = async () => {
         await db.pg.exec(`
           DELETE FROM "HeldStoryline"; DELETE FROM "HeldStorylineChapter";
           DELETE FROM "HeldStorylineChapterEdge"; DELETE FROM "HeldStorylineBranchChoice";
           DELETE FROM "HeldStorylineCreateClick"; DELETE FROM "StorylineReport";
-          DELETE FROM "Report"; DELETE FROM "EvidenceHold";
+          DELETE FROM "Report"; DELETE FROM "EvidenceHold"; DELETE FROM "CommentV2";
+          DELETE FROM "Thread"; DELETE FROM "Image"; DELETE FROM "Post";
           INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
             VALUES (1, ${OWNER}, 'A story with no story', 1, now());
         `);
+        await seedStoryline();
       };
       await seeds();
       await reportIt();
       const reported = await ownerSees();
-      expect((await heldCopy()).storyline).toHaveLength(1);
+      expect((await heldCopy()).chapters).toHaveLength(2);
 
       await seeds();
       await hold(OWNER);
       const held = await ownerSees();
-      expect((await heldCopy()).storyline).toHaveLength(1);
+      expect((await heldCopy()).chapters).toHaveLength(2);
 
       expect(plain[0]).toBe(JSON.stringify({ value: { id: 1 } }));
       expect(plain[1]).toContain('NOT_FOUND');

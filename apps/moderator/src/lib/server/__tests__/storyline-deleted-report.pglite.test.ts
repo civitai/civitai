@@ -80,20 +80,26 @@ CREATE TABLE "HeldStoryline" (
 CREATE TABLE "HeldStorylineChapter" ("id" INTEGER PRIMARY KEY, "storylineId" INTEGER NOT NULL);
 INSERT INTO "User" VALUES (${REPORTER}, 'reporter'), (${OWNER}, 'owner'), (${MOD}, 'mod');
 INSERT INTO "Storyline" VALUES (1, ${OWNER}, 'Still here'), (2, ${OWNER}, 'Kept on delete'),
-  (3, ${OWNER}, 'Gone for good');
+  (3, ${OWNER}, 'Gone for good'), (4, ${OWNER}, 'Taken out');
 INSERT INTO "Report" ("id", "reason", "userId") VALUES (100, 'TOSViolation', ${REPORTER}),
-  (200, 'TOSViolation', ${REPORTER}), (300, 'TOSViolation', ${REPORTER});
-INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (100, 1), (200, 2), (300, 3);
+  (200, 'TOSViolation', ${REPORTER}), (300, 'TOSViolation', ${REPORTER}),
+  (400, 'TOSViolation', ${REPORTER});
+INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (100, 1), (200, 2), (300, 3), (400, 4);
 `;
 
-// What `deleteStoryline` leaves: report 200's storyline kept as a copy, report 300's without one.
+// What `deleteStoryline` leaves (pinned on the writer's side by storyline-delete.sql.behavior.test.ts
+// and the migration): report 200's storyline kept as a copy, report 300's without one, and report
+// 400's kept from a moderator's delete.
 const DELETE = `
 UPDATE "StorylineReport" SET "storylineTitle" = 'Kept on delete', "heldStorylineId" = 2 WHERE "reportId" = 200;
 UPDATE "StorylineReport" SET "storylineTitle" = 'Gone for good' WHERE "reportId" = 300;
 INSERT INTO "HeldStoryline" ("id", "userId", "title", "createdAt", "deletedAt", "deletedById", "reportIds")
   VALUES (2, ${OWNER}, 'Kept on delete', now(), now(), ${OWNER}, ARRAY[200]);
 INSERT INTO "HeldStorylineChapter" VALUES (20, 2), (21, 2);
-DELETE FROM "Storyline" WHERE "id" IN (2, 3);
+UPDATE "StorylineReport" SET "storylineTitle" = 'Taken out', "heldStorylineId" = 4 WHERE "reportId" = 400;
+INSERT INTO "HeldStoryline" ("id", "userId", "title", "createdAt", "deletedAt", "deletedById")
+  VALUES (4, ${OWNER}, 'Taken out', now(), now(), ${MOD});
+DELETE FROM "Storyline" WHERE "id" IN (2, 3, 4);
 `;
 
 let db: PGlite;
@@ -118,19 +124,20 @@ describe('a storyline report after its storyline is deleted', () => {
     const before = await queue();
     await db.exec(DELETE);
     const after = await queue();
-    expect(before.items.map((r) => r.id).sort()).toEqual([100, 200, 300]);
+    expect(before.items.map((r) => r.id).sort()).toEqual([100, 200, 300, 400]);
     expect(after.items.map((r) => [r.id, r.entityId]).sort()).toEqual([
       [100, 1],
       [200, null],
       [300, null],
+      [400, null],
     ]);
-    expect(after.totalItems).toBe(3);
+    expect(after.totalItems).toBe(4);
   });
 
   it('is still counted in the queue tabs', async () => {
     await db.exec(DELETE);
     expect(await getReportStatusCounts({ type: 'storyline', reasons: 'all' })).toEqual({
-      Pending: 3,
+      Pending: 4,
     });
   });
 
@@ -149,12 +156,13 @@ describe('a storyline report after its storyline is deleted', () => {
       { id: 100, status: 'Pending' },
       { id: 200, status: 'Actioned' },
       { id: 300, status: 'Unactioned' },
+      { id: 400, status: 'Pending' },
     ]);
   });
 
   it('shows the held copy, or only the title when none was kept', async () => {
     await db.exec(DELETE);
-    const deleted = await getDeletedReportStorylines([100, 200, 300]);
+    const deleted = await getDeletedReportStorylines([100, 200, 300, 400]);
     expect(deleted.sort((a, b) => a.reportId - b.reportId)).toEqual([
       {
         reportId: 200,
@@ -168,6 +176,17 @@ describe('a storyline report after its storyline is deleted', () => {
         },
       },
       { reportId: 300, title: 'Gone for good', held: null },
+      {
+        reportId: 400,
+        title: 'Taken out',
+        held: {
+          id: 4,
+          userId: OWNER,
+          deletedAt: expect.any(Date),
+          deletedByOwner: false,
+          chapters: 0,
+        },
+      },
     ]);
   });
 });

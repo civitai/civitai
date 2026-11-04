@@ -23,8 +23,17 @@ CREATE TABLE IF NOT EXISTS "HeldStoryline" (
   -- Every author of a comment in its threads when it was deleted: the purge keeps the copy while
   -- any of them is held.
   "commenterIds" INTEGER[] NOT NULL DEFAULT '{}',
+  -- Its chapter-1 drafts, which the delete unlinks (the posts stay drafts), and their authors, who
+  -- keep the copy while held as the commenters do.
+  "pendingPostIds" INTEGER[] NOT NULL DEFAULT '{}',
+  "pendingAuthorIds" INTEGER[] NOT NULL DEFAULT '{}',
+  -- Its pictures: the images stay, but their link to it goes with it.
+  "coverImageId" INTEGER,
+  "heroImageId" INTEGER,
+  "sparkImageId" INTEGER,
+  "coverUploadImageIds" INTEGER[] NOT NULL DEFAULT '{}',
   "heldAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  -- Why it was kept: open-report, owner, chapter-author, commenter, tombstone.
+  -- Why it was kept: open-report, owner, chapter-author, commenter, pending-author, tombstone.
   "holdReasons" TEXT[]
 );
 
@@ -47,10 +56,19 @@ ALTER TABLE "StorylineReport" ALTER COLUMN "storylineId" DROP NOT NULL;
 ALTER TABLE "StorylineReport" ADD COLUMN IF NOT EXISTS "heldStorylineId" INTEGER;
 ALTER TABLE "StorylineReport" ADD COLUMN IF NOT EXISTS "storylineTitle" TEXT;
 
-ALTER TABLE "StorylineReport" DROP CONSTRAINT IF EXISTS "StorylineReport_storylineId_fkey";
-ALTER TABLE "StorylineReport"
-  ADD CONSTRAINT "StorylineReport_storylineId_fkey"
-  FOREIGN KEY ("storylineId") REFERENCES "Storyline" ("id")
-  ON DELETE SET NULL ON UPDATE CASCADE
-  NOT VALID;
+-- The swap in one transaction (a DO block), so no delete runs while the column has no foreign key;
+-- skipped once the key already sets NULL.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'StorylineReport_storylineId_fkey' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE "StorylineReport" DROP CONSTRAINT IF EXISTS "StorylineReport_storylineId_fkey";
+    ALTER TABLE "StorylineReport"
+      ADD CONSTRAINT "StorylineReport_storylineId_fkey"
+      FOREIGN KEY ("storylineId") REFERENCES "Storyline" ("id")
+      ON DELETE SET NULL ON UPDATE CASCADE
+      NOT VALID;
+  END IF;
+END $$;
 ALTER TABLE "StorylineReport" VALIDATE CONSTRAINT "StorylineReport_storylineId_fkey";

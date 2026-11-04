@@ -58,8 +58,8 @@ const storylineCopyReleasedSql = (markerView: boolean) =>
     AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
 
 /**
- * A deleted storyline's copy (`deleteStoryline`) is released once its owner, every chapter author
- * and every commenter is unheld, read now, and no report on it is open.
+ * A deleted storyline's copy (`deleteStoryline`) is released once its owner, every chapter author,
+ * commenter and draft author is unheld, read now, and no report on it is open.
  */
 const heldStorylineReleasedSql = (markerView: boolean) => {
   const held = (id: string) => accountHoldSql(Prisma.raw(id), markerView);
@@ -69,7 +69,11 @@ const heldStorylineReleasedSql = (markerView: boolean) => {
         'hc."userId"'
       )}
     )
-    AND NOT EXISTS (SELECT 1 FROM unnest(hs."commenterIds") AS cm(id) WHERE ${held('cm.id')})
+    AND NOT EXISTS (
+      SELECT 1 FROM unnest(hs."commenterIds" || hs."pendingAuthorIds") AS cm(id) WHERE ${held(
+        'cm.id'
+      )}
+    )
     AND NOT EXISTS (
       SELECT 1 FROM "Report" r
       WHERE r.status IN ('Pending'::"ReportStatus", 'Processing'::"ReportStatus")
