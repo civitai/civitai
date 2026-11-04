@@ -104,27 +104,30 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
     });
 
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-    const result = await getDownloadUrl(STORED_URL, 'my%20report.pdf');
+    try {
+      const result = await getDownloadUrl(STORED_URL, 'my%20report.pdf');
 
-    expect(result.url).toBe('https://signed.example.com/a');
-    expect(new Date(result.urlExpiryDate).toISOString()).toBe('2030-01-01T00:00:00.000Z');
+      expect(result.url).toBe('https://signed.example.com/a');
+      expect(new Date(result.urlExpiryDate).toISOString()).toBe('2030-01-01T00:00:00.000Z');
 
-    const dwBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
-    expect(dwBody.key).toBe('default/7/my report.pdf');
+      const dwBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(dwBody.key).toBe('default/7/my report.pdf');
 
-    const calls = attachmentCalls();
-    expect(calls).toHaveLength(1);
-    const init = calls[0][1] as RequestInit;
-    expect(init.method).toBe('POST');
-    expect(timeoutSpy).toHaveBeenCalledTimes(1);
-    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
-    expect(init.signal).toBe(timeoutSpy.mock.results[0].value);
-    timeoutSpy.mockRestore();
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer internal-tok');
-    expect(JSON.parse(init.body as string)).toEqual({
-      path: STORED_URL,
-      fileName: 'my report.pdf',
-    });
+      const calls = attachmentCalls();
+      expect(calls).toHaveLength(1);
+      const init = calls[0][1] as RequestInit;
+      expect(init.method).toBe('POST');
+      expect(timeoutSpy).toHaveBeenCalledTimes(1);
+      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+      expect(init.signal).toBe(timeoutSpy.mock.results[0].value);
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer internal-tok');
+      expect(JSON.parse(init.body as string)).toEqual({
+        path: STORED_URL,
+        fileName: 'my report.pdf',
+      });
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it('passes a bare key through unchanged', async () => {

@@ -344,7 +344,6 @@ export async function getDownloadUrl(
   }
 
   if (!response.ok) {
-    // A 404 can mean the object moved to secondary storage.
     if (response.status === 404 && movedAttachmentFallback) {
       const moved = await getMovedAttachmentUrl(fileUrl, fileName);
       if (moved) return moved;
