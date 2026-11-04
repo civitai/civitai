@@ -54,8 +54,7 @@ export function DeveloperRateCardView({ data }: { data?: RateCardData }) {
               effect.
             </Text>
             <Text size="xs" c="dimmed">
-              Rate card {data.version}, in effect since {data.effectiveFrom}. Set under section 5 of
-              the{' '}
+              Set under section 5 of the{' '}
               <Anchor component={Link} href={APP_DEVELOPER_TERMS_PATH} size="xs">
                 App Developer Terms
               </Anchor>

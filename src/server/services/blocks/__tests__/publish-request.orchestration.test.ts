@@ -2070,7 +2070,8 @@ describe('approveRequest', () => {
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
       ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
       expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
-      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+      expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
     } finally {
       vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
     }

@@ -78,8 +78,6 @@ export function getDeveloperRateCard() {
     platform_default: share.platform_default,
   };
   return {
-    version: ACTIVE_RATE_CARD.version,
-    effectiveFrom: ACTIVE_RATE_CARD.effectiveFrom,
     rows: DEVELOPER_RATE_CARD_SHOWN_ROWS.map((row) => ({ row, sharePct: sharePct[row] })),
   };
 }

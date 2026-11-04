@@ -196,7 +196,7 @@ describe('the OWNER path — authorization', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(dbMock.dbWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('CONTROL: lowering visibility never asks for the terms', async () => {
