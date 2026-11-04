@@ -1291,6 +1291,12 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
         source: 'missing',
         reason: 'full url unreadable',
       });
+      const read = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .find((p) => p.subType === 'archive-image-read' && p.imageId === 10);
+      expect(read).toMatchObject({ fullUrl: true, retried: false, type: 'info' });
+      expect(JSON.stringify(read)).not.toContain('ten.png');
     });
 
     it('still fails the archive on a stored object it cannot read, however long ago it was sent', async () => {
@@ -1376,9 +1382,11 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     expect(read).toMatchObject({
       reportId: report.id,
       imageId: 8,
+      errorName: 'Error',
       errorCode: 'ECONNRESET',
       fullUrl: false,
       retried: true,
+      type: 'error',
     });
     expect(failed).toMatchObject({
       reportId: report.id,
