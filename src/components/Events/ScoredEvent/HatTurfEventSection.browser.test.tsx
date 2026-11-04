@@ -77,6 +77,24 @@ describe('Hat Turf on the event page', () => {
     expect(h.mutate).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: false });
   });
 
+  // Articles link to /events/<event>#hat-turf: the section carries that id, and scrolls itself into
+  // view when it mounts after the browser's own jump has already happened.
+  test('the #hat-turf link lands on the section', async () => {
+    const scroll = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => undefined);
+    window.history.replaceState(null, '', '#hat-turf');
+    try {
+      await render('blue');
+      await vi.waitFor(() => expect(section()).not.toBeNull());
+      expect(section()!.id).toBe('hat-turf');
+      await vi.waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
+    } finally {
+      window.history.replaceState(null, '', window.location.pathname);
+      scroll.mockRestore();
+    }
+  });
+
   test.each([
     ['signed out', () => (h.user = null), 'blue'],
     ['on no team', () => undefined, undefined],

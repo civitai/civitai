@@ -1,9 +1,13 @@
 import { Button, Paper, Text } from '@mantine/core';
+import { useEffect, useRef } from 'react';
 import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+/** The page anchor articles link to: /events/<event>#hat-turf. */
+export const HAT_TURF_ANCHOR = 'hat-turf';
 
 /**
  * Join or leave Hat Turf from the event page. Only for a signed-in viewer on a team, while turf runs
@@ -29,11 +33,22 @@ export function HatTurfEventSection({ event, team }: { event: string; team?: str
     },
     onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
   });
-  if (!playable || !stock || stock.mode === 'off') return null;
+  const shown = playable && !!stock && stock.mode !== 'off';
+  // The section mounts after its queries, too late for the browser's own jump to the anchor.
+  const ref = useRef<HTMLDivElement>(null);
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (!shown || jumped.current || window.location.hash !== `#${HAT_TURF_ANCHOR}`) return;
+    jumped.current = true;
+    ref.current?.scrollIntoView({ block: 'center' });
+  }, [shown]);
+  if (!shown) return null;
 
   const joined = stock.optedIn;
   return (
     <Paper
+      ref={ref}
+      id={HAT_TURF_ANCHOR}
       withBorder
       radius="md"
       p="md"
