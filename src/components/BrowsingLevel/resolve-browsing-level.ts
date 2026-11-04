@@ -1,4 +1,8 @@
 import { NsfwLevel } from '~/server/common/enums';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -22,6 +26,18 @@ type BrowsingLevelInputs = {
   override?: number;
   user?: number;
 };
+
+/** Client mirror of the server cap in applyDomainFeature (src/server/trpc.ts); change them together. */
+export function domainForcedBrowsingLevel({
+  canViewNsfw,
+  loggedIn,
+}: {
+  canViewNsfw: boolean;
+  loggedIn: boolean;
+}) {
+  if (canViewNsfw) return undefined;
+  return loggedIn ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+}
 
 /** The level a page asked for, falling back to the viewer's own. */
 export function resolvePageBrowsingLevel({ forced, override, user }: BrowsingLevelInputs) {
