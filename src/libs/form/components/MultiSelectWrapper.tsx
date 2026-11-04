@@ -207,14 +207,14 @@ export function CreatableMultiSelect({
 
   const handleValueRemove = (val: string) => onChange?.(value.filter((item) => item !== val));
 
-  const handlePaste = (pastedText: string) => {
-    // Split pasted text by comma or new line
-    const pastedValues = pastedText
+  // Splits on commas and new lines, then keeps what still fits under maxValues.
+  const addEntries = (text: string) => {
+    const entries = text
       .split(/[\n,]/)
-      .slice(0, maxValues)
-      .map((x) => x.trim());
-    const newValue = new Set([...((value as string[]) ?? []), ...pastedValues]);
-    onChange?.([...newValue]);
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const merged = [...new Set([...value, ...entries])].slice(0, maxValues);
+    onChange?.(merged);
   };
 
   const values = value.map((item) => (
@@ -276,6 +276,19 @@ export function CreatableMultiSelect({
                       event.preventDefault();
                       handleValueRemove(value[value.length - 1]);
                     }
+
+                    // Enter confirms an IME composition too; that must not add the half-typed word.
+                    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                      // A highlighted option is submitted by the combobox itself.
+                      if (combobox.getSelectedOptionIndex() !== -1) return;
+                      // Stay in the field: without this Enter submits the surrounding form.
+                      event.preventDefault();
+                      if (search.trim()) {
+                        addEntries(search);
+                        setSearch('');
+                        combobox.closeDropdown();
+                      }
+                    }
                   }}
                   onPaste={
                     parsePaste
@@ -283,7 +296,7 @@ export function CreatableMultiSelect({
                           e.preventDefault();
                           e.stopPropagation();
                           const pastedText = e.clipboardData.getData('text');
-                          handlePaste(pastedText);
+                          addEntries(pastedText);
                         }
                       : undefined
                   }
