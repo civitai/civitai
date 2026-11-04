@@ -167,7 +167,7 @@ function HatButton({ imageId }: { imageId: number }) {
 }
 
 /** The feed's badge, tap for every team's count, the hat to place, show hats and leaving. */
-export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
+function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();
