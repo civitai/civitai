@@ -95,6 +95,7 @@ import {
   MAX_CLOSURE_VOTES,
 } from '~/server/services/crucible-judge-closure';
 import {
+  getAnchorVotesKey,
   getJudgesKey,
   getVoteOutcomesKey,
   getVotedPairsKey,
@@ -2438,6 +2439,21 @@ function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemp
 const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /**
+ * Adds the pair to the judge's voted set and, for a vote against an anchor, records the anchor in
+ * the same script. The Bradley-Terry fit reads the anchor to freeze that side as Elo does, and the
+ * prize guard's count of voted pairs then also accounts for every anchor. Returns 1 when added.
+ */
+export const RECORD_VOTED_PAIR_SCRIPT = `
+local added = redis.call('SADD', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+if added == 1 and ARGV[2] ~= '' then
+  redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
+end
+-- Every vote, so the anchors expire with the voted set; a no-op while no anchor exists.
+redis.call('EXPIRE', KEYS[2], ARGV[3])
+return added`;
+
+/**
  * Counts the vote against both entries before it is processed, so concurrent votes cannot each
  * pass a read of the same count. An entry already at the cap takes no count and becomes the
  * vote's anchor, which the rating update leaves as it is.
@@ -3392,12 +3408,17 @@ export const submitVote = async ({
       );
     }
 
-    // Race condition protection: Atomically mark the pair as voted before processing
-    // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
-    // Note: sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
-    const key = getVotedPairsKey(crucibleId, userId);
-    const addResult = await sysRedis.sAdd(key, pairKey);
-    await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
+    // Marks the pair voted before the rating update; 0 means it already was (a duplicate vote).
+    const addResult = Number(
+      await sysRedis.eval(RECORD_VOTED_PAIR_SCRIPT, {
+        keys: [getVotedPairsKey(crucibleId, userId), getAnchorVotesKey(crucibleId, userId)],
+        arguments: [
+          pairKey,
+          anchorEntryId === null ? '' : String(anchorEntryId),
+          String(JUDGE_KEY_TTL_SECONDS),
+        ],
+      })
+    );
 
     if (addResult === 0) {
       // User has already voted on this pair

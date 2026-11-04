@@ -2,8 +2,12 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 import { CRUCIBLE_DEFAULT_ELO } from '~/server/redis/crucible-elo.redis';
-import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
-import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
+import { createPairKey } from '~/server/services/crucible-judge-closure';
+import {
+  getAnchorVotesKey,
+  getJudgesKey,
+  getVotedPairsKey,
+} from '~/server/services/crucible-redis-keys';
 
 /**
  * Votes from one winner over one loser. `frozen` names a side these votes do not move, as in the
@@ -16,7 +20,7 @@ export type PairTally = {
   frozen?: 'winner' | 'loser';
 };
 
-/** One judge's vote, in the order the judge cast it. */
+/** One judge's vote on one pair. */
 export type JudgeVote = { userId: number; winnerEntryId: number; loserEntryId: number };
 
 const MAX_ITERATIONS = 200;
@@ -88,39 +92,19 @@ export function fitBradleyTerry(tallies: PairTally[]): Map<number, number> {
   );
 }
 
-/**
- * Which side of each vote Elo froze, worked out again from the votes in order: a judge's first
- * `cap` counted votes on an entry move it, and later ones leave it frozen, as
- * `reserveJudgeEntryVotes` decides when the vote is cast. A vote with both sides at the cap was
- * refused then, so it is dropped here.
- */
-export function capJudgeVotes(
-  votes: JudgeVote[],
-  cap = CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
-): (JudgeVote & { frozen?: 'winner' | 'loser' })[] {
-  const counted = new Map<string, number>();
-  const open = (userId: number, entryId: number) =>
-    (counted.get(`${userId}:${entryId}`) ?? 0) < cap;
-  const count = (userId: number, entryId: number) => {
-    const key = `${userId}:${entryId}`;
-    counted.set(key, (counted.get(key) ?? 0) + 1);
-  };
-  const capped: (JudgeVote & { frozen?: 'winner' | 'loser' })[] = [];
-  for (const vote of votes) {
-    const winnerOpen = open(vote.userId, vote.winnerEntryId);
-    const loserOpen = open(vote.userId, vote.loserEntryId);
-    if (!winnerOpen && !loserOpen) continue;
-    if (winnerOpen) count(vote.userId, vote.winnerEntryId);
-    if (loserOpen) count(vote.userId, vote.loserEntryId);
-    capped.push({ ...vote, frozen: !winnerOpen ? 'winner' : !loserOpen ? 'loser' : undefined });
-  }
-  return capped;
-}
+/** A judge's anchors: pair key (`small:large`) -> the entry Elo left frozen on that vote. */
+export type JudgeAnchors = Map<number, Map<string, number>>;
 
-/** Judges' votes, in the order cast, as the tallies the fit takes, with Elo's frozen sides. */
-export function tallyJudgeVotes(votes: JudgeVote[]): PairTally[] {
+/**
+ * Judges' votes as the tallies the fit takes. A vote's frozen side is the anchor Elo recorded for
+ * it when it was cast (see `RECORD_VOTED_PAIR_SCRIPT`), so the fit freezes exactly what Elo froze.
+ */
+export function tallyJudgeVotes(votes: JudgeVote[], anchors: JudgeAnchors): PairTally[] {
   const tallies = new Map<string, PairTally>();
-  for (const { winnerEntryId, loserEntryId, frozen } of capJudgeVotes(votes)) {
+  for (const { userId, winnerEntryId, loserEntryId } of votes) {
+    const anchor = anchors.get(userId)?.get(createPairKey(winnerEntryId, loserEntryId));
+    const frozen =
+      anchor === winnerEntryId ? 'winner' : anchor === loserEntryId ? 'loser' : undefined;
     const key = `${winnerEntryId}>${loserEntryId}|${frozen ?? ''}`;
     const tally = tallies.get(key);
     if (tally) tally.votes++;
@@ -145,31 +129,24 @@ export function usesBradleyTerryRanking(
 }
 
 /**
- * Every judge's votes in a crucible, one per judge and pair, ordered per judge as cast. ClickHouse
- * can hold repeated rows, and a repeat never flips the winner, so any one row of the group stands
- * for the vote and its first `createdAt` for when it was cast.
+ * Every judge's votes in a crucible, one per judge and pair. ClickHouse can hold repeated rows,
+ * and a repeat never flips the winner, so any one row of the group stands for the vote. The inner
+ * aliases must not reuse a column name: ClickHouse would read the GROUP BY's columns as them.
  *
  * shortcut: one row per vote, read on every sync and finalize. A judge casts at most
  * CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY votes per entry, so this is bounded by judges times
- * entries; store the tallies per crucible if large crucibles make it slow. Two votes by one judge
- * with the same `createdAt` keep no defined order, which only matters when one of them is the
- * vote that reaches the cap.
+ * entries; store the tallies per crucible if large crucibles make it slow.
  */
 async function fetchJudgeVotes(crucibleId: number): Promise<JudgeVote[]> {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const rows = await clickhouse.$query<JudgeVote>`
-    SELECT judgeId AS userId, winner AS winnerEntryId, loser AS loserEntryId
+    SELECT judge AS userId, w AS winnerEntryId, l AS loserEntryId
     FROM (
-      SELECT
-        userId AS judgeId,
-        any(winnerEntryId) AS winner,
-        any(loserEntryId) AS loser,
-        min(createdAt) AS votedAt
+      SELECT userId AS judge, any(winnerEntryId) AS w, any(loserEntryId) AS l
       FROM crucible_votes
       WHERE crucibleId = ${crucibleId}
       GROUP BY userId, least(winnerEntryId, loserEntryId), greatest(winnerEntryId, loserEntryId)
     )
-    ORDER BY judgeId, votedAt
   `;
   return rows.map((row) => ({
     userId: Number(row.userId),
@@ -180,24 +157,36 @@ async function fetchJudgeVotes(crucibleId: number): Promise<JudgeVote[]> {
 
 /** For display: the fit over whatever ClickHouse holds now, lag and all. */
 export async function fitCrucibleScores(crucibleId: number) {
-  return fitBradleyTerry(tallyJudgeVotes(await fetchJudgeVotes(crucibleId)));
+  const [{ anchors }, votes] = await Promise.all([
+    readRedisJudging(crucibleId),
+    fetchJudgeVotes(crucibleId),
+  ]);
+  return fitBradleyTerry(tallyJudgeVotes(votes, anchors));
 }
 
-const SCARD_BATCH = 100;
+const JUDGE_BATCH = 100;
 
-/** Pairs judged in this crucible as Redis counts them: the sum of every judge's voted-pairs set. */
-async function countRedisJudgedPairs(crucibleId: number) {
-  const judges = (await sysRedis.sMembers(getJudgesKey(crucibleId))) ?? [];
-  let total = 0;
-  for (let i = 0; i < judges.length; i += SCARD_BATCH) {
-    const counts = await Promise.all(
-      judges
-        .slice(i, i + SCARD_BATCH)
-        .map((userId) => sysRedis.sCard(getVotedPairsKey(crucibleId, Number(userId))))
-    );
-    total += counts.reduce((sum, n) => sum + n, 0);
+/**
+ * Per judge, in bounded batches: the pairs Redis counts as judged (the sum of every judge's
+ * voted-pairs set, which the prize guard compares) and the anchors Elo recorded.
+ */
+async function readRedisJudging(crucibleId: number) {
+  const judges = ((await sysRedis.sMembers(getJudgesKey(crucibleId))) ?? []).map(Number);
+  let judgedPairs = 0;
+  const anchors: JudgeAnchors = new Map();
+  for (let i = 0; i < judges.length; i += JUDGE_BATCH) {
+    const batch = judges.slice(i, i + JUDGE_BATCH);
+    const [counts, anchorHashes] = await Promise.all([
+      Promise.all(batch.map((userId) => sysRedis.sCard(getVotedPairsKey(crucibleId, userId)))),
+      Promise.all(batch.map((userId) => sysRedis.hGetAll(getAnchorVotesKey(crucibleId, userId)))),
+    ]);
+    judgedPairs += counts.reduce((sum, n) => sum + n, 0);
+    batch.forEach((userId, j) => {
+      const hash = Object.entries(anchorHashes[j] ?? {});
+      if (hash.length) anchors.set(userId, new Map(hash.map(([pair, id]) => [pair, Number(id)])));
+    });
   }
-  return total;
+  return { judgedPairs, anchors };
 }
 
 /** How long after a crucible ends finalize waits for ClickHouse to catch up before paying by Elo. */
@@ -221,10 +210,11 @@ export async function fitCrucibleScoresForPrizes(
   let clickhouseVotes = 0;
   let redisVotes = 0;
   try {
-    redisVotes = await countRedisJudgedPairs(crucibleId);
+    const { judgedPairs, anchors } = await readRedisJudging(crucibleId);
+    redisVotes = judgedPairs;
     const votes = await fetchJudgeVotes(crucibleId);
     clickhouseVotes = votes.length;
-    if (clickhouseVotes === redisVotes) return fitBradleyTerry(tallyJudgeVotes(votes));
+    if (clickhouseVotes === redisVotes) return fitBradleyTerry(tallyJudgeVotes(votes, anchors));
   } catch (error) {
     logToAxiom({
       type: 'warning',

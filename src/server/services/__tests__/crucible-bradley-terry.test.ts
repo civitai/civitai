@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock, redisMock } from '~/__tests__/mocks';
-import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
+import {
+  getAnchorVotesKey,
+  getJudgesKey,
+  getVotedPairsKey,
+} from '~/server/services/crucible-redis-keys';
 
 const chQuery = vi.fn();
 const logToAxiom = loggingMock.logToAxiom;
@@ -9,7 +13,6 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }
 const {
   BRADLEY_TERRY_INGEST_WAIT_MS,
   CrucibleRankingDeferredError,
-  capJudgeVotes,
   fitBradleyTerry,
   fitBradleyTerryStrengths,
   fitCrucibleScoresForPrizes,
@@ -171,26 +174,51 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     expect(maxInFlight, 'SCARDs in flight at once').toBe(100);
   });
 
+  it('pays from a fit that freezes the anchors Redis recorded for each judge', async () => {
+    const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((loser) => ({
+      userId: 9,
+      winnerEntryId: 10,
+      loserEntryId: loser,
+    }));
+    const anchors = new Map([[9, new Map([6, 7, 8].map((loser) => [`${loser}:10`, 10]))]]);
+    redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
+      key === getJudgesKey(1) ? ['9'] : []
+    );
+    redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
+      key === getVotedPairsKey(1, 9) ? 8 : 0
+    );
+    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) =>
+      key === getAnchorVotesKey(1, 9) ? { '6:10': '10', '7:10': '10', '8:10': '10' } : {}
+    );
+    chQuery.mockResolvedValue(rows);
+
+    const scores = await fit();
+    expect(scores).toEqual(fitBradleyTerry(tallyJudgeVotes(rows, anchors)));
+    expect(scores, 'differs from a fit that ignores the anchors').not.toEqual(
+      fitBradleyTerry(tallyJudgeVotes(rows, new Map()))
+    );
+  });
+
   it('falls back to Elo when Redis is unreachable', async () => {
     redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
     expect(await fit(endedAgo(60_000))).toBeNull();
   });
 });
 
-describe('the per-judge, per-entry cap, as Elo applies it', () => {
-  const cap = 5;
+describe('the per-judge, per-entry cap, as Elo recorded it', () => {
   // Judge 1 votes X (10) over A-E: five votes, all counted for X.
   const firstFive = [1, 2, 3, 4, 5].map((loser) => ({
     userId: 1,
     winnerEntryId: 10,
     loserEntryId: loser,
   }));
-  // Then X over F-H: X is at the cap, so these place F-H against X and leave X frozen.
+  // Then X over F-H with X at the cap: Elo recorded X as the anchor, so these place F-H only.
   const pastCap = [6, 7, 8].map((loser) => ({ userId: 1, winnerEntryId: 10, loserEntryId: loser }));
+  const xAnchored = new Map([[1, new Map([6, 7, 8].map((loser) => [`${loser}:10`, 10]))]]);
 
   it('moves an entry a judge voted on 8 times exactly as if they had cast only 5', () => {
-    const onlyFive = fitBradleyTerryStrengths(tallyJudgeVotes(firstFive));
-    const eight = fitBradleyTerryStrengths(tallyJudgeVotes([...firstFive, ...pastCap]));
+    const onlyFive = fitBradleyTerryStrengths(tallyJudgeVotes(firstFive, new Map()));
+    const eight = fitBradleyTerryStrengths(tallyJudgeVotes([...firstFive, ...pastCap], xAnchored));
     // Strength ratios are scale-free; the fit's centring moves with F-H, the ratios do not.
     for (const opponent of [1, 2, 3, 4, 5]) {
       const ratio = (fit: Map<number, number>) => Math.log10(fit.get(10)! / fit.get(opponent)!);
@@ -200,30 +228,25 @@ describe('the per-judge, per-entry cap, as Elo applies it', () => {
     expect(eight.get(6)!).toBeLessThan(eight.get(10)!);
   });
 
-  it('freezes the side at the cap, counts the other, and drops a vote with both at the cap', () => {
-    const fourMore = [11, 12, 13, 14].map((winner) => ({
-      userId: 1,
-      winnerEntryId: winner,
-      loserEntryId: 1,
-    })); // entry 1 reaches 5 counted votes
-    const bothCapped = { userId: 1, winnerEntryId: 10, loserEntryId: 1 };
-    const frozen = capJudgeVotes([...firstFive, ...pastCap, ...fourMore, bothCapped], cap).map(
-      (vote) => vote.frozen
-    );
-    expect(frozen).toEqual([
-      ...Array(5).fill(undefined),
-      'winner',
-      'winner',
-      'winner',
-      ...Array(4).fill(undefined),
-    ]); // 12 votes: the 13th, both sides at the cap, is dropped
-  });
-
-  it('counts each judge separately', () => {
-    const otherJudge = pastCap.map((vote) => ({ ...vote, userId: 2 }));
-    expect(capJudgeVotes([...firstFive, ...otherJudge], cap).map((vote) => vote.frozen)).toEqual(
-      Array(8).fill(undefined)
-    );
+  it('freezes the recorded side, whichever side it is, and only for that judge', () => {
+    const votes = [
+      { userId: 1, winnerEntryId: 10, loserEntryId: 6 }, // anchor 10: the winner
+      { userId: 1, winnerEntryId: 7, loserEntryId: 10 }, // anchor 10: the loser
+      { userId: 2, winnerEntryId: 10, loserEntryId: 6 }, // another judge, no anchor
+    ];
+    const anchors = new Map([
+      [
+        1,
+        new Map([
+          ['6:10', 10],
+          ['7:10', 10],
+        ]),
+      ],
+    ]);
+    const frozen = tallyJudgeVotes(votes, anchors)
+      .map((t) => `${t.winnerEntryId}>${t.loserEntryId}:${t.frozen ?? '-'}x${t.votes}`)
+      .sort();
+    expect(frozen).toEqual(['10>6:-x1', '10>6:winnerx1', '7>10:loserx1']);
   });
 });
 
@@ -242,6 +265,16 @@ describe('usesBradleyTerryRanking — which crucibles the fit ranks', () => {
   it('ranks crucibles starting on or after the date, and leaves earlier ones on Elo', () => {
     expect(usesBradleyTerryRanking(crucible('2026-12-01T00:00:00Z'), from)).toBe(true);
     expect(usesBradleyTerryRanking(crucible('2026-11-30T23:59:00Z'), from)).toBe(false);
+  });
+
+  // Anchors are recorded only from the deploy that ships the fit on: a crucible already judging
+  // then has votes without them, so it must finish on Elo however late it ends.
+  it('leaves a crucible that started before the date on Elo, even when it ends after it', () => {
+    const running = {
+      ...crucible('2026-11-30T12:00:00Z'),
+      endAt: new Date('2026-12-05T00:00:00Z'),
+    };
+    expect(usesBradleyTerryRanking(running, from)).toBe(false);
   });
 
   it('goes by creation time for a crucible with no start time', () => {
