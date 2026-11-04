@@ -49,7 +49,12 @@
       {/if}
       <div class="min-w-0 space-y-1.5">
         <p class="m-0 font-semibold break-words text-dark-0">{face.name}</p>
-        {#if !cover}<p class="m-0 text-xs text-dark-2">No .com cover picked</p>{/if}
+        {#if !cover}
+          <p class="m-0 text-xs text-dark-2">
+            {face.coverPicked ? 'The picked .com cover no longer exists' : 'No .com cover picked'};
+            civitai.com shows another image
+          </p>
+        {/if}
         <a
           href={face.url}
           target="_blank"

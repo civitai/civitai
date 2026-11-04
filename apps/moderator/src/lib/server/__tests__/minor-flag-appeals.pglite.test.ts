@@ -200,11 +200,19 @@ const ids = async (
 
 describe('civitai.com face', () => {
   it("gives each row its model's .com face, or null when the model has none", async () => {
-    await db.query(`INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (900, 'com-cover', 4)`);
+    await db.query(
+      `INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (900, 'com-cover', 4), (901, 'other-cover', 1)`
+    );
     await db.query(
       `UPDATE "Model" SET "sfwName" = 'com one', "sfwCoverImageId" = 900 WHERE id = 1`
     );
     await db.query(`UPDATE "Model" SET "sfwName" = 'com two' WHERE id = 2`);
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com five', "sfwCoverImageId" = 901 WHERE id = 5`
+    );
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com six', "sfwCoverImageId" = 999 WHERE id = 6`
+    );
     // A cover id with the face off shows no face.
     await db.query(`UPDATE "Model" SET "sfwCoverImageId" = 900 WHERE id = 3`);
 
@@ -215,8 +223,18 @@ describe('civitai.com face', () => {
       name: 'com one',
       url: 'https://com.test/models/1',
       cover: { id: 900, url: 'com-cover', type: 'image', nsfwLevel: 4 },
+      coverPicked: true,
     });
-    expect(face(2)).toEqual({ name: 'com two', url: 'https://com.test/models/2', cover: null });
+    expect(face(2)).toEqual({
+      name: 'com two',
+      url: 'https://com.test/models/2',
+      cover: null,
+      coverPicked: false,
+    });
+    // Two covers in one page: each model gets its own.
+    expect(face(5)?.cover).toEqual({ id: 901, url: 'other-cover', type: 'image', nsfwLevel: 1 });
+    // A picked cover whose image is gone.
+    expect(face(6)).toMatchObject({ name: 'com six', cover: null, coverPicked: true });
     expect(face(3)).toBeNull();
     expect(items.find((i) => i.modelId === 1)).not.toHaveProperty('sfwName');
   });

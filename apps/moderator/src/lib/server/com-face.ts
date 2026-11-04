@@ -39,6 +39,7 @@ export async function loadComFaces(models: ComFaceSource[]): Promise<Map<number,
             name: m.sfwName,
             url: `${base}/models/${m.id}`,
             cover: (m.sfwCoverImageId != null && covers.get(m.sfwCoverImageId)) || null,
+            coverPicked: m.sfwCoverImageId != null,
           },
     ])
   );

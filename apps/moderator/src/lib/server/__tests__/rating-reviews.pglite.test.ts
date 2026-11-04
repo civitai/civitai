@@ -830,8 +830,13 @@ describe('hydrateRatingReviews', () => {
     });
     const noCover = await seedEntity(db, 'Model', { userId: owner, sfwName: 'only a name' });
     const noFace = await seedEntity(db, 'Model', { userId: owner, sfwCoverImageId: cover.id });
+    const goneCover = await seedEntity(db, 'Model', {
+      userId: owner,
+      sfwName: 'cover gone',
+      sfwCoverImageId: 9999,
+    });
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'p' });
-    for (const id of [withFace, noCover, noFace]) await fileReview('Model', id);
+    for (const id of [withFace, noCover, noFace, goneCover]) await fileReview('Model', id);
     await fileReview('Post', postId);
 
     const all = await listPending();
@@ -841,11 +846,19 @@ describe('hydrateRatingReviews', () => {
       name: 'com name',
       url: `https://com.test/models/${withFace}`,
       cover: { id: cover.id, url: 'com-cover', type: 'image', nsfwLevel: 2 },
+      coverPicked: true,
     });
     expect(model(noCover)?.entity?.comFace).toEqual({
       name: 'only a name',
       url: `https://com.test/models/${noCover}`,
       cover: null,
+      coverPicked: false,
+    });
+    expect(model(goneCover)?.entity?.comFace).toEqual({
+      name: 'cover gone',
+      url: `https://com.test/models/${goneCover}`,
+      cover: null,
+      coverPicked: true,
     });
     expect(model(noFace)?.entity?.comFace).toBeNull();
     expect(all.find((i) => i.entityType === 'Post')?.entity).not.toHaveProperty('comFace');
