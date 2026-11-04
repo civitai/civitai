@@ -16,9 +16,10 @@
   import RecapDialog from '$lib/RecapDialog.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
-  import WatchProgress from '$lib/WatchProgress.svelte';
+  import WatchHairline from '$lib/WatchHairline.svelte';
+  import WatchMeta from '$lib/WatchMeta.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
-  import { answerForKey, answerForKeyPress } from './keys';
+    import { answerForKey, answerForKeyPress } from './keys';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
@@ -476,13 +477,12 @@
       {submit}
     />
   {:else}
-  {#if strip}
-    <WatchProgress
-      label={strip.label}
+  {#if strip && data.mode === 'queue'}
+    <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
+    <WatchMeta
       value={strip.value}
       max={strip.max}
-      note={strip.note}
-      fervor={data.status.fervor}
+      streak={data.daily.streak}
       {hearts}
       maxHearts={data.status.maxSmites}
     />
