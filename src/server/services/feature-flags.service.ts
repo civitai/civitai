@@ -201,15 +201,9 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'model-page-design-system-markup',
   },
-  // SSR-CPU switch for CLOSED Mantine overlays (Tooltip, Popover, Menu, HoverCard imported from
-  // `~/components/MantineOverlays`). ON: the server render and the hydrating render emit only the
-  // trigger, with the attributes Mantine gives a closed trigger, and Mantine's floating machinery
-  // (floating-ui, styles, portals) mounts on the trigger's first pointer, focus, click or key event,
-  // without remounting the trigger. An overlay that starts open, or `keepMounted`, stays on Mantine.
-  // OFF: every overlay renders Mantine's component, unchanged. `[]`: dark and fails CLOSED when the
-  // key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
-  // on-switch. Hydration cannot mismatch: server and client read the same serialised flags, and each
-  // overlay reads it once, at mount (`OverlayFastPathContext`).
+  // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
+  // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
+  // on-switch.
   ssrClosedOverlayFastPath: {
     availability: [],
     fliptKey: 'ssr-closed-overlay-fast-path',

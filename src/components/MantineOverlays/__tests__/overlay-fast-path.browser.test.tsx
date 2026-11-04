@@ -53,8 +53,6 @@ const { Tooltip, Popover, Menu, HoverCard, OverlayFastPathContext } = await impo
 );
 const { theme: appTheme } = await import('~/providers/ThemeProvider');
 
-// ── shared helpers ────────────────────────────────────────────────────────────────────────────
-
 let park: HTMLElement;
 
 beforeEach(async () => {
@@ -106,8 +104,6 @@ function Stateful() {
   const [value] = React.useState(() => Math.random().toString(36).slice(2));
   return <span data-testid="stateful" data-value={value} />;
 }
-
-// ── 2 + 3: behaviour on the first interaction, Mantine vs fast path ───────────────────────────
 
 describe.each([
   ['Mantine (flag off)', false],
@@ -451,8 +447,6 @@ test("Tooltip mirrors Mantine's statics, withProps included", async () => {
   expect(Tooltip.withProps).toBe(Mantine.Tooltip.withProps);
   expect(Tooltip.Group).toBe(Mantine.Tooltip.Group);
 });
-
-// ── 1: hydration through the real FeatureFlagsProvider ───────────────────────────────────────
 
 function IdProbe({ name }: { name: string }) {
   const id = React.useId();

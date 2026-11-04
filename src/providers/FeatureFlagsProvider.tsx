@@ -132,7 +132,6 @@ export const FeatureFlagsProvider = ({
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>
       <FeatureFlagsReadyCtx.Provider value={ready}>
-        {/* Read once per overlay at mount, so a later flag change never swaps a mounted tree. */}
         <OverlayFastPathContext.Provider value={featureFlags.ssrClosedOverlayFastPath === true}>
           {children}
         </OverlayFastPathContext.Provider>
