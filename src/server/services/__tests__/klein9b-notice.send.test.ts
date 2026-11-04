@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type { Sleep } from '~/server/services/notice-ledger.service';
 import type * as EmailClient from '~/server/email/client';
 import type * as Klein9bNoticeEmail from '~/server/email/templates/klein9bNotice.email';
 import type * as NotificationsClient from '~/server/notifications/client';
 import { klein9bNoticeSchema } from '~/server/schema/klein9b-notice.schema';
-import { KLEIN9B_NOTICE } from '~/shared/constants/klein9b-notice.constants';
+import { KLEIN9B_NOTICE, getKlein9bNoticeUrl } from '~/shared/constants/klein9b-notice.constants';
 
 const { emailConfiguredMock, sendMock, notifyMock } = vi.hoisted(() => ({
   emailConfiguredMock: vi.fn(),
@@ -27,6 +28,19 @@ vi.mock('~/server/notifications/client', async (importOriginal) => ({
 }));
 
 const { sendKlein9bNotice } = await import('~/server/services/klein9b-notice.service');
+const sleep = vi.fn<Sleep>(async () => undefined);
+
+// Sends paced on a frozen clock: each wait is the full gap to the send's reserved slot.
+const pacedSleeps = async (go: (sleep: Sleep) => Promise<unknown>) => {
+  const sleep = vi.fn<Sleep>(async () => undefined);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+  try {
+    await go(sleep);
+  } finally {
+    now.mockRestore();
+  }
+  return sleep.mock.calls.map(([ms]) => ms);
+};
 
 // User 1 is charged (a fee), user 2 is uncharged (a published free version).
 const versions = [
@@ -85,7 +99,14 @@ beforeEach(() => {
 });
 
 const run = (dryRun: boolean) =>
-  sendKlein9bNotice({ dryRun, count: 1000, batchSize: 25, date: 'November 4th' });
+  sendKlein9bNotice({
+    dryRun,
+    count: 1000,
+    batchSize: 1,
+    date: 'November 4th',
+    minIntervalMs: 0,
+    sleep,
+  });
 
 describe('sendKlein9bNotice', () => {
   it('a dry run only counts: no claim, no notification, no email', async () => {
@@ -112,13 +133,13 @@ describe('sendKlein9bNotice', () => {
       expect.objectContaining({
         userId: 1,
         type: 'system-announcement',
-        details: { message: KLEIN9B_NOTICE.charged.message, url: '/user/account' },
+        details: { message: KLEIN9B_NOTICE.charged.message, url: '/user/u1/models' },
       })
     );
     expect(notifyMock).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 2,
-        details: { message: KLEIN9B_NOTICE.uncharged.message, url: '/user/account' },
+        details: { message: KLEIN9B_NOTICE.uncharged.message, url: '/user/u2/models' },
       })
     );
     expect(sendMock).toHaveBeenCalledTimes(2);
@@ -166,8 +187,10 @@ describe('sendKlein9bNotice', () => {
     const first = (await sendKlein9bNotice({
       dryRun: false,
       count: 1,
-      batchSize: 25,
+      batchSize: 1,
       date: 'x',
+      minIntervalMs: 0,
+      sleep,
     })) as {
       sent: number;
       remaining: number;
@@ -175,6 +198,65 @@ describe('sendKlein9bNotice', () => {
     expect(first).toMatchObject({ sent: 1, remaining: 1 });
     expect(await run(false)).toMatchObject({ sent: 1, remaining: 0 });
     expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a throttled email without posting the notification again', async () => {
+    let throttled = false;
+    sendMock.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === 'u1@example.com' && !throttled) {
+        throttled = true;
+        throw Object.assign(new Error('454 Throttling failure: Maximum sending rate exceeded'), {
+          responseCode: 454,
+        });
+      }
+    });
+    expect(await run(false)).toMatchObject({ sent: 2, failed: 0 });
+    expect(notifyMock.mock.calls.map(([n]) => n.userId).sort()).toEqual([1, 2]);
+    expect(sendMock.mock.calls.map(([d]) => d.to).sort()).toEqual([
+      'u1@example.com',
+      'u1@example.com',
+      'u2@example.com',
+    ]);
+    expect(sleep).toHaveBeenCalledWith(2_000);
+  });
+
+  it('links a creator with no username to their account page', async () => {
+    users[0].username = null as unknown as string;
+    try {
+      await run(false);
+      expect(notifyMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 1,
+          details: expect.objectContaining({ url: '/user/account' }),
+        })
+      );
+    } finally {
+      users[0].username = 'u1';
+    }
+  });
+
+  it('counts a dry run against `count`', async () => {
+    expect(
+      await sendKlein9bNotice({ dryRun: true, count: 1, batchSize: 1, date: 'x', minIntervalMs: 0 })
+    ).toMatchObject({ wouldSend: 1 });
+  });
+
+  it('paces its sends', async () => {
+    const waits = await pacedSleeps((sleep) =>
+      sendKlein9bNotice({
+        dryRun: false,
+        count: 50,
+        batchSize: 1,
+        date: 'x',
+        minIntervalMs: 300,
+        sleep,
+      })
+    );
+    expect(waits).toEqual([300]);
+  });
+
+  it('encodes the username into the models link', () => {
+    expect(getKlein9bNoticeUrl('a b/c')).toBe('/user/a%20b%2Fc/models');
   });
 
   it('refuses a real send with no email transport, before claiming anyone', async () => {
@@ -195,12 +277,12 @@ describe('the route schema', () => {
     ).toBe(false);
   });
 
-  it('bounds count to 1-1000 (default 50) and batchSize to 1-50 (default 25)', () => {
+  it('bounds count to 1-1000 (default 50), and sends one at a time by default (at most 5)', () => {
     const send = (extra: object) =>
       klein9bNoticeSchema.safeParse({ action: 'send', date: 'November 4th', ...extra });
-    expect(send({}).data).toMatchObject({ count: 50, batchSize: 25 });
-    expect(send({ count: 1000, batchSize: 50 }).success).toBe(true);
-    for (const bad of [{ count: 0 }, { count: 1001 }, { batchSize: 0 }, { batchSize: 51 }])
+    expect(send({}).data).toMatchObject({ count: 50, batchSize: 1 });
+    expect(send({ count: 1000, batchSize: 5 }).success).toBe(true);
+    for (const bad of [{ count: 0 }, { count: 1001 }, { batchSize: 0 }, { batchSize: 6 }])
       expect(send(bad).success).toBe(false);
   });
 });

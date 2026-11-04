@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type { Sleep } from '~/server/services/notice-ledger.service';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import type * as EmailClient from '~/server/email/client';
 import type * as NcEarningsNoticeEmail from '~/server/email/templates/ncEarningsNotice.email';
@@ -202,6 +203,7 @@ describe('sendNcEarningsNotice', () => {
       count: 50,
       batchSize: 10,
       date: 'November 5th',
+      minIntervalMs: 0,
       ...over,
     });
 
@@ -262,6 +264,17 @@ describe('sendNcEarningsNotice', () => {
     );
   });
 
+  it('paces its sends', async () => {
+    const sleep = vi.fn<Sleep>(async () => undefined);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    try {
+      await run({ minIntervalMs: 300, sleep });
+    } finally {
+      now.mockRestore();
+    }
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([300, 600]);
+  });
+
   it('sends at most `count` per run', async () => {
     expect(await run({ count: 1 })).toMatchObject({ sent: 1, remaining: 2 });
     expect(createNotificationMock).toHaveBeenCalledTimes(1);
@@ -304,6 +317,27 @@ describe('sendNcEarningsNotice', () => {
     expect(recordedAtSend).toEqual([true, true, true]);
   });
 
+  it('retries a throttled email without posting the notification again', async () => {
+    let throttled = false;
+    sendMock.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === 'u1@example.com' && !throttled) {
+        throttled = true;
+        throw Object.assign(new Error('454 Throttling failure: Maximum sending rate exceeded'), {
+          responseCode: 454,
+        });
+      }
+    });
+    const sleep = vi.fn<Sleep>(async () => undefined);
+    expect(await run({ sleep })).toMatchObject({ sent: 3, failed: 0 });
+    expect(sleep).toHaveBeenCalledWith(2_000);
+    expect(createNotificationMock.mock.calls.map(([n]) => n.userId).sort()).toEqual([1, 2, 3]);
+    expect(sendMock.mock.calls.map(([d]) => d.to).sort()).toEqual([
+      'u1@example.com',
+      'u1@example.com',
+      'u2@example.com',
+    ]);
+  });
+
   it('refuses to send, and records nobody, when email is not configured', async () => {
     emailConfiguredMock.mockReturnValue(false);
     await expect(run()).rejects.toThrow('Email is not configured');
@@ -326,7 +360,7 @@ describe('sendNcEarningsNotice', () => {
 describe('ncEarningsNoticeSchema send', () => {
   const send = { action: 'send', notice: 'nc-older', userIds: [1], date: 'November 5th' };
 
-  it('sends one creator at a time by default, so a run stays under the SES sending rate', () => {
+  it('defaults to batchSize 1 and dryRun true', () => {
     expect(ncEarningsNoticeSchema.parse(send)).toMatchObject({ batchSize: 1, dryRun: true });
   });
 
