@@ -88,7 +88,12 @@ import {
   fitCrucibleScoresForPrizes,
   usesBradleyTerryRanking,
 } from '~/server/services/crucible-bradley-terry';
-import { createVoteOutcome, decidedPairKeys } from '~/server/services/crucible-judge-closure';
+import {
+  createPairKey,
+  createVoteOutcome,
+  decidedPairKeys,
+} from '~/server/services/crucible-judge-closure';
+import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
 import {
   getCrucibleJudgingConfig,
   recordSessionVote,
@@ -2405,13 +2410,6 @@ export const submitEntry = async ({
   }
 };
 
-/**
- * Redis key for tracking voted pairs per user per crucible
- */
-function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
-}
-
 function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
@@ -2467,14 +2465,6 @@ async function reserveJudgeEntryVotes(
 }
 
 /**
- * Create a canonical pair key (always sorted so a:b == b:a)
- */
-function createPairKey(entryId1: number, entryId2: number): string {
-  const [smaller, larger] = entryId1 < entryId2 ? [entryId1, entryId2] : [entryId2, entryId1];
-  return `${smaller}:${larger}`;
-}
-
-/**
  * The served pair, plus its anchor when it has one. A vote must name the same anchor: deciding it
  * from the counts at vote time alone would let a concurrent submit push an entry over the cap for a
  * moment and turn a normal vote into one that moves only one side.
@@ -2498,13 +2488,6 @@ export async function markPairVoted(
   await sysRedis.sAdd(key, pairKey);
   // Set TTL to 30 days (for crucible cleanup)
   await sysRedis.expire(key, 30 * 24 * 60 * 60);
-}
-
-/**
- * Redis key for tracking unique judges (voters) per crucible
- */
-function getJudgesKey(crucibleId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGES}:${crucibleId}` as RedisKeyTemplateSys;
 }
 
 /**

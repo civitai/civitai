@@ -1,7 +1,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { sysRedis } from '~/server/redis/client';
+import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
 
 export type PairTally = { winnerEntryId: number; loserEntryId: number; votes: number };
 
@@ -105,15 +105,9 @@ export async function fitCrucibleScores(crucibleId: number) {
 
 /** Pairs judged in this crucible as Redis counts them: the sum of every judge's voted-pairs set. */
 async function countRedisJudgedPairs(crucibleId: number) {
-  const judges = await sysRedis.sMembers(
-    `${REDIS_SYS_KEYS.CRUCIBLE.JUDGES}:${crucibleId}` as RedisKeyTemplateSys
-  );
+  const judges = await sysRedis.sMembers(getJudgesKey(crucibleId));
   const counts = await Promise.all(
-    (judges ?? []).map((userId) =>
-      sysRedis.sCard(
-        `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys
-      )
-    )
+    (judges ?? []).map((userId) => sysRedis.sCard(getVotedPairsKey(crucibleId, Number(userId))))
   );
   return counts.reduce((sum, n) => sum + n, 0);
 }

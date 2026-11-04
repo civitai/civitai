@@ -3,8 +3,9 @@ export function createVoteOutcome(winnerEntryId: number, loserEntryId: number) {
   return `${winnerEntryId}>${loserEntryId}`;
 }
 
-function pairKey(a: number, b: number) {
-  return a < b ? `${a}:${b}` : `${b}:${a}`;
+/** Canonical pair key, sorted so a:b == b:a. */
+export function createPairKey(entryId1: number, entryId2: number): string {
+  return entryId1 < entryId2 ? `${entryId1}:${entryId2}` : `${entryId2}:${entryId1}`;
 }
 
 /**
@@ -45,7 +46,7 @@ export function impliedPairKeys(outcomes: string[]): Set<string> {
   for (const [start, seen] of reaches) {
     for (const end of seen) {
       if (end === start || reaches.get(end)?.has(start)) continue;
-      implied.add(pairKey(start, end));
+      implied.add(createPairKey(start, end));
     }
   }
   return implied;
