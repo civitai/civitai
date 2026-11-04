@@ -18,6 +18,11 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
@@ -48,12 +53,17 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
 }
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  return <ImagesCardContent data={data} height={height} />;
+  return (
+    <HatTurfCardProvider>
+      <ImagesCardContent data={data} height={height} />
+    </HatTurfCardProvider>
+  );
 }
 
 function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { getImages, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
+  const turf = useTurfFeed();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
 
@@ -157,8 +167,10 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     revealStickers={contextProps.revealStickers}
                   />
                 )}
+                {safe && <HatTurfLayer imageId={image.id} />}
                 {/* Steps clear of an event decoration sitting on the corner. */}
-                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2">
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 flex flex-col items-start gap-1">
+                  <HatTurfBadge imageId={image.id} />
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
                     {safe && storyline && (
@@ -354,12 +366,19 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 // would still change this card's layout for everyone while
                 // adding nothing — a visual regression with no feature behind
                 // it, on the surface the flag exists to keep clear of.
-                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
+                ((features.stickerPlacement && !contextProps.hideStickerBadge) || turf ? (
                   <div className="flex items-center">
                     <div className="min-w-0 flex-1">
                       <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
                     </div>
-                    <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
+                    {features.stickerPlacement && !contextProps.hideStickerBadge && (
+                      <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
+                    )}
+                    {turf && (
+                      <div className="mr-2">
+                        <HatTurfButton imageId={image.id} />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>
