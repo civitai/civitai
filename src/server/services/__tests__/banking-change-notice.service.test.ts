@@ -351,4 +351,9 @@ describe('the route schema', () => {
     expect(send({ batchSize: 5 }).success).toBe(true);
     expect(send({ batchSize: 6 }).success).toBe(false);
   });
+
+  it('sends at most 100 per call, so a call answers before the request times out', () => {
+    expect(send({ count: 100 }).success).toBe(true);
+    expect(send({ count: 101 }).success).toBe(false);
+  });
 });
