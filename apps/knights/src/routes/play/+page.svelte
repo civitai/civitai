@@ -58,9 +58,9 @@
   // The answer being sent, kept highlighted until the next item arrives.
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
-  let imageFailed = $derived(!!view && failedItem === view.item.id);
+  let imageFailed = $derived(!!view && failedItem === view.item.key);
   let reasonItem = $state<string | null>(null);
-  let choosingReason = $derived(!!view && reasonItem === view.item.id);
+  let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   // The guide and the rank-up come first; the daily recap waits behind them and opens once they are dismissed.
@@ -185,7 +185,7 @@
   let epoch = 0;
   // The current item a refill came back empty for: ask again only once the item on screen changes.
   let emptyFor: string | undefined;
-  // Holds each decoded image so the browser keeps it ready until the item is shown.
+  // Holds each decoded image, by item key, so the browser keeps it ready until the item is shown.
   const preloaded = new Map<string, HTMLImageElement>();
   let note = $state<string | null>(null);
   let cooling = $state(false);
@@ -196,10 +196,11 @@
   const SETTLE_MS = 250;
   const NOTE_MS = 5000;
 
+  const JUDGED_NOTICE = 'You have already judged this one.';
   const syncBuffer = () => (buffered = buffer.size);
-  function dropBuffered(token: string) {
-    buffer.drop(token);
-    preloaded.delete(token);
+  function dropBuffered(key: string) {
+    buffer.drop(key);
+    preloaded.delete(key);
     syncBuffer();
   }
   function clearBuffer() {
@@ -210,17 +211,28 @@
   }
 
   // Primitives, so reloading the page data after a vote (same item, same flags) does not re-run the refill and drop
-  // items that are already loaded.
-  let currentId = $derived(view?.item.id);
+  // items that are already loaded. The key, not the token: the token is sealed afresh each time an item is served.
+  let currentKey = $derived(view?.item.key);
   let paused = $derived(Boolean(data.lockoutSeconds || data.muted || data.resetPending));
 
-  // The server's feed can land on a buffered item (after a plain form post): it is on screen now, not ahead.
+  // The server's feed can land on a buffered item (after a plain form post): it is on screen now, not ahead. It can
+  // also land on one already judged whose vote is still in flight: that is not shown again, the buffered item is.
   $effect(() => {
-    if (currentId) untrack(() => dropBuffered(currentId));
+    const key = currentKey;
+    if (!key) return;
+    untrack(() => {
+      dropBuffered(key);
+      if (local || !tracker.has(key)) return;
+      const next = buffer.next();
+      if (!next) return;
+      preloaded.delete(next.item.key);
+      local = next;
+      syncBuffer();
+    });
   });
 
   $effect(() => {
-    const current = currentId;
+    const current = currentKey;
     void buffered;
     if (!current || paused || refilling || emptyFor === current) return;
     if (untrack(() => buffer.needsRefill())) void refill(current);
@@ -231,21 +243,29 @@
     refilling = true;
     let added = 0;
     try {
-      const after = [...tracker.excluded(current), ...buffer.tokens()]
+      const shown = untrack(() => view?.item.id) ?? '';
+      const after = [...tracker.excluded(shown), ...buffer.tokens()]
         .slice(-MAX_EXCLUDED)
         .map((token) => `after=${encodeURIComponent(token)}`);
-      const response = await fetch(`/play/next?count=${buffer.missing()}&${after.join('&')}`, {
+      const count = Math.max(1, buffer.missing());
+      const response = await fetch(`/play/next?count=${count}&${after.join('&')}`, {
         headers: { accept: 'application/json' },
       });
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
-      // Decoded one after the other, in order, so the buffer keeps the order the server picked.
+      // Decoded one after the other, in order, so the buffer keeps the order the server picked. An image that will not
+      // decode is left out of the next requests instead of being offered again.
       for (const entry of body?.items ?? []) {
         const image = new Image();
         image.src = entry.item.src;
-        await image.decode();
+        try {
+          await image.decode();
+        } catch {
+          if (mine === epoch) tracker.avoid(entry.item.id);
+          continue;
+        }
         if (mine !== epoch) return;
-        if (buffer.enqueue(entry, (token) => tracker.has(token) || token === currentId)) {
-          preloaded.set(entry.item.id, image);
+        if (buffer.enqueue(entry, (key) => tracker.has(key) || key === currentKey)) {
+          preloaded.set(entry.item.key, image);
           added += 1;
           syncBuffer();
         }
@@ -275,7 +295,7 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
-  async function post(action: URL, body: FormData, token: string) {
+  async function post(action: URL, body: FormData, key: string) {
     let outcome = describeOutcome(null);
     let reached = false;
     try {
@@ -292,10 +312,10 @@
       // Keeps the lost-connection notice.
     }
     tracker.settle();
-    if (!reached) tracker.release(token);
+    if (!reached) tracker.release(key);
     if (!outcome.ok) {
       tell(outcome.message);
-      dropBuffered(token);
+      dropBuffered(key);
       if (outcome.resync) {
         local = null;
         clearBuffer();
@@ -306,33 +326,49 @@
     await invalidate('app:play').catch(() => {});
   }
 
-  // The plain form post: once the page has the server's next item, what was on screen ahead of it goes.
-  const submitAndResync: SubmitFunction = (input) => {
+  // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
+  // as sent from here on, so a reload that serves it again (its vote still in flight) is not posted a second time.
+  const submitAndResync = (input: Parameters<SubmitFunction>[0], key: string, token: string): ReturnType<SubmitFunction> => {
+    tracker.claim(key, token);
     const finish = submit(input) as (options: FinishOptions) => Promise<void>;
     return async (options) => {
       await finish(options);
       local = null;
+      tracker.settle();
+      const { result } = options;
+      const settled = result.type === 'success' || (result.type === 'failure' && result.status === 409);
+      if (!settled) tracker.release(key);
     };
   };
 
   // A vote or a skip moves on at once to the item buffered ahead and posts in the background. Without that item (or without
-  // JS) the form posts and the page reloads as before.
+  // JS) the form posts and the page reloads as before. An item already sent is never posted again, whatever token it
+  // came back with: the notice says so, and the page is read again if nothing is left in flight to do it.
   const submitJudgment: SubmitFunction = (input) => {
-    const next = buffer.peek();
+    const shown = view;
     const token = String(input.formData.get('item') ?? '');
-    if (!next || !token) return submitAndResync(input);
+    if (!shown || !token) return submit(input);
+    const key = shown.item.key;
+    if (tracker.has(key)) {
+      input.cancel();
+      tell(JUDGED_NOTICE);
+      if (!tracker.pending) void invalidate('app:play');
+      return;
+    }
+    const next = buffer.peek();
+    if (!next) return submitAndResync(input, key, token);
     input.cancel();
-    if (cooling || !tracker.claim(token)) return;
+    if (cooling || !tracker.claim(key, token)) return;
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
     if (answer) sound.play('press');
     local = buffer.next();
-    preloaded.delete(next.item.id);
+    preloaded.delete(next.item.key);
     syncBuffer();
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
-    void post(input.action, input.formData, token);
+    void post(input.action, input.formData, key);
   };
 
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
@@ -362,7 +398,7 @@
     onclick={asksReason && option.value === BLOCKED_ANSWER
       ? (event) => {
           event.preventDefault();
-          reasonItem = view?.item.id ?? null;
+          reasonItem = view?.item.key ?? null;
         }
       : undefined}
   >
@@ -524,15 +560,15 @@
         <span class="text">{view.question.prompt}</span>
       </p>
       <div class="stagewrap">
-        {#key view.item.id}
-          {@const itemId = view.item.id}
+        {#key view.item.key}
+          {@const itemKey = view.item.key}
           <ImageStage
             src={view.item.src}
             width={view.item.width}
             height={view.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
-            onfail={() => (failedItem = itemId)}
+            onfail={() => (failedItem = itemKey)}
           />
         {/key}
         {@render levelToast(true)}

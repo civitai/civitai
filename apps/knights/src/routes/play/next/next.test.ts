@@ -69,6 +69,17 @@ beforeEach(() => {
 });
 
 describe('GET /play/next', () => {
+  it('gives each item a key that is stable across requests while its token is re-sealed', async () => {
+    const first = await ask([token('queue', 9)]);
+    const second = await ask([token('queue', 9)]);
+
+    expect(first.body.next.item.id).not.toBe(second.body.next.item.id);
+    expect(first.body.next.item.key).toBe('q:cdn/k42');
+    expect(second.body.next.item.key).toBe(first.body.next.item.key);
+    expect(first.body.next.item.key).not.toContain(first.body.next.item.id);
+    expect(first.body.items[0].item.key).toBe(first.body.next.item.key);
+  });
+
   it('serves the item after the ones named, sealed for this player, never cached', async () => {
     const { response, body } = await ask([token('queue', 9)]);
 
@@ -178,7 +189,9 @@ describe('GET /play/next', () => {
 
     it('serves fewer when the queue runs out, and nothing when it is empty', async () => {
       queueOfFive();
-      expect(ids((await ask([token('queue', 1), token('queue', 2), token('queue', 3)], {}, 3)).body)).toEqual([4, 5]);
+      expect(
+        ids((await ask([token('queue', 1), token('queue', 2), token('queue', 3)], {}, 3)).body)
+      ).toEqual([4, 5]);
       getFeed.mockResolvedValue(null);
       const { body } = await ask([], {}, 3);
       expect(body.items).toEqual([]);

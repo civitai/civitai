@@ -9,7 +9,7 @@ import { pickYesNo } from '$lib/server/yesno/feed';
 import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { db } from '$lib/server/db';
-import type { PickedItem } from './optimistic';
+import { itemKey, type PickedItem } from './optimistic';
 
 /**
  * The next thing to judge: a hidden check first, so its rate holds whatever the yes/no share is (it only rides on a
@@ -41,6 +41,7 @@ export async function pickItem(
         question: hidden.question,
         item: {
           id: sealItem(secret, userId, { kind: 'hidden', id: hidden.referenceId }),
+          key: itemKey(hidden.question.key, imageUrl(hidden.imageKey)),
           src: imageUrl(hidden.imageKey),
           width: hidden.width,
           height: hidden.height,
@@ -74,6 +75,7 @@ export async function pickItem(
       },
       item: {
         id: sealItem(secret, userId, { kind: 'yesno', id: offer.itemId }),
+        key: itemKey('yesno', imageUrl(offer.imageKey)),
         src: imageUrl(offer.imageKey),
         width: offer.width,
         height: offer.height,
@@ -88,6 +90,7 @@ export async function pickItem(
     question: feed.question,
     item: {
       id: sealItem(secret, userId, { kind: 'queue', id: item.id }),
+      key: itemKey(feed.question.key, imageUrl(item.imageKey)),
       src: imageUrl(item.imageKey),
       width: item.width,
       height: item.height,
