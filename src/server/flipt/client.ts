@@ -204,6 +204,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
+  // Turns on the per-instance style hoist in the patched `@mantine/core` `useStyles`
+  // (patches/@mantine__core@7.17.8.patch, a backport of Mantine 9's): vars, styles and classNames
+  // resolved once per component instance instead of once per `getStyles(selector)` call. Same
+  // markup either way. Server only — the gate is installed on globalThis at boot, so the client
+  // always runs the original code. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or
+  // an uninitialized client, which keeps the original path. Global boolean, evaluated with no
+  // entity or context, at most once per 5s per process. See
+  // `src/server/utils/mantine-styles-hoist-gate.ts`.
+  //
+  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
+  // reads as off.
+  SSR_MANTINE_USESTYLES_HOIST = 'ssr-mantine-usestyles-hoist',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path

@@ -34,21 +34,25 @@
   }
 </script>
 
-<header class="mb-6 flex items-center justify-between gap-3">
-  <a href="/" class="flex items-center gap-2.5">
+<header class="mb-6 flex flex-wrap items-center justify-between gap-3">
+  <a href="/" class="flex shrink-0 items-center gap-2.5">
     <span
       class="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-sky-700 to-sky-400 text-sm font-bold text-white"
     >
       C
     </span>
-    <div class="font-semibold leading-tight text-white">
+    <div class="whitespace-nowrap font-semibold leading-tight text-white">
       Training Studio
       <span class="block font-mono text-xs uppercase tracking-widest text-dark-2">Beta</span>
     </div>
   </a>
 
-  <div class="flex items-center gap-4">
-    <a href="/" class="font-mono text-sm text-dark-2 transition-colors hover:text-white">
+  <div class="ml-auto flex items-center gap-3 sm:gap-4">
+    <!-- Below sm the logo is the way home; the link would wrap the header. -->
+    <a
+      href="/"
+      class="hidden whitespace-nowrap font-mono text-sm text-dark-2 transition-colors hover:text-white sm:inline"
+    >
       My trainings
     </a>
     {#if buzz}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { eventTurfTopic } from '~/server/events/turf/turf-map';
 import {
+  teamStandings,
   HAT_DEFAULT_SCALE,
   RING_LENGTH,
   applyTurfPush,
@@ -12,7 +13,6 @@ import {
   orderedTeams,
   ringArcs,
   standingsLabel,
-  viewerBehind,
 } from '~/components/HatTurf/hat-turf.utils';
 
 const counted = { blue: 6, pink: 4, green: 2, yellow: 1 };
@@ -65,23 +65,6 @@ describe('badgeLeader', () => {
   it('is null with no leader, or a leader with nothing counted (shown-only stickers)', () => {
     expect(badgeLeader({ counted, leader: null })).toBeNull();
     expect(badgeLeader({ counted: { blue: 0 }, leader: 'blue' })).toBeNull();
-  });
-});
-
-describe('viewerBehind', () => {
-  it('shows the viewer’s team count when it is not the leader', () => {
-    expect(viewerBehind({ counted, leader: 'blue' }, 'pink')).toEqual({ team: 'pink', count: 4 });
-  });
-  it('is null for the leader, for no team, and when nobody leads', () => {
-    expect(viewerBehind({ counted, leader: 'blue' }, 'blue')).toBeNull();
-    expect(viewerBehind({ counted, leader: 'blue' }, null)).toBeNull();
-    expect(viewerBehind({ counted: {}, leader: null }, 'pink')).toBeNull();
-  });
-  it('a team with no hats yet reads 0', () => {
-    expect(viewerBehind({ counted: { blue: 2 }, leader: 'blue' }, 'green')).toEqual({
-      team: 'green',
-      count: 0,
-    });
   });
 });
 
@@ -172,5 +155,28 @@ describe('turf pushes', () => {
 describe('turfTopic', () => {
   it('is the topic the server pushes to', () => {
     expect(turfTopic('birthday2026', 42)).toBe(eventTurfTopic('birthday2026', 42));
+  });
+});
+
+describe('teamStandings', () => {
+  it('lists the viewer team with no hats, most hats first, and the total', () => {
+    const out = teamStandings({ counted: { blue: 2, pink: 5 }, leader: 'pink' }, 'yellow');
+    expect(out.rows).toEqual([
+      { team: 'pink', count: 5 },
+      { team: 'blue', count: 2 },
+      { team: 'yellow', count: 0 },
+    ]);
+    expect(out.total).toBe(7);
+    expect(out.toTake).toBe(6);
+  });
+
+  it('a tie is not a take: level with the leader still needs one more', () => {
+    expect(teamStandings({ counted: { blue: 3, pink: 3 }, leader: 'pink' }, 'blue').toTake).toBe(1);
+  });
+
+  it('nothing to take when the viewer leads, has no team, or nobody has hats', () => {
+    expect(teamStandings({ counted: { pink: 3 }, leader: 'pink' }, 'pink').toTake).toBeNull();
+    expect(teamStandings({ counted: { pink: 3 }, leader: 'pink' }, null).toTake).toBeNull();
+    expect(teamStandings({ counted: {}, leader: null }, 'blue').toTake).toBeNull();
   });
 });

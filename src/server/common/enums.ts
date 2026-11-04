@@ -1,6 +1,7 @@
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',
+  // A B2 lifecycle rule hides this prefix 7 days after upload; never use it for anything durable.
   TrainingImagesTemp = 'training-images-temp',
   Model = 'model',
   Default = 'default',

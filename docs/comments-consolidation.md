@@ -1329,13 +1329,12 @@ Per-surface cutover checklist additions from the residue sweep:
 - **image flip**: `EntityMetric` rows with `metricType='Comment'` (surfaced by the
   `EntityMetricImage` view) are written on comment create/delete — re-point that writer with the
   image surface.
-- **comicChapter flip**: `ChapterComments.tsx` bypasses the comment providers and passes
-  `parentThreadId` in its mutation input — the comics client changes shape with its surface flip,
-  unlike every provider-based surface. It also feeds the `Thread` id into `CommentsCtx` as the
-  `entityId`; after the flip the entity id is `ComicChapter.id`, which `getChapterThread` (or the
-  chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
-  also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it is removed with this
-  flip, and chapter comments write through the `commentv3` mutations (decided 2026-10-30).
+- **comicChapter flip**: reads built 2026-11-03 (`CommentSection` on the comics page, keyed by
+  `ComicChapter.id`; `ChapterComments.tsx` and `getChapterThread` removed). Its server side,
+  `createChapterComment` in `comics.router.ts` (now `{ chapterId, content }`), still bypasses
+  `upsertComment` and writes `Thread`/`CommentV2` directly, because `commentv2.upsert` cannot
+  address a thread keyed by project and position. It is removed with the write flip, and chapter
+  comments write through the `commentv3` mutations (decided 2026-10-30).
 - **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
   with it (#5780).
 - **storyline flip**: the newest surface (#6628); `getCommentThreadStorylineId` /

@@ -1284,7 +1284,8 @@
         </div>
       </div>
 
-      <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <!-- Below lg the trigger word comes before the image grid, not after an arbitrarily long one. -->
+      <aside class="order-first h-fit rounded-xl lg:sticky lg:top-4 lg:order-none lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
           <Tooltip.Provider>
@@ -1311,11 +1312,14 @@
     </div>
   {/if}
 
-  <div class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
+  <!-- Below lg the actions float over a long image grid instead of waiting at its end. -->
+  <div
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-3 max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+  >
     <Button variant="outline" onclick={onBack}>
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
     </Button>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
       {#if uploadedCount > 0 && !busy && !allLabeled}
         <button
           id="continue-blocked-reason"
