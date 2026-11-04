@@ -2,13 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const restartCareer = vi.hoisted(() => vi.fn());
 const forgetLegacyCounters = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/db', () => ({ db: {} }));
+const playerRow = vi.hoisted(() => ({ value: undefined as { exp: number } | undefined }));
+const getPlayerStatus = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/db', () => ({
+  db: {
+    selectFrom: () => ({
+      select: () => ({ where: () => ({ executeTakeFirst: async () => playerRow.value }) }),
+    }),
+  },
+}));
+vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 const getStanding = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
 }));
-vi.mock('$lib/server/join.service', () => ({ joinOrder: vi.fn() }));
+vi.mock('$lib/server/yesno/items', () => ({ judgesNeeded: vi.fn(async () => 3) }));
 vi.mock('$lib/server/career/restart.service', () => ({ restartCareer }));
 vi.mock('$lib/server/career/runtime', () => ({ forgetLegacyCounters }));
 vi.mock('$lib/server/queue/runtime', () => ({
@@ -21,7 +30,7 @@ const submit = (fields: Record<string, string>) => {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
   return actions.restart({
-    request: new Request('http://knights.test/', { method: 'POST', body }),
+    request: new Request('http://knights.test/rules', { method: 'POST', body }),
     locals: { user: { id: 7 } },
   } as never);
 };
@@ -95,5 +104,28 @@ describe('restart action for a muted player', () => {
     });
     expect(restartCareer).not.toHaveBeenCalled();
     expect(forgetLegacyCounters).not.toHaveBeenCalled();
+  });
+});
+
+describe('rules load', () => {
+  const run = async () => {
+    const { load } = await import('./+page.server');
+    return (await load({ locals: { user: { id: 9 } } } as never)) as Record<string, any>;
+  };
+
+  it('is open to a visitor with no player row: the rules, and no career to restart', async () => {
+    playerRow.value = undefined;
+    const result = await run();
+    expect(result.facts).toBeDefined();
+    expect(result.career).toBeNull();
+    expect(getPlayerStatus).not.toHaveBeenCalled();
+  });
+
+  it('gives a player what a restart would take, for the confirmation, without feeding the header', async () => {
+    playerRow.value = { exp: 1200 };
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 7 });
+    const result = await run();
+    expect(result.career).toEqual({ status: { rank: 'Knight', level: 7 }, exp: 1200 });
+    expect(result.status).toBeUndefined();
   });
 });
