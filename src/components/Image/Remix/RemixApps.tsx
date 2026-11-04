@@ -106,7 +106,8 @@ export function runRemixApp({
 }: {
   app: RemixAppDefinition;
   imageId: number;
-  cost?: number;
+  /** The quoted price: nothing runs, confirmed or not, without one on screen. */
+  cost: number;
   nonce: string;
   startedMessage?: string;
   /** After the submit returns or fails, or the confirm is dismissed. */
@@ -122,11 +123,9 @@ export function runRemixApp({
     children: (
       <Stack gap="sm">
         <Text size="sm">
-          {cost != null
-            ? `Runs ${
-                app.name
-              } on this image for ${cost.toLocaleString()} Buzz and adds the result to your queue.`
-            : `Runs ${app.name} on this image and adds the result to your queue.`}
+          {`Runs ${
+            app.name
+          } on this image for ${cost.toLocaleString()} Buzz and adds the result to your queue.`}
         </Text>
         <Checkbox
           label="Don't ask again"
@@ -174,7 +173,7 @@ function RemixAppItem({
   return (
     <Menu.Item
       className="rounded-md p-2"
-      disabled={!!refusal}
+      disabled={cost == null}
       leftSection={
         <ThemeIcon size={36} radius="md" variant="light" color="grape">
           <Icon size={20} stroke={1.7} />
@@ -186,6 +185,7 @@ function RemixAppItem({
         )
       }
       onClick={() => {
+        if (cost == null) return;
         onRun?.();
         runRemixApp({ app, imageId, cost, nonce });
       }}

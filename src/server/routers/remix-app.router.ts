@@ -8,6 +8,8 @@ import {
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
 import type { Context } from '~/server/createContext';
+import { rateLimit } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
@@ -15,6 +17,9 @@ import type { SessionUser } from '~/types/session';
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 
 const imageId = z.number().int().positive();
+
+/** Each uncached quote is an orchestrator what-if; one per menu open or image view is the norm. */
+const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
 function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
   return {
@@ -35,10 +40,12 @@ export const remixAppRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(() => listRemixApps()),
   quote: remixAppProcedure
+    .use(quoteRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ imageId }))
     .query(async ({ ctx, input }) => quoteRemixApps({ ...input, caller: await getCaller(ctx) })),
   teamQuote: remixAppProcedure
+    .use(quoteRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ imageId }))
     .query(({ ctx, input }) =>

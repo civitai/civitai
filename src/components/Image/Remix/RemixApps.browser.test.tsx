@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
   flags: { remixApps: true, isGreen: false } as Record<string, boolean>,
   user: { id: 9, showNsfw: true } as { id: number; showNsfw: boolean } | null,
   quoteEnabled: [] as boolean[],
+  /** What the open menu's quote returns; the default prices the first app at 25. */
+  quote: null as null | { isLoading: boolean; prices?: Record<string, unknown>[] },
 }));
 
 vi.mock('~/components/TrackView/track.utils', () => ({
@@ -50,11 +52,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       'remixApp.quote': {
         useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
           h.quoteEnabled.push(opts.enabled);
-          return {
-            data: opts.enabled
-              ? { prices: [{ slug: 'anime-it', cost: 25, ready: true }] }
-              : undefined,
+          const quote = h.quote ?? {
             isLoading: false,
+            prices: [{ slug: 'anime-it', cost: 25, ready: true }],
+          };
+          return {
+            data: opts.enabled && quote.prices ? { prices: quote.prices } : undefined,
+            isLoading: quote.isLoading,
             isError: false,
           };
         },
@@ -95,6 +99,7 @@ beforeEach(() => {
   h.flags = { remixApps: true, isGreen: false };
   h.user = { id: 9, showNsfw: true };
   h.quoteEnabled = [];
+  h.quote = null;
   localStorage.clear();
 });
 
@@ -197,5 +202,61 @@ describe('Remix apps in the Remix menu', () => {
     await item.click();
     await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(3));
     expect(h.run.mock.calls[2][0].nonce).not.toBe(first);
+  });
+
+  describe('nothing runs without a price on screen', () => {
+    const section = () => (
+      <Menu opened>
+        <Menu.Target>
+          <button type="button">target</button>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <RemixAppsSection apps={[firstApp]} imageId={video.id} openCount={1} />
+        </Menu.Dropdown>
+      </Menu>
+    );
+    const item = () => page.getByRole('menuitem', { name: firstApp.name });
+    /** A DOM click, which a disabled item ignores, where a pointer click would wait for it. */
+    const tap = () => (item().element() as HTMLElement).click();
+
+    test('while the quote loads, the app cannot be run, confirmed before or not', async () => {
+      h.quote = { isLoading: true };
+      const screen = await renderWithProviders(section());
+      await expect.element(item()).toBeDisabled();
+      tap();
+      localStorage.setItem('remix-apps:confirmed', '1');
+      tap();
+      expect(h.confirm).not.toHaveBeenCalled();
+      expect(h.run).not.toHaveBeenCalled();
+
+      // POSITIVE CONTROL: once priced, the same tap runs.
+      h.quote = null;
+      await screen.rerender(section());
+      await expect.element(item()).toBeEnabled();
+      tap();
+      await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
+    });
+
+    test('a refused price is shown in place of the price, and the app cannot be run', async () => {
+      h.quote = {
+        isLoading: false,
+        prices: [{ slug: firstApp.slug, refusal: 'This engine is busy right now.' }],
+      };
+      const screen = await renderWithProviders(section());
+      await expect.element(page.getByText('This engine is busy right now.')).toBeVisible();
+      await expect.element(item()).toBeDisabled();
+      tap();
+      expect(h.confirm).not.toHaveBeenCalled();
+      expect(h.run).not.toHaveBeenCalled();
+
+      // POSITIVE CONTROL: the same item with a price opens the confirm.
+      h.quote = null;
+      await screen.rerender(section());
+      await expect.element(item()).toBeEnabled();
+      tap();
+      expect(h.confirm).toHaveBeenCalledTimes(1);
+      renderWithProviders(lastConfirm().children);
+      await expect.element(page.getByText('for 25 Buzz')).toBeInTheDocument();
+    });
   });
 });
