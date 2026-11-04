@@ -216,6 +216,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { FlaggedConsumerFetchError } from '~/server/http/orchestrator/flagged-consumers';
 import {
   MAX_PENDING_ARCHIVE_ENTRIES,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -700,6 +701,94 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
         namedMissing: 1,
       })
     );
+  });
+
+  const generatedLine = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-generated-images');
+  const stamped = () =>
+    dbMock.dbWrite.csamReport.update.mock.calls.some(
+      ([args]) => (args as { data?: { archivedAt?: unknown } }).data?.archivedAt instanceof Date
+    );
+  const sentHoursAgo = (hours: number) => ({
+    ...report,
+    reportSentAt: new Date(Date.now() - hours * 3_600_000),
+  });
+  const rejectOne = (failing: string) => async (url: unknown) => {
+    if (url === failing) throw new Error('synthetic timeout');
+    return fakeBlob(8);
+  };
+
+  it('keeps failing the pass on a download that rejects, until the give-up window ends', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await expect(
+      archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
+    ).rejects.toThrow('synthetic timeout');
+    expect(stamped()).toBe(false);
+  });
+
+  it('archives the rest and counts the download it gave up on', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ kind: 'generatedImages', entries: IMAGE_COUNT - 1 })
+    );
+    const line = generatedLine();
+    expect(line).toMatchObject({
+      reportId: report.id,
+      expected: IMAGE_COUNT,
+      strikeUrls: IMAGE_COUNT,
+      entries: IMAGE_COUNT - 1,
+      unreadable: 1,
+      type: 'error',
+    });
+    expect(JSON.stringify(line)).not.toContain('example.invalid');
+  });
+
+  it('archives the blobs the report names when the strikes list is not found', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(404, 'Not Found');
+    };
+    const named = 'https://example.invalid/named-0.jpeg';
+
+    await archiveCsamDataForReport({
+      ...report,
+      details: { generatedImages: [{ jobId: 'job-1', blobs: [{ url: named }] }] },
+    } as never);
+
+    expect(stamped()).toBe(true);
+    expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
+    expect(generatedLine()).toMatchObject({
+      strikesNotFound: true,
+      strikeUrls: 0,
+      entries: 1,
+      type: 'error',
+    });
+  });
+
+  it('fails the pass when the strikes list fails any other way', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(503, 'Service Unavailable');
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('503');
+    expect(stamped()).toBe(false);
+  });
+
+  it('does not stamp a pass that read none of its generated images', async () => {
+    mockFetchBlob = async () => null;
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      `none of ${IMAGE_COUNT} generated images could be read`
+    );
+    expect(stamped()).toBe(false);
   });
 
   it('holds a bounded number of generated-image buffers', async () => {

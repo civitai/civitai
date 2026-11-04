@@ -58,7 +58,10 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
-import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import {
+  FlaggedConsumerFetchError,
+  getConsumerStrikes,
+} from '~/server/http/orchestrator/flagged-consumers';
 import type { ShownRendition } from '@civitai/shared/held-media';
 import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
@@ -2933,23 +2936,49 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   async function archiveGeneratedImages() {
     const { userId } = report;
 
-    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
+    // The orchestrator no longer serves this list (404 for every consumer). That must not block the
+    // report's own blobs; any other failure may be transient, so it fails the pass for the next run.
+    let strikesNotFound = false;
+    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` }).catch(
+      (e: unknown) => {
+        if (!(e instanceof FlaggedConsumerFetchError) || e.status !== 404) throw e;
+        strikesNotFound = true;
+        return [];
+      }
+    );
     const namedUrls = new Set(
       (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
         blobs.flatMap(({ url }) => (url ? [url] : []))
       )
     );
-    const imageUrls = [
-      ...new Set([
-        ...flaggedData
-          .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
-          .filter(isDefined)
-          .map((x) => x.previewUrl),
-        ...namedUrls,
-      ]),
-    ];
+    const strikeUrls = new Set(
+      flaggedData
+        .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+        .filter(isDefined)
+        .map((x) => x.previewUrl)
+    );
+    const imageUrls = [...new Set([...strikeUrls, ...namedUrls])];
     const appendedUrls = new Set<string>();
     let entries = 0;
+    let unreadable = 0;
+    const hoursSinceSent = report.reportSentAt
+      ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
+      : 0;
+    const givenUp = hoursSinceSent >= CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS;
+
+    // Orchestrator URLs are a host we do not control: a rejection (timeout, reset) fails the pass
+    // for a day of hourly retries, then is recorded unreadable, as `archiveImages` does a full URL.
+    const readBlob = async (url: string) => {
+      try {
+        const blob = await fetchBlob(url, undefined, { requireOk: true });
+        if (!blob) return null;
+        return { buffer: Buffer.from(await blob.arrayBuffer()), isMedia: isArchivedMedia(blob) };
+      } catch (e) {
+        // Not logged: a fetch error can quote the URL, and these are presigned.
+        if (!givenUp) throw e;
+        return null;
+      }
+    };
 
     const stored = await archiveAndUpload({
       userId,
@@ -2965,24 +2994,37 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         await Promise.all(
           imageUrls.map((url, index) => {
             return limit(async () => {
-              const blob = await fetchBlob(url, undefined, { requireOk: true });
-              if (!blob) return;
-              try {
-                const arrayBuffer = await blob.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-
-                const imageName = zipEntryNameForUrl(url, index);
-
-                await boundedArchive.append(buffer, { name: imageName });
-                entries += 1;
-                if (isArchivedMedia(blob)) appendedUrls.add(url);
-              } catch (e) {
-                //
+              const read = await readBlob(url);
+              if (!read) {
+                unreadable += 1;
+                return;
               }
+              // An append failure is the archive's own, so it fails the pass.
+              await boundedArchive.append(read.buffer, { name: zipEntryNameForUrl(url, index) });
+              entries += 1;
+              if (read.isMedia) appendedUrls.add(url);
             });
           })
         );
+        // A stamp ends archiving for good, and an outage that answers with errors looks just
+        // like this.
+        if (!givenUp && imageUrls.length > 0 && entries === 0)
+          throw new Error(`none of ${imageUrls.length} generated images could be read`);
       },
+    });
+
+    logToAxiom({
+      name: 'csam-report',
+      type: unreadable || strikesNotFound ? 'error' : 'info',
+      subType: 'archive-generated-images',
+      message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
+      reportId: report.id,
+      expected: imageUrls.length,
+      strikeUrls: strikeUrls.size,
+      namedUrls: namedUrls.size,
+      entries,
+      unreadable,
+      strikesNotFound,
     });
 
     archived.push({
