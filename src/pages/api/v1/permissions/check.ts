@@ -22,8 +22,16 @@ const schema = z.object({
 // enforcing version follows once the logs show which account the trusted service uses.
 async function logUntrustedCaller(req: NextApiRequest, userId: number | undefined, count: number) {
   const header = req.headers.authorization;
-  const bearer = header?.split(' ')[1] || undefined;
-  const session = bearer ? await getSessionFromBearerToken(bearer).catch(() => null) : null;
+  const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+  // Same sources as getServerAuthSession, which also skips the webhook token.
+  const bearer =
+    (header ? header.split(' ')[1] : queryToken !== env.WEBHOOK_TOKEN ? queryToken : undefined) ||
+    undefined;
+  const session = bearer
+    ? await getSessionFromBearerToken(bearer, { allowClientCredentialsOnly: true }).catch(
+        () => null
+      )
+    : null;
   const callerUserId = session?.user?.id;
   if (callerUserId != null && env.PERMISSIONS_CHECK_SERVICE_USER_IDS.includes(callerUserId)) return;
   if (callerUserId != null && callerUserId === userId) return;
@@ -32,7 +40,7 @@ async function logUntrustedCaller(req: NextApiRequest, userId: number | undefine
     type: 'warning',
     name: 'permissions-check-untrusted-caller',
     caller: session ? 'other-user' : bearer ? 'unresolved-bearer' : 'anonymous',
-    hasAuthorizationHeader: !!header,
+    credentialSource: header ? 'header' : bearer ? 'query' : 'none',
     entityCount: count,
     ...(session && {
       callerUserId,
@@ -61,7 +69,8 @@ export default PublicEndpoint(
       return res.status(400).json({ error: 'Invalid permission' });
     }
 
-    await logUntrustedCaller(req, userId, entityIds.length).catch(() => undefined);
+    // Not awaited: classifying the caller may read the database and must not delay the answer.
+    void logUntrustedCaller(req, userId, entityIds.length).catch(() => undefined);
 
     const sessionUser = userId != null ? await sessionClient.getSessionUserById(userId) : null;
 

@@ -34,14 +34,16 @@ function keyOwnedBy(id: number, apiKeyType = 'User') {
   return { user: { id }, apiKeyId: 55, apiKeyType, subject: { type: 'apiKey', id: 55 } };
 }
 
-async function check(authorization?: string) {
+async function check(authorization?: string, query: Record<string, string> = {}) {
   const req = {
     method: 'GET',
     headers: authorization ? { authorization } : {},
-    query: { entityIds: String(VERSION), userId: String(ASKED_ABOUT) },
+    query: { entityIds: String(VERSION), userId: String(ASKED_ABOUT), ...query },
   };
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
   await permissionsHandler(req as never, res as never);
+  // The log is written after the answer; let it settle.
+  await new Promise((resolve) => setTimeout(resolve, 0));
   return res.json.mock.calls.at(-1)?.[0];
 }
 
@@ -76,13 +78,17 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
     expect(await check('Bearer k')).toEqual({ [VERSION]: true });
     expect(logged()).toEqual([
-      expect.objectContaining({
+      {
+        type: 'warning',
+        name: LOG_NAME,
         caller: 'other-user',
+        credentialSource: 'header',
+        entityCount: 1,
         callerUserId: ASKED_ABOUT + 1,
         apiKeyId: 55,
-      }),
+        apiKeyType: 'User',
+      },
     ]);
-    expect(JSON.stringify(logged())).not.toContain('"k"');
   });
 
   // Every user who generates holds a System key, so the key type must not make a caller trusted.
@@ -106,8 +112,16 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(logged()).toEqual([]);
   });
 
-  it('still answers when the bearer lookup throws', async () => {
+  it('still answers, and logs, when the bearer lookup throws', async () => {
     mockBearer.mockRejectedValue(new Error('db down'));
     expect(await check('Bearer k')).toEqual({ [VERSION]: true });
+    expect(logged()).toEqual([expect.objectContaining({ caller: 'unresolved-bearer' })]);
+  });
+
+  it('reads a query-string token the way session auth does', async () => {
+    mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
+    await check(undefined, { token: 'k' });
+    expect(mockBearer).toHaveBeenCalledWith('k', expect.anything());
+    expect(logged()).toEqual([]);
   });
 });
