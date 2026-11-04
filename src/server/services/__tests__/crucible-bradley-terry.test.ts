@@ -1,5 +1,18 @@
-import { describe, expect, it } from 'vitest';
-import { fitBradleyTerry } from '~/server/services/crucible-bradley-terry';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks';
+import type * as Logging from '~/server/logging/client';
+
+const chQuery = vi.fn();
+const logToAxiom = vi.fn(async () => undefined);
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }));
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Logging>()),
+  logToAxiom,
+}));
+
+const { fitBradleyTerry, fitCrucibleScoresForPrizes } = await import(
+  '~/server/services/crucible-bradley-terry'
+);
 
 describe('fitBradleyTerry', () => {
   it('orders a consistent set of votes the way they point', () => {
@@ -67,5 +80,67 @@ describe('fitBradleyTerry', () => {
 
   it('scores nothing without votes', () => {
     expect(fitBradleyTerry([]).size).toBe(0);
+  });
+});
+
+describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
+  const tallies = [
+    { winnerEntryId: 1, loserEntryId: 2, votes: 2 },
+    { winnerEntryId: 2, loserEntryId: 3, votes: 1 },
+  ]; // 3 distinct (judge, pair) votes
+  /** Two judges whose voted-pairs sets hold `a` and `b` pairs. */
+  const withRedisPairs = (a: number, b: number) => {
+    redisMock.sysRedis.sMembers.mockResolvedValue(['7', '8']);
+    redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
+      key.endsWith(':7') ? a : key.endsWith(':8') ? b : 0
+    );
+  };
+  const fit = () => fitCrucibleScoresForPrizes(1, { attempts: 3, retryMs: 0 });
+  const warned = () =>
+    logToAxiom.mock.calls.map(([entry]) => (entry as { message: string }).message);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    chQuery.mockResolvedValue(tallies);
+  });
+
+  it('ranks by the fit when ClickHouse holds exactly the votes Redis counts', async () => {
+    withRedisPairs(2, 1);
+    const scores = await fit();
+    expect(scores, 'fitted scores').not.toBeNull();
+    expect(scores!.get(1)!).toBeGreaterThan(scores!.get(3)!);
+    expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('falls back to Elo and names both counts when they never match', async () => {
+    withRedisPairs(2, 2);
+    expect(await fit(), 'scores on a mismatch').toBeNull();
+    expect(chQuery, 'ClickHouse re-read for lag').toHaveBeenCalledTimes(3);
+    expect(warned()).toEqual(['Crucible 1 ranks by Elo: ClickHouse has 3 votes, Redis 4']);
+  });
+
+  it('waits out ingest lag: a short first read that then catches up still fits', async () => {
+    withRedisPairs(2, 1);
+    chQuery.mockResolvedValueOnce(tallies.slice(0, 1));
+    expect(await fit(), 'scores after a lagging read').not.toBeNull();
+    expect(chQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not wait when ClickHouse holds more votes than Redis: lag cannot explain that', async () => {
+    withRedisPairs(1, 1);
+    expect(await fit()).toBeNull();
+    expect(chQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to Elo when ClickHouse is unreachable', async () => {
+    withRedisPairs(2, 1);
+    chQuery.mockRejectedValue(new Error('connect ECONNREFUSED'));
+    expect(await fit()).toBeNull();
+    expect(warned()).toEqual(['Crucible 1 ranks by Elo: could not read its votes']);
+  });
+
+  it('falls back to Elo when Redis is unreachable', async () => {
+    redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
+    expect(await fit()).toBeNull();
   });
 });

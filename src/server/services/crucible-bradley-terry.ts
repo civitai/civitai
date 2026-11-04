@@ -1,3 +1,8 @@
+import { clickhouse } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+import type { RedisKeyTemplateSys } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+
 export type PairTally = { winnerEntryId: number; loserEntryId: number; votes: number };
 
 const ELO_BASE = 1500;
@@ -57,12 +62,99 @@ export function fitBradleyTerry(tallies: PairTally[]): Map<number, number> {
 
 /**
  * When the fit, not Elo, ranks a crucible (display and prizes). Crucibles running at deploy finish
- * on Elo: switching mid-run would reorder a leaderboard judges have already seen. To switch every
- * crucible, return true; to switch none, set the date to null.
+ * on Elo: switching mid-run would reorder a leaderboard judges have already seen. Set the date no
+ * earlier than the deploy. To switch every crucible, return true; to switch none, set it to null.
  */
-export const BRADLEY_TERRY_RANKING_FROM: Date | null = null;
+export const BRADLEY_TERRY_RANKING_FROM: Date | null = new Date('2026-11-06T00:00:00Z');
 
 export function usesBradleyTerryRanking(crucible: { startAt: Date | null; createdAt: Date }) {
   if (!BRADLEY_TERRY_RANKING_FROM) return false;
   return (crucible.startAt ?? crucible.createdAt) >= BRADLEY_TERRY_RANKING_FROM;
+}
+
+/**
+ * Every judge's votes in a crucible, one per judge and pair. ClickHouse holds about 1% repeated
+ * rows, and a repeat never flips the winner, so any one row of the group stands for the vote.
+ */
+async function fetchDedupedTallies(crucibleId: number): Promise<PairTally[]> {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const rows = await clickhouse.$query<PairTally>`
+    SELECT winnerEntryId, loserEntryId, toUInt32(count()) AS votes
+    FROM (
+      SELECT any(winnerEntryId) AS winnerEntryId, any(loserEntryId) AS loserEntryId
+      FROM crucible_votes
+      WHERE crucibleId = ${crucibleId}
+      GROUP BY userId, least(winnerEntryId, loserEntryId), greatest(winnerEntryId, loserEntryId)
+    )
+    GROUP BY winnerEntryId, loserEntryId
+  `;
+  return rows.map((row) => ({
+    winnerEntryId: Number(row.winnerEntryId),
+    loserEntryId: Number(row.loserEntryId),
+    votes: Number(row.votes),
+  }));
+}
+
+/** For display: the fit over whatever ClickHouse holds now, lag and all. */
+export async function fitCrucibleScores(crucibleId: number) {
+  return fitBradleyTerry(await fetchDedupedTallies(crucibleId));
+}
+
+/** Pairs judged in this crucible as Redis counts them: the sum of every judge's voted-pairs set. */
+async function countRedisJudgedPairs(crucibleId: number) {
+  const judges = await sysRedis.sMembers(
+    `${REDIS_SYS_KEYS.CRUCIBLE.JUDGES}:${crucibleId}` as RedisKeyTemplateSys
+  );
+  const counts = await Promise.all(
+    (judges ?? []).map((userId) =>
+      sysRedis.sCard(
+        `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys
+      )
+    )
+  );
+  return counts.reduce((sum, n) => sum + n, 0);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The fit prizes are paid from, or null to pay from Elo. Fits only once ClickHouse holds exactly
+ * the votes Redis says were cast: fewer is ingest lag, so it re-reads a few times; more, or either
+ * store unreachable, never converges and falls back. A judge set gone with its 30-day TTL also
+ * falls back, by mismatch.
+ */
+export async function fitCrucibleScoresForPrizes(
+  crucibleId: number,
+  { attempts = 4, retryMs = 5_000 }: { attempts?: number; retryMs?: number } = {}
+): Promise<Map<number, number> | null> {
+  let clickhouseVotes = 0;
+  let redisVotes = 0;
+  try {
+    redisVotes = await countRedisJudgedPairs(crucibleId);
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const tallies = await fetchDedupedTallies(crucibleId);
+      clickhouseVotes = tallies.reduce((sum, t) => sum + t.votes, 0);
+      if (clickhouseVotes === redisVotes) return fitBradleyTerry(tallies);
+      if (clickhouseVotes > redisVotes || attempt === attempts) break;
+      await sleep(retryMs);
+    }
+  } catch (error) {
+    logToAxiom({
+      type: 'warning',
+      name: 'crucible-bradley-terry-fallback',
+      message: `Crucible ${crucibleId} ranks by Elo: could not read its votes`,
+      crucibleId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch();
+    return null;
+  }
+  logToAxiom({
+    type: 'warning',
+    name: 'crucible-bradley-terry-fallback',
+    message: `Crucible ${crucibleId} ranks by Elo: ClickHouse has ${clickhouseVotes} votes, Redis ${redisVotes}`,
+    crucibleId,
+    clickhouseVotes,
+    redisVotes,
+  }).catch();
+  return null;
 }

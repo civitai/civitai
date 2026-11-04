@@ -11,6 +11,7 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
+import type * as BradleyTerry from '~/server/services/crucible-bradley-terry';
 import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
 
@@ -28,6 +29,7 @@ const setTTL = vi.fn();
 const afterPostsPublish = vi.fn();
 const createPrizes = vi.fn();
 const voidPrizes = vi.fn();
+const fitCrucibleScoresForPrizes = vi.fn();
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -54,6 +56,11 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
   getAllEntryElos,
 }));
 
+vi.mock('~/server/services/crucible-bradley-terry', async (importOriginal) => ({
+  ...(await importOriginal<typeof BradleyTerry>()),
+  fitCrucibleScoresForPrizes,
+}));
+
 vi.mock('~/server/services/prize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PrizeService>()),
   createPrizes,
@@ -73,6 +80,7 @@ type AwardedPrize = {
 const awarded = (call = 0) => createPrizes.mock.calls[call][0] as AwardedPrize[];
 
 const { finalizeCrucible } = await import('~/server/services/crucible.service');
+const { BRADLEY_TERRY_RANKING_FROM } = await import('~/server/services/crucible-bradley-terry');
 
 const dbEntry = (
   id: number,
@@ -1281,5 +1289,46 @@ describe('finalizeCrucible — entry posts', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
     );
+  });
+});
+
+describe('finalizeCrucible — Bradley-Terry ranking', () => {
+  // Elo says 1 > 2 > 3; the fit says the reverse, so the paid order shows which one ranked.
+  const fitReversed = new Map([
+    [1, 1400],
+    [2, 1500],
+    [3, 1600],
+  ]);
+  const paidOrder = () =>
+    awarded()
+      .sort((a, b) => a.position - b.position)
+      .map((prize) => prize.subjectId);
+  const startedAfterSwitch = () => new Date(BRADLEY_TERRY_RANKING_FROM!.getTime() + 1000);
+  const voteCounts = { 1: 20, 2: 20, 3: 20 };
+
+  it('pays by the fit for a crucible started after the switch', async () => {
+    setupCrucible({ startAt: startedAfterSwitch(), voteCounts, seededPrizePool: 1000 });
+    fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+    await finalizeCrucible(1);
+    expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
+  });
+
+  it('pays by Elo when the guard falls back', async () => {
+    setupCrucible({ startAt: startedAfterSwitch(), voteCounts, seededPrizePool: 1000 });
+    fitCrucibleScoresForPrizes.mockResolvedValue(null);
+    await finalizeCrucible(1);
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('pays a crucible started before the switch by Elo without fitting', async () => {
+    setupCrucible({
+      startAt: new Date(BRADLEY_TERRY_RANKING_FROM!.getTime() - 1000),
+      voteCounts,
+      seededPrizePool: 1000,
+    });
+    fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+    await finalizeCrucible(1);
+    expect(fitCrucibleScoresForPrizes).not.toHaveBeenCalled();
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
   });
 });

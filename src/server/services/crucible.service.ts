@@ -84,6 +84,10 @@ import {
   enteredImageWhere,
   publishedImageWhere,
 } from '~/server/selectors/image.selector';
+import {
+  fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
+} from '~/server/services/crucible-bradley-terry';
 import { createVoteOutcome, decidedPairKeys } from '~/server/services/crucible-judge-closure';
 import {
   getCrucibleJudgingConfig,
@@ -3440,12 +3444,12 @@ export const submitVote = async ({
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
   await Promise.all([
     // A lost outcome only means this judge is served a pair they could have skipped.
-    sysRedis
-      .sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId))
-      .then(() => sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS))
-      .catch((error: unknown) =>
-        log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
-      ),
+    (async () => {
+      await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+      await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+    })().catch((error: unknown) =>
+      log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+    ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
     crucible.minViewSeconds &&
@@ -3677,7 +3681,8 @@ export const getCrucibleJudgesCount = async ({
  *
  * This function:
  * 1. Copies ELO scores from Redis to PostgreSQL CrucibleEntry.score
- * 2. Places entries with enough votes by ELO (entry time breaks ties); the rest stay unplaced
+ * 2. Places entries with enough votes by ELO, or by the Bradley-Terry fit where
+ *    `usesBradleyTerryRanking` (entry time breaks ties); the rest stay unplaced
  * 3. Updates CrucibleEntry records with final positions
  * 4. Calculates prize amounts based on configured percentages
  * 5. Updates crucible status to 'completed'
@@ -3712,6 +3717,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       prizePositions: true,
       startAt: true,
       endAt: true,
+      createdAt: true,
       timeAdjustedPlacement: true,
       nsfwLevel: true,
       _count: {
@@ -3852,8 +3858,12 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${allEntries[0].id}`);
   }
 
+  // Elo stays the fallback: the fit is used only when every vote is accounted for.
+  const fittedScores = usesBradleyTerryRanking(crucible)
+    ? await fitCrucibleScoresForPrizes(crucibleId)
+    : null;
   const ranking = rankEntries(allEntries, {
-    redisElos,
+    redisElos: fittedScores ? Object.fromEntries(fittedScores) : redisElos,
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
