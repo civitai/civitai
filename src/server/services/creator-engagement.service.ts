@@ -548,7 +548,7 @@ async function getNewestPage(q: Required<Pick<EngagementQuery, 'limit'>> & Engag
   const [images, models] = await Promise.all([
     types.length
       ? newestImages(q.userId, types, cursor, q.limit)
-      : Promise.resolve({ rows: [] as ImageRow[] }),
+      : Promise.resolve<Awaited<ReturnType<typeof newestImages>>>({ rows: [] }),
     includesModels(q.type) ? newestModels(q.userId, cursor, q.limit) : Promise.resolve([]),
   ]);
   type Entry = Position & ({ image: ImageRow } | { model: ModelRow });
@@ -579,10 +579,9 @@ async function getNewestPage(q: Required<Pick<EngagementQuery, 'limit'>> & Engag
   return { items, metadata: { nextCursor } } satisfies EngagementPage;
 }
 
-async function hydratePage(
-  q: EngagementQuery,
-  page: Array<{ k: Kind; id: number } & ({ image: ImageRow } | { model: ModelRow })>
-): Promise<EngagementItem[]> {
+type PageEntry = { k: Kind; id: number } & ({ image: ImageRow } | { model: ModelRow });
+
+async function hydratePage(q: EngagementQuery, page: PageEntry[]): Promise<EngagementItem[]> {
   const w = windowsAt(q.now ?? new Date());
   const excluded = await getMetricExcludedUserIds();
   const imageRows = page.flatMap((e) => ('image' in e ? [e.image] : []));
@@ -720,7 +719,7 @@ async function getEngagementPage(q: EngagementQuery): Promise<EngagementPage> {
   ]);
   const images = new Map(imageRows.map((r) => [r.id, r]));
   const models = new Map(modelRows.map((r) => [r.id, r]));
-  const owned = page.flatMap((e) => {
+  const owned = page.flatMap((e): PageEntry[] => {
     const image = e.k === 'i' ? images.get(e.id) : undefined;
     const model = e.k === 'm' ? models.get(e.id) : undefined;
     if (image) return [{ k: e.k, id: e.id, image }];
