@@ -47,13 +47,15 @@ describe('queryNotifications SQL', () => {
 
   it('binds a keyset cursor as two params, never into the SQL text', async () => {
     captured.length = 0;
-    const createdAt = new Date('2026-07-01T00:00:00.000Z');
-    await queryNotifications({ userId: 42, limit: 10, cursor: { createdAt, id: 9 } });
+    const cursor = { createdAt: '2026-07-01T00:00:00.123456', id: '2586946432' };
+    await queryNotifications({ userId: 42, limit: 10, cursor });
 
     const { sql, params } = captured[0];
-    expect(params).toEqual([42, createdAt, 9, 10]);
+    expect(params).toEqual([42, cursor.createdAt, cursor.id, 10]);
     // Text pinned for the bare `<=`, the index bound; the paging behaviour is tested against PGlite.
-    expect(sql).toContain('un."createdAt" <= $2 AND (un."createdAt" < $2 OR un.id < $3)');
+    expect(sql).toContain(
+      'un."createdAt" <= $2::timestamp AND (un."createdAt" < $2::timestamp OR un.id < $3::bigint)'
+    );
     expect(sql).toContain('LIMIT $4');
   });
 

@@ -95,15 +95,16 @@ export async function queryNotifications(input: {
     where.push(`un."createdAt" < $${params.length}`);
   } else if (cursor) {
     params.push(cursor.createdAt, cursor.id);
-    const [at, id] = [params.length - 1, params.length];
+    const [at, id] = [`$${params.length - 1}::timestamp`, `$${params.length}::bigint`];
     // The bare `<=` lets the ("userId", "createdAt" DESC) index bound the scan.
-    where.push(`un."createdAt" <= $${at} AND (un."createdAt" < $${at} OR un.id < $${id})`);
+    where.push(`un."createdAt" <= ${at} AND (un."createdAt" < ${at} OR un.id < ${id})`);
   }
   params.push(limit);
 
   const db = await getNotifDbWithoutLag(userId);
   const query = await db.cancellableQuery<NotificationRow>(
-    `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read
+    `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read,
+       to_char(un."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "cursorAt"
      FROM "UserNotification" un
        JOIN "Notification" n ON n."id" = un."notificationId"
      WHERE ${where.join(' AND ')}

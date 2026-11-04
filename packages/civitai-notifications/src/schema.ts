@@ -65,6 +65,8 @@ export const notificationRow = z.object({
   category: notificationCategory,
   details: z.record(z.string(), z.any()),
   createdAt: z.coerce.date(),
+  /** `createdAt` at full (microsecond) precision, for the list cursor. */
+  cursorAt: z.string(),
   read: z.boolean(),
 });
 export type NotificationRow = z.infer<typeof notificationRow>;

@@ -35,29 +35,34 @@ const ddlDir = fileURLToPath(
 );
 
 const USER = 5;
-// Seven rows in list order (newest first, then id descending). Three share one timestamp so a page
-// boundary can fall inside the tie.
-const SEED: Array<[id: number, createdAt: string]> = [
-  [1, '2026-11-04T05:00:00.000Z'],
-  [4, '2026-11-04T04:00:00.000Z'],
-  [3, '2026-11-04T04:00:00.000Z'],
-  [2, '2026-11-04T04:00:00.000Z'],
-  [5, '2026-11-04T03:00:00.000Z'],
-  [6, '2026-11-04T02:00:00.000Z'],
-  [7, '2026-11-04T01:00:00.000Z'],
+// Row ids sit past 2^31, as prod's bigint ids do, so an int32 bound on the cursor fails these tests.
+const ID = 2_586_946_400;
+// Eight rows in list order (newest first, then id descending). Four share the millisecond .123 and
+// differ only in microseconds (two of those tie exactly), so a page boundary can fall inside the tie
+// and a cursor that keeps only milliseconds skips rows.
+const SEED: Array<[n: number, createdAt: string]> = [
+  [1, '2026-11-04T05:00:00.000000'],
+  [4, '2026-11-04T04:00:00.123456'],
+  [3, '2026-11-04T04:00:00.123456'],
+  [2, '2026-11-04T04:00:00.123001'],
+  [8, '2026-11-04T04:00:00.123000'],
+  [5, '2026-11-04T03:00:00.000000'],
+  [6, '2026-11-04T02:00:00.000000'],
+  [7, '2026-11-04T01:00:00.000000'],
 ];
 
-// [id, createdAt, category, viewed]: the unread Comment rows are 11, 13, 14, 16, 18, two of them tied.
+// [n, createdAt, category, viewed]: the unread Comment rows are 11, 14, 13, 16, 18; 14 and 13 share a
+// millisecond.
 const MIXED_USER = 6;
 const MIXED: Array<[number, string, 'Comment' | 'Buzz', boolean]> = [
-  [11, '2026-11-04T05:00:00.000Z', 'Comment', false],
-  [12, '2026-11-04T04:30:00.000Z', 'Buzz', false],
-  [14, '2026-11-04T04:00:00.000Z', 'Comment', false],
-  [13, '2026-11-04T04:00:00.000Z', 'Comment', false],
-  [15, '2026-11-04T04:00:00.000Z', 'Comment', true],
-  [16, '2026-11-04T03:00:00.000Z', 'Comment', false],
-  [17, '2026-11-04T02:00:00.000Z', 'Buzz', false],
-  [18, '2026-11-04T01:00:00.000Z', 'Comment', false],
+  [11, '2026-11-04T05:00:00.000000', 'Comment', false],
+  [12, '2026-11-04T04:30:00.000000', 'Buzz', false],
+  [14, '2026-11-04T04:00:00.000500', 'Comment', false],
+  [13, '2026-11-04T04:00:00.000200', 'Comment', false],
+  [15, '2026-11-04T04:00:00.000100', 'Comment', true],
+  [16, '2026-11-04T03:00:00.000000', 'Comment', false],
+  [17, '2026-11-04T02:00:00.000000', 'Buzz', false],
+  [18, '2026-11-04T01:00:00.000000', 'Comment', false],
 ];
 
 beforeAll(async () => {
@@ -65,24 +70,24 @@ beforeAll(async () => {
   await h.notif.exec(
     readFileSync(ddlDir + '01_all_ddl.sql', 'utf8').replaceAll('CONCURRENTLY', '')
   );
-  for (const [id, createdAt] of SEED) {
+  for (const [n, createdAt] of SEED) {
     await h.notif.query(
       `INSERT INTO "Notification" (id, type, key, category, details) VALUES ($1, 'new-comment', $2, 'Comment', '{}')`,
-      [id, `k${id}`]
+      [n, `k${n}`]
     );
     await h.notif.query(
-      `INSERT INTO "UserNotification" (id, "notificationId", "userId", "createdAt") VALUES ($1, $1, $2, $3)`,
-      [id, USER, createdAt.replace('Z', '')]
+      `INSERT INTO "UserNotification" (id, "notificationId", "userId", "createdAt") VALUES ($1, $2, $3, $4)`,
+      [ID + n, n, USER, createdAt]
     );
   }
-  for (const [id, createdAt, category, viewed] of MIXED) {
+  for (const [n, createdAt, category, viewed] of MIXED) {
     await h.notif.query(
       `INSERT INTO "Notification" (id, type, key, category, details) VALUES ($1, 't', $2, $3, '{}')`,
-      [id, `k${id}`, category]
+      [n, `k${n}`, category]
     );
     await h.notif.query(
-      `INSERT INTO "UserNotification" (id, "notificationId", "userId", "createdAt", viewed) VALUES ($1, $1, $2, $3, $4)`,
-      [id, MIXED_USER, createdAt.replace('Z', ''), viewed]
+      `INSERT INTO "UserNotification" (id, "notificationId", "userId", "createdAt", viewed) VALUES ($1, $2, $3, $4, $5)`,
+      [ID + n, n, MIXED_USER, createdAt, viewed]
     );
   }
 });
@@ -96,7 +101,7 @@ async function pageThrough(
   for (let guard = 0; guard < 20; guard++) {
     const rows = await queryNotifications({ ...filter, limit: limit + 1, cursor });
     const page = pageNotifications(rows, limit);
-    seen.push(...page.items.map((r) => r.id));
+    seen.push(...page.items.map((r) => Number(r.id) - ID));
     if (!page.nextCursor) break;
     cursor = parseNotificationCursor(page.nextCursor);
   }
@@ -104,7 +109,7 @@ async function pageThrough(
 }
 
 describe('paging the notification list', () => {
-  it.each([1, 2, 3, 4, 7, 8])('shows every row exactly once at page size %i', async (limit) => {
+  it.each([1, 2, 3, 4, 5, 8, 9])('shows every row exactly once at page size %i', async (limit) => {
     expect(await pageThrough(limit)).toEqual(SEED.map(([id]) => id));
   });
 
@@ -128,7 +133,7 @@ describe('paging the notification list', () => {
       cursor: new Date('2026-11-04T04:00:00.000Z'),
     });
 
-    expect(rows.map((r) => r.id)).toEqual([5, 6, 7]);
+    expect(rows.map((r) => Number(r.id) - ID)).toEqual([5, 6, 7]);
   });
 
   it('a caller still paging with legacy date cursors always reaches the end', async () => {

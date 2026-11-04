@@ -12,7 +12,10 @@ vi.mock('~/server/utils/browsing-level', () => ({ getRequestBrowsingLevel: () =>
 
 import { getUserNotificationsInfiniteHandler } from '../notification.controller';
 
-const row = (id: number) => ({ id, createdAt: new Date(Date.UTC(2026, 10, 4, 3, 0, 0, 100 - id)) });
+const row = (id: number) => ({
+  id: 2586946400 + id,
+  cursorAt: `2026-11-04T03:00:00.${String(999 - id).padStart(6, '0')}`,
+});
 const ctx = { user: { id: 7 } } as never;
 
 describe('getUserNotificationsInfiniteHandler paging', () => {
@@ -27,7 +30,10 @@ describe('getUserNotificationsInfiniteHandler paging', () => {
       expect.objectContaining({ limit: 4, userId: 7 })
     );
     expect(page.items).toEqual([row(1), row(2), row(3)]);
-    expect(parseNotificationCursor(page.nextCursor ?? '')).toEqual(row(3));
+    expect(parseNotificationCursor(page.nextCursor ?? '')).toEqual({
+      createdAt: row(3).cursorAt,
+      id: String(row(3).id),
+    });
   });
 
   it('has no next cursor on the last page', async () => {
