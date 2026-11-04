@@ -2,7 +2,7 @@ import { sql, type Kysely, type SqlBool } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from './progression/levels';
 import { RANK_BADGE_IDS } from './progression/badges';
 import { calculateFervor, fervorSince } from './progression/fervor';
 

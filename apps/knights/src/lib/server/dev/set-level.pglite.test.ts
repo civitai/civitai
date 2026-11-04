@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from '../progression/levels';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedGradedVotes, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
@@ -20,7 +20,7 @@ afterAll(async () => {
   await pg.close();
 });
 beforeEach(async () => {
-  await pg.exec(`TRUNCATE "KnightsVote","NewOrderPlayer"`);
+  await pg.exec(`TRUNCATE "KnightsVote","NewOrderPlayer","KnightsPlayerDay"`);
 });
 
 const row = async (userId: number) =>
@@ -43,14 +43,25 @@ describe('setPlayerLevel', () => {
   it('applies the rank-up the new level and the recorded accuracy earn', async () => {
     await seedPlayer(pg, 1);
     await seedGradedVotes(pg, 1, { correct: 60 });
+    await pg.query(
+      `INSERT INTO "KnightsPlayerDay" ("playerId","day","votes")
+       SELECT 1, DATE '2026-01-01' + g, 1 FROM generate_series(0, 59) g`
+    );
 
-    expect(await setPlayerLevel(db, 1, 45)).toMatchObject({ ok: true, rank: 'Paladin' });
+    expect(await setPlayerLevel(db, 1, 95)).toMatchObject({ ok: true, rank: 'Paladin' });
     expect((await row(1)).rankType).toBe('Paladin');
+  });
+
+  it('does not make a Paladin of a player with too few days played', async () => {
+    await seedPlayer(pg, 1);
+    await seedGradedVotes(pg, 1, { correct: 60 });
+
+    expect(await setPlayerLevel(db, 1, 95)).toMatchObject({ ok: true, rank: 'Templar' });
   });
 
   it('leaves the rank alone without the accuracy', async () => {
     await seedPlayer(pg, 1);
-    await setPlayerLevel(db, 1, 45);
+    await setPlayerLevel(db, 1, 95);
     expect((await row(1)).rankType).toBe('Knight');
   });
 

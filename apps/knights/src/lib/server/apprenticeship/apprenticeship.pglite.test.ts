@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from '../progression/levels';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { expForLevel } from '../progression/levels';

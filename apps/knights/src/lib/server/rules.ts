@@ -37,6 +37,7 @@ export function rulesFacts(yesNoJudges: number) {
       rank: r.rank,
       levels: r.levels,
       accuracyPercent: Math.round(r.accuracyBar * 100),
+      minDaysPlayed: r.minDaysPlayed,
     })),
     accuracy: { window: PROGRESSION.accuracyWindow, minGraded: RATING.minGraded },
     xp: { atVote: PROGRESSION.voteXp, onCorrect: PROGRESSION.correctXp },

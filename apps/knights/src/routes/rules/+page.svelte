@@ -91,7 +91,8 @@
     Until {facts.accuracy.minGraded} are graded you are not yet rated.
   </li>
   <li>
-    You rise to a rank by reaching its level and meeting its accuracy bar. Below the bar of your own
+    You rise to a rank by reaching its level and meeting its accuracy bar; The top rank also asks for days
+    on which you judged at least once since your career began. Below the bar of your own
     rank your vote weight and gold are cut to {facts.gold.belowBarFactor}x, but you are never
     demoted.
   </li>

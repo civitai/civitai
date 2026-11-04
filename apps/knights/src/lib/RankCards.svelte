@@ -6,6 +6,7 @@
     rank: string;
     levels: string;
     accuracyBar: number;
+    minDaysPlayed?: number;
     voteWeight?: number;
     goldMultiplier?: number;
     dailyGoldCap?: number;
@@ -29,7 +30,7 @@
       <p class="name">{rank.rank}</p>
       <p class="levels">Levels {rank.levels}</p>
       <div class="facts">
-        <p class="main">Levels {rank.levels} · accuracy {percent(rank.accuracyBar)}</p>
+        <p class="main">Levels {rank.levels} · accuracy {percent(rank.accuracyBar)}{rank.minDaysPlayed ? ` · ${rank.minDaysPlayed} days played` : ''}</p>
         {#if rank.voteWeight !== undefined && rank.goldMultiplier !== undefined && rank.dailyGoldCap !== undefined}
           <p>Vote {rank.voteWeight}x · gold {rank.goldMultiplier}x · {count(rank.dailyGoldCap)} a day</p>
         {/if}

@@ -1,8 +1,8 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from './progression/levels';
 import { calculateFervor, fervorLedgerOf } from './progression/fervor';
-import { ledgerOf } from './progression/progression';
+import { daysPlayedOf, ledgerOf } from './progression/progression';
 import {
   accuracyOf,
   nextLadderEntry,
@@ -35,6 +35,11 @@ export type PlayerStatus = {
     levelsToGo: number;
     levelMet: boolean;
     accuracyMet: boolean;
+    /** Days with a vote the rank asks for (0: none), how many the player has (read only when it asks), and the rest. */
+    minDaysPlayed: number;
+    daysPlayed: number;
+    daysToGo: number;
+    daysMet: boolean;
   } | null;
 };
 
@@ -45,6 +50,7 @@ type Extras = {
   goldPending?: number;
   goldEarned?: number;
   smites?: number;
+  daysPlayed?: number;
 };
 
 export function statusFrom(rank: string, exp: number, standing: Extras = {}): PlayerStatus {
@@ -72,7 +78,9 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
       rank: next.rank,
       fromLevel: next.fromLevel,
       accuracyBar: next.accuracyBar,
-      ...progressToward(next, progress.level, accuracy),
+      minDaysPlayed: next.minDaysPlayed,
+      daysPlayed: standing.daysPlayed ?? 0,
+      ...progressToward(next, progress.level, accuracy, standing.daysPlayed ?? 0),
     },
   };
 }
@@ -87,9 +95,11 @@ export async function getPlayerStatus(
     .select(['rankType', 'exp', 'goldPending', 'goldEarned'])
     .where('userId', '=', userId)
     .executeTakeFirst();
+  const next = player && nextLadderEntry(player.rankType);
   return player
     ? statusFrom(player.rankType, player.exp, {
         ...player,
+        daysPlayed: next && next.minDaysPlayed > 0 ? await daysPlayedOf(db, userId) : 0,
         ledger: await ledgerOf(db, userId),
         fervorLedger: await fervorLedgerOf(db, userId, now),
         smites: await activeSmiteCount(db, userId),

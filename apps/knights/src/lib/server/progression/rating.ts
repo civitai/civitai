@@ -28,21 +28,33 @@ export const nextLadderEntry = (rank: string): LadderEntry | null => {
   return at === -1 ? null : RANK_LADDER[at + 1] ?? null;
 };
 
-export function progressToward(entry: LadderEntry, level: number, accuracy: number | null) {
+export function progressToward(
+  entry: LadderEntry,
+  level: number,
+  accuracy: number | null,
+  daysPlayed: number
+) {
   return {
     levelsToGo: Math.max(0, entry.fromLevel - level),
     levelMet: level >= entry.fromLevel,
     accuracyMet: accuracy !== null && accuracy >= entry.accuracyBar,
+    daysToGo: Math.max(0, entry.minDaysPlayed - daysPlayed),
+    daysMet: daysPlayed >= entry.minDaysPlayed,
   };
 }
 
-/** The highest rank above `rank` whose level and accuracy bar are both met, or null. */
-export function earnedRank(rank: string, level: number, accuracy: number | null): Rank | null {
+/** The highest rank above `rank` whose level, accuracy bar and days played are all met, or null. */
+export function earnedRank(
+  rank: string,
+  level: number,
+  accuracy: number | null,
+  daysPlayed: number
+): Rank | null {
   const at = ladderIndex(rank);
   if (at === -1) return null;
   const earned = RANK_LADDER.slice(at + 1).filter((entry) => {
-    const progress = progressToward(entry, level, accuracy);
-    return progress.levelMet && progress.accuracyMet;
+    const progress = progressToward(entry, level, accuracy, daysPlayed);
+    return progress.levelMet && progress.accuracyMet && progress.daysMet;
   });
   return earned.at(-1)?.rank ?? null;
 }
@@ -58,5 +70,6 @@ export const rankTable = () =>
     rank: entry.rank,
     levels: levelsLabel(index),
     accuracyBar: entry.accuracyBar,
+    minDaysPlayed: entry.minDaysPlayed,
     ...RANK_RULES[entry.rank],
   }));

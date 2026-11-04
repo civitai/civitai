@@ -1,6 +1,6 @@
 import { NsfwLevel } from '@civitai/shared';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from '../progression/levels';
 import { penaltyFactor } from '../progression/config';
 import { RANK_RULES, type Rank } from '../ranks';
 import type { DecisionRule } from './stage-rules';

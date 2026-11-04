@@ -1,6 +1,6 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { getLevelProgression } from '../progression/levels';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REFERENCE_POOL, REFERENCE_SOURCE, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { nextRankLine } from '$lib/chrome';
   import { percent } from '$lib/format';
   import type { PlayerStatus } from '$lib/server/player-status';
 
@@ -8,6 +9,7 @@
     position,
     links,
   }: { status: PlayerStatus; position?: Snippet; links?: Snippet } = $props();
+  let nextLine = $derived(nextRankLine(status));
   let hearts = $derived(Math.max(0, status.maxSmites - status.smites));
 </script>
 
@@ -44,11 +46,8 @@
     · <a href="/ranks">Ranks</a>
   </p>
 {/if}
-{#if status.nextRank}
-  <p class="status">
-    Next, {status.nextRank.rank}: level {status.nextRank.fromLevel}{status.nextRank.levelMet ? ' (reached)' : `, ${status.nextRank.levelsToGo} to go`}
-    and accuracy of {percent(status.nextRank.accuracyBar)} or more{status.nextRank.accuracyMet ? ' (reached)' : ''}
-  </p>
+{#if nextLine}
+  <p class="status">{nextLine}</p>
 {/if}
 <div class="bar" aria-hidden="true">
   <div class="fill" style:width="{status.progressPercent}%"></div>

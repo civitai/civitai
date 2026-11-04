@@ -1,6 +1,6 @@
 import { RANK_RULES, type Rank } from '../ranks';
 
-/** The level curve lives in @civitai/shared/new-order-levels. */
+/** The level curve is `levels.ts`. */
 export const PROGRESSION = {
   voteXp: 10,
   /** voteXp + correctXp must stay 100, the original game's per-correct-vote XP. */
@@ -15,12 +15,20 @@ export const PROGRESSION = {
   fervorAccuracyFloor: 0.1,
 } as const;
 
-/** Acolyte (apprenticeship) and Inquisitor (moderators) are deliberately not on the ladder. */
+/**
+ * Acolyte (apprenticeship, levels 1-20) and Inquisitor (moderators) are deliberately not on the ladder. A rank needs
+ * its level, its accuracy bar and `minDaysPlayed` distinct UTC days with a vote since the career began.
+ */
 export const RANK_LADDER = [
-  { rank: 'Knight', fromLevel: 1, accuracyBar: 0.7 },
-  { rank: 'Templar', fromLevel: 21, accuracyBar: 0.8 },
-  { rank: 'Paladin', fromLevel: 41, accuracyBar: 0.85 },
-] as const satisfies readonly { rank: Rank; fromLevel: number; accuracyBar: number }[];
+  { rank: 'Knight', fromLevel: 20, accuracyBar: 0.7, minDaysPlayed: 0 },
+  { rank: 'Templar', fromLevel: 50, accuracyBar: 0.8, minDaysPlayed: 0 },
+  { rank: 'Paladin', fromLevel: 90, accuracyBar: 0.85, minDaysPlayed: 60 },
+] as const satisfies readonly {
+  rank: Rank;
+  fromLevel: number;
+  accuracyBar: number;
+  minDaysPlayed: number;
+}[];
 
 /** Accuracy is over the last `PROGRESSION.accuracyWindow` graded votes. */
 export const RATING = {
