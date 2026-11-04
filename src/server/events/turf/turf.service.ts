@@ -2,12 +2,12 @@ import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { flagAudienceAmong } from '~/server/events/event-access';
+import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { loadEvents } from '~/server/events/load-events';
 import { decodeHat, eventPointKeys } from '~/server/events/points/keys';
 import {
   applyTurfOverride,
   turfConfigKey,
-  TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
 } from '~/server/events/turf/config';
 import { nextStickerAt, refillStock, stepAt } from '~/server/events/turf/schedule';
@@ -281,11 +281,8 @@ type StickerRow = TurfStickerRow & {
 };
 
 // The live stickers on images anyone may see (imageVisible), oldest first per image. Neither the owner's
-// opt-in nor the placer's is read here: a placer who opts out leaves what they placed counting. A placer earns with an account from
-// before the event start, or one that has since reached the Spark tier's threshold, read from its
-// CreatorMilestone row so the tier stays the one source (compared as
-// creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
-// or excluded. Read when the map is written, so credit is forward-only: a newly eligible placer
+// opt-in nor the placer's is read here: a placer who opts out leaves what they placed counting.
+// Eligibility is read when the map is written, so credit is forward-only: a newly eligible placer
 // counts from the next map write, and never for an action already recorded, since each ledger row
 // names the players credited when the action happened.
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
@@ -293,13 +290,7 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
     SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
       (u."bannedAt" IS NULL AND u."deletedAt" IS NULL) AS drawable,
       ${contestEntry(Prisma.sql`s."imageId"`)} AS contest,
-      COALESCE(((u."createdAt" < ${event.startDate}
-          OR CASE WHEN jsonb_typeof(u.meta -> 'scores' -> 'total') = 'number'
-            THEN (u.meta -> 'scores' ->> 'total')::numeric ELSE 0 END >= (
-              SELECT threshold FROM "CreatorMilestone" WHERE key = ${TURF_SCORE_TIER_KEY}
-            ))
-        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT u."excludeFromLeaderboards"), false) AS eligible
+      ${eventPlayerEligibleSql(event.startDate)} AS eligible
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"

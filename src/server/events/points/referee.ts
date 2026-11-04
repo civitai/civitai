@@ -27,7 +27,7 @@ import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/poin
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { teamAwardsBy } from '~/server/events/scoring/team-awards';
+import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -352,8 +352,13 @@ export function teamHoursByDay(
   return days;
 }
 
-async function writeTeamHours(event: RefereeEvent, window: Window, rows: RefereeRow[]) {
-  const days = teamHoursByDay(window, rows, teamAwardsBy(event, window.cut));
+async function writeTeamHours(
+  event: RefereeEvent,
+  window: Window,
+  rows: RefereeRow[],
+  awards: readonly TeamAward[]
+) {
+  const days = teamHoursByDay(window, rows, awards);
   await sysRedis.hSet(eventSeasonKeys(event.name, 'live').teamHours, {
     ...Object.fromEntries([...days].map(([day, teams]) => [day, JSON.stringify(teams)])),
     [TEAM_HOURS_CUT_FIELD]: window.cut.toISOString(),
@@ -423,7 +428,8 @@ export async function runEventPointsReferee(
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
   // A preview's cut never passes the start, so no award reaches its base.
-  for (const { team, points } of teamAwardsBy(event, window.cut))
+  const awards = await loadTeamAwards(event, window.cut);
+  for (const { team, points } of awards)
     totals.team.set(team, (totals.team.get(team) ?? 0) + points);
   const changed = await resetLiveBase(sysRedis, event, season, window.cut, totals);
   // This runs in a job: its corrections go out before it returns, not on a later window, except the
@@ -445,7 +451,7 @@ export async function runEventPointsReferee(
   }
   // Feeds only the chart: a failed write must not fail a settle that has already landed.
   if (season === 'live')
-    await writeTeamHours(event, window, rows).catch((error) =>
+    await writeTeamHours(event, window, rows, awards).catch((error) =>
       logSysRedisFailOpen('write-degraded', 'writeTeamHours', error, { event: event.name })
     );
   return {

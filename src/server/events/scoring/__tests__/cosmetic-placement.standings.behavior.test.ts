@@ -44,6 +44,7 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
+const { crucibleTeamAwardRowsSql } = await import('~/server/events/scoring/crucible-team-awards');
 const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await import(
   '~/server/events/points/keys'
 );
@@ -716,6 +717,61 @@ describe('referee snapshot', () => {
       'modelLike:1:21:claimed': '6',
       settled: '1',
     });
+  });
+
+  it("adds a crucible entrant's award to the team's base only, never to a hat, owner or count", async () => {
+    // The event the rally award is configured for, and an entrant's judgeable entry.
+    const rally = { ...scored, name: 'birthday2026' };
+    const rallyKeys = eventSeasonKeys(rally.name, 'live');
+    await db.pg.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error');
+      CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+      ALTER TABLE "Image"
+        ADD COLUMN "postId" int, ADD COLUMN ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+        ADD COLUMN "tosViolation" boolean DEFAULT false, ADD COLUMN "needsReview" text,
+        ADD COLUMN "nsfwLevel" int DEFAULT 1;
+      CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
+      CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "nsfwLevel" int);
+      CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
+      INSERT INTO "Post" VALUES (9001, '2026-10-01');
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (9001, 2, 9001);
+      INSERT INTO "Crucible" VALUES (77, 'Active', 3);
+      INSERT INTO "CrucibleEntry" VALUES (1, 77, 2, 9001);
+    `);
+    const award = {
+      time: '2026-11-03 10:00:00.000',
+      op: 'add',
+      actorId: 2,
+      entityId: 77,
+      team: 'Blue',
+      sourceId: 'crucibleEntry:1',
+    };
+    const answer = (awards: unknown[]) =>
+      ch.query.mockImplementation(async ({ query }: { query: string }) => ({
+        json: async () =>
+          query === eventPointsRefereeUsersSql
+            ? [involved]
+            : query === crucibleTeamAwardRowsSql
+            ? awards
+            : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
+      }));
+    const bases = () =>
+      Object.fromEntries(
+        (['hat', 'owner', 'count', 'team'] as const).map((scope) => [
+          scope,
+          hashes.get(rallyKeys.base(scope)),
+        ])
+      );
+
+    answer([]);
+    await runEventPointsReferee(rally, 'live', HOURLY);
+    const without = bases();
+    answer([award]);
+    await runEventPointsReferee(rally, 'live', HOURLY);
+    const withAward = bases();
+
+    expect(withAward.team).toEqual({ ...without.team, Blue: '1000' });
+    expect({ ...withAward, team: undefined }).toEqual({ ...without, team: undefined });
   });
 
   // The engine names the winner on the first final run, so final must reach the result.
