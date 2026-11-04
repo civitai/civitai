@@ -11,6 +11,7 @@ import {
   IconPencil,
   IconSparkles,
 } from '@tabler/icons-react';
+import { getQueryKey } from '@trpc/react-query';
 import { useMemo } from 'react';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -23,7 +24,7 @@ import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { showErrorNotification } from '~/utils/notifications';
-import { trpc, trpcVanilla } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 
 export const CONFIRMED_KEY = 'remix-apps:confirmed';
 
@@ -79,6 +80,13 @@ async function submitRemixApp(
 ) {
   try {
     await trpcVanilla.remixApp.run.mutate({ slug: app.slug, imageId, nonce });
+    // The queue's status signals skip a workflow it has never listed, so it must refetch.
+    queryClient
+      .invalidateQueries({
+        queryKey: getQueryKey(trpc.orchestrator.queryGeneratedImages),
+        exact: false,
+      })
+      .catch(() => null);
     showNotification({
       icon: <IconCheck size={18} />,
       color: 'teal',
@@ -107,7 +115,8 @@ export function runRemixApp({
 }: {
   app: RemixAppDefinition;
   imageId: number;
-  cost?: number;
+  /** The quoted price: nothing runs, confirmed or not, without one on screen. */
+  cost: number;
   nonce: string;
   startedMessage?: string;
   /** After the submit returns or fails, or the confirm is dismissed. */
@@ -123,11 +132,9 @@ export function runRemixApp({
     children: (
       <Stack gap="sm">
         <Text size="sm">
-          {cost != null
-            ? `Runs ${
-                app.name
-              } on this image for ${cost.toLocaleString()} Buzz and adds the result to your queue.`
-            : `Runs ${app.name} on this image and adds the result to your queue.`}
+          {`Runs ${
+            app.name
+          } on this image for ${cost.toLocaleString()} Buzz and adds the result to your queue.`}
         </Text>
         <Checkbox
           label="Don't ask again"
@@ -175,7 +182,7 @@ function RemixAppItem({
   return (
     <Menu.Item
       className="rounded-md p-2"
-      disabled={!!refusal}
+      disabled={cost == null}
       leftSection={
         <ThemeIcon size={36} radius="md" variant="light" color="grape">
           <Icon size={20} stroke={1.7} />
@@ -187,6 +194,7 @@ function RemixAppItem({
         )
       }
       onClick={() => {
+        if (cost == null) return;
         onRun?.();
         runRemixApp({ app, imageId, cost, nonce });
       }}

@@ -41,9 +41,10 @@ export function TeamRemixButton({ imageId }: { imageId: number }) {
             <CurrencyBadge currency="BUZZ" unitAmount={cost ?? 0} loading={isLoading} size="sm" />
           )
         }
-        disabled={!!refusal}
+        disabled={cost == null}
         loading={pending}
         onClick={() => {
+          if (cost == null) return;
           setPending(true);
           runRemixApp({
             app: { ...TEAM_REMIX_APP, name },
