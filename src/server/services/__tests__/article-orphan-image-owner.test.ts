@@ -158,7 +158,7 @@ beforeEach(() => {
   deletedArticleCover = null;
   hold.rows = [{ held: false }];
   dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-    if (!strings.join('?').includes(' AS held')) return undefined;
+    if (!strings.join('?').includes(' AS held')) return [];
     if (!hold.rows) throw new Error('relation "EvidenceHeldUser" does not exist');
     return hold.rows;
   }) as never);
@@ -267,6 +267,19 @@ describe('deleteArticleById', () => {
       expect(deletedIds()).toEqual([UNUSED_OWN.id]);
     }
   );
+
+  it('removes the comment topic before the article, in the same transaction', async () => {
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    const topicDelete = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('DELETE FROM "CommentTopic"')
+    );
+    expect(topicDelete).toBeGreaterThanOrEqual(0);
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[topicDelete].slice(1)).toEqual([ARTICLE_ID]);
+    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[topicDelete]).toBeLessThan(
+      dbMock.dbWrite.article.delete.mock.invocationCallOrder[0]
+    );
+  });
 
   // An article saved before shop keys were refused can hold one as the author's own image row.
   it('keeps an unused image of the author whose key shop artwork uses', async () => {

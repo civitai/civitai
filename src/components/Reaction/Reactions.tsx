@@ -1,5 +1,6 @@
 import type { ButtonProps, GroupProps } from '@mantine/core';
-import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useSessionStorage } from '@mantine/hooks';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
@@ -22,7 +23,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { AnimatedCount } from '~/components/Metrics';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';
@@ -37,12 +37,6 @@ export type ReactionMetrics = {
   cryCount?: number;
   tippedAmountCount?: number;
 };
-
-/**
- * `'container'` renders both forms and lets a CSS container query pick one, so the choice follows
- * the width of the surrounding row with no measuring pass and no flash on first paint.
- */
-export type CountFormat = boolean | 'container';
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
@@ -117,7 +111,7 @@ export function Reactions({
   showAll?: boolean;
   invisibleEmpty?: boolean;
   disableBuzzTip?: boolean;
-  abbreviate?: CountFormat;
+  abbreviate?: boolean;
 }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -300,7 +294,7 @@ function ReactionsList({
 
   readonly?: boolean;
   invisibleEmpty?: boolean;
-  abbreviate?: CountFormat;
+  abbreviate?: boolean;
 }) {
   const currentUser = useCurrentUser();
 
@@ -385,7 +379,7 @@ function ReactionBadge({
   countUnknown?: boolean;
   reaction: ReviewReactions;
   canClick: boolean;
-  abbreviate?: CountFormat;
+  abbreviate?: boolean;
   resetKey?: string | number;
 } & Omit<ButtonProps, 'children'> &
   React.ComponentPropsWithoutRef<'button'>) {
@@ -413,15 +407,6 @@ function ReactionBadge({
         <Text inherit lh={1}>
           {countUnknown ? (
             '–'
-          ) : abbreviate === 'container' ? (
-            <>
-              <span data-count="full">
-                <AnimatedCount value={count} abbreviate={false} resetKey={resetKey} />
-              </span>
-              <span data-count="abbr">
-                <AnimatedCount value={count} abbreviate animate={false} />
-              </span>
-            </>
           ) : (
             <AnimatedCount value={count} abbreviate={abbreviate ?? false} resetKey={resetKey} />
           )}

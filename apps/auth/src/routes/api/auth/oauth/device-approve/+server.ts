@@ -13,6 +13,12 @@ const DEVICE_CODE_KEY = REDIS_KEYS.OAUTH.DEVICE_CODES;
 
 export const POST: RequestHandler = async ({ request, getClientAddress, locals }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
+  // The device token carries no impersonation marker and would outlive the impersonation.
+  if (locals.impersonatedBy != null)
+    return json(
+      { error: 'access_denied', error_description: 'Not available while impersonating' },
+      { status: 403 }
+    );
 
   const { user_code } = await parseBody(request);
   if (!user_code) {

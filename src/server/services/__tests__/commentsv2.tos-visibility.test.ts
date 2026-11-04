@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserService from '~/server/services/user.service';
 import type * as BlocklistService from '~/server/services/blocklist.service';
+import type * as HotReads from '@civitai/db-queries/hot-reads';
 
 /**
  * A CommentV2 flagged as a ToS violation must not be readable by anyone but a moderator. Until this,
@@ -9,6 +10,13 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
  * reveal. A phishing comment a moderator had removed stayed on the image, article or post.
  */
 
+// An image's thread lookup (one Kysely read). Its rows, against a real database, are pinned in
+// hot-reads-2.kysely-parity.test.ts.
+const { imageThread } = vi.hoisted(() => ({ imageThread: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads>()),
+  getImageThread: imageThread,
+}));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   amIBlockedByUser: vi.fn(async () => false),
@@ -67,7 +75,7 @@ const whereClauses = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  threadFindUnique.mockResolvedValue({ id: 10, locked: false });
+  imageThread.mockResolvedValue({ id: 10, locked: false });
   pinnedFindMany.mockResolvedValue([]);
   // `clearAllMocks` keeps implementations, so a row one case hands `findFirst` would otherwise leak
   // into every later case as a target comment, and a bare `{ id }` has no `user`, which the real
@@ -172,6 +180,7 @@ describe('CommentV2 counts and the ToS flag', () => {
   it('reaches the thread through the relation, in a single query', async () => {
     await getCommentCount({ entityId: 1, entityType: 'image' });
 
+    expect(imageThread).not.toHaveBeenCalled();
     expect(threadFindUnique).not.toHaveBeenCalled();
     expect(commentCount).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ thread: { imageId: 1 } }) })

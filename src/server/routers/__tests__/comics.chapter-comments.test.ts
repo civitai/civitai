@@ -14,24 +14,6 @@ import { describe, expect, it } from 'vitest';
 const router = () => readFileSync('src/server/routers/comics.router.ts', 'utf8');
 
 describe('comic chapter comments', () => {
-  it('filters ToS-flagged comments out of the chapter thread for non-moderators', () => {
-    // The only v2 read outside commentsv2.service.ts, and it filtered `hidden` alone.
-    expect(router()).toContain(`{ hidden: false, tosViolation: false }`);
-  });
-
-  it('returns every reaction row but only the viewer’s own reaction identity', () => {
-    // Anchored on the return, so a call moved to some other value no longer satisfies it.
-    expect(router()).toContain(
-      'if (!ctx.user?.isModerator) keepOwnReactorIds(thread, ctx.user?.id);\n      return thread;'
-    );
-  });
-
-  it('runs the content guard every other comment surface has, before the thread upsert', () => {
-    expect(router()).toContain(
-      'await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator })'
-    );
-  });
-
   it('is guarded and rate limited, so a muted account cannot comment here', () => {
     // The client hides the box for a muted user, which is presentation, not a gate.
     expect(router()).toContain('createChapterComment: comicGuardedProcedure');

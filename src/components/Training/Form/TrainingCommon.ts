@@ -162,9 +162,9 @@ export const useTrainingSignals = () => {
       // its own nudge when a training update lands.
       queryUtils.training.getRunState.invalidate({ modelVersionId: updated.modelVersionId }).then();
 
-      // Update select file page
+      // The model wizard's select-file step reads this entry.
       queryUtils.model.getById.setData(
-        { id: updated.modelId },
+        { id: updated.modelId, forEditor: true },
         produce((old) => {
           if (!old) return old;
           const mv = old.modelVersions.find((x) => x.id == updated.modelVersionId);

@@ -31,7 +31,7 @@ A profile hold shows a "Profile" card: avatar, cover and SFW cover as captioned 
 every other image) and the bio, message, their SFW variants and location as plain text. A comment
 hold shows a "Commented on" card with the parent's title, a link and up to four of its images. A
 legacy model `Comment` resolves to its model (the hold row also links to the comment on the model
-page). A `CommentV2` resolves to the entity on its `CommentV3` row (a reply carries its entity on its own
+page). A `CommentV2` or `CommentV3` hold resolves to the entity on its `CommentV3` row (a reply carries its entity on its own
 row): a post, model, image or article gets the full card, any other entity type shows the type and a
 link only, and a comment with no `CommentV3` row (question and answer comments were never migrated)
 has no parent card. All
@@ -123,7 +123,7 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
 | Do nothing                          | nothing on the content or the account                                                      | `Dismissed`  |
 
 - Removal reuses what a moderator already uses for each type, and keeps the content: a ToS-violation
-  flag for `Comment` and `CommentV2`, a profile-field clear for `UserProfile`, an
+  flag for `Comment`, `CommentV2` and `CommentV3`, a profile-field clear for `UserProfile`, an
   unpublish-as-violation for `Model`, a moderator unpublish for `Post` (`publishedAt` cleared and the
   `unpublishedAt` / `unpublishedBy` / `prevPublishedAt` stamps written, post and images kept, images
   taken out of the search index; a republish restores it), the chat soft delete (row and content

@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
+import {
+  heldCopiesSchemaSql,
+  heldStorylineCopiesSchemaSql,
+} from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -12,7 +15,7 @@ import type * as BlockCheckService from '~/server/services/block-check.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
- * Deleting a parent row (a post, a model, a question...) cascades into its comment threads and every
+ * Deleting a parent row (a post, a model, a review...) cascades into its comment threads and every
  * comment in them, other people's included. A thread holding a held author's comment is detached
  * from the parent first, and is then unreachable from the site except for moderators. The SQL runs on
  * a Postgres stand-in with the real foreign keys, so the cascade is what decides.
@@ -62,8 +65,6 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
 
 import { detachHeldThreadsCte, modelThreadParents } from '~/server/services/comment-thread-hold';
 import { isCommentDetached, isThreadDetached } from '~/server/services/commentsv2.service';
-import { deleteQuestion } from '~/server/services/question.service';
-import { deleteAnswer } from '~/server/services/answer.service';
 import {
   deleteResourceReview,
   deleteResourceReviews,
@@ -132,11 +133,6 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL,
       "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "modelVersionId" int
     );
-    CREATE TABLE "Question" (id int PRIMARY KEY, "userId" int NOT NULL);
-    CREATE TABLE "Answer" (
-      id int PRIMARY KEY, "userId" int NOT NULL,
-      "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE
-    );
     CREATE DOMAIN "Availability" AS text;
     CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
     CREATE TABLE "Bounty" (
@@ -165,8 +161,6 @@ beforeAll(async () => {
       "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
       "modelId" int UNIQUE REFERENCES "Model"(id) ON DELETE CASCADE,
       "reviewId" int UNIQUE REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
-      "questionId" int UNIQUE REFERENCES "Question"(id) ON DELETE CASCADE,
-      "answerId" int UNIQUE REFERENCES "Answer"(id) ON DELETE CASCADE,
       "imageId" int UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
       "bountyId" int UNIQUE REFERENCES "Bounty"(id) ON DELETE CASCADE,
       "bountyEntryId" int UNIQUE REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
@@ -183,6 +177,12 @@ beforeAll(async () => {
       "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE,
       "tosViolation" boolean NOT NULL DEFAULT false
     );
+    -- An article's comments written to CommentV3 directly, which have no CommentV2 row.
+    CREATE TABLE "CommentTopic" ("entityType" text NOT NULL, "entityId" int NOT NULL);
+    CREATE TABLE "CommentV3" (
+      id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "userId" int NOT NULL,
+      "deletedAt" timestamptz
+    );
     -- Stands in for the hold marker's delete trigger: a marked owner's image row is kept.
     CREATE FUNCTION keep_marked_image() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -193,15 +193,16 @@ beforeAll(async () => {
       FOR EACH ROW EXECUTE FUNCTION keep_marked_image();
   `);
   await db.exec(heldCopiesSchemaSql());
+  await db.exec(heldStorylineCopiesSchemaSql());
 });
 afterAll(() => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
-    TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
-      "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "HeldAnswer", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
+    TRUNCATE "CommentV2", "Thread", "ResourceReview", "Model", "Post", "Image", "CsamReport",
+      "EvidenceHold", "BountyEntry", "Bounty", "Article", "CommentTopic", "CommentV3",
+      "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -220,8 +221,6 @@ beforeEach(async () => {
     (async ({ where }: { where: { id: number } }) =>
       (await db.query(`DELETE FROM "${table}" WHERE id = $1 RETURNING *`, [where.id]))
         .rows[0]) as never;
-  vi.mocked(dbMock.dbWrite.question.delete).mockImplementation(deleteRow('Question'));
-  vi.mocked(dbMock.dbWrite.answer.delete).mockImplementation(deleteRow('Answer'));
   vi.mocked(dbMock.dbWrite.resourceReview.delete).mockImplementation(deleteRow('ResourceReview'));
   vi.mocked(dbMock.dbWrite.resourceReview.findMany).mockResolvedValue([]);
   vi.mocked(dbMock.dbWrite.bounty.delete).mockImplementation(deleteRow('Bounty'));
@@ -325,32 +324,6 @@ describe('detaching held threads in the parent delete', () => {
 });
 
 describe('single deletes keep held threads', () => {
-  it("keeps a held comment on another user's answer to a deleted question", async () => {
-    await db.exec(`
-      INSERT INTO "Question" VALUES (40, ${OWNER});
-      INSERT INTO "Answer" VALUES (41, ${OTHER}, 40);
-    `);
-    await seedThread('answerId', 41, HELD);
-
-    await deleteQuestion({ id: 40 });
-
-    expect((await db.query(`SELECT id FROM "Question"`)).rows).toEqual([]);
-    expect(await commentIds()).toEqual([1, 2]);
-  });
-
-  it('deletes an answer and the thread on it when no held author is in it (control)', async () => {
-    await db.exec(`
-      INSERT INTO "Question" VALUES (40, ${OTHER});
-      INSERT INTO "Answer" VALUES (41, ${OWNER}, 40);
-    `);
-    await seedThread('answerId', 41, OTHER);
-
-    await deleteAnswer({ id: 41 });
-
-    expect((await db.query(`SELECT id FROM "Answer"`)).rows).toEqual([]);
-    expect(await commentIds()).toEqual([]);
-  });
-
   it('keeps a held reply on a deleted review', async () => {
     await db.exec(`
       INSERT INTO "Model" VALUES (20, ${OTHER});
@@ -634,6 +607,53 @@ describe('the production delete paths keep held threads', () => {
     expect(await isCommentDetached(3)).toBe(true);
   });
 
+  // A CommentV3 row cannot be detached from its article as a thread is.
+  it('refuses to delete an article with a held author’s comment written only to CommentV3', async () => {
+    await db.exec(`
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (5, 'article', 70, ${HELD});
+    `);
+    vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+
+    await expect(deleteArticleById({ id: 70, userId: OWNER })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect((await db.query(`SELECT id FROM "Article"`)).rows).toEqual([{ id: 70 }]);
+  });
+
+  // A held comment with a CommentV2 row is kept by the thread detach; a deleted one keeps nothing.
+  it.each([
+    [
+      'it has a CommentV2 row the detach keeps',
+      `INSERT INTO "Thread" (id, "articleId") VALUES (300, 70);
+       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5, ${HELD}, 300);`,
+    ],
+    ['it was deleted', `UPDATE "CommentV3" SET "deletedAt" = now() WHERE id = 5`],
+  ])('deletes an article with a held author’s CommentV3 comment when %s', async (_, seed) => {
+    await db.exec(`
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (5, 'article', 70, ${HELD});
+    `);
+    await db.exec(seed);
+    vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+
+    await deleteArticleById({ id: 70, userId: OWNER });
+
+    expect((await db.query(`SELECT id FROM "Article"`)).rows).toEqual([]);
+  });
+
+  it('deletes an article whose CommentV3-only comments are by unheld authors (control)', async () => {
+    await db.exec(`
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (5, 'article', 70, ${OWNER});
+    `);
+    vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+
+    await deleteArticleById({ id: 70, userId: OWNER });
+
+    expect((await db.query(`SELECT id FROM "Article"`)).rows).toEqual([]);
+  });
+
   it('keeps a held thread on an image of a deleted post', async () => {
     await db.exec(`
       INSERT INTO "Post" VALUES (10, ${OWNER});
@@ -678,24 +698,6 @@ describe('the production delete paths keep held threads', () => {
 
 describe("a held author's rows under a deleted parent", () => {
   const rows = async (sql: string) => (await db.query(sql)).rows;
-
-  it("copies the held authors' answers to a deleted question, and no one else's", async () => {
-    await db.exec(`
-      INSERT INTO "Question" (id, "userId") VALUES (40, ${OWNER});
-      INSERT INTO "Answer" (id, "userId", "questionId", content) VALUES
-        (41, ${HELD}, 40, 'held'), (42, ${OTHER}, 40, 'other'), (43, ${MARKED}, 40, 'marked');
-    `);
-
-    await deleteQuestion({ id: 40 });
-
-    expect(await rows(`SELECT id FROM "Answer"`)).toEqual([]);
-    expect(
-      await rows(`SELECT id, "userId", content, "holdReasons" FROM "HeldAnswer" ORDER BY id`)
-    ).toEqual([
-      { id: 41, userId: HELD, content: 'held', holdReasons: ['report'] },
-      { id: 43, userId: MARKED, content: 'marked', holdReasons: ['hold-marker'] },
-    ]);
-  });
 
   async function seedEnteredBounty(entrant: number) {
     await db.exec(`
@@ -766,22 +768,19 @@ describe("a held author's rows under a deleted parent", () => {
         recommended, exclude, nsfw, "tosViolation", "createdAt", "updatedAt")
         SELECT u, 1, 1, u, 5, true, false, false, false, now(), now()
         FROM unnest(ARRAY[${HELD}, ${MARKED}, ${OTHER}]) u;
-      INSERT INTO "HeldAnswer" (id, "questionId", "userId", content, "createdAt", "updatedAt")
-        SELECT u, 1, u, '', now(), now() FROM unnest(ARRAY[${HELD}, ${MARKED}, ${OTHER}]) u;
     `);
     const left = async () => ({
       reviews: (await rows(`SELECT "userId" FROM "HeldResourceReview" ORDER BY 1`)).map(
         (r) => r.userId
       ),
-      answers: (await rows(`SELECT "userId" FROM "HeldAnswer" ORDER BY 1`)).map((r) => r.userId),
     });
 
-    expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 1, answers: 1 });
-    expect(await left()).toEqual({ reviews: [HELD, MARKED], answers: [HELD, MARKED] });
+    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 1 });
+    expect(await left()).toEqual({ reviews: [HELD, MARKED] });
 
     await db.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold";`);
-    expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 2, answers: 2 });
-    expect(await left()).toEqual({ reviews: [], answers: [] });
+    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 2 });
+    expect(await left()).toEqual({ reviews: [] });
   });
 
   it.each([
@@ -971,10 +970,6 @@ describe("a held author's rows under a deleted parent", () => {
       ]);
       expect(await deleteSettledKeptBounties()).toBe(1);
     });
-  });
-
-  it('reports a question that is not there as not found', async () => {
-    await expect(deleteQuestion({ id: 404 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 

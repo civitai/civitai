@@ -452,7 +452,8 @@ export type Appeal = {
   entityRemovedAt: Timestamp | null;
   category: AppealCategory | null;
   /**
-   * What the form collected beyond the message (`SiteAppealContext`).
+   * What the form collected beyond the message (`SiteAppealContext`); on an in-app model appeal, the
+   * locked settings an owner asks a moderator to review (`LockReviewContext`), else NULL.
    */
   context: unknown | null;
 };
@@ -2702,6 +2703,7 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
+  removedByAuthor: Generated<boolean>;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;
@@ -3188,6 +3190,24 @@ export type EventCosmeticScoreDaily = {
   modelLikes: Generated<number>;
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
+};
+export type EventTurfSticker = {
+  id: Generated<string>;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  removedAt: Timestamp | null;
+  removedById: number | null;
+};
+export type EventTurfStock = {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Timestamp;
 };
 export type EvidenceHeldUser = {
   userId: number;
@@ -5567,6 +5587,11 @@ export type Storyline = {
    * The banner's vertical focus, as a percentage (0 top to 100 bottom).
    */
   heroImagePosition: Generated<number>;
+  /**
+   * The image the storyline was started from, credited above chapter 1. Not a chapter. Shown only
+   * while the image is visible and within the storyline's ceiling, which may not go below it.
+   */
+  sparkImageId: number | null;
 };
 export type StorylineBranchChoice = {
   userId: number;
@@ -5688,8 +5713,16 @@ export type StorylinePendingChapter = {
   createdAt: Generated<Timestamp>;
 };
 export type StorylineReport = {
-  storylineId: number;
   reportId: number;
+  storylineId: number | null;
+  /**
+   * The storyline's id once deleted, when a held copy of it was kept ("HeldStoryline").
+   */
+  heldStorylineId: number | null;
+  /**
+   * The storyline's title when it was deleted.
+   */
+  storylineTitle: string | null;
 };
 export type Tag = {
   id: Generated<number>;
@@ -6594,6 +6627,8 @@ export type DB = {
   EntityModeration: EntityModeration;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EventTurfSticker: EventTurfSticker;
+  EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
   EvidenceHoldImage: EvidenceHoldImage;

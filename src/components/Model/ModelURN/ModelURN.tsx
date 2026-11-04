@@ -1,4 +1,5 @@
-import { Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
+import { Code, Group, Stack, Text } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
 import { useMemo } from 'react';

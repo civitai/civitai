@@ -215,7 +215,7 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
     dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
-    expect(getOrchestratorToken).toHaveBeenCalledWith(5);
+    expect(getOrchestratorToken).toHaveBeenCalledWith(5, undefined, { allowRestricted: true });
     expect(readTokens()).toEqual(['owner-token']);
   });
 

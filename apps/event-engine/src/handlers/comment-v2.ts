@@ -1,4 +1,5 @@
 import { createEventHandler } from './base';
+import { COMMENT_V3_SURFACES } from './comment-v3';
 
 /**
 ## Metrics driven by commentv2 table:
@@ -8,6 +9,8 @@ import { createEventHandler } from './base';
 - BountyMetric.commentCount (create/delete)
 - UserMetric.commentCount (create/delete) — comments *received* by the owner of the commented-on
   entity, across every surface CommentsV2 serves, not just the four with their own entity metric.
+
+A surface in COMMENT_V3_SURFACES is counted by comment-v3.ts instead, so it is skipped here.
 */
 
 interface CommentV2Record {
@@ -42,7 +45,7 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
         COALESCE(
           p."userId", i."userId", a."userId", b."userId",
           rev."userId", be."userId", ch."createdById", cp."userId", clp."createdById",
-          m3d."userId", m3dr."userId", mdl."userId", q."userId", ans."userId", al.user_id
+          m3d."userId", m3dr."userId", mdl."userId", al.user_id
         ) AS "ownerId"
       FROM "Thread" t
       LEFT JOIN "Thread" r ON r.id = t."rootThreadId"
@@ -58,14 +61,22 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
       LEFT JOIN "Model3D" m3d ON m3d.id = COALESCE(r."model3dId", t."model3dId")
       LEFT JOIN "Model3DReview" m3dr ON m3dr.id = COALESCE(r."model3dReviewId", t."model3dReviewId")
       LEFT JOIN "Model" mdl ON mdl.id = COALESCE(r."modelId", t."modelId")
-      LEFT JOIN "Question" q ON q.id = COALESCE(r."questionId", t."questionId")
-      LEFT JOIN "Answer" ans ON ans.id = COALESCE(r."answerId", t."answerId")
       LEFT JOIN app_listings al ON al.serial_id = COALESCE(r."appListingId", t."appListingId")
       WHERE t.id = $1`,
       [record.threadId]
     );
 
     if (!thread) return;
+    const surface = thread.articleId
+      ? 'article'
+      : thread.imageId
+      ? 'image'
+      : thread.postId
+      ? 'post'
+      : thread.bountyId
+      ? 'bounty'
+      : null;
+    if (surface && COMMENT_V3_SURFACES.includes(surface)) return;
 
     // A creator answering their own commenters is not engagement received. Left in, it dominates:
     // 71.4% / 60.9% / 57.6% of the raw total for userIds 1421581 / 2895 / 1279061. Keep this in step

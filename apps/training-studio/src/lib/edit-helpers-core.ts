@@ -93,7 +93,8 @@ export async function listEditGenerations(
 // Tagged apart from `gen` so the helpers' outputs never show up in the caller's generation feed or
 // in "From my edit generations".
 const HELPER_TAGS = [CIVITAI_TAG, 'training-studio-edit-helper'];
-// Never fetched by a whatif.
+// For the suggestion's whatif, which prices without fetching it (an edit's does not: see
+// `editImageQuote`).
 const WHATIF_IMAGE = 'https://example.com/whatif.png';
 
 /** `/v2/consumer/blobs/` URLs only: a helper reads the caller's own uploads and generations, never an
@@ -116,6 +117,7 @@ async function submit(
       tags: HELPER_TAGS,
       steps: [step],
       currencies: resolveCurrencies(currencies, WHATIF_CURRENCIES),
+      upgradeMode: 'manual',
       // Generated media never comes back mature, whatever the starting image: the Studio can't tell
       // which site the result will be shown on, and the generator's own mature rules are per site.
       allowMatureContent: false,
@@ -170,8 +172,10 @@ export interface EditImageOption {
   nsfwLevel?: string;
 }
 
-export const editImageQuote = (client: OrchestratorClient) =>
-  whatIfCost(client, editImageStep(WHATIF_IMAGE, 'whatif'), 'whatif');
+/** Priced with the real starting image: the orchestrator downloads an edit's input even for a whatif,
+ *  so a placeholder URL fails the quote. */
+export const editImageQuote = (client: OrchestratorClient, imageUrl: string) =>
+  whatIfCost(client, editImageStep(imageUrl, 'whatif'), 'whatif');
 
 export const submitEditImage = (client: OrchestratorClient, req: EditImageRequest) =>
   submit(client, editImageStep(req.imageUrl, req.prompt.trim()), req.currencies, 'image edit');
@@ -190,8 +194,9 @@ export async function pollEditImage(
   return { done, options };
 }
 
-// Must carry its provider prefix: the orchestrator prices nothing it can't resolve.
-const SUGGEST_MODEL = 'openai/gpt-4o-mini';
+// Must take image input (the step sends both images) and carry its provider prefix: the
+// orchestrator prices nothing it can't resolve.
+const SUGGEST_MODEL = 'deepseek/deepseek-v4.1-flash';
 const SUGGEST_SYSTEM = [
   'You write the instruction for one example in an image-editing dataset.',
   'You are shown the image before the edit, then the image after it.',

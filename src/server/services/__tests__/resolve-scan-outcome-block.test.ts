@@ -8,7 +8,7 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
   auditMetaData: vi.fn(() => ({ success: false, blockedFor: ['prompt'] })),
   includesInappropriate: vi.fn(() => false),
-  includesPoi: vi.fn(() => true),
+  includesPoi: vi.fn(() => 'a person'),
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocklist>()),

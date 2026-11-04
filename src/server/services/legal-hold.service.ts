@@ -459,7 +459,8 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
  * is held cannot be determined. The reason is logged here and goes no further.
  */
 export async function assertAccountNotUnderLegalHold(
-  userId: number
+  userId: number,
+  refused = 'Account deletion refused'
 ): Promise<Pick<AccountLegalHold, 'markerView'>> {
   const hold = await holdOrNull(userId);
   if (!hold) throw new LegalHoldUnconfirmedError();
@@ -467,7 +468,7 @@ export async function assertAccountNotUnderLegalHold(
   logToAxiom({
     type: 'info',
     name: 'account-legal-hold',
-    message: 'Account deletion refused',
+    message: refused,
     details: { userId, legs: hold.legs },
   });
   throw new LegalHoldError();

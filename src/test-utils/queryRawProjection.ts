@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 /**
  * Select-aware projection for `$queryRaw` fakes.
  *
@@ -98,5 +100,32 @@ export function projectOntoSelect<T extends Record<string, unknown>>(
  *     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
  */
 export function respondWithRows<T extends Record<string, unknown>>(rows: T[]) {
-  return async (strings: TemplateStrings) => projectOntoSelect(strings, rows);
+  return async (query: TemplateStrings | Prisma.Sql) =>
+    projectOntoSelect(isSql(query) ? query.strings : query, rows);
+}
+
+/**
+ * The statement a `$queryRaw` call sent, whichever way it was called: as a tagged template
+ * (`$queryRaw\`...\``, arguments `(strings, ...values)`) or with a prebuilt `Prisma.Sql`
+ * (`$queryRaw(statement)`). Nested `Prisma.Sql` fragments are flattened, so `.strings`, `.values`
+ * and `.text` are what the database receives.
+ */
+export function statementOf(call: readonly unknown[]): Prisma.Sql {
+  const [query, ...values] = call;
+  if (isSql(query)) return query;
+  return Prisma.sql(query as readonly string[], ...(values as Prisma.Sql[]));
+}
+
+// Structural, not `instanceof Prisma.Sql`: the `Sql` class is not a runtime member of the `Prisma`
+// namespace the unit suite loads (it read as undefined there), while every `Prisma.sql` result
+// carries these fields. A template-strings array is an array, so it never matches.
+function isSql(query: unknown): query is Prisma.Sql {
+  return (
+    typeof query === 'object' &&
+    query !== null &&
+    !Array.isArray(query) &&
+    Array.isArray((query as Prisma.Sql).strings) &&
+    Array.isArray((query as Prisma.Sql).values) &&
+    typeof (query as Prisma.Sql).text === 'string'
+  );
 }

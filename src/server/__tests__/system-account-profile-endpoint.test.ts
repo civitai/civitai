@@ -151,11 +151,68 @@ describe('POST /api/admin/system-account-profile', () => {
     ['a blank name', { name: '   ' }],
     ['a name with a bidi override', { name: 'Agent\u202Eevil' }],
     ['a name with a zero-width space', { name: 'Ag\u200Bent' }],
+    ['a name with an invisible unassigned character', { name: 'Ag\u2065ent' }],
+    ['a name with a Hangul filler', { name: 'Ag\u3164ent' }],
     ['the reserved moderation name', { name: 'civitai moderation' }],
   ])('refuses %s with no write', async (_, extra) => {
     const { status } = await call({ userId: SYSTEM_ID, name: 'Agent', ...extra });
     expect(status).toBe(400);
     expect(wrote()).toBe(0);
+  });
+
+  it.each([
+    [
+      'fullwidth',
+      '\uFF23\uFF49\uFF56\uFF49\uFF54\uFF41\uFF49 \uFF2D\uFF4F\uFF44\uFF45\uFF52\uFF41\uFF54\uFF49\uFF4F\uFF4E',
+    ],
+    ['mixed-script', '\u0421ivit\u0430i M\u043Ederation'],
+    ['digit-for-letter', 'C1vitai Moderation'],
+    ['symbol-for-letter', 'C|vitai Moderation'],
+    ['zero-for-o', 'Civitai M0derati0n'],
+    ['digits-for-letters', 'C1v174i Mod3r4tion'],
+    ['box-drawing-bar-for-i', 'C\u2503vitai Moderation'],
+    ['Cyrillic-yi-for-i', 'C\u0457vitai Moderation'],
+    ['Greek-iota-dialytika-for-i', 'C\u03CAvitai Moderation'],
+    ['mixed l and 0', 'Clvitai M0deration'],
+    ['padded with a blank symbol', 'C\u2503vitai Moderation\u2800'],
+    ['padded with a private-use character', 'C\u2503vitai\uE000 Moderation'],
+    ['separated by a symbol that folds to letters', 'Civitai\u2122Moderation'],
+    ['capital lunate sigma', '\u03F9ivitai Moderation'],
+    ['divides-sign-for-i', 'C\u2223vitai Moderation'],
+    ['inverted-exclamation-for-i', 'C\u00A1vitai Moderation'],
+    ['letter-click-for-i', 'C\u01C3vitai Moderation'],
+  ])('refuses a %s spelling of the reserved name', async (_, name) => {
+    const { status, body } = await call({ userId: SYSTEM_ID, name });
+    expect({ status, body: JSON.stringify(body) }).toEqual({
+      status: 400,
+      body: expect.stringContaining('name is reserved'),
+    });
+    expect(wrote()).toBe(0);
+  });
+
+  it('admits a name with an emoji', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'Agent \u2764\uFE0F' });
+    expect(status).toBe(200);
+  });
+
+  it('admits a name of only digits as long as the reserved one', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: '23456789023456789' });
+    expect(status).toBe(200);
+  });
+
+  it('admits the reserved name with more than half its letters replaced', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'C!v!74! M0d3r47ion' });
+    expect(status).toBe(200);
+  });
+
+  it('refuses the reserved name with half its letters replaced', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'C!v!74! M0d3r4tion' });
+    expect(status).toBe(400);
+  });
+
+  it('admits a name that only shares words with the reserved one', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'Civitai Moderation Bot' });
+    expect(status).toBe(200);
   });
 
   it('refuses a request that sets nothing', async () => {
@@ -241,12 +298,13 @@ describe('POST /api/admin/system-account-profile', () => {
     });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'error',
+        type: 'info',
         name: 'system-account-profile-set',
         details: {
           userId: SYSTEM_ID,
           changed: ['name', 'settings.chat.dmPolicy'],
           asserted_actor: 9,
+          auditRecorded: true,
         },
       })
     );
@@ -308,6 +366,13 @@ describe('POST /api/admin/system-account-profile', () => {
     const { status, body } = await call({ userId: SYSTEM_ID, name: 'Agent' });
     expect(status).toBe(200);
     expect(body).toEqual({ userId: SYSTEM_ID, changed: ['name'], auditRecorded: false });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'system-account-profile-set',
+        details: expect.objectContaining({ auditRecorded: false }),
+      })
+    );
   });
 
   it('audits a write that succeeded before a later one failed', async () => {
@@ -322,12 +387,14 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: 'error',
         name: 'system-account-profile-set-failed',
         details: {
           userId: SYSTEM_ID,
           changed: ['name'],
           failed: { fields: ['settings.chat.dmPolicy'], error: 'Error' },
           asserted_actor: 9,
+          auditRecorded: true,
         },
       })
     );

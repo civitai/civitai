@@ -1,12 +1,17 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import {
+  compiledRelations,
+  declaredViews,
+  isViewMarker,
+  relationsOf,
+  schemaLines,
+} from '~/server/db/__tests__/no-view-ledger';
 import {
   countUnclaimedPrizesViaKysely,
   countUnclaimedPrizesViaPrisma,
@@ -246,18 +251,19 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('ModelVersion')} (id, name, "modelId", "trainedWords", "createdAt", status,
-        "requireAuth", "usageControl") VALUES
+        "requireAuth", "usageControl", "baseModel") VALUES
         (${MV_A1}, 'v1', ${MODEL_A}, '{alpha,"two words"}', '2026-04-02 00:00:00.123', 'Published',
-          false, 'Download'),
-        (${MV_A2}, 'v2', ${MODEL_A}, '{}', '2026-04-03 00:00:00.000', 'Draft', true, 'Generation'),
+          false, 'Download', 'SDXL 1.0'),
+        (${MV_A2}, 'v2', ${MODEL_A}, '{}', '2026-04-03 00:00:00.000', 'Draft', true, 'Generation',
+          'SDXL 1.0'),
         (${MV_A3}, 'v3', ${MODEL_A}, '{x}', '2026-04-04 00:00:00.000', 'Scheduled', false,
-          'InternalGeneration'),
+          'InternalGeneration', 'SDXL 1.0'),
         (${MV_TAKEN_DOWN}, 'td', ${MODEL_TAKEN_DOWN}, '{y}', '2026-04-05 00:00:00.000',
-          'UnpublishedViolation', true, 'ExternalGeneration'),
+          'UnpublishedViolation', true, 'ExternalGeneration', 'Flux.2 Klein 9B'),
         (${MV_NULL_WORDS}, 'nw', ${MODEL_TAKEN_DOWN}, NULL, '2026-04-06 00:00:00.000', 'Published',
-          false, 'Download'),
+          false, 'Download', 'SDXL 1.0'),
         (${MV_ORPHAN}, 'orphan', 5898, '{z}', '2026-04-07 00:00:00.000', 'Published', false,
-          'Download')
+          'Download', 'SDXL 1.0')
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('ResourceReview')} (id, "modelId", "modelVersionId", "userId", recommended,
@@ -591,6 +597,7 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
         createdAt: new Date('2026-04-05T00:00:00.000Z'),
         requireAuth: true,
         usageControl: 'ExternalGeneration',
+        baseModel: 'Flux.2 Klein 9B',
       });
       expect((await readModelVersionForFileViaKysely(kysely, MV_A1))?.trainedWords).toStrictEqual([
         'alpha',
@@ -686,47 +693,6 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
 // ---------------------------------------------------------------------------------------------
 // No statement reads a VIEW. Offline: the statements are compiled, not run.
 
-const SCHEMA_PRISMA = resolve(
-  here,
-  '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
-);
-
-const schemaLines = () => readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
-const isViewMarker = (line: string) => line.trim() === '/// @view';
-
-/**
- * Every model declared `/// @view` in schema.full.prisma. The marker sits above the model, in its
- * doc comment block, sometimes with a blank line between them, so the walk up from each `model`
- * line skips blank and `///` lines and stops at anything else.
- */
-function declaredViews(): Set<string> & { markersAttributed: number } {
-  const lines = schemaLines();
-  const views = new Set<string>();
-  const attributed = new Set<number>();
-  lines.forEach((line, i) => {
-    const model = /^model (\w+) \{/.exec(line);
-    if (!model) return;
-    for (let j = i - 1; j >= 0 && (lines[j].trim() === '' || lines[j].startsWith('///')); j--)
-      if (isViewMarker(lines[j])) {
-        views.add(model[1]);
-        attributed.add(j);
-      }
-  });
-  return Object.assign(views, { markersAttributed: attributed.size });
-}
-
-/** The quoted relation names a compiled statement reads FROM or JOINs. */
-function relationsOf(sqlText: string): string[] {
-  return [...sqlText.matchAll(/\b(?:from|join)\s+"(\w+)"/gi)].map((match) => match[1]);
-}
-
-async function compiledRelations(read: (db: never) => Promise<unknown>) {
-  const harness = compileHarness();
-  // The dummy driver returns no rows, so a read that requires one throws after compiling.
-  await read(harness.db as never).catch(() => undefined);
-  return harness.queries.map((query) => relationsOf(query.sql));
-}
-
 describe('hot reads 5: no statement reads a view', () => {
   const TABLES = [
     'KeyValue',
@@ -754,8 +720,8 @@ describe('hot reads 5: no statement reads a view', () => {
 
   it('control: the relation extractor finds a view a statement reads', () => {
     expect(relationsOf('select * from "UserStat" inner join "User" on 1 = 1')).toEqual([
-      'UserStat',
       'User',
+      'UserStat',
     ]);
   });
 
@@ -763,17 +729,17 @@ describe('hot reads 5: no statement reads a view', () => {
   // the one statement over Post and EntityCollaborator.
   it.each<[string, (db: never) => Promise<unknown>, string[][]]>([
     ['a KeyValue row', (db) => readKeyValueViaKysely(db, 'k'), [['KeyValue']]],
-    ["a post's Model3D", (db) => readPostModel3dViaKysely(db, 1), [['Post', 'Model3D']]],
+    ["a post's Model3D", (db) => readPostModel3dViaKysely(db, 1), [['Model3D', 'Post']]],
     [
       'the dismissed announcement ids',
       (db) =>
         readDismissedAnnouncementIdsViaKysely(db, { userId: 1, now: NOW, domain: DomainColor.red }),
-      [['AnnouncementDismissal', 'Announcement']],
+      [['Announcement', 'AnnouncementDismissal']],
     ],
     [
       "a post's collaborators",
       (db) => readPostCollaboratorsViaKysely(db, undefined as never, 1),
-      [['Post', 'EntityCollaborator']],
+      [['EntityCollaborator', 'Post']],
     ],
     ['a home block', (db) => readHomeBlockViaKysely(db, 1), [['HomeBlock']]],
     ['the unclaimed prize count', (db) => countUnclaimedPrizesViaKysely(db, 1), [['Prize']]],
@@ -786,7 +752,7 @@ describe('hot reads 5: no statement reads a view', () => {
     [
       "the download path's model version",
       (db) => readModelVersionForFileViaKysely(db, 1),
-      [['ModelVersion', 'Model']],
+      [['Model', 'ModelVersion']],
     ],
     [
       'an image reaction id',

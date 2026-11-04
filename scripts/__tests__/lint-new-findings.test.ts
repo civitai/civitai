@@ -242,7 +242,8 @@ describe('collect + compare with the real ESLint and Prettier', () => {
 
   beforeEach(() => {
     tree = mkdtempSync(join(tmpdir(), 'lint-new-e2e-'));
-    symlinkSync(NODE_MODULES, join(tree, 'node_modules'));
+    // A junction needs no admin rights or Developer Mode on Windows; elsewhere the type is ignored.
+    symlinkSync(NODE_MODULES, join(tree, 'node_modules'), 'junction');
     mkdirSync(join(tree, 'out'));
     put('.prettierrc', '{ "singleQuote": true }\n');
     // Pre-existing debt at base: an ESLint error and an unformatted file.

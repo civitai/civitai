@@ -301,7 +301,9 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
   // A banned or deleted owner cannot be minted a token, so their run is read with the service token.
   const ownerClosed = !!(model.user.bannedAt || model.user.deletedAt);
   try {
-    const token = ownerClosed ? serviceToken() : await getOrchestratorToken(model.userId);
+    const token = ownerClosed
+      ? serviceToken()
+      : await getOrchestratorToken(model.userId, undefined, { allowRestricted: true });
     let workflow: Workflow;
     try {
       workflow = await getWorkflow({ token, path: { workflowId } });

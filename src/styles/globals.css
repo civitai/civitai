@@ -104,6 +104,15 @@
   --safe-area-inset-bottom-page: var(--safe-area-inset-bottom);
 }
 
+/* Firefox for Android reports the system navigation bar as a bottom inset but lays the page out
+   above it, so paying it leaves a blank band over the bar (Chrome reports 0 there). Firefox on iOS
+   is WebKit and does not match. */
+@supports (-moz-appearance: none) {
+  :root {
+    --safe-area-inset-bottom: 0px;
+  }
+}
+
 /* 🔴 `--app-page-max-width` AND THE PLATFORM WIDTH-CAP LEDGER WERE BOTH DECLARED HERE AND
    ARE GONE. THE FULL-PAGE APP BLOCK SURFACE HAS NO PLATFORM WIDTH BOUND AT ALL — no
    custom property, no `var()` read, no per-app rule, no template, and no ledger to add one

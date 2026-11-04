@@ -6,6 +6,7 @@ import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timesta
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { needsColorSwap } from '~/utils/html-helpers';
 import { DEFAULT_ALLOWED_ATTRIBUTES, sanitizeHtml } from '~/utils/html-sanitize-helpers';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
@@ -52,6 +53,7 @@ export function RenderHtml({
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
   const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
+  const toCurrentDomain = useCurrentDomainHref();
 
   html = useMemo(() => {
     let processedHtml = html;
@@ -153,8 +155,7 @@ export function RenderHtml({
               };
         },
         a: function (tagName, attribs) {
-          if (typeof window !== 'undefined' && attribs.href)
-            attribs.href = attribs.href.replace('//civitai.com', `//${location.host}`);
+          if (attribs.href) attribs.href = toCurrentDomain(attribs.href);
 
           return {
             tagName,
@@ -172,6 +173,7 @@ export function RenderHtml({
     withProfanityFilter,
     thirdPartyAllowed,
     allowStickers,
+    toCurrentDomain,
   ]);
 
   // Stored comment content carries stickers as empty `<span data-type="sticker">`

@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconArrowBackUp, IconPhotoUp } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

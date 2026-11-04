@@ -234,7 +234,9 @@ beforeEach(() => {
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;
   }) =>
-    Object.keys(args.select ?? {}).join() === 'muted' ? { muted: false } : undefined) as never);
+    Object.keys(args.select ?? {}).join() === 'muted,bannedAt'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
@@ -324,6 +326,18 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const arg = mockSign.mock.calls[0][0];
     expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
     expect(arg.buzzBudget).toBeUndefined();
+  });
+
+  it('200: a banned account mints without spend', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      muted: false,
+      bannedAt: new Date(),
+    } as never);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).not.toContain('ai:write:budgeted');
   });
 
   it('200: an account with no row mints without spend', async () => {

@@ -27,6 +27,11 @@ const {
   mockSettingsBust: vi.fn(async () => undefined),
   mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
 }));
+const v3Tos = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
+vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  setUserCommentsV3Tos: v3Tos,
+}));
 
 vi.mock('~/server/email/templates', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -87,7 +92,13 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
 const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
-const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
+const commentV2Updates = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) => ({
+      sql: (strings as unknown as string[]).join('?').replace(/\s+/g, ' '),
+      values,
+    }))
+    .filter((c) => c.sql.includes('UPDATE "CommentV2"'));
 
 const call = () =>
   toggleBan({
@@ -104,7 +115,6 @@ beforeEach(() => {
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
   commentUpdateMany.mockResolvedValue({ count: 0 });
-  commentV2UpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('toggleBan -> user search index', () => {
@@ -197,19 +207,38 @@ describe('toggleBan -> removeComments', () => {
   it('flags both comment tables when asked, and does not touch the author-owned hide', async () => {
     await ban(true);
 
-    for (const updateMany of [commentUpdateMany, commentV2UpdateMany]) {
-      expect(updateMany).toHaveBeenCalledWith({
-        where: { userId: USER_ID, tosViolation: false },
-        data: { tosViolation: true },
-      });
-    }
+    expect(commentUpdateMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID, tosViolation: false },
+      data: { tosViolation: true },
+    });
+    const [v2] = commentV2Updates();
+    expect(v2.sql).toContain('SET "tosViolation" = true');
+    expect(v2.sql).not.toContain('hidden');
+    expect(v2.values[0]).toBe(USER_ID);
+    // A comment on a CommentV3-write surface is left to the CommentV3 pass, which locks that table
+    // first as every write there does.
+    expect(v2.sql).toContain('AND NOT ?');
+    expect(v3Tos.mock.calls).toEqual([[USER_ID]]);
+    expect((v2.values[1] as { sql: string }).sql).toContain(
+      'EXISTS (SELECT 1 FROM "CommentV3" v WHERE v.id = c2.id'
+    );
+  });
+
+  it('finishes the ban and logs it when flagging the CommentV3 comments fails', async () => {
+    v3Tos.mockRejectedValueOnce(new Error('lock timeout'));
+
+    await expect(ban(true)).resolves.toBeDefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-remove-comments', message: 'lock timeout' })
+    );
   });
 
   it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
     await ban();
 
     expect(commentUpdateMany).not.toHaveBeenCalled();
-    expect(commentV2UpdateMany).not.toHaveBeenCalled();
+    expect(commentV2Updates()).toEqual([]);
+    expect(v3Tos).not.toHaveBeenCalled();
   });
 });
 

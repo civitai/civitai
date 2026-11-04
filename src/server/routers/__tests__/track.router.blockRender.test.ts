@@ -20,6 +20,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // pull in a real connection. needsUpdate() short-circuits to false for our
 // non-'web' x-client header, so these stubs are never actually exercised.
 vi.mock('~/server/redis/client', () => ({
+  // Bound at load by `trpc.ts`'s account-standing guard; no case here reaches it.
+  redis: {},
   sysRedis: { hGetAll: vi.fn(async () => ({})) },
   withSysReadDeadline: (p: Promise<unknown>) => p,
   REDIS_SYS_KEYS: { CLIENT: 'client' },

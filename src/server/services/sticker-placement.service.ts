@@ -3,7 +3,6 @@ import { toQueueImage } from '~/server/utils/queue-image';
 import { listApprovedPlacementRows, listStickerPlacementRows } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { cosmeticCache } from '~/server/redis/caches';
 import {
@@ -770,36 +769,15 @@ async function readStickerPlacementRows({
   imageIds: number[];
   viewerId?: number;
 }): Promise<StickerPlacementRow[]> {
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    return (await listStickerPlacementRows((await loadKyselyDb()).kyselyRead, {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetIds: imageIds,
-      viewerId,
-    })) as StickerPlacementRow[];
-
-  return dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      OR: [
-        { status: 'approved' },
-        // A pending placement is visible to exactly two people: the one who paid
-        // for it, and the one being asked to accept it. Without both ids scoped
-        // this becomes "everyone sees every pending placement", which is the
-        // feature working in reverse.
-        ...(viewerId
-          ? [
-              { status: 'pending' as const, placerId: viewerId },
-              { status: 'pending' as const, ownerId: viewerId },
-            ]
-          : []),
-      ],
-    },
-    select: stickerPlacementRowSelect,
-    orderBy: { createdAt: 'asc' },
-  });
+  // A pending placement is visible to exactly two people: the one who paid for it, and the one
+  // being asked to accept it (`viewerId` as placer or owner). Without both scoped this becomes
+  // "everyone sees every pending placement", which is the feature working in reverse.
+  return (await listStickerPlacementRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetIds: imageIds,
+    viewerId,
+  })) as StickerPlacementRow[];
 }
 
 /** Each row with its `data` parsed ONCE, for both the kept-off check and the listing. */
@@ -904,21 +882,11 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
 
   // Rows rather than a groupBy, so the count agrees with the listing about
   // placements kept off an image by a moderator flag.
-  const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    ? ((await listApprovedPlacementRows((await loadKyselyDb()).kyselyRead, {
-        surface: SURFACE,
-        targetType: TARGET_TYPE,
-        targetIds: imageIds,
-      })) as { id: number; targetId: number; status: string; data: Prisma.JsonValue }[])
-    : await dbRead.placement.findMany({
-        where: {
-          surface: SURFACE,
-          targetType: TARGET_TYPE,
-          targetId: { in: imageIds },
-          status: 'approved',
-        },
-        select: { id: true, targetId: true, status: true, data: true },
-      });
+  const rows = (await listApprovedPlacementRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetIds: imageIds,
+  })) as { id: number; targetId: number; status: string; data: Prisma.JsonValue }[];
 
   return countApprovedPlacements(rows, await keptOffPlacementIds(keptOffInputs(parseRows(rows))));
 }

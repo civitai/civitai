@@ -1,4 +1,5 @@
-import { Checkbox, Input, Select, Stack } from '@mantine/core';
+import { Checkbox, Input, Stack } from '@mantine/core';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
 
@@ -192,7 +193,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               onPrev={() => cycle(-1)}
               onNext={() => cycle(1)}
               header={
-                <Select
+                <SheetSelect
                   label="Preprocessor"
                   description="Choose a control signal, or browse previews with the arrows below."
                   data={groups}

@@ -12,7 +12,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
@@ -58,7 +58,12 @@ function chatCivHosts() {
 const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
 /** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
-const v3PageBudgetOverrides: Record<string, number> = {};
+const v3PageBudgetOverrides: Record<string, number> = {
+  image: 10,
+  bountyEntry: 10,
+  review: 10,
+  post: 15,
+};
 const v3PageBudget = 40;
 
 function getCommentAutoExpandDepth(entityType: string) {
@@ -97,11 +102,6 @@ export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
     period: MetricTimeframe.AllTime,
-  },
-  questionFilterDefaults: {
-    sort: QuestionSort.MostLiked,
-    period: MetricTimeframe.AllTime,
-    limit: 50,
   },
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,
@@ -449,7 +449,25 @@ export const constants = {
      * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
      * it here and mounts `CommentSection`; notifications build their deep links from this list.
      */
-    v3ReadSurfaces: ['article'] as string[],
+    v3ReadSurfaces: [
+      'article',
+      'post',
+      'image',
+      'review',
+      'bounty',
+      'bountyEntry',
+      'challenge',
+      'crucible',
+      'storyline',
+      'model3d',
+      'appListing',
+      'comicChapter',
+    ] as string[],
+    /**
+     * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
+     * on one exists only there.
+     */
+    v3WriteSurfaces: ['article'] as string[],
     /** Most replies the v3 suite opens up front under one top-level comment. */
     v3RepliesPerRoot: 10,
     /** Replies per "show more" page in the v3 suite. */
@@ -709,6 +727,7 @@ const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    nonCommercial: true,
   },
   'SAI CLA': {
     url: '',
@@ -744,6 +763,38 @@ const baseLicenses: Record<string, LicenseDetails> = {
       'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
+  // flux1D, flagged non-commercial for Krea and Kontext; Flux.1 D keeps the unflagged entry.
+  'flux1D nc': {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
+  'flux2 dev nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  'flux nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
@@ -932,16 +983,16 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
-  'Flux.1 Krea': baseLicenses['flux1D'],
-  'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.1 Krea': baseLicenses['flux1D nc'],
+  'Flux.1 Kontext': baseLicenses['flux1D nc'],
   'Flux.3': baseLicenses['bfl tos'],
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
-  'Flux.2 D': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux2 dev nc'],
+  'Flux.2 Klein 9B': baseLicenses['flux nc'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux nc'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
   'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
@@ -1076,6 +1127,18 @@ export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLice
 
 export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
   return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
+}
+
+// Creator compensation, tips and promotion stop on every non-commercial license. Kept apart from
+// isNonCommercialBaseModel so the earnings rule can diverge from the purchase/fee rule again.
+export function stopsCreatorEarnings(baseModel?: string | null): boolean {
+  return isNonCommercialBaseModel(baseModel);
+}
+
+export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+
+export function notCommerciallyAvailableMessage(baseModel: string) {
+  return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
 }
 
 // Effective commercial-use permissions for a resource given its base model.

@@ -18,14 +18,21 @@ vi.mock('~/server/notifications/client', () => ({ notifications: {} }));
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getIdleHatOwners,
-  IDLE_HAT_NUDGE_SEND_ID,
+  getPushableUserIds,
+  IDLE_HAT_HOLDOUT_SEND_ID,
+  IDLE_HAT_NUDGE_LEGACY_SEND_ID,
+  IDLE_HAT_REMINDER_SEND_ID,
+  isInHoldout,
   runIdleHatNudge,
   type IdleHatOwner,
 } from '~/server/jobs/birthday2026-idle-hat-nudge';
 
 const DURING = new Date('2026-11-02T12:00:00Z');
 
-function setup(owners: IdleHatOwner[], { now = DURING, assigned = 'Green' } = {}) {
+function setup(
+  owners: IdleHatOwner[],
+  { now = DURING, assigned = 'Green', pushable = [] as number[] } = {}
+) {
   const calls: SendSystemNoticesInput[] = [];
   const getUserTeam = vi.fn(async (_userId: number) => assigned);
   const sendSystemNotices = vi.fn(async (input: SendSystemNoticesInput) => {
@@ -49,6 +56,7 @@ function setup(owners: IdleHatOwner[], { now = DURING, assigned = 'Green' } = {}
   const run = (query: Record<string, string> = {}) =>
     runIdleHatNudge(query, {
       getOwners: async () => owners,
+      getPushable: async (ids) => ids.filter((id) => pushable.includes(id)),
       getUserTeam,
       sendSystemNotices,
       now: () => now,
@@ -72,7 +80,8 @@ describe('birthday2026 idle hat nudge', () => {
     const result = await run({ mode: 'send' });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].sendId).toBe(IDLE_HAT_NUDGE_SEND_ID);
+    expect(calls[0].sendId).toBe(IDLE_HAT_REMINDER_SEND_ID);
+    expect(calls[0].type).toBe('event-reminder');
     expect(calls[0].url).toBe('/events/birthday2026');
     expect(calls[0].recipients).toEqual([
       { userId: 1, params: { team: 'Pink' } },
@@ -82,6 +91,50 @@ describe('birthday2026 idle hat nudge', () => {
       "Your birthday hat isn't on anything yet. Put it on an image, model or article to score for Team Pink.",
       "Your birthday hat isn't on anything yet. Put it on an image, model or article to score for Team Blue.",
     ]);
+  });
+
+  it('holds out about a tenth of the owners push would reach, as an unpushable notice with the same copy', async () => {
+    const ids = Array.from({ length: 400 }, (_, i) => i + 1);
+    const pushable = ids.filter((id) => id % 2 === 0);
+    const { run, calls } = setup(
+      ids.map((userId) => ({ userId, teams: ['Pink'] })),
+      { pushable }
+    );
+    const result = await run({ mode: 'send' });
+
+    const [reminder, holdout] = calls;
+    expect(holdout).toMatchObject({
+      sendId: IDLE_HAT_HOLDOUT_SEND_ID,
+      type: 'system-announcement',
+      message: reminder.message,
+      url: reminder.url,
+    });
+    const held = holdout.recipients!.map((r) => r.userId);
+    // Only pushable owners are split; the rest all get the reminder.
+    expect(held.every((id) => pushable.includes(id))).toBe(true);
+    expect(held.length).toBeGreaterThan(pushable.length * 0.04);
+    expect(held.length).toBeLessThan(pushable.length * 0.16);
+    expect(reminder.recipients!.map((r) => r.userId).sort((a, b) => a - b)).toEqual(
+      ids.filter((id) => !held.includes(id))
+    );
+    expect(reminder.excludeSendIds).toEqual([
+      IDLE_HAT_NUDGE_LEGACY_SEND_ID,
+      IDLE_HAT_HOLDOUT_SEND_ID,
+    ]);
+    expect(holdout.excludeSendIds).toEqual([
+      IDLE_HAT_NUDGE_LEGACY_SEND_ID,
+      IDLE_HAT_REMINDER_SEND_ID,
+    ]);
+    expect(result).toMatchObject({
+      pushable: pushable.length,
+      holdout: { counts: { queued: held.length } },
+    });
+  });
+
+  it('keeps each owner in the arm a past run put them in', () => {
+    // Pinned: a changed salt or hash would reshuffle owners between runs of a live experiment.
+    const ids = Array.from({ length: 60 }, (_, i) => i + 1);
+    expect(ids.filter(isInHoldout)).toEqual([7, 15, 41, 44, 45, 52, 58]);
   });
 
   it('asks the event for the team of an owner whose hats name several teams or none', async () => {
@@ -117,7 +170,7 @@ describe('birthday2026 idle hat nudge', () => {
   });
 });
 
-describe('getIdleHatOwners', () => {
+describe('owner queries', () => {
   const pg = new PGlite();
 
   beforeAll(async () => {
@@ -131,6 +184,13 @@ describe('getIdleHatOwners', () => {
     await pg.exec(`
       CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text NOT NULL, data jsonb);
       CREATE TABLE "UserCosmetic" ("userId" int NOT NULL, "cosmeticId" int NOT NULL, "equippedToId" int);
+      CREATE TABLE "PushSubscription" (id serial PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "UserPushSetting" ("userId" int NOT NULL, type text NOT NULL);
+      INSERT INTO "PushSubscription" ("userId") VALUES (10), (10), (12), (13);
+      INSERT INTO "UserPushSetting" VALUES
+        (10, 'event-reminder'),   -- subscribed twice, reminders on
+        (12, 'new-mention'),      -- subscribed, reminders off
+        (14, 'event-reminder');   -- reminders on, no subscription
       INSERT INTO "Cosmetic" VALUES
         (1, 'ContentDecoration', '{"event":"birthday2026","team":"Pink"}'),
         (2, 'ContentDecoration', '{"event":"birthday2026","team":"Blue"}'),
@@ -157,5 +217,9 @@ describe('getIdleHatOwners', () => {
       13: [],
       16: ['Pink'],
     });
+  });
+
+  it('getPushableUserIds: users with a subscription and push on for event-reminder, once each', async () => {
+    expect(await getPushableUserIds([10, 12, 13, 14, 99])).toEqual([10]);
   });
 });

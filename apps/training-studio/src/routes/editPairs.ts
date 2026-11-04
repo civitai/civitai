@@ -12,7 +12,7 @@ import {
 } from './trainingFlow';
 
 /** Where a pair came from — the list filters and each card's source tag read it. */
-export type PairSource = 'upload' | 'zip' | 'gen';
+export type PairSource = 'upload' | 'zip' | 'gen' | 'reuse';
 
 /** One edit-LoRA example: the image the edit starts from, its result, and the instruction that turns
  *  one into the other. Owned by the flow so it survives Back/Continue. */
@@ -262,6 +262,20 @@ export function pairItems(pairs: EditPair[]): TrainingItem[] {
         path: `main/${name}.${imgExt(pair.after!)}`,
       },
     ];
+  });
+}
+
+/** The pairs in a finished edit run's items (`pairItems`' layout, read back for "Train again"),
+ *  joined by name like a zip's folders; the instruction is the result's caption. */
+export function pairsFromItems<T extends { caption: string; path?: string }>(
+  items: T[]
+): { before: T; after?: T; instruction: string }[] {
+  const byPath = new Map(items.flatMap((i) => (i.path ? [[i.path, i] as const] : [])));
+  const match = matchZipPairs([...byPath.keys()]);
+  if (!match) return [];
+  return match.pairs.map((p) => {
+    const after = p.afterPath ? byPath.get(p.afterPath) : undefined;
+    return { before: byPath.get(p.beforePath)!, after, instruction: after?.caption.trim() ?? '' };
   });
 }
 

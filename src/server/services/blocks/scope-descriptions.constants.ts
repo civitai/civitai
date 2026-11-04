@@ -81,6 +81,9 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     // Not "under your username": the username is shown only on collections whose reviewed
     // declaration sets `showAuthor`, so the sentence claims authorship, not display.
     "Add and edit entries in this app's shared data as you — every user of the app can read them",
+  'apps:storage:import':
+    // The consent modal names each source app and its collections beside this line.
+    'Read — and, where it says so, change — your data in another app, as you',
   'collections:read:self':
     'Browse and read public Civitai collections, and your own public collections',
   'collections:write:self': 'Bookmark (follow) collections on your behalf',
@@ -110,6 +113,7 @@ export const SCOPE_PLAIN_TITLES: Record<string, string> = {
   'apps:storage:shared:write': 'Post to community data',
   'apps:storage': 'Store your data and read shared entries',
   'apps:storage:publish': 'Share entries with other users',
+  'apps:storage:import': 'Use your data from another app',
   'collections:read:self': 'Browse collections',
   'collections:write:self': 'Follow collections for you',
   'collections:read:private': 'See your private collections',

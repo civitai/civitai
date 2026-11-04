@@ -1,6 +1,7 @@
 import {
   Autocomplete,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -14,8 +15,13 @@ import { IconSearch, IconX } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { toHideableOptions } from '~/components/Account/hidden-users-options';
+import { openUnhideAllModal } from '~/components/Account/openUnhideAllModal';
 import { VirtualGrid } from '~/components/VirtualGrid/VirtualGrid';
-import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import {
+  useClearHiddenPreferences,
+  useHiddenPreferencesData,
+  useToggleHiddenPreferences,
+} from '~/hooks/hidden-preferences';
 import { SettingsSection } from '~/components/Account/SettingsLayout';
 
 import { trpc } from '~/utils/trpc';
@@ -50,6 +56,7 @@ export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
   const options = toHideableOptions(data, blockedUsers);
 
   const toggleHiddenMutation = useToggleHiddenPreferences();
+  const clearHiddenMutation = useClearHiddenPreferences();
 
   const handleToggleBlocked = async ({
     id,
@@ -100,7 +107,26 @@ export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
       <SettingsSection
         title="Hidden users"
         description="Their models, images and comments are hidden from you."
-        action={sortField}
+        action={
+          <Group gap="xs" wrap="nowrap">
+            <Button
+              size="compact-sm"
+              variant="default"
+              disabled={!hiddenUsers.length}
+              loading={clearHiddenMutation.isPending}
+              onClick={() =>
+                openUnhideAllModal({
+                  noun: 'user',
+                  count: hiddenUsers.length,
+                  onConfirm: () => clearHiddenMutation.mutateAsync({ kind: 'user' }),
+                })
+              }
+            >
+              Unhide all
+            </Button>
+            {sortField}
+          </Group>
+        }
       >
         <div className="flex flex-col gap-3">
           {searchField}

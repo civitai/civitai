@@ -59,3 +59,14 @@ describe('the way in to a reading path', () => {
     expect(path(Array.from({ length: 201 }, (_, i) => i + 1)).success).toBe(false);
   });
 });
+
+describe('the spark image', () => {
+  it('is set on create and cannot be sent on update', () => {
+    expect(
+      createStorylineSchema.parse({ title: 'A story', maxNsfwLevel: NsfwLevel.R, sparkImageId: 5 })
+    ).toMatchObject({ sparkImageId: 5 });
+    expect(updateStorylineSchema.parse({ id: 10, sparkImageId: 5 })).not.toHaveProperty(
+      'sparkImageId'
+    );
+  });
+});

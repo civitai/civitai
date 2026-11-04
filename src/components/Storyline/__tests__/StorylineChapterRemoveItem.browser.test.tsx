@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   leave: vi.fn(),
   removed: null as null | (() => void),
   remove: vi.fn(),
+  takenDown: false,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
@@ -25,15 +26,15 @@ vi.mock('@mantine/modals', async (importOriginal) => ({
 
 const OWNER = 10;
 const AUTHOR = 20;
-// The reader is on image 1 of chapter 100 (chapter 1), or image 2 or 3 of its two continuations,
-// chapters 101 and 102.
+// The reader is on image 1 of chapter 100 (chapter 1), or image 2, 3 or 4 of its continuations,
+// chapters 101 to 103.
 vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
   useStorylineMode: () => ({
     active: true,
     leave: mocks.leave,
     chapterIdOfImage: (imageId: number) => 99 + imageId,
     path: {
-      storyline: { id: 2, userId: OWNER },
+      storyline: { id: 2, userId: OWNER, tosViolation: mocks.takenDown },
       chapters: [
         { chapterId: 100, depth: 0, childCount: 2, post: { id: 500, title: 'One', userId: OWNER } },
         {
@@ -47,6 +48,14 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
           depth: 1,
           childCount: 0,
           post: { id: 502, title: 'Two, the other way', userId: AUTHOR },
+        },
+        // Someone paid to add it; only the owner's payload says so.
+        {
+          chapterId: 103,
+          depth: 1,
+          childCount: 0,
+          paid: true,
+          post: { id: 503, title: 'Two, paid for', userId: AUTHOR },
         },
       ],
     },
@@ -72,6 +81,7 @@ beforeEach(() => {
   mocks.leave.mockReset();
   mocks.removed = null;
   mocks.remove.mockReset();
+  mocks.takenDown = false;
 });
 
 describe('Remove from storyline in the reader', () => {
@@ -107,10 +117,36 @@ describe('Remove from storyline in the reader', () => {
     expect(offered()).toBe(false);
   });
 
-  test('is never offered for chapter 1', async () => {
+  test('for chapter 1, is disabled and points to deleting the storyline', async () => {
     mocks.currentUser = { id: OWNER };
     renderItem(1);
-    await expect.element(page.getByRole('menuitem', { name: 'Other' })).toBeVisible();
-    expect(offered()).toBe(false);
+    const item = page.getByRole('menuitem', { name: /Remove from storyline/ });
+    await expect.element(item).toBeDisabled();
+    await expect
+      .element(item)
+      .toHaveTextContent("Chapter 1 can't be removed. Delete the storyline");
+  });
+
+  // Its owner can't delete a taken-down storyline, so it must not send them looking for Delete.
+  test('for chapter 1 of a taken-down storyline, does not point to deleting it', async () => {
+    mocks.currentUser = { id: OWNER };
+    mocks.takenDown = true;
+    renderItem(1);
+    const item = page.getByRole('menuitem', { name: /Remove from storyline/ });
+    await expect.element(item).toBeDisabled();
+    await expect.element(item).toHaveTextContent("Chapter 1 can't be removed");
+    expect(document.body.textContent).not.toContain('Delete the storyline');
+  });
+
+  test('for a chapter someone paid to add, is disabled for the owner and says why', async () => {
+    mocks.currentUser = { id: OWNER };
+    renderItem(4);
+    const item = page.getByRole('menuitem', { name: /Remove from storyline/ });
+    await expect.element(item).toBeDisabled();
+    await expect
+      .element(item)
+      .toHaveTextContent("Someone paid to add this chapter, so it can't be removed");
+    await item.click({ force: true });
+    expect(mocks.remove).not.toHaveBeenCalled();
   });
 });

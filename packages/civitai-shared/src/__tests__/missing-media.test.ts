@@ -240,10 +240,9 @@ describe('assertMediaPresentForPublish — the url decides whether a probe happe
      * `onSkipped` — whose whole job is counting the short-circuit that happens BEFORE any store is
      * consulted.
      *
-     * This file sits under a workspace package's `src`, which tsconfig INCLUDES — the exclusion for
-     * `__tests__` is scoped to the ROOT `src` tree only — so `pnpm typecheck` reads these lines. If
-     * the type widened, the suppression would be unused and TS2578 fails the run. The assertion IS
-     * the `@ts-expect-error`.
+     * `pnpm run typecheck:tests` reads these lines (test files are not in `pnpm typecheck`). If the
+     * type widened, the suppression would be unused and TS2578 fails the run. The assertion IS the
+     * `@ts-expect-error`.
      */
     await assertMediaPresentForPublish({
       url: KEY,

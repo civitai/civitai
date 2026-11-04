@@ -516,6 +516,7 @@ describe('deleteUser under a legal hold', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'account-legal-hold',
+        message: 'Account deletion refused',
         details: { userId: IMAGE_IN_REVIEW, legs: ['image-review'] },
       })
     );

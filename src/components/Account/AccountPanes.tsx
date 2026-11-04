@@ -3,6 +3,7 @@ import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
+import { AppStorageCard } from '~/components/Account/AppStorageCard';
 import { CatalogItemsCard } from '~/components/Account/CatalogItemsCard';
 import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
@@ -10,6 +11,8 @@ import { DeleteCard } from '~/components/Account/DeleteCard';
 import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
+import { ShowcaseHatSetting } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
+import { HatTurfSetting } from '~/components/Account/HatTurfSetting';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
@@ -49,6 +52,8 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
       return (
         <SettingsStack>
           <ProfileCard flat />
+          <ShowcaseHatSetting />
+          <HatTurfSetting />
           <SocialProfileCard flat />
           {features.strikes && <StrikesCard flat />}
           <div className="flex flex-col gap-3">
@@ -94,6 +99,8 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           {features.oauthApps && <OAuthAppsCard flat />}
           {features.oauthApps && <ConnectedAppsCard flat />}
           {features.oauthApps && <CatalogItemsCard flat />}
+          {/* Self-gates on the App Blocks flag and renders nothing without app data. */}
+          <AppStorageCard flat />
         </SettingsStack>
       );
 

@@ -127,7 +127,11 @@ beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ) => runChainWalk(renderedSql(strings, values))) as never);
+  ) => {
+    const sql = renderedSql(strings, values);
+    // An unresolved chain also asks CommentV3; none of these comments is on a CommentV3 surface.
+    return sql.includes('FROM "CommentV3" c') ? [] : runChainWalk(sql);
+  }) as never);
   dbMock.dbWrite.thread.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) => threads[where.id] ?? null) as never
   );

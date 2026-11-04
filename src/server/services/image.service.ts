@@ -10,6 +10,7 @@ import {
   type MediaProbeAnswer,
   summarizeProbeError,
 } from '@civitai/shared';
+import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -66,6 +67,7 @@ import {
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
+  imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
@@ -2394,11 +2396,7 @@ const getAllImagesUncaptured = async (
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
     );
     // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
-    AND.push(
-      userId
-        ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-        : Prisma.sql`(i."blockedFor" IS NULL)`
-    );
+    AND.push(...imageBlockedForConditions({ userId }));
   }
 
   if (disablePoi) {
@@ -6412,6 +6410,8 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
+  // With no user (the shared imagesForModelVersionsCache), this drops every blocked image.
+  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
@@ -6670,6 +6670,7 @@ export const getImagesForPosts = async ({
         : Prisma.sql`i."ingestion" != 'Blocked'`
     );
   }
+  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
@@ -6949,6 +6950,7 @@ export const getImagesByEntity = async ({
       AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
     }
   }
+  AND.push(...imageBlockedForConditions({ userId, isModerator }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -8319,9 +8321,19 @@ export async function resolveIngestionError({
       userId: true,
       metadata: true,
       url: true,
+      blockedFor: true,
+      needsReview: true,
+      user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
   if (!image) throw new Error('Image not found');
+  const refusal = ingestionResolveRefusal({
+    blockedFor: image.blockedFor,
+    needsReview: image.needsReview,
+    ownerBannedAt: image.user.bannedAt,
+    ownerDeletedAt: image.user.deletedAt,
+  });
+  if (refusal) throw throwBadRequestError(refusal);
 
   /**
    * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
@@ -8384,16 +8396,25 @@ export async function resolveIngestionError({
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 
-  await dbWrite.image.update({
-    where: { id },
+  // Matched on what was read, so a block or ban landing after the replica read is not lifted.
+  const { count } = await dbWrite.image.updateMany({
+    where: {
+      id,
+      blockedFor: image.blockedFor,
+      needsReview: image.needsReview,
+      user: { bannedAt: null, deletedAt: null },
+    },
     data: {
       nsfwLevel,
       nsfwLevelLocked: true,
       ingestion: ImageIngestionStatus.Scanned,
+      blockedFor: null,
       scannedAt: new Date(),
       metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
+  if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
+  if (image.blockedFor != null) await dropBlockedImageDeleteQueue([id]);
   await imageMetadataCache.refresh(id);
 
   await tagIdsForImagesCache.refresh(id);

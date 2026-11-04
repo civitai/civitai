@@ -8,9 +8,9 @@ import {
   Loader,
   RingProgress,
   Text,
-  Tooltip,
   Anchor,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import {
@@ -26,11 +26,14 @@ import {
   IconInfoHexagon,
   IconTrash,
   IconLink,
+  IconListDetails,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
-import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
+import { GenerationDetailsTable } from '~/components/ImageGeneration/GenerationDetails';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DurationIcon } from '~/components/ImageGeneration/DurationIcon';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
@@ -105,6 +108,9 @@ import {
 import Model3DLightbox from '~/components/ImageGeneration/Model3DLightbox';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { workflowConfigs } from '~/shared/generation/config/workflows';
+import { polygenVersionOptions } from '~/shared/form-graph/generation/model3d/polygen.graph';
+import { tripoVersionOptions } from '~/shared/form-graph/generation/model3d/tripo.graph';
+import { migrateModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -112,6 +118,10 @@ const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
 ];
 
 /** 3D ecosystem key → user-facing model name shown on the queue card. */
+const POLYGEN_VERSION_LABELS = new Map<string, string>(
+  [...polygenVersionOptions, ...tripoVersionOptions].map((o) => [o.value, o.label])
+);
+
 const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
   PolyGen: 'Meshy',
   Tripo: 'Tripo',
@@ -132,6 +142,7 @@ export function QueueItem({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
+  const compact = useMobileGenerator();
 
   const { unstableResources } = useGenerationConfig();
 
@@ -279,8 +290,16 @@ export function QueueItem({
   // The model (Meshy/Tripo/Hunyuan3D) that generated the mesh. Derived from the
   // ecosystem carried in the params snapshot; legacy items predate the model
   // selector, so any 3D item without an ecosystem is Meshy (PolyGen).
+  const polyGenModelVersion = isPolyGen
+    ? (migrateModel3dParams(params as Record<string, unknown>).version as string | undefined)
+    : undefined;
   const polyGenModelLabel = isPolyGen
-    ? POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy'
+    ? [
+        POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy',
+        POLYGEN_VERSION_LABELS.get(polyGenModelVersion ?? ''),
+      ]
+        .filter(Boolean)
+        .join(' ')
     : null;
 
   const engine = params.engine as string | undefined;
@@ -295,7 +314,7 @@ export function QueueItem({
   const stepDisplay = workflowDefinition?.stepDisplay ?? 'inline';
 
   return (
-    <Card ref={ref} withBorder px="xs" id={id}>
+    <Card ref={ref} withBorder padding="xs" pb={0} id={id}>
       {inView && (
         <Card.Section py={4} inheritPadding withBorder>
           <div className="flex justify-between">
@@ -314,30 +333,34 @@ export function QueueItem({
               <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
-              {(!!request.cost?.total || !!refund) && (
-                <GenerationCostPopover
-                  workflowCost={request.cost}
-                  transactions={request.transactions}
-                  refund={refund}
-                  readOnly
-                  variant="badge"
-                />
-              )}
-              {request.transactions.length > 0 && (
-                <TransactionsPopover data={request.transactions} />
-              )}
-              {!!request.duration && currentUser?.isModerator && (
+              {/* Cost and workflow wrap to the next line together. */}
+              <div className="flex min-w-0 flex-nowrap items-center gap-1 empty:hidden">
+                {(!!request.cost?.total || !!refund) && (
+                  <GenerationCostPopover
+                    workflowCost={request.cost}
+                    transactions={request.transactions}
+                    refund={refund}
+                    readOnly
+                    variant="badge"
+                  />
+                )}
+                {/* The cost badge lists them under Paid With; this is for a request with no cost. */}
+                {request.transactions.length > 0 && !request.cost?.total && !refund && (
+                  <TransactionsPopover data={request.transactions} />
+                )}
+                {workflowDefinition && (
+                  <Badge
+                    radius="sm"
+                    color="violet"
+                    size="sm"
+                    classNames={{ label: 'overflow-hidden' }}
+                  >
+                    {workflowDefinition.label}
+                  </Badge>
+                )}
+              </div>
+              {!!request.duration && currentUser?.isModerator && !compact && (
                 <DurationIcon seconds={request.duration} />
-              )}
-              {workflowDefinition && (
-                <Badge
-                  radius="sm"
-                  color="violet"
-                  size="sm"
-                  classNames={{ label: 'overflow-hidden' }}
-                >
-                  {workflowDefinition.label}
-                </Badge>
               )}
               {polyGenChipLabel && !workflowDefinition && (
                 <Badge
@@ -372,7 +395,8 @@ export function QueueItem({
             </div>
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton request={request} hideDetails={hideDetails} />
-              {currentUser?.isModerator && (
+              {/* The dashboard link stays off the phone card. */}
+              {currentUser?.isModerator && !compact && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
                     size="md"
@@ -388,7 +412,13 @@ export function QueueItem({
                 </ButtonTooltip>
               )}
               <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
-                <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                <LegacyActionIcon
+                  size="md"
+                  p={4}
+                  radius={0}
+                  onClick={handleCopy}
+                  aria-label="Copy Workflow ID"
+                >
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
                 </LegacyActionIcon>
               </ButtonTooltip>
@@ -399,6 +429,7 @@ export function QueueItem({
                   </LegacyActionIcon>
                 </ButtonTooltip>
               )}
+              {!hideDetails && <QueueItemDetails params={details} />}
               <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
             </div>
           </div>
@@ -485,18 +516,37 @@ export function QueueItem({
           </div>
         </>
       )}
-
-      {inView && !hideDetails && (
-        <Card.Section withBorder className="-mx-2">
-          <GenerationDetails
-            label="Additional Details"
-            params={details}
-            labelWidth={150}
-            paperProps={{ radius: 0, style: { borderWidth: '1px 0 0 0' } }}
-          />
-        </Card.Section>
-      )}
     </Card>
+  );
+}
+
+/** The card's parameters: a popover on desktop, a sheet on a phone. */
+export function QueueItemDetails({ params }: { params: Record<string, unknown> }) {
+  const [opened, setOpened] = useState(false);
+
+  return (
+    <PopoverOrSheet
+      opened={opened}
+      onClose={() => setOpened(false)}
+      title="Details"
+      popoverProps={{ position: 'bottom-end', width: 380 }}
+      dropdownProps={{ className: 'max-h-[60vh] overflow-y-auto' }}
+      target={
+        <ButtonTooltip {...tooltipProps} label="Details" disabled={opened}>
+          <LegacyActionIcon
+            size="md"
+            p={4}
+            radius={0}
+            aria-label="Details"
+            onClick={() => setOpened((value) => !value)}
+          >
+            <IconListDetails />
+          </LegacyActionIcon>
+        </ButtonTooltip>
+      }
+    >
+      <GenerationDetailsTable params={params} labelWidth={150} />
+    </PopoverOrSheet>
   );
 }
 

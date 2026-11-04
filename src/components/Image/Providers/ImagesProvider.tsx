@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
 import { RemixGalleryBatchProvider } from '~/components/RemixGallery/RemixGalleryBatchProvider';
+import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StorylineBatchProvider } from '~/components/Storyline/StorylineBatchProvider';
 import { uniquePostIds } from '~/components/Storyline/storyline-mode.utils';
@@ -36,6 +37,8 @@ type ImagesContextProps = {
    * viewer's own setting alone everywhere else.
    */
   revealStickers?: boolean;
+  /** No Hat Turf on these cards, and none of its fetches. */
+  hideHatTurf?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -66,6 +69,7 @@ export function ImagesProvider({
   hideReactions,
   hideStickerBadge,
   revealStickers,
+  hideHatTurf,
   collectionId,
   judgeInfo,
   judgingCategories,
@@ -105,9 +109,11 @@ export function ImagesProvider({
   return (
     <ImagesContext.Provider value={state}>
       <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
-        <RemixGalleryBatchProvider imageIds={imageIds}>
-          <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
-        </RemixGalleryBatchProvider>
+        <TurfSummaryProvider imageIds={imageIds} gate={hideHatTurf ? null : undefined}>
+          <RemixGalleryBatchProvider imageIds={imageIds}>
+            <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
+          </RemixGalleryBatchProvider>
+        </TurfSummaryProvider>
       </StickerPlacementBatchProvider>
     </ImagesContext.Provider>
   );

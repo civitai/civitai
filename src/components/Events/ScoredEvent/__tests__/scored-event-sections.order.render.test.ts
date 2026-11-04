@@ -77,6 +77,10 @@ vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   HatCatalogPreview: marker('catalog'),
 }));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marker('rules') }));
+// Inside the standings section; its own browser test covers it.
+vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
+  HatTurfEventSection: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
   TopHats: marker('topHats'),

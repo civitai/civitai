@@ -1,0 +1,332 @@
+import { readFileSync } from 'fs';
+import path from 'path';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+
+vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
+  getDocStoreMaintenance: () => ({
+    migrateDocuments: () => {
+      throw new Error('these cases never reach a page');
+    },
+  }),
+}));
+
+const {
+  closeStorageMigrationRunsForRequest,
+  reserveStorageMigrationRuns,
+  resumeStorageMigrationRuns,
+  runStorageMigrationsForRequest,
+} = await import('~/server/services/apps/storage-migration-run.service');
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+/**
+ * The migration-run SQL against a REAL Postgres (PGlite), with the REAL manual-apply
+ * `migration.sql`: every raw statement of `storage-migration-run.service.ts` that the other suites
+ * only see through a mocked `$queryRaw` — the approve gate's lock, join and reservation, the
+ * claim/save pair, the cap cleanup and the close. The canonical db mock's raw methods are routed to
+ * the database (`pgliteRaw`, the parameterised statement Prisma would send), and `$transaction`
+ * runs its callback inside a real BEGIN/COMMIT, so `SET LOCAL` and `pg_advisory_xact_lock` run as
+ * in production. Only the two Prisma model reads `loadTarget` makes stay mocked.
+ *
+ * Expected values are literals read back from the table.
+ */
+
+const MIGRATION = path.resolve(
+  __dirname,
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261221120000_app_storage_migration_runs/migration.sql'
+);
+
+const APP = 'apb_SQL1';
+const SLUG = 'card-app';
+const RUN_MANIFEST = {
+  storage: {
+    collections: {
+      cards: { visibility: 'private', schema: { type: 'object', required: ['status'] } },
+      notes: { visibility: 'private' },
+    },
+  },
+};
+
+let db: PGlite;
+
+/** The rows of the runs table, as the assertions read them. */
+async function rows() {
+  return (
+    await db.query<Record<string, unknown>>(
+      `SELECT publish_request_id, collection, status, attempts, claim_token
+       FROM app_storage_migration_runs ORDER BY publish_request_id, collection`
+    )
+  ).rows;
+}
+
+async function insertRequest(id: string, manifest: unknown, status = 'approved') {
+  await db.query(
+    `INSERT INTO app_block_publish_requests (id, slug, status, manifest, reviewed_at)
+     VALUES ($1, $2, $3, $4::jsonb, now())`,
+    [id, SLUG, status, JSON.stringify(manifest)]
+  );
+}
+
+/** One run row, with the fields a case sets. */
+async function insertRun(r: {
+  request: string;
+  collection: string;
+  status: string;
+  attempts?: number;
+  token?: string | null;
+  heartbeatMinutesAgo?: number | null;
+}) {
+  await db.query(
+    `INSERT INTO app_storage_migration_runs
+       (publish_request_id, collection, app_block_id, ops, status, attempts, claim_token, heartbeat_at)
+     VALUES ($1, $2, $3, '[]'::jsonb, $4, $5, $6,
+       CASE WHEN $7::int IS NULL THEN NULL ELSE now() - make_interval(mins => $7::int) END)`,
+    [
+      r.request,
+      r.collection,
+      APP,
+      r.status,
+      r.attempts ?? 0,
+      r.token ?? null,
+      r.heartbeatMinutesAgo ?? null,
+    ]
+  );
+}
+
+beforeAll(async () => {
+  db = new PGlite();
+  // The two tables the runs table's foreign keys name, with the columns these statements read.
+  await db.exec(`
+    CREATE TABLE app_blocks (id TEXT PRIMARY KEY);
+    CREATE TABLE app_block_publish_requests (
+      id TEXT PRIMARY KEY, slug TEXT NOT NULL, status TEXT NOT NULL,
+      manifest JSONB NOT NULL, reviewed_at TIMESTAMPTZ
+    );
+  `);
+  await db.exec(readFileSync(MIGRATION, 'utf8'));
+  // The file is idempotent: a second application is a no-op, not an error.
+  await db.exec(readFileSync(MIGRATION, 'utf8'));
+  await db.query(`INSERT INTO app_blocks (id) VALUES ($1)`, [APP]);
+});
+afterAll(async () => {
+  await db?.close();
+});
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  await db.exec(`DELETE FROM app_storage_migration_runs; DELETE FROM app_block_publish_requests;`);
+  const pg = pgliteRaw(db);
+  dbMock.dbWrite.$queryRaw.mockImplementation(pg.queryRaw as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation(pg.executeRaw as never);
+  dbMock.dbWrite.$executeRawUnsafe.mockImplementation((async (sql: string) => {
+    await db.query(sql);
+    return 0;
+  }) as never);
+  dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) => {
+    await db.exec('BEGIN');
+    try {
+      const out = await fn(dbMock.dbWrite);
+      await db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      await db.exec('ROLLBACK');
+      throw err;
+    }
+  }) as never);
+});
+
+describe('reserveStorageMigrationRuns on a real database', () => {
+  const PLAN_CARDS = new Map([['cards', [{ op: 'remove' as const, path: '/legacy' }]]]);
+  const PLAN_NOTES = new Map([['notes', [{ op: 'remove' as const, path: '/old' }]]]);
+  const withNotesChanged = {
+    ...RUN_MANIFEST,
+    storage: {
+      collections: {
+        ...RUN_MANIFEST.storage.collections,
+        notes: { visibility: 'private', schema: { type: 'object' } },
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    await insertRequest('pubreq_A', RUN_MANIFEST);
+    await insertRequest('pubreq_B', withNotesChanged, 'pending');
+    await insertRun({ request: 'pubreq_A', collection: 'cards', status: 'running' });
+  });
+
+  it('🔴 an open run on the same collection refuses, and reserves nothing', async () => {
+    await expect(
+      reserveStorageMigrationRuns({
+        appBlockId: APP,
+        publishRequestId: 'pubreq_B',
+        manifest: RUN_MANIFEST,
+        plans: PLAN_CARDS,
+      })
+    ).rejects.toThrow(
+      'Cannot approve: this version changes the storage of collection cards, and an earlier storage migration of that collection is still running (publish request pubreq_A, collection cards); approving now would leave it half-done. Approve again once it has finished.'
+    );
+    expect(await rows()).toEqual([
+      {
+        publish_request_id: 'pubreq_A',
+        collection: 'cards',
+        status: 'running',
+        attempts: 0,
+        claim_token: null,
+      },
+    ]);
+  });
+
+  it('🔴 an open run on a different collection does not refuse; the new plan gets its own row; a re-run adds none', async () => {
+    const reserve = () =>
+      reserveStorageMigrationRuns({
+        appBlockId: APP,
+        publishRequestId: 'pubreq_B',
+        manifest: withNotesChanged,
+        plans: PLAN_NOTES,
+      });
+    await reserve();
+    // The same request reserved again (a retried approve): ON CONFLICT, no second row.
+    await reserve();
+    expect(await rows()).toEqual([
+      {
+        publish_request_id: 'pubreq_A',
+        collection: 'cards',
+        status: 'running',
+        attempts: 0,
+        claim_token: null,
+      },
+      {
+        publish_request_id: 'pubreq_B',
+        collection: 'notes',
+        status: 'pending',
+        attempts: 0,
+        claim_token: null,
+      },
+    ]);
+    const ops = await db.query<{ ops: unknown }>(
+      `SELECT ops FROM app_storage_migration_runs WHERE publish_request_id = 'pubreq_B'`
+    );
+    expect(ops.rows).toEqual([{ ops: [{ op: 'remove', path: '/old' }] }]);
+  });
+});
+
+describe('claim and save on a real database', () => {
+  beforeEach(async () => {
+    await insertRequest('pubreq_R', RUN_MANIFEST);
+  });
+
+  it('🔴 a stale-heartbeat reclaim counts an attempt and takes a new claim token', async () => {
+    await insertRun({
+      request: 'pubreq_R',
+      collection: 'cards',
+      status: 'running',
+      attempts: 1,
+      token: 'lost-runner',
+      heartbeatMinutesAgo: 30,
+    });
+    // The request reads as pending, so the reclaimed run waits: one claim, one save, no page.
+    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: SLUG,
+      manifest: RUN_MANIFEST,
+      status: 'pending',
+    });
+    await runStorageMigrationsForRequest('pubreq_R', ['cards']);
+    const [row] = await rows();
+    expect([row.status, row.attempts]).toEqual(['pending', 2]);
+    expect(row.claim_token).not.toBe('lost-runner');
+    expect(typeof row.claim_token).toBe('string');
+  });
+
+  it('a run with a fresh heartbeat is not claimed', async () => {
+    await insertRun({
+      request: 'pubreq_R',
+      collection: 'cards',
+      status: 'running',
+      token: 'live-runner',
+      heartbeatMinutesAgo: 1,
+    });
+    await runStorageMigrationsForRequest('pubreq_R', ['cards']);
+    const [row] = await rows();
+    expect([row.status, row.attempts, row.claim_token]).toEqual(['running', 0, 'live-runner']);
+    expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("🔴 a save under a lost claim is refused: the other runner's row is not overwritten", async () => {
+    await insertRun({ request: 'pubreq_R', collection: 'cards', status: 'pending' });
+    // Between this runner's claim and its save, another runner re-claims the row.
+    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockImplementation((async () => {
+      await db.query(
+        `UPDATE app_storage_migration_runs SET claim_token = 'other-runner', status = 'running'
+         WHERE publish_request_id = 'pubreq_R'`
+      );
+      return { slug: SLUG, manifest: RUN_MANIFEST, status: 'pending' };
+    }) as never);
+    await runStorageMigrationsForRequest('pubreq_R', ['cards']);
+    const [row] = await rows();
+    expect([row.status, row.claim_token]).toEqual(['running', 'other-runner']);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        message: 'storage migration run pubreq_R/cards was re-claimed by another runner',
+      }),
+      'app-blocks'
+    );
+  });
+});
+
+describe('the cap cleanup on a real database', () => {
+  it('🔴 fails a pending run at the cap and a stale running one, and leaves a fresh running one alone', async () => {
+    for (const id of ['pubreq_P', 'pubreq_S', 'pubreq_F']) await insertRequest(id, RUN_MANIFEST);
+    await insertRun({ request: 'pubreq_P', collection: 'cards', status: 'pending', attempts: 5 });
+    await insertRun({
+      request: 'pubreq_S',
+      collection: 'cards',
+      status: 'running',
+      attempts: 5,
+      heartbeatMinutesAgo: 30,
+    });
+    await insertRun({
+      request: 'pubreq_F',
+      collection: 'cards',
+      status: 'running',
+      attempts: 5,
+      heartbeatMinutesAgo: 1,
+    });
+    expect(await resumeStorageMigrationRuns()).toEqual({ advanced: 0, tableMissing: false });
+    expect((await rows()).map((r) => [r.publish_request_id, r.status])).toEqual([
+      ['pubreq_F', 'running'],
+      ['pubreq_P', 'failed'],
+      ['pubreq_S', 'failed'],
+    ]);
+    const failed = await db.query<{ last_error: string; finished: boolean }>(
+      `SELECT last_error, finished_at IS NOT NULL AS finished FROM app_storage_migration_runs
+       WHERE publish_request_id = 'pubreq_P'`
+    );
+    expect(failed.rows).toEqual([
+      {
+        last_error:
+          'gave up: the run reached the attempt cap without finishing (its last error, if any, was: none)',
+        finished: true,
+      },
+    ]);
+  });
+});
+
+describe('closeStorageMigrationRunsForRequest on a real database', () => {
+  it("🔴 supersedes the request's pending and running rows, and nothing else", async () => {
+    for (const id of ['pubreq_X', 'pubreq_Y']) await insertRequest(id, RUN_MANIFEST);
+    await insertRun({ request: 'pubreq_X', collection: 'cards', status: 'pending' });
+    await insertRun({ request: 'pubreq_X', collection: 'notes', status: 'completed' });
+    await insertRun({ request: 'pubreq_Y', collection: 'cards', status: 'pending' });
+    await closeStorageMigrationRunsForRequest('pubreq_X');
+    expect((await rows()).map((r) => [r.publish_request_id, r.collection, r.status])).toEqual([
+      ['pubreq_X', 'cards', 'superseded'],
+      ['pubreq_X', 'notes', 'completed'],
+      ['pubreq_Y', 'cards', 'pending'],
+    ]);
+  });
+});

@@ -10,9 +10,8 @@ export type ThreadParentColumn =
   | 'articleId'
   | 'bountyId'
   | 'bountyEntryId'
-  | 'questionId'
-  | 'answerId'
-  | 'reviewId';
+  | 'reviewId'
+  | 'storylineId';
 
 /** For each column, a query selecting the ids of the parent rows about to be deleted. */
 export type ThreadParents = Partial<Record<ThreadParentColumn, Prisma.Sql>>;
@@ -102,12 +101,6 @@ export const modelThreadParents = (doomed: Prisma.Sql): ThreadParents => ({
 export const bountyThreadParents = (doomed: Prisma.Sql): ThreadParents => ({
   bountyId: doomed,
   bountyEntryId: Prisma.sql`SELECT e.id FROM "BountyEntry" e WHERE e."bountyId" IN (${doomed})`,
-});
-
-/** The threads that cascade with a question: its own, and its answers'. */
-export const questionThreadParents = (doomed: Prisma.Sql): ThreadParents => ({
-  questionId: doomed,
-  answerId: Prisma.sql`SELECT a.id FROM "Answer" a WHERE a."questionId" IN (${doomed})`,
 });
 
 /**

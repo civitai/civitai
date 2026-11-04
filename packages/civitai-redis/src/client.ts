@@ -2367,6 +2367,14 @@ export const REDIS_SYS_KEYS = {
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
     /**
+     * APP DEV PREVIEW ERRORS — the uncaught errors (and console errors) an app's own code reported
+     * in its LIVE DEV PREVIEW (`BLOCK_ERROR {fatal:false}` from a dev-tunnel host only), keyed
+     * `${DEV_PREVIEW_ERRORS}:<userId>:<blockId>`. A capped LIST (newest first, last 200), hard-TTL
+     * EX 2h, written only while the user has a live dev tunnel of that app; read back by App
+     * Assistant's app-activity read for that same user (preview-errors.service.ts). On `sysRedis`.
+     */
+    DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
+    /**
      * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
      * post-paid customComfy job's terminal poll/cancel can refund the
      * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
@@ -2564,6 +2572,11 @@ export const REDIS_SYS_KEYS = {
     // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
     // voted on this judging session, and how long idle ends that session. Missing = defaults.
     CRUCIBLE_JUDGING: 'system:crucible-judging',
+    // JSON { crucibles: { [crucibleId]: { theme, themeElements, judgeId, mode, reviewPrompt? } } }:
+    // the crucibles whose entries the AI theme review checks. Missing or invalid = none.
+    CRUCIBLE_THEME_REVIEW: 'system:crucible-theme-review',
+    // Prefix for `:<crucibleId>`, a hash of entryId -> JSON { at, userId } of its acceptance.
+    CRUCIBLE_ENTRY_ACCEPTED: 'system:crucible-entry-accepted',
     // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
@@ -2581,6 +2594,9 @@ export const REDIS_SYS_KEYS = {
   NOTICES: {
     // Hash of userId → sent-at ISO time; a field is claimed before its email goes out.
     BANKING_CHANGE_SENT: 'notices:banking-change-sent',
+    KLEIN9B_SENT: 'notices:klein9b-sent',
+    NC_RECENT_SENT: 'notices:nc-recent-sent',
+    NC_OLDER_SENT: 'notices:nc-older-sent',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
@@ -2872,6 +2888,10 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  MEMBERSHIP_EXTEND: {
+    // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
+    LOCK: 'membership-extend:lock',
+  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
     SEND_LOCK: 'message-as-civitai:send-lock',
@@ -2879,6 +2899,10 @@ export const REDIS_SYS_KEYS = {
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
+    // Per judge: `winner>loser` for each vote, so pairs implied by their own votes can be skipped.
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
+    // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
+    ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',
@@ -3013,6 +3037,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
+    ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -3089,6 +3115,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
+    // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
+    REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3148,6 +3176,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.
     USER_CREATOR: 'packed:caches:user-creator',
+    // userId -> the event hat their avatar shows during the event (src/server/events/showcase-hat.ts).
+    SHOWCASE_HAT: 'packed:caches:showcase-hat',
     // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
     // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
     // revocation. See src/server/auth/api-key-principal-cache.ts.
@@ -3327,3 +3357,9 @@ export const REDIS_SUB_KEYS = {
     MERGING: 'merging', // sys
   },
 } as const;
+
+/**
+ * How long after a mute or unmute the account-standing cache is busted again: past the 10 s refill
+ * lock, so a refill that read the row before the change cannot leave the old standing behind.
+ */
+export const ACCOUNT_STANDING_REBUST_MS = 11_000;

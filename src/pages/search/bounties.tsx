@@ -11,6 +11,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
 import { BountyCard } from '~/components/Cards/BountyCard';
@@ -49,7 +50,9 @@ const RenderFilters = () => {
         title="Filter by Base Model"
         attribute="details.baseModel"
         sortBy={['name']}
+        limit={SEARCH_FACET_LIMIT}
         searchable
+        remoteSearch={false}
       />
       <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList title="Tags" attribute="tags.name" searchable />

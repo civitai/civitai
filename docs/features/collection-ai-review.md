@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   collectionItemId  Int64,
   entityId          Int64,                  -- the reviewed image
   userId            Int32,                  -- always -1 (system); kept for Tracker parity
-  model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.5'
+  model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.6-flash'
   decision          LowCardinality(String), -- what the rules concluded
   appliedAction     LowCardinality(String), -- what was actually done: accept | reject | stamp | none
   violations        Array(LowCardinality(String)),
@@ -135,10 +135,12 @@ collection. Lifting that restriction means fixing the notification path first.
   rejected, and picked up on a later run.
 - **`allowedNsfwLevels`** is a bitmask of `NsfwLevel` flags. Anything outside it is rejected with no
   vision call.
-- **Our own uncertainty never rejects a submission.** A response the rules cannot parse, and a
-  subject whose age the model could not determine, are both left for a human regardless of
-  `escalationAction` — a provider outage must not reject submissions and tell the submitters they
-  broke a rule.
+- **Our own uncertainty never rejects a submission.** A response the rules cannot parse, a subject
+  whose age the model could not determine, and a rating label the rules do not recognize (or none)
+  are all left for a human regardless of `escalationAction` — a provider outage must not reject
+  submissions and tell the submitters they broke a rule. An unrecognized label alongside a real
+  violation, or alongside any other escalation, is handled as that finding would be; the label
+  alone never rejects.
 - **`minorUncertain` alone does not escalate.** The prompt invites that hedge on exactly the
   stylized art these collections are made of, so on its own it would sweep up a large share of
   ordinary submissions. It escalates alongside a sexualized presentation, or when the image is
@@ -146,7 +148,9 @@ collection. Lifting that restriction means fixing the notification path first.
   so an ambiguous age matters there even where the image is otherwise wholesome.
 - **Items a moderator has already decided are left alone.** The job claims rows only while they are
   still `REVIEW` with no reviewer, so a human decision made mid-run keeps both its outcome and its
-  attribution.
+  attribution. An accept, or a rejection for a level outside `allowedNsfwLevels`, is claimed only
+  while the image still has the level it was decided on; a re-rated image is reviewed again on the
+  next run.
 - **`escalationAction: 'leaveForHuman'`** stamps `reviewedById` without changing status, so the job
   does not reclassify (and re-bill) the item on the next run.
 - The job acts as system user `-1` via an in-process `isSystem` flag on

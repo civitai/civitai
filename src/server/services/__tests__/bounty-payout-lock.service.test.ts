@@ -200,6 +200,8 @@ function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
         return [{ gone }];
       }
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
+      // No row, no lock: Postgres has nothing to hold for a bounty that is gone.
+      if (!bounty) return [];
       held.push(await rowLock.acquire());
       locked.rows ??= snapshotRows();
       return bounty ? [{ meta: null, ...bounty }] : [];
@@ -2095,6 +2097,26 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     });
 
+    it('refuses the same ruling with a different ledger reference, keeping the first', async () => {
+      await resolve();
+      await expect(
+        resolveUnpaidBountyAward({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'paid_winner',
+          ledgerReference: 'another reference',
+          moderatorId: 98,
+        })
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringContaining('manual payout'),
+      });
+      expect(unpaidAwards.get(5)).toMatchObject({
+        ledgerReference: 'manual payout to the winner',
+        resolvedById: 99,
+      });
+    });
+
     it('refuses a different ruling on a resolved award', async () => {
       await resolve();
       await expect(resolve('refunded_supporter')).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -2131,6 +2153,31 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       bounty = null;
       expect(await resolve()).toEqual({ recorded: true });
       expect(unpaidAwards.get(5)).toMatchObject({ ruling: 'paid_winner', resolvedById: 99 });
+    });
+
+    it('answers a repeat of the same ruling as not recorded, sent at once on a deleted bounty', async () => {
+      bounty = null;
+      const results = await Promise.all([resolve(), resolve()]);
+      expect(results.map((r) => r.recorded).sort()).toEqual([false, true]);
+      expect(modActivityRows.filter((r) => r.activity === 'bountyAwardResolved')).toHaveLength(1);
+    });
+
+    it('refuses the losing reference when two differ, sent at once on a deleted bounty', async () => {
+      bounty = null;
+      const results = await Promise.allSettled([
+        resolve(),
+        resolveUnpaidBountyAward({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'paid_winner',
+          ledgerReference: 'another reference',
+          moderatorId: 98,
+        }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const refused = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect(refused.reason).toMatchObject({ code: 'CONFLICT' });
+      expect(modActivityRows.filter((r) => r.activity === 'bountyAwardResolved')).toHaveLength(1);
     });
 
     it('refuses an award recorded only before the table existed, once its bounty is gone', async () => {

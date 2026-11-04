@@ -23,6 +23,10 @@ import {
   isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
+import {
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
 import { trpc } from '~/utils/trpc';
 
 interface BlockConsentModalProps {
@@ -32,6 +36,12 @@ interface BlockConsentModalProps {
   missingScopes: string[];
   /** Called after the grant lands so the host can re-mint the block token. */
   onGranted: () => void;
+  /**
+   * The blockId of a SOURCE app this app imports from, when the block asked for
+   * `apps:storage:publish` THERE (`REQUEST_CONSENT { scopes, from }`). The prompt then names
+   * that app, and Allow records the grant for it, not for this app.
+   */
+  from?: string;
 }
 
 /* The ONE scope in the vocabulary that can spend the viewer's Buzz is `BLOCK_SPEND_SCOPE`, imported
@@ -94,10 +104,29 @@ export default function BlockConsentModal({
   blockName,
   missingScopes,
   onGranted,
+  from,
 }: BlockConsentModalProps) {
   const dialog = useDialogContext();
   const [error, setError] = useState<string | null>(null);
-  const grantsSpend = missingScopes.includes(BLOCK_SPEND_SCOPE);
+  const forSource = from !== undefined;
+  const grantsSpend = !forSource && missingScopes.includes(BLOCK_SPEND_SCOPE);
+  const grantsImport = !forSource && missingScopes.includes(APP_STORAGE_IMPORT_SCOPE);
+  // The import consent covers every source app the approved manifest imports from, so the
+  // prompt names each one and its collections before the viewer allows it. A prompt for a source
+  // app reads the same list, for that source's name and whether this app may write there.
+  const imports = trpc.blocks.getStorageImports.useQuery(
+    { appBlockId },
+    { enabled: grantsImport || forSource }
+  );
+  const source = forSource
+    ? imports.data?.imports.find(
+        (i) => i.from === from && i.access === 'readwrite' && i.sourceAppBlockId !== null
+      )
+    : undefined;
+  // `from` is the block's own text: until the server's imports name the source, say "another app"
+  // rather than show it.
+  const sourceName = source ? source.sourceName ?? source.from : 'another app';
+  const appLabel = blockName ?? 'This app';
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
   const grant = trpc.blocks.grantScopes.useMutation({
@@ -125,7 +154,9 @@ export default function BlockConsentModal({
     <Modal
       {...dialog}
       withCloseButton={false}
-      title={`${blockName ?? 'This app'} needs permission`}
+      title={
+        forSource ? `${appLabel} needs permission in ${sourceName}` : `${appLabel} needs permission`
+      }
     >
       <Stack gap="md">
         <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -133,7 +164,14 @@ export default function BlockConsentModal({
             <IconShieldLock size={20} />
           </ThemeIcon>
           <Text size="sm">
-            To do that, <strong>{blockName ?? 'this app'}</strong> needs your permission to:
+            To do that, <strong>{blockName ?? 'this app'}</strong> needs your permission
+            {forSource ? (
+              <>
+                {' '}
+                in <strong>{sourceName}</strong>
+              </>
+            ) : null}{' '}
+            to:
           </Text>
         </Group>
         <List size="sm" spacing={4}>
@@ -147,6 +185,21 @@ export default function BlockConsentModal({
                   </Text>
                   {sensitive && <SensitiveScopeBadge size="xs" />}
                 </Group>
+                {forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
+                  <SourcePublishConsentDetail
+                    consumerName={appLabel}
+                    sourceName={sourceName}
+                    available={source !== undefined}
+                    loading={imports.isLoading}
+                  />
+                ) : null}
+                {!forSource && scope === APP_STORAGE_IMPORT_SCOPE ? (
+                  <StorageImportConsentDetail
+                    consumerName={blockName ?? 'This app'}
+                    imports={imports.data?.imports}
+                    loading={imports.isLoading}
+                  />
+                ) : null}
               </List.Item>
             );
           })}
@@ -214,7 +267,9 @@ export default function BlockConsentModal({
             size="xs"
             color="yellow"
             loading={grant.isPending}
-            disabled={budgetBlocksSubmit}
+            disabled={
+              budgetBlocksSubmit || (grantsImport && !imports.data) || (forSource && !source)
+            }
             onClick={() =>
               grant.mutate({
                 appBlockId,
@@ -226,6 +281,19 @@ export default function BlockConsentModal({
                 ...(grantsSpend && limitEnabled && budgetValid
                   ? { buzzBudgetPerDay: parsedBudget }
                   : {}),
+                // Exactly what the list above showed: the server records these and refuses the
+                // grant if the app's approved imports are no longer the same.
+                ...(grantsImport && imports.data
+                  ? {
+                      storageImports: imports.data.imports.map((i) => ({
+                        from: i.from,
+                        collections: i.collections,
+                        access: i.access,
+                      })),
+                    }
+                  : {}),
+                // The source app the grant is for; the server checks this app imports it.
+                ...(forSource ? { from } : {}),
               })
             }
           >
@@ -234,5 +302,89 @@ export default function BlockConsentModal({
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+type StorageImportRow = {
+  from: string;
+  sourceName: string | null;
+  collections: string[];
+  access: 'read' | 'readwrite';
+};
+
+/** One line per source app: both app names, the collections, and whether it can change them. */
+export function StorageImportConsentDetail({
+  consumerName,
+  imports,
+  loading,
+}: {
+  consumerName: string;
+  imports: StorageImportRow[] | undefined;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Text size="xs" c="dimmed">
+        Loading which apps…
+      </Text>
+    );
+  }
+  if (!imports || imports.length === 0) return null;
+  return (
+    <List size="xs" spacing={2} mt={4} data-testid="block-consent-storage-imports">
+      {imports.map((i) => (
+        <List.Item key={i.from}>
+          <strong>{consumerName}</strong> {i.access === 'readwrite' ? 'reads and changes' : 'reads'}{' '}
+          your {i.collections.join(', ')} in <strong>{i.sourceName ?? i.from}</strong>
+          {/* An import is not publish consent in the source: creates, updates, counters and marks
+              in its shared collections need `apps:storage:publish` there, separately (deletes do
+              not). The block asks for it with `from`, which opens this modal for the source. */}
+          {i.access === 'readwrite'
+            ? ` — as you. Changing what other people see there, such as adding entries, votes or counts, needs your separate permission in ${
+                i.sourceName ?? i.from
+              }.`
+            : ''}
+        </List.Item>
+      ))}
+    </List>
+  );
+}
+
+/**
+ * The publish grant in a SOURCE app: what the consumer's writes there do, and that the grant is
+ * the source's own. `available` is false when the consumer does not import `from` with
+ * `readwrite` from an approved app this host shows; the prompt then offers nothing to allow.
+ */
+export function SourcePublishConsentDetail({
+  consumerName,
+  sourceName,
+  available,
+  loading,
+}: {
+  consumerName: string;
+  sourceName: string;
+  available: boolean;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Text size="xs" c="dimmed">
+        Loading which app…
+      </Text>
+    );
+  }
+  if (!available) {
+    return (
+      <Text size="xs" c="red" mt={4} data-testid="block-consent-source-unavailable">
+        {consumerName} does not change your data in that app, so it cannot ask for this permission
+        there.
+      </Text>
+    );
+  }
+  return (
+    <Text size="xs" mt={4} data-testid="block-consent-source-publish">
+      Entries, votes and counts that {consumerName} adds in {sourceName} appear publicly there under
+      your account. You are giving this permission to {sourceName}, so {sourceName} can do the same.
+    </Text>
   );
 }

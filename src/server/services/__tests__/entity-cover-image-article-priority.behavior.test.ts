@@ -38,7 +38,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
       "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
-      "needsReview" text, "userId" int DEFAULT 1, index int DEFAULT 0, "postId" int,
+      "needsReview" text, "blockedFor" text, "userId" int DEFAULT 1, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
       "scanJobs" jsonb

@@ -1,4 +1,5 @@
-import { Button, Loader, Menu, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
+import { Button, Loader, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
@@ -27,9 +28,9 @@ import {
   HiddenCommentLabel,
   HideAgainButton,
   useHiddenCommentReveal,
-} from '~/components/CommentsV2/Comment/HiddenComment';
-import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
-import { useScrollToHighlightedComment } from '~/components/CommentsV2/Comment/useScrollToHighlightedComment';
+} from '~/components/CommentsV3/HiddenComment';
+import { CommentBadge } from '~/components/CommentsV3/CommentBadge';
+import { useScrollToHighlightedComment } from '~/components/CommentsV3/useScrollToHighlightedComment';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -51,7 +52,7 @@ import { CommentEditor } from './CommentComposer';
 import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
 import { useCommentMutations } from './useCommentMutations';
-import classes from '~/components/CommentsV2/Comment/Comment.module.css';
+import classes from '~/components/CommentsV3/CommentItem.module.css';
 
 /** An editor's trailing empty paragraph, which would render as a blank line under the text. */
 const stripTrailingEmpty = (html: string) => html.replace(/(<p><\/p>)+$/, '');
@@ -193,7 +194,7 @@ export function CommentItem({
       ) : concealed ? (
         <HiddenCommentAvatar size={26} />
       ) : (
-        <UserAvatar user={author} size="sm" linkToProfile />
+        <UserAvatar user={author} size="sm" linkToProfile withShowcaseHat />
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -293,7 +294,10 @@ export function CommentItem({
                       leftSection={<IconFlag size={14} stroke={1.5} />}
                       onClick={() =>
                         openReportModal({
-                          entityType: ReportEntity.CommentV2,
+                          // Reports on a CommentV3-write surface are filed against CommentV3.
+                          entityType: constants.comments.v3WriteSurfaces.includes(entityType)
+                            ? ReportEntity.CommentV3
+                            : ReportEntity.CommentV2,
                           entityId: comment.id,
                         })
                       }

@@ -89,15 +89,17 @@ section).
   choosing the main route of chapters. Setting the price, endorsing collaborators and answering
   continuations stay the creator's. Each such edit is recorded in the moderator activity log.
 - **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
-  post stays published; the storyline, its chapter order and its comments go. It is refused while a
-  paid continuation is pending or its Buzz has not settled. Only a moderator can delete one that
-  has approved a paid continuation, is under an open report, or was taken down (and not while the
-  creator's appeal is open).
+  post stays published; the storyline, its chapter order and its comments go, and the creator sees
+  the same result whatever else is true of it. Reports on it stay in the moderator queue under its
+  title, and a copy may be kept for moderators' records. It is refused while a paid continuation is
+  pending or its Buzz has not settled. Only a moderator can delete one that has approved a paid
+  continuation or was taken down (and not while the creator's appeal is open).
 - **Removing a chapter.** The creator, the chapter's author or a moderator removes a chapter from the
   storyline, from its menu on the storyline page or in the image menu while reading; its post stays
   published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a
   continuation of it waits for review or its own payment has not settled. The creator cannot remove
-  a chapter someone paid to add; its author can, and their Buzz is not returned. A taken-down
+  a chapter someone paid to add, and their menu shows it disabled with the reason; its author can,
+  and their Buzz is not returned. A taken-down
   storyline's chapters are left to moderators. A moderator's removal leaves a removed placeholder,
   as a takedown does, so the post cannot be submitted again; a removed chapter cannot be removed.
   A creator's or author's removal during an open report is removed as usual and recorded for

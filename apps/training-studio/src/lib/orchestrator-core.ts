@@ -19,6 +19,7 @@ import {
   workflowToDetail,
   workflowToRow,
   type ArchiveKind,
+  type DatasetItem,
   type GenerationItem,
   type TrainingDetail,
   type TrainingRow,
@@ -363,12 +364,12 @@ export async function getTrainingWorkflow(
   return workflowToDetail(data);
 }
 
-/** A run's dataset (blob airs + captions) — for Remix / "reuse a dataset". Empty for a run whose dataset
- *  isn't blob-backed (older or Flux.2). The token scopes to the caller, so this only reads their own runs. */
+/** A run's dataset (blob airs + captions, and an edit run's pair paths) — for Remix / "reuse a dataset".
+ *  Empty for a run whose dataset isn't blob-backed (older or Flux.2). The token scopes to the caller, so this only reads their own runs. */
 export async function getRunDataset(
   client: OrchestratorClient,
   workflowId: string
-): Promise<{ air: string; caption: string }[]> {
+): Promise<DatasetItem[]> {
   const detail = await getTrainingWorkflow(client, workflowId);
   return detail?.dataset ?? [];
 }

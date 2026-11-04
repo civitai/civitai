@@ -1,6 +1,7 @@
 import { trpc } from '~/utils/trpc';
 import type { ButtonProps } from '@mantine/core';
-import { Button, Menu } from '@mantine/core';
+import { Button } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import type { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

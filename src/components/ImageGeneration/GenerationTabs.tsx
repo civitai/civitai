@@ -1,4 +1,5 @@
-import { Tooltip, CloseButton, SegmentedControl } from '@mantine/core';
+import { CloseButton, SegmentedControl } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconArrowsDiagonal,
@@ -34,6 +35,8 @@ import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useRemixStore } from '~/store/remix.store';
 import { WorkflowLookup } from '~/components/generation_v2/WorkflowLookup';
+import { MobileGenerator } from '~/components/ImageGeneration/MobileGenerator';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 
 // Each form lane pulls in its whole engine (~50 graph modules for form-graph,
 // the data-graph tree for v1), so load only the lane the flag selects.
@@ -68,6 +71,17 @@ type CloseProps = {
 
 /** The generator as one panel: a header whose tabs switch between the form and the results. */
 export default function GenerationPanel(props: CloseProps) {
+  const mobileGenerator = useMobileGenerator();
+  if (mobileGenerator)
+    return (
+      <GenerationShell>
+        <MobileGenerator form={<GenerationForm />} {...props} />
+      </GenerationShell>
+    );
+  return <TabbedGenerationPanel {...props} />;
+}
+
+function TabbedGenerationPanel(props: CloseProps) {
   const features = useFeatureFlags();
   const view = useGenerationPanelStore((state) => state.view);
 

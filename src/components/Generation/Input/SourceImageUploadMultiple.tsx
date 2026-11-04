@@ -9,8 +9,8 @@ import {
   Card,
   ActionIcon,
   Loader,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { Dispatch, DragEvent, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {

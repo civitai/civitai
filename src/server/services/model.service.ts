@@ -1,6 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
   coverageColumn,
   coveragePair,
@@ -49,6 +50,11 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readPostModelVersionIdsViaKysely,
+  readPostModelVersionIdsViaPrisma,
+} from '~/server/services/hot-reads-7.reads';
 import { readDownedModel } from '~/server/services/model-takedown-lock';
 import {
   planReciprocalAssociations,
@@ -162,6 +168,7 @@ import {
   assertBaseModelAttestations,
   assertNoUnattestedScopeEntry,
 } from '~/server/services/base-model-attestation.service';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
@@ -329,13 +336,10 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  // The model page's read (`getModelHandler`, the only caller passing this select). With
-  // `kysely-hot-reads-2` on it reads through Kysely, in the same shape, on the client the same lag
-  // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
-  if (
-    (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
-    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
-  ) {
+  // The model page's read (`getModelHandler`, the only caller passing this select) goes through
+  // Kysely, in the same shape, on the client the same lag decision picks: `getKyselyWithoutLag` is
+  // `getDbWithoutLag`'s twin. Every other select reads through Prisma below.
+  if ((select as Prisma.ModelSelect) === modelWithDetailsSelect) {
     const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
     return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;
   }
@@ -1484,7 +1488,9 @@ export const getModelsRaw = async ({
               username: userBasicData[model.userId]?.username ?? null,
               deletedAt: userBasicData[model.userId]?.deletedAt ?? null,
               image: userBasicData[model.userId]?.image ?? null,
-              profilePicture: profilePictures?.[model.userId] ?? null,
+              profilePicture:
+                (profilePictures?.[model.userId] as (typeof profilePictures)[number] | undefined) ??
+                null,
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
@@ -2220,6 +2226,8 @@ export const deleteModelById = async ({
   });
 
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  if (deletedVersionIds.length)
+    void onStorySparkPostsHidden({ modelVersionIds: deletedVersionIds });
   // Refunded before the cache and index steps below: the delete has committed, and a failure in one
   // of them must not leave the bids standing. Without `onBidRefundFailed` its error is thrown last.
   let refundError: unknown;
@@ -4675,7 +4683,10 @@ export const publishModelById = async ({
       })
     : undefined;
   const versionIds = ownVersions ? ownVersions.map((v) => v.id) : requestedVersionIds;
-  if (ownVersions) assertBaseModelAttestations({ versions: ownVersions });
+  if (ownVersions) {
+    assertBaseModelAttestations({ versions: ownVersions });
+    await assertNonCommercialVersionsUnmonetized(ownVersions);
+  }
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -4871,13 +4882,13 @@ export const publishModelById = async ({
     description: model.description,
     rules: false,
   }).catch(() => null);
-  if (includeVersions)
-    scanEntitiesInBackground(
-      'Post',
-      posts
-        .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
-        .map((p) => p.id)
-    );
+  if (includeVersions) {
+    const versionPostIds = posts
+      .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
+      .map((p) => p.id);
+    scanEntitiesInBackground('Post', versionPostIds);
+    void onStorySparkPostsRestored({ postIds: versionPostIds });
+  }
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5104,6 +5115,7 @@ export const unpublishModelById = async ({
       where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
       select: { id: true },
     });
+    void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },
@@ -5526,8 +5538,14 @@ export const getAllModelsWithCategories = async ({
   viewer?: { id?: number; isModerator?: boolean | null } | null;
 }) => {
   const { take, skip } = getPagination(limit, page);
+  const seesUnpublished = !!viewer?.isModerator || (!!viewer?.id && userId === viewer.id);
   const where: Prisma.ModelFindManyArgs['where'] = {
-    status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
+    status: {
+      in: seesUnpublished
+        ? [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training]
+        : [ModelStatus.Published],
+    },
+    ...(!seesUnpublished && { availability: { not: Availability.Private } }),
     deletedAt: null,
     userId,
     // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
@@ -5861,6 +5879,14 @@ function createVersionModelCache() {
 let versionModelCacheInstance: ReturnType<typeof createVersionModelCache> | undefined;
 const versionModelCache = () => (versionModelCacheInstance ??= createVersionModelCache());
 
+/** The post-version cache's lookup: each post's model version id, from the replica. */
+export async function lookupPostModelVersions(ids: number[]) {
+  const posts = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
+    ? await readPostModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, ids)
+    : await readPostModelVersionIdsViaPrisma(dbRead, ids);
+  return Object.fromEntries(posts.map((post) => [post.id, post]));
+}
+
 function createPostVersionCache() {
   return createCachedObject<{ id: number; modelVersionId: number | null }>({
     key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:post-version`,
@@ -5870,13 +5896,7 @@ function createPostVersionCache() {
     // As for versions: a post not yet on the replica must not be remembered as missing.
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    lookupFn: async (ids) => {
-      const posts = await dbRead.post.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, modelVersionId: true },
-      });
-      return Object.fromEntries(posts.map((post) => [post.id, post]));
-    },
+    lookupFn: lookupPostModelVersions,
   });
 }
 let postVersionCacheInstance: ReturnType<typeof createPostVersionCache> | undefined;
@@ -6583,8 +6603,6 @@ export async function getFeaturedModels() {
       // was trying to subtract 2 minutes
       const now = dayjs();
 
-      // TODO we're featuring modelVersions, but showing models due to how collections and meili works
-
       let retries = 0;
       while (retries < 3) {
         const nowDate = now.subtract(retries, 'day').toDate();
@@ -6597,6 +6615,7 @@ export async function getFeaturedModels() {
             position: true,
             modelVersion: {
               select: {
+                id: true,
                 modelId: true,
                 baseModel: true,
                 model: { select: { type: true } },
@@ -6610,6 +6629,7 @@ export async function getFeaturedModels() {
         } else {
           return data.map((row) => ({
             modelId: row.modelVersion.modelId,
+            modelVersionId: row.modelVersion.id,
             position: row.position,
             baseModel: row.modelVersion.baseModel as BaseModel,
             type: row.modelVersion.model.type,
@@ -6618,9 +6638,12 @@ export async function getFeaturedModels() {
       }
 
       // if nothing found, get from the collection
-      const query = await dbWrite.$queryRaw<{ modelId: number; baseModel: string; type: string }[]>`
+      const query = await dbWrite.$queryRaw<
+        { modelId: number; modelVersionId: number; baseModel: string; type: string }[]
+      >`
         SELECT
           ci."modelId",
+          mv.id AS "modelVersionId",
           mv."baseModel",
           m."type"
         FROM "CollectionItem" ci
@@ -6634,6 +6657,7 @@ export async function getFeaturedModels() {
       `;
       return query.map((row) => ({
         modelId: row.modelId,
+        modelVersionId: row.modelVersionId,
         position: 0,
         baseModel: row.baseModel as BaseModel,
         type: row.type as ModelType,
@@ -7110,11 +7134,13 @@ export const publishPrivateModel = async (
     throw throwBadRequestError('Model has no published versions');
   }
 
-  if (publishVersions)
+  if (publishVersions) {
     assertBaseModelAttestations({
       versions: versions.map((version) => ({ ...version, model })),
       grandfatherPublished: false,
     });
+    await assertNonCommercialVersionsUnmonetized(versions);
+  }
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();

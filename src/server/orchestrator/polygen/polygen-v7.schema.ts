@@ -26,7 +26,9 @@ import type {
 } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import { POLYGEN_MAX_ANIMATION_ACTION_ID } from '~/shared/form-graph/generation/model3d/polygen.graph';
 import {
+  dropUndefined,
   polygenSymmetryModes,
   polygenTopologies,
 } from '~/server/orchestrator/polygen/polygen.schema';
@@ -51,7 +53,7 @@ const MIN_RIGGING_HEIGHT = 0.1;
 const MAX_RIGGING_HEIGHT = 10;
 
 const MIN_ANIMATION_ACTION_ID = 0;
-const MAX_ANIMATION_ACTION_ID = 10_000;
+const MAX_ANIMATION_ACTION_ID = POLYGEN_MAX_ANIMATION_ACTION_ID;
 
 // =============================================================================
 // Schema
@@ -93,13 +95,50 @@ export type PolyGenV7GenerationSchema = z.infer<typeof polygenV7GenerationSchema
 // Helper — convert validated schema to Meshy v7 / Fal PolyGen input shape
 // =============================================================================
 
-/** Strip undefined fields so we don't send empty keys to the orchestrator. */
-function dropUndefined<T extends Record<string, unknown>>(obj: T): T {
-  const out = {} as Record<string, unknown>;
-  for (const [k, v] of Object.entries(obj)) {
-    if (v !== undefined) out[k] = v;
-  }
-  return out as T;
+export type MeshyV7LineSharedData = Partial<
+  Pick<
+    PolyGenV7GenerationSchema,
+    | 'targetPolycount'
+    | 'topology'
+    | 'symmetryMode'
+    | 'shouldRemesh'
+    | 'enablePbr'
+    | 'texturePrompt'
+    | 'enableRigging'
+    | 'enableAnimation'
+    | 'poseMode'
+    | 'riggingHeightMeters'
+    | 'animationActionId'
+  >
+>;
+
+/** The request fields Meshy v7 and v7.1 share. */
+export function toMeshyV7LineSharedInput<V extends 'v7' | 'v7.1'>(
+  data: MeshyV7LineSharedData,
+  version: V
+) {
+  // Animation targets the rigged mesh's skeleton, so the API rejects
+  // animation without rigging. The form exposes one "Animate" toggle and
+  // rigging follows it.
+  const enableAnimation = !!data.enableAnimation;
+  const enableRigging = enableAnimation || !!data.enableRigging;
+
+  return dropUndefined({
+    engine: 'fal' as const,
+    model: 'meshy' as const,
+    version,
+    targetPolycount: data.targetPolycount,
+    topology: data.topology,
+    symmetryMode: data.symmetryMode,
+    shouldRemesh: data.shouldRemesh,
+    enablePbr: data.enablePbr,
+    texturePrompt: data.texturePrompt,
+    enableRigging,
+    enableAnimation,
+    poseMode: data.poseMode,
+    riggingHeightMeters: enableRigging ? data.riggingHeightMeters : undefined,
+    animationActionId: enableAnimation ? data.animationActionId : undefined,
+  });
 }
 
 /**
@@ -109,28 +148,9 @@ function dropUndefined<T extends Record<string, unknown>>(obj: T): T {
 export function toMeshyV7PolyGenInput(
   data: PolyGenV7GenerationSchema
 ): MeshyV7ImageTo3dFalPolyGenInput | MeshyV7MultiImageTo3dFalPolyGenInput {
-  // Same rigging/animation coupling as v6: animation targets the rigged
-  // mesh's skeleton, so the API rejects animation without rigging. The form
-  // exposes one "Animate" toggle and rigging follows it.
-  const enableAnimation = !!data.enableAnimation;
-  const enableRigging = enableAnimation || !!data.enableRigging;
-
   const shared = dropUndefined({
-    engine: 'fal' as const,
-    model: 'meshy' as const,
-    version: 'v7' as const,
-    targetPolycount: data.targetPolycount,
-    topology: data.topology,
-    symmetryMode: data.symmetryMode,
-    shouldRemesh: data.shouldRemesh,
-    enablePbr: data.enablePbr,
-    texturePrompt: data.texturePrompt,
-    enableRigging,
-    enableAnimation,
+    ...toMeshyV7LineSharedInput(data, 'v7'),
     shouldTexture: data.shouldTexture,
-    poseMode: data.poseMode,
-    riggingHeightMeters: enableRigging ? data.riggingHeightMeters : undefined,
-    animationActionId: enableAnimation ? data.animationActionId : undefined,
   });
 
   if (data.sourceImages.length > 1) {

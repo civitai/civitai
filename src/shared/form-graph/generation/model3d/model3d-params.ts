@@ -6,11 +6,13 @@
 
 import { hunyuan3dModelVersionOptions, hunyuan3dOctreeResolutionOptions } from './hunyuan3d.graph';
 import {
+  polygenGeometryResolutionOptions,
   polygenModelTypeOptions,
   polygenPoseModeOptions,
   polygenSymmetryOptions,
   polygenTextModeOptions,
   polygenTopologyOptions,
+  polygenV71ModelTypeOptions,
   polygenVersionOptions,
 } from './polygen.graph';
 import {
@@ -33,6 +35,7 @@ export const model3dFieldLabels = {
   symmetryMode: 'Symmetry',
   poseMode: 'Pose',
   modelType: 'Model type',
+  geometryResolution: 'Geometry resolution',
   ultraMode: 'Ultra fidelity',
   texture: 'Texture',
   geometryQuality: 'Geometry quality',
@@ -91,7 +94,8 @@ const optionsByEcosystem: Record<string, Partial<Record<Model3dField, readonly O
     topology: polygenTopologyOptions,
     symmetryMode: polygenSymmetryOptions,
     poseMode: polygenPoseModeOptions,
-    modelType: polygenModelTypeOptions,
+    modelType: [...polygenModelTypeOptions, ...polygenV71ModelTypeOptions],
+    geometryResolution: polygenGeometryResolutionOptions,
   },
   Tripo: {
     version: tripoVersionOptions,

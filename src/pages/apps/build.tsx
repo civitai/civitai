@@ -154,6 +154,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
               sandboxUrl={props.sandboxUrl}
               subagents={props.subagents}
               remoteRunner={props.remoteRunner}
+              userId={currentUser?.id ?? null}
             />
           )}
         </AppsPageLayout>

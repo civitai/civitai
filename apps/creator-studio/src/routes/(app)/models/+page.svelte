@@ -526,7 +526,10 @@
           · licensing fees and permanent paid access
         </span>
         {#if data.caps.feeBoost > 0 && data.caps.feePricingLimit !== null}
-          <span class="font-medium text-white" data-testid="fee-allowance-boost">
+          <span
+            class="font-medium {feeAllowance.atLimit ? 'text-yellow-5' : 'text-white'}"
+            data-testid="fee-allowance-boost"
+          >
             · {feeAllowance.used} of {feeAllowance.limit} for licensing fees ({feeAllowanceBoostNote(
               data.caps.feeBoost
             )})
@@ -565,9 +568,10 @@
     {#if permAtCap && data.caps.pricingFloor.eligible}
       <p class="w-full text-yellow-5">{PRICING_SLOT_EXPLAINER}</p>
       {#if data.caps.feeBoost > 0 && !feeAllowance.atLimit}
-        <p class="w-full text-white">
-          You can still add {feeAllowance.remaining} more licensing fees this month with your extra
-          slots. They don't cover permanent paid access.
+        <p class="w-full text-dark-2">
+          You can still add {feeAllowance.remaining} more licensing {feeAllowance.remaining === 1
+            ? 'fee'
+            : 'fees'} this month with your extra slots. They don't cover permanent paid access.
         </p>
       {/if}
     {/if}

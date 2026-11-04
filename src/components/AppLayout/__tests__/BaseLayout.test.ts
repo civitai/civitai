@@ -22,6 +22,7 @@ vi.mock('~/components/Meta/MetaPWA', () => ({ MetaPWA: () => null }));
 vi.mock('~/components/Notifications/PushRegistrationManager', () => ({
   PushRegistrationManager: () => null,
 }));
+vi.mock('~/components/Notifications/PushOptInPrompt', () => ({ PushOptInPrompt: () => null }));
 // renderToString reads a zustand store's INITIAL state, so setState can't open the panel.
 vi.mock('~/store/generation-panel.store', async (importOriginal) => ({
   ...(await importOriginal<typeof GenerationPanelStore>()),

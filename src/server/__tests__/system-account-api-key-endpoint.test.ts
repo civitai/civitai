@@ -66,6 +66,11 @@ let apiKeys: KeyRow[];
 let access: AccessRow[];
 
 const SYSTEM_ID = 1001;
+// Every single-bit scope inside Full except VaultWrite: OR'd with VaultWrite they make Full.
+const ALL_BUT_VAULT_WRITE = Object.entries(TokenScope)
+  .filter(([name, bit]) => bit !== 0 && name !== 'Full' && name !== 'VaultWrite')
+  .filter(([, bit]) => (TokenScope.Full & bit) === bit)
+  .map(([name]) => name);
 const systemUser = (overrides: Partial<UserRow> = {}): UserRow => ({
   id: SYSTEM_ID,
   username: 'TestAgent',
@@ -264,17 +269,45 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(body).toMatchObject({ userId: SYSTEM_ID, keyId: apiKeys[0].id, rotated: 0 });
   });
 
-  it('grants exactly the named read scopes', async () => {
-    const { status } = await call({ userId: SYSTEM_ID, scopes: ['UserRead', 'BuzzRead'] });
+  it('grants exactly the named scopes, and records the mask in the mint log line', async () => {
+    const { status, body } = await call({
+      userId: SYSTEM_ID,
+      scopes: ['UserRead', 'AIServicesRead', 'AIServicesWrite'],
+    });
+    const mask = TokenScope.UserRead | TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
     expect(status).toBe(201);
-    expect(apiKeys[0].tokenScope).toBe(TokenScope.UserRead | TokenScope.BuzzRead);
+    expect(apiKeys[0].tokenScope).toBe(mask);
+    expect(body.tokenScope).toBe(mask);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        name: 'system-account-api-key-minted',
+        details: expect.objectContaining({ keyId: apiKeys[0].id, tokenScope: mask }),
+      })
+    );
   });
 
   it.each([
-    ['a write scope', ['UserRead', 'ModelsWrite']],
+    ['a write scope', ['UserRead', 'ModelsWrite'], TokenScope.UserRead | TokenScope.ModelsWrite],
+    ['a delete scope', ['MediaDelete'], TokenScope.MediaDelete],
+    ['a tipping scope', ['SocialTip'], TokenScope.SocialTip],
+    ['a repeated scope', ['VaultWrite', 'VaultWrite'], TokenScope.VaultWrite],
+    ['every scope in Full but one', ALL_BUT_VAULT_WRITE, TokenScope.Full & ~TokenScope.VaultWrite],
+  ])('grants %s', async (_label, scopes, mask) => {
+    const { status } = await call({ userId: SYSTEM_ID, scopes });
+    expect(status).toBe(201);
+    expect(apiKeys[0].tokenScope).toBe(mask);
+  });
+
+  it.each([
     ['Full', ['Full']],
+    ['scopes that add up to Full', [...ALL_BUT_VAULT_WRITE, 'VaultWrite']],
     ['an opt-in scope', ['AppBlocksSubmit']],
-    ['a tipping scope', ['SocialTip']],
+    ['the dev-tunnel opt-in scope', ['AppBlocksDevTunnel']],
+    ['an opt-in scope beside a granted one', ['UserRead', 'LinkConnect']],
+    ['the worker-only scope', ['WorkerRegister']],
+    ['the client-credentials-only scope', ['AppStoreCatalogWrite']],
+    ['None', ['None']],
     ['an unknown scope', ['Nope']],
     ['an inherited property name', ['toString']],
     ['an empty list', []],
@@ -282,6 +315,14 @@ describe('POST /api/admin/system-account-api-key', () => {
     const { status } = await call({ userId: SYSTEM_ID, scopes });
     expect(status).toBe(400);
     expect(apiKeys).toHaveLength(0);
+  });
+
+  it('lists the grantable scopes when it refuses one, and Full is not among them', async () => {
+    const { status, body } = await call({ userId: SYSTEM_ID, scopes: ['Nope'] });
+    expect(status).toBe(400);
+    const message = JSON.stringify(body.error);
+    expect(message).toContain('AIServicesWrite');
+    expect(message).not.toMatch(/\bFull\b/);
   });
 
   it('trims the key name, so a padded name rotates the same key', async () => {
@@ -513,6 +554,10 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
     expect(alertNames()).toContain('system-account-api-key-revoked');
     expect(alertNames()).not.toContain('system-account-api-key-revoke-failed');
+    // Deliberately 'error', not 'info': a revoke only ever cleans up a mint that failed or was refused.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'system-account-api-key-revoked', type: 'error' })
+    );
   });
 
   it('still refuses with 403, and alerts, when revoking the refused key fails', async () => {
@@ -558,14 +603,12 @@ describe('POST /api/admin/system-account-api-key', () => {
 
     expect(apiKeys).toHaveLength(0);
     expect(trackModActivity).toHaveBeenCalledTimes(1);
-    expect(
-      logToAxiom.mock.calls.some(
-        ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
-      )
-    ).toBe(true);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'system-account-api-key-minted', type: 'error' })
+    );
   });
 
-  it('audits and alerts on every mint, with neither the key nor its hash', async () => {
+  it('audits and logs every mint at info, with neither the key nor its hash', async () => {
     await call({ userId: SYSTEM_ID, actorUserId: 9 });
     await call({ userId: SYSTEM_ID, actorUserId: 9 });
 
@@ -579,7 +622,7 @@ describe('POST /api/admin/system-account-api-key', () => {
       ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
     );
     expect(alerts).toHaveLength(2);
-    expect(alerts.every(([data]) => (data as { type: string }).type === 'error')).toBe(true);
+    expect(alerts.every(([data]) => (data as { type: string }).type === 'info')).toBe(true);
     expect(alerts[0][0]).toMatchObject({
       details: { asserted_actor: 9, userId: SYSTEM_ID, name: 'system' },
     });
@@ -588,6 +631,18 @@ describe('POST /api/admin/system-account-api-key', () => {
     const recorded = JSON.stringify([trackModActivity.mock.calls, logToAxiom.mock.calls]);
     expect(recorded).not.toContain('fake-plaintext');
     expect(recorded).not.toContain('fake-hash-of');
+  });
+
+  it('logs a mint at error when its audit row could not be written', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+    expect((await call({ userId: SYSTEM_ID })).status).toBe(201);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'system-account-api-key-minted',
+        details: expect.objectContaining({ auditRecorded: false }),
+      })
+    );
   });
 
   it('refuses any method but POST', async () => {

@@ -59,7 +59,7 @@ describe('buildAppsStoreFeedbackContext', () => {
     expect(context?.filters).toEqual({
       kind: 'all',
       category: 'none',
-      sort: 'top-rated',
+      sort: 'popular',
       query: '',
     });
   });

@@ -120,6 +120,8 @@ export type LicenseRecord = {
   disableMature?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;
+  // License requires derivatives to carry the same license.
+  requiresSameLicense?: boolean;
 };
 
 export type BaseModelFamilyRecord = {
@@ -1303,7 +1305,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // MOSS Image - open weights, checkpoint and LoRA
-  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: [...checkpointAndLora, ModelType.LoCon] },
+  {
+    ecosystemId: ECO.MossImage,
+    supportType: 'generation',
+    modelTypes: [...checkpointAndLora, ModelType.LoCon],
+  },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1503,7 +1509,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Ideogram,
     defaults: {
-      model: { id: 3246186 },
+      model: { id: 3375798 },
       modelLocked: true,
     },
   },
@@ -2457,6 +2463,11 @@ export const supportOverrides: SupportOverride[] = [
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
   // { ecosystemId: ECO.SD35M, supportType: 'training', enabled: false },
+  // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
+  // separately, so this is per base model, never per ecosystem.
+  { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
+  // An API model with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
+  { baseModelId: BM.Ideogram45, supportType: 'generation', modelTypes: ['Checkpoint'] },
 ];
 
 // =============================================================================
@@ -2515,6 +2526,7 @@ export const licenses: LicenseRecord[] = [
       'Stable Cascade is licensed under the Stable Cascade Non-Commercial Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
     disableMature: true,
+    nonCommercial: true,
   },
   {
     id: 9,
@@ -2636,21 +2648,26 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 29,
-    name: 'FLUX.2 [dev] Non-Commercial License',
-    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
     notice:
-      'The FLUX.2 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.2 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   {
     id: 30,
-    name: 'FLUX.2 Klein 9B Non-Commercial License',
-    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
     notice:
-      'The FLUX.2 Klein 9B Model is licensed by Black Forest Labs. Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   {
     id: 31,
@@ -2786,6 +2803,17 @@ export const licenses: LicenseRecord[] = [
       'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
+  {
+    id: 50,
+    // Id 14, flagged non-commercial for Krea and Kontext; Flux.1 D keeps id 14.
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
     nonCommercial: true,
   },
 ];
@@ -3026,7 +3054,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Krea-trained variant of Flux optimized for creative generation',
     type: 'image',
     ecosystemId: ECO.FluxKrea,
-    licenseId: 14,
+    licenseId: 50,
   },
   {
     id: BM.Flux1Kontext,
@@ -3034,7 +3062,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux variant specialized for context-aware image editing and generation',
     type: 'image',
     ecosystemId: ECO.Flux1Kontext,
-    licenseId: 14,
+    licenseId: 50,
   },
   {
     id: BM.Flux2D,
@@ -4234,6 +4262,20 @@ export function isModelSupported(
 }
 
 /**
+ * A base model whose generation is switched off by name, whatever the resource type. Narrower than
+ * `isModelSupported`: it reads only explicit disables, so paths that skip the model-type check (a
+ * LoRA attached to a generation) can apply it without refusing types they support by design.
+ */
+export function isBaseModelGenerationDisabled(baseModelName: string): boolean {
+  const baseModel = baseModelByName.get(baseModelName);
+  if (!baseModel) return false;
+  if (baseModel.disabled) return true;
+  return supportOverrides.some(
+    (o) => o.baseModelId === baseModel.id && o.supportType === 'generation' && o.disabled
+  );
+}
+
+/**
  * Check if a base model or ecosystem supports generation for a given model type.
  * Accepts either a base model name (e.g., 'SDXL 1.0') or an ecosystem key (e.g., 'SDXL').
  */
@@ -4634,9 +4676,8 @@ export function getCompatibleBaseModels(
     const modelEcosystem = ecosystemById.get(model.ecosystemId);
     if (!modelEcosystem) continue;
 
-    // Check if this model's ecosystem supports the model type for generation
-    const support = getEcosystemSupport(model.ecosystemId, 'generation');
-    if (!support || support.disabled || !support.modelTypes.includes(modelType)) continue;
+    // Per base model: an override can switch one off without its ecosystem (Ideogram 4.0).
+    if (!isModelSupported(model.id, 'generation', modelType)) continue;
 
     // Get support level
     const supportLevel = getGenerationSupport(ecosystemId, model.ecosystemId, modelType);

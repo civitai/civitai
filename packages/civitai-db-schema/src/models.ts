@@ -1782,6 +1782,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
 }
@@ -3220,6 +3221,7 @@ export interface CommentV3 {
   pinnedAt: Date | null;
   reactionCount: number;
   legacyV1Id: number | null;
+  removedByAuthor: boolean;
   reactions?: CommentV3Reaction[];
   reports?: CommentV3Report[];
   mutes?: CommentMute[];
@@ -3489,6 +3491,26 @@ export interface EventCosmeticScoreDaily {
   modelLikes: number;
   points: number;
   updatedAt: Date;
+}
+
+export interface EventTurfSticker {
+  id: bigint;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: JsonValue;
+  createdAt: Date;
+  removedAt: Date | null;
+  removedById: number | null;
+}
+
+export interface EventTurfStock {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Date;
 }
 
 export interface CreatorMilestone {
@@ -6697,6 +6719,8 @@ export interface Storyline {
   heroImageId: number | null;
   heroImage?: Image | null;
   heroImagePosition: number;
+  sparkImageId: number | null;
+  sparkImage?: Image | null;
   chapters?: StorylineChapter[];
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
@@ -6817,10 +6841,12 @@ export interface StorylineCoverUpload {
 }
 
 export interface StorylineReport {
-  storylineId: number;
-  storyline?: Storyline;
   reportId: number;
   report?: Report;
+  storylineId: number | null;
+  storyline?: Storyline | null;
+  heldStorylineId: number | null;
+  storylineTitle: string | null;
 }
 
 export interface ServiceOffering {

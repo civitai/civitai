@@ -1,5 +1,7 @@
 import type { SelectProps } from '@mantine/core';
-import { Group, Input, Select } from '@mantine/core';
+import { SheetSelect } from './SheetSelect';
+import { Group, Input } from '@mantine/core';
+import { useId } from '@mantine/hooks';
 import clsx from 'clsx';
 
 // =============================================================================
@@ -69,11 +71,14 @@ export function SelectInput<V extends string = string>({
   ...props
 }: SelectInputProps<V>) {
   const hasPresets = presets && presets.length > 0;
+  // The label sits on the wrapper; one id ties it to the field.
+  const id = useId(props.id);
   // Support both `options` and `data` - prefer `data` if both provided
   const selectData = data ?? options;
 
   return (
     <Input.Wrapper
+      id={id}
       label={
         hasPresets ? (
           <Group gap={8} className="w-full" justify="space-between" wrap="nowrap">
@@ -93,8 +98,10 @@ export function SelectInput<V extends string = string>({
       }
       styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
     >
-      <Select
+      <SheetSelect
         {...props}
+        id={id}
+        sheetTitle={label}
         data={selectData}
         value={value ?? null}
         onChange={(newValue) => {

@@ -149,6 +149,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   const isTwoColumn = useMatches({ base: false, md: true });
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
+  const router = useRouter();
+  const currentUser = useCurrentUser();
   const isSticker = cosmetic.type === CosmeticType.Sticker;
   const { data: stickerBalances, isLoading: isLoadingBalances } = useQueryStickerBalances({
     enabled: isSticker,
@@ -156,6 +158,11 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   const hasCosmetic = Object.values(userCosmetics ?? {})
     .flat()
     .some(({ id }) => id === cosmetic.id);
+  // The same hat can be bought repeatedly, one holding per copy.
+  const ownedHatCopies =
+    cosmetic.type === CosmeticType.ContentDecoration
+      ? (userCosmetics?.contentDecorations ?? []).filter(({ id }) => id === cosmetic.id).length
+      : 0;
   const canPurchase = canPurchaseShopCosmetic({
     type: cosmetic.type,
     owned: hasCosmetic,
@@ -292,6 +299,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
                   )}
                   {canPurchase ? (
                     <Stack gap={6}>
+                      {ownedHatCopies > 0 && (
+                        <Text size="sm" align="center" c="dimmed">
+                          You own {ownedHatCopies} of these. Buying another lets you wear it on one
+                          more piece of content.
+                        </Text>
+                      )}
                       {acceptsBlue && isAvailable && (
                         <PayWithSelector
                           value={payWith}
@@ -309,6 +322,18 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
                         accountTypes={accountTypes}
                         showTypePct={acceptsBlue && payWith === 'blue-first'}
                       />
+                      {ownedHatCopies > 0 && currentUser?.username && (
+                        <Button
+                          variant="default"
+                          radius="xl"
+                          onClick={() => {
+                            router.push(`/user/${currentUser.username}`);
+                            dialog.onClose();
+                          }}
+                        >
+                          Place on my content
+                        </Button>
+                      )}
                     </Stack>
                   ) : cosmetic.type === CosmeticType.Sticker ? (
                     <Text size="sm" align="center" c="dimmed">

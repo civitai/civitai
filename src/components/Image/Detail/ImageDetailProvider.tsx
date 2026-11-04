@@ -1,4 +1,3 @@
-import { useHotkeys } from '@mantine/hooks';
 import produce from 'immer';
 import { useRouter } from 'next/router';
 import { createContext, Fragment, useContext, useMemo, useRef, useState } from 'react';
@@ -14,6 +13,7 @@ import {
 } from '~/components/Image/image.utils';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useCloseOnEscape } from '~/components/Image/Detail/useCloseOnEscape';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -189,7 +189,7 @@ export function ImageDetailProvider({
       }
     }
   };
-  useHotkeys([['Escape', close]]);
+  useCloseOnEscape(close);
 
   // #region [info toggle]
   const toggleInfo = () => {

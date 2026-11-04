@@ -19,7 +19,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
-import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
+import {
+  capScaleFromWidth,
+  STICKER_PLACEMENT_MIN_SCALE,
+  stickerMaxScale,
+} from '~/shared/utils/sticker-placement';
 import {
   pointerToSurfaceFraction,
   useStickerPlacementDraftStore,
@@ -182,7 +186,7 @@ export function DraftStickerLayer() {
       );
 
       move(active.draftId, {
-        scale: width / bounds.width,
+        scale: capScaleFromWidth(width, bounds.width, maxScaleRef.current),
         x: (active.anchorX + centre.x) / bounds.width,
         y: (active.anchorY + centre.y) / bounds.height,
       });
@@ -277,6 +281,7 @@ export function DraftStickerLayer() {
             selected={draft.id === selectedDraftId}
             dressed={dressed}
             price={space?.price ?? 0}
+            creatorMaxScale={maxScale}
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}

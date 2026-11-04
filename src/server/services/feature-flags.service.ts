@@ -138,6 +138,9 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // The generator's phone layout (docs/plans/mobile-generator.md). Dark until the Flipt
+  // `mobile-generator` ramp; OFF = today's generator on phones, unchanged.
+  mobileGenerator: { availability: [], fliptKey: 'mobile-generator' },
   // SSR-CPU trial on `/models/[id]/[[...slug]]`: when ON, the model page's below-the-fold,
   // non-SEO sidebar sections (creator card, license/permissions, collection-showcase body) render
   // client-side after hydration behind fixed-height placeholders. `getServerSideProps` still
@@ -197,6 +200,13 @@ const featureFlags = createFeatureFlags({
   modelPageDesignSystemMarkup: {
     availability: [],
     fliptKey: 'model-page-design-system-markup',
+  },
+  // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
+  // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
+  // on-switch.
+  ssrClosedOverlayFastPath: {
+    availability: [],
+    fliptKey: 'ssr-closed-overlay-fast-path',
   },
   // Browser site search through /api/search, which applies the viewer's and the site's rules on
   // the server, instead of straight to Meilisearch with a per-viewer token. OFF = the direct path,
@@ -383,7 +393,6 @@ const featureFlags = createFeatureFlags({
   // the Anima ControlNet input (and strip controlNets server-side) without a
   // deploy if the orchestrator side misbehaves.
   animaControlnet: { availability: ['public'], fliptKey: 'anima-controlnet' },
-  questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
     toggleable: true,
@@ -538,6 +547,11 @@ const featureFlags = createFeatureFlags({
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
   // `event.getAccess` (usePlayableEventDecoration) instead.
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
+  // Read through useHatTurfFeed, which also checks the event is playable.
+  hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
+  // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
+  // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
+  hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -692,6 +706,8 @@ const featureFlags = createFeatureFlags({
   // dropped from the version options, which both hides it and makes a submitted
   // `version: 'v7'` fail the node's schema (see `model3d/polygen.graph.ts`).
   meshyV7Generator: { availability: ['mod'] },
+  // Same shape for Meshy v7.1.
+  meshyV71Generator: { availability: ['mod'] },
   // Gates Krea 3's Ultra thinking mode the same way: it is a `thinkingMode`
   // option, not a model version, so it ships dark and opens with the partner's
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
@@ -747,6 +763,8 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
+  // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
+  remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
@@ -930,8 +948,8 @@ const featureFlags = createFeatureFlags({
   // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
   // and no visible count at all when the first `comment.getAll` page holds every comment (the
   // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
-  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Independent of the server
-  // flag `kysely-hot-reads-4`, which picks how the new procedure reads (Prisma or Kysely).
+  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Either way the counts read
+  // through Kysely.
   commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 

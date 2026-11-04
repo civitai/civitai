@@ -1,4 +1,5 @@
-import { ActionIcon, Skeleton, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Skeleton, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCalendarCheck, IconCrown, IconEyeOff, IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';

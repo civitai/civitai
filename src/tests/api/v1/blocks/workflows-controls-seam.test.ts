@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 
 /**
  * 🔴 THE SEAM TEST. The four `/api/v1/blocks/workflows/*` routes and the four
@@ -67,6 +68,25 @@ const {
  * — but it is the only thing mocked on the request path.
  */
 const claimsBox: { claims: unknown } = { claims: undefined };
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
+
 vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {

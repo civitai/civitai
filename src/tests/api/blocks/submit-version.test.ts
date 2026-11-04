@@ -321,6 +321,7 @@ describe('POST /api/blocks/submit-version', () => {
       version: '1.0.0',
       status: 'pending',
       listing,
+      storageMigrationWarnings: [],
     });
   });
 
@@ -336,6 +337,8 @@ describe('POST /api/blocks/submit-version', () => {
       status: 'pending',
       // The service answered no listing readiness: the field is still there, as null.
       listing: null,
+      // Nor any schema-migration warning: the field is still there, empty.
+      storageMigrationWarnings: [],
     });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const arg = mockSubmitVersion.mock.calls[0][0];

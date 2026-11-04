@@ -120,7 +120,8 @@ locally until the orchestration client ships it.
   error is raised, so a retry pays only for what is missing.
 - **Model stamp per step:** every step reports its model, revision and profile; an image step's
   profile is the image profile, a video step's the video profile. Each distinct stamp in a
-  workflow is checked against the collection before any of its vectors is kept, and a workflow
+  workflow is checked against the collection before any of its vectors is kept (a process reads a
+  stamp it has already confirmed only once, since recorded fields are never overwritten), and a workflow
   with two stamps for one media type is rejected. Until a model is recorded, a call's first
   workflow runs alone, and checks are serialised within a process, so one process cannot record
   two models into a new collection. Across processes there is no compare-and-set, so the

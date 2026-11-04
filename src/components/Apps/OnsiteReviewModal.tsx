@@ -15,8 +15,8 @@ import {
   Switch,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {

@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Group,
-  Modal,
-  Stack,
-  Text,
-  Textarea,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Alert, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconMessage2 } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';

@@ -1,4 +1,4 @@
-import { Tooltip } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 
@@ -31,6 +31,7 @@ export function ButtonGroupInput({ value, onChange, data, className }: Props) {
           >
             <button
               type="button"
+              data-tap-target
               onClick={() => onChange(item.value)}
               className={clsx(
                 'flex flex-1 flex-col items-center justify-center gap-1 rounded-lg px-3 py-2 transition-colors',

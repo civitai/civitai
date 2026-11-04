@@ -2,7 +2,7 @@
  * The 3D families' handlers for the form-graph lane. Each converts parsed
  * data into a `PolyGenStepTemplate` via the shared schema builders, then
  * chains the `model3DPreview` step. PolyGen branches on `version` (v6
- * text/image vs v7 image/multi-image); the trellis-pipeline pair
+ * text/image, v7 image/multi-image, v7.1 all three); the trellis-pipeline pair
  * (Pixal3D / Trellis.2) and Tripo v2.5 map `images[0]` → `sourceImage`;
  * Tripo H3.1 branches on text, one image, or 2–4 views (multiview).
  */
@@ -28,6 +28,11 @@ import {
   toMeshyV7PolyGenInput,
   type PolyGenV7GenerationSchema,
 } from '~/server/orchestrator/polygen/polygen-v7.schema';
+import {
+  toMeshyV71PolyGenInput,
+  type MeshyV71PolyGenInput,
+  type PolyGenV71GenerationData,
+} from '~/server/orchestrator/polygen/polygen-v71.schema';
 import {
   toTripoPolyGenInput,
   type TripoGenerationSchema,
@@ -60,20 +65,28 @@ export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepIn
   (data, ctx) => {
     const { mode, ...rest } = data;
     const images = data.images ?? [];
+    const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
 
     let input:
       | MeshyTextTo3dFalPolyGenInput
       | MeshyImageTo3dFalPolyGenInput
       | MeshyV7ImageTo3dFalPolyGenInput
-      | MeshyV7MultiImageTo3dFalPolyGenInput;
+      | MeshyV7MultiImageTo3dFalPolyGenInput
+      | MeshyV71PolyGenInput;
 
-    if (data.version === 'v7') {
+    if (data.version === 'v7.1') {
+      input = toMeshyV71PolyGenInput({
+        ...rest,
+        process,
+        ...(mode !== undefined ? { mode } : {}),
+        sourceImages: process === 'imageTo3D' ? images : [],
+      } as unknown as PolyGenV71GenerationData);
+    } else if (data.version === 'v7') {
       input = toMeshyV7PolyGenInput({
         ...rest,
         sourceImages: images,
       } as unknown as PolyGenV7GenerationSchema);
     } else {
-      const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
       const sourceImage = process === 'imageTo3D' ? images[0] : undefined;
       input = toMeshyPolyGenInput({
         ...rest,

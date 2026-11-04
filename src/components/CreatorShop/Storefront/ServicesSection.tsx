@@ -58,7 +58,7 @@ export function ServicesSection({
               key={offering.id}
               offering={offering}
               footer={
-                <Group justify="space-between" mt="sm" wrap="nowrap">
+                <Group justify="space-between" mt="sm">
                   {offering.slotsOpen != null && (
                     <Badge color={full ? 'gray' : 'green'} variant="light" radius="sm">
                       {full
@@ -67,7 +67,7 @@ export function ServicesSection({
                     </Badge>
                   )}
                   {isOwner && (
-                    <Group gap={4} ml="auto" wrap="nowrap">
+                    <Group gap={4} ml="auto">
                       <Button component={NextLink} href={manageHref} size="xs" variant="default">
                         Manage
                       </Button>
@@ -84,7 +84,7 @@ export function ServicesSection({
                     </Group>
                   )}
                   {!isOwner && (
-                    <Group gap={4} ml="auto" wrap="nowrap">
+                    <Group gap={4} ml="auto">
                       <ReportServiceButton offeringId={offering.id} />
                       {shopPublished && (
                         <LoginRedirect reason="perform-action">

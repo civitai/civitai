@@ -155,9 +155,9 @@ describe('migrateResourceToCollection', () => {
     ]);
   });
 
-  it('keeps every name it builds within the 100-character cap', async () => {
+  it('keeps every name it builds within the 150-character cap', async () => {
     installFakeCacheRedis();
-    const longName = 'm'.repeat(98);
+    const longName = 'm'.repeat(148);
     stubSplit(longName);
     vi.mocked(dbMock.dbWrite.model.create).mockClear();
     vi.mocked(dbMock.dbWrite.model.update).mockClear();
@@ -178,7 +178,7 @@ describe('migrateResourceToCollection', () => {
     ]
       .map(([args]) => (args as { data: { name?: string } }).data.name)
       .filter((name) => name !== undefined);
-    expect(names.map((name) => name.length)).toEqual([100, 100, 100]);
-    expect(names[0]).toBe(`${'m'.repeat(98)} -`);
+    expect(names.map((name) => name.length)).toEqual([150, 150, 150]);
+    expect(names[0]).toBe(`${'m'.repeat(148)} -`);
   });
 });

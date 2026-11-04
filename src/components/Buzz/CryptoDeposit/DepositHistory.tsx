@@ -4,16 +4,15 @@ import {
   Badge,
   Button,
   Group,
-  HoverCard,
   Pagination,
   Paper,
-  Popover,
   Skeleton,
   Stack,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { HoverCard, Popover } from '~/components/MantineOverlays';
 import {
   IconCheck,
   IconClock,

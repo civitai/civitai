@@ -2,7 +2,6 @@
 // generation hot path, and pulling stripe/email in here made three of its
 // suites fail to collect. Verdict handling lives in
 // `user-restriction-resolve.service.ts` for that reason.
-import { refreshSession } from '~/server/auth/session-invalidation';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
@@ -223,9 +222,10 @@ export async function announcePendingReviewMute({
   // needs to hear about; the case's notice already went out when it was filed.
   if (claim.deduped && claim.wasMuted) return;
 
-  await bestEffort('pending-review-mute-refresh-session-failed', userId, () =>
-    refreshSession(userId, { caller: 'moderation' })
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
   );
+  await afterAccountStandingChanged(userId, { kind: 'refresh', caller: 'moderation' });
   const notificationType = PENDING_REVIEW_MUTE_NOTIFICATION[type];
   if (notificationType) {
     await bestEffort('pending-review-mute-notify-failed', userId, () =>

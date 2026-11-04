@@ -1,10 +1,15 @@
+import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { isImageReviewed } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import type {
+  ClearHiddenInput,
+  GetHiddenModelsInput,
+  ToggleHiddenSchemaOutput,
+} from '~/server/schema/user-preferences.schema';
 import type { BlockHideCommentsResult } from '~/server/services/block-hide-comments.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
@@ -13,8 +18,17 @@ import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
-import { Availability, TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
+import {
+  clearAllUserEngagements,
+  clearUserEngagement,
+  setUserEngagement,
+} from '~/server/services/user-engagement';
+import {
+  Availability,
+  ModelStatus,
+  TagEngagementType,
+  UserEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
@@ -556,6 +570,79 @@ export async function toggleHidden(
   }
 }
 
+// `name`, `type` and `username` are null when the viewer can no longer see the model: a Hide
+// can be written for any model id, so this list must not become a way to read drafts,
+// unpublished, removed or private models. The id stays so the hide can still be undone.
+export type HiddenModelListItem = {
+  id: number;
+  name: string | null;
+  type: string | null;
+  username: string | null;
+};
+
+// Hidden models are cached as bare ids, so the settings list resolves names here. Not
+// `getModelsRaw({ hidden: true })`: that applies feed status/browsing-level rules, and this list
+// must show every hide the user can undo, including ones the feed would now filter out.
+// Paged by model id, a stable single-column cursor; no index orders Hide rows by `createdAt`.
+export async function getHiddenModelsForUser({
+  userId,
+  query,
+  limit,
+  cursor,
+}: GetHiddenModelsInput & { userId: number }) {
+  const visible = Prisma.sql`(
+    (m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability != ${Availability.Private}::"Availability")
+    OR m."userId" = ${userId}
+  )`;
+  const where = [
+    Prisma.sql`me."userId" = ${userId}`,
+    Prisma.sql`me.type = 'Hide'`,
+    Prisma.sql`m.status != ${ModelStatus.Deleted}::"ModelStatus"`,
+  ];
+  if (cursor) where.push(Prisma.sql`me."modelId" < ${cursor}`);
+  if (query) {
+    const pattern = `%${query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+    where.push(Prisma.sql`${visible} AND m.name ILIKE ${pattern}`);
+  }
+
+  // The creator join runs after the LIMIT: joined inside, it ran once per hidden model.
+  const rows = await dbRead.$queryRaw<HiddenModelListItem[]>(Prisma.sql`
+    WITH page AS (
+      SELECT
+        me."modelId" "id",
+        CASE WHEN ${visible} THEN m.name END "name",
+        CASE WHEN ${visible} THEN m.type::text END "type",
+        CASE WHEN ${visible} THEN m."userId" END "userId"
+      FROM "ModelEngagement" me
+      JOIN "Model" m ON m.id = me."modelId"
+      WHERE ${Prisma.join(where, ' AND ')}
+      ORDER BY me."modelId" DESC
+      LIMIT ${limit + 1}
+    )
+    SELECT p.id, p.name, p.type, u.username
+    FROM page p
+    LEFT JOIN "User" u ON u.id = p."userId"
+    ORDER BY p.id DESC
+  `);
+
+  const items = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? items[items.length - 1].id : undefined;
+  return { items, nextCursor };
+}
+
+// Removes every Hide of one kind and nothing else: hidden tags, browsing level and the other
+// engagement types (Follow, Block, Favorite, Notify, Mute) on the same rows are untouched.
+export async function clearHidden({ userId, kind }: ClearHiddenInput & { userId: number }) {
+  if (kind === 'model') return { count: await clearAllHiddenModels({ userId }) };
+
+  const count = await clearAllUserEngagements({ userId, type: UserEngagementType.Hide });
+  // Mirrors the follow-cache step of toggleHideUser's un-hide path.
+  await userFollowsCache.refresh(userId);
+  await HiddenUsers.refreshCache({ userId });
+  return { count };
+}
+
 async function toggleHiddenTags({
   tagIds,
   userId,
@@ -707,6 +794,29 @@ async function toggleHideModel({
     removed: [],
     hidden: hiding,
   };
+}
+
+const CLEAR_HIDDEN_MODELS_BATCH = 5000;
+
+// Batched because the heaviest accounts hold several hundred thousand Hide rows; one DELETE of
+// that size floods WAL (replica lag for every dbRead caller) and can hit the statement timeout.
+async function clearAllHiddenModels({ userId }: { userId: number }) {
+  let total = 0;
+  let deleted: number;
+  do {
+    deleted = await dbWrite.$executeRaw`
+      DELETE FROM "ModelEngagement"
+      WHERE "userId" = ${userId} AND type = 'Hide' AND "modelId" IN (
+        SELECT "modelId" FROM "ModelEngagement"
+        WHERE "userId" = ${userId} AND type = 'Hide'
+        LIMIT ${CLEAR_HIDDEN_MODELS_BATCH}
+      )
+    `;
+    total += deleted;
+  } while (deleted === CLEAR_HIDDEN_MODELS_BATCH);
+
+  await HiddenModels.refreshCache({ userId });
+  return total;
 }
 
 // Hide / unhide a single Model3D for a viewer. Mirrors `toggleHideModel`

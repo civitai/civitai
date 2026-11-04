@@ -1,5 +1,5 @@
 import type { MenuProps } from '@mantine/core';
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   IconEdit,

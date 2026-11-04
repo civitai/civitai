@@ -41,6 +41,7 @@ const row = (over: Record<string, unknown>) => ({
   entityType: 'post',
   entityId: PARENT_ID,
   comicProjectId: null,
+  comicChapterPosition: null,
   appListingSlug: null,
   ...over,
 });
@@ -85,12 +86,17 @@ describe('/comments/<id> — getServerSideProps wiring', () => {
     });
   });
 
-  it('resolves a comic chapter through its project, not its chapter id', async () => {
+  it('resolves a comic chapter through its project and position, not its chapter id', async () => {
     getRow.mockResolvedValue(
-      row({ entityType: 'comicChapter', entityId: 9901, comicProjectId: PARENT_ID })
+      row({
+        entityType: 'comicChapter',
+        entityId: 9901,
+        comicProjectId: PARENT_ID,
+        comicChapterPosition: 0,
+      })
     );
     expect(await run()).toEqual({
-      redirect: { destination: `/comics/${PARENT_ID}?${QUERY}`, permanent: false },
+      redirect: { destination: `/comics/${PARENT_ID}/comic/1?${QUERY}`, permanent: false },
     });
   });
 

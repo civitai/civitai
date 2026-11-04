@@ -48,7 +48,7 @@ import {
   payoutPendingSql,
 } from '~/server/services/bounty-payout-lock';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
-import type { BountyAwardRuling } from '~/shared/constants/bounty.constants';
+import type { BountyAwardRuling } from '@civitai/shared/bounty-award';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
 import {
   hasOpenTextScanFlag,
@@ -1830,7 +1830,7 @@ export async function releaseUnconfirmedBountyRefund(
 
 /**
  * Records the ruling on an award recorded as unpaid by `releaseStuckBountyAward` or
- * `releaseUnconfirmedBountyRefund` (a supporter refund, with no winner). Moves no Buzz: the
+ * `releaseUnconfirmedBountyRefund` (winner payout or supporter refund). Moves no Buzz: the
  * ruling is settled in the ledger first, and this only lets the bounty be deleted again.
  */
 export async function resolveUnpaidBountyAward({
@@ -1892,13 +1892,16 @@ export async function resolveUnpaidBountyAward({
         },
       });
     }
-    if (award.resolvedAt) {
-      if (award.ruling === ruling) return false;
+    // A repeat with a different ruling or reference is a conflict, not a no-op: the caller would
+    // believe its reference was recorded.
+    const alreadyResolved = (stored: { ruling: string | null; ledgerReference: string | null }) => {
+      if (stored.ruling === ruling && stored.ledgerReference === ledgerReference) return false;
       throw new TRPCError({
         code: 'CONFLICT',
-        message: `That award is already resolved as ${award.ruling}`,
+        message: `That award is already resolved as ${stored.ruling} (ledger reference: ${stored.ledgerReference})`,
       });
-    }
+    };
+    if (award.resolvedAt) return alreadyResolved(award);
     if (ruling === 'paid_winner' && award.winnerUserId == null)
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -1908,8 +1911,13 @@ export async function resolveUnpaidBountyAward({
       where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
     });
-    if (!count)
+    // Zero rows: a concurrent resolve won (the record of a deleted bounty is unlocked). Same ruling and
+    // reference is a no-op; anything else conflicts.
+    if (!count) {
+      const stored = await tx.bountyUnpaidAward.findUnique({ where: key });
+      if (stored?.resolvedAt) return alreadyResolved(stored);
       throw new TRPCError({ code: 'CONFLICT', message: 'That award was resolved meanwhile' });
+    }
     await tx.modActivity.create({
       data: {
         userId: moderatorId,

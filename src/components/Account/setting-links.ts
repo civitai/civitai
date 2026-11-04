@@ -12,6 +12,7 @@ export const settingPanes: Record<string, string> = {
   'account-info': 'profile',
   'creator-profile': 'profile',
   'account-standing': 'profile',
+  'hat-turf': 'profile',
   'refresh-session': 'profile',
   'delete-account': 'profile',
 
@@ -30,6 +31,7 @@ export const settingPanes: Record<string, string> = {
   topics: 'content',
   'hidden-tags': 'content',
   'hidden-users': 'content',
+  'hidden-models': 'content',
 
   'metric-visibility': 'creator',
   stickers: 'creator',

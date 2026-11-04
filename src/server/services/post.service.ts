@@ -1,4 +1,9 @@
 import { Prisma } from '@prisma/client';
+import {
+  onStorySparkLost,
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+} from '~/server/events/points/hooks';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { uniq } from 'lodash-es';
@@ -247,6 +252,7 @@ export const getPostsInfinite = async ({
   cursor,
   query,
   username,
+  userId: profileUserId,
   excludedImageIds,
   excludedUserIds,
   period,
@@ -282,7 +288,11 @@ export const getPostsInfinite = async ({
 
   let targetUser: number | undefined;
 
-  if (username) {
+  if (profileUserId) {
+    targetUser = profileUserId;
+    AND.push(Prisma.sql`p."userId" = ${targetUser}`);
+    cacheTags.push(`posts-user:${targetUser}`);
+  } else if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (!record) return { items: [] };
 
@@ -1197,6 +1207,7 @@ export async function afterPostPublish(post: { postId: number; userId: number })
 
 export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsRestored({ postIds: posts.map((post) => post.postId) });
   const userIds = uniq(posts.map((post) => post.userId));
   await userPostCountCache.refresh(userIds);
   const images = await dbWrite.image.findMany({
@@ -1215,6 +1226,7 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },
     select: { id: true },
@@ -1238,6 +1250,11 @@ export const deletePost = async ({
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
   const markerView = await holdMarkerViewExists();
+  // Chapter 1 of a story started from an image, whose points go with it.
+  const sparked = await dbWrite.storylineChapter.findFirst({
+    where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
+    select: { storylineId: true },
+  });
 
   const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported } =
     await dbWrite.$transaction(
@@ -1330,6 +1347,7 @@ export const deletePost = async ({
   // reject, and by this point the rows are gone — the pre-delete snapshot is the only
   // remaining record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
+  if (sparked) void onStorySparkLost(sparked.storylineId);
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 

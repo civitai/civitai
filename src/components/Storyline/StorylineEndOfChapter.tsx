@@ -116,9 +116,9 @@ export function StorylineEndOfChapter({
             title: 'Make this the main path',
             children: (
               <Text size="sm">
-                Make <strong>{getStorylineChapterName(child)}</strong> the main path after chapter{' '}
-                {chapterDepth + 1}? Readers are sent this way first. The current main path stays, as
-                one of the other paths.
+                Make <strong>{getStorylineChapterName(child, { inSentence: true })}</strong> the
+                main path after chapter {chapterDepth + 1}? Readers are sent this way first. The
+                current main path stays, as one of the other paths.
               </Text>
             ),
             labels: { confirm: 'Make main path', cancel: 'Cancel' },
@@ -387,9 +387,13 @@ export function StorylineEndOfChapter({
                       >
                         <IconGitFork size={14} /> Start a branch from here
                       </Anchor>
-                      <Text size="xs" c="dimmed">
+                      <Text size="xs" c="dimmed" data-testid="storyline-start-branch-note">
                         A side path after this chapter. The {onMain ? 'main path' : 'path'} still
-                        goes on to {main ? getStorylineChapterName(main) : 'the next chapter'}.
+                        goes on to{' '}
+                        {main
+                          ? getStorylineChapterName(main, { inSentence: true })
+                          : 'the next chapter'}
+                        .
                       </Text>
                     </div>
                   )}

@@ -4,13 +4,13 @@ import {
   Badge,
   Button,
   Group,
-  HoverCard,
   Overlay,
   Paper,
   Stack,
   Text,
   ThemeIcon,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconBolt,

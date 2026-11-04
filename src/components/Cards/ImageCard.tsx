@@ -13,12 +13,24 @@ import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
 import clsx from 'clsx';
 
-export function ImageCard({ data }: Props) {
+export function ImageCard(props: Props) {
+  return (
+    <HatTurfCardProvider>
+      <ImageCardContent {...props} />
+    </HatTurfCardProvider>
+  );
+}
+
+function ImageCardContent({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
@@ -29,7 +41,7 @@ export function ImageCard({ data }: Props) {
     <AspectRatioImageCard
       image={data}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
-      cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
+      cosmetic={data.cosmetic?.data ?? (remix.any ? REMIX_FRAME : undefined)}
       eventDecoration={data.eventDecoration?.data}
       eventDecorationOn={{ entityType: 'Image', entityId: data.id }}
       routedDialog={{
@@ -37,16 +49,22 @@ export function ImageCard({ data }: Props) {
         state: { imageId: data.id, images: getImages(), ...context },
       }}
       overlay={({ safe }) =>
-        // Not mounted at all with the flag off. The overlay renders null there
-        // anyway, but a card is rendered by the hundred and this keeps the
-        // flag-off tree identical to what shipped before it.
-        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
+        safe && (
+          <>
+            {/* Not mounted with the flag off: a card is rendered by the hundred. */}
+            {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
+            <HatTurfLayer imageId={data.id} />
+          </>
+        )
       }
       header={
         <div className="flex w-full items-start justify-between">
-          {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
-            <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
-          )}
+          <div className="flex flex-col items-start gap-1">
+            <HatTurfBadge imageId={data.id} />
+            {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
+              <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
+            )}
+          </div>
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />
@@ -54,7 +72,7 @@ export function ImageCard({ data }: Props) {
         </div>
       }
       footer={({ safe }) => (
-        <div className="flex w-full flex-col gap-2">
+        <div className={clsx(cardClasses.footer, 'flex w-full flex-col gap-2')}>
           {/* In the footer, not over the media: this card's footer is painted on
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
@@ -74,54 +92,44 @@ export function ImageCard({ data }: Props) {
   );
 }
 
-const countFormatter = new Intl.NumberFormat('en-US');
-const MAX_COUNT_LENGTH = 9;
-
 function ImageCardActionRow({ data }: Props) {
   const features = useFeatureFlags();
-  const biggest = Math.max(
-    data.stats?.likeCountAllTime ?? 0,
-    data.stats?.heartCountAllTime ?? 0,
-    data.stats?.laughCountAllTime ?? 0,
-    data.stats?.cryCountAllTime ?? 0
-  );
-  const countLength = Math.min(countFormatter.format(biggest).length, MAX_COUNT_LENGTH);
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
-    <div
-      className={clsx(cardClasses.actionRow, 'flex flex-wrap items-center gap-1')}
-      data-count-len={Math.max(countLength, 5)}
-    >
-      <Reactions
-        className={clsx(cardClasses.reactions, cardClasses.reactionsFill)}
-        entityId={data.id}
-        entityType="image"
-        reactions={data.reactions}
-        metricsUnknown={data.stats?.statsUnknown}
-        metrics={{
-          likeCount: data.stats?.likeCountAllTime,
-          dislikeCount: data.stats?.dislikeCountAllTime,
-          heartCount: data.stats?.heartCountAllTime,
-          laughCount: data.stats?.laughCountAllTime,
-          cryCount: data.stats?.cryCountAllTime,
-        }}
-        targetUserId={data.user.id}
-        abbreviate="container"
-        disableBuzzTip
-      />
-      {!data.poi && (
-        <ImageBuzzTip
+    <div className={cardClasses.actions}>
+      <div className={cardClasses.actionRow}>
+        <Reactions
+          className={cardClasses.reactions}
           entityId={data.id}
-          targetUserId={data.user.id}
-          tippedAmountCount={data.stats?.tippedAmountCountAllTime}
+          entityType="image"
+          reactions={data.reactions}
           metricsUnknown={data.stats?.statsUnknown}
-          className={clsx(cardClasses.reactions, 'flex items-center pl-0.5')}
+          metrics={{
+            likeCount: data.stats?.likeCountAllTime,
+            dislikeCount: data.stats?.dislikeCountAllTime,
+            heartCount: data.stats?.heartCountAllTime,
+            laughCount: data.stats?.laughCountAllTime,
+            cryCount: data.stats?.cryCountAllTime,
+          }}
+          targetUserId={data.user.id}
+          abbreviate
+          disableBuzzTip
         />
-      )}
-      {(features.stickerPlacement || hasMetaButton) && (
-        <div className="ml-auto flex items-center gap-1">
+      </div>
+      <div className={cardClasses.tipRow}>
+        {!data.poi && (
+          <ImageBuzzTip
+            entityId={data.id}
+            targetUserId={data.user.id}
+            tippedAmountCount={data.stats?.tippedAmountCountAllTime}
+            metricsUnknown={data.stats?.statsUnknown}
+            className={clsx(cardClasses.reactions, 'flex items-center pl-0.5')}
+          />
+        )}
+        <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
+          <HatTurfButton imageId={data.id} />
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>
               <ThemeIcon className={cardClasses.infoChip} variant="light">
@@ -130,7 +138,7 @@ function ImageCardActionRow({ data }: Props) {
             </ImageMetaPopover2>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

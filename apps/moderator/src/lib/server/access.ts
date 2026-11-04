@@ -165,6 +165,7 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: '/bounties/poi-appeals', label: 'Real-Person Appeals' },
       { path: '/bounties/file-checks', label: 'Entry File Checks' },
+      { path: '/bounties/unpaid-awards', label: 'Unpaid Awards', countKey: 'bountyUnpaidAwards' },
     ],
   },
   {
@@ -221,6 +222,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/csam/text-holds', label: 'CSAM holds', countKey: 'csamTextHolds' },
       { path: '/text-scan/prompts', label: 'Prompts' },
       { path: '/text-scan/model-rules', label: 'Model rules' },
+      { path: '/text-scan/shadow-sexual-prompt', label: 'Shadow sexual prompt' },
     ],
   },
   {

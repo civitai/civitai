@@ -22,6 +22,7 @@ import {
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { BETA_MESSAGE_MAX } from '~/server/schema/blocks/offsite-listing.schema';
 import { BETA_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-beta.service';
+import { OWNER_REVISION_IN_PROGRESS_MESSAGE } from '~/server/services/blocks/app-listing-moderator-edit';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
@@ -119,6 +120,7 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
   newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
   newUlid: () => `ULID${++seq.n}`,
+  newAppListingModerationEventId: () => `alme_new_${++seq.n}`,
 }));
 
 const OWNER = 42;
@@ -2258,5 +2260,305 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
       ],
       [],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Moderator edits of a listing the moderator holds no seat on
+// ---------------------------------------------------------------------------
+
+describe('moderator edits', () => {
+  // The shadow's content; anything other than the parent's means someone else edited it.
+  let shadowTagline = 'the tagline';
+  function auditEvents() {
+    return mockWrite.appListingModerationEvent.create.mock.calls.map(
+      (c) => (c[0] as { data: Record<string, unknown> }).data
+    );
+  }
+  beforeEach(() => {
+    shadowTagline = 'the tagline';
+    mockWrite.appListing.findUnique.mockImplementation(async (...a: unknown[]) => {
+      const args = a[0] as { where: { id: string } };
+      return args.where.id === 'apl_parent'
+        ? {
+            id: 'apl_parent',
+            slug: 'cool-app',
+            revisionOfId: null,
+            status: 'approved',
+            revisionOf: null,
+            tagline: 'the tagline',
+          }
+        : {
+            id: args.where.id,
+            slug: 'rev-x',
+            revisionOfId: 'apl_parent',
+            status: 'draft',
+            revisionOf: { id: 'apl_parent', slug: 'cool-app' },
+            tagline: shadowTagline,
+          };
+    });
+  });
+
+  it('a moderator edits a draft they do not own, and the edit is recorded with them as actor', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Mod rename' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res.listingId).toBe('apl_parent');
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { name: 'Mod rename' },
+    });
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({
+        appListingId: 'apl_parent',
+        action: 'moderator-edit',
+        actorUserId: MOD,
+        detail: 'details',
+      }),
+    ]);
+  });
+
+  it('a material moderator edit on a live listing goes through a shadow revision, not the live row', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Material rename' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res).toMatchObject({ requiresReview: true, shadowId: 'apl_new_1' });
+    // The revision still belongs to the listing's owner, not the moderator.
+    expect(mockWrite.appListing.create.mock.calls[0][0].data).toMatchObject({
+      userId: OWNER,
+      revisionOfId: 'apl_parent',
+    });
+    const updateCalls = mockWrite.appListing.update.mock.calls.map((c) => c[0]);
+    expect(
+      updateCalls.every(
+        (c) => (c as unknown as { where: { id: string } }).where.id !== 'apl_parent'
+      )
+    ).toBe(true);
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD }),
+    ]);
+  });
+
+  it('the audit row is written in the same transaction as the edit, so a failed insert rolls it back', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    let inTx = false;
+    const writesInTx: boolean[] = [];
+    mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      inTx = true;
+      try {
+        return await cb(mockWrite);
+      } finally {
+        inTx = false;
+      }
+    });
+    mockWrite.appListing.update.mockImplementation(async (a: { data: unknown }) => {
+      writesInTx.push(inTx);
+      return a.data;
+    });
+    mockWrite.appListingModerationEvent.create.mockImplementation(async () => {
+      expect(inTx).toBe(true);
+      throw new Error('violates check constraint "app_listing_mod_events_action_check"');
+    });
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'x' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toThrow(/check constraint/);
+    expect(writesInTx).toEqual([true]);
+  });
+
+  it('a refused moderator save leaves no audit row', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'removed' }));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'delist' });
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'x' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a non-owner who is not a moderator is still refused, with nothing written', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'x' },
+        userId: OTHER,
+        isModerator: false,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it("the owner's own edit writes no moderator-edit event, even when the owner is a moderator", async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Owner rename' },
+      userId: OWNER,
+      isModerator: true,
+    });
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a moderator submits a revision draft on a listing they do not own; a stranger cannot', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow());
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: OTHER, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    const res = await submitListingRevision({
+      shadowId: 'apl_shadow',
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res).toBeTruthy();
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ submittedByUserId: MOD }),
+      })
+    );
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD, detail: 'revision' }),
+    ]);
+  });
+
+  it("a moderator's revision-draft edit is written to the shadow and recorded on the parent", async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { tagline: 'mod tagline' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'mod tagline' },
+    });
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD, detail: 'details' }),
+    ]);
+  });
+
+  it("a moderator is refused the owner's unsubmitted revision draft, and nothing is written", async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { tagline: 'mod tagline' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: OWNER_REVISION_IN_PROGRESS_MESSAGE });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it("a moderator cannot submit the owner's revision", async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow());
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: MOD, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it("a moderator's material edit is refused while the owner has a revision in progress", async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'Material rename' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('an owner save that lands between the check and the write is still refused (the re-check runs in the transaction)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      shadowTagline = 'owner saved meanwhile';
+      return cb(mockWrite);
+    });
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { tagline: 'mod tagline' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a moderator cannot open a revision on its own; only a save opens one', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    await expect(
+      beginListingRevision({ listingId: 'apl_parent', userId: MOD, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('the owner is not held back by the same in-progress revision', async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch: { name: 'Owner rename' }, userId: OWNER })
+    ).resolves.toMatchObject({ requiresReview: true, shadowId: 'apl_shadow' });
+  });
+
+  it('a moderator cannot change whether the app can be forked', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ kind: 'onsite', status: 'draft' })
+    );
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { forkable: true },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only the app’s owner or a collaborator can change whether it can be forked.',
+    });
+    expect(auditEvents()).toEqual([]);
   });
 });

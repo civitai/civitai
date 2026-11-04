@@ -119,7 +119,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if ('notFound' in pageData) return send(404, { error: 'Not found' });
 
     // The seeds, from the exact request a server render's bootstrap reads (the internal bootstrap
-    // host), so the host-derived ones — ToS, announcements — are the page's.
+    // host for ToS, the viewer's host for announcements), so the host-derived ones are the page's.
     let bootstrapFailed = false;
     const bootstrapSeeds = resolveSettingsBootstrapSeeds(settingsBootstrapRequest(req), session);
     bootstrapSeeds.catch(() => {
