@@ -395,6 +395,9 @@ export const userSettingsSchema = z.object({
   // Opt-in, per event name: take part in Hat Turf (events/turf). Placing needs it. Written only by
   // hatTurf.setOptIn.
   eventTurfOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Per event name: keep Hat Turf off my images (events/turf): no new stickers, and those placed are
+  // neither drawn nor counted while it is true. Written only by hatTurf.setOwnerOff.
+  eventTurfOwnerOff: z.record(z.string(), z.boolean()).optional(),
   // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
   // or absent means the default, 'off' means none. Written only by event.setShowcaseHat.
   eventShowcaseHat: z

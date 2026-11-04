@@ -1,5 +1,6 @@
 import { Badge, Card, Divider, Group, Select, Stack, Switch, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
+import { HatTurfOwnerToggle } from '~/components/HatTurf/HatTurfOwnerToggle';
 import { IconDiamond } from '@tabler/icons-react';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
@@ -72,6 +73,7 @@ export function SettingsCard() {
         <AutoplayGifsToggle />
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
+        <HatTurfOwnerToggle />
 
         <Divider label="Privacy" mb={-12} />
         <HideFromReactionListsToggle />

@@ -36,15 +36,26 @@ import {
 // The opt-in lives in User.settings, per event name: placing needs it (see inTurf). The owner's
 // choice is not read: any visible, non-contest image is turf unless its owner is banned or deleted.
 export const TURF_SETTING = 'eventTurfOptIn';
+// Per event name, an owner's "keep Hat Turf off my images". Only a user not in Hat Turf may set it.
+export const TURF_OWNER_OFF_SETTING = 'eventTurfOwnerOff';
 
 /**
- * Whether the user aliased `alias` is in Hat Turf for `event`: only an explicit opt-in counts.
+ * Whether the user aliased `alias` is in Hat Turf for `event`: never while they keep Hat Turf off
+ * their own images (a player cannot wall theirs off); otherwise only an explicit opt-in counts.
  * Placing a hat does not opt anyone in; Hat Turf was announced as opt-in only.
  */
 const inTurf = (alias: string, event: string) => {
   const u = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`COALESCE((${u}.settings -> ${TURF_SETTING} ->> ${event}) = 'true', false)`;
+  return Prisma.sql`CASE WHEN (${u}.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event}) = 'true'
+    THEN false ELSE COALESCE((${u}.settings -> ${TURF_SETTING} ->> ${event}) = 'true', false) END`;
 };
+
+/**
+ * The owner of image `i` has not kept Hat Turf off their images. Their images then take no new
+ * stickers, and those already placed are neither drawn nor counted; turning it back on restores them.
+ */
+const ownerAllowsTurf = (event: string) => Prisma.sql`NOT EXISTS (SELECT 1 FROM "User" ow
+  WHERE ow.id = i."userId" AND (ow.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event}) = 'true')`;
 
 const CONFIG_TTL_MS = 30_000;
 const MAP_LOG_MAX = 50_000;
@@ -130,13 +141,19 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
     }),
-    dbRead.$queryRaw<{ optedIn: boolean | null }[]>`
-      SELECT ${inTurf('u', event.name)} AS "optedIn"
+    dbRead.$queryRaw<{ optedIn: boolean | null; ownerOff: boolean | null }[]>`
+      SELECT ${inTurf('u', event.name)} AS "optedIn",
+        (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff"
       FROM "User" u WHERE u.id = ${userId}
     `,
   ]);
   const { stock: _, ...supply } = turfSupplyAt(event, row, now);
-  return { ...supply, mode: event.turf.mode, optedIn: !!user?.optedIn };
+  return {
+    ...supply,
+    mode: event.turf.mode,
+    optedIn: !!user?.optedIn,
+    ownerOff: !!user?.ownerOff,
+  };
 }
 // #endregion
 
@@ -173,12 +190,19 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!team) throw throwBadRequestError("You aren't on a team yet");
 
   const [image] = await dbWrite.$queryRaw<
-    { ownerId: number; visible: boolean; contest?: boolean; ownerActive: boolean }[]
+    {
+      ownerId: number;
+      visible: boolean;
+      contest?: boolean;
+      ownerActive: boolean;
+      ownerAllows: boolean;
+    }[]
   >`
     SELECT i."userId" AS "ownerId",
       COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
       ${contestEntry(Prisma.sql`i.id`)} AS contest,
-      ${ownerActive} AS "ownerActive"
+      ${ownerActive} AS "ownerActive",
+      ${ownerAllowsTurf(event.name)} AS "ownerAllows"
     FROM "Image" i JOIN "User" o ON o.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -188,6 +212,8 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
     throw throwBadRequestError('Hat stickers only go on images in a published post');
   if (image.contest) throw throwBadRequestError("Hat stickers don't go on contest entries");
   if (!image.ownerActive) throw throwBadRequestError("You can't put hat stickers on this image");
+  if (!image.ownerAllows)
+    throw throwBadRequestError('This creator keeps Hat Turf off their images');
   // The same refusals as a regular sticker: a block either way, or a suspended placer. Neither
   // applies to an owner's own image.
   if (image.ownerId !== userId)
@@ -255,6 +281,15 @@ export async function removeTurfSticker(id: bigint, moderatorId: number) {
 export async function setTurfOptIn(eventName: string, userId: number, optedIn: boolean) {
   const event = await getTurfEvent(eventName);
   if (!event) throw throwNotFoundError('This event has no turf');
+  // A player cannot keep Hat Turf off their own images: joining needs the owner switch back on.
+  if (optedIn) {
+    const [user] = await dbWrite.$queryRaw<{ ownerOff: boolean | null }[]>`
+      SELECT (settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff"
+      FROM "User" WHERE id = ${userId}
+    `;
+    if (user?.ownerOff)
+      throw throwBadRequestError('Let people play Hat Turf on your images to join');
+  }
   // Only a real change writes, and `changed` says so: the opt-in analytics count each change once.
   const changed = await dbWrite.$executeRaw`
     UPDATE "User"
@@ -266,6 +301,55 @@ export async function setTurfOptIn(eventName: string, userId: number, optedIn: b
       AND (settings -> ${TURF_SETTING} ->> ${event.name}) IS DISTINCT FROM ${String(optedIn)}
   `;
   return { changed: changed > 0, event: event.name };
+}
+
+/**
+ * The owner's "keep Hat Turf off my images" (`off`). Turning it off is refused while the user is in
+ * Hat Turf, both up front for the message and in the write itself; turning it back on is always allowed.
+ */
+export async function setTurfOwnerOff(eventName: string, userId: number, off: boolean) {
+  const event = await getTurfEvent(eventName);
+  if (!event) throw throwNotFoundError('This event has no turf');
+  const notJoined = off ? Prisma.sql`AND NOT ${inTurf('u', event.name)}` : Prisma.empty;
+  if (off) {
+    const [user] = await dbWrite.$queryRaw<{ optedIn: boolean | null }[]>`
+      SELECT ${inTurf('u', event.name)} AS "optedIn" FROM "User" u WHERE u.id = ${userId}
+    `;
+    if (user?.optedIn) throw throwBadRequestError('Leave Hat Turf first');
+  }
+  const changed = await dbWrite.$executeRaw`
+    UPDATE "User" u
+    SET settings = jsonb_set(
+      COALESCE(u.settings, '{}'::jsonb) || jsonb_build_object(${TURF_OWNER_OFF_SETTING}::text,
+        COALESCE(u.settings -> ${TURF_OWNER_OFF_SETTING}, '{}'::jsonb)),
+      ARRAY[${TURF_OWNER_OFF_SETTING}::text, ${event.name}::text], to_jsonb(${off}::boolean))
+    WHERE u.id = ${userId}
+      AND (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) IS DISTINCT FROM ${String(
+    off
+  )}
+      ${notJoined}
+  `;
+  // Counts, the scoring map and pushes follow at once, not at the next reconcile.
+  if (changed > 0) await syncOwnerImages(event, userId);
+  return { changed: changed > 0, event: event.name };
+}
+
+/** Rewrites turf for every image of `ownerId` that has a live sticker, a batch at a time. */
+async function syncOwnerImages(event: TurfEvent, ownerId: number) {
+  for (let after = 0; ; ) {
+    const rows = await dbWrite.$queryRaw<{ imageId: number }[]>`
+      SELECT DISTINCT s."imageId" FROM "EventTurfSticker" s
+      JOIN "Image" i ON i.id = s."imageId"
+      WHERE s.event = ${event.name} AND i."userId" = ${ownerId} AND s."removedAt" IS NULL
+        AND s."imageId" > ${after}
+      ORDER BY s."imageId" LIMIT ${RECONCILE_IMAGE_BATCH}
+    `;
+    if (!rows.length) return;
+    const ids = rows.map((row) => row.imageId);
+    await syncTurfImages(event, ids);
+    after = ids[ids.length - 1];
+    if (rows.length < RECONCILE_IMAGE_BATCH) return;
+  }
 }
 // #endregion
 
@@ -280,8 +364,9 @@ type StickerRow = TurfStickerRow & {
   contest?: boolean;
 };
 
-// The live stickers on images anyone may see (imageVisible), oldest first per image. Neither the owner's
-// opt-in nor the placer's is read here: a placer who opts out leaves what they placed counting. A placer earns with an account from
+// The live stickers on images anyone may see (imageVisible) whose owner allows turf (ownerAllowsTurf),
+// oldest first per image. The placer's opt-in is not read here: a placer who opts out leaves what
+// they placed counting. A placer earns with an account from
 // before the event start, or one that has since reached the Spark tier's threshold, read from its
 // CreatorMilestone row so the tier stays the one source (compared as
 // creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
@@ -305,6 +390,7 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
     JOIN "Image" i ON i.id = s."imageId"
     JOIN "Post" p ON p.id = i."postId"
     WHERE s.event = ${event.name} AND s."removedAt" IS NULL AND ${where} AND ${imageVisible}
+      AND ${ownerAllowsTurf(event.name)}
     ORDER BY s."imageId", s."createdAt", s.id
   `;
 }
@@ -611,6 +697,7 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
       JOIN "Post" p ON p.id = i."postId"
       JOIN "User" o ON o.id = i."userId"
       WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerActive}
+        AND ${ownerAllowsTurf(event.name)}
     `,
     // Removed ones too: the unique key refuses a second sticker either way.
     viewerId
@@ -673,7 +760,7 @@ export async function getTurfStickers(
     JOIN "Post" p ON p.id = i."postId"
     WHERE s.event = ${event.name} AND s."imageId" = ${imageId} AND s."removedAt" IS NULL
       AND ${imageVisible} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL ${only}
-      AND NOT ${contestEntry(Prisma.sql`s."imageId"`)}
+      AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
     ORDER BY s."createdAt" DESC, s.id DESC
     LIMIT ${limit}
   `;
@@ -764,7 +851,7 @@ export async function getTurfStickersForImages(
       WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
         AND s."removedAt" IS NULL AND ${imageVisible}
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT ${contestEntry(Prisma.sql`s."imageId"`)}
+        AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
     ), picked AS (
       SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC
