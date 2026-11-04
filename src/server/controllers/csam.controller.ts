@@ -3,7 +3,10 @@ import type { ProtectedContext } from '~/server/createContext';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import {
+  FlaggedConsumerFetchError,
+  reviewConsumerStrikes,
+} from '~/server/http/orchestrator/flagged-consumers';
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
@@ -102,7 +105,19 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       }
     }
   } else if (type === 'GeneratedImage') {
-    await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
+    // The orchestrator no longer serves this route. A 404 leaves nothing to review, and must not
+    // stop the account removal below.
+    await reviewConsumerStrikes({
+      consumerId: `civitai-${userId}`,
+      moderatorId: reportedById,
+    }).catch((e: unknown) => {
+      if (!(e instanceof FlaggedConsumerFetchError) || e.status !== 404) throw e;
+      logToAxiom({
+        name: 'csam-report',
+        type: 'info',
+        message: 'strikes review not found at the orchestrator; nothing to review',
+      }).catch(() => undefined);
+    });
   }
 
   // A supplemental report follows one that removed the account for this; one restored or banned for

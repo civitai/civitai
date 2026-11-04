@@ -2,15 +2,19 @@ import { env } from '~/env/server';
 
 const baseUrl = `${env.ORCHESTRATOR_ENDPOINT ?? ''}/v1/manager/consumers/flagged`;
 
+export class FlaggedConsumerFetchError extends Error {
+  constructor(readonly status: number, statusText: string) {
+    super(`Orchestrator fetch failed: ${status} ${statusText}`);
+  }
+}
+
 async function orchestratorFetch(path: string, opts?: RequestInit) {
   const url = `${baseUrl}${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
   };
   const response = await fetch(url, { ...opts, headers: { ...headers, ...opts?.headers } });
-  if (!response.ok) {
-    throw new Error(`Orchestrator fetch failed: ${response.status} ${response.statusText}`);
-  }
+  if (!response.ok) throw new FlaggedConsumerFetchError(response.status, response.statusText);
   return response;
 }
 
