@@ -1,5 +1,5 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
+import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -336,7 +336,13 @@ export const useMarkReadNotification = () => {
  */
 export function notificationListFilters(listKey: QueryKey[number], category: string) {
   return [
-    { queryKey: [listKey, { input: { category: null } }], exact: false },
+    // Predicate, not `{ input: { category: null } }`: the All tab's key holds `category: undefined`,
+    // and partial key matching does not equate that with null.
+    {
+      queryKey: [listKey],
+      predicate: ({ queryKey }: Query) =>
+        !(queryKey[1] as { input?: { category?: unknown } } | undefined)?.input?.category,
+    },
     { queryKey: [listKey, { input: { category } }], exact: false },
   ];
 }
