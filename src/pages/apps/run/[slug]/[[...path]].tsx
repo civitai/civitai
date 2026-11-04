@@ -345,7 +345,7 @@ export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSu
  * The localStorage "recently opened" entry for this render — or `null` when there must
  * not be one.
  *
- * 🔴 A PRIVATE RUN GETS `null`. Both link shapes the recents rail builds —
+ * 🔴 A PRIVATE RUN GETS `null`. Both link shapes a recents entry becomes —
  * `/apps/run/<slug>` and `/apps/store-preview/<slug>` — 404 for a delisted app once the
  * flag narrows again, so an entry written here is a rail row that breaks later. That is
  * the defect `ownerId` (#4048) was added to stop, arriving by a different route.
@@ -460,8 +460,8 @@ function AppPage(props: PageProps) {
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Record this ACTUAL run in the client-only recents store (localStorage), so
-  // both the shared app-chrome "Recently run" menu AND the `/apps` store's
-  // "Recently opened" rail can offer a 1-click return. Keyed by appBlockId (the
+  // both the shared app-chrome "Recently run" menu AND the `/apps` home's
+  // "My apps" grid can offer a 1-click return. Keyed by appBlockId (the
   // store's stable de-dup id).
   //
   // Fields, and why each is written:
@@ -486,10 +486,10 @@ function AppPage(props: PageProps) {
   // these entries — which is how a rail of apps that 404 for the viewer got
   // rendered. `ownerId` is `null` for a signed-out run, which is its own bucket.
   //
-  // 🔴 A PRIVATE RUN WRITES NO RECENTS ENTRY. The store's "Recently opened" rail and the
+  // 🔴 A PRIVATE RUN WRITES NO RECENTS ENTRY. The `/apps` home's grid and the
   // chrome's "Recently run" menu both link to `/apps/run/<slug>` and to the app's STORE
   // page — and a delisted app has neither a live listing nor a public run. Recording one
-  // would hand the viewer a rail entry that 404s the moment the flag narrows again, which
+  // would hand the viewer a recents entry that 404s the moment the flag narrows again, which
   // is the exact defect `ownerId` (#4048) was added to stop. The guard is inside the
   // effect rather than on the call site so the hook order is unconditional.
   const recentsOwnerId = currentUser?.id ?? null;
