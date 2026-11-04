@@ -305,6 +305,25 @@ describe('sendNcEarningsNotice', () => {
     expect(recordedAtSend).toEqual([true, true, true]);
   });
 
+  it('retries a throttled email without posting the notification again', async () => {
+    let throttled = false;
+    sendMock.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === 'u1@example.com' && !throttled) {
+        throttled = true;
+        throw Object.assign(new Error('454 Throttling failure: Maximum sending rate exceeded'), {
+          responseCode: 454,
+        });
+      }
+    });
+    expect(await run({ sleep: async () => undefined })).toMatchObject({ sent: 3, failed: 0 });
+    expect(createNotificationMock.mock.calls.map(([n]) => n.userId).sort()).toEqual([1, 2, 3]);
+    expect(sendMock.mock.calls.map(([d]) => d.to).sort()).toEqual([
+      'u1@example.com',
+      'u1@example.com',
+      'u2@example.com',
+    ]);
+  });
+
   it('refuses to send, and records nobody, when email is not configured', async () => {
     emailConfiguredMock.mockReturnValue(false);
     await expect(run()).rejects.toThrow('Email is not configured');
