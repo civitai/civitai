@@ -45,6 +45,7 @@ export async function applySystemModelNsfwFlag({
     minor: boolean;
     poi: boolean;
     sfwOnly: boolean;
+    availability?: string;
   };
   source: string;
   /** The flip applies a lead held while the model was minor or POI (`applyHeldRestrictedVerdict`). */
@@ -71,8 +72,8 @@ export async function applySystemModelNsfwFlag({
   }
 
   // A minor or POI model stays SFW, as the model form and the profanity check keep it: the verdict
-  // waits in Needs review for a moderator instead. Held from the caller's read, which can be stale: an
-  // owner who cleared the flag since falls through to the flip, whose guard has the final say.
+  // waits in Needs review for a moderator instead. The caller's read can be stale; the flip's guard
+  // decides.
   if (model.minor || model.poi) {
     const held = await holdRestrictedVerdict(model.id, source);
     if (held) return 'held_restricted';
@@ -81,16 +82,13 @@ export async function applySystemModelNsfwFlag({
   // Guarded in the WHERE, not by the caller's read: a moderator ruling that lands between
   // the read and this write would otherwise be overwritten. `array_append` in the database
   // for the same reason — writing back the array we read would drop a concurrent lock.
-  // The marker rides the same guarded write as the lock, merged in jsonb so no other meta key is
-  // rewritten from a stale read.
-  // An SFW-only model is rated as any other, with SFW-only cleared (the two cannot stand together),
-  // and also gets a lead that records what was replaced, so a moderator can put the owner's rating
-  // back; so does a lead held while the model was minor or POI, applied once the owner cleared the
-  // flag. The lead and its ruling record are decided on the row as written, not on the read.
+  // SFW-only and nsfw cannot stand together, so SFW-only is cleared, except on a Private model, which
+  // must stay SFW-only. Either way a lead records what was replaced, so a moderator can put the owner's
+  // rating back. The lead is decided on the row as written, not on the read.
   const flipped = await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET nsfw = TRUE,
-        "sfwOnly" = FALSE,
+        "sfwOnly" = CASE WHEN m.availability = 'Private' THEN m."sfwOnly" ELSE FALSE END,
         "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
         meta = ${asJsonbObjectSql('m.meta')} || CASE
           WHEN m."sfwOnly" OR ${asJsonbObjectSql(
@@ -137,7 +135,11 @@ export async function applySystemModelNsfwFlag({
         entityId: model.id,
         ownerId: model.userId,
         before: { nsfw: model.nsfw, sfwOnly: model.sfwOnly, lockedProperties: stored },
-        after: { nsfw: true, sfwOnly: false, lockedProperties: [...stored, 'nsfw'] },
+        after: {
+          nsfw: true,
+          sfwOnly: model.availability === 'Private' && model.sfwOnly,
+          lockedProperties: [...stored, 'nsfw'],
+        },
         actorRole: 'system',
         systemFields: { nsfw: source, sfwOnly: source, lockedProperties: source },
       })
@@ -192,6 +194,7 @@ export async function applyHeldRestrictedVerdict(
       minor: true,
       poi: true,
       sfwOnly: true,
+      availability: true,
       meta: true,
     },
   });
@@ -221,6 +224,7 @@ export async function applyModelNsfwTextScan({
       minor: true,
       poi: true,
       sfwOnly: true,
+      availability: true,
     },
   });
   if (!model) return nothing;

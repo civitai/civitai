@@ -1033,6 +1033,7 @@ describe('a held scan verdict', () => {
     async (flag) => {
       mockStored({ [flag]: true });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, [flag]: false });
+      expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
       expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
     }
   );
@@ -1042,6 +1043,7 @@ describe('a held scan verdict', () => {
       meta: { restrictedNsfwVerdict: { source: 'text-scan', at: 'x', restriction: 'poi' } },
     });
     await upsert({ id: MODEL_ID, userId: OWNER_ID });
+    expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
     expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
   });
 

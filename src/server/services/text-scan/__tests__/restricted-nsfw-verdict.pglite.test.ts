@@ -67,6 +67,7 @@ beforeAll(async () => {
       poi boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false,
       "sfwOnly" boolean NOT NULL DEFAULT false,
+      availability text NOT NULL DEFAULT 'Public',
       meta jsonb NOT NULL DEFAULT '{}',
       "deletedAt" timestamp(3)
     );
@@ -521,6 +522,77 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     await seed({});
     expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
     expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
+  });
+});
+
+describe('a Private model, which must stay SFW-only', () => {
+  const makePrivate = () =>
+    db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = $1`, [MODEL]);
+  const expectRatedSfwOnly = async () => {
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, sfwOnly: true, lockedProperties: ['nsfw'] });
+    expect(after.meta.systemNsfwLock).toMatchObject({ source: 'text-scan' });
+    expect(after.meta.restrictedNsfwVerdict.applied.prior).toMatchObject({
+      nsfw: false,
+      sfwOnly: true,
+    });
+    expect(after.meta.restrictedNsfwVerdictRulings.at(-1)).toMatchObject({ ruling: 'autoApply' });
+    expect(mocks.trackModActivity).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ activity: 'restrictedNsfwVerdict:autoApply' })
+    );
+  };
+
+  it.each(['minor', 'poi'] as const)(
+    'when the owner unticks %s with a lead held: rated NSFW and locked, SFW-only kept',
+    async (restriction) => {
+      await seed({ sfwOnly: true, meta: lead(restriction) });
+      await makePrivate();
+      expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
+      await expectRatedSfwOnly();
+    }
+  );
+
+  it('when it went Private between submit and callback: the same', async () => {
+    await seed({ sfwOnly: true });
+    await makePrivate();
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned({ sfwOnly: true }), source: 'text-scan' })
+    ).toBe('applied');
+    await expectRatedSfwOnly();
+  });
+
+  it('made public afterwards: nsfw stays locked and the lead is not applied again', async () => {
+    await seed({ sfwOnly: true, meta: lead('minor') });
+    await makePrivate();
+    await applyHeldRestrictedVerdict(MODEL);
+    const applied = (await row()).meta;
+    await db.query(`UPDATE "Model" SET availability = 'Public' WHERE id = $1`, [MODEL]);
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
+    expect(
+      await applySystemModelNsfwFlag({
+        model: scanned({ nsfw: true, sfwOnly: true, lockedProperties: ['nsfw'] }),
+        source: 'text-scan',
+      })
+    ).not.toBe('applied');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after.meta).toEqual(applied);
+    expect(after.meta.restrictedNsfwVerdictRulings).toHaveLength(1);
+  });
+
+  it('Keep restores the prior rating', async () => {
+    await seed({ sfwOnly: true, meta: lead('poi') });
+    await makePrivate();
+    await applyHeldRestrictedVerdict(MODEL);
+    await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
+    expect(await row()).toMatchObject({ nsfw: false, sfwOnly: true, lockedProperties: [] });
+  });
+
+  it('a Public model still has SFW-only cleared (control)', async () => {
+    await seed({ sfwOnly: true });
+    await applySystemModelNsfwFlag({ model: scanned({ sfwOnly: true }), source: 'text-scan' });
+    expect(await row()).toMatchObject({ nsfw: true, sfwOnly: false });
   });
 });
 

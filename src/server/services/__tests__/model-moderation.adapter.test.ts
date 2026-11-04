@@ -136,7 +136,7 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(flip).toBeDefined();
     expect(flip?.sql).toContain('array_append');
     expect(flip?.sql).toContain("'systemNsfwLock'");
-    expect(flip?.values).toContain('xguard-text-moderation');
+    expect(flip?.values).toEqual(expect.arrayContaining(['xguard-text-moderation', 1]));
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
@@ -294,12 +294,11 @@ describe('modelModerationAdapter.applyResult', () => {
       }
     );
 
-    it('rates an SFW-only model, clearing SFW-only, under the same lock', async () => {
+    it('rates an SFW-only model instead of holding it', async () => {
       dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow({ sfwOnly: true }));
 
       await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
-      expect(flipCall()?.sql).toContain('"sfwOnly" = FALSE');
       expect(heldCall()).toBeUndefined();
       expect(outcomeMock).toHaveBeenCalledWith('applied');
     });

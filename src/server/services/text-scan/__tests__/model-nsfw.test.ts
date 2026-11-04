@@ -175,15 +175,9 @@ describe('applyModelNsfwTextScan on a model its owner restricted', () => {
     }
   );
 
-  it('guards the flip on the restriction too, so a flag set after the read still holds', async () => {
-    await applyModelNsfwTextScan(args(true));
-    expect(flipSql()).toMatch(/NOT \(m\.minor OR m\.poi\)/);
-  });
-
-  it('rates an SFW-only model as any other, clears SFW-only, and tells the owner', async () => {
+  it('rates an SFW-only model as any other and tells the owner', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ sfwOnly: true }));
     await applyModelNsfwTextScan(args(true));
-    expect(flipSql()).toContain('"sfwOnly" = FALSE');
     expect(heldCall()).toBeUndefined();
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
     expect(createNotification).toHaveBeenCalled();

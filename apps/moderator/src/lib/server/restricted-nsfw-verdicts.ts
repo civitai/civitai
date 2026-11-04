@@ -11,8 +11,8 @@ const restrictionSql = sql`CASE
   WHEN m.poi OR m.meta->'restrictedNsfwVerdict'->>'restriction' = 'poi' THEN 'poi'
   ELSE 'sfwOnly' END`;
 
-/** Every pending lead, minor first, then POI, then SFW-only, oldest first within each. Small by
- *  construction (a handful a week), so unpaged up to `limit`. */
+/** Every pending lead, minor first, then POI, then SFW-only, oldest first within each. The queue is
+ *  small, so unpaged and capped at `limit`. */
 export async function getRestrictedVerdicts(limit = 100): Promise<RestrictedVerdictRow[]> {
   const result = await sql<RestrictedVerdictRow>`
     SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,

@@ -265,6 +265,7 @@ export const modelModerationAdapter: ModerationAdapter = {
         minor: true,
         poi: true,
         sfwOnly: true,
+        availability: true,
       },
     });
     // Deleted between submit and callback — a bare update would throw P2025 and fail the

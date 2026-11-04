@@ -46,7 +46,7 @@ Notes on the tabs:
   minor in that order after the owner unticks the flag. On a minor or real-person model the scan records the
   lead and leaves the rating to the moderator, until an owner's save clears both flags: the rating then applies
   as on any other model, recorded on the lead. On an SFW-only model it applies the rating as on any other model, clearing
-  SFW-only, and records the lead with what it replaced. Ruled under `modelFlags.detections.decide` through
+  SFW-only (a Private model keeps SFW-only), and records the lead with what it replaced. Ruled under `modelFlags.detections.decide` through
   `model/resolve-restricted-nsfw-verdict`: **Keep owner's rating** (nsfw off, SFW-only restored where the scan
   cleared it, and the scan's own lock for the lead lifted; a moderator's or a later scan's lock stands),
   **Dismiss** (a minor lead needs a reason) or **Rate NSFW** (refused by the main app while the model is marked
