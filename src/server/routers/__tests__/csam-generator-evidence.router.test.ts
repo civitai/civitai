@@ -66,8 +66,14 @@ describe('generator evidence procedures', () => {
     const member = caller({ id: 5, isModerator: false }, true);
     expect(await codeOf(member.preserveGeneratorEvidence(preserve))).toBe('FORBIDDEN');
     expect(await codeOf(member.approveGeneratorEvidence(approve))).toBe('FORBIDDEN');
+    expect(await codeOf(member.recopyGeneratorEvidenceFile(file))).toBe('FORBIDDEN');
+    expect(
+      await codeOf(member.excludeGeneratorEvidenceFile({ ...file, reason: 'damaged copy' }))
+    ).toBe('FORBIDDEN');
     expect(preserveGeneratorEvidence).not.toHaveBeenCalled();
     expect(approveGeneratorEvidenceReport).not.toHaveBeenCalled();
+    expect(recopyGeneratorEvidenceFile).not.toHaveBeenCalled();
+    expect(excludeGeneratorEvidenceFile).not.toHaveBeenCalled();
   });
 
   it('refuse every read to a member, and to a moderator without CSAM reporting access', async () => {
@@ -107,5 +113,19 @@ describe('generator evidence procedures', () => {
     expect(getEvidenceTriggers).toHaveBeenCalledWith(7);
     expect(await codeOf(moderator.getGeneratorEvidenceReport({ userId: 7 }))).toBe('ok');
     expect(getGeneratorEvidenceReport).toHaveBeenCalledWith(7, 5);
+
+    expect(await codeOf(moderator.approveGeneratorEvidence(approve))).toBe('ok');
+    expect(await codeOf(moderator.recopyGeneratorEvidenceFile(file))).toBe('ok');
+    expect(
+      await codeOf(moderator.excludeGeneratorEvidenceFile({ ...file, reason: 'damaged copy' }))
+    ).toBe('ok');
+    for (const service of [
+      approveGeneratorEvidenceReport,
+      recopyGeneratorEvidenceFile,
+      excludeGeneratorEvidenceFile,
+    ]) {
+      expect(service).toHaveBeenCalledTimes(1);
+      expect(service).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, moderatorId: 5 }));
+    }
   });
 });

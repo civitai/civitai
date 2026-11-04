@@ -37,7 +37,7 @@ import {
 import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
 import { evidenceVersion } from '~/server/services/generator-evidence/evidence-meta';
 import { MAX_EVIDENCE_FILES_PER_REPORT } from '~/server/services/generator-evidence/evidence-payload';
-import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
+import { MAX_FILES_PER_PRESERVE, MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 import { MAX_MANIFEST_BYTES } from '~/server/services/generator-evidence/evidence-manifest';
 
 const config = {
@@ -237,6 +237,92 @@ describe('preserveGeneratorEvidence', () => {
     const [job] = createCsamReport.mock.calls[0][0].details.generatedImages;
     expect(job.blobs[0]).toMatchObject({ blobId: OUTPUT, status: 'blocked-unreadable' });
     expect(fetched.filter((p) => p.includes('/blocked/'))).toEqual([]);
+  });
+
+  describe('the file limit of one request', () => {
+    beforeEach(() => dbMock.dbWrite.evidenceHold.create.mockClear());
+
+    // One input plus `outputs` outputs.
+    const serveWorkflowWith = (outputs: number) => {
+      const images = Array.from({ length: outputs }, (_, i) => ({
+        type: 'image',
+        id: `OUTPUT${String(i).padStart(9, '0')}.png`,
+        available: true,
+      }));
+      const big = { ...workflow, steps: [{ ...workflow.steps[0], output: { images } }] };
+      const served = vi.mocked(globalThis.fetch).getMockImplementation()!;
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+        new URL(String(input)).pathname === `/v1/manager/workflows/${WORKFLOW}`
+          ? new Response(JSON.stringify(big), { status: 200 })
+          : served(input)
+      );
+    };
+    const restrictionWithOneInput = () =>
+      dbMock.dbRead.userRestriction.findMany.mockResolvedValueOnce([
+        {
+          id: 31,
+          triggers: [
+            { inputImages: [`${config.base}/v2/consumer/blobs/TRIGGERIN0001.jpeg?sig=x`] },
+          ],
+        },
+      ] as never);
+    const nothingWritten = (store: EvidenceStore) => {
+      expect(fetched.filter((path) => path.startsWith('/v2/consumer/blobs/'))).toEqual([]);
+      expect(store.upload).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.evidenceHold.create).not.toHaveBeenCalled();
+      expect(createCsamReport).not.toHaveBeenCalled();
+    };
+
+    it('refuses a request over the limit before probing or copying any file', async () => {
+      serveWorkflowWith(MAX_FILES_PER_PRESERVE);
+      const store = memoryStore();
+
+      await expect(
+        preserveGeneratorEvidence(
+          { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+          { config, store }
+        )
+      ).rejects.toThrow('This request covers 101 files; at most 100 can be preserved at once.');
+      nothingWritten(store);
+    });
+
+    it("counts a trigger's inputs toward the limit", async () => {
+      serveWorkflowWith(MAX_FILES_PER_PRESERVE - 1);
+      restrictionWithOneInput();
+      const store = memoryStore();
+
+      await expect(
+        preserveGeneratorEvidence(
+          {
+            userId: USER,
+            moderatorId: 1,
+            workflowIds: [WORKFLOW],
+            triggers: [{ restrictionId: 31, index: 0 }],
+          },
+          { config, store }
+        )
+      ).rejects.toThrow(/covers 101 files/);
+      nothingWritten(store);
+    });
+
+    it('preserves a request of exactly the limit', async () => {
+      serveWorkflowWith(MAX_FILES_PER_PRESERVE - 2);
+      restrictionWithOneInput();
+      const store = memoryStore();
+
+      const result = await preserveGeneratorEvidence(
+        {
+          userId: USER,
+          moderatorId: 1,
+          workflowIds: [WORKFLOW],
+          triggers: [{ restrictionId: 31, index: 0 }],
+        },
+        { config, store }
+      );
+
+      expect(result.counts).toEqual({ preserved: MAX_FILES_PER_PRESERVE });
+      expect(store.upload).toHaveBeenCalledTimes(MAX_FILES_PER_PRESERVE);
+    });
   });
 
   describe('a file the pending report already holds', () => {

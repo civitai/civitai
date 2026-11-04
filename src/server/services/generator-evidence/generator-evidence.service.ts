@@ -34,7 +34,7 @@ import {
   readManifest,
 } from '~/server/services/generator-evidence/evidence-manifest';
 import { evidenceSizeProblem } from '~/server/services/generator-evidence/evidence-payload';
-import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
+import { MAX_FILES_PER_PRESERVE, MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 import {
   evidenceVersion,
   GENERATOR_EVIDENCE_VERSION,
@@ -218,6 +218,12 @@ export async function preserveGeneratorEvidence(
       message: `This request covers ${workflowCount} workflows; at most ${MAX_WORKFLOWS_PER_PRESERVE} can be preserved at once. Preserve them in batches of ${MAX_WORKFLOWS_PER_PRESERVE} or fewer; filing a whole preserve run's manifest larger than that is not available yet.`,
     });
   const { jobs, refused } = await loadJobs(deps, input);
+  const fileCount = jobs.reduce((n, job) => n + job.refs.length, 0);
+  if (fileCount > MAX_FILES_PER_PRESERVE)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `This request covers ${fileCount} files; at most ${MAX_FILES_PER_PRESERVE} can be preserved at once. Pick fewer workflows or triggers.`,
+    });
   if (!jobs.length) return { reportId: null, refused, counts: {} as Record<string, number> };
 
   const pending = await dbWrite.csamReport.findFirst({

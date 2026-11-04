@@ -13,7 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
-import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
+import { MAX_FILES_PER_PRESERVE, MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 import { trpc } from '~/utils/trpc';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -334,12 +334,13 @@ function AddEvidence({
   const [cursor, setCursor] = useState<string>();
   const workflowsQuery = trpc.csam.getGeneratorEvidenceWorkflows.useQuery({ userId, cursor });
   const [pickedTriggers, setPickedTriggers] = useState<Set<string> | null>(null);
-  const [pickedWorkflows, setPickedWorkflows] = useState<Set<string>>(new Set());
+  // Each picked workflow keeps its file count: the page that listed it may no longer be loaded.
+  const [pickedWorkflows, setPickedWorkflows] = useState<Map<string, number>>(new Map());
   const [tips, setTips] = useState('');
   const [manifestKey, setManifestKey] = useState('');
   const preserve = trpc.csam.preserveGeneratorEvidence.useMutation({
     onSuccess: () => {
-      setPickedWorkflows(new Set());
+      setPickedWorkflows(new Map());
       setPickedTriggers(new Set());
       void utils.csam.getGeneratorEvidenceReport.invalidate({ userId });
     },
@@ -364,6 +365,15 @@ function AddEvidence({
   const parsedTips = tips.trim() ? parseCyberTips(tips) : [];
   const manifest = manifestKey.trim();
   const count = triggers.size + pickedWorkflows.size;
+  const triggerFiles = new Map<string, number>(
+    (triggersQuery.data ?? []).flatMap((r) =>
+      r.triggers.map((t): [string, number] => [`${r.restrictionId}:${t.index}`, t.inputCount])
+    )
+  );
+  const fileCount =
+    [...pickedWorkflows.values()].reduce((n, files) => n + files, 0) +
+    [...triggers].reduce((n, key) => n + (triggerFiles.get(key) ?? 0), 0);
+  const tooManyFiles = fileCount > MAX_FILES_PER_PRESERVE;
 
   return (
     <Card withBorder>
@@ -413,7 +423,12 @@ function AddEvidence({
           <Checkbox
             key={workflow.workflowId}
             checked={pickedWorkflows.has(workflow.workflowId)}
-            onChange={() => setPickedWorkflows(toggle(pickedWorkflows, workflow.workflowId))}
+            onChange={() => {
+              const next = new Map(pickedWorkflows);
+              if (!next.delete(workflow.workflowId))
+                next.set(workflow.workflowId, workflow.inputs + workflow.outputs);
+              setPickedWorkflows(next);
+            }}
             label={
               <Text size="sm" lineClamp={2}>
                 {workflow.createdAt ?? workflow.workflowId} · inputs {workflow.inputs} · outputs{' '}
@@ -447,6 +462,12 @@ function AddEvidence({
             at once.
           </Alert>
         )}
+        {tooManyFiles && (
+          <Alert color="yellow">
+            {fileCount} files picked; at most {MAX_FILES_PER_PRESERVE} can be preserved at once.
+            Pick fewer workflows or triggers.
+          </Alert>
+        )}
         {preserve.error && <Alert color="red">{preserve.error.message}</Alert>}
         {preserve.data && (
           <Alert color={preserve.data.reportId ? 'green' : 'yellow'}>
@@ -468,13 +489,14 @@ function AddEvidence({
           disabled={
             (count === 0 && !manifest) ||
             parsedTips === null ||
-            pickedWorkflows.size > MAX_WORKFLOWS_PER_PRESERVE
+            pickedWorkflows.size > MAX_WORKFLOWS_PER_PRESERVE ||
+            tooManyFiles
           }
           loading={preserve.isPending}
           onConfirm={() =>
             preserve.mutate({
               userId,
-              workflowIds: [...pickedWorkflows],
+              workflowIds: [...pickedWorkflows.keys()],
               triggers: [...triggers].map((key) => {
                 const [restrictionId, index] = key.split(':').map(Number);
                 return { restrictionId, index };
