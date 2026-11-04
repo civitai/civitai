@@ -3,6 +3,7 @@ import {
   appsRunBackTarget,
   parseAppsRunOrigin,
   withHomeLaunchOrigin,
+  withRunLaunchOrigin,
 } from '~/shared/utils/apps-run-origin';
 
 /**
@@ -64,5 +65,39 @@ describe('appsRunBackTarget', () => {
       href: '/apps',
       label: 'My apps',
     });
+  });
+});
+
+describe('withRunLaunchOrigin', () => {
+  it('store: drops every `from` spelling and keeps the other pairs verbatim', () => {
+    expect(
+      withRunLaunchOrigin('/apps/run/x/y?a=1&from=home&q=a%20b&fr%6Fm=home&from#h', 'store')
+    ).toBe('/apps/run/x/y?a=1&q=a%20b#h');
+  });
+
+  it('store: a query holding only `from` leaves no dangling `?`', () => {
+    expect(withRunLaunchOrigin('/apps/run/x?from=home', 'store')).toBe('/apps/run/x');
+    expect(withRunLaunchOrigin('/apps/run/x?from=home#h', 'store')).toBe('/apps/run/x#h');
+  });
+
+  it('store: an href with no `from` is unchanged', () => {
+    expect(withRunLaunchOrigin('/apps/run/x/y?sl=asl_01J9', 'store')).toBe(
+      '/apps/run/x/y?sl=asl_01J9'
+    );
+  });
+
+  it('a malformed key is not mistaken for `from`', () => {
+    expect(withRunLaunchOrigin('/apps/run/x?fr%m=1', 'store')).toBe('/apps/run/x?fr%m=1');
+  });
+
+  it('home: exactly one from=home, appended last', () => {
+    expect(withRunLaunchOrigin('/apps/run/x?from=a&b=2&from=c', 'home')).toBe(
+      '/apps/run/x?b=2&from=home'
+    );
+  });
+
+  it('a non-run href is returned unchanged for either origin', () => {
+    expect(withRunLaunchOrigin('/models/1?from=x', 'store')).toBe('/models/1?from=x');
+    expect(withRunLaunchOrigin('/models/1', 'home')).toBe('/models/1');
   });
 });
