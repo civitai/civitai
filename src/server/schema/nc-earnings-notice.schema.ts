@@ -17,7 +17,8 @@ export const ncEarningsNoticeSchema = z.discriminatedUnion('action', [
     date,
     dryRun: z.boolean().default(true),
     count: z.coerce.number().int().min(1).max(1000).default(50),
-    batchSize: z.coerce.number().int().min(1).max(50).default(25),
+    // SES's sending rate is account-wide: parallel batches got throttled and refused other site emails.
+    batchSize: z.coerce.number().int().min(1).max(5).default(1),
   }),
   z.object({ action: z.literal('send-test'), notice, email: z.email(), date, username, ...sample }),
   z.object({ action: z.literal('preview'), notice, date, username, ...sample }),

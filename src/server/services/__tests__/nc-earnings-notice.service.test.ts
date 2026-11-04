@@ -14,6 +14,7 @@ import {
   sendNcEarningsNotice,
 } from '~/server/services/nc-earnings-notice.service';
 import { fillNcEarningsCopy } from '~/shared/constants/nc-earnings-notice.constants';
+import { ncEarningsNoticeSchema } from '~/server/schema/nc-earnings-notice.schema';
 
 const { sendMock, createNotificationMock, emailConfiguredMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
@@ -316,5 +317,18 @@ describe('sendNcEarningsNotice', () => {
 
     redisMock.sysRedis.hDel.mockRejectedValue(new Error('redis down'));
     expect(await run()).toMatchObject({ sent: 0, failedUserIds: [2], stuckUserIds: [2] });
+  });
+});
+
+describe('ncEarningsNoticeSchema send', () => {
+  const send = { action: 'send', notice: 'nc-older', userIds: [1], date: 'November 5th' };
+
+  it('sends one creator at a time by default, so a run stays under the SES sending rate', () => {
+    expect(ncEarningsNoticeSchema.parse(send)).toMatchObject({ batchSize: 1, dryRun: true });
+  });
+
+  it('refuses a batch size over 5', () => {
+    expect(ncEarningsNoticeSchema.safeParse({ ...send, batchSize: 5 }).success).toBe(true);
+    expect(ncEarningsNoticeSchema.safeParse({ ...send, batchSize: 6 }).success).toBe(false);
   });
 });
