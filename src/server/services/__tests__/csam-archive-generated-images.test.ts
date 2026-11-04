@@ -5,17 +5,12 @@ import JSZip from 'jszip';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * `archiveGeneratedImages`, end to end through `archiveCsamDataForReport` on the disk-staged path.
+ * `archiveGeneratedImages`, end to end through `archiveCsamDataForReport` on the disk-staged path:
+ * the flagged-consumer strikes read, files preserved by `evidenceKey` (archived, or listed missing
+ * when they never can be), and files named by URL.
  *
- * Two defects made a GeneratedImage report filed with preserved generator evidence fail every
- * archive run:
- *   1. the flagged-consumer strikes read threw on the orchestrator's 404 for a user it has never
- *      flagged, which means "no strikes";
- *   2. files preserved into the evidence store carry an `evidenceKey` and no `url`, so the archive
- *      built from `blobs[].url` left them out and did not count them as missing.
- *
- * The strikes read is the REAL `getConsumerStrikes` behind a stubbed `fetch`, so the 404 handling
- * under test is the production code, not a mock of it.
+ * The strikes read is the real `getConsumerStrikes` behind a stubbed `fetch`; the evidence store
+ * read is stubbed at `streamEvidenceObject`, below the verified read.
  */
 
 const csamBaseDir = await vi.hoisted(async () => {
@@ -393,6 +388,55 @@ describe('archiveGeneratedImages: preserved evidence', () => {
       reason: 'preserved copy not found in the evidence store',
     });
     expect(logged).toContain('preserved file could not be archived: preserved copy not found');
+  });
+
+  it.each([
+    ['NotFound', { name: 'NotFound', $metadata: { httpStatusCode: 404 } }],
+    ['a plain 404', { name: 'UnknownError', $metadata: { httpStatusCode: 404 } }],
+  ])(
+    'retries the report on %s without NoSuchKey: a wrong bucket answers that too',
+    async (_case, fields) => {
+      mockStreamEvidenceObject = async () => {
+        throw Object.assign(new Error('not found'), fields);
+      };
+
+      await expect(archiveCsamDataForReport(evidenceReport() as never)).rejects.toThrow(
+        'preserved file blob-kept could not be read: read failed: not found'
+      );
+    }
+  );
+
+  it('records a copy whose stored type is not evidence media as missing, when none was recorded', async () => {
+    const report = evidenceReport();
+    delete report.details.generatedImages[0].blobs[0].contentType;
+    mockStreamEvidenceObject = async () => ({
+      chunks: [new Uint8Array(PRESERVED_BYTES)],
+      contentType: 'text/html',
+    });
+
+    const { manifestEntry } = await permanentFailure(report);
+
+    expect(manifestEntry).toEqual({
+      blobId: 'blob-kept',
+      source: 'missing',
+      reason: 'stored type is not an evidence media type',
+    });
+  });
+
+  it('retries the report when a read fails mid-stream, whatever type the store reported', async () => {
+    const report = evidenceReport();
+    delete report.details.generatedImages[0].blobs[0].contentType;
+    mockStreamEvidenceObject = async () => ({
+      chunks: (async function* () {
+        yield new Uint8Array(PRESERVED_BYTES.subarray(0, 4));
+        throw new Error('connection reset');
+      })(),
+      contentType: 'text/html',
+    });
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'preserved file blob-kept could not be read: read failed: connection reset'
+    );
   });
 
   it('records a preserved copy whose recorded type is not evidence media as missing', async () => {

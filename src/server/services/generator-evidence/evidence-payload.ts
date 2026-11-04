@@ -148,7 +148,7 @@ export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
 
 export type VerifiedEvidence =
   | { ok: true; body: Blob; contentType: string }
-  | { ok: false; reason: string; shaMismatch?: boolean; overLimit?: true };
+  | { ok: false; reason: string; shaMismatch?: boolean; overLimit?: true; notMedia?: true };
 
 export type EvidenceObjectStream = {
   chunks: AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
@@ -231,6 +231,7 @@ export async function readVerifiedEvidence(
     return {
       ok: false,
       reason: `${contentType ?? 'an unknown type'} is not an evidence media type`,
+      notMedia: true,
     };
   return { ok: true, body: new Blob(parts, { type: contentType }), contentType };
 }

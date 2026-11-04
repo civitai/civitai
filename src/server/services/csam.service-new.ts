@@ -115,6 +115,7 @@ import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
+  isMissingObject,
   probeOriginalImage,
   readOriginalImage,
 } from '~/server/services/csam-original-image';
@@ -239,14 +240,6 @@ const preservedEvidenceBlobs = (details: unknown) =>
 
 const zipSafeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'unnamed';
 
-/** An object-store read of a key that holds nothing. */
-const isMissingObject = (e: unknown) => {
-  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } } | null;
-  return (
-    err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
-  );
-};
-
 const isEvidenceMediaType = (type: string | undefined) =>
   !!type && EVIDENCE_MEDIA_TYPES.has(type.toLowerCase());
 
@@ -260,14 +253,11 @@ async function readPreservedCopy(blob: StoredEvidenceBlob) {
   if (blob.contentType !== undefined && !isEvidenceMediaType(blob.contentType))
     return { ok: false as const, permanent: 'recorded type is not an evidence media type' };
   let notFound = false;
-  let storedType: string | undefined;
   const read = await readVerifiedEvidence(
     blob,
     async (key) => {
       try {
-        const object = await streamEvidenceObject(key);
-        storedType = object.contentType;
-        return object;
+        return await streamEvidenceObject(key);
       } catch (e) {
         notFound = isMissingObject(e);
         throw e;
@@ -277,10 +267,11 @@ async function readPreservedCopy(blob: StoredEvidenceBlob) {
   );
   if (read.ok) return read;
   if (read.shaMismatch || read.overLimit) return { ok: false as const, permanent: read.reason };
+  // NoSuchKey only: a plain 404 is also what a wrong bucket answers, and that must be retried.
   if (notFound)
     return { ok: false as const, permanent: 'preserved copy not found in the evidence store' };
-  // Only reached once the bytes hashed to what was recorded, so the type is all that is wrong.
-  if (storedType !== undefined && !isEvidenceMediaType(blob.contentType ?? storedType))
+  // Set only by the type check, which runs after the whole copy was read and its hash matched.
+  if (read.notMedia)
     return { ok: false as const, permanent: 'stored type is not an evidence media type' };
   return { ok: false as const, transient: read.reason };
 }
