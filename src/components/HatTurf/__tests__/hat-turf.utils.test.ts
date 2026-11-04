@@ -146,6 +146,14 @@ describe('turf pushes', () => {
       counts: null,
     });
   });
+  it("keeps each pushed sticker's hat art, and drops a malformed one", () => {
+    const sticker = { id: '1', userId: 3, team: 'blue', cosmeticId: 11, data: {} };
+    const read = (url: unknown) =>
+      readTurfPush({ event: 'e', imageId: 4, counts, stickers: [{ ...sticker, url }] }, 'e')
+        ?.stickers?.[0];
+    expect(read('blue-cap-art')?.url).toBe('blue-cap-art');
+    expect(read(42)).not.toHaveProperty('url');
+  });
   it('refuses a malformed push instead of drawing from it', () => {
     expect(readTurfPush({ event: 'e', imageId: 'x', counts }, 'e')).toBeNull();
     expect(readTurfPush({ event: 'e', imageId: 4, counts: { shown: 1 } }, 'e')).toBeNull();
