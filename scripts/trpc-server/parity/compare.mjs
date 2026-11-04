@@ -15,10 +15,11 @@
  * Usage:
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
  *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json
- *     [--cases trpc|image-delivery] [--route-counter]
+ *     [--cases trpc|image-delivery|beacons] [--route-counter]
+ *     [--tracker <url> --tracker-a-ip <ip> --tracker-b-ip <ip>]
  *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
- * `--cases` picks the case list (`cases.mjs`): `trpc` (the default) or `image-delivery`. A case
+ * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery` or `beacons`. A case
  * with `warm: true` is sent once more to the same server, unmeasured, right before its measured
  * send (after the Redis reset), so the measured request finds what the first one cached.
  *
@@ -27,6 +28,13 @@
  * and after the run, and fails unless it moved on EACH server by exactly what the cases' `counted`
  * labels add up to. On the candidate that proves the route itself answered (not a look-alike
  * response); on the reference it is the positive control that the counter can be read at all.
+ *
+ * `--tracker` (beacons, where it is required): the tracker stub's URL (`tracker-stub.mjs`), and the
+ * address each server's events arrive from. For every case it reads the events each server sent
+ * for that request, and fails the case unless each sent exactly the tables in the case's `tracked`
+ * list and both sent the same rows. For a declared divergence only the candidate is held to
+ * `tracked`. A server's events are awaited (up to TRACKER_WAIT_MS) before the next send, since a
+ * beacon sends its row after it has answered.
  *
  * Exit codes: 0 parity (every case equal to Next, every declared case equal to its pinned
  * answer); 1 a difference; 2 the harness could not
@@ -41,7 +49,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { buildCases, buildImageDeliveryCases } from './cases.mjs';
+import { buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
 
 const IGNORED_HEADERS = new Set(['date', 'connection', 'keep-alive']);
 const COOKIE_TIME_TOLERANCE_S = 30;
@@ -60,6 +68,9 @@ const { values: args } = parseArgs({
     'settle-ms': { type: 'string', default: '300' },
     cases: { type: 'string', default: 'trpc' },
     'route-counter': { type: 'boolean', default: false },
+    tracker: { type: 'string' },
+    'tracker-a-ip': { type: 'string' },
+    'tracker-b-ip': { type: 'string' },
   },
 });
 
@@ -337,14 +348,69 @@ async function readRouteCounter(base) {
   return counts;
 }
 
+// --- the tracker stub (--tracker) ------------------------------------------------------------------
+
+const TRACKER_WAIT_MS = 10_000;
+
+async function readTracker(since) {
+  const res = await fetch(`${args.tracker}/__events?since=${since}`).catch((err) => ({ err }));
+  if (res.err || !res.ok) fail2(`tracker stub ${args.tracker} answered ${res.err || res.status}`);
+  return res.json();
+}
+
+/**
+ * The events `ip` sent after the stub's first `since` events. Waits until at least `expected` have
+ * arrived (or TRACKER_WAIT_MS), then one settle period more, so an extra event is seen too.
+ */
+async function trackerEventsSince(since, ip, expected) {
+  const deadline = Date.now() + TRACKER_WAIT_MS;
+  const from = (r) => r.events.filter((e) => e.from === ip);
+  let r = await readTracker(since);
+  while (from(r).length < expected && Date.now() < deadline) {
+    await sleep(100);
+    r = await readTracker(since);
+  }
+  await sleep(settleMs);
+  return from(await readTracker(since));
+}
+
+const table = (e) => e.path.replace(/^\/track\//, '');
+const row = (e) => `${e.method} ${e.path} ${JSON.stringify(e.body)}`;
+
+/** Each server sent exactly the case's tables (only the candidate for a declared case), and the same rows. */
+function compareTracked(c, ea, eb) {
+  const diffs = [];
+  const want = [...c.tracked].sort();
+  const sides = c.divergence
+    ? [['B', eb]]
+    : [
+        ['A', ea],
+        ['B', eb],
+      ];
+  for (const [side, events] of sides) {
+    const got = events.map(table).sort();
+    if (JSON.stringify(got) !== JSON.stringify(want))
+      diffs.push(`${side} sent [${got.join(', ')}], expected [${want.join(', ')}]`);
+  }
+  if (!c.divergence) diffs.push(...multisetDiff(ea.map(row), eb.map(row)));
+  return diffs;
+}
+
 // --- run ----------------------------------------------------------------------------------------------
 
 const suites = {
   trpc: () => buildCases({ sessionCookie }),
   'image-delivery': () => buildImageDeliveryCases({ webhookToken: env.WEBHOOK_TOKEN }),
+  beacons: () => buildBeaconCases({ sessionCookie }),
 };
 if (!suites[args.cases]) fail2(`--cases ${args.cases}: expected one of ${Object.keys(suites)}`);
 const cases = suites[args.cases]();
+const tracking = Boolean(args.tracker);
+if (args.cases === 'beacons' && !tracking) fail2('--cases beacons needs --tracker');
+if (tracking && (!args['tracker-a-ip'] || !args['tracker-b-ip']))
+  fail2('--tracker needs --tracker-a-ip and --tracker-b-ip');
+if (tracking && !cases.every((c) => Array.isArray(c.tracked)))
+  fail2('--tracker: every case needs a `tracked` list');
 const settleMs = Number(args['settle-ms']);
 const results = [];
 
@@ -353,17 +419,23 @@ const counterBefore = args['route-counter']
   : null;
 
 for (const c of cases) {
+  const want = tracking ? c.tracked.length : 0;
   await flushRedis();
   if (c.warm) await send(args.a, c);
+  const markA = tracking ? (await readTracker(0)).total : 0;
   const ra = await send(args.a, c);
-  await sleep(settleMs);
+  const ea = tracking ? await trackerEventsSince(markA, args['tracker-a-ip'], want) : [];
+  if (!tracking) await sleep(settleMs);
   await flushRedis();
   if (c.warm) await send(args.b, c);
+  const markB = tracking ? (await readTracker(0)).total : 0;
   const rb = await send(args.b, c);
-  await sleep(settleMs);
+  const eb = tracking ? await trackerEventsSince(markB, args['tracker-b-ip'], want) : [];
+  if (!tracking) await sleep(settleMs);
 
   // A declared case lets only the reference differ: the candidate is held to its pinned answer.
   const parts = c.divergence ? compareToPin(c.divergence.candidate, rb) : compare(c, ra, rb);
+  if (tracking) parts.tracker = compareTracked(c, ea, eb);
   const failing = Object.entries(parts)
     .filter(([, diffs]) => diffs.length > 0)
     .map(([part]) => part);
@@ -381,6 +453,7 @@ for (const c of cases) {
       : { status: rb.status, statusMessage: rb.statusMessage },
     // What the case actually exercised, so a run where every case short-circuits is visible.
     referenceBody: ra.error ? undefined : snippet(ra.body),
+    ...(tracking ? { tracked: { reference: ea.map(row), candidate: eb.map(row) } } : {}),
     verdict: failing.length > 0 ? 'DIFF' : c.divergence ? 'DECLARED' : 'SAME',
     failing,
     declared: c.divergence,
@@ -391,6 +464,16 @@ for (const c of cases) {
 if (results.length === 0) fail2('no cases ran');
 if (results.every((r) => r.reference.error)) fail2(`reference server ${args.a} answered nothing`);
 if (results.every((r) => r.candidate.error)) fail2(`candidate server ${args.b} answered nothing`);
+if (tracking) {
+  // Positive control: the reference's rows reached the stub. Without any, every `tracked: []`
+  // case would pass against a stub wired to nothing.
+  const sent = results.reduce((k, r) => k + r.tracked.reference.length, 0);
+  const expected = cases.filter((c) => !c.divergence).reduce((k, c) => k + c.tracked.length, 0);
+  console.log(`tracker rows: reference sent ${sent}, cases expect ${expected} from each server`);
+  if (expected === 0) fail2('no case expects a tracker row');
+  if (sent === 0)
+    fail2(`no tracker row from the reference (${args['tracker-a-ip']}) reached the stub`);
+}
 
 for (const r of results) {
   const ref = r.reference.error || `${r.reference.status}`;

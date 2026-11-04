@@ -4,12 +4,15 @@
  *
  * It serves `/api/trpc/[trpc]`, the internal image-delivery lookup
  * (`/api/internal/image-delivery/[id]`, a high-volume route whose handler is tiny, so most of its
- * cost under Next is the router), plus the probe and metrics routes from the SAME compiled
- * pages-API route modules that `server.js` serves, by calling each module's exported
+ * cost under Next is the router), the three browser beacons (`/api/internal/ping`,
+ * `/api/internal/pulse`, `/api/track/batch`: high-volume POSTs with tiny handlers, the same
+ * reason), plus the probe and metrics routes (the list is `./served-pages.cjs`) from the SAME
+ * compiled pages-API route modules that `server.js` serves, by calling each module's exported
  * `handler(req, res, ctx)` — Next's own direct-invocation contract
  * (`next/dist/build/templates/pages-api.js`). That keeps everything the route module does per
- * request (instrumentation, the request span, `prepare`, `apiResolver`: cookies, query, the
- * 17mb body parse) and skips the router-server, the proxy and base-server. What it still has to
+ * request (instrumentation, the request span, `prepare`, `apiResolver`: cookies, query, and the
+ * body parse under the module's own `config.api.bodyParser`, 17mb for tRPC and Next's 1mb default
+ * for the beacons) and skips the router-server, the proxy and base-server. What it still has to
  * do in their place is in `./next-compat.cjs`.
  *
  * Mode: `TRPC_SERVER_MODE=route` (the default) is the only one implemented. Anything else exits
@@ -104,18 +107,8 @@ const pagesManifest = JSON.parse(
   fs.readFileSync(path.join(distDir, 'server', 'pages-manifest.json'), 'utf8')
 );
 
-/** The only pages this server answers. Anything else is a 404. */
-const SERVED_PAGES = [
-  '/api/trpc/[trpc]',
-  // Exact one-segment matches only (see `createPageMatcher`): a trailing slash or more segments
-  // get this server's plain 404, where Next would redirect or render its 404 page. Its caller
-  // sends `/api/internal/image-delivery/<key>` only; the parity harness pins those answers.
-  '/api/internal/image-delivery/[id]',
-  '/api/live',
-  '/api/health',
-  '/api/ready',
-  '/api/metrics',
-];
+/** The only pages this server answers (see that file). Anything else is a 404. */
+const SERVED_PAGES = require('./served-pages.cjs');
 for (const page of SERVED_PAGES) {
   if (!pagesManifest[page]) throw new Error(`[trpc-server] ${page} is not in pages-manifest.json`);
 }

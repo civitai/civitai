@@ -499,3 +499,420 @@ export function buildImageDeliveryCases(ctx) {
     },
   ];
 }
+
+// --- browser beacons (`--cases beacons`) ----------------------------------------------------------
+//
+// Compares Next (`server.js`, the reference) with the standalone server serving the three tracking
+// beacons: `/api/internal/ping` (page views, `TrackPageView.tsx`), `/api/internal/pulse` (entity
+// views, `TrackView.tsx`) and `/api/track/batch` (the coalesced search/action/impression flush,
+// `trackEventBuffer.ts`). Each is a POST with a JSON body, sent in the shapes those callers use:
+//   - ping: `fetch` with a string body and no Content-Type, so the browser sends `text/plain`;
+//   - pulse: `fetch` with `Content-Type: application/json`;
+//   - batch: `sendBeacon` with an `application/json` Blob, or `fetch` with the same header.
+// The route module parses the body itself (Next's default `bodyParser`: JSON, urlencoded and text
+// up to 1mb; none of the three sets `config.api`), so these cases also cover the parser: each
+// content type, malformed JSON, and bodies on both sides of the limit.
+//
+// A beacon's response is an empty 200 or a short 400, which a server that never ran the route
+// could imitate. So every case also names the tracker rows the route must send (`tracked`, table
+// names): with `--tracker`, the harness reads what each server sent to the job's tracker stub for
+// that request and requires both to have sent exactly those tables, with the same rows. The
+// reference sending them is the positive control that the stub sees anything. Rows carry the
+// session's user id, so the signed-in cases also check that the session is read the same way.
+//
+// Impressions are not in `tracked`: they go to ClickHouse directly, not through the tracker URL.
+
+const BEACON_UA = DESKTOP_UA;
+/** What a same-origin browser request carries through the CDN. */
+const beaconFrom = {
+  'user-agent': BEACON_UA,
+  'cf-connecting-ip': NORMAL_IP,
+  'cf-ipcountry': 'US',
+  'x-forwarded-for': NORMAL_IP,
+  'x-forwarded-proto': 'https',
+  origin: SITE,
+  referer: `${SITE}/models/123/some-model`,
+  'sec-fetch-site': 'same-origin',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-dest': 'empty',
+};
+const TEXT = { 'content-type': 'text/plain;charset=UTF-8' };
+const JSON_CT = { 'content-type': 'application/json' };
+
+const PING = '/api/internal/ping';
+const PULSE = '/api/internal/pulse';
+const BATCH = '/api/track/batch';
+
+const PAGE_VIEW = {
+  duration: 5234,
+  path: '/models/123/some-model',
+  windowWidth: 1920,
+  windowHeight: 1080,
+};
+const VIEW = { type: 'ImageView', entityType: 'Image', entityId: 4321 };
+const SEARCH = {
+  kind: 'search',
+  data: { query: 'a cat', index: 'models_v9', filters: { tags: ['x'] } },
+};
+const ACTION = { kind: 'action', data: { type: 'AddToBounty_Click' } };
+const IMPRESSION = {
+  kind: 'impression',
+  data: { sessionKey: 'k1', surface: 'other', entities: [{ entityType: 'Image', entityId: 7 }] },
+};
+
+/** A JSON body padded to exactly `bytes` bytes with a field the schemas strip. */
+function paddedJson(value, bytes) {
+  const base = JSON.stringify({ ...value, pad: '' });
+  if (base.length > bytes) throw new Error('paddedJson: value is larger than the target size');
+  return JSON.stringify({ ...value, pad: 'a'.repeat(bytes - base.length) });
+}
+// Next's default limit is '1mb', which `bytes` reads as 1048576.
+const UNDER_LIMIT = 1024 * 1024 - 64;
+const OVER_LIMIT = 1024 * 1024 + 64;
+
+/** The rows a request must send: one table name per row, in any order. */
+const n = (table, count) => Array.from({ length: count }, () => table);
+
+/** `headers` without the named ones (a case that must NOT send a header). */
+const omit = (headers, ...names) =>
+  Object.fromEntries(Object.entries(headers).filter(([k]) => !names.includes(k)));
+
+/**
+ * @param {{ sessionCookie: string }} ctx
+ */
+export function buildBeaconCases(ctx) {
+  const signedIn = { ...beaconFrom, cookie: ctx.sessionCookie };
+  const post = (id, path, headers, body, tracked, extra = {}) => ({
+    id,
+    method: 'POST',
+    path,
+    headers,
+    body,
+    tracked,
+    ...extra,
+  });
+  return [
+    // --- ping: page views -------------------------------------------------------------------------
+    post('ping-text-plain', PING, { ...beaconFrom, ...TEXT }, JSON.stringify(PAGE_VIEW), [
+      'pageViews',
+    ]),
+    // The caller's exact shape: no Content-Type header at all.
+    post('ping-no-content-type', PING, beaconFrom, JSON.stringify(PAGE_VIEW), ['pageViews']),
+    post(
+      'ping-ads-and-numeric-strings',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      JSON.stringify({ ...PAGE_VIEW, ads: true, windowWidth: '1280', windowHeight: '720' }),
+      ['pageViews']
+    ),
+    post('ping-signed-in', PING, { ...signedIn, ...TEXT }, JSON.stringify(PAGE_VIEW), [
+      'pageViews',
+    ]),
+    post(
+      'ping-no-country',
+      PING,
+      omit({ ...beaconFrom, ...TEXT }, 'cf-ipcountry'),
+      JSON.stringify(PAGE_VIEW),
+      ['pageViews']
+    ),
+    // An empty path matches no page: answered 200 with no row.
+    post(
+      'ping-empty-path',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      JSON.stringify({ ...PAGE_VIEW, path: '' }),
+      []
+    ),
+    // application/json is parsed to an object by the body parser, and this route only JSON.parses.
+    post(
+      'ping-json-content-type',
+      PING,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify(PAGE_VIEW),
+      []
+    ),
+    post(
+      'ping-no-referer',
+      PING,
+      omit({ ...beaconFrom, ...TEXT }, 'referer'),
+      JSON.stringify(PAGE_VIEW),
+      []
+    ),
+    post(
+      'ping-cross-site-referer',
+      PING,
+      { ...beaconFrom, ...TEXT, referer: 'https://elsewhere.example/x' },
+      JSON.stringify(PAGE_VIEW),
+      []
+    ),
+    post(
+      'ping-malformed-referer',
+      PING,
+      { ...beaconFrom, ...TEXT, referer: 'not a url' },
+      JSON.stringify(PAGE_VIEW),
+      []
+    ),
+    post('ping-malformed-body', PING, { ...beaconFrom, ...TEXT }, '{"path":', []),
+    post('ping-empty-body', PING, { ...beaconFrom, ...TEXT }, '', []),
+    post(
+      'ping-missing-path',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      JSON.stringify({ duration: 5000 }),
+      []
+    ),
+    post(
+      'ping-just-under-1mb',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      paddedJson(PAGE_VIEW, UNDER_LIMIT),
+      ['pageViews']
+    ),
+    post(
+      'ping-just-over-1mb',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      paddedJson(PAGE_VIEW, OVER_LIMIT),
+      []
+    ),
+
+    // --- pulse: entity views ----------------------------------------------------------------------
+    post('pulse-json', PULSE, { ...beaconFrom, ...JSON_CT }, JSON.stringify(VIEW), ['views']),
+    post(
+      'pulse-json-charset',
+      PULSE,
+      { ...beaconFrom, 'content-type': 'application/json; charset=utf-8' },
+      JSON.stringify({
+        ...VIEW,
+        ads: 'Served',
+        nsfw: false,
+        nsfwLevel: 1,
+        browsingLevel: 1,
+        details: { a: 1 },
+      }),
+      ['views']
+    ),
+    // A client that sends no JSON Content-Type: the route parses the string itself.
+    post('pulse-text-plain', PULSE, { ...beaconFrom, ...TEXT }, JSON.stringify(VIEW), ['views']),
+    post('pulse-signed-in', PULSE, { ...signedIn, ...JSON_CT }, JSON.stringify(VIEW), ['views']),
+    post(
+      'pulse-referer-only',
+      PULSE,
+      omit({ ...beaconFrom, ...JSON_CT }, 'origin'),
+      JSON.stringify(VIEW),
+      ['views']
+    ),
+    post(
+      'pulse-no-origin-no-referer',
+      PULSE,
+      omit({ ...beaconFrom, ...JSON_CT }, 'origin', 'referer'),
+      JSON.stringify(VIEW),
+      []
+    ),
+    post(
+      'pulse-cross-origin',
+      PULSE,
+      { ...beaconFrom, ...JSON_CT, origin: 'https://elsewhere.example' },
+      JSON.stringify(VIEW),
+      []
+    ),
+    // Rejected by the body parser itself (its "Invalid JSON" 400), before the handler runs.
+    post('pulse-malformed-json', PULSE, { ...beaconFrom, ...JSON_CT }, '{"type":', []),
+    // Rejected by the handler's own parse.
+    post('pulse-malformed-text', PULSE, { ...beaconFrom, ...TEXT }, '{"type":', []),
+    post(
+      'pulse-schema-invalid',
+      PULSE,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify({ ...VIEW, entityId: 'x' }),
+      []
+    ),
+    post(
+      'pulse-urlencoded',
+      PULSE,
+      { ...beaconFrom, 'content-type': 'application/x-www-form-urlencoded' },
+      'type=ImageView&entityType=Image&entityId=1',
+      []
+    ),
+    post(
+      'pulse-just-over-1mb',
+      PULSE,
+      { ...beaconFrom, ...JSON_CT },
+      paddedJson(VIEW, OVER_LIMIT),
+      []
+    ),
+
+    // --- batch: coalesced search / action / impression events ---------------------------------------
+    post('batch-json', BATCH, { ...beaconFrom, ...JSON_CT }, JSON.stringify([SEARCH, ACTION]), [
+      'search',
+      'actions',
+    ]),
+    post('batch-text-plain', BATCH, { ...beaconFrom, ...TEXT }, JSON.stringify([SEARCH, ACTION]), [
+      'search',
+      'actions',
+    ]),
+    post('batch-signed-in', BATCH, { ...signedIn, ...JSON_CT }, JSON.stringify([ACTION, SEARCH]), [
+      'actions',
+      'search',
+    ]),
+    post(
+      'batch-with-impression',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([IMPRESSION, SEARCH]),
+      ['search']
+    ),
+    post(
+      'batch-impression-only',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([IMPRESSION]),
+      []
+    ),
+    post(
+      'batch-100-events',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify(n(ACTION, 100)),
+      n('actions', 100)
+    ),
+    post(
+      'batch-101-events',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify(n(ACTION, 101)),
+      []
+    ),
+    post('batch-empty-array', BATCH, { ...beaconFrom, ...JSON_CT }, '[]', []),
+    post('batch-not-an-array', BATCH, { ...beaconFrom, ...JSON_CT }, JSON.stringify(SEARCH), []),
+    post(
+      'batch-one-bad-event',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([SEARCH, { kind: 'action', data: { type: 'NotAnAction' } }]),
+      []
+    ),
+    post(
+      'batch-cross-origin',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT, origin: 'https://elsewhere.example' },
+      JSON.stringify([SEARCH]),
+      []
+    ),
+    post(
+      'batch-just-over-1mb',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      paddedJson({ x: [SEARCH] }, OVER_LIMIT),
+      []
+    ),
+
+    // --- methods ------------------------------------------------------------------------------------
+    { id: 'ping-get', path: PING, headers: beaconFrom, tracked: [] },
+    { id: 'pulse-get', path: PULSE, headers: beaconFrom, tracked: [] },
+    { id: 'batch-head', method: 'HEAD', path: BATCH, headers: beaconFrom, tracked: [] },
+    post('batch-put', BATCH, { ...beaconFrom, ...JSON_CT }, JSON.stringify([SEARCH]), [], {
+      method: 'PUT',
+    }),
+    {
+      // A CORS preflight, answered by the endpoint wrapper before the handler.
+      id: 'pulse-options-preflight',
+      method: 'OPTIONS',
+      path: PULSE,
+      headers: {
+        ...beaconFrom,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      },
+      tracked: [],
+    },
+
+    // --- what the router does before a route runs ---------------------------------------------------
+    post(
+      // Next strips these; not stripping `x-nextjs-data` makes the route module add
+      // `x-nextjs-matched-path` to the response (the negative control's diff).
+      'client-sent-internal-headers',
+      PULSE,
+      {
+        ...beaconFrom,
+        ...JSON_CT,
+        'x-nextjs-data': '1',
+        'x-matched-path': '/api/trpc/[trpc]',
+        'x-middleware-override-headers': 'origin',
+        'x-middleware-request-origin': 'https://elsewhere.example',
+        'x-now-route-matches': 'nxtPtrpc=a',
+      },
+      JSON.stringify(VIEW),
+      ['views']
+    ),
+    post(
+      // Next drops `nxtP…` query keys before the route runs; so must this server.
+      'internal-query-keys',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([SEARCH]),
+      ['search'],
+      { path: `${BATCH}?nxtPfoo=1&nextInternalLocale=en&x=1` }
+    ),
+    post(
+      // No CDN headers at all: each server fills x-forwarded-* from the socket, which the row's
+      // `ip` column is derived from.
+      'no-forwarded-headers',
+      PULSE,
+      { 'user-agent': BEACON_UA, origin: SITE, referer: `${SITE}/`, ...JSON_CT },
+      JSON.stringify(VIEW),
+      ['views']
+    ),
+
+    // --- not an exact match: this server's plain answers; the callers never send these ------------
+    post(
+      'ping-trailing-slash',
+      `${PING}/`,
+      { ...beaconFrom, ...TEXT },
+      JSON.stringify(PAGE_VIEW),
+      [],
+      {
+        divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+      }
+    ),
+    post(
+      'batch-extra-segment',
+      `${BATCH}/x`,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([SEARCH]),
+      [],
+      {
+        divergence: { reason: PAGE_RENDERED, candidate: NOT_FOUND },
+      }
+    ),
+    post(
+      // A sibling beacon that stays on Next: this server does not serve it.
+      'neighbouring-beacon-not-served',
+      '/api/track/block-render',
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify({ appBlockId: 'a', blockInstanceId: 'b', slotId: 'c' }),
+      [],
+      {
+        divergence: {
+          reason:
+            'Next serves this route; this server serves only the pages in served-pages.cjs, and routing sends it only those.',
+          candidate: NOT_FOUND,
+        },
+      }
+    ),
+
+    // --- the server's other routes, next to these ---------------------------------------------------
+    {
+      id: 'other-internal-route',
+      path: '/api/live?token={WEBHOOK_TOKEN}',
+      headers: {},
+      tracked: [],
+    },
+    {
+      id: 'trpc-call',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+      tracked: [],
+    },
+  ];
+}

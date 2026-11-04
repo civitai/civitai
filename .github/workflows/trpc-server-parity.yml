@@ -9,6 +9,9 @@ name: tRPC server parity
 #   - seeds a few `Image` rows and runs the image-delivery cases (`--cases image-delivery`), with
 #     the route's own counter checked on both servers (`--route-counter`), so the candidate must
 #     have run the route for every case it answered;
+#   - runs the browser-beacon cases (`--cases beacons`) with every tracker row each server's route
+#     sent captured by a stub tracker (`tracker-stub.mjs`, `--tracker`), so the candidate must have
+#     run the route and sent the same rows as Next for every case;
 #   - checks the standalone server registered instrumentation at BOOT (liveness heartbeat written
 #     and the instrumentation log lines present before it received any request);
 #   - fails if the standalone server stops emitting the request span an external latency alert
@@ -58,6 +61,12 @@ on:
       - 'src/pages/api/metrics.ts'
       - 'src/pages/api/internal/image-delivery/**'
       - 'src/server/services/image-delivery.service.ts'
+      - 'src/pages/api/internal/ping.ts'
+      - 'src/pages/api/internal/pulse.ts'
+      - 'src/pages/api/track/batch.ts'
+      - 'src/server/clickhouse/**'
+      - 'src/server/schema/track.schema.ts'
+      - 'src/server/utils/endpoint-helpers.ts'
       - 'src/proxy.ts'
       - 'src/server/middleware/**'
       - 'src/instrumentation.ts'
@@ -364,8 +373,22 @@ jobs:
           nohup node scripts/trpc-server/parity/otlp-stub.mjs --port 4318 --out "$WORK/spans.json" \
             --watch 'executing api route (pages) /api/trpc/[trpc]' --watch 'test-span' \
             --watch 'GET /api/internal/image-delivery/[id]' \
+            --watch 'POST /api/internal/ping' --watch 'POST /api/internal/pulse' \
+            --watch 'POST /api/track/batch' \
             > "$WORK/otlp-stub.log" 2>&1 &
           echo $! > "$WORK/otlp-stub.pid"
+
+      # Every server's CLICKHOUSE_TRACKER_URL (`make-env.mjs`): records the tracker rows the
+      # beacon routes send, per sending container.
+      - name: Start the tracker stub
+        run: |
+          nohup node scripts/trpc-server/parity/tracker-stub.mjs --port 4319 \
+            > "$WORK/tracker-stub.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -fsS -o /dev/null http://127.0.0.1:4319/__events && break
+            sleep 0.2
+          done
+          curl -fsS http://127.0.0.1:4319/__events
 
       # The negative control: the standalone server with ONE line removed — the strip of
       # client-sent internal headers. The anchor must match exactly once, or the control would
@@ -395,7 +418,8 @@ jobs:
               echo "the image is not this commit's: its server.cjs differs from the checkout"; exit 1
             fi
             echo "::warning::dispatch: testing this checkout's server.cjs on top of $IMAGE"
-            # Only server.cjs is overlaid (next-compat.cjs and the route modules are the image's),
+            # Only server.cjs is overlaid (next-compat.cjs, served-pages.cjs and the route modules
+            # are the image's),
             # so this run is NOT a verdict on the head commit: the verdict step below never posts
             # success for it.
             echo "PARITY_OVERLAY=1" >> "$GITHUB_ENV"
@@ -501,6 +525,25 @@ jobs:
             --cases image-delivery \
             --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
 
+      - name: Beacon parity (Next vs standalone)
+        if: ${{ !cancelled() }}
+        run: |
+          ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/beacons.json" \
+            --cases beacons --tracker http://127.0.0.1:4319 \
+            --tracker-a-ip "$(ip next)" --tracker-b-ip "$(ip trpc)"
+
+      - name: Beacon negative control (Next vs mutant must be red)
+        if: ${{ !cancelled() }}
+        run: |
+          ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/beacons-mutant.json" \
+            --cases beacons --tracker http://127.0.0.1:4319 \
+            --tracker-a-ip "$(ip next)" --tracker-b-ip "$(ip mutant)" \
+            --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
+
       - name: The alerted span is still emitted
         if: ${{ !cancelled() }}
         run: |
@@ -516,6 +559,11 @@ jobs:
           node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
             --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)" \
             --span 'GET /api/internal/image-delivery/[id]'
+          # The beacons' request spans, by the same rule.
+          for span in 'POST /api/internal/ping' 'POST /api/internal/pulse' 'POST /api/track/batch'; do
+            node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+              --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)" --span "$span"
+          done
 
       - name: Server logs
         if: always()
@@ -529,6 +577,7 @@ jobs:
           path: |
             ${{ runner.temp }}/parity/*.json
             ${{ runner.temp }}/parity/otlp-stub.log
+            ${{ runner.temp }}/parity/tracker-stub.log
           if-no-files-found: ignore
 
       - name: Report the verdict on the head commit
