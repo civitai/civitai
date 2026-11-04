@@ -456,7 +456,7 @@ export default function BountyEntryDetailsPage({
       </Text>
       <Card.Section pl="md" pb="md">
         <ScrollArea.Autosize mah={200} offsetScrollbars>
-          <RenderHtml html={bountyEntry.description} />
+          <RenderHtml html={bountyEntry.description} withMentions />
         </ScrollArea.Autosize>
       </Card.Section>
     </Card>
