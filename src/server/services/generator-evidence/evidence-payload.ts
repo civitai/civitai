@@ -5,7 +5,7 @@ import type {
   GeneratorEvidenceDetails,
   StoredEvidenceJob,
 } from '~/server/services/generator-evidence/evidence-meta';
-import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
+import { isEvidenceMediaType } from '~/server/services/generator-evidence/evidence-meta';
 import { escapeXml, xmlSafe, xmlText } from '~/server/services/ncmec-xml';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -161,7 +161,7 @@ export async function verifyStoredEvidence(
   hashObject: (key: string) => Promise<string>
 ): Promise<{ ok: true } | { ok: false; reason: string; shaMismatch?: boolean }> {
   if (!blob.evidenceKey || !blob.sha256) return { ok: false, reason: 'no preserved copy recorded' };
-  if (!blob.contentType || !EVIDENCE_MEDIA_TYPES.has(blob.contentType.toLowerCase()))
+  if (!isEvidenceMediaType(blob.contentType))
     return {
       ok: false,
       reason: `${blob.contentType ?? 'an unknown type'} is not an evidence media type`,
@@ -227,7 +227,8 @@ export async function readVerifiedEvidence(
       shaMismatch: true,
     };
   const contentType = blob.contentType ?? storedType;
-  if (!contentType || !EVIDENCE_MEDIA_TYPES.has(contentType.toLowerCase()))
+  // `!contentType` is redundant at runtime; it narrows the type for the Blob below.
+  if (!contentType || !isEvidenceMediaType(contentType))
     return {
       ok: false,
       reason: `${contentType ?? 'an unknown type'} is not an evidence media type`,

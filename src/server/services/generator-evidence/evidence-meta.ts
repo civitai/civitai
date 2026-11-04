@@ -19,6 +19,10 @@ export const EVIDENCE_MEDIA_TYPES = new Set([
   'video/quicktime',
 ]);
 
+/** Whether a content type is one of `EVIDENCE_MEDIA_TYPES`, ignoring case; none is not. */
+export const isEvidenceMediaType = (type: string | null | undefined) =>
+  !!type && EVIDENCE_MEDIA_TYPES.has(type.toLowerCase());
+
 /** Report-level state of a report filed with preserved generator evidence, in `details.generatorEvidence`. */
 export type GeneratorEvidenceMeta = {
   version: typeof GENERATOR_EVIDENCE_VERSION;

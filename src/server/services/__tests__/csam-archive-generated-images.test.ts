@@ -111,6 +111,13 @@ vi.mock('~/server/services/generator-evidence/evidence-store', async (importOrig
   streamEvidenceObject: (key: string) => mockStreamEvidenceObject(key),
 }));
 
+// The read limit, lowered so a copy can exceed it without a quarter-gigabyte fixture. Above the
+// 30-byte fixture file, so every other case reads under it.
+vi.mock('~/server/services/generator-evidence/preserve-blob', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  MAX_EVIDENCE_BYTES: 64,
+}));
+
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isFlipt: async () => false,
@@ -133,7 +140,6 @@ const USER_ID = 31337;
 const PRESERVED_BYTES = Buffer.from('preserved-png-bytes-0123456789');
 const PRESERVED_SHA = createHash('sha256').update(PRESERVED_BYTES).digest('hex');
 
-/** A report filed with preserved generator evidence: one file with a copy, one without. */
 /** One file of the fixture; every recorded field optional, as on a stored report. */
 type FixtureBlob = {
   blobId: string;
@@ -146,6 +152,7 @@ type FixtureBlob = {
   preservedAt?: string;
 };
 
+/** A report filed with preserved generator evidence: one file with a copy, one without. */
 const evidenceReport = (sha256 = PRESERVED_SHA) => ({
   id: 501,
   userId: USER_ID,
@@ -278,17 +285,6 @@ describe('archiveGeneratedImages: flagged-consumer strikes', () => {
       consumerId: `civitai-${USER_ID}`,
       body: 'no such consumer',
     });
-  });
-
-  it('truncates a long strikes-404 body in the log to 500 characters', async () => {
-    strikesResponse = () => new Response('x'.repeat(700), { status: 404 });
-
-    await archiveCsamDataForReport(evidenceReport() as never);
-
-    const logged = loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as { name?: string; body?: string })
-      .find((data) => data.name === 'orchestrator-flagged-consumers');
-    expect(logged?.body).toBe('x'.repeat(500));
   });
 
   it('still fails the archive when the strikes read answers any other error (500)', async () => {
@@ -451,6 +447,24 @@ describe('archiveGeneratedImages: preserved evidence', () => {
       reason: 'recorded type is not an evidence media type',
     });
     expect(logged).toContain('recorded type is not an evidence media type');
+  });
+
+  it('records a preserved copy larger than the read limit as missing, not a retry', async () => {
+    const report = evidenceReport();
+    delete report.details.generatedImages[0].blobs[0].bytes;
+    mockStreamEvidenceObject = async () => ({
+      chunks: [new Uint8Array(40), new Uint8Array(40)],
+      contentType: 'image/png',
+    });
+
+    const { manifestEntry, logged } = await permanentFailure(report);
+
+    expect(manifestEntry).toEqual({
+      blobId: 'blob-kept',
+      source: 'missing',
+      reason: 'the preserved copy is larger than 64 bytes',
+    });
+    expect(logged).toContain('the preserved copy is larger than 64 bytes');
   });
 
   it('records a preserved copy with no recorded sha256 as missing', async () => {

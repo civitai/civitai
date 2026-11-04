@@ -71,8 +71,8 @@ import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/pr
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
 import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import {
-  EVIDENCE_MEDIA_TYPES,
   isAwaitingEvidenceApproval,
+  isEvidenceMediaType,
   isGeneratorEvidenceDetails,
   unsentGeneratorEvidenceWhere,
 } from '~/server/services/generator-evidence/evidence-meta';
@@ -239,9 +239,6 @@ const preservedEvidenceBlobs = (details: unknown) =>
   uniqueEvidenceBlobs(details).filter((blob) => !!blob.evidenceKey);
 
 const zipSafeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'unnamed';
-
-const isEvidenceMediaType = (type: string | undefined) =>
-  !!type && EVIDENCE_MEDIA_TYPES.has(type.toLowerCase());
 
 /**
  * The verified preserved copy, or why not: `permanent` when every later run would fail the same
