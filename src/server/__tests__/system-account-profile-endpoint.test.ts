@@ -167,6 +167,7 @@ describe('POST /api/admin/system-account-profile', () => {
     ['digit-for-letter', 'C1vitai Moderation'],
     ['symbol-for-letter', 'C|vitai Moderation'],
     ['zero-for-o', 'Civitai M0derati0n'],
+    ['digits-for-letters', 'C1v174i Mod3r4tion'],
     ['capital lunate sigma', '\u03F9ivitai Moderation'],
     ['divides-sign-for-i', 'C\u2223vitai Moderation'],
     ['inverted-exclamation-for-i', 'C\u00A1vitai Moderation'],
