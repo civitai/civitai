@@ -18,8 +18,6 @@ import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImage
 import { StorylineFeedFilters } from '~/components/Storyline/StorylineFeedFilters';
 import clsx from 'clsx';
 
-// Routes whose filters are narrow enough to share their phone row with the gear (see `SubNav2`).
-
 // The filter group is the wrapper's first child. It gives up its full-width rule to leave room for
 // the gear: its gap closes, its buttons stop growing and may shrink with an ellipsis, and the
 // trailing chevron goes. Signed in, the images feed's group (Everyone, sort, Filters) is the
@@ -31,7 +29,9 @@ const PHONE_FILTER_ROW = [
   '@max-sm:[&>:first-child>*]:min-w-0 @max-sm:[&>:first-child>*]:grow-0',
   '@max-sm:[&>:first-child_button]:min-w-0 @max-sm:[&>:first-child_button]:max-w-full',
   '@max-sm:[&>:first-child_button>span]:min-w-0 @max-sm:[&>:first-child_button>span]:truncate',
-  '@max-sm:[&>:first-child_button>svg]:shrink-0 @max-sm:[&>:first-child_button>svg:last-child]:hidden',
+  // Below 390px (the container's own width, as `@max-sm` is) the audience button keeps only its icon.
+  '@max-[389px]:[&>:first-child_button[data-collapse-label]>span]:sr-only',
+  '@max-sm:[&>:first-child_button>svg]:shrink-0 @max-sm:[&>:first-child_button>svg[data-chevron]]:hidden',
 ].join(' ');
 
 const filterSections = [
@@ -89,7 +89,8 @@ export function SubNav2() {
         // keeps all its width to scroll in. `contents` leaves desktop as it was.
         <div className={PHONE_FILTER_ROW}>
           {section.component}
-          <SubNavSettingsButton />
+          {/* Pushes the gear right when the group is hidden on phones (the hub pages). */}
+          <SubNavSettingsButton className="@max-sm:ml-auto" />
         </div>
       ) : (
         <SubNavSettingsButton withHomepageOption={router.pathname === '/'} className="ml-auto" />

@@ -107,7 +107,20 @@ const PHONES = [
   { width: 360, height: 780 },
 ] as const;
 
-const FEEDS = ['/images', '/models', '/videos', '/posts', '/articles', '/tools'] as const;
+const FEEDS = [
+  '/images',
+  '/models',
+  '/videos',
+  '/3d-models',
+  '/posts',
+  '/articles',
+  '/bounties',
+  '/tools',
+  '/tools/[slug]',
+  '/comics',
+  '/apps',
+  '/storylines',
+] as const;
 
 describe('sub nav phone row', () => {
   test('the real cascade is loaded — without this every assertion below is vacuous', async () => {
@@ -158,18 +171,41 @@ describe('sub nav phone row', () => {
           expect(box.right, button.textContent ?? '').toBeLessThanOrEqual(gearBox.left + 1);
           expect(box.width, button.textContent ?? '').toBeGreaterThanOrEqual(32);
         }
-        // At 390px every label is shown in full. At 360px the widest group (signed in) trims its
-        // labels with an ellipsis; that is the room the gear costs, and is not asserted.
-        if (viewport.width === 390) {
-          for (const button of buttons) {
-            const clipped = [button, ...button.querySelectorAll('*')].some(
-              (el) => el.scrollWidth > el.clientWidth + 1
-            );
-            expect(clipped, `${button.textContent} is clipped`).toBe(false);
-          }
+        // The audience button ("Everyone") keeps only its icon below 390px; the name stays for
+        // screen readers (the text is visually hidden, not removed) and for hover (`title`).
+        const audience = filterGroup.querySelector<HTMLElement>('button[data-collapse-label]');
+        if (audience) {
+          const label = audience.querySelector('span')!.getBoundingClientRect();
+          expect(audience.getAttribute('title')).toBeTruthy();
+          expect(audience.textContent).toBeTruthy();
+          if (viewport.width < 390) expect(label.width).toBeLessThanOrEqual(1);
+          else expect(label.width).toBeGreaterThan(20);
+        }
+        // Every other label is shown in full, at 360px as well as 390px.
+        for (const button of buttons.filter((b) => b !== audience)) {
+          const clipped = [button, ...button.querySelectorAll('*')].some(
+            (el) => el.scrollWidth > el.clientWidth + 1
+          );
+          expect(clipped, `${button.textContent} is clipped`).toBe(false);
         }
         expect(wrapper.scrollWidth).toBeLessThanOrEqual(wrapper.clientWidth + 1);
       });
     }
   }
+
+  test('the hub pages hide their filters on phones and the gear stays at the right edge', async () => {
+    setRoute('/hubs/[id]/[[...slug]]');
+    await renderAtViewport(
+      <Shell>
+        <SubNav2 />
+      </Shell>,
+      { width: 390, height: 844 }
+    );
+    await nextLayout();
+    const { g, filterGroup } = rows();
+    expect(getComputedStyle(filterGroup).display).toBe('none');
+    const box = g.getBoundingClientRect();
+    expect(box.right).toBeLessThanOrEqual(390);
+    expect(box.left).toBeGreaterThan(390 / 2);
+  });
 });
