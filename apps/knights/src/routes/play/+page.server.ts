@@ -9,7 +9,7 @@ import {
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { requireMember } from '$lib/server/membership';
-import { isRank, RANK_RULES, RANKS, rankIndex } from '$lib/server/ranks';
+import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
@@ -65,7 +65,7 @@ type RankPerks = {
   voteWeight?: number;
   goldMultiplier?: number;
   dailyGoldCap?: number;
-  /** The rank below's perks, for the rank-up's "what changed". */
+  /** The perks of the rank the player held before, for the rank-up's "what changed". */
   previous?: Perks;
 };
 type Notice = ProgressNotice & RankPerks & { milestone?: string; milestoneLevel?: number };
@@ -90,7 +90,7 @@ function withRankPerks(progress: ProgressNotice | null): Notice | null {
     voteWeight: perks.voteWeight,
     goldMultiplier: perks.goldMultiplier,
     dailyGoldCap: perks.dailyGoldCap,
-    previous: perksOf(RANKS[rankIndex(progress.rank) - 1] ?? ''),
+    previous: perksOf(progress.fromRank),
   };
 }
 

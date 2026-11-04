@@ -241,6 +241,17 @@ describe('play load', () => {
     });
   });
 
+  it("takes a skipped rank's 'what changed' from the rank the player was last told about", async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Paladin', level: 90 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    const page = await run();
+    expect(page.progress).toMatchObject({
+      kind: 'rank',
+      rank: 'Paladin',
+      previous: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+    });
+  });
+
   it('keeps Knights on the queue', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
     const page = await run();
