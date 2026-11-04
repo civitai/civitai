@@ -70,6 +70,7 @@ import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-arc
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
+import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
 import {
   isAwaitingEvidenceApproval,
   isGeneratorEvidenceDetails,
@@ -1555,7 +1556,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
 /** The verified copy as the File NCMEC's upload takes, built on the read's Blob without a copy. */
 async function readEvidenceFile(blob: StoredEvidenceBlob) {
-  const read = await readVerifiedEvidence(blob, streamEvidenceObject);
+  const read = await readVerifiedEvidence(blob, streamEvidenceObject, MAX_EVIDENCE_BYTES);
   if (!read.ok) throw new Error(`preserved file ${blob.blobId} failed its re-read: ${read.reason}`);
   return new File([read.body], blob.blobId, { type: read.contentType });
 }
