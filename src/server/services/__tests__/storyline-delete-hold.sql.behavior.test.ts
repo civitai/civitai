@@ -254,8 +254,8 @@ describe('deleteStoryline under a real account hold', () => {
   const outcome = (fn: () => Promise<unknown>) =>
     fn().then(
       (value) => JSON.stringify({ value }),
-      (e: { code: string; message: string }) =>
-        JSON.stringify({ error: { name: (e as Error).name, code: e.code, message: e.message } })
+      (e: { name: string; code: string; message: string }) =>
+        JSON.stringify({ error: { name: e.name, code: e.code, message: e.message } })
     );
 
   it('deletes with no hold or report, comments and all, and keeps no copy', async () => {
