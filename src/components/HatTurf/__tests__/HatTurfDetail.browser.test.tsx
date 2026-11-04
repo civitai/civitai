@@ -375,17 +375,22 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-more')).toBeNull();
   });
 
+  // Controls render on the first commit (context and mocks are synchronous), so the not-hidden
+  // rows are the positive control for the hidden ones at the same moment.
   test.each([
-    ['joined', true],
-    ['not joined', false],
-  ])('a contest entry shows no Hat Turf controls (%s)', async (_, optedIn) => {
-    h.stock = { available: 3, optedIn, mode: 'live' };
-    render({ hidden: { 9: true } });
-    // The same render without `hidden` shows the badge within this window (the tests above).
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(q('hat-turf-detail-controls')).toBeNull();
-    expect(q('hat-turf-detail-invite')).toBeNull();
-  });
+    { who: 'joined', optedIn: true, hidden: false },
+    { who: 'not joined', optedIn: false, hidden: false },
+    { who: 'joined', optedIn: true, hidden: true },
+    { who: 'not joined', optedIn: false, hidden: true },
+  ])(
+    '$who viewer, contest entry $hidden: detail controls only off contests',
+    async ({ optedIn, hidden }) => {
+      h.stock = { available: 3, optedIn, mode: 'live' };
+      render(hidden ? { hidden: { 9: true } } : {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(q('hat-turf-detail-controls') === null).toBe(hidden);
+    }
+  );
 
   test('the hat controls fit the 30px reaction row, standings ring included', async () => {
     render();

@@ -67,6 +67,10 @@ describe('syncTurfImages', () => {
 
 const visibleOf = (sql: string) =>
   sql.slice(sql.indexOf(' p."publishedAt"'), sql.indexOf('"blockedFor" IS NULL'));
+const contestOf = (sql: string) => {
+  const at = sql.indexOf('EXISTS ( SELECT 1 FROM "CollectionItem"');
+  return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
+};
 const sqlOf = (call: unknown[]) => {
   const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
   return Prisma.sql(strings, ...values).sql.replace(/\s+/g, ' ');
@@ -123,7 +127,8 @@ describe('the stickers a turf push carries', () => {
     expect(where).toBe(
       ' WHERE s.event = ? AND s."imageId" = ANY(?::int[]) AND s."removedAt" IS NULL AND' +
         visibleOf(read) +
-        '"blockedFor" IS NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL'
+        '"blockedFor" IS NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ' +
+        contestOf(read)
     );
 
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
@@ -135,6 +140,9 @@ describe('the stickers a turf push carries', () => {
     // The same image visibility rule on both reads.
     expect(visibleOf(live)).not.toBe('');
     expect(visibleOf(live)).toBe(visibleOf(read));
+    // The push reads the contest rule too, and carries nothing for an entry (turf-contest.pglite).
+    expect(contestOf(read)).not.toBe('');
+    expect(live).toContain(`${contestOf(read)} AS contest`);
   });
 
   it('rides on the push a placement sends, with no extra read', async () => {

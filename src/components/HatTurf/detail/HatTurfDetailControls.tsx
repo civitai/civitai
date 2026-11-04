@@ -125,7 +125,6 @@ function HatButton({ imageId }: { imageId: number }) {
           onClick={press}
         >
           <HatIcon size={16} />
-          {joined && <span data-testid="hat-turf-detail-left-count">{stock?.available}</span>}
         </button>
       </Popover.Target>
       <Popover.Dropdown className={classes.invite} data-testid="hat-turf-detail-invite">

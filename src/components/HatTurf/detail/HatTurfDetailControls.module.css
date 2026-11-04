@@ -4,25 +4,19 @@
   gap: 8px;
 }
 
-/* Sized like the reaction buttons beside it (30px pills), so the row keeps their height. */
+/* The reaction buttons' height and fill, so the row keeps their height. */
 .hat {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 30px;
+  width: 30px;
   height: 30px;
   flex: none;
-  padding: 0 8px;
   border: 0;
-  border-radius: var(--mantine-radius-xl);
+  border-radius: 50%;
   cursor: pointer;
   background-color: rgba(52, 58, 64, 0.4);
   color: var(--mantine-color-white);
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
 }
 
 .hatOn {

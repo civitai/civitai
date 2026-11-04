@@ -34,7 +34,7 @@ export function HatTurfSetting() {
   if (!event || !stock || stock.mode === 'off') return null;
 
   return (
-    <SettingsSection title="Hat Turf">
+    <SettingsSection title="Hat Turf" id="hat-turf">
       <SettingRow
         label={HAT_TURF_SETTING_LABEL}
         description={HAT_TURF_SETTING_DESCRIPTION}

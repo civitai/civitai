@@ -57,6 +57,17 @@ const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   WHERE ci."imageId" = ${imageId} AND c.mode = 'Contest'
 )`;
 
+/** The images among `imageIds` that are entries in a contest (see contestEntry). */
+async function contestImageIds(imageIds: number[], db: typeof dbRead | typeof dbWrite) {
+  if (!imageIds.length) return new Set<number>();
+  const rows = await db.$queryRaw<{ imageId: number }[]>`
+    SELECT DISTINCT ci."imageId" FROM "CollectionItem" ci
+    JOIN "Collection" c ON c.id = ci."collectionId"
+    WHERE ci."imageId" = ANY(${imageIds}::int[]) AND c.mode = 'Contest'
+  `;
+  return new Set((rows ?? []).map((r) => r.imageId));
+}
+
 const configCache = new Map<string, { at: number; config: EventTurfConfig }>();
 
 /** The event with its turf config, live override applied. Undefined when it has no turf. */
@@ -255,6 +266,8 @@ type StickerRow = TurfStickerRow & {
   data: Prisma.JsonValue;
   // The feed draws it: the placer is not banned or deleted (getTurfStickersForImages' rule).
   drawable: boolean;
+  // A contest entry: its stickers still score, but no push carries them or its counts.
+  contest?: boolean;
 };
 
 // The live stickers on images anyone may see (imageVisible), oldest first per image. The owner's opt-in only gates
@@ -269,6 +282,7 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
       (u."bannedAt" IS NULL AND u."deletedAt" IS NULL) AS drawable,
+      ${contestEntry(Prisma.sql`s."imageId"`)} AS contest,
       COALESCE(((u."createdAt" < ${event.startDate}
           OR CASE WHEN jsonb_typeof(u.meta -> 'scores' -> 'total') = 'number'
             THEN (u.meta -> 'scores' ->> 'total')::numeric ELSE 0 END >= (
@@ -351,6 +365,8 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
     dbWrite
   );
   const { entries, counts, stickers } = computeImages(event, rows, await teamCosmetics(event), now);
+  // Scoring keeps a contest entry's stickers; its viewers are told nothing.
+  const contest = new Set(rows.filter((row) => row.contest).map((row) => row.imageId));
   const keys = imageIds.map((id) => `Image:${id}`);
   const values = await sysRedis.hmGet(turfKeys(event.name).map, keys);
   const current: Record<string, string> = {};
@@ -368,10 +384,11 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
     if (value === before[i]) continue;
     if (value) await sysRedis.hSet(countsKey, k, value);
     else await sysRedis.hDel(countsKey, k);
+    const hidden = contest.has(imageIds[i]);
     changes.push({
       imageId: imageIds[i],
-      counts: c ?? null,
-      stickers: stickers.get(k) ?? [],
+      counts: hidden ? null : c ?? null,
+      stickers: hidden ? [] : stickers.get(k) ?? [],
     });
   }
   await pushTurfCounts(event.name, changes);
@@ -383,6 +400,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const entries = new Map<string, TurfEntry>();
   const counts = new Map<string, TurfCounts>();
   const stickers = new Map<string, FeedSticker[]>();
+  const contest = new Set<number>();
   // A snapshot only to choose which images to pick for; the diff below decides what is pushed. An
   // image that moved since the snapshot did so by a sync, which pushed its stickers itself.
   const before = (await sysRedis.hGetAll(turfKeys(event.name).counts)) ?? {};
@@ -402,6 +420,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
       Prisma.sql`s."imageId" = ANY(${ids.map((r) => r.imageId)}::int[])`,
       dbRead
     );
+    for (const row of rows) if (row.contest) contest.add(row.imageId);
     const part = computeImages(event, rows, cosmetics, now, changed);
     part.entries.forEach((v, k) => entries.set(k, v));
     part.counts.forEach((v, k) => counts.set(k, v));
@@ -429,11 +448,15 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     await Promise.all(part.map((k) => sysRedis.hDel(keys.counts, k)));
   const imageIdOf = (k: string) => Number(k.slice('Image:'.length));
   await pushTurfCounts(event.name, [
-    ...countDiff.set.map(([k]) => ({
-      imageId: imageIdOf(k),
-      counts: counts.get(k) ?? null,
-      stickers: stickers.get(k) ?? null,
-    })),
+    ...countDiff.set.map(([k]) =>
+      contest.has(imageIdOf(k))
+        ? { imageId: imageIdOf(k), counts: null, stickers: [] }
+        : {
+            imageId: imageIdOf(k),
+            counts: counts.get(k) ?? null,
+            stickers: stickers.get(k) ?? null,
+          }
+    ),
     ...countDiff.remove.map((k) => ({
       imageId: imageIdOf(k),
       counts: null,
@@ -489,12 +512,9 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
             AND "imageId" = ANY(${imageIds}::int[])
         `
       : [],
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT i.id FROM "Image" i
-      WHERE i.id = ANY(${imageIds}::int[]) AND ${contestEntry(Prisma.sql`i.id`)}
-    `,
+    contestImageIds(imageIds, dbRead),
   ]);
-  const hiddenIds = new Set(contestRows.map((r) => r.id));
+  const hiddenIds = contestRows;
   const hidden = Object.fromEntries([...hiddenIds].map((id) => [id, true]));
   const mineIds = new Set(mineRows.map((r) => r.imageId));
   const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
@@ -632,6 +652,7 @@ export async function getTurfStickersForImages(
       WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
         AND s."removedAt" IS NULL AND ${imageVisible}
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+        AND NOT ${contestEntry(Prisma.sql`s."imageId"`)}
     ), picked AS (
       SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC

@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
+import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -31,14 +32,25 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+const pushTurfCounts = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('~/server/events/turf/turf-watch', async (importOriginal) => ({
+  ...(await importOriginal<typeof TurfWatch>()),
+  pushTurfCounts,
+}));
 vi.mock('~/server/services/placement-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementModeration>()),
   assertCanPlace: async () => undefined,
 }));
 
-const { getTurfSummaries, getTurfStickers, placeTurfSticker } = await import(
-  '~/server/events/turf/turf.service'
-);
+const {
+  getTurfEvent,
+  getTurfSummaries,
+  getTurfStickers,
+  getTurfStickersForImages,
+  placeTurfSticker,
+  reconcileTurf,
+  syncTurfImages,
+} = await import('~/server/events/turf/turf.service');
 
 const OWNER = 7;
 const PLACER = 5;
@@ -51,8 +63,11 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (
-      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz
+      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
+      "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
+      "excludeFromLeaderboards" boolean DEFAULT false
     );
+    CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, "postId" int, ingestion text DEFAULT 'Scanned',
@@ -67,9 +82,9 @@ beforeAll(async () => {
       "cosmeticId" int, data jsonb, "createdAt" timestamptz DEFAULT now(), "removedAt" timestamptz
     );
 
-    INSERT INTO "User" VALUES
-      (${OWNER}, '{"eventTurfOptIn": {"e": "true"}}', NULL, NULL),
-      (${PLACER}, '{"eventTurfOptIn": {"e": "true"}}', NULL, NULL);
+    INSERT INTO "User" (id, settings) VALUES
+      (${OWNER}, '{"eventTurfOptIn": {"e": "true"}}'),
+      (${PLACER}, '{"eventTurfOptIn": {"e": "true"}}');
     INSERT INTO "Post" VALUES (1, '2026-10-01', 'Public');
     INSERT INTO "Image" (id, "userId", "postId") VALUES
       (${CONTEST_ENTRY}, ${OWNER}, 1), (${BOOKMARKED}, ${OWNER}, 1);
@@ -107,6 +122,30 @@ describe('Hat Turf on contest entries', () => {
   it('no stickers are drawn on a contest entry on image detail', async () => {
     expect((await getTurfStickers('e', CONTEST_ENTRY, PLACER)).stickers).toEqual([]);
     expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers).toHaveLength(1);
+  });
+
+  it('feed cards get no stickers for a contest entry', async () => {
+    const feed = await getTurfStickersForImages('e', [CONTEST_ENTRY, BOOKMARKED], 5);
+    expect(Object.keys(feed)).toEqual([String(BOOKMARKED)]);
+  });
+
+  it.each([
+    ['a sync', async () => syncTurfImages((await getTurfEvent('e'))!, [CONTEST_ENTRY, BOOKMARKED])],
+    ['a reconcile', async () => reconcileTurf((await getTurfEvent('e'))!)],
+  ])('%s pushes nothing about a contest entry', async (_, run) => {
+    redisMock.sysRedis.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
+      fields.map(() => null)) as never);
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    pushTurfCounts.mockClear();
+    await run();
+    const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
+    const of = (id: number) =>
+      pushed.find((push: { imageId: number }) => push.imageId === id) as
+        | { counts: unknown; stickers: unknown[] | null }
+        | undefined;
+    expect(of(BOOKMARKED)?.counts).not.toBeNull();
+    expect(of(BOOKMARKED)?.stickers).toHaveLength(1);
+    expect(of(CONTEST_ENTRY)).toEqual({ imageId: CONTEST_ENTRY, counts: null, stickers: [] });
   });
 
   it('placing on a contest entry is refused', async () => {
