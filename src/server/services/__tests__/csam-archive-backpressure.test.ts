@@ -1356,6 +1356,39 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
   });
+
+  it('logs which image failed the pass, and how far it got, without the key or the message', async () => {
+    mockGetObject = async (key) => {
+      if (key === 'key-eight')
+        throw Object.assign(new Error('aborted reading key-eight'), { code: 'ECONNRESET' });
+      return {
+        Body: { transformToByteArray: async () => new Uint8Array(stored) },
+        ContentType: 'image/webp',
+        ContentLength: stored.length,
+      };
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('aborted');
+
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    const read = lines.find((p) => p.subType === 'archive-image-read');
+    const failed = lines.find((p) => p.subType === 'archive-failed');
+    expect(read).toMatchObject({
+      reportId: report.id,
+      imageId: 8,
+      errorCode: 'ECONNRESET',
+      fullUrl: false,
+      retried: true,
+    });
+    expect(failed).toMatchObject({
+      reportId: report.id,
+      stored: ['base'],
+      errorCode: 'ECONNRESET',
+    });
+    const text = JSON.stringify([read, failed]);
+    expect(text).not.toContain('key-eight');
+    expect(text).not.toContain('eight.jpeg');
+  });
 });
 
 describe('test harness', () => {
