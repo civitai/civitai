@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock, redisMock } from '~/__tests__/mocks';
+import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
 
 const chQuery = vi.fn();
 const logToAxiom = loggingMock.logToAxiom;
@@ -8,8 +9,11 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }
 const {
   BRADLEY_TERRY_INGEST_WAIT_MS,
   CrucibleRankingDeferredError,
+  capJudgeVotes,
   fitBradleyTerry,
+  fitBradleyTerryStrengths,
   fitCrucibleScoresForPrizes,
+  tallyJudgeVotes,
   usesBradleyTerryRanking,
 } = await import('~/server/services/crucible-bradley-terry');
 
@@ -83,15 +87,23 @@ describe('fitBradleyTerry', () => {
 });
 
 describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
-  const tallies = [
-    { winnerEntryId: 1, loserEntryId: 2, votes: 2 },
-    { winnerEntryId: 2, loserEntryId: 3, votes: 1 },
-  ]; // 3 distinct (judge, pair) votes
-  /** Two judges whose voted-pairs sets hold `a` and `b` pairs. */
+  // ClickHouse rows: 3 distinct (judge, pair) votes.
+  const judgeVotes = [
+    { userId: 7, winnerEntryId: 1, loserEntryId: 2 },
+    { userId: 7, winnerEntryId: 2, loserEntryId: 3 },
+    { userId: 8, winnerEntryId: 1, loserEntryId: 2 },
+  ];
+  /**
+   * Two judges whose voted-pairs sets hold `a` and `b` pairs. Only the exact keys the vote path
+   * writes answer (the writer side is pinned in crucible-vote-integrity), so a guard that reads
+   * any other key counts 0 and these tests fail.
+   */
   const withRedisPairs = (a: number, b: number) => {
-    redisMock.sysRedis.sMembers.mockResolvedValue(['7', '8']);
+    redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
+      key === getJudgesKey(1) ? ['7', '8'] : []
+    );
     redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
-      key.endsWith(':7') ? a : key.endsWith(':8') ? b : 0
+      key === getVotedPairsKey(1, 7) ? a : key === getVotedPairsKey(1, 8) ? b : 0
     );
   };
   const now = new Date('2026-12-01T12:00:00Z');
@@ -101,7 +113,7 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    chQuery.mockResolvedValue(tallies);
+    chQuery.mockResolvedValue(judgeVotes);
   });
 
   it('ranks by the fit when ClickHouse holds exactly the votes Redis counts', async () => {
@@ -140,9 +152,70 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     expect(logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   });
 
+  it('counts every judge when there are more than one batch of them', async () => {
+    const judges = Array.from({ length: 250 }, (_, i) => i + 1);
+    redisMock.sysRedis.sMembers.mockResolvedValue(judges.map(String));
+    redisMock.sysRedis.sCard.mockResolvedValue(1);
+    chQuery.mockResolvedValue(
+      judges.map((userId) => ({ userId, winnerEntryId: 1, loserEntryId: 2 }))
+    );
+    expect(await fit(), 'fit over 250 judges').not.toBeNull();
+    expect(redisMock.sysRedis.sCard).toHaveBeenCalledTimes(250);
+  });
+
   it('falls back to Elo when Redis is unreachable', async () => {
     redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
     expect(await fit(endedAgo(60_000))).toBeNull();
+  });
+});
+
+describe('the per-judge, per-entry cap, as Elo applies it', () => {
+  const cap = 5;
+  // Judge 1 votes X (10) over A-E: five votes, all counted for X.
+  const firstFive = [1, 2, 3, 4, 5].map((loser) => ({
+    userId: 1,
+    winnerEntryId: 10,
+    loserEntryId: loser,
+  }));
+  // Then X over F-H: X is at the cap, so these place F-H against X and leave X frozen.
+  const pastCap = [6, 7, 8].map((loser) => ({ userId: 1, winnerEntryId: 10, loserEntryId: loser }));
+
+  it('moves an entry a judge voted on 8 times exactly as if they had cast only 5', () => {
+    const onlyFive = fitBradleyTerryStrengths(tallyJudgeVotes(firstFive));
+    const eight = fitBradleyTerryStrengths(tallyJudgeVotes([...firstFive, ...pastCap]));
+    // Strength ratios are scale-free; the fit's centring moves with F-H, the ratios do not.
+    for (const opponent of [1, 2, 3, 4, 5]) {
+      const ratio = (fit: Map<number, number>) => Math.log10(fit.get(10)! / fit.get(opponent)!);
+      expect(ratio(eight), `X against ${opponent}`).toBeCloseTo(ratio(onlyFive), 6);
+    }
+    // F-H still lose to X, so they place below it.
+    expect(eight.get(6)!).toBeLessThan(eight.get(10)!);
+  });
+
+  it('freezes the side at the cap, counts the other, and drops a vote with both at the cap', () => {
+    const fourMore = [11, 12, 13, 14].map((winner) => ({
+      userId: 1,
+      winnerEntryId: winner,
+      loserEntryId: 1,
+    })); // entry 1 reaches 5 counted votes
+    const bothCapped = { userId: 1, winnerEntryId: 10, loserEntryId: 1 };
+    const frozen = capJudgeVotes([...firstFive, ...pastCap, ...fourMore, bothCapped], cap).map(
+      (vote) => vote.frozen
+    );
+    expect(frozen).toEqual([
+      ...Array(5).fill(undefined),
+      'winner',
+      'winner',
+      'winner',
+      ...Array(4).fill(undefined),
+    ]); // 12 votes: the 13th, both sides at the cap, is dropped
+  });
+
+  it('counts each judge separately', () => {
+    const otherJudge = pastCap.map((vote) => ({ ...vote, userId: 2 }));
+    expect(capJudgeVotes([...firstFive, ...otherJudge], cap).map((vote) => vote.frozen)).toEqual(
+      Array(8).fill(undefined)
+    );
   });
 });
 

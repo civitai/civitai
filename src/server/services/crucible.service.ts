@@ -92,8 +92,13 @@ import {
   createPairKey,
   createVoteOutcome,
   decidedPairKeys,
+  MAX_CLOSURE_VOTES,
 } from '~/server/services/crucible-judge-closure';
-import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
+import {
+  getJudgesKey,
+  getVoteOutcomesKey,
+  getVotedPairsKey,
+} from '~/server/services/crucible-redis-keys';
 import {
   getCrucibleJudgingConfig,
   recordSessionVote,
@@ -2410,17 +2415,16 @@ export const submitEntry = async ({
   }
 };
 
-function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
-}
-
 /** Pairs this judge is not served again: those they voted on, and those their votes decide. */
 async function getDecidedPairKeys(crucibleId: number, userId: number) {
-  const [votedPairKeys = [], outcomes = []] = await Promise.all([
+  const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
+  const [votedPairKeys = [], outcomeCount = 0] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-    sysRedis.sMembers(getVoteOutcomesKey(crucibleId, userId)),
+    sysRedis.sCard(outcomesKey),
   ]);
-  return decidedPairKeys(votedPairKeys, outcomes);
+  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
+  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return votedPairKeys;
+  return decidedPairKeys(votedPairKeys, (await sysRedis.sMembers(outcomesKey)) ?? []);
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -3430,6 +3434,15 @@ export const submitVote = async ({
     (async () => {
       await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
       await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+      // The set grows by one vote at a time, so this fires once per judge and crucible.
+      if ((await sysRedis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
+        logToAxiom({
+          type: 'info',
+          name: 'crucible-closure-cap',
+          message: `Judge ${userId} passed ${MAX_CLOSURE_VOTES} votes in crucible ${crucibleId}; the judge-side skip is off for them`,
+          crucibleId,
+          userId,
+        }).catch();
     })().catch((error: unknown) =>
       log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
     ),
