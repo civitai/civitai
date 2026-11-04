@@ -65,7 +65,7 @@ const ALLOWS = 7;
 const OFF = 8;
 // A user not in Hat Turf, free to use the switch.
 const OUTSIDER = 9;
-// Never chose: in Hat Turf once they place an event hat (the old default).
+// Never chose: not in Hat Turf (only an explicit opt-in counts).
 const NEVER_CHOSE = 10;
 // Each owner's one image, id = owner + 900.
 const IMAGES = [ALLOWS + 900, OFF + 900, OUTSIDER + 900];
@@ -221,6 +221,36 @@ describe('when the switch takes effect', () => {
     await setTurfOwnerOff('e', OUTSIDER, true);
     expect(counted()).not.toContain(`Image:${IMAGES[2]}`);
     await setTurfOwnerOff('e', OUTSIDER, false);
+    expect(counted()).toContain(`Image:${IMAGES[2]}`);
+  });
+
+  // The switch re-syncs the owner's images a batch (2000) at a time: an owner with more than one
+  // batch gets all of them back, not only the first.
+  it('an owner with more than one batch of stickered images gets every one back', async () => {
+    const extra = 2_001;
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", "postId")
+        SELECT 10000 + g, ${OUTSIDER}, 1 FROM generate_series(1, ${extra}) g;
+      INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data)
+        SELECT 'e', id, ${PLACER}, 'Blue', 11, '{}' FROM "Image" WHERE id > 10000;
+    `);
+    // A loop that stops advancing its cursor re-reads the first batch forever: cut it off, so the
+    // failure is a missing image, not a hang.
+    const raw = pgliteRaw(db);
+    let batches = 0;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      sql: TemplateStringsArray | Prisma.Sql,
+      ...values: unknown[]
+    ) => {
+      const text = Array.isArray(sql) ? sql.join('') : (sql as Prisma.Sql).sql;
+      if (text.includes('i."userId" =') && text.includes('s."imageId" >') && ++batches > 5)
+        return Promise.reject(new Error('owner sync did not advance'));
+      return raw.queryRaw(sql, ...values);
+    }) as never);
+    await setTurfOwnerOff('e', OUTSIDER, true);
+    await setTurfOwnerOff('e', OUTSIDER, false);
+    const owners = counted().filter((key) => Number(key.slice('Image:'.length)) > 10000);
+    expect(owners).toHaveLength(extra);
     expect(counted()).toContain(`Image:${IMAGES[2]}`);
   });
 });

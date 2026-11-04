@@ -71,8 +71,7 @@ export type TurfEvent = EventDef & { turf: EventTurfConfig };
 const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> 'Private'
   AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL`;
-// The image's owner `o` is neither banned nor deleted. ownerAllowsTurf covers this too; placement reads
-// it apart only to refuse a banned owner's image without blaming the owner's switch.
+// Read apart from ownerAllowsTurf so a banned owner's image is not blamed on the owner's switch.
 const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
 // Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
 const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
