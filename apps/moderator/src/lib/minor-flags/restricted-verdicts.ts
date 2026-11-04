@@ -17,8 +17,11 @@ export type RestrictedVerdictRow = {
   nsfw: boolean;
   /** An earlier scan had already locked nsfw on this model; Keep lifts that lock. */
   systemLocked: boolean;
-  /** The scan rated this SFW-only model NSFW at once and cleared SFW-only; Keep puts it back. */
+  /** The verdict was applied: at once on an SFW-only model (SFW-only cleared), or when the owner
+   *  unticked minor/POI. Keep puts the owner's rating back. */
   autoApplied: boolean;
+  /** Held as minor or POI, and the owner has since unticked both. */
+  unticked: boolean;
   heldAt: string | null;
   source: string | null;
   /** The text scan's own verdict row, when the text-scan path raised it. */

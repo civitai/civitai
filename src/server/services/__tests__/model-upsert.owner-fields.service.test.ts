@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
+import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 import type * as ModelCoverService from '~/server/services/model-cover.service';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
@@ -113,6 +114,13 @@ const { mockSettleAppeals } = vi.hoisted(() => ({ mockSettleAppeals: vi.fn() }))
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
   ...(await importOriginal<typeof AppealTextHash>()),
   settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
+}));
+const { mockApplyHeldVerdict } = vi.hoisted(() => ({
+  mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
+}));
+vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelNsfw>()),
+  applyHeldRestrictedVerdict: mockApplyHeldVerdict,
 }));
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -1016,5 +1024,28 @@ describe('name length cap', () => {
     mockStored({ name: name(200) });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: name(150) });
     expect(updateData().name).toBe(name(150));
+  });
+});
+
+describe('a held scan verdict', () => {
+  it.each(['minor', 'poi'] as const)(
+    'is applied when the owner’s save unticks %s',
+    async (flag) => {
+      mockStored({ [flag]: true });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, [flag]: false });
+      expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+    }
+  );
+
+  it('is left held while the save keeps the flag (control)', async () => {
+    mockStored({ minor: true });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true });
+    expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
+  });
+
+  it('does not fail the save when applying it fails', async () => {
+    mockStored({ poi: true });
+    mockApplyHeldVerdict.mockRejectedValueOnce(new Error('boom'));
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, poi: false })).resolves.toBeTruthy();
   });
 });

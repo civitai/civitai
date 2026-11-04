@@ -43,13 +43,15 @@ Notes on the tabs:
 - Needs review also lists, above its merged leads, models the text scan rated NSFW while their owner had them
   marked minor, a real person or SFW-only ("Scan rated NSFW on a restricted model"), from the server-owned
   `meta.restrictedNsfwVerdict` lead: minor first, then real person, then SFW-only. A lead held as minor stays
-  minor after the owner unticks the flag. On a minor or real-person model the scan records the lead and leaves
-  the rating to the moderator; on an SFW-only model it applies the rating as on any other model, clearing
+  minor in that order after the owner unticks the flag. On a minor or real-person model the scan records the
+  lead and leaves the rating to the moderator, until an owner's save clears both flags: the rating then applies
+  as on any other model, recorded on the lead. On an SFW-only model it applies the rating as on any other model, clearing
   SFW-only, and records the lead with what it replaced. Ruled under `modelFlags.detections.decide` through
   `model/resolve-restricted-nsfw-verdict`: **Keep owner's rating** (nsfw off, SFW-only restored where the scan
   cleared it, and the scan's own lock for the lead lifted; a moderator's or a later scan's lock stands),
-  **Dismiss** (a minor lead needs a reason) or, on SFW-only leads only, **Rate NSFW** (refused by the main app
-  on minor or real-person models). Each ruling, and the scan's own SFW-only change, logs a ModActivity row and
+  **Dismiss** (a minor lead needs a reason) or **Rate NSFW** (refused by the main app while the model is marked
+  minor or a real person; a lead held as minor needs a reason). Each ruling, and each rating the scan applies
+  itself, logs a ModActivity row and
   keeps the values it replaced in `meta.restrictedNsfwVerdictRulings`. The block shows how many leads wait when
   it lists fewer. The sidebar's Needs review badge adds these leads to the held-detection count; a model with
   both counts twice.

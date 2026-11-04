@@ -42,7 +42,9 @@ vi.mock('~/server/clickhouse/tracker', () => ({
   },
 }));
 
-const { applySystemModelNsfwFlag } = await import('~/server/services/text-scan/actions/model-nsfw');
+const { applyHeldRestrictedVerdict, applySystemModelNsfwFlag } = await import(
+  '~/server/services/text-scan/actions/model-nsfw'
+);
 const { resolveRestrictedNsfwVerdict } = await import(
   '~/server/services/text-scan/actions/restricted-nsfw-verdict'
 );
@@ -83,6 +85,16 @@ beforeAll(async () => {
   const tx = { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
+  dbMock.dbWrite.model.findUnique.mockImplementation(
+    (async () =>
+      (
+        await db.query(
+          `SELECT id, nsfw, 1 AS "nsfwLevel", "lockedProperties", "userId", minor, poi, "sfwOnly", meta
+         FROM "Model" WHERE id = $1`,
+          [MODEL]
+        )
+      ).rows[0] ?? null) as never
+  );
 });
 afterAll(() => db.close());
 
@@ -286,10 +298,22 @@ describe('resolveRestrictedNsfwVerdict', () => {
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
   });
 
-  it('treats a lead held as minor as minor after the owner unticks it', async () => {
+  it('asks a reason to dismiss or rate NSFW a lead held as minor after the owner unticks it', async () => {
     await seed({ sfwOnly: true, meta: lead('minor') });
     await expect(rule('dismiss')).rejects.toThrow(/minor lead/);
-    await expect(rule('rateNsfw')).rejects.toThrow(/cannot be rated NSFW/);
+    await expect(rule('rateNsfw')).rejects.toThrow(/once marked minor/);
+    await expect(rule('rateNsfw', '  ')).rejects.toThrow(/once marked minor/);
+    expect(await row()).toMatchObject({ nsfw: false, sfwOnly: true });
+    expect(mocks.trackModActivity).not.toHaveBeenCalled();
+
+    await rule('rateNsfw', 'Adult character, checked the gallery');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+    expect(after.meta.restrictedNsfwVerdictRulings.at(-1)).toMatchObject({
+      ruling: 'rateNsfw',
+      restriction: 'minor',
+      reason: 'Adult character, checked the gallery',
+    });
   });
 
   it('dismisses with a reason and changes nothing but the lead', async () => {
@@ -362,9 +386,18 @@ describe('resolveRestrictedNsfwVerdict', () => {
     expect(await row()).toMatchObject({ nsfw: false, sfwOnly: true });
   });
 
-  it('refuses Rate NSFW on a lead held as a real person after the owner unticks it', async () => {
+  it('allows Rate NSFW on a lead held as a real person once the owner unticks it', async () => {
     await seed({ sfwOnly: true, meta: lead('poi') });
-    await expect(rule('rateNsfw')).rejects.toThrow(/cannot be rated NSFW/);
+    await rule('rateNsfw');
+    expect(await row()).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+  });
+
+  it("keep leaves the owner's own NSFW rating on a model no longer restricted", async () => {
+    await seed({ nsfw: true, sfwOnly: false, meta: lead('poi') });
+    await rule('keep');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
+    expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
   });
 
   it('refuses Rate NSFW on an SFW-only lead once the owner marks the model minor', async () => {
@@ -388,6 +421,64 @@ describe('resolveRestrictedNsfwVerdict', () => {
     await rule('dismiss');
     await expect(rule('keep')).rejects.toThrow(/ruled on meanwhile/);
     expect((await row()).meta.restrictedNsfwVerdictRulings).toHaveLength(1);
+  });
+});
+
+describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => {
+  it.each([
+    ['minor', true],
+    ['minor', false],
+    ['poi', true],
+    ['poi', false],
+  ] as const)(
+    'applies a lead held as %s (SFW-only %s): nsfw on and locked, with what it replaced; Keep undoes it',
+    async (restriction, sfwOnly) => {
+      await seed({ sfwOnly, meta: { ...lead(restriction), other: 1 } });
+      expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
+      const after = await row();
+      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+      expect(after.meta).toMatchObject({
+        other: 1,
+        systemNsfwLock: { source: 'text-scan', at: expect.any(String) },
+        restrictedNsfwVerdict: {
+          restriction,
+          applied: {
+            at: expect.any(String),
+            prior: { nsfw: false, sfwOnly, lockedProperties: [], systemNsfwLock: null },
+          },
+        },
+      });
+      expect(after.meta.restrictedNsfwVerdictRulings).toEqual([
+        expect.objectContaining({ ruling: 'autoApply', restriction }),
+      ]);
+      expect(mocks.trackModActivity).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.objectContaining({ entityId: MODEL, activity: 'restrictedNsfwVerdict:autoApply' })
+      );
+
+      await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
+      const kept = await row();
+      expect(kept).toMatchObject({ nsfw: false, sfwOnly, lockedProperties: [] });
+      expect(kept.meta).not.toHaveProperty('systemNsfwLock');
+      expect(kept.meta).not.toHaveProperty('restrictedNsfwVerdict');
+    }
+  );
+
+  it.each(['minor', 'poi'] as const)(
+    'leaves the lead held while the model is still %s',
+    async (flag) => {
+      await seed({ [flag]: true, meta: lead(flag) });
+      expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
+      const after = await row();
+      expect(after).toMatchObject({ nsfw: false, lockedProperties: [] });
+      expect(after.meta.restrictedNsfwVerdict).not.toHaveProperty('applied');
+    }
+  );
+
+  it('does nothing without a lead', async () => {
+    await seed({});
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
+    expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
   });
 });
 

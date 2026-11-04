@@ -4416,6 +4416,21 @@ export const upsertModel = async (
       );
       await settleFlagAppealsAfterModeratorLift({ modelId: result.id, userId, liftedLabels });
     }
+    // A scan verdict held because the model was minor or POI applies once the save clears both flags.
+    if ((beforeUpdate.minor || beforeUpdate.poi) && !result.minor && !result.poi) {
+      const { applyHeldRestrictedVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      await applyHeldRestrictedVerdict(result.id).catch((error: Error) =>
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'held restricted nsfw verdict not applied',
+          modelId: result.id,
+          error: error.message,
+        }).catch(() => null)
+      );
+    }
 
     // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
     // each resource: without this, a creator who adds RentCivit is told the model is "not enabled

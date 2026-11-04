@@ -93,6 +93,20 @@ describe('restricted-verdict leads', () => {
     expect(await getRestrictedVerdictCount()).toBe(5);
   });
 
+  it('marks a lead held as minor or a real person whose owner has since unticked it', async () => {
+    await model(1, { sfwOnly: true, meta: lead('minor', '2026-11-01T00:00:00Z') });
+    await model(2, { meta: lead('poi', '2026-11-02T00:00:00Z') });
+    await model(3, { poi: true, meta: lead('poi', '2026-11-03T00:00:00Z') });
+    await model(4, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-04T00:00:00Z') });
+    const rows = await getRestrictedVerdicts();
+    expect(Object.fromEntries(rows.map((r) => [r.modelId, r.unticked]))).toEqual({
+      1: true,
+      2: true,
+      3: false,
+      4: false,
+    });
+  });
+
   it("shows the scan's own verdict row next to the lead", async () => {
     await model(1, { minor: true, meta: lead('minor', '2026-11-01T00:00:00Z') });
     await db.query(

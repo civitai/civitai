@@ -35,7 +35,8 @@ type Row = {
   rulings: RestrictedNsfwVerdictRulingRecord[] | null;
 };
 
-/** A model the owner once declared minor counts as minor here even after they untick it. */
+/** A model the owner once declared minor counts as minor here even after they untick it: for the
+ *  queue order and the reasons it needs, not for whether it may be rated NSFW. */
 const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
   row.minor || verdict.restriction === 'minor'
     ? 'minor'
@@ -50,7 +51,8 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
  *   scan's own lock for this lead is lifted; a moderator's lock (every moderator nsfw write drops the
  *   `systemNsfwLock` marker) or a newer scan's lock stands, and then nothing but the lead changes.
  * - `dismiss`: drops the lead only, after the moderator acted elsewhere. A minor lead needs a reason.
- * - `rateNsfw`: SFW-only leads only. Unsets sfwOnly, sets nsfw and locks it as the moderator's.
+ * - `rateNsfw`: only while the model is neither minor nor POI, and with a reason on a minor lead.
+ *   Unsets sfwOnly, sets nsfw and locks it as the moderator's.
  * Each ruling closes the lead, logs a ModActivity row, and appends a record with the prior values.
  */
 export async function resolveRestrictedNsfwVerdict({
@@ -82,10 +84,12 @@ export async function resolveRestrictedNsfwVerdict({
     const restriction = restrictionOf(row, verdict);
     if (ruling === 'dismiss' && restriction === 'minor' && !note)
       throw throwBadRequestError('Say why a minor lead is dismissed, or where it was escalated.');
-    if (ruling === 'rateNsfw' && restriction !== 'sfwOnly')
+    if (ruling === 'rateNsfw' && (row.minor || row.poi))
       throw throwBadRequestError(
         'This model is marked as depicting a real person or a minor; it cannot be rated NSFW.'
       );
+    if (ruling === 'rateNsfw' && restriction === 'minor' && !note)
+      throw throwBadRequestError('Say why a model once marked minor is rated NSFW.');
 
     const locked = row.lockedProperties ?? [];
     const prior = {
@@ -102,14 +106,18 @@ export async function resolveRestrictedNsfwVerdict({
       const leadAt = Date.parse(verdict.applied?.at ?? verdict.at);
       const lockAt = Date.parse(row.systemNsfwLock?.at ?? '');
       const lockIsLeads = !!row.systemNsfwLock && lockAt <= leadAt;
-      const nsfwLocked = locked.includes('nsfw');
-      if (!nsfwLocked || lockIsLeads) {
+      const sfwOnly = verdict.applied?.prior.sfwOnly ?? row.sfwOnly;
+      if (lockIsLeads) {
+        next = { nsfw: false, sfwOnly, lockedProperties: locked.filter((p) => p !== 'nsfw') };
+        dropSystemLock = true;
+      } else if (!locked.includes('nsfw')) {
+        // Nothing of the scan's to undo: an owner who has since unrestricted the model and rated it
+        // NSFW keeps that rating.
         next = {
-          nsfw: false,
-          sfwOnly: verdict.applied?.prior.sfwOnly ?? row.sfwOnly,
-          lockedProperties: lockIsLeads ? locked.filter((p) => p !== 'nsfw') : locked,
+          nsfw: row.minor || row.poi || sfwOnly ? false : row.nsfw,
+          sfwOnly,
+          lockedProperties: locked,
         };
-        dropSystemLock = lockIsLeads;
       }
     } else if (ruling === 'rateNsfw') {
       next = {

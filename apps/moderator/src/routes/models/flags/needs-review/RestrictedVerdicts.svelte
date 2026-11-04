@@ -31,6 +31,10 @@
   let errors = $state<Record<number, string>>({});
   let pending = $state<number | null>(null);
 
+  const canRateNsfw = (row: RestrictedVerdictRow) => !row.minor && !row.poi;
+  const needsReason = (row: RestrictedVerdictRow) =>
+    row.restriction === 'minor' && !reasons[row.modelId]?.trim();
+
   const submit =
     (modelId: number): SubmitFunction =>
     () => {
@@ -59,7 +63,8 @@
     </h2>
     <p class="m-0 mt-1 text-xs text-dark-2">
       The owner marked these minor, a real person or SFW-only. Minor and real-person models keep their
-      rating until you rule; SFW-only models were rated NSFW, and Keep restores SFW-only. Minor first.
+      rating until you rule or the owner unticks the flag; SFW-only models were rated NSFW, and Keep
+      restores SFW-only. Minor first.
     </p>
     <ul class="m-0 mt-2 flex list-none flex-col gap-2 p-0">
       {#each rows as row (row.modelId)}
@@ -74,8 +79,15 @@
             <MetaChip tone={row.restriction === 'minor' ? 'red' : 'neutral'}>
               {RESTRICTION_LABEL[row.restriction]}
             </MetaChip>
+            {#if row.unticked}
+              <MetaChip tone="amber">
+                held as {RESTRICTION_LABEL[row.restriction]}; owner has since unticked it
+              </MetaChip>
+            {/if}
             {#if row.autoApplied}
-              <MetaChip tone="amber">rated NSFW, SFW-only cleared</MetaChip>
+              <MetaChip tone="amber">
+                {row.unticked ? 'rated NSFW when unticked' : 'rated NSFW, SFW-only cleared'}
+              </MetaChip>
             {:else if row.systemLocked}<MetaChip>locked NSFW by an earlier scan</MetaChip>{/if}
             <span class="text-xs text-dark-2">
               by {row.username ?? `user #${row.userId}`}
@@ -121,7 +133,9 @@
                 <input type="hidden" name="modelId" value={row.modelId} />
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-dark-2">
-                    Reason {row.restriction === 'minor' ? '(required to dismiss a minor lead)' : ''}
+                    Reason {row.restriction === 'minor'
+                      ? '(required to dismiss or rate NSFW a minor lead)'
+                      : ''}
                   </span>
                   <select
                     class="rounded border border-dark-4 bg-dark-7 p-1"
@@ -151,16 +165,15 @@
                     variant="outline"
                     name="ruling"
                     value="dismiss"
-                    disabled={pending === row.modelId ||
-                      (row.restriction === 'minor' && !reasons[row.modelId]?.trim())}
+                    disabled={pending === row.modelId || needsReason(row)}
                     >Dismiss</Button
                   >
-                  {#if row.restriction === 'sfwOnly'}
+                  {#if canRateNsfw(row)}
                     <ConfirmButton
                       label="Rate NSFW"
                       title="Rate this model NSFW?"
                       description="This unsets SFW-only, marks the model NSFW and locks the rating as yours."
-                      disabled={pending === row.modelId}
+                      disabled={pending === row.modelId || needsReason(row)}
                       onconfirm={() => {
                         const form = document.getElementById(
                           `restricted-rate-${row.modelId}`
@@ -171,7 +184,7 @@
                   {/if}
                 </div>
               </form>
-              {#if row.restriction === 'sfwOnly'}
+              {#if canRateNsfw(row)}
                 <form
                   id={`restricted-rate-${row.modelId}`}
                   method="POST"
