@@ -2,6 +2,14 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as FliptClientModule from '~/server/flipt/client';
+
+// A refusal reads the operator hold; nothing is held in these cases (the held refusal is covered
+// on a real database in storage-migration-run.sql.test.ts).
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
+  isFlipt: async () => false,
+}));
 
 const {
   advanceStorageMigrationRun,

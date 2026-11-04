@@ -92,6 +92,7 @@ async function insertRun(r: {
   attempts?: number;
   token?: string | null;
   heartbeatMinutesAgo?: number | null;
+  app?: string;
 }) {
   await db.query(
     `INSERT INTO app_storage_migration_runs
@@ -101,7 +102,7 @@ async function insertRun(r: {
     [
       r.request,
       r.collection,
-      APP,
+      r.app ?? APP,
       r.status,
       r.attempts ?? 0,
       r.token ?? null,
@@ -364,7 +365,13 @@ describe('the operator hold (app-blocks-storage-migration-hold) on a real databa
   it('🔴 a held run is never claimed by the job: it stays pending with its attempts, the cap cleanup leaves it, and the next run after the hold is lifted claims it', async () => {
     await insertRequest('pubreq_H', RUN_MANIFEST);
     // One attempt below the cap: a hold must neither add one nor let the cleanup fail it.
-    await insertRun({ request: 'pubreq_H', collection: 'cards', status: 'pending', attempts: 4 });
+    await insertRun({
+      request: 'pubreq_H',
+      collection: 'cards',
+      status: 'pending',
+      attempts: 4,
+      heartbeatMinutesAgo: 30,
+    });
     heldApps.add(APP);
     const first = await resumeStorageMigrationRuns();
     const second = await resumeStorageMigrationRuns();
@@ -379,7 +386,7 @@ describe('the operator hold (app-blocks-storage-migration-hold) on a real databa
     ]);
     // Touched, so the job's least-recently-touched-first sweep rotates it behind other apps' runs.
     const touched = await db.query<{ touched: boolean }>(
-      `SELECT heartbeat_at IS NOT NULL AS touched FROM app_storage_migration_runs`
+      `SELECT heartbeat_at > now() - make_interval(mins => 1) AS touched FROM app_storage_migration_runs`
     );
     expect(touched.rows).toEqual([{ touched: true }]);
     expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
@@ -457,8 +464,98 @@ describe('the operator hold (app-blocks-storage-migration-hold) on a real databa
         plans: PLAN_CARDS,
       })
     ).rejects.toThrow(
-      'Cannot approve: this version changes the storage of collection cards, and an earlier storage migration of that collection is still pending (publish request pubreq_A, collection cards); approving now would leave it half-done. Approve again once it has finished.'
+      'Cannot approve: this version changes the storage of collection cards, and an earlier storage migration of that collection (publish request pubreq_A, collection cards) is held by an operator switch and does not run while held. Approve again once an operator has released the hold and the migration has finished.'
     );
     expect((await rows()).map((r) => r.publish_request_id)).toEqual(['pubreq_A']);
+  });
+
+  it('🔴 a held run left running by a dead runner goes back to pending: claim cleared, cursor and counts kept, no attempt added', async () => {
+    await insertRequest('pubreq_D', RUN_MANIFEST);
+    await insertRun({
+      request: 'pubreq_D',
+      collection: 'cards',
+      status: 'running',
+      attempts: 2,
+      token: 'dead-runner',
+      heartbeatMinutesAgo: 30,
+    });
+    await db.query(
+      `UPDATE app_storage_migration_runs SET cursor = '{"scopeUid":7,"key":"k-41"}'::jsonb, scanned = 41`
+    );
+    heldApps.add(APP);
+    expect(await resumeStorageMigrationRuns()).toEqual({
+      advanced: 0,
+      held: 1,
+      tableMissing: false,
+    });
+    expect(await rows()).toEqual([
+      {
+        publish_request_id: 'pubreq_D',
+        collection: 'cards',
+        status: 'pending',
+        attempts: 2,
+        claim_token: null,
+      },
+    ]);
+    const kept = await db.query<Record<string, unknown>>(
+      `SELECT cursor, scanned, heartbeat_at > now() - make_interval(mins => 1) AS touched
+       FROM app_storage_migration_runs`
+    );
+    expect(kept.rows).toEqual([
+      { cursor: { scopeUid: 7, key: 'k-41' }, scanned: 41, touched: true },
+    ]);
+    expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('a held run with a LIVE runner (fresh heartbeat) is left alone: its claim is never clobbered', async () => {
+    await insertRequest('pubreq_L', RUN_MANIFEST);
+    await insertRun({
+      request: 'pubreq_L',
+      collection: 'cards',
+      status: 'running',
+      attempts: 1,
+      token: 'live-runner',
+      heartbeatMinutesAgo: 1,
+    });
+    heldApps.add(APP);
+    await runStorageMigrationsForRequest('pubreq_L', ['cards'], APP);
+    const [row] = await rows();
+    expect([row.status, row.attempts, row.claim_token]).toEqual(['running', 1, 'live-runner']);
+  });
+
+  it("🔴 rotation: with a batch of one, the run after a held stale one is another app's run", async () => {
+    const OTHER = 'apb_SQL2';
+    await db.query(`INSERT INTO app_blocks (id) VALUES ($1) ON CONFLICT DO NOTHING`, [OTHER]);
+    await insertRequest('pubreq_H', RUN_MANIFEST);
+    await insertRequest('pubreq_O', RUN_MANIFEST);
+    // The held run is the least recently touched, so the sweep picks it first.
+    await insertRun({
+      request: 'pubreq_H',
+      collection: 'cards',
+      status: 'running',
+      token: 'dead-runner',
+      heartbeatMinutesAgo: 30,
+    });
+    await insertRun({
+      request: 'pubreq_O',
+      collection: 'cards',
+      status: 'pending',
+      heartbeatMinutesAgo: 20,
+      app: OTHER,
+    });
+    heldApps.add(APP);
+    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: SLUG,
+      manifest: RUN_MANIFEST,
+      status: 'pending',
+    });
+    const first = await resumeStorageMigrationRuns({ limit: 1 });
+    const second = await resumeStorageMigrationRuns({ limit: 1 });
+    expect([first, second]).toEqual([
+      { advanced: 0, held: 1, tableMissing: false },
+      { advanced: 1, held: 0, tableMissing: false },
+    ]);
+    const other = (await rows()).find((r) => r.publish_request_id === 'pubreq_O');
+    expect(typeof other?.claim_token).toBe('string');
   });
 });
