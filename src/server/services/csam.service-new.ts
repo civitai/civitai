@@ -337,7 +337,21 @@ export async function getCsamsToArchive() {
   });
   // A skipped archive is not retried. One skipped for missing training data keeps `archivedAt` null:
   // the image retention holds release a user's images once all their reports are archived.
-  return (data as unknown as CsamReportProps[]).filter((report) => !report.details?.archiveSkipped);
+  const reports = (data as unknown as CsamReportProps[]).filter(
+    (report) => !report.details?.archiveSkipped
+  );
+  // Its files are preserved copies keyed in the CSAM bucket, which this archive cannot read, so a
+  // stamp would claim an archive that holds none of them. Left unstamped, the report stays held.
+  const generatorEvidence = reports.filter((report) => isGeneratorEvidenceDetails(report.details));
+  if (generatorEvidence.length)
+    logToAxiom({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'archive-skipped-generator-evidence',
+      message: `${generatorEvidence.length} report(s) not archived: generator evidence archive not supported`,
+      count: generatorEvidence.length,
+    });
+  return reports.filter((report) => !isGeneratorEvidenceDetails(report.details));
 }
 
 // Excludes reports whose archive was skipped for missing training data: they never get archivedAt.

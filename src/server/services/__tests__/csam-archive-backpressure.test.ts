@@ -291,6 +291,52 @@ describe('getCsamsToArchive', () => {
     const reports = await getCsamsToArchive();
     expect(reports.map((r) => r.id)).toEqual([1, 3]);
   });
+
+  it('leaves generator-evidence reports unarchived and counts them, while the rest archive', async () => {
+    const generatorEvidence = {
+      id: 11,
+      userId: 707070,
+      reportedById: 5,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(),
+      details: {
+        generatedImages: [
+          { jobId: 'job-1', source: 'workflow', blobs: [{ blobId: 'b1', status: 'preserved' }] },
+        ],
+        generatorEvidence: { version: 1, approvedAt: new Date().toISOString() },
+      },
+      images: [],
+    };
+    const control = {
+      id: 12,
+      userId: 717171,
+      reportedById: 5,
+      type: 'Image',
+      details: {},
+      images: [],
+    };
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([generatorEvidence, control] as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: control.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+
+    // The job's loop: archive what was selected.
+    for (const report of await getCsamsToArchive()) await archiveCsamDataForReport(report);
+
+    const stampedIds = dbMock.dbWrite.csamReport.update.mock.calls
+      .map(([args]) => args as { where: { id: number }; data: { archivedAt?: unknown } })
+      .filter((args) => args.data.archivedAt instanceof Date)
+      .map((args) => args.where.id);
+    expect(stampedIds).toEqual([control.id]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .find((p) => p.subType === 'archive-skipped-generator-evidence')
+    ).toMatchObject({ count: 1, message: expect.stringContaining('not supported') });
+  });
 });
 
 describe('archiveCsamDataForReport (TrainingData report, training data missing)', () => {
