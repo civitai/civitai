@@ -130,7 +130,7 @@ describe('a moderator takedown and the title scan', () => {
   it('a clean scan lifts a takedown only the scan holds', async () => {
     await flaggingScan();
     expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
-    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledWith(ID);
+    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(ID);
     await cleanScan();
     expect(state()).toEqual(UP);
     expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(ID);
@@ -139,7 +139,7 @@ describe('a moderator takedown and the title scan', () => {
   it('a restore lifts a takedown only a moderator holds', async () => {
     await takeDown();
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
-    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledWith(ID);
+    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(ID);
     await expect(restore()).resolves.toMatchObject({ tosViolation: false, changed: true });
     expect(state()).toEqual(UP);
     expect(sparkHooks.onStorySparked).toHaveBeenCalledWith(ID);

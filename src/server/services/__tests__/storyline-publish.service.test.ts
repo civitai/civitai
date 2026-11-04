@@ -249,7 +249,7 @@ describe("the owner's chapter 1", () => {
     await expect(promotePendingChapter(DRAFT)).resolves.toMatchObject({ status: 'written' });
     expect(chapterOf(DRAFT)).toMatchObject({ depth: 0 });
     // Event points: a story started from an image scores once chapter 1 is live.
-    expect(onStorySparked).toHaveBeenCalledWith(EMPTY_STORY);
+    expect(onStorySparked).toHaveBeenCalledExactlyOnceWith(EMPTY_STORY);
   });
 
   it('is not written when the scan refuses the post, and the link stays', async () => {
