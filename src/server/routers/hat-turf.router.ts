@@ -7,6 +7,7 @@ import {
   placeTurfSticker,
   removeTurfSticker,
   setTurfOptIn,
+  setTurfOwnerOff,
   watchTurfImages,
 } from '~/server/events/turf/turf.service';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
@@ -15,6 +16,7 @@ import {
   placeTurfStickerSchema,
   removeTurfStickerSchema,
   setTurfOptInSchema,
+  setTurfOwnerOffSchema,
   turfEventSchema,
   turfImageSchema,
   turfStickersForImagesSchema,
@@ -92,6 +94,12 @@ export const hatTurfRouter = router({
         );
       return result;
     }),
+  // The owner's "keep Hat Turf off my images"; refused while the user is in Hat Turf.
+  setOwnerOff: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(setTurfOwnerOffSchema)
+    .use(rateLimit({ limit: 20, period: 60 }))
+    .mutation(({ ctx, input }) => setTurfOwnerOff(input.event, ctx.user.id, input.off)),
   remove: moderatorProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(removeTurfStickerSchema)
