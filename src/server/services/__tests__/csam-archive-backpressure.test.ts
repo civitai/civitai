@@ -217,6 +217,7 @@ import {
   ARCHIVE_SCAN_PAGE_SIZE,
   CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS,
   CSAM_ARCHIVE_GIVE_UP_LIMIT,
+  ORIGINAL_IMAGE_RETRY_DELAYS_MS,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
@@ -231,6 +232,12 @@ import {
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
 } from '~/server/utils/archive-helpers';
 
+// Either side of the give-up thresholds, derived so a change to a threshold moves the fixtures.
+const LATE = CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS + 1;
+const EARLY = CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1;
+const ENOUGH_RUNS = CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS;
+const TOO_FEW_RUNS = CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS - 1;
+
 // Overshoot the bound by a wide, non-multiple margin so the fixture cannot sit on the boundary
 // it is testing. Invented figures — the real report was a different size entirely.
 const IMAGE_COUNT = 53;
@@ -239,7 +246,7 @@ const IMAGE_BYTES = 97 * 1024;
 
 /** `n` earlier failed archive runs, as `details.archiveFailedRuns` records them. */
 const failedRuns = (n: number) =>
-  Array.from({ length: n }, (_, i) => `2026-01-0${i + 1}T00:00:00.000Z`);
+  Array.from({ length: n }, (_, i) => `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`);
 
 const APPEND_ONLY_MIGRATION = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -322,7 +329,7 @@ const ISO_TIME = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d
 const connectionReset = () => Object.assign(new Error('aborted'), { code: 'ECONNRESET' });
 
 /**
- * Runs the reader's 2s and 8s waits between attempts at once, so a dropped connection is retried
+ * Runs the reader's waits between attempts (`ORIGINAL_IMAGE_RETRY_DELAYS_MS`) at once, so a dropped connection is retried
  * without slowing the suite. (This file may not import the reader to inject its `sleep`: the
  * import guard admits only its own tests.) Every other timer keeps its delay.
  */
@@ -331,7 +338,11 @@ function skipReaderBackoff() {
   return vi
     .spyOn(globalThis, 'setTimeout')
     .mockImplementation(((callback: () => void, ms?: number, ...args: unknown[]) =>
-      realSetTimeout(callback, ms === 2_000 || ms === 8_000 ? 0 : ms, ...args)) as never);
+      realSetTimeout(
+        callback,
+        ms !== undefined && ORIGINAL_IMAGE_RETRY_DELAYS_MS.includes(ms) ? 0 : ms,
+        ...args
+      )) as never);
 }
 
 function fakeObject(bytes: number, contentType = 'image/jpeg') {
@@ -1399,15 +1410,17 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     });
 
     it('fails the archive, to be retried, within a day of sending', async () => {
-      await expect(archiveCsamDataForReport(sentHoursAgo(23, 5) as never)).rejects.toThrow('503');
+      await expect(
+        archiveCsamDataForReport(sentHoursAgo(EARLY, ENOUGH_RUNS + 2) as never)
+      ).rejects.toThrow('503');
     });
 
     it('fails the archive, to be retried, on a late first run', async () => {
-      await expect(archiveCsamDataForReport(sentHoursAgo(25, 0) as never)).rejects.toThrow('503');
+      await expect(archiveCsamDataForReport(sentHoursAgo(LATE, 0) as never)).rejects.toThrow('503');
     });
 
     it('is recorded as missing after a day and 3 failed runs, and the rest is archived', async () => {
-      await archiveCsamDataForReport(sentHoursAgo(25, 3) as never);
+      await archiveCsamDataForReport(sentHoursAgo(LATE, ENOUGH_RUNS) as never);
       const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
 
       expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
@@ -1447,12 +1460,6 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
       });
 
     const storedDetails = async (id: number) => (await storedRow(id)).details;
-
-    it('pins the thresholds these fixtures straddle (23h/25h; 2 and 3 failed runs)', () => {
-      expect([CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS, CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS]).toEqual([
-        24, 3,
-      ]);
-    });
 
     const failure =
       'stored original read failed for image 7 (backend backblaze, ContentLength unknown, ' +
@@ -1498,7 +1505,7 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
           if (key === 'key-seven') throw error();
           return fakeObject(8);
         };
-        const sent = await sentReport(25, 3);
+        const sent = await sentReport(LATE, ENOUGH_RUNS);
 
         await expect(archiveCsamDataForReport(sent as never)).rejects.toThrow(
           `stored original read failed for image 7 (backend backblaze, ContentLength unknown, ${ending}`
@@ -1508,9 +1515,9 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     );
 
     it.each([
-      ['a late first run', 25, 0],
-      ['a late run with 2 failed before it', 25, 2],
-      ['a run within a day, however many failed before it', 23, 5],
+      ['a late first run', LATE, 0],
+      ['a late run with too few failed before it', LATE, TOO_FEW_RUNS],
+      ['a run within a day, however many failed before it', EARLY, ENOUGH_RUNS + 2],
     ])(
       'fails the archive on %s, recording the failure and keeping every other details key',
       async (_, hoursAgo, priorFailedRuns) => {
@@ -1527,22 +1534,44 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
       }
     );
 
-    it('counts failed runs up to the give-up: 0 -> 1 and 2 -> 3', async () => {
-      const first = await sentReport(25, 0);
+    it('counts failed runs up to the give-up: 0 -> 1, and one short -> enough', async () => {
+      const first = await sentReport(LATE, 0);
       await archiveCsamDataForReport(first as never).catch(() => undefined);
-      const third = await sentReport(25, 2);
-      await archiveCsamDataForReport(third as never).catch(() => undefined);
+      const last = await sentReport(LATE, TOO_FEW_RUNS);
+      await archiveCsamDataForReport(last as never).catch(() => undefined);
 
       expect(
         ((await storedDetails(first.id)) as { archiveFailedRuns: unknown[] }).archiveFailedRuns
       ).toHaveLength(1);
       expect(
-        ((await storedDetails(third.id)) as { archiveFailedRuns: unknown[] }).archiveFailedRuns
-      ).toHaveLength(3);
+        ((await storedDetails(last.id)) as { archiveFailedRuns: unknown[] }).archiveFailedRuns
+      ).toHaveLength(ENOUGH_RUNS);
+    });
+
+    it('still rejects with the read failure when the failed run cannot be recorded', async () => {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockRejectedValue(
+        new Error('synthetic database outage')
+      );
+      const sent = await sentReport(EARLY, 0);
+
+      const error = await archiveCsamDataForReport(sent as never).catch((e: unknown) => e);
+
+      expect((error as Error).message).toBe(failure);
+      const line = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+        .find((payload) => payload.subType === 'archive-failed-run-unrecorded');
+      expect(line).toEqual({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-failed-run-unrecorded',
+        message: 'synthetic database outage',
+        reportId: sent.id,
+      });
     });
 
     it('after a day and 3 failed runs, records it missing, logs it by image id, and archives the rest', async () => {
-      const sent = await sentReport(25, 3);
+      const sent = await sentReport(LATE, ENOUGH_RUNS);
 
       await archiveCsamDataForReport(sent as never);
       const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
@@ -1584,7 +1613,7 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
       expect(await storedDetails(sent.id)).toEqual({
         contents: ['a'],
         readFailures: { '7': 2 },
-        archiveFailedRuns: failedRuns(3),
+        archiveFailedRuns: failedRuns(ENOUGH_RUNS),
       });
     });
   });
@@ -1650,24 +1679,34 @@ describe('archiveCsamDataForReport (Image report, give-up limit per run)', () =>
     reportId: 85,
     type: 'Image',
     images: [],
-    // Eligible to give up: a day since sending, and 3 failed runs before this one.
-    details: { archiveFailedRuns: failedRuns(3) },
-    reportSentAt: new Date(Date.now() - 25 * 3_600_000),
+    // Eligible to give up: a day since sending, and enough failed runs before this one.
+    details: { archiveFailedRuns: failedRuns(ENOUGH_RUNS) },
+    reportSentAt: new Date(Date.now() - LATE * 3_600_000),
   };
+  const { files, share } = CSAM_ARCHIVE_GIVE_UP_LIMIT;
+  // An account small enough that the file floor is the limit, and one large enough that the share is.
+  const SMALL = Math.floor(files / share / 2);
+  const LARGE = Math.ceil((2 * (files + 2)) / share);
 
-  /** `total` stored images, the first `dropping` of which drop every read. */
-  function account(total: number, dropping: number) {
+  /** `total` images, the first `failing` of which cannot be read: stored ones, or full URLs. */
+  function account(total: number, failing: number, kind: 'stored' | 'full url' = 'stored') {
     const rows = Array.from({ length: total }, (_, i) => ({
       id: i + 1,
-      url: `limit-key-${i + 1}`,
+      url:
+        kind === 'full url' && i < failing
+          ? `https://image.civitai.com/legacy/limit-${i + 1}.png`
+          : `limit-key-${i + 1}`,
       type: 'image',
     }));
     dbMock.dbRead.image.findMany.mockImplementation(
       async (args: { where?: { id?: { gt?: number } } } = {}) =>
         rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
     );
+    dbMock.dbRead.image.count.mockResolvedValue(total);
     mockGetObject = async (key) => {
-      if (Number(key.slice('limit-key-'.length)) <= dropping) throw connectionReset();
+      if (Number(key.slice('limit-key-'.length)) <= failing) throw connectionReset();
+      // A readable file takes a moment, so a run that stops early visibly stops before the end.
+      await new Promise((resolve) => setTimeout(resolve, 5));
       return fakeObject(8);
     };
   }
@@ -1685,29 +1724,29 @@ describe('archiveCsamDataForReport (Image report, give-up limit per run)', () =>
     backoff.mockRestore();
   });
 
-  it('pins the limit these fixtures straddle', () => {
-    expect(CSAM_ARCHIVE_GIVE_UP_LIMIT).toEqual({ files: 5, share: 0.05 });
-  });
-
-  it('fails the run, unstamped, when it gives up on more files than the limit', async () => {
-    account(40, 7);
+  it('fails the run, unstamped, as soon as it gives up on more stored files than the limit', async () => {
+    account(SMALL, files + 2);
 
     await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
-      'report 4141 gave up on 7 of 40 images, over the limit of 5'
+      `report 4141 gave up on ${files + 1} of ${SMALL} images, over the limit of ${files}`
     );
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     const line = vi
       .mocked(logToAxiom)
       .mock.calls.map(([payload]) => payload as Record<string, unknown>)
       .find((payload) => payload.subType === 'archive-give-up-limit');
-    expect(line).toMatchObject({ reportId: 4141, givenUp: 7, images: 40, limit: 5 });
+    expect(line).toMatchObject({ reportId: 4141, givenUp: files + 1, images: SMALL, limit: files });
+    // Stopped there: the rest of the account was never read.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(requestedKeys.size).toBeLessThan(SMALL / 2);
   });
 
   it.each([
-    ['under the 5-file floor', 40, 3],
-    ['under 5% of a larger account', 200, 7],
-  ])('completes when it gives up on files %s', async (_, total, dropping) => {
-    account(total, dropping);
+    ['exactly at the file floor', () => SMALL, () => files],
+    ['under the file floor', () => SMALL, () => files - 2],
+    ['under the share of a larger account', () => LARGE, () => files + 2],
+  ])('completes when it gives up on stored files %s', async (_, total, failing) => {
+    account(total(), failing());
 
     await archiveCsamDataForReport(report as never);
 
@@ -1717,13 +1756,35 @@ describe('archiveCsamDataForReport (Image report, give-up limit per run)', () =>
       (entry: { source: string }) => entry.source === 'missing'
     );
     expect(missing).toEqual(
-      Array.from({ length: dropping }, (_, i) => ({
+      Array.from({ length: failing() }, (_, i) => ({
         imageId: i + 1,
         source: 'missing',
         reason: 'stored original unreadable',
       }))
     );
-    expect(manifest.images).toHaveLength(total);
+    expect(manifest.images).toHaveLength(total());
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
+      where: { id: 4141 },
+      data: { archivedAt: expect.any(Date) },
+    });
+  });
+
+  it('does not count dead full URLs toward the limit', async () => {
+    account(SMALL, files + 2, 'full url');
+
+    await archiveCsamDataForReport(report as never);
+
+    const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    expect(
+      manifest.images.filter((entry: { source: string }) => entry.source === 'missing')
+    ).toEqual(
+      Array.from({ length: files + 2 }, (_, i) => ({
+        imageId: i + 1,
+        source: 'missing',
+        reason: 'full url unreadable',
+      }))
+    );
     expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
       where: { id: 4141 },
       data: { archivedAt: expect.any(Date) },

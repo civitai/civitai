@@ -649,14 +649,18 @@ export const CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS = 24;
 export const CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS = 3;
 
 /**
- * Most files one archive run may give up on: the larger of `files` and `share` of the account's
- * images. Past it the run fails instead of completing, so a storage incident (every read dropping)
- * cannot record a whole account's evidence missing; the report is retried next run.
+ * Most stored objects one archive run may give up on: the larger of `files` and `share` of the
+ * account's images (full URLs are not counted). Past it the run fails at once instead of completing,
+ * so a storage incident (every read dropping) cannot record a whole account's evidence missing; the
+ * report is retried next run.
  */
 export const CSAM_ARCHIVE_GIVE_UP_LIMIT = { files: 5, share: 0.05 };
 
 export const csamArchiveGiveUpLimit = (images: number) =>
   Math.max(CSAM_ARCHIVE_GIVE_UP_LIMIT.files, images * CSAM_ARCHIVE_GIVE_UP_LIMIT.share);
+
+// Re-exported for tests: only this module may import the reader (`no-csam-original-image-import`).
+export { ORIGINAL_IMAGE_RETRY_DELAYS_MS } from '~/server/services/csam-original-image';
 
 /** Manifest reason for a stored object that failed every read until the archive gave up on it. */
 export const STORED_ORIGINAL_UNREADABLE = 'stored original unreadable';
@@ -2886,7 +2890,16 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const mayGiveUp =
           hoursSinceSent >= CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS &&
           csamArchiveFailedRuns(report.details) >= CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS;
-        let givenUp = 0;
+        // Stored objects given up on; a dead full URL says nothing about our storage, so not counted.
+        let storedGivenUp = 0;
+        // Counted only once a give-up happens, so an ordinary run pays no extra query.
+        let imageTotal: Promise<number> | undefined;
+        const accountImages = () =>
+          (imageTotal ??= (
+            imageCount !== undefined
+              ? Promise.resolve(imageCount)
+              : dbRead.image.count({ where: { userId: report.userId } })
+          ).then((count) => (Number.isFinite(count) ? count : 0)));
         // A supplemental report's unreviewed images are kept as evidence it did not send.
         const notSent = new Set(report.details?.supplemental?.unreviewedImageIds);
         const manifest: ({ imageId: number; preservedNotSent?: true } & EvidenceFileRecord)[] = [];
@@ -2899,18 +2912,31 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           try {
             original = await readOriginalImage(image, { reserve: budget.reserve });
           } catch (e) {
-            // After a day AND several failed runs, one unreadable file no longer holds the archive
-            // back: a full URL (on a host we may not control), or a stored object whose every
-            // read attempt dropped its connection, is recorded missing. Anything else (a refusal,
-            // an error response, our own timeout, a local error, a refused reservation) throws.
+            // Recorded missing only per CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS / _ATTEMPTS / _LIMIT.
             const passthrough = isEdgeUrlPassthrough(image.url);
             const eligible = passthrough
               ? true
               : e instanceof StoredOriginalReadError && e.allAttemptsDropped;
             if (!mayGiveUp || !eligible) throw e;
-            givenUp += 1;
             if (passthrough) original = { source: 'missing', reason: 'full url unreadable' };
             else {
+              const givenUp = ++storedGivenUp;
+              const images = await accountImages();
+              const limit = csamArchiveGiveUpLimit(images);
+              if (givenUp > limit) {
+                const message = `report ${report.id} gave up on ${givenUp} of ${images} images, over the limit of ${limit}`;
+                logToAxiom({
+                  name: 'csam-report',
+                  type: 'error',
+                  subType: 'archive-give-up-limit',
+                  message,
+                  reportId: report.id,
+                  givenUp,
+                  images,
+                  limit,
+                });
+                throw new Error(message);
+              }
               // Not silent: the error names the image, so a dropped file is recoverable from logs.
               logToAxiom({
                 name: 'csam-report',
@@ -2965,24 +2991,6 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         } catch (e) {
           budget.abort(e);
           throw e;
-        }
-
-        // A storage incident must not mass-record evidence missing: past the limit the run fails
-        // (and is retried) instead of completing.
-        const giveUpLimit = csamArchiveGiveUpLimit(manifest.length);
-        if (givenUp > giveUpLimit) {
-          const message = `report ${report.id} gave up on ${givenUp} of ${manifest.length} images, over the limit of ${giveUpLimit}`;
-          logToAxiom({
-            name: 'csam-report',
-            type: 'error',
-            subType: 'archive-give-up-limit',
-            message,
-            reportId: report.id,
-            givenUp,
-            images: manifest.length,
-            limit: giveUpLimit,
-          });
-          throw new Error(message);
         }
 
         const scanned = new Set(manifest.map((entry) => entry.imageId));

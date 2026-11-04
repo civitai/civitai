@@ -5,6 +5,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isAllowedImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { MediaType } from '~/shared/utils/prisma/enums';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 
 /*
@@ -76,8 +77,6 @@ function isDroppedConnection(e: unknown): boolean {
   }
   return false;
 }
-
-const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const PROBE_TIMEOUT_MS = 60 * 1000;
 
@@ -256,14 +255,11 @@ async function readStoredObjectOnce(
   let release: () => void = noReservation;
   let reserved: number | undefined;
   let body: unknown;
-  // Kept, so a failure after our own timeout fired is told apart from a dropped connection: the
-  // aborted request can surface as `aborted`/ECONNRESET, and must not be retried as one.
-  const signals: AbortSignal[] = [];
-  const timeout = (ms: number) => {
-    const signal = AbortSignal.timeout(ms);
-    signals.push(signal);
-    return signal;
-  };
+  // The timeout of the request in flight, so a failure after it fired is told apart from a dropped
+  // connection (the cut-off request can surface as `aborted`/ECONNRESET). Only that request's: an
+  // earlier request's timer keeps running after it settles.
+  let inFlight: AbortSignal | undefined;
+  const timeout = (ms: number) => (inFlight = AbortSignal.timeout(ms));
   try {
     if (reserve) {
       let headLength: number | undefined;
@@ -276,6 +272,7 @@ async function readStoredObjectOnce(
         // `NotFound` is also a wrong bucket; the GET below tells the two apart.
         if (!isMissingHead(e)) throw e;
       }
+      inFlight = undefined;
       if (headLength !== undefined) {
         seen.contentLength = headLength;
         if (headLength > MAX_ORIGINAL_IMAGE_BYTES) return missing(OVER_CAP);
@@ -325,7 +322,7 @@ async function readStoredObjectOnce(
     // An unread body holds its socket until the read timeout.
     if (body) destroyBody(body);
     release();
-    if (signals.some((signal) => signal.aborted) && !(e instanceof ReservationError)) {
+    if (inFlight?.aborted && !(e instanceof ReservationError)) {
       const message = e instanceof Error ? e.message : String(e);
       throw Object.assign(new Error(`timed out: ${message}`, { cause: e }), {
         name: 'TimeoutError',
@@ -340,11 +337,7 @@ async function readStoredObjectOnce(
  * (a failed archive), which is passed through as is, so a caller can act on this one alone.
  */
 export class StoredOriginalReadError extends Error {
-  /**
-   * Every attempt failed on a dropped connection (see `isDroppedConnection`). Only such a failure
-   * says nothing about the object itself; a refusal (403, a wrong bucket), an error response the
-   * SDK already retried, our own timeout or a local error (RangeError, out of memory) does not.
-   */
+  /** Every attempt failed on a dropped connection (`isDroppedConnection`), not on anything else. */
   allAttemptsDropped = false;
 }
 
@@ -392,11 +385,11 @@ export async function readOriginalImage(
     backend,
     fetchImpl = fetch,
     attempts = ORIGINAL_IMAGE_READ_ATTEMPTS,
-    sleep = defaultSleep,
+    sleep: wait = sleep,
   }: ReadOptions & {
     reserve?: Reserve;
     attempts?: number;
-    sleep?: (ms: number) => Promise<void>;
+    sleep?: (ms: number) => Promise<unknown>;
   } = {}
 ): Promise<OriginalImageRead> {
   const passthrough = isEdgeUrlPassthrough(image.url);
@@ -412,7 +405,7 @@ export async function readOriginalImage(
       } catch (e) {
         if (e instanceof ReservationError) throw e.reason;
         if (attempt < attempts && isDroppedConnection(e)) {
-          await sleep(
+          await wait(
             ORIGINAL_IMAGE_RETRY_DELAYS_MS[
               Math.min(attempt - 1, ORIGINAL_IMAGE_RETRY_DELAYS_MS.length - 1)
             ]

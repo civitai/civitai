@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   extensionForContentType,
   MAX_ORIGINAL_IMAGE_BYTES,
+  ORIGINAL_IMAGE_READ_TIMEOUT_MS,
   probeOriginalImage,
   readOriginalImage,
   StoredOriginalReadError,
@@ -446,6 +447,36 @@ describe('readOriginalImage on a dropped connection', () => {
       'stored original read failed for image 4242 (backend unknown, ContentLength unknown, attempt 2/3): Access Denied'
     );
     expect((thenRefused as StoredOriginalReadError).allAttemptsDropped).toBe(false);
+  });
+
+  it("retries a reset on the GET after the HEAD's own timeout has since fired", async () => {
+    // The HEAD's timer keeps running after it answers; here it fires while the reservation waits.
+    const headTimeouts: AbortController[] = [];
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+      const controller = new AbortController();
+      if (ms !== ORIGINAL_IMAGE_READ_TIMEOUT_MS) headTimeouts.push(controller);
+      return controller.signal;
+    });
+    try {
+      const { s3, backend } = flakyBodies([connectionReset]);
+      const reserve = vi.fn(async () => {
+        for (const head of headTimeouts) head.abort(new Error('probe timeout'));
+        return () => undefined;
+      });
+
+      const read = await readOriginalImage(stored, {
+        backend,
+        reserve,
+        sleep: async () => undefined,
+      });
+
+      expect(read).toMatchObject({ source: 'original', sha256: sha256(data) });
+      expect(getCount(s3)).toBe(2);
+      expect(headTimeouts.length).toBe(2);
+      expect(headTimeouts.every((head) => head.signal.aborted)).toBe(true);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('does not retry a reset that our own read timeout caused', async () => {
