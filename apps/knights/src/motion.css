@@ -280,3 +280,18 @@
     }
   }
 }
+
+/* Phase 2: a counter that just went up. The glow is for a bar or ring stroke, the pop for a number. Both are 400ms or less,
+   and a component applies them only under prefers-reduced-motion: no-preference. */
+@keyframes mo-bump-glow {
+  40% {
+    box-shadow: 0 0 10px rgb(201 162 74 / 0.9);
+    filter: drop-shadow(0 0 4px rgb(201 162 74 / 0.9));
+  }
+}
+@keyframes mo-bump-pop {
+  40% {
+    transform: scale(1.18);
+    color: var(--io-gold);
+  }
+}

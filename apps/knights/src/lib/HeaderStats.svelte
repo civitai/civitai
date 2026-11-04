@@ -4,7 +4,7 @@
   import StatPopover from './StatPopover.svelte';
   import XpGauge from './XpGauge.svelte';
   import { count, percent } from './format';
-  import { gaugeFraction, nextRankRequirements } from './gauge';
+  import { nextRankRequirements, pendingSegment, xpLine } from './gauge';
   import { goldView } from './gold-view';
   import { tween } from './motion';
   import { rewardDeltas } from './rewards';
@@ -29,7 +29,8 @@
   } = $props();
 
   const gold = $derived(goldView(status, goldPerBuzz));
-  const fraction = $derived(gaugeFraction(status.xpIntoLevel, status.xpForNextLevel));
+  const segment = $derived(pendingSegment(status.xpIntoLevel, status.xpForNextLevel, status.xpPending));
+  const fraction = $derived(segment.confirmed);
   const requirements = $derived(nextRankRequirements(status, ladder));
   const toNext = $derived(status.xpForNextLevel - status.xpIntoLevel);
 
@@ -105,22 +106,25 @@
   <li>
     <StatPopover id="rank-popover" label="{status.rank}, level {status.level}, details">
       {#snippet trigger()}
-        <XpGauge level={status.level} {fraction} size={30} />
+        <XpGauge level={status.level} {fraction} pending={segment.pending} size={30} />
         <span class="rank-name">{status.rank}</span>
         {#if floater && floater.xp > 0}
           {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.xp)} XP</span>{/key}
         {/if}
       {/snippet}
       <div class="rank-head">
-        <XpGauge level={status.level} {fraction} size={48} />
+        <XpGauge level={status.level} {fraction} pending={segment.pending} size={48} />
         <div class="label"><strong class="rank-title">{status.rank}</strong><span>Level {status.level}</span></div>
       </div>
       <div class="meter">
         <div class="meter-row">
-          <b>{count(status.xpIntoLevel)} / {count(status.xpForNextLevel)} XP</b>
+          <b>{xpLine(status.xpIntoLevel, status.xpForNextLevel, status.xpPending)}</b>
           <span>{count(toNext)} to level {status.level + 1}</span>
         </div>
-        <div class="track" aria-hidden="true"><div class="bar" style:width="{fraction * 100}%"></div></div>
+        <div class="track" aria-hidden="true">
+          <div class="bar" style:width="{fraction * 100}%"></div>
+          <div class="bar ahead" style:left="{fraction * 100}%" style:width="{segment.pending * 100}%"></div>
+        </div>
       </div>
       {#if status.rating.bar !== null}
         <div class="meter">
@@ -281,6 +285,7 @@
   }
   .meter-row {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 12px;
     color: var(--io-parchment-muted);
@@ -305,6 +310,15 @@
     border-radius: 3px;
     background: var(--io-gold);
     transition: width 360ms var(--ease-in-out);
+  }
+  .bar.ahead {
+    position: absolute;
+    top: 0;
+    border-radius: 0 3px 3px 0;
+    opacity: 0.4;
+    transition:
+      left 360ms var(--ease-in-out),
+      width 360ms var(--ease-in-out);
   }
   .mark {
     position: absolute;
@@ -337,7 +351,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .bar {
+    .bar,
+    .bar.ahead {
       transition: none;
     }
   }

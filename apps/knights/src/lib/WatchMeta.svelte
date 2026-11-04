@@ -1,6 +1,7 @@
 <script lang="ts">
   import HeartsRow from './HeartsRow.svelte';
   import Icon from './Icon.svelte';
+  import { bump } from './motion';
 
   let {
     value,
@@ -13,7 +14,7 @@
 
 <!-- Below 1200px there is no rail: the Watch, the streak and the hearts sit in one quiet row above the question. -->
 <div class="meta">
-  <span class="watch">Watch <b>{value}/{max}</b></span>
+  <span class="watch" use:bump={value}>Watch <b>{value}/{max}</b></span>
   <span class="streak"><Icon name="flame" size={14} /><b>{streak}</b> {streak === 1 ? 'day' : 'days'}</span>
   <HeartsRow {hearts} {maxHearts} />
 </div>
@@ -32,6 +33,28 @@
   b {
     color: var(--io-parchment);
     font-weight: 600;
+  }
+  .watch {
+    position: relative;
+  }
+  .watch b {
+    display: inline-block;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .watch:global([data-bump]) b {
+      animation: mo-bump-pop 400ms var(--ease-out-quart);
+    }
+    .watch:global([data-bump])::after {
+      --rise: -10px;
+      content: '+1';
+      position: absolute;
+      right: -14px;
+      top: -4px;
+      color: var(--io-gold);
+      font: 700 11px/1 var(--io-font-ui);
+      pointer-events: none;
+      animation: mo-float 400ms var(--ease-out-quart) both;
+    }
   }
   .streak {
     display: inline-flex;

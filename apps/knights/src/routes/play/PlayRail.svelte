@@ -3,7 +3,8 @@
   import Icon from '$lib/Icon.svelte';
   import { watchStrip } from '$lib/chrome';
   import { count, percent } from '$lib/format';
-  import { nextRankRequirements } from '$lib/gauge';
+  import { nextRankRequirements, pendingSegment } from '$lib/gauge';
+  import { bump } from '$lib/motion';
   import type { DailyStatus } from '$lib/server/daily/daily.service';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { Rail } from '$lib/server/rail';
@@ -23,6 +24,9 @@
   const days = $derived(nextRankRequirements(status, ladder).find((need) => need.key === 'days'));
   const clamp = (ratio: number) => Math.min(100, Math.max(0, ratio * 100));
   const levelFill = $derived(next ? clamp(status.level / next.fromLevel) : 0);
+  // The rank bar counts whole levels, so the level now in progress is drawn as the pending share of that one level, after the fill.
+  const inLevel = $derived(pendingSegment(status.xpIntoLevel, status.xpForNextLevel, status.xpPending));
+  const levelPending = $derived(next ? clamp(inLevel.pending / next.fromLevel) : 0);
   const accuracyFill = $derived(
     next && status.rating.accuracy !== null ? clamp(status.rating.accuracy / next.accuracyBar) : 0
   );
@@ -33,7 +37,7 @@
   <section aria-labelledby="rail-watch">
     <h2 id="rail-watch">Today's Watch</h2>
     <div class="watch">
-      <span class="ring" role="img" aria-label="{strip.value} of {strip.max} judged">
+      <span class="ring" role="img" aria-label="{strip.value} of {strip.max} judged" use:bump={strip.value}>
         <svg viewBox="0 0 36 36" aria-hidden="true" focusable="false">
           <circle class="track" cx="18" cy="18" r="15.5" />
           <circle
@@ -103,7 +107,11 @@
     {#if next}
       <div class="meter">
         <p class="row"><span>Level {status.level} / {next.fromLevel}</span><span>{next.levelMet ? 'Reached' : `${next.levelsToGo} to go`}</span></p>
-        <div class="bar" aria-hidden="true"><div style:width="{levelFill}%"></div></div>
+        <div class="bar" aria-hidden="true">
+          <div style:width="{levelFill}%"></div>
+          <div class="ahead" style:left="{levelFill}%" style:width="{levelPending}%"></div>
+        </div>
+        {#if status.xpPending > 0}<p class="sub">+{count(status.xpPending)} XP pending</p>{/if}
       </div>
       <div class="meter">
         <p class="row">
@@ -311,6 +319,7 @@
     color: var(--io-verdigris);
   }
   .bar {
+    position: relative;
     height: 6px;
     border-radius: 3px;
     background: var(--io-bg);
@@ -321,6 +330,15 @@
     border-radius: 3px;
     background: var(--io-gold);
     transition: width 360ms var(--ease-in-out);
+  }
+  .bar .ahead {
+    position: absolute;
+    top: 0;
+    border-radius: 0 3px 3px 0;
+    opacity: 0.4;
+    transition:
+      left 360ms var(--ease-in-out),
+      width 360ms var(--ease-in-out);
   }
 
   .ticker {
@@ -341,6 +359,26 @@
   @keyframes pulse {
     50% {
       opacity: 0.35;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .ring:global([data-bump]) .fill {
+      animation: mo-bump-glow 400ms var(--ease-out-quart);
+    }
+    .ring:global([data-bump]) .label b {
+      display: inline-block;
+      animation: mo-bump-pop 400ms var(--ease-out-quart);
+    }
+    .ring:global([data-bump])::after {
+      --rise: -10px;
+      content: '+1';
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      color: var(--io-gold);
+      font: 700 12px/1 var(--io-font-ui);
+      pointer-events: none;
+      animation: mo-float 400ms var(--ease-out-quart) both;
     }
   }
   @media (prefers-reduced-motion: reduce) {

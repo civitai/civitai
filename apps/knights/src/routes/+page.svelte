@@ -8,7 +8,7 @@
   import VerdictsCard from '$lib/VerdictsCard.svelte';
   import { nextRankLine } from '$lib/chrome';
   import { count } from '$lib/format';
-  import { gaugeFraction } from '$lib/gauge';
+  import { pendingSegment } from '$lib/gauge';
   import { tween } from '$lib/motion';
   import type { ActionData, PageData } from './$types';
 
@@ -19,7 +19,9 @@
 
   const status = $derived(data.status);
   const next = $derived(status ? nextRankLine(status) : null);
-  const fraction = $derived(status ? gaugeFraction(status.xpIntoLevel, status.xpForNextLevel) : 0);
+  const segment = $derived(
+    status ? pendingSegment(status.xpIntoLevel, status.xpForNextLevel, status.xpPending) : { confirmed: 0, pending: 0, overflow: 0 }
+  );
 
   const links = $derived([
     { href: '/judgments', icon: 'scroll-text' as const, title: 'Judgments' },
@@ -58,13 +60,22 @@
         <svg class="ring" viewBox="0 0 224 224" aria-hidden="true" focusable="false">
           <circle class="track" cx="112" cy="112" r="106" />
           <circle
+            class="ahead"
+            cx="112"
+            cy="112"
+            r="106"
+            pathLength="100"
+            stroke-dasharray="{segment.pending * 100} {100 - segment.pending * 100}"
+            stroke-dashoffset={-segment.confirmed * 100}
+          />
+          <circle
             class="fill"
             cx="112"
             cy="112"
             r="106"
             pathLength="100"
             stroke-dasharray="100"
-            stroke-dashoffset={100 - fraction * 100}
+            stroke-dashoffset={100 - segment.confirmed * 100}
           />
         </svg>
         <span class="crest"><RankBadge rank={status.rank} src={data.badges.large[status.rank]} size={176} /><span class="shimmer" aria-hidden="true"></span></span>
@@ -72,7 +83,9 @@
       </div>
 
       <h1 class="rank-name">{status.rank}</h1>
-      <p class="xp">{count(status.xpIntoLevel)} / {count(status.xpForNextLevel)} XP to level {status.level + 1}</p>
+      <p class="xp">
+        {count(status.xpIntoLevel)} / {count(status.xpForNextLevel)} XP to level {status.level + 1}{#if status.xpPending > 0}<span class="xp-pending"> · +{count(status.xpPending)} pending</span>{/if}
+      </p>
       {#if next}<p class="line">{next}</p>{/if}
 
       <a class="btn primary begin" href="/play" data-sveltekit-preload-data="off">Begin judging</a>
@@ -237,6 +250,10 @@
     stroke: var(--io-gold-muted);
     opacity: 0.5;
   }
+  .ring .ahead {
+    stroke: var(--io-gold);
+    opacity: 0.4;
+  }
   .ring .fill {
     stroke: var(--io-gold);
     animation: mo-gauge-fill 1100ms var(--ease-out-quart) 150ms both;
@@ -276,6 +293,9 @@
   .xp {
     margin: 0.5rem 0 0;
     font: 400 1rem/1.3 var(--io-font-ui);
+  }
+  .xp-pending {
+    color: var(--io-gold);
   }
   .line {
     margin-top: 0.3rem;

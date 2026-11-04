@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { bump } from './motion';
   import { sound } from './sound';
 
   let { label, value, max }: { label: string; value: number; max: number } = $props();
@@ -34,7 +35,7 @@
   aria-valuemax={max}
   aria-valuenow={value}
 >
-  <div class="fill" style:width="{max > 0 ? (value / max) * 100 : 0}%"></div>
+  <div class="fill" use:bump={value} style:width="{max > 0 ? (value / max) * 100 : 0}%"></div>
 </div>
 
 <style>
@@ -50,6 +51,11 @@
   }
   .done .fill {
     box-shadow: 0 0 10px rgb(201 162 74 / 0.8);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .fill:global([data-bump]) {
+      animation: mo-bump-glow 400ms var(--ease-out-quart);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .fill {
