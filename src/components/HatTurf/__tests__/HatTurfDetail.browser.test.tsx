@@ -3,6 +3,7 @@ import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as Notifications from '~/utils/notifications';
 import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
+import type * as UseExperimentModule from '~/components/Experiments/useExperiment';
 
 import '~/styles/globals.css';
 
@@ -26,6 +27,14 @@ const h = vi.hoisted(() => ({
   user: { id: 1 } as { id: number } | null,
   mine: null as unknown,
   trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
+}));
+const assigned = vi.hoisted(() => ({ variant: 'control' }));
+vi.mock('~/components/Experiments/useExperiment', async (importOriginal) => ({
+  ...(await importOriginal<typeof UseExperimentModule>()),
+  useExperiment: (_key: string, opts?: { enabled?: boolean }) =>
+    opts?.enabled === false
+      ? { ready: false, variant: undefined, assignment: undefined }
+      : { ready: true, variant: assigned.variant, assignment: 'rule' },
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtilsModule>()),

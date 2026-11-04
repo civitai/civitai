@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Drawer, Popover, Switch, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { useExperiment } from '~/components/Experiments/useExperiment';
+import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
@@ -13,6 +15,7 @@ import classes from '~/components/HatTurf/detail/HatTurfDetailControls.module.cs
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { badgeLeader, teamStandings } from '~/components/HatTurf/hat-turf.utils';
 import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
@@ -61,16 +64,32 @@ function HatButton({ imageId }: { imageId: number }) {
   });
   const [inviteOpen, setInviteOpen] = useState<boolean | undefined>(undefined);
   const join = useJoin();
+  // Only a viewer who could be invited is in the experiment; one who joined sees the same in both arms.
+  const invitable = !!user && !!stock && stock.optedIn !== true;
+  const experiment = useExperiment('hatTurfImageDetail', { enabled: invitable });
+  const exposureRef = useExperimentExposure('hatTurfImageDetail', 'image-detail', {
+    enabled: invitable,
+  });
+  const track = useHatTurfAction('image-detail');
   // Same query as the layer's, so one request. The feed's sticker list is capped at 5 per image.
   const { data: image } = trpc.hatTurf.getImageStickers.useQuery(
     { event: feed?.event ?? '', imageId },
     { enabled: !!feed && !!user, staleTime: 30_000 }
   );
 
-  if (!feed || !card || !user || feed.open[imageId] === false) return null;
+  const hidden = !feed || !card || !user || feed.open[imageId] === false;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
-  const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
+  const showInvite =
+    !hidden && experiment.ready && (inviteOpen ?? (!!stock && !joined && !snoozed));
+  const [viewed, setViewed] = useState(false);
+  useEffect(() => {
+    if (!showInvite || viewed || !feed) return;
+    setViewed(true);
+    track('invite_view', feed.event);
+  }, [showInvite, viewed, feed, track]);
+
+  if (hidden) return null;
   const placed = card.placed || image?.mine;
   const empty = joined && stock?.available === 0 && !placed;
 
@@ -120,7 +139,11 @@ function HatButton({ imageId }: { imageId: number }) {
           <HatIcon size={18} />
         </button>
       </Popover.Target>
-      <Popover.Dropdown className={classes.invite} data-testid="hat-turf-detail-invite">
+      <Popover.Dropdown
+        ref={exposureRef}
+        className={classes.invite}
+        data-testid="hat-turf-detail-invite"
+      >
         <div className={classes.cover} aria-hidden="true">
           {COVER_HATS.map((hat) => (
             <span
@@ -155,6 +178,7 @@ function HatButton({ imageId }: { imageId: number }) {
               onClick={() => {
                 setDismissedAt(Date.now());
                 setInviteOpen(false);
+                track('invite_dismiss', feed.event);
               }}
             >
               Not now
