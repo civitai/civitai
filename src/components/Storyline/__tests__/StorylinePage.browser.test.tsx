@@ -301,6 +301,37 @@ describe('StorylinePage', () => {
     ).toEqual([false, false, true]);
   });
 
+  test('credits the spark image above chapter 1, linking to it', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      spark: {
+        image: { id: 77, url: 'spark-pick', type: 'image', nsfwLevel: 1 },
+        user: { id: 5, username: 'painter' },
+      },
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    const credit = page
+      .getByRole('region', { name: 'Chapters' })
+      .getByTestId('storyline-spark-credit');
+    await expect.element(credit).toHaveTextContent("Inspired by @painter's image");
+    await expect.element(credit).toHaveAttribute('href', '/images/77');
+    expect(thumbs(credit.element())).toEqual([{ image: 'spark-pick', ratio: '3/4' }]);
+    // Above chapter 1, not after it.
+    const first = stopElements()[0];
+    expect(
+      credit.element().compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  test('shows no credit when the server sends no spark', async () => {
+    mocks.storyline = { ...STORYLINE, spark: null };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(testIds('storyline-spark-credit')).toEqual([]);
+  });
+
   test('a ceiling with no label shows no ceiling chip', async () => {
     mocks.storyline = { ...STORYLINE, maxNsfwLevel: 0 };
     renderWithProviders(<StorylinePage id={2} />);

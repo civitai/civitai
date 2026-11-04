@@ -534,6 +534,7 @@ function CanonStop({
                   takenDown={takenDown}
                   hasChildren={(canon?.childCount ?? 0) > 0}
                   byAuthor={post.userId === currentUser?.id}
+                  paid={canon?.paid ?? node.chapter.paid}
                 />
               )}
             </Menu.Dropdown>

@@ -47,11 +47,42 @@ export const reviewsOnModelsSql = (models: Prisma.Sql) =>
 export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>
   Prisma.sql`SELECT rr.id FROM "ResourceReview" rr WHERE rr."modelVersionId" IN (${versions})`;
 
-/** Drops the copies whose author is no longer held. Returns how many went. */
+/**
+ * A storyline copy is kept while either user it records is held. The reader on a branch choice or
+ * create click never releases one, even once their account is gone. Unlike a kept model, no
+ * storyline or chapter passes to the placeholder owner, so every copy is released with its holds.
+ */
+const storylineCopyReleasedSql = (markerView: boolean) =>
+  Prisma.sql`NOT ${accountHoldSql(Prisma.raw('h."ownerId"'), markerView)}
+    AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
+
+/** Drops the copies whose users are no longer held. Returns how many went. */
 export async function purgeReleasedHeldCopies() {
   const markerView = await holdMarkerViewExists();
   const released = accountHoldSql(Prisma.raw('h."userId"'), markerView);
   const reviews = await dbWrite.$executeRaw`
     DELETE FROM "HeldResourceReview" h WHERE NOT ${released}`;
-  return { reviews };
+  // One statement, so a hold placed meanwhile cannot leave a chapter's copy without its edges.
+  const storylineReleased = storylineCopyReleasedSql(markerView);
+  const [storyline] = await dbWrite.$queryRaw<
+    { chapters: number; edges: number; choices: number; clicks: number }[]
+  >`
+    WITH chapters AS (
+      DELETE FROM "HeldStorylineChapter" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    edges AS (
+      DELETE FROM "HeldStorylineChapterEdge" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    choices AS (
+      DELETE FROM "HeldStorylineBranchChoice" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    clicks AS (
+      DELETE FROM "HeldStorylineCreateClick" h WHERE ${storylineReleased} RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM chapters)::int AS chapters,
+      (SELECT count(*) FROM edges)::int AS edges,
+      (SELECT count(*) FROM choices)::int AS choices,
+      (SELECT count(*) FROM clicks)::int AS clicks
+  `;
+  return { reviews, storyline };
 }

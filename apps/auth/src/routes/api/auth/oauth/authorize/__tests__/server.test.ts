@@ -289,7 +289,7 @@ describe('authorize — family', () => {
 
   it("hands an impersonation hub session's impersonation to the site's session", async () => {
     const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
-    await start({}, { user: { id: 7 }, session });
+    await start({}, { user: { id: 7 }, session, impersonatedBy: 100 });
     expect(storeOidcContext).toHaveBeenCalledWith(
       'the-code',
       expect.objectContaining({ family: 'family-a', impersonatedBy: 100, impExp: 999 })
@@ -320,5 +320,18 @@ describe('authorize — scope in a JSON body', () => {
       cookies: { get: () => undefined, set: () => undefined },
     } as never);
     expect(await redirectedError(pending)).toBe('invalid_scope');
+  });
+});
+
+describe('authorize — during impersonation', () => {
+  beforeEach(() => {
+    h.authorize.mockRejectedValue(new Error('code issued'));
+  });
+
+  it('refuses a registered app and issues nothing', async () => {
+    const res = await start({}, { user: { id: 7 }, impersonatedBy: 5 });
+    expect(res.status).toBe(303);
+    expect(res.location).toContain('error=access_denied');
+    expect(h.authorize).not.toHaveBeenCalled();
   });
 });

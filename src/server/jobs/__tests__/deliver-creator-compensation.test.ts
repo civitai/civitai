@@ -8,13 +8,16 @@ import {
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 
-const { mockClickhouseQuery, mockCreateBuzzTransactionMany } = vi.hoisted(() => ({
-  mockClickhouseQuery: vi.fn(),
-  mockCreateBuzzTransactionMany: vi.fn(),
-}));
+const { mockClickhouseQuery, mockClickhouseExec, mockCreateBuzzTransactionMany } = vi.hoisted(
+  () => ({
+    mockClickhouseQuery: vi.fn(),
+    mockClickhouseExec: vi.fn(),
+    mockCreateBuzzTransactionMany: vi.fn(),
+  })
+);
 
 vi.mock('~/server/clickhouse/client', () => ({
-  clickhouse: { $query: mockClickhouseQuery },
+  clickhouse: { $query: mockClickhouseQuery, $exec: mockClickhouseExec },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: mockCreateBuzzTransactionMany,
@@ -353,15 +356,18 @@ describe('the daily job after a failed run', () => {
     });
     mockClickhouseQuery.mockReset();
     mockClickhouseQuery.mockImplementation(async (strings: TemplateStringsArray, ...values) => {
-      if (strings.join('').includes('manual_events')) {
-        updateEvents.push(String(values[0]));
-        return [];
-      }
+      // The real $query appends FORMAT JSONEachRow, and ClickHouse then accepts an INSERT ... VALUES
+      // but writes 0 rows (prod, 2026-11-04): an event sent this way never reaches Kafka.
+      if (strings.join('').includes('manual_events')) return [];
       if (!strings.join('').includes('resourceCompensations')) return [];
       const date = (values[0] as Date).toISOString().slice(0, 10);
       queriedDates.push(date);
       if (failDates.has(date)) throw new Error(`ClickHouse timed out reading ${date}`);
       return [row('compensation', 'Yellow', 50, 11), row('tip', 'Yellow', 6, 11)];
+    });
+    mockClickhouseExec.mockReset();
+    mockClickhouseExec.mockImplementation(async (strings: TemplateStringsArray, ...values) => {
+      if (strings.join('').includes('manual_events')) updateEvents.push(String(values[0]));
     });
     dbMock.dbRead.$queryRaw.mockReset();
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ userId: CREATOR, modelVersionIds: [11] }]);

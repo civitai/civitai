@@ -41,7 +41,7 @@ function ImageCardContent({ data }: Props) {
     <AspectRatioImageCard
       image={data}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
-      cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
+      cosmetic={data.cosmetic?.data ?? (remix.any ? REMIX_FRAME : undefined)}
       eventDecoration={data.eventDecoration?.data}
       eventDecorationOn={{ entityType: 'Image', entityId: data.id }}
       routedDialog={{

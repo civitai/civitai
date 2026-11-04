@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { useHatTurfFeed } from '~/components/HatTurf/useHatTurfFeed';
+import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
@@ -28,6 +29,8 @@ const STICKER_REREAD_JITTER_MS = 750;
 
 export type TurfSummaries = {
   event: string;
+  /** The viewer's `hatTurfFeedCard` arm; null on a surface outside that experiment (image detail). */
+  arm: HatTurfFeedArm | null;
   /** The viewer's team, or null (signed out, or not in the event). */
   team: string | null;
   images: Record<number, TurfSummary>;
@@ -60,6 +63,7 @@ export function TurfSummaryProvider({
   const feedGate = useHatTurfFeed();
   const gate = gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
+  const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
 
   const chunks = useMemo(
@@ -191,9 +195,9 @@ export function TurfSummaryProvider({
     const stickers = { ...baseStickers };
     for (const [id, read] of Object.entries(reread))
       if (read.at > stampOf(stickerQueries, Number(id))) stickers[Number(id)] = read.stickers;
-    return { event, team: base.team, images, open: base.open, stickers, watch };
+    return { event, arm, team: base.team, images, open: base.open, stickers, watch };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);
+  }, [event, arm, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);
 
   return (
     <TurfSummaryContext.Provider value={value}>

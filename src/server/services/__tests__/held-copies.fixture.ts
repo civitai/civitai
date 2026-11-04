@@ -1,10 +1,13 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 
-const HELD_COPIES_MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261212120000_held_resource_review/migration.sql'
-);
+const migrationPath = (name: string) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+  );
+const HELD_COPIES_MIGRATION = migrationPath('20261212120000_held_resource_review');
+const HELD_STORYLINE_COPIES_MIGRATION = migrationPath('20261216130000_storyline_held_chapter');
 
 /**
  * The held-copy tables, and the columns their copies read on a fixture's own "ResourceReview" and
@@ -29,4 +32,13 @@ export const heldCopiesSchemaSql = () => `
   CREATE TABLE IF NOT EXISTS "ModelVersion" (id serial PRIMARY KEY);
   ALTER TABLE "ModelVersion" ADD COLUMN IF NOT EXISTS "modelId" int;
   ${readFileSync(HELD_COPIES_MIGRATION, 'utf8')}
+`;
+
+/**
+ * The held storyline chapter copy tables, which `purgeReleasedHeldCopies` reads. The migration also
+ * indexes "StorylineBranchChoice", so a fixture without the storyline tables gets a stand-in.
+ */
+export const heldStorylineCopiesSchemaSql = () => `
+  CREATE TABLE IF NOT EXISTS "StorylineBranchChoice" ("chapterId" int);
+  ${readFileSync(HELD_STORYLINE_COPIES_MIGRATION, 'utf8')}
 `;
