@@ -34,8 +34,9 @@ const { GET } = await import('./+server');
 const token = (kind: 'queue' | 'hidden' | 'yesno', id: number) =>
   sealItem('secret', 7, { kind, id });
 
-const ask = async (after: string[], user: Record<string, unknown> = {}) => {
+const ask = async (after: string[], user: Record<string, unknown> = {}, count?: number) => {
   const url = new URL('http://knights.test/play/next');
+  if (count !== undefined) url.searchParams.set('count', String(count));
   for (const value of after) url.searchParams.append('after', value);
   const response = await GET({ url, locals: { user: { id: 7, ...user } } } as never);
   return { response, body: (await response.json()) as Record<string, any> };
@@ -147,5 +148,67 @@ describe('GET /play/next', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', smites: 0, maxSmites: 3 });
     expect((await ask([token('queue', 9)])).body.next).toBeNull();
     expect(getFeed).not.toHaveBeenCalled();
+  });
+
+  describe('with a count', () => {
+    // A queue that hands out the first id not excluded, so each pick depends on the ones before it.
+    const queueOfFive = () =>
+      getFeed.mockImplementation(async (_db, _user, options: { exclude?: number[] }) => {
+        const id = [1, 2, 3, 4, 5].find((candidate) => !options.exclude?.includes(candidate));
+        return id === undefined
+          ? null
+          : { ...feed, items: [{ id, imageKey: `k${id}`, width: 1, height: 1 }] };
+      });
+    const ids = (body: Record<string, any>) =>
+      body.items.map((entry: any) => openItem('secret', 7, entry.item.id)?.id);
+
+    it('returns that many items in order, each picked as if the ones before it were judged', async () => {
+      queueOfFive();
+      const { body } = await ask([token('queue', 1)], {}, 3);
+      expect(ids(body)).toEqual([2, 3, 4]);
+      expect(body.next.item.id).toBe(body.items[0].item.id);
+    });
+
+    it('serves one item by default and never more than the buffer holds', async () => {
+      queueOfFive();
+      expect(ids((await ask([], {})).body)).toEqual([1]);
+      expect(ids((await ask([], {}, 50)).body)).toEqual([1, 2, 3]);
+      expect(ids((await ask([], {}, -2)).body)).toEqual([1]);
+    });
+
+    it('serves fewer when the queue runs out, and nothing when it is empty', async () => {
+      queueOfFive();
+      expect(ids((await ask([token('queue', 1), token('queue', 2), token('queue', 3)], {}, 3)).body)).toEqual([4, 5]);
+      getFeed.mockResolvedValue(null);
+      const { body } = await ask([], {}, 3);
+      expect(body.items).toEqual([]);
+      expect(body.next).toBeNull();
+    });
+
+    it('returns the same items for the same request, and rolls with a different slot at each position', async () => {
+      queueOfFive();
+      const first = await ask([token('queue', 1)], {}, 3);
+      const slots = pickHiddenCheck.mock.calls.map((call) => call[1].slot);
+      pickHiddenCheck.mockClear();
+      const second = await ask([token('queue', 1)], {}, 3);
+
+      expect(ids(second.body)).toEqual(ids(first.body));
+      expect(pickHiddenCheck.mock.calls.map((call) => call[1].slot)).toEqual(slots);
+      expect(new Set(slots).size).toBe(3);
+    });
+
+    it('leaves out what earlier items of the same response took, for every kind', async () => {
+      queueOfFive();
+      pickHiddenCheck.mockResolvedValueOnce({
+        referenceId: 5,
+        imageKey: 'h5',
+        width: 1,
+        height: 2,
+        question: { key: 'q', kind: 'rating', prompt: 'Rate it', options: [] },
+      });
+      await ask([], {}, 2);
+      expect(pickHiddenCheck.mock.calls[1][1].exclude).toEqual([5]);
+      expect(getFeed.mock.calls[1][2].exclude).toEqual([]);
+    });
   });
 });

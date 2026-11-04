@@ -9,17 +9,21 @@ import { feedSecret } from '$lib/server/smites/runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { skippedFor } from '$lib/server/skips';
 import { getStanding } from '$lib/server/standing';
-import { MAX_EXCLUDED } from '../optimistic';
+import { BUFFER_TARGET, MAX_EXCLUDED, type PickedItem } from '../optimistic';
 import { pickItem } from '../next-item.server';
 import type { RequestHandler } from './$types';
 
-const NOTHING = () => json({ next: null }, { headers: { 'cache-control': 'no-store' } });
+const reply = (items: PickedItem[]) =>
+  json({ next: items[0] ?? null, items }, { headers: { 'cache-control': 'no-store' } });
+const NOTHING = () => reply([]);
 
 /**
  * The item after the ones named in `after`, which the player has not finished voting on: what the page shows the moment
  * a vote is sent, while the vote itself posts in the background. Served only when the real feed would serve an item (not
  * muted, not paced, no reset pending); otherwise the page waits for the vote like any other. It reads and records nothing.
- * The roll for hidden checks and yes/no questions comes from the named items, so asking again changes nothing.
+ * `count` asks for up to BUFFER_TARGET items in order, each picked as if the ones before it were already judged. The
+ * roll for hidden checks and yes/no questions comes from the named items (and the ones picked before it), so asking
+ * again changes nothing and no two positions share a roll.
  */
 export const GET: RequestHandler = async ({ url, locals }) => {
   const userId = locals.user.id;
@@ -42,11 +46,27 @@ export const GET: RequestHandler = async ({ url, locals }) => {
     .map((token) => openItem(secret, userId, token))
     .filter((ref): ref is ItemRef => ref !== null);
   const skipped = await skippedFor(skipStore, userId);
-  for (const ref of named) skipped[ref.kind].push(ref.id);
 
-  const digest = createHash('sha256')
-    .update(`${secret}:next:${userId}:${named.map((ref) => `${ref.kind}${ref.id}`).join(',')}`)
-    .digest();
-  const next = await pickItem(userId, status.rank, skipped, digest.readUInt32BE(0));
-  return json({ next }, { headers: { 'cache-control': 'no-store' } });
+  const wanted = Number.parseInt(url.searchParams.get('count') ?? '1', 10);
+  const count = Math.min(Math.max(Number.isFinite(wanted) ? wanted : 1, 1), BUFFER_TARGET);
+
+  const items: PickedItem[] = [];
+  const taken = [...named];
+  while (items.length < count) {
+    const digest = createHash('sha256')
+      .update(`${secret}:next:${userId}:${taken.map((ref) => `${ref.kind}${ref.id}`).join(',')}`)
+      .digest();
+    const leaveOut = {
+      queue: [...skipped.queue],
+      hidden: [...skipped.hidden],
+      yesno: [...skipped.yesno],
+    };
+    for (const ref of taken) leaveOut[ref.kind].push(ref.id);
+    const next = await pickItem(userId, status.rank, leaveOut, digest.readUInt32BE(0));
+    const ref = next && openItem(secret, userId, next.item.id);
+    if (!next || !ref || taken.some((t) => t.kind === ref.kind && t.id === ref.id)) break;
+    items.push(next);
+    taken.push(ref);
+  }
+  return reply(items);
 };

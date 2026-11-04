@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_EXCLUDED, createVoteTracker, describeOutcome } from './optimistic';
+import { MAX_EXCLUDED, createItemBuffer, createVoteTracker, describeOutcome } from './optimistic';
+import type { PickedItem } from './optimistic';
 
 describe('createVoteTracker', () => {
   it('lets an item be sent once and refuses a second send of the same token', () => {
@@ -88,5 +89,54 @@ describe('describeOutcome', () => {
   it('resyncs on a redirect or error, where the page no longer matches the session', () => {
     expect(describeOutcome({ type: 'redirect' })).toMatchObject({ ok: false, resync: true });
     expect(describeOutcome({ type: 'error' })).toMatchObject({ ok: false, resync: true });
+  });
+});
+
+const picked = (id: string): PickedItem => ({
+  question: { key: 'q', kind: 'rating', prompt: 'Rate it', options: [] },
+  item: { id, src: `cdn/${id}`, width: 1, height: 1 },
+  banner: null,
+});
+const never = () => false;
+
+describe('createItemBuffer', () => {
+  it('hands items out in the order they were enqueued', () => {
+    const buffer = createItemBuffer();
+    buffer.enqueue(picked('a'), never);
+    buffer.enqueue(picked('b'), never);
+    expect(buffer.peek()?.item.id).toBe('a');
+    expect(buffer.next()?.item.id).toBe('a');
+    expect(buffer.next()?.item.id).toBe('b');
+    expect(buffer.next()).toBeNull();
+  });
+
+  it('refuses a repeat, an item the caller already knows, and anything past the target', () => {
+    const buffer = createItemBuffer(2);
+    expect(buffer.enqueue(picked('a'), never)).toBe(true);
+    expect(buffer.enqueue(picked('a'), never)).toBe(false);
+    expect(buffer.enqueue(picked('b'), (token) => token === 'b')).toBe(false);
+    expect(buffer.enqueue(picked('c'), never)).toBe(true);
+    expect(buffer.enqueue(picked('d'), never)).toBe(false);
+    expect(buffer.tokens()).toEqual(['a', 'c']);
+  });
+
+  it('asks for more below the refill size and says how many fill it', () => {
+    const buffer = createItemBuffer(3, 2);
+    expect(buffer.needsRefill()).toBe(true);
+    expect(buffer.missing()).toBe(3);
+    buffer.enqueue(picked('a'), never);
+    expect(buffer.needsRefill()).toBe(true);
+    buffer.enqueue(picked('b'), never);
+    expect(buffer.needsRefill()).toBe(false);
+    expect(buffer.missing()).toBe(1);
+  });
+
+  it('drops one item by token and clears all', () => {
+    const buffer = createItemBuffer();
+    for (const id of ['a', 'b', 'c']) buffer.enqueue(picked(id), never);
+    buffer.drop('b');
+    expect(buffer.tokens()).toEqual(['a', 'c']);
+    buffer.clear();
+    expect(buffer.size).toBe(0);
   });
 });

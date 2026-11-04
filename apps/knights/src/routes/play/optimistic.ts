@@ -11,7 +11,11 @@ export type PickedItem = {
 };
 
 /** Items the next-stretch query leaves out: the ones already sent and the one on screen. */
-export const MAX_EXCLUDED = 4;
+export const MAX_EXCLUDED = 8;
+
+/** Items kept downloaded ahead of the one on screen, and the size below which more are asked for. */
+export const BUFFER_TARGET = 3;
+export const BUFFER_REFILL_BELOW = 2;
 
 export const NETWORK_NOTICE =
   'Your last judgment may not have been recorded: check your connection.';
@@ -32,6 +36,9 @@ export function createVoteTracker() {
       inFlight += 1;
       return true;
     },
+    has(token: string): boolean {
+      return sent.includes(token);
+    },
     settle() {
       inFlight = Math.max(0, inFlight - 1);
     },
@@ -45,6 +52,49 @@ export function createVoteTracker() {
     },
     excluded(current: string): string[] {
       return [...sent.filter((token) => token !== current), current].slice(-MAX_EXCLUDED);
+    },
+  };
+}
+
+/**
+ * Items fetched and decoded ahead of the one on screen, in the order they were picked. Only an item that is neither
+ * buffered nor already known (sent, on screen) gets in, so a repeat or a stale reply cannot show an item twice.
+ */
+export function createItemBuffer(target = BUFFER_TARGET, refillBelow = BUFFER_REFILL_BELOW) {
+  let items: PickedItem[] = [];
+  return {
+    /** False when the item is a repeat, already known to the caller, or the buffer is full. */
+    enqueue(item: PickedItem, known: (token: string) => boolean): boolean {
+      const token = item.item.id;
+      if (items.length >= target || known(token) || items.some((it) => it.item.id === token))
+        return false;
+      items.push(item);
+      return true;
+    },
+    peek(): PickedItem | null {
+      return items[0] ?? null;
+    },
+    next(): PickedItem | null {
+      return items.shift() ?? null;
+    },
+    drop(token: string) {
+      items = items.filter((it) => it.item.id !== token);
+    },
+    clear() {
+      items = [];
+    },
+    get size() {
+      return items.length;
+    },
+    tokens(): string[] {
+      return items.map((it) => it.item.id);
+    },
+    needsRefill(): boolean {
+      return items.length < refillBelow;
+    },
+    /** How many to ask for to fill the buffer. */
+    missing(): number {
+      return Math.max(0, target - items.length);
     },
   };
 }
