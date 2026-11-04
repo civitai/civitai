@@ -71,6 +71,7 @@ import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/pr
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
 import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import {
+  EVIDENCE_MEDIA_TYPES,
   isAwaitingEvidenceApproval,
   isGeneratorEvidenceDetails,
   unsentGeneratorEvidenceWhere,
@@ -237,6 +238,52 @@ const preservedEvidenceBlobs = (details: unknown) =>
   uniqueEvidenceBlobs(details).filter((blob) => !!blob.evidenceKey);
 
 const zipSafeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'unnamed';
+
+/** An object-store read of a key that holds nothing. */
+const isMissingObject = (e: unknown) => {
+  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return (
+    err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
+  );
+};
+
+const isEvidenceMediaType = (type: string | undefined) =>
+  !!type && EVIDENCE_MEDIA_TYPES.has(type.toLowerCase());
+
+/**
+ * The verified preserved copy, or why not: `permanent` when every later run would fail the same
+ * way, `transient` when reading it again could succeed.
+ */
+async function readPreservedCopy(blob: StoredEvidenceBlob) {
+  if (!blob.sha256)
+    return { ok: false as const, permanent: 'no sha256 recorded for the preserved copy' };
+  if (blob.contentType !== undefined && !isEvidenceMediaType(blob.contentType))
+    return { ok: false as const, permanent: 'recorded type is not an evidence media type' };
+  let notFound = false;
+  let storedType: string | undefined;
+  const read = await readVerifiedEvidence(
+    blob,
+    async (key) => {
+      try {
+        const object = await streamEvidenceObject(key);
+        storedType = object.contentType;
+        return object;
+      } catch (e) {
+        notFound = isMissingObject(e);
+        throw e;
+      }
+    },
+    MAX_EVIDENCE_BYTES
+  );
+  if (read.ok) return read;
+  if (read.shaMismatch || read.overLimit) return { ok: false as const, permanent: read.reason };
+  if (notFound)
+    return { ok: false as const, permanent: 'preserved copy not found in the evidence store' };
+  // Only reached once the bytes hashed to what was recorded, so the type is all that is wrong.
+  if (storedType !== undefined && !isEvidenceMediaType(blob.contentType ?? storedType))
+    return { ok: false as const, permanent: 'stored type is not an evidence media type' };
+  return { ok: false as const, transient: read.reason };
+}
 
 /** One file of `generated-images.zip`'s manifest, for a report filed with preserved evidence. */
 type PreservedArchiveRecord = {
@@ -2996,19 +3043,31 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         if (!isGeneratorEvidenceDetails(report.details)) return;
         // One file at a time: a verified read holds the whole file until it is appended.
         const manifest: PreservedArchiveRecord[] = [];
+        const usedNames = new Set<string>();
         for (const blob of preserved) {
-          const read = await readVerifiedEvidence(blob, streamEvidenceObject, MAX_EVIDENCE_BYTES);
+          const read = await readPreservedCopy(blob);
           if (!read.ok) {
-            // A copy that no longer matches what was recorded will never match: archive the rest
-            // and say so. Anything else (a storage read failing) is retried with the report.
-            if (!read.shaMismatch && !read.overLimit)
-              throw new Error(`preserved file ${blob.blobId} could not be read: ${read.reason}`);
-            manifest.push({ blobId: blob.blobId, source: 'missing', reason: read.reason });
+            // A failure that would repeat every run is recorded and the rest archived; anything
+            // else (a storage read failing) is retried with the report.
+            if ('transient' in read)
+              throw new Error(`preserved file ${blob.blobId} could not be read: ${read.transient}`);
+            manifest.push({ blobId: blob.blobId, source: 'missing', reason: read.permanent });
+            logToAxiom({
+              name: 'csam-report',
+              type: 'warning',
+              subType: 'archive-generated-images',
+              message: `preserved file could not be archived: ${read.permanent}`,
+              reportId: report.id,
+              blobId: blob.blobId,
+            });
             continue;
           }
-          const name = `evidence/${zipSafeName(blob.blobId)}.${extensionForContentType(
-            read.contentType
-          )}`;
+          const extension = extensionForContentType(read.contentType);
+          const base = `evidence/${zipSafeName(blob.blobId)}`;
+          let name = `${base}.${extension}`;
+          // Two blob ids can reduce to one safe name: never let one entry shadow another.
+          for (let n = 2; usedNames.has(name); n++) name = `${base}-${n}.${extension}`;
+          usedNames.add(name);
           let written!: () => void;
           const done = new Promise<void>((resolve) => (written = resolve));
           await boundedArchive.append(

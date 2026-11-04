@@ -131,6 +131,7 @@ let strikesRequests: string[] = [];
 import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const USER_ID = 31337;
 
@@ -258,6 +259,31 @@ describe('archiveGeneratedImages: flagged-consumer strikes', () => {
     );
   });
 
+  it('logs every strikes 404 with the consumer and the response body', async () => {
+    strikesResponse = () => new Response('no such consumer', { status: 404 });
+
+    await archiveCsamDataForReport(evidenceReport() as never);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith({
+      name: 'orchestrator-flagged-consumers',
+      type: 'warning',
+      message: 'strikes read answered 404; treated as no strikes',
+      consumerId: `civitai-${USER_ID}`,
+      body: 'no such consumer',
+    });
+  });
+
+  it('truncates a long strikes-404 body in the log to 500 characters', async () => {
+    strikesResponse = () => new Response('x'.repeat(700), { status: 404 });
+
+    await archiveCsamDataForReport(evidenceReport() as never);
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([data]) => data as { name?: string; body?: string })
+      .find((data) => data.name === 'orchestrator-flagged-consumers');
+    expect(logged?.body).toBe('x'.repeat(500));
+  });
+
   it('still fails the archive when the strikes read answers any other error (500)', async () => {
     strikesResponse = () => new Response('', { status: 500, statusText: 'Internal Server Error' });
 
@@ -326,6 +352,82 @@ describe('archiveGeneratedImages: preserved evidence', () => {
       )
     ).toEqual(['blob-kept:preserved', 'blob-expired:missing']);
     expect(archiveRecord()).toMatchObject({ entries: 2, namedExpected: 1, namedMissing: 0 });
+  });
+
+  /** Runs one report whose single preserved file fails permanently, and returns what it recorded. */
+  async function permanentFailure(report: ReturnType<typeof evidenceReport>) {
+    await archiveCsamDataForReport(report as never);
+    const zip = await storedZip();
+    expect(Object.keys(zip.files).sort()).toEqual(['manifest.json']);
+    expect(archiveRecord()).toMatchObject({ entries: 1, namedExpected: 1, namedMissing: 1 });
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+    expect(logged).not.toContain('generator-evidence/key-kept');
+    return {
+      manifestEntry: JSON.parse(await zip.file('manifest.json')!.async('string')).files[0],
+      logged,
+    };
+  }
+
+  it('records a preserved copy missing from the evidence store as missing, not a retry', async () => {
+    mockStreamEvidenceObject = async () => {
+      throw Object.assign(new Error('The specified key does not exist.'), { name: 'NoSuchKey' });
+    };
+
+    const { manifestEntry, logged } = await permanentFailure(evidenceReport());
+
+    expect(manifestEntry).toEqual({
+      blobId: 'blob-kept',
+      source: 'missing',
+      reason: 'preserved copy not found in the evidence store',
+    });
+    expect(logged).toContain('preserved file could not be archived: preserved copy not found');
+  });
+
+  it('records a preserved copy whose recorded type is not evidence media as missing', async () => {
+    const report = evidenceReport();
+    report.details.generatedImages[0].blobs[0].contentType = 'text/html';
+
+    const { manifestEntry, logged } = await permanentFailure(report);
+
+    expect(manifestEntry).toEqual({
+      blobId: 'blob-kept',
+      source: 'missing',
+      reason: 'recorded type is not an evidence media type',
+    });
+    expect(logged).toContain('recorded type is not an evidence media type');
+  });
+
+  it('records a preserved copy with no recorded sha256 as missing', async () => {
+    const report = evidenceReport();
+    delete (report.details.generatedImages[0].blobs[0] as { sha256?: string }).sha256;
+
+    const { manifestEntry, logged } = await permanentFailure(report);
+
+    expect(manifestEntry).toEqual({
+      blobId: 'blob-kept',
+      source: 'missing',
+      reason: 'no sha256 recorded for the preserved copy',
+    });
+    expect(logged).toContain('no sha256 recorded for the preserved copy');
+  });
+
+  it('gives two blob ids that reduce to one safe name distinct entries', async () => {
+    const report = evidenceReport();
+    const kept = report.details.generatedImages[0].blobs[0];
+    report.details.generatedImages[0].blobs = [
+      { ...kept, blobId: 'a/b', evidenceKey: 'generator-evidence/key-kept' },
+      { ...kept, blobId: 'a_b', evidenceKey: 'generator-evidence/key-kept' },
+    ];
+
+    await archiveCsamDataForReport(report as never);
+
+    const zip = await storedZip();
+    expect(Object.keys(zip.files).sort()).toEqual([
+      'evidence/a_b-2.png',
+      'evidence/a_b.png',
+      'manifest.json',
+    ]);
+    expect(archiveRecord()).toMatchObject({ entries: 3, namedExpected: 2, namedMissing: 0 });
   });
 
   it('retries the report when the evidence store cannot be read', async () => {
