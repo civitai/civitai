@@ -2,9 +2,10 @@
 /**
  * The only pages the standalone tRPC server (`./server.cjs`) answers. Anything else is a 404.
  *
- * Its own module so a unit test can pin the exact list (`__tests__/served-pages.test.ts`) and check
- * it against the proxy matcher (`src/server/middleware/__tests__/proxy-standalone-pages.test.ts`):
- * this server never runs the proxy, so a page the proxy runs on under Next cannot be served here.
+ * Its own module so a unit test can check the list against the proxy matcher
+ * (`src/server/middleware/__tests__/proxy-standalone-pages.test.ts`, which also pins the list
+ * through its per-page example ledger): this server never runs the proxy, so a page the proxy runs
+ * on under Next cannot be served here.
  *
  * Every page is matched exactly (see `createPageMatcher` in `./next-compat.cjs`): a trailing slash or
  * an extra segment gets this server's plain 404, where Next would redirect or render its 404 page.
