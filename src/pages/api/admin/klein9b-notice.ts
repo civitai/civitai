@@ -13,10 +13,10 @@
  *   Body: { "action": "<action>", ...params }
  *
  * Sends are paced (NOTICE_MIN_INTERVAL_MS in notice-ledger.service) and one call sends at most
- * `count` (max 1000), so send a larger audience in several calls.
+ * `count` (max 100), so send a larger audience in several calls.
  *
  * Actions:
- *   send      - {date, dryRun?, count?, batchSize?}  Notify up to `count` (default 50, max 1000)
+ *   send      - {date, dryRun?, count?, batchSize?}  Notify up to `count` (default 50, max 100)
  *                                 not-yet-sent creators. The audience is recounted on every call; who
  *                                 gets which notice is classifyKlein9bAudience in
  *                                 klein9b-notice.service (listed 9B / 9B-base versions only).

@@ -277,12 +277,12 @@ describe('the route schema', () => {
     ).toBe(false);
   });
 
-  it('bounds count to 1-1000 (default 50), and sends one at a time by default (at most 5)', () => {
+  it('bounds count to 1-100 (default 50), and sends one at a time by default (at most 5)', () => {
     const send = (extra: object) =>
       klein9bNoticeSchema.safeParse({ action: 'send', date: 'November 4th', ...extra });
     expect(send({}).data).toMatchObject({ count: 50, batchSize: 1 });
-    expect(send({ count: 1000, batchSize: 5 }).success).toBe(true);
-    for (const bad of [{ count: 0 }, { count: 1001 }, { batchSize: 0 }, { batchSize: 6 }])
+    expect(send({ count: 100, batchSize: 5 }).success).toBe(true);
+    for (const bad of [{ count: 0 }, { count: 101 }, { batchSize: 0 }, { batchSize: 6 }])
       expect(send(bad).success).toBe(false);
   });
 });

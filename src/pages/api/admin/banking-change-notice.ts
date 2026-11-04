@@ -11,10 +11,10 @@
  *   Body: { "action": "<action>", ...params }
  *
  * Sends are paced (NOTICE_MIN_INTERVAL_MS in notice-ledger.service) and one call sends at most
- * `count` (max 1000), so send a larger audience in several calls.
+ * `count` (max 100), so send a larger audience in several calls.
  *
  * Actions:
- *   send      - {dryRun?, count?, batchSize?}  Email up to `count` (default 50, max 1000) of the
+ *   send      - {dryRun?, count?, batchSize?}  Email up to `count` (default 50, max 100) of the
  *                                 audience who have not been sent it yet: accounts that banked in the
  *                                 last 12 months plus current paid Creator Program members, skipping
  *                                 banned or deleted accounts. dryRun defaults to TRUE and returns the

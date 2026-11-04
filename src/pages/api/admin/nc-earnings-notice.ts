@@ -8,7 +8,7 @@
  *   Body: { "action": "<action>", "notice": "nc-recent" | "nc-older", ...params }
  *
  * Sends are paced (NOTICE_MIN_INTERVAL_MS in notice-ledger.service) and one call sends at most
- * `count` (max 1000), so send a larger audience in several calls.
+ * `count` (max 100), so send a larger audience in several calls.
  *
  * Actions:
  *   send      - {userIds, date, dryRun?, count?, batchSize?}  Notify up to `count` not-yet-sent
