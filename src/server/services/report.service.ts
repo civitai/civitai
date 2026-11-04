@@ -1262,8 +1262,8 @@ export async function isAppealBlockedByHoldMarker({
 
 /**
  * Whether an appealable-looking image is refused anyway: a hold marker keeps it, or a CSAM report
- * names it. The appeal endpoint, the owner's image page and the removed-images list all refuse on
- * this, so none of them offers what another refuses.
+ * names it. Used by the appeal endpoint and the owner's image page. getMyRemovedImages composes the
+ * same two checks by hand, so change them together.
  */
 export async function isImageAppealRefused({
   imageId,

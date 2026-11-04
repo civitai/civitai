@@ -178,9 +178,7 @@ describe('the removed-images list', () => {
     expect(await getMyRemovedImages(OWNER, NOW)).toStrictEqual(before);
   });
 
-  // Once the hold ends the owner's other removals can be appealed again, report or not, but the
-  // image it kept stays refused by the appeal endpoint until it is purged or released. Another removed image in the same list,
-  // which no hold kept, keeps its appeal.
+  // A hold's kept image stays refused until it is purged or released, even after the hold ends.
   it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
     const ALSO_REMOVED = 9;
     holder.chQuery.mockResolvedValue({

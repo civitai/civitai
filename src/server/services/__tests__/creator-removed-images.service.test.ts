@@ -160,7 +160,6 @@ describe('getMyRemovedImages', () => {
 
     expect(normal.items.map((i) => i.imageId)).toEqual([2, 1]);
     expect(excluded).toEqual(normal);
-    // Not even read: an owner lookup here would be one result away from listing them differently.
     const ownerLookups = dbMock.dbWrite.$queryRaw.mock.calls.filter((call) =>
       sqlOf(call).sql.includes('"UserReport"')
     );
