@@ -1,3 +1,4 @@
+import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 
@@ -99,6 +100,18 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
+}));
+
+const { mockApplyHeldVerdict, mockLeavingPrivate, mockFinishApply } = vi.hoisted(() => ({
+  mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
+  mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
+  mockFinishApply: vi.fn(async (_id: number) => undefined),
+}));
+vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelNsfw>()),
+  applyHeldRestrictedVerdict: mockApplyHeldVerdict,
+  applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
+  finishHeldVerdictApply: mockFinishApply,
 }));
 
 import {
@@ -264,6 +277,32 @@ describe('privateModelFromTraining — gallery settings cache', () => {
 
     expect(mockDbWrite.model.update).toHaveBeenCalled();
     expect(redisMock.redis.del).toHaveBeenCalledWith([`model:gallery-settings:${MODEL_ID}`]);
+  });
+});
+
+describe('privateModelFromTraining — a held scan verdict', () => {
+  it.each(['minor', 'poi'] as const)('is applied when the owner unticks %s', async (flag) => {
+    mockStored({ [flag]: true, sfwOnly: true });
+    await privateFromTraining({ user: owner, [flag]: false });
+    expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('is left held while the flag stays ticked (control)', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await privateFromTraining({ user: owner, minor: true });
+    expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
+  });
+
+  it('is applied when a failed flow puts the model back out of Private', async () => {
+    mockStored({});
+    mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow();
+    expect(mockDbWrite.model.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
+    );
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate).toHaveBeenCalledWith(expect.anything(), MODEL_ID);
   });
 });
 
@@ -580,6 +619,25 @@ describe('publishPrivateModel', () => {
 
   const publish = (isModerator: boolean, publishVersions = true) =>
     publishPrivateModel({ modelId: MODEL_ID, publishVersions, isModerator });
+
+  it('applies a held scan verdict in the publish transaction, after the availability write', async () => {
+    mockPrivateModel({});
+    mockLeavingPrivate.mockResolvedValueOnce(true);
+    await publish(false);
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate).toHaveBeenCalledWith(mockDbWrite, MODEL_ID);
+    expect(mockLeavingPrivate.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('finishes nothing when there was no lead to apply (control)', async () => {
+    mockPrivateModel({});
+    await publish(false);
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockFinishApply).not.toHaveBeenCalled();
+  });
 
   it('restores a moderator-set cannotPromote and drops the marker', async () => {
     mockPrivateModel({ meta: { cannotPromote: true, restoreCannotPromote: true } });

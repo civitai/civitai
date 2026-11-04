@@ -29,6 +29,7 @@ type Row = {
   minor: boolean;
   poi: boolean;
   sfwOnly: boolean;
+  availability: string;
   lockedProperties: string[] | null;
   verdict: RestrictedNsfwVerdict | null;
   systemNsfwLock: RestrictedNsfwVerdictRulingRecord['prior']['systemNsfwLock'];
@@ -45,14 +46,16 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
     : 'sfwOnly';
 
 /**
- * A moderator's ruling on a restricted-verdict lead: the text scan rated a minor, POI or SFW-only
- * model NSFW and left nsfw alone (`holdRestrictedVerdict`).
+ * A moderator's ruling on a restricted-verdict lead: the text scan rated a restricted model NSFW and
+ * held the verdict (`holdRestrictedVerdict`), or rated an SFW-only model and recorded what it replaced.
  * - `keep`: the owner's rating stands: nsfw off, and SFW-only back on where the scan cleared it. The
  *   scan's own lock for this lead is lifted; a moderator's lock (every moderator nsfw write drops the
- *   `systemNsfwLock` marker) or a newer scan's lock stands, and then nothing but the lead changes.
- * - `dismiss`: drops the lead only, after the moderator acted elsewhere. A minor lead needs a reason.
- * - `rateNsfw`: only while the model is neither minor nor POI, and with a reason on a minor lead.
- *   Unsets sfwOnly, sets nsfw and locks it as the moderator's.
+ *   `systemNsfwLock` marker) or a newer scan's lock stands, and then nothing but the lead changes. On a
+ *   model still minor or POI the verdict is kept dormant, to come back if the owner clears the flag.
+ * - `dismiss`: drops the lead only: the moderator judged the scan wrong, or acted elsewhere. A minor
+ *   lead needs a reason. Refused on a model left NSFW and SFW-only, which its owner cannot save.
+ * - `rateNsfw`: only while the model is neither minor, POI nor Private, and with a reason on a minor
+ *   lead. Unsets sfwOnly, sets nsfw and locks it as the moderator's.
  * Each ruling closes the lead, logs a ModActivity row, and appends a record with the prior values.
  */
 export async function resolveRestrictedNsfwVerdict({
@@ -69,7 +72,7 @@ export async function resolveRestrictedNsfwVerdict({
   const note = reason?.trim() || null;
   const result = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<Row[]>`
-      SELECT m."userId", m.nsfw, m.minor, m.poi, m."sfwOnly", m."lockedProperties",
+      SELECT m."userId", m.nsfw, m.minor, m.poi, m."sfwOnly", m.availability, m."lockedProperties",
         m.meta->'restrictedNsfwVerdict' AS verdict,
         m.meta->'systemNsfwLock' AS "systemNsfwLock",
         m.meta->'restrictedNsfwVerdictRulings' AS rulings
@@ -84,9 +87,16 @@ export async function resolveRestrictedNsfwVerdict({
     const restriction = restrictionOf(row, verdict);
     if (ruling === 'dismiss' && restriction === 'minor' && !note)
       throw throwBadRequestError('Say why a minor lead is dismissed, or where it was escalated.');
+    // The owner form refuses to save nsfw with SFW-only, so the lead may not close on that pair.
+    if (ruling === 'dismiss' && row.nsfw && row.sfwOnly)
+      throw throwBadRequestError("Keep or Rate NSFW: the model can't be saved as it is.");
     if (ruling === 'rateNsfw' && (row.minor || row.poi))
       throw throwBadRequestError(
         'This model is marked as depicting a real person or a minor; it cannot be rated NSFW.'
+      );
+    if (ruling === 'rateNsfw' && row.availability === 'Private')
+      throw throwBadRequestError(
+        'This model is private and stays SFW-only; the rating applies when it is published.'
       );
     if (ruling === 'rateNsfw' && restriction === 'minor' && !note)
       throw throwBadRequestError('Say why a model once marked minor is rated NSFW.');
@@ -130,6 +140,12 @@ export async function resolveRestrictedNsfwVerdict({
       };
       dropSystemLock = true;
     }
+    // A Keep on a model still minor or POI rules on the rating the flag holds, not on the scan: the
+    // verdict waits, server-owned, and comes back as a held lead if the owner clears the flag.
+    const dormant: RestrictedNsfwVerdict | null =
+      ruling === 'keep' && (row.minor || row.poi)
+        ? { source: verdict.source, at: verdict.at, restriction: verdict.restriction }
+        : null;
 
     const record: RestrictedNsfwVerdictRulingRecord = {
       at: new Date().toISOString(),
@@ -143,9 +159,11 @@ export async function resolveRestrictedNsfwVerdict({
     const rulings = [...(Array.isArray(row.rulings) ? row.rulings : []), record].slice(
       -RULINGS_KEPT
     );
-    const dropped = dropSystemLock
-      ? ['restrictedNsfwVerdict', 'systemNsfwLock']
-      : ['restrictedNsfwVerdict'];
+    const dropped = [
+      'restrictedNsfwVerdict',
+      'restrictedNsfwVerdictDormant',
+      ...(dropSystemLock ? ['systemNsfwLock'] : []),
+    ];
     // Guarded on the lead still being there: the row lock makes a second ruling wait, then fail here.
     const written = await tx.$executeRaw`
       UPDATE "Model" m
@@ -154,6 +172,7 @@ export async function resolveRestrictedNsfwVerdict({
           "lockedProperties" = ${next.lockedProperties}::text[],
           meta = (m.meta - ${dropped}::text[])
             || jsonb_build_object('restrictedNsfwVerdictRulings', ${JSON.stringify(rulings)}::jsonb)
+            || ${JSON.stringify(dormant ? { restrictedNsfwVerdictDormant: dormant } : {})}::jsonb
       WHERE m.id = ${modelId} AND m.meta ? 'restrictedNsfwVerdict'
     `;
     if (!written) throw throwBadRequestError('This lead was ruled on meanwhile; reload.');

@@ -17,7 +17,7 @@ export async function getRestrictedVerdicts(limit = 100): Promise<RestrictedVerd
   const result = await sql<RestrictedVerdictRow>`
     SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
       ${restrictionSql} AS restriction,
-      m.minor, m.poi, m."sfwOnly", m.nsfw,
+      m.minor, m.poi, m."sfwOnly", m.nsfw, (m.availability::text = 'Private') AS "isPrivate",
       (m.meta ? 'systemNsfwLock' AND 'nsfw' = ANY(m."lockedProperties")) AS "systemLocked",
       (m.meta->'restrictedNsfwVerdict' ? 'applied') AS "autoApplied",
       (m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')

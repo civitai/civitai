@@ -61,8 +61,8 @@ WITH stamped AS (
     )
   RETURNING m.id
 )
-SELECT count(*) AS backfilled FROM stamped;
--- COMMIT;  -- only when `backfilled` equals `to_backfill`; otherwise ROLLBACK.
+SELECT count(*) AS backfilled, array_agg(id ORDER BY id) AS ids FROM stamped;
+-- COMMIT;  -- only when `backfilled` equals `to_backfill`; otherwise ROLLBACK. Keep the printed `ids`.
 --
--- Rollback (before any moderator ruled): UPDATE "Model" SET meta = meta - 'restrictedNsfwVerdict'
---   WHERE meta->'restrictedNsfwVerdict'->>'at' = meta->'systemNsfwLock'->>'at';
+-- Rollback (before any moderator ruled), scoped to the printed ids so no lead written since is touched:
+--   UPDATE "Model" SET meta = meta - 'restrictedNsfwVerdict' WHERE id = ANY('{<printed ids>}'::int[]);

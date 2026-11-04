@@ -180,7 +180,13 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // restricted-verdict leads (`Model_restrictedNsfwVerdict_idx`). A model with both counts twice.
     withLastGood(
       'held-detections',
-      async () => (await getHeldDetectionModelCount()) + (await getRestrictedVerdictCount()),
+      async () => {
+        const [held, leads] = await Promise.all([
+          getHeldDetectionModelCount(),
+          getRestrictedVerdictCount(),
+        ]);
+        return held + leads;
+      },
       3_000
     ),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.

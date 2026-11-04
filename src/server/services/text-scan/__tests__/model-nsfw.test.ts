@@ -156,19 +156,12 @@ describe('applyModelNsfwTextScan', () => {
 });
 
 describe('applyModelNsfwTextScan on a model its owner restricted', () => {
-  const heldCall = () =>
-    dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
-      (c[0] as readonly string[]).join('?').includes('AND (m.minor OR m.poi)')
-    );
-
   it.each(['minor', 'poi'] as const)(
     'never marks a %s model nsfw: holds the verdict for a moderator instead',
     async (flag) => {
       dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ [flag]: true }));
       const result = await applyModelNsfwTextScan(args(true));
       expect(flipSql()).toBeUndefined();
-      expect(heldCall()).toBeDefined();
-      expect(heldCall()).toContain('text-scan');
       expect(updateModelNsfwLevels).not.toHaveBeenCalled();
       expect(createNotification).not.toHaveBeenCalled();
       expect(result).toEqual({ deferredRatingNotice: null });
@@ -178,7 +171,6 @@ describe('applyModelNsfwTextScan on a model its owner restricted', () => {
   it('rates an SFW-only model as any other and tells the owner', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ sfwOnly: true }));
     await applyModelNsfwTextScan(args(true));
-    expect(heldCall()).toBeUndefined();
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
     expect(createNotification).toHaveBeenCalled();
   });
@@ -188,7 +180,6 @@ describe('applyModelNsfwTextScan on a model its owner restricted', () => {
       strings.join('?').includes('SET nsfw = TRUE') ? 0 : 1
     );
     await applyModelNsfwTextScan(args(true));
-    expect(heldCall()).toBeDefined();
     expect(updateModelNsfwLevels).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
   });

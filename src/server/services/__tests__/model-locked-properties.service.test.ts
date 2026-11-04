@@ -450,7 +450,11 @@ describe('upsertModel — restricted nsfw verdict lead', () => {
       mockStored({
         minor: true,
         sfwOnly: true,
-        meta: { restrictedNsfwVerdict: lead, restrictedNsfwVerdictRulings: [ruling] },
+        meta: {
+          restrictedNsfwVerdict: lead,
+          restrictedNsfwVerdictRulings: [ruling],
+          restrictedNsfwVerdictDormant: lead,
+        },
       });
 
       await upsert({
@@ -458,13 +462,18 @@ describe('upsertModel — restricted nsfw verdict lead', () => {
         userId: isModerator ? MODERATOR_ID : OWNER_ID,
         isModerator,
         name: 'Cleaned',
-        meta: { restrictedNsfwVerdict: null, restrictedNsfwVerdictRulings: [] },
+        meta: {
+          restrictedNsfwVerdict: null,
+          restrictedNsfwVerdictRulings: [],
+          restrictedNsfwVerdictDormant: null,
+        },
       } as never);
 
       expect(updateData().meta).toEqual(
         expect.objectContaining({
           restrictedNsfwVerdict: lead,
           restrictedNsfwVerdictRulings: [ruling],
+          restrictedNsfwVerdictDormant: lead,
         })
       );
     }
@@ -478,10 +487,15 @@ describe('upsertModel — restricted nsfw verdict lead', () => {
       userId: isModerator ? MODERATOR_ID : OWNER_ID,
       isModerator,
       name: 'Cleaned',
-      meta: { restrictedNsfwVerdict: lead, restrictedNsfwVerdictRulings: [ruling] },
+      meta: {
+        restrictedNsfwVerdict: lead,
+        restrictedNsfwVerdictRulings: [ruling],
+        restrictedNsfwVerdictDormant: lead,
+      },
     } as never);
 
     expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdict');
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictDormant');
     expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictRulings');
   });
 });

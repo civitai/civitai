@@ -74,6 +74,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     systemNsfwLock: _systemNsfwLock,
     restrictedNsfwVerdict: _restrictedNsfwVerdict,
     restrictedNsfwVerdictRulings: _restrictedNsfwVerdictRulings,
+    restrictedNsfwVerdictDormant: _restrictedNsfwVerdictDormant,
     ...rest
   } = meta;
 
@@ -177,7 +178,7 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
  * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
- * dispute. `restrictedNsfwVerdict` is a moderator's lead that only its ruling clears, and its rulings are kept beside it. Client meta that carries them is ignored, so on update the stored values survive the
+ * dispute. `restrictedNsfwVerdict` is a moderator's lead that only its ruling clears, and its rulings (and a kept lead's dormant verdict) are kept beside it. Client meta that carries them is ignored, so on update the stored values survive the
  * `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
@@ -186,6 +187,7 @@ export const SERVER_OWNED_META_KEYS = [
   'systemNsfwLock',
   'restrictedNsfwVerdict',
   'restrictedNsfwVerdictRulings',
+  'restrictedNsfwVerdictDormant',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 export function systemNsfwLockMarker(source: string): ModelMeta['systemNsfwLock'] {

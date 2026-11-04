@@ -42,7 +42,8 @@ beforeEach(async () => {
     CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "userId" INTEGER,
       "nsfw" BOOLEAN NOT NULL DEFAULT false, "poi" BOOLEAN NOT NULL DEFAULT false,
       "minor" BOOLEAN NOT NULL DEFAULT false, "sfwOnly" BOOLEAN NOT NULL DEFAULT false,
-      "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "meta" JSONB);
+      "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "meta" JSONB,
+      "availability" TEXT NOT NULL DEFAULT 'Public');
     CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL,
       "entityId" INTEGER NOT NULL, "nsfwLevel" INTEGER, "triggeredLabels" TEXT[],
       "result" JSONB, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now());
@@ -104,6 +105,17 @@ describe('restricted-verdict leads', () => {
       2: true,
       3: false,
       4: false,
+    });
+  });
+
+  it('marks a Private model, whose rating applies when it is published', async () => {
+    await model(1, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-01T00:00:00Z') });
+    await model(2, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-02T00:00:00Z') });
+    await db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = 2`);
+    const rows = await getRestrictedVerdicts();
+    expect(Object.fromEntries(rows.map((r) => [r.modelId, r.isPrivate]))).toEqual({
+      1: false,
+      2: true,
     });
   });
 

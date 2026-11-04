@@ -31,7 +31,9 @@
   let errors = $state<Record<number, string>>({});
   let pending = $state<number | null>(null);
 
-  const canRateNsfw = (row: RestrictedVerdictRow) => !row.minor && !row.poi;
+  const canRateNsfw = (row: RestrictedVerdictRow) => !row.minor && !row.poi && !row.isPrivate;
+  // NSFW with SFW-only is a pair the owner form refuses, so the lead may not close on it.
+  const unsaveable = (row: RestrictedVerdictRow) => row.nsfw && row.sfwOnly;
   const needsReason = (row: RestrictedVerdictRow) =>
     row.restriction === 'minor' && !reasons[row.modelId]?.trim();
 
@@ -79,6 +81,9 @@
             <MetaChip tone={row.restriction === 'minor' ? 'red' : 'neutral'}>
               {RESTRICTION_LABEL[row.restriction]}
             </MetaChip>
+            {#if row.isPrivate}
+              <MetaChip>private: applies when published</MetaChip>
+            {/if}
             {#if row.unticked}
               <MetaChip tone="amber">
                 held as {RESTRICTION_LABEL[row.restriction]}; owner has since unticked it
@@ -165,8 +170,10 @@
                     variant="outline"
                     name="ruling"
                     value="dismiss"
-                    disabled={pending === row.modelId || needsReason(row)}
-                    >Dismiss</Button
+                    disabled={pending === row.modelId || needsReason(row) || unsaveable(row)}
+                    title={unsaveable(row)
+                      ? "Keep or Rate NSFW: the model can't be saved as it is."
+                      : undefined}>Dismiss</Button
                   >
                   {#if canRateNsfw(row)}
                     <ConfirmButton

@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { applyHeldVerdictAfterLeavingPrivate } from '~/server/services/model.service';
 import { invalidateManyImageExistence } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -32,6 +33,7 @@ export default WebhookEndpoint(async (req, res) => {
       lastVersionAt: null,
     },
   });
+  await applyHeldVerdictAfterLeavingPrivate(params.id);
 
   const modelVersions = await dbWrite.modelVersion.findMany({
     where: { modelId: params.id },

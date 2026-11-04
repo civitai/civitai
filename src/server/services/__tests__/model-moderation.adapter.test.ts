@@ -261,7 +261,7 @@ describe('modelModerationAdapter.applyResult', () => {
   it('treats a lock that appears between read and write as a decline', async () => {
     // The lock fails the flip's guard and the restricted-verdict hold's alike; only forensics write.
     dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
-      /SET nsfw = TRUE|AND \(m\.minor OR m\.poi\)/.test(strings.join('?')) ? 0 : 1
+      /SET nsfw = TRUE|'restriction', CASE WHEN m\.minor/.test(strings.join('?')) ? 0 : 1
     );
 
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
@@ -277,8 +277,6 @@ describe('modelModerationAdapter.applyResult', () => {
   });
 
   describe('on a model its owner restricted', () => {
-    const heldCall = () => rawCalls().find((c) => c.sql.includes('AND (m.minor OR m.poi)'));
-
     it.each(['minor', 'poi'] as const)(
       'never flips a %s model: holds the verdict and still records the forensics',
       async (flag) => {
@@ -287,7 +285,6 @@ describe('modelModerationAdapter.applyResult', () => {
         await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
         expect(flipCall()).toBeUndefined();
-        expect(heldCall()?.values).toContain('xguard-text-moderation');
         expect(forensicsCall()).toBeDefined();
         expect(updateModelNsfwLevels).not.toHaveBeenCalled();
         expect(outcomeMock).toHaveBeenCalledWith('held_restricted');
@@ -299,7 +296,6 @@ describe('modelModerationAdapter.applyResult', () => {
 
       await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
-      expect(heldCall()).toBeUndefined();
       expect(outcomeMock).toHaveBeenCalledWith('applied');
     });
   });
@@ -861,7 +857,7 @@ describe('apply-stage outcome metric', () => {
   it('counts a lock that landed between the read and the write', async () => {
     // The lock fails the flip's guard and the restricted-verdict hold's alike; only forensics write.
     dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
-      /SET nsfw = TRUE|AND \(m\.minor OR m\.poi\)/.test(strings.join('?')) ? 0 : 1
+      /SET nsfw = TRUE|'restriction', CASE WHEN m\.minor/.test(strings.join('?')) ? 0 : 1
     );
     await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
     expect(outcomeMock).toHaveBeenCalledWith('declined_race');

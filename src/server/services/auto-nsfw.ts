@@ -62,10 +62,10 @@ export function evaluateAutoNsfw({
 
 /**
  * Writes an {@link evaluateAutoNsfw} result: jsonb merges, never a meta read earlier and written
- * back, which would drop whatever a moderator or a scan set since. The lock and its
- * `systemNsfwLock` marker land only where no nsfw lock exists yet and the model is not minor, POI or
- * SFW-only (as `upsertModel`'s own profanity check); otherwise only the detection is recorded. `updatedAt` is bumped:
- * the model's rating changed.
+ * back, which would drop whatever a moderator or a scan set since. The lock and its `systemNsfwLock`
+ * marker land only where no nsfw lock exists yet and the model is not minor, POI or SFW-only (as
+ * `upsertModel`'s own profanity check); otherwise only the detection is recorded. `updatedAt` is
+ * bumped: the model's rating changed.
  */
 export async function writeAutoNsfw(
   db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },

@@ -15,6 +15,8 @@ export type RestrictedVerdictRow = {
   poi: boolean;
   sfwOnly: boolean;
   nsfw: boolean;
+  /** Private models stay SFW-only: their lead applies when the model is published. */
+  isPrivate: boolean;
   /** An earlier scan had already locked nsfw on this model; Keep lifts that lock. */
   systemLocked: boolean;
   /** The verdict was applied: at once on an SFW-only model (SFW-only cleared), or when the owner

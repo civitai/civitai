@@ -496,6 +496,9 @@ export type ModelMeta = Partial<{
   restrictedNsfwVerdict: RestrictedNsfwVerdict;
   /** Moderator rulings on past restricted-verdict leads, with the values each replaced. Moderator-only. */
   restrictedNsfwVerdictRulings: RestrictedNsfwVerdictRulingRecord[];
+  /** A lead a moderator kept while the model was minor or POI: revived as a held lead when the owner
+   *  clears the flag. Server-owned, moderator-only. */
+  restrictedNsfwVerdictDormant: RestrictedNsfwVerdict;
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

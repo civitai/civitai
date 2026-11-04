@@ -108,6 +108,11 @@ describe('stripMinorHashMeta', () => {
           restriction: 'minor',
         },
         restrictedNsfwVerdictRulings: [],
+        restrictedNsfwVerdictDormant: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00Z',
+          restriction: 'minor',
+        },
       })
     ).toEqual({});
   });

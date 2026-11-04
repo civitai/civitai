@@ -115,12 +115,16 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOri
   ...(await importOriginal<typeof AppealTextHash>()),
   settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
 }));
-const { mockApplyHeldVerdict } = vi.hoisted(() => ({
+const { mockApplyHeldVerdict, mockLeavingPrivate, mockFinishApply } = vi.hoisted(() => ({
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
+  mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
+  mockFinishApply: vi.fn(async (_id: number) => undefined),
 }));
 vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
+  applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
+  finishHeldVerdictApply: mockFinishApply,
 }));
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -1057,15 +1061,50 @@ describe('a held scan verdict', () => {
     expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
   });
 
-  it('is left held while the save keeps the flag (control)', async () => {
-    mockStored({ minor: true });
-    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true });
-    expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
+  it.each(['minor', 'poi'] as const)(
+    'is left held while the save keeps %s (control)',
+    async (flag) => {
+      mockStored({ [flag]: true });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, [flag]: true });
+      expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
+    }
+  );
+
+  it('is revived by a later save while a kept verdict waits on an unrestricted model', async () => {
+    mockStored({
+      meta: {
+        restrictedNsfwVerdictDormant: { source: 'text-scan', at: 'x', restriction: 'minor' },
+      },
+    });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID });
+    expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
   });
 
   it('does not fail the save when applying it fails', async () => {
     mockStored({ poi: true });
     mockApplyHeldVerdict.mockRejectedValueOnce(new Error('boom'));
     await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, poi: false })).resolves.toBeTruthy();
+  });
+});
+
+describe('a held scan verdict on a model leaving Private', () => {
+  it('is applied in the save when a moderator makes a Private model public', async () => {
+    mockStored({ availability: Availability.Private, sfwOnly: true });
+    mockLeavingPrivate.mockResolvedValueOnce(true);
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      availability: Availability.Public,
+    });
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate).toHaveBeenCalledWith(expect.anything(), MODEL_ID);
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('is not applied while the model stays Private (control)', async () => {
+    mockStored({ availability: Availability.Private, sfwOnly: true });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
+    expect(mockLeavingPrivate).not.toHaveBeenCalled();
   });
 });
