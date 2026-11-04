@@ -7,9 +7,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * Who is in Hat Turf, run on a real Postgres through the service's own SQL: Hat Turf is opt-OUT for
- * anyone who has placed one of the event's hats, so the rule lives in a CASE over a jsonb setting and
- * an EXISTS, which a mocked query cannot evaluate.
+ * Who is in Hat Turf, run on a real Postgres through the service's own SQL: only an explicit opt-in
+ * counts. Hat Turf was announced as opt-in only; a short-lived opt-out default (placing a hat put you
+ * in) was reverted, so the fixture keeps hat placers who never chose, to prove they stay out.
  */
 
 const START = new Date('2026-11-01T00:00:00Z');
@@ -102,8 +102,10 @@ beforeEach(async () => {
 const inTurf = async (userId: number) => (await getTurfStock('e', userId)).optedIn;
 
 describe('who is in Hat Turf', () => {
-  it('never chosen, with a hat placed (even one since taken off): in', async () => {
-    expect(await inTurf(NEVER_SET)).toBe(true);
+  // Deliberate: Hat Turf is opt-in only, as announced. Making placing a hat count as joining is a
+  // product decision for the event owner, not a code cleanup.
+  it('placing a hat never opts anyone in: never chosen, with a hat placed, is out', async () => {
+    expect(await inTurf(NEVER_SET)).toBe(false);
   });
 
   it('never chosen for this event, no hat of this event placed: out', async () => {
@@ -118,20 +120,20 @@ describe('who is in Hat Turf', () => {
     expect(await inTurf(OPTED_IN)).toBe(true);
   });
 
-  it('an owner who placed a hat has open images; an owner who opted out does not', async () => {
+  it('only an owner who opted in has open images', async () => {
     const { open } = await getTurfSummaries('e', [101, 102, 103, 104]);
-    expect(open).toEqual({ 101: true, 102: false, 103: true, 104: false });
+    expect(open).toEqual({ 101: false, 102: false, 103: true, 104: false });
   });
 
-  it('turning it off writes an explicit false, which beats a placed hat', async () => {
+  it('turning it on writes an explicit true, and turning it off takes the user out again', async () => {
+    expect((await setTurfOptIn('e', NEVER_SET, true)).changed).toBe(true);
+    expect(await inTurf(NEVER_SET)).toBe(true);
     expect((await setTurfOptIn('e', NEVER_SET, false)).changed).toBe(true);
     expect(await inTurf(NEVER_SET)).toBe(false);
     const { rows } = await pg.query<{ v: unknown }>(
       `SELECT settings -> 'eventTurfOptIn' -> 'e' AS v FROM "User" WHERE id = 1`
     );
     expect(rows[0].v).toBe(false);
-    expect((await setTurfOptIn('e', NEVER_SET, true)).changed).toBe(true);
-    expect(await inTurf(NEVER_SET)).toBe(true);
   });
 });
 
@@ -149,15 +151,19 @@ describe('placing a hat sticker', () => {
       NOW
     );
 
-  it('a placer in by default may place', async () => {
-    await expect(place(NEVER_SET, 101)).rejects.toThrow('passed the checks');
+  it('a placer who opted in may place', async () => {
+    await expect(place(OPTED_IN, 103)).rejects.toThrow('passed the checks');
+  });
+
+  it('a placer who placed hats but never opted in may not', async () => {
+    await expect(place(NEVER_SET, 103)).rejects.toThrow('Turn on "accept team hat stickers"');
   });
 
   it('a placer who opted out may not', async () => {
     await expect(place(OPTED_OUT, 102)).rejects.toThrow('Turn on "accept team hat stickers"');
   });
 
-  it("an owner who opted out doesn't take stickers, even from someone in", async () => {
-    await expect(place(NEVER_SET, 102)).rejects.toThrow("This creator doesn't accept");
+  it("an owner who never opted in doesn't take stickers, even from someone in", async () => {
+    await expect(place(OPTED_IN, 101)).rejects.toThrow("This creator doesn't accept");
   });
 });

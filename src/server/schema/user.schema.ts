@@ -392,9 +392,8 @@ export const userSettingsSchema = z.object({
   // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
   // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
   eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
-  // Per event name: accept team hat stickers (events/turf). Absent means in once the user has placed one
-  // of the event's hats (opt-out). Placing needs it, and only images of owners who have it are turf.
-  // Written only by hatTurf.setOptIn.
+  // Opt-in, per event name: accept team hat stickers (events/turf). Placing needs it, and only images
+  // of owners who have it are turf. Written only by hatTurf.setOptIn.
   eventTurfOptIn: z.record(z.string(), z.boolean()).optional(),
   // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
   // or absent means the default, 'off' means none. Written only by event.setShowcaseHat.

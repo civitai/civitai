@@ -33,20 +33,17 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 
-// The in-or-out choice lives in User.settings, per event name: placing needs in, and only images of owners
-// who are in are turf (see inTurf).
+// The opt-in lives in User.settings, per event name: placing needs it, and only images of owners
+// who have it are turf (see inTurf).
 export const TURF_SETTING = 'eventTurfOptIn';
 
 /**
- * Whether the user aliased `alias` is in Hat Turf for `event`: their explicit choice wins; never
- * chosen, they are in once they have placed any of the event's hats (opt-out, not opt-in).
+ * Whether the user aliased `alias` is in Hat Turf for `event`: only an explicit opt-in counts.
+ * Placing a hat does not opt anyone in; Hat Turf was announced as opt-in only.
  */
 const inTurf = (alias: string, event: string) => {
   const u = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`CASE (${u}.settings -> ${TURF_SETTING} ->> ${event})
-    WHEN 'true' THEN true WHEN 'false' THEN false
-    ELSE EXISTS (SELECT 1 FROM "EventCosmeticPlacement" ecp
-      WHERE ecp."userId" = ${u}.id AND ecp.event = ${event}) END`;
+  return Prisma.sql`COALESCE((${u}.settings -> ${TURF_SETTING} ->> ${event}) = 'true', false)`;
 };
 
 const CONFIG_TTL_MS = 30_000;
