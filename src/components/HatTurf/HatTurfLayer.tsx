@@ -278,7 +278,7 @@ function HatTurfLayerContent({
               <TeamHat color={colorOf(feed.team)} size={hatSize(HAT_DEFAULT_SCALE)} />
             </div>
           )}
-          {draft && (
+          {draft && showHats && (
             <>
               <div
                 className={classes.draft}

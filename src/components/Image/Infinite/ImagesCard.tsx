@@ -425,6 +425,7 @@ function ImageReactions({
         return (
           <div
             className={clsx(cardClasses.footer, classes.actionsFooter)}
+            style={{ ['--footer-height' as string]: `${IMAGES_CARD_FOOTER_HEIGHT}px` }}
             onClick={(e) => {
               // The padding around the buttons must not open the card's image link.
               if (!readonly) {
