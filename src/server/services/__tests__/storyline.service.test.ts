@@ -2119,6 +2119,29 @@ describe('getStoryline: page fields', () => {
     ] as never);
   });
 
+  // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
+  // else is told which chapters were paid for, not even that none were.
+  it("tells only the owner which of the main route's chapters someone paid to add", async () => {
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      sqlOfRaw(strings, values).includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const page = (viewer: { id: number; isModerator?: boolean }) =>
+      getStoryline({ id: 10, viewer, browsingLevel: NsfwLevel.PG });
+
+    const asOwner = await page({ id: OWNER });
+    expect(asOwner.mainPath.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+      const { mainPath } = await page(viewer);
+      expect(mainPath.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of mainPath) expect(chapter).not.toHaveProperty('paid');
+    }
+  });
+
   it('gives counts, roles, the main route with tombstones, and the viewer’s role', async () => {
     getBlockedPairIds.mockResolvedValue([BLOCKED]);
     const page = await getStoryline({
@@ -3894,6 +3917,36 @@ describe('covers and cast', () => {
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
       take: STORYLINE_GRAPH_LIMIT + 1,
     });
+  });
+
+  // As on the page's main route: the owner alone is told which chapters someone paid to add.
+  it("tells only the owner which of the map's chapters someone paid to add", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      composed([strings, ...values]).text.includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const graph = (viewer: { id: number; isModerator?: boolean }) =>
+      getStorylineGraph({ id: 10, viewer, browsingLevel: PG });
+
+    const { chapters: asOwner } = await graph({ id: OWNER });
+    expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: STRANGER }, { id: MODERATOR, isModerator: true }]) {
+      const { chapters } = await graph(viewer);
+      expect(chapters.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+    }
   });
 
   it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
