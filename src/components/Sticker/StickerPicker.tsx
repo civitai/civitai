@@ -19,9 +19,8 @@ import { trpc } from '~/utils/trpc';
  * Opening the picker must not move focus out of the composer. Two things break
  * when it does: the caret is lost, so the sticker lands wherever `focus()` puts
  * it rather than where the author was typing; and a composer validating on blur
- * (`CommentForm` uses `mode: 'onBlur'`) fires "Cannot be empty" the moment the
- * picker is clicked, then keeps showing it — pre-submit, React Hook Form doesn't
- * re-validate on change.
+ * would fire "Cannot be empty" the moment the picker is clicked, then keep showing
+ * it — pre-submit, React Hook Form doesn't re-validate on change.
  */
 const keepComposerFocus = (e: ReactMouseEvent) => e.preventDefault();
 

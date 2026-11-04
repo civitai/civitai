@@ -16,6 +16,8 @@ const OWNER_TABLES = [
   'crucible',
   'storyline',
   'comicChapter',
+  'model3D',
+  'appListing',
 ] as const;
 
 const lookup = (table: (typeof OWNER_TABLES)[number]) => dbMock.dbRead[table].findUnique;
@@ -55,9 +57,25 @@ describe('getThreadEntityOwnerId', () => {
     );
   });
 
+  it('resolves the 3D model owner via userId', async () => {
+    lookup('model3D').mockResolvedValueOnce({ userId: 33 });
+    await expect(getThreadEntityOwnerId({ entityType: 'model3d', entityId: 5 })).resolves.toBe(33);
+  });
+
+  it('resolves the app listing owner by its serialId', async () => {
+    lookup('appListing').mockResolvedValueOnce({ userId: 34 });
+    await expect(getThreadEntityOwnerId({ entityType: 'appListing', entityId: 5 })).resolves.toBe(
+      34
+    );
+    expect(lookup('appListing')).toHaveBeenCalledWith({
+      where: { serialId: 5 },
+      select: { userId: true },
+    });
+  });
+
   it('returns null for entity types we cannot cheaply resolve', async () => {
     await expect(
-      getThreadEntityOwnerId({ entityType: 'model3d', entityId: 1 })
+      getThreadEntityOwnerId({ entityType: 'model3dReview', entityId: 1 })
     ).resolves.toBeNull();
     expect(anyLookupCalled()).toBe(false);
   });

@@ -1509,7 +1509,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Ideogram,
     defaults: {
-      model: { id: 3246186 },
+      model: { id: 3375798 },
       modelLocked: true,
     },
   },
@@ -2463,6 +2463,11 @@ export const supportOverrides: SupportOverride[] = [
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
   // { ecosystemId: ECO.SD35M, supportType: 'training', enabled: false },
+  // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
+  // separately, so this is per base model, never per ecosystem.
+  { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
+  // An API model with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
+  { baseModelId: BM.Ideogram45, supportType: 'generation', modelTypes: ['Checkpoint'] },
 ];
 
 // =============================================================================
@@ -4257,6 +4262,20 @@ export function isModelSupported(
 }
 
 /**
+ * A base model whose generation is switched off by name, whatever the resource type. Narrower than
+ * `isModelSupported`: it reads only explicit disables, so paths that skip the model-type check (a
+ * LoRA attached to a generation) can apply it without refusing types they support by design.
+ */
+export function isBaseModelGenerationDisabled(baseModelName: string): boolean {
+  const baseModel = baseModelByName.get(baseModelName);
+  if (!baseModel) return false;
+  if (baseModel.disabled) return true;
+  return supportOverrides.some(
+    (o) => o.baseModelId === baseModel.id && o.supportType === 'generation' && o.disabled
+  );
+}
+
+/**
  * Check if a base model or ecosystem supports generation for a given model type.
  * Accepts either a base model name (e.g., 'SDXL 1.0') or an ecosystem key (e.g., 'SDXL').
  */
@@ -4657,9 +4676,8 @@ export function getCompatibleBaseModels(
     const modelEcosystem = ecosystemById.get(model.ecosystemId);
     if (!modelEcosystem) continue;
 
-    // Check if this model's ecosystem supports the model type for generation
-    const support = getEcosystemSupport(model.ecosystemId, 'generation');
-    if (!support || support.disabled || !support.modelTypes.includes(modelType)) continue;
+    // Per base model: an override can switch one off without its ecosystem (Ideogram 4.0).
+    if (!isModelSupported(model.id, 'generation', modelType)) continue;
 
     // Get support level
     const supportLevel = getGenerationSupport(ecosystemId, model.ecosystemId, modelType);

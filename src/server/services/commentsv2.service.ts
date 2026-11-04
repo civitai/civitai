@@ -281,6 +281,15 @@ export async function getThreadEntityOwnerId({
       return findUserId(
         dbRead.storyline.findUnique({ where: { id: entityId }, select: { userId: true } })
       );
+    case 'model3d':
+      return findUserId(
+        dbRead.model3D.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    // `entityId` is the serialId. Stays user_id: `ownerOfThreadContent` grants hide/pin on it.
+    case 'appListing':
+      return findUserId(
+        dbRead.appListing.findUnique({ where: { serialId: entityId }, select: { userId: true } })
+      );
     case 'comicChapter': {
       const row = await dbRead.comicChapter.findUnique({
         where: { id: entityId },
@@ -1022,8 +1031,8 @@ export async function getCommentsThreadDetails2({
   entityId,
   entityType,
 }: CommentConnectorInput): Promise<{ id: number; locked: boolean } | null> {
-  // A surface that writes CommentV3 has no thread; its lock is the topic's, and there is no id.
-  if (isV3WriteSurface(entityType)) {
+  // A surface read from CommentV3 takes its lock from the topic, with no thread id (0).
+  if (constants.comments.v3ReadSurfaces.includes(entityType)) {
     const topic = await kyselyRead
       .selectFrom('CommentTopic')
       .select('locked')
@@ -1032,8 +1041,6 @@ export async function getCommentsThreadDetails2({
       .executeTakeFirst();
     return topic ? { id: 0, locked: topic.locked } : null;
   }
-  const viaKysely = await readImageThreadViaKysely(entityType, entityId);
-  if (viaKysely !== undefined) return viaKysely;
   return dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },

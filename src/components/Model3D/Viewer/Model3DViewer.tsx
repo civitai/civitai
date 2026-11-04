@@ -163,7 +163,6 @@ export function Model3DViewer({
     controls: OrbitControls;
     initialCameraPos: THREE.Vector3;
     initialTarget: THREE.Vector3;
-    animationId: number;
     resizeObserver: ResizeObserver;
     studioTexture: THREE.Texture;
   } | null>(null);
@@ -319,7 +318,6 @@ export function Model3DViewer({
       controls,
       initialCameraPos,
       initialTarget,
-      animationId,
       resizeObserver,
       studioTexture,
     };

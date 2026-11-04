@@ -20,6 +20,7 @@ import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
 import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
@@ -30,6 +31,7 @@ import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
+import { trainingCanaryJob } from '~/server/jobs/training-canary';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
@@ -267,6 +269,7 @@ export const jobs: Job[] = [
   linkedAccountReview,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  bluePaidAccessDetection,
   creatorProgramCounterpartyReview,
   creatorProgramPrepayoutReview,
   giftMembershipArming,
@@ -284,6 +287,7 @@ export const jobs: Job[] = [
   collectionGameProcessing,
   sendCollectionNotifications,
   checkProcessingResourceTrainingV2,
+  trainingCanaryJob,
   ...dailyChallengeJobs,
   challengeActivationJob,
   challengeCompletionJob,

@@ -408,6 +408,11 @@ describe('`align="center"` — the one declared opt-out from the shared left edg
     expect(t.measureBox!.contains(t.nav)).toBe(false);
   });
 
+  it('fills the column, so auto margins cannot shrink-wrap it wider than a phone screen', () => {
+    const t = renderLayout(1068, false, 'center');
+    expect(t.measureBox!.getAttribute('style') ?? '').toMatch(/(^|[;\s])width:\s*100%/);
+  });
+
   it('`align="start"` is byte-identical to omitting it (the default stays left-aligned)', () => {
     const explicit = renderLayout(1068, false, 'start');
     expect(explicit.measureBox!.getAttribute('style') ?? '').not.toMatch(/margin/i);

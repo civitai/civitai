@@ -16,7 +16,9 @@ vi.mock('~/server/services/creator-shop-withheld', () => ({
   getWithheldCosmeticIds: vi.fn(async () => new Set()),
 }));
 
-const { resolveShowcaseHatIds, SHOWCASE_SETTING } = await import('~/server/events/showcase-hat');
+const { resolveShowcaseHatIds, SHOWCASE_OFF, SHOWCASE_SETTING } = await import(
+  '~/server/events/showcase-hat'
+);
 
 const EVENT = 'birthday2026';
 const pg = new PGlite();
@@ -57,7 +59,7 @@ beforeEach(async () => {
   await pg.exec(`DELETE FROM "User"; DELETE FROM "UserCosmetic";`);
 });
 
-async function user(id: number, pick?: number | null) {
+async function user(id: number, pick?: number | 'off' | null) {
   const settings = pick === undefined ? {} : { [SHOWCASE_SETTING]: { [EVENT]: pick } };
   await pg.query(`INSERT INTO "User" VALUES ($1, $2)`, [id, JSON.stringify(settings)]);
 }
@@ -127,5 +129,13 @@ describe('resolveShowcaseHatIds', () => {
     await hat(2, CAP);
     await hat(3, DEAR, { placed: true });
     expect(await resolve(1, 2, 3)).toEqual({ 2: CAP, 3: DEAR });
+  });
+
+  it('shows no hat to a player who turned it off, and leaves the rest of the batch alone', async () => {
+    await user(1, SHOWCASE_OFF);
+    await user(2);
+    await hat(1, DEAR, { placed: true });
+    await hat(2, CAP);
+    expect(await resolve(1, 2)).toEqual({ 2: CAP });
   });
 });

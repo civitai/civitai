@@ -256,6 +256,10 @@ export type EventScoring = EventPointsConfig & {
   // Points a team is given outright: they count toward its total, rank and winner from `at`, but
   // never toward any hat's or person's points.
   teamAwards?: readonly TeamAward[];
+  // While the event is playable, a remix submitted to a teammate's hatted image is waived the
+  // owner's remix gallery price, up to this many waived submissions per placer per UTC day. See
+  // team-remix-waiver.ts for who qualifies. Omit it and nobody's price is waived.
+  teamRemixWaiver?: { perPlacerPerDay: number };
 };
 export type TeamAward = { team: string; points: number; at: Date; reason: string };
 
