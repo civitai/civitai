@@ -53,7 +53,8 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
  *   `systemNsfwLock` marker) or a newer scan's lock stands, and then nothing but the lead changes. On a
  *   model still minor or POI the verdict is kept dormant, to come back if the owner clears the flag.
  * - `dismiss`: drops the lead only: the moderator judged the scan wrong, or acted elsewhere. A minor
- *   lead needs a reason. Refused on a model left NSFW and SFW-only, which its owner cannot save.
+ *   lead needs a reason. Refused on a model left NSFW and SFW-only (its owner cannot save it), or NSFW
+ *   and minor or POI.
  * - `rateNsfw`: only while the model is neither minor, POI nor Private, and with a reason on a minor
  *   lead. Unsets sfwOnly, sets nsfw and locks it as the moderator's.
  * Each ruling closes the lead, logs a ModActivity row, and appends a record with the prior values.
@@ -87,8 +88,9 @@ export async function resolveRestrictedNsfwVerdict({
     const restriction = restrictionOf(row, verdict);
     if (ruling === 'dismiss' && restriction === 'minor' && !note)
       throw throwBadRequestError('Say why a minor lead is dismissed, or where it was escalated.');
-    // The owner form refuses to save nsfw with SFW-only, so the lead may not close on that pair.
-    if (ruling === 'dismiss' && row.nsfw && row.sfwOnly)
+    // The owner form refuses to save nsfw with SFW-only, and a minor or POI model is never NSFW, so the
+    // lead may not close on either.
+    if (ruling === 'dismiss' && row.nsfw && (row.sfwOnly || row.minor || row.poi))
       throw throwBadRequestError("Keep or Rate NSFW: the model can't be saved as it is.");
     if (ruling === 'rateNsfw' && (row.minor || row.poi))
       throw throwBadRequestError(
@@ -132,6 +134,8 @@ export async function resolveRestrictedNsfwVerdict({
           lockedProperties: locked,
         };
       }
+      // A minor or POI model ends SFW whatever lock it carries (one whose time can't be read, say).
+      if (row.minor || row.poi) next = { ...next, nsfw: false };
     } else if (ruling === 'rateNsfw') {
       next = {
         nsfw: true,

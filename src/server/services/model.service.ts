@@ -4146,9 +4146,21 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
-          const ownerFlagOverride =
-            applyRaisedRestrictions(locked, data) ?? withRaisedFlags(locked, data);
+          const raisedOverScanLock = applyRaisedRestrictions(locked, data);
+          const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
+          // The owner's flag clears a rating a scan set: the scan's verdict waits for a moderator,
+          // as one held on a model already flagged does, rather than going with the rating.
+          const scanLock = prevMeta?.systemNsfwLock;
+          if (raisedOverScanLock && scanLock && !prevMeta?.restrictedNsfwVerdict)
+            meta = {
+              ...(meta ?? {}),
+              restrictedNsfwVerdict: {
+                source: scanLock.source,
+                at: scanLock.at,
+                restriction: raisedOverScanLock.flags.includes('minor') ? 'minor' : 'poi',
+              },
+            };
         }
         if (
           !isModerator &&

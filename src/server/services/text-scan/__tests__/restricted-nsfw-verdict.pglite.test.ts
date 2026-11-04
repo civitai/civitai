@@ -661,6 +661,33 @@ describe('a Private model, which must stay SFW-only', () => {
   });
 });
 
+describe('a stuck minor or POI model whose scan lock time cannot be read', () => {
+  it.each(['minor', 'poi'] as const)(
+    '%s: Keep still ends it SFW; Dismiss is refused',
+    async (flag) => {
+      await seed({
+        nsfw: true,
+        [flag]: true,
+        sfwOnly: false,
+        locked: ['nsfw'],
+        meta: { systemNsfwLock: { source: 'text-scan', at: 'bad' }, ...lead(flag) },
+      });
+      await expect(
+        resolveRestrictedNsfwVerdict({
+          modelId: MODEL,
+          ruling: 'dismiss',
+          reason: 'x',
+          userId: MODERATOR,
+        })
+      ).rejects.toThrow(/can't be saved as it is/);
+      await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
+      const after = await row();
+      expect(after.nsfw).toBe(false);
+      expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
+    }
+  );
+});
+
 describe('Dismiss on a model left NSFW and SFW-only', () => {
   it('is refused; Keep and Rate NSFW still resolve it', async () => {
     for (const ruling of ['keep', 'rateNsfw'] as const) {

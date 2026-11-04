@@ -48,12 +48,14 @@ Notes on the tabs:
     leaves the rating alone. It applies, as on any other model and recorded on the lead, when an owner's save
     clears minor and real person, or when the model leaves Private (publishing it, or a moderator changing its
     availability), in the same write. On a public SFW-only model the scan applies the rating at once, clearing
-    SFW-only, and records the lead with what it replaced.
+    SFW-only, and records the lead with what it replaced. An owner who ticks minor or real person over a rating the scan set
+    clears that rating, and the same save records the scan's verdict as a lead.
   - Ruled under `modelFlags.detections.decide` through `model/resolve-restricted-nsfw-verdict`: **Keep owner's
     rating** (nsfw off, SFW-only restored where the scan cleared it, and the scan's own lock for the lead
     lifted; a moderator's or a later scan's lock stands; on a model still minor or a real person the verdict is
     kept, server-owned, and applies if the owner later clears the flag), **Dismiss** (a minor lead needs a
-    reason; refused while the model is NSFW and SFW-only, which its owner cannot save) or **Rate NSFW** (refused
+    reason; refused while the model is NSFW and SFW-only, which its owner cannot save, or NSFW and minor or a
+    real person) or **Rate NSFW** (refused
     while the model is minor, a real person or Private; a lead held as minor needs a reason).
   - Each ruling, and each rating the scan applies itself, logs a ModActivity row and keeps the values it
     replaced in `meta.restrictedNsfwVerdictRulings`. The block shows how many leads wait when it lists fewer.
