@@ -31,6 +31,13 @@ function keyOwnedBy(userId: number, tokenScope: number = TokenScope.UserRead) {
   } as never);
 }
 
+// Only this role is granted by a moderator-app page, so each other row must earn its refusal.
+function pageAccessFor(role: string) {
+  dbMock.dbWrite.appPageAccess.findFirst.mockImplementation((async (args: {
+    where: { roles: { hasSome: string[] } };
+  }) => (args.where.roles.hasSome.includes(role) ? { path: '/' } : null)) as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   installFakeCacheRedis();
@@ -70,7 +77,7 @@ describe('a bearer key owned by a system account', () => {
     'with every read scope resolves while the account holds %s',
     async (_, held) => {
       keyOwnedBy(USER_ID, TokenScopePresets.ReadOnly);
-      dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue({ path: '/' } as never);
+      pageAccessFor('dispute-agent');
       getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
       await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
         user: { id: USER_ID },
@@ -81,16 +88,15 @@ describe('a bearer key owned by a system account', () => {
   describe('with a write scope', () => {
     beforeEach(() => {
       keyOwnedBy(USER_ID, TokenScope.UserRead | TokenScope.AIServicesWrite);
-      dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue({ path: '/' } as never);
+      pageAccessFor('dispute-agent');
     });
 
     it('resolves while the account holds no moderator access', async () => {
-      dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue(null);
       getSessionUserById.mockResolvedValue({
         id: USER_ID,
         meta: SYSTEM_META,
         isModerator: false,
-        roles: ['dispute-agent'],
+        roles: ['some-other-role'],
       });
       await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
         user: { id: USER_ID },
