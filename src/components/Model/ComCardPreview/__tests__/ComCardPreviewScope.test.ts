@@ -43,6 +43,7 @@ function setup() {
   function Page({ previewing, scoped }: { previewing: boolean; scoped: boolean }) {
     seen.hero = useComCardBrowsingLevel(previewing);
     const body = createElement(Body);
+    // eslint-disable-next-line react/no-children-prop -- ComCardPreviewScope requires children in its props type
     return scoped ? createElement(ComCardPreviewScope, { previewing, children: body }) : body;
   }
   function Body() {
