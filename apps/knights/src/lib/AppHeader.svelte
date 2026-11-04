@@ -200,7 +200,8 @@
               type="button"
               class="restart"
               onclick={() => {
-                close();
+                // Focus goes back to the trigger first: the dialog returns focus to whatever opened it, and this item unmounts.
+                close(true);
                 restarting = true;
               }}
             >

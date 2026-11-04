@@ -146,6 +146,10 @@ export function createItemBuffer({
   };
 }
 
+/** An empty buffer asks only for the ready layer: a full batch is picked one item at a time, and the first swap waits on it. */
+export const refillCount = (size: number): number =>
+  size === 0 ? READY_TARGET : Math.max(1, BUFFER_TARGET - size);
+
 type Outcome = { type: string; status?: number; data?: Record<string, unknown> };
 export type VoteOutcome = { ok: true } | { ok: false; message: string; resync: boolean };
 

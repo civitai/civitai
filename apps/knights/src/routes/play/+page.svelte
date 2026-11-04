@@ -24,6 +24,7 @@
     createItemBuffer,
     createVoteTracker,
     describeOutcome,
+    refillCount,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -294,7 +295,7 @@
       const after = [...tracker.excluded(shown), ...buffer.tokens()]
         .slice(-MAX_EXCLUDED)
         .map((token) => `after=${encodeURIComponent(token)}`);
-      const count = Math.max(1, buffer.missing());
+      const count = refillCount(buffer.size);
       const response = await fetch(`/play/next?count=${count}&${after.join('&')}`, {
         headers: { accept: 'application/json' },
       });

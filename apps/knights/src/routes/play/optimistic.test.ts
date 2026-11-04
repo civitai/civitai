@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUFFER_TARGET,
+  refillCount,
   READY_TARGET,
   REFILL_AT,
   MAX_EXCLUDED,
@@ -258,5 +259,16 @@ describe('createItemBuffer', () => {
     buffer.clear();
     expect(buffer.size).toBe(0);
     expect(buffer.readyCount).toBe(0);
+  });
+});
+
+describe('refillCount', () => {
+  it('asks for only the ready layer while the buffer is empty, so the first swap is not held behind a long request', () => {
+    expect(refillCount(0)).toBe(3);
+  });
+
+  it('tops up to the full buffer otherwise, always asking for at least one', () => {
+    expect(refillCount(4)).toBe(6);
+    expect(refillCount(10)).toBe(1);
   });
 });
