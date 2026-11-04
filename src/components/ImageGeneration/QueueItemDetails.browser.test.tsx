@@ -49,4 +49,42 @@ describe('QueueItemDetails', () => {
     await expect.element(page.getByText('Seed')).toBeInTheDocument();
     await expect.element(page.getByRole('tooltip')).not.toBeInTheDocument();
   });
+
+  describe('when the image info popover already lists the generation settings', () => {
+    const params = {
+      workflow: 'txt2img',
+      output_format: 'jpeg',
+      ecosystem: 'Krea2',
+      quantity: 1,
+      cfgScale: 1,
+      steps: 8,
+      seed: 1712037009,
+      sampler: 'Euler',
+    };
+
+    test('it drops what the image info repeats and keeps the rest', async () => {
+      layout = 'desktop';
+      renderWithProviders(<QueueItemDetails params={params} omitImageInfoParams />);
+      await page.getByRole('button', { name: 'Details' }).click();
+
+      await expect.element(page.getByText('Workflow')).toBeInTheDocument();
+      await expect.element(page.getByText('Ecosystem')).toBeInTheDocument();
+      await expect.element(page.getByText('Quantity')).toBeInTheDocument();
+      await expect.element(page.getByText('Seed')).not.toBeInTheDocument();
+      await expect.element(page.getByText('Steps')).not.toBeInTheDocument();
+      await expect.element(page.getByText('Cfg scale')).not.toBeInTheDocument();
+      await expect.element(page.getByText('Sampler')).not.toBeInTheDocument();
+    });
+
+    test('without the image info (pending, failed, blocked) it lists everything', async () => {
+      layout = 'desktop';
+      renderWithProviders(<QueueItemDetails params={params} />);
+      await page.getByRole('button', { name: 'Details' }).click();
+
+      await expect.element(page.getByText('Seed')).toBeInTheDocument();
+      await expect.element(page.getByText('Steps')).toBeInTheDocument();
+      await expect.element(page.getByText('Cfg scale')).toBeInTheDocument();
+      await expect.element(page.getByText('Workflow')).toBeInTheDocument();
+    });
+  });
 });

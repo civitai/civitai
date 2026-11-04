@@ -238,6 +238,9 @@ export function QueueItem({
   };
 
   const { prompt, ...details } = params as { prompt: string };
+  // Mirrors when GeneratedOutputWrapper shows the image's own info icon.
+  const hasImageInfo =
+    !compact && allImages.some((x) => x.available && !x.blockedReason && !x.hideDetails);
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel = canceled
@@ -429,7 +432,9 @@ export function QueueItem({
                   </LegacyActionIcon>
                 </ButtonTooltip>
               )}
-              {!hideDetails && <QueueItemDetails params={details} />}
+              {!hideDetails && (
+                <QueueItemDetails params={details} omitImageInfoParams={hasImageInfo} />
+              )}
               <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
             </div>
           </div>
@@ -520,9 +525,33 @@ export function QueueItem({
   );
 }
 
+// What the image's own info popover already lists.
+const imageInfoParamKeys = [
+  'prompt',
+  'negativePrompt',
+  'cfgScale',
+  'steps',
+  'seed',
+  'sampler',
+  'scheduler',
+  'clipSkip',
+];
+
 /** The card's parameters: a popover on desktop, a sheet on a phone. */
-export function QueueItemDetails({ params }: { params: Record<string, unknown> }) {
+export function QueueItemDetails({
+  params,
+  omitImageInfoParams = false,
+}: {
+  params: Record<string, unknown>;
+  /** Hide what the image's info popover shows, so the two don't repeat each other. */
+  omitImageInfoParams?: boolean;
+}) {
   const [opened, setOpened] = useState(false);
+  const shown = omitImageInfoParams
+    ? Object.fromEntries(
+        Object.entries(params).filter(([key]) => !imageInfoParamKeys.includes(key))
+      )
+    : params;
 
   return (
     <PopoverOrSheet
@@ -545,7 +574,7 @@ export function QueueItemDetails({ params }: { params: Record<string, unknown> }
         </ButtonTooltip>
       }
     >
-      <GenerationDetailsTable params={params} labelWidth={150} />
+      <GenerationDetailsTable params={shown} labelWidth={150} />
     </PopoverOrSheet>
   );
 }
