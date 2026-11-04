@@ -39,8 +39,10 @@ export function ShowcaseGrid({
     resize.observe(grid);
     for (const child of grid.children) resize.observe(child);
     const mutation = new MutationObserver((records) => {
-      for (const record of records)
+      for (const record of records) {
         for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node);
+        for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node);
+      }
       update();
     });
     mutation.observe(grid, { childList: true });
