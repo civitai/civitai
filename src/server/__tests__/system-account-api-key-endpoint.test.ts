@@ -317,6 +317,14 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
   });
 
+  it('lists the grantable scopes when it refuses one, and Full is not among them', async () => {
+    const { status, body } = await call({ userId: SYSTEM_ID, scopes: ['Nope'] });
+    expect(status).toBe(400);
+    const message = JSON.stringify(body.error);
+    expect(message).toContain('AIServicesWrite');
+    expect(message).not.toMatch(/\bFull\b/);
+  });
+
   it('trims the key name, so a padded name rotates the same key', async () => {
     await call({ userId: SYSTEM_ID, name: 'ops' });
     const { body } = await call({ userId: SYSTEM_ID, name: '  ops  ' });
