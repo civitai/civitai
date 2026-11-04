@@ -64,6 +64,18 @@ describe('nextRankRequirements', () => {
     );
   });
 
+  it('says reached when the count alone clears the bar, as the met flag does', () => {
+    const counted = {
+      ...status,
+      nextRank: { ...status.nextRank, minDaysPlayed: 50, daysPlayed: 60 },
+    };
+    expect(nextRankRequirements(counted, []).at(-1)).toEqual({
+      key: 'days',
+      text: 'At least 50 days played · reached',
+      met: true,
+    });
+  });
+
   it('is empty at the top of the ladder', () => {
     expect(nextRankRequirements({ ...status, nextRank: null }, [])).toEqual([]);
   });

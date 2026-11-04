@@ -94,7 +94,11 @@
     </div>
     {#if nextDays}
       <p class="days">
-        Also at least {nextDays} days played{next.daysMet ? ' (reached)' : ` (you have ${next.daysPlayed})`}.
+        Also at least {nextDays} days played{next.daysMet
+          ? ' (reached)'
+          : next.daysPlayed === undefined
+            ? ''
+            : ` (you have ${next.daysPlayed})`}.
       </p>
     {/if}
   </div>
