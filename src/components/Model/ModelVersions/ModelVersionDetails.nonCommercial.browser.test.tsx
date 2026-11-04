@@ -178,6 +178,7 @@ const downloadButton = () =>
 beforeEach(() => {
   mocks.user = null;
   mocks.access = [];
+  mocks.flags = { imageGeneration: true };
 });
 
 describe('ModelVersionDetails — non-commercial base hides price and fee', () => {
@@ -187,6 +188,10 @@ describe('ModelVersionDetails — non-commercial base hides price and fee', () =
     expect(text()).toContain(LABEL);
     expect(text()).toContain('licensed for non-commercial use only');
     expect(text()).not.toMatch(/20[,.]?000|20k|20K/);
+    expect(text()).not.toMatch(/(?<!\d)5k/i);
+    expect(
+      document.querySelector('[data-testid="not-commercially-available-generate"]')
+    ).toBeTruthy();
     const btn = downloadButton();
     expect(btn).toBeTruthy();
     expect(
@@ -216,6 +221,7 @@ describe('ModelVersionDetails — non-commercial base hides price and fee', () =
     await expect.element(page.getByText('Base Model', { exact: true })).toBeInTheDocument();
     expect(text()).not.toContain(LABEL);
     expect(downloadButton()?.getAttribute('href')).toBeTruthy();
+    expect(downloadButton()?.hasAttribute('data-disabled')).toBe(false);
   });
 
   test('commercial control: fee and price still show', async () => {
@@ -223,5 +229,6 @@ describe('ModelVersionDetails — non-commercial base hides price and fee', () =
     await expect.element(page.getByText('Generation License Fee')).toBeInTheDocument();
     expect(text()).not.toContain(LABEL);
     expect(text()).toMatch(/20[,.]?000|20k|20K/);
+    expect(text()).toMatch(/(?<!\d)5k/i);
   });
 });

@@ -1070,12 +1070,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                       )}
                     </div>
                   ) : null}
-                  {canGenerate && isNonCommercial && generationRequiresPurchase && (
-                    <Text size="xs" c="dimmed" data-testid="not-commercially-available-generate">
-                      {NOT_COMMERCIALLY_AVAILABLE_LABEL}.{' '}
-                      {notCommerciallyAvailableMessage(version.baseModel)}
-                    </Text>
-                  )}
+                  {canGenerate &&
+                    !isLoadingAccess &&
+                    isNonCommercial &&
+                    generationRequiresPurchase && (
+                      <Text size="xs" c="dimmed" data-testid="not-commercially-available-generate">
+                        {NOT_COMMERCIALLY_AVAILABLE_LABEL}.{' '}
+                        {notCommerciallyAvailableMessage(version.baseModel)}
+                      </Text>
+                    )}
                 </Stack>
               </Card>
               {/* Component-only model message */}
