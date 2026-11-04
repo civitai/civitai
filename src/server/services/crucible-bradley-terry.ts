@@ -115,8 +115,9 @@ export function tallyJudgeVotes(votes: JudgeVote[], anchors: JudgeAnchors): Pair
 
 /**
  * When the fit, not Elo, ranks a crucible (display and prizes): crucibles starting on or after this
- * date. Null ranks none. Floor: anchor recording (#7748) went live in prod at 2026-11-04T21:25Z,
- * and a crucible starting before then has anchorless votes, so it must finish on Elo.
+ * date. Null ranks none. Floor: anchor recording (#7748, shipped in 5.1.435) was live in prod by
+ * 2026-11-04T21:25Z (5.1.436 live); a crucible starting before then has anchorless votes, so it
+ * must finish on Elo.
  */
 export const BRADLEY_TERRY_RANKING_FROM: Date | null = new Date('2026-11-06T00:00:00Z');
 
