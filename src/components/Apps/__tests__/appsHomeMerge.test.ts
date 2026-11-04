@@ -118,7 +118,8 @@ describe('mergeHomeApps', () => {
       expect.objectContaining({
         key: 'recent:neon-sketch',
         name: 'Neon Sketch',
-        launchHref: '/apps/run/neon-sketch',
+        // The home stamps its launch origin on an in-site run link (`?from=home`)…
+        launchHref: '/apps/run/neon-sketch?from=home',
         external: false,
         iconUrl: null,
         iconFromServer: false,
@@ -128,6 +129,7 @@ describe('mergeHomeApps', () => {
       expect.objectContaining({
         key: 'recent:ext-notes',
         name: 'Ext Notes',
+        // …and never on an off-site URL.
         launchHref: 'https://notes.example.org/',
         external: true,
         iconFromServer: false,
@@ -203,5 +205,150 @@ describe('recents for the home are read per ACCOUNT, and a bad store reads as em
     expect(
       mergeHomeApps({ server: [FORGE], recents, canOpenPage: true }).map((t) => t.key)
     ).toEqual(['listing:apl_forge']);
+  });
+});
+
+// ── "Remove from My apps" ────────────────────────────────────────────────────────
+// The re-appear rule: shown ⇔ lastUsed > hiddenAt, where lastUsed is the LATER of the server
+// row's `lastUsedAt` and this browser's recents `openedAt`. Every instant below is distinct
+// from every other, so no assertion can pass by two fixtures coinciding.
+const T_SERVER_OLD = new Date('2026-10-03T04:05:06.000Z'); // server use, BEFORE the hide
+const T_HIDE = '2026-10-10T11:22:33.000Z';
+const T_SERVER_NEW = new Date('2026-10-14T07:08:09.000Z'); // server use, AFTER the hide
+const T_OPEN_OLD = Date.parse('2026-10-06T16:17:18.000Z'); // recents open, BEFORE the hide
+const T_OPEN_NEW = Date.parse('2026-10-12T19:20:21.000Z'); // recents open, AFTER the hide
+
+const withOpenedAt = (r: RecentApp, openedAt: number): RecentApp => ({ ...r, openedAt });
+
+describe('mergeHomeApps — hidden apps (the single re-appear predicate)', () => {
+  const forgeOld = { ...FORGE, lastUsedAt: T_SERVER_OLD };
+  const forgeNew = { ...FORGE, lastUsedAt: T_SERVER_NEW };
+
+  it('🔴 a hidden server app with no later use is excluded; its neighbours stay', () => {
+    const tiles = mergeHomeApps({
+      server: [forgeOld, TAGGER],
+      recents: [],
+      canOpenPage: true,
+      hidden: { 'pixel-forge': T_HIDE },
+    });
+    expect(tiles.map((t) => t.slug)).toEqual(['tag-wizard']);
+  });
+
+  it('control: with no hide the same row is shown', () => {
+    expect(
+      mergeHomeApps({ server: [forgeOld], recents: [], canOpenPage: true }).map((t) => t.slug)
+    ).toEqual(['pixel-forge']);
+  });
+
+  it('🔴 shown again when the SERVER lastUsedAt is after the hide', () => {
+    const tiles = mergeHomeApps({
+      server: [forgeNew],
+      recents: [],
+      canOpenPage: true,
+      hidden: { 'pixel-forge': T_HIDE },
+    });
+    expect(tiles.map((t) => t.slug)).toEqual(['pixel-forge']);
+  });
+
+  it('🔴 shown again when ONLY the client recents openedAt is after the hide (server row older)', () => {
+    const tiles = mergeHomeApps({
+      server: [forgeOld],
+      recents: [withOpenedAt(recentOnsite('pixel-forge', 'ab_forge', 'Pixel Forge'), T_OPEN_NEW)],
+      canOpenPage: true,
+      hidden: { 'pixel-forge': T_HIDE },
+    });
+    expect(tiles.map((t) => [t.slug, t.source])).toEqual([['pixel-forge', 'both']]);
+  });
+
+  it('🔴 a recents-ONLY app (no server row) comes back on an open after the hide', () => {
+    const tiles = mergeHomeApps({
+      server: [],
+      recents: [withOpenedAt(recentOnsite('neon-sketch', 'ab_neon', 'Neon Sketch'), T_OPEN_NEW)],
+      canOpenPage: true,
+      hidden: { 'neon-sketch': T_HIDE },
+    });
+    expect(tiles.map((t) => [t.slug, t.source])).toEqual([['neon-sketch', 'recent']]);
+  });
+
+  it('🔴 still hidden when BOTH the server use and the recents open are before the hide', () => {
+    const tiles = mergeHomeApps({
+      server: [forgeOld, TAGGER],
+      recents: [
+        withOpenedAt(recentOnsite('pixel-forge', 'ab_forge', 'Pixel Forge'), T_OPEN_OLD),
+        withOpenedAt(recentOnsite('neon-sketch', 'ab_neon', 'Neon Sketch'), T_OPEN_OLD),
+      ],
+      canOpenPage: true,
+      hidden: { 'pixel-forge': T_HIDE, 'neon-sketch': T_HIDE },
+    });
+    // Neither the matched row (recents claimed it, so the server pass must NOT re-add it)
+    // nor the recents-only entry renders.
+    expect(tiles.map((t) => t.slug)).toEqual(['tag-wizard']);
+  });
+
+  it('a recents entry with NO openedAt (written before the field) counts as no use', () => {
+    const tiles = mergeHomeApps({
+      server: [],
+      recents: [recentOnsite('neon-sketch', 'ab_neon', 'Neon Sketch')],
+      canOpenPage: true,
+      hidden: { 'neon-sketch': T_HIDE },
+    });
+    expect(tiles).toEqual([]);
+  });
+
+  it('🔴 the boundary: a use at EXACTLY the hide time keeps it hidden; 1 ms later shows it', () => {
+    const at = (ms: number) =>
+      mergeHomeApps({
+        server: [{ ...FORGE, lastUsedAt: new Date(ms) }],
+        recents: [],
+        canOpenPage: true,
+        hidden: { 'pixel-forge': T_HIDE },
+      }).map((t) => t.slug);
+    expect(at(Date.parse(T_HIDE))).toEqual([]);
+    expect(at(Date.parse(T_HIDE) + 1)).toEqual(['pixel-forge']);
+  });
+
+  it.each([
+    ['not a date', 'yesterday-ish'],
+    ['a number', 1760095353000],
+    ['null', null],
+    ['an object', { at: T_HIDE }],
+    ['an empty string', ''],
+  ])('a garbage hiddenAt (%s) is ignored — the app shows', (_label, garbage) => {
+    const tiles = mergeHomeApps({
+      server: [forgeOld],
+      recents: [],
+      canOpenPage: true,
+      hidden: { 'pixel-forge': garbage },
+    });
+    expect(tiles.map((t) => t.slug)).toEqual(['pixel-forge']);
+  });
+});
+
+describe('mergeHomeApps — launch origin', () => {
+  it('🔴 an in-site run link carries ?from=home, preserving an existing query', () => {
+    const tiles = mergeHomeApps({
+      server: [
+        FORGE,
+        { ...TAGGER, launchHref: '/apps/run/tag-wizard?sl=asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A' },
+      ],
+      recents: [],
+      canOpenPage: true,
+    });
+    expect(tiles.map((t) => t.launchHref)).toEqual([
+      '/apps/run/pixel-forge?from=home',
+      '/apps/run/tag-wizard?sl=asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A&from=home',
+    ]);
+  });
+
+  it('an off-site URL and a store page are left alone', () => {
+    const tiles = mergeHomeApps({
+      server: [LAB, { ...FORGE, launchHref: '/apps/store-preview/pixel-forge' }],
+      recents: [],
+      canOpenPage: true,
+    });
+    expect(tiles.map((t) => t.launchHref)).toEqual([
+      'https://promptlab.example.org/app',
+      '/apps/store-preview/pixel-forge',
+    ]);
   });
 });

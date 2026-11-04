@@ -3,9 +3,10 @@ import {
   Anchor,
   Avatar,
   Button,
-  Card,
+  CloseButton,
   Group,
   Paper,
+  SimpleGrid,
   Skeleton,
   Stack,
   Text,
@@ -17,11 +18,12 @@ import {
   IconDotsVertical,
   IconExternalLink,
   IconEye,
+  IconEyeOff,
   IconShieldLock,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { chromeRecentAppIconSrc } from '~/components/AppBlocks/chromeRecentAppIconSrc';
 import { useChromeListingDetail } from '~/components/AppBlocks/useChromeListingDetail';
@@ -44,23 +46,33 @@ import {
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { canAccessAppsActivity } from '~/shared/utils/app-blocks-access';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
  * `/apps` — the signed-in viewer's app HOME ("My apps"): a launcher grid of the apps they
- * have — the server-derived list (`appListings.listMyApps`) merged with this browser's
- * "Recently opened" store for the current account (`mergeHomeApps`, which owns the order and
- * the dedupe). The store is `/apps/store`.
+ * have, drawn like a phone home screen (a large rounded icon, a one-line name under it). The
+ * list is the server-derived apps (`appListings.listMyApps`) merged with this browser's
+ * "Recently opened" store for the current account (`mergeHomeApps`, which owns the order,
+ * the dedupe and the "Remove from My apps" rule). The store is `/apps/store`.
  *
  * The page (`pages/apps/index.tsx`) owns the gate: it renders this body only for a
  * signed-in viewer the store admits, so nothing here re-checks store access.
  */
 
-/** Minimum tile width; the grid adds columns as width allows and drops to one on a phone. */
-export const APPS_HOME_TILE_MIN_WIDTH = 220;
+/**
+ * Columns per breakpoint, so a tile stays icon-sized rather than stretching: 4 on a phone, up
+ * to 8 on a wide screen. Each column is `minmax(0, 1fr)`, and the name truncates, so nothing
+ * can push the grid wider than its container (no horizontal scroll at 390px).
+ */
+export const APPS_HOME_GRID_COLS = { base: 4, xs: 5, sm: 6, md: 7, lg: 8 } as const;
 /** Skeleton tiles shown while the list loads. */
 const APPS_HOME_SKELETON_TILES = 8;
-const APPS_HOME_ICON_PX = 56;
+export const APPS_HOME_ICON_PX = 60;
+/** The rounded-square app icon's corner radius (≈ 22% of the side, like a launcher icon). */
+const APPS_HOME_ICON_RADIUS = 14;
+/** How long the "Removed … Undo" bar stays up. */
+const APPS_HOME_UNDO_MS = 8000;
 
 /** The deep link to the viewer's permissions for their apps. */
 export const APPS_HOME_PERMISSIONS_HREF = {
@@ -70,23 +82,21 @@ export const APPS_HOME_PERMISSIONS_HREF = {
 
 function TileGrid({ children, testId }: { children: ReactNode; testId: string }) {
   return (
-    <div
+    <SimpleGrid
       data-testid={testId}
-      style={{
-        display: 'grid',
-        gap: 16,
-        // `min(100%, …)` so a phone narrower than one tile gets one full-width column
-        // instead of a clipped one (the `AppsCardGrid` lesson).
-        gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${APPS_HOME_TILE_MIN_WIDTH}px), 1fr))`,
-      }}
+      cols={APPS_HOME_GRID_COLS}
+      spacing={{ base: 'xs', sm: 'md' }}
+      verticalSpacing="lg"
     >
       {children}
-    </div>
+    </SimpleGrid>
   );
 }
 
 type IconProps = { app: Pick<AppsHomeTileModel, 'name' | 'slug' | 'category'>; src: string | null };
 
+/** The app icon — the same seeded letter avatar the store card and detail page use when an
+ *  app has no icon (`listingPlaceholderGradient` + `appInitial`). */
 function AppIcon({ app, src }: IconProps) {
   return (
     <Avatar
@@ -95,11 +105,10 @@ function AppIcon({ app, src }: IconProps) {
       // The resolved source, readable even after a failed image load swaps in the monogram.
       data-icon-src={src ?? ''}
       alt=""
-      radius="md"
+      radius={APPS_HOME_ICON_RADIUS}
       size={APPS_HOME_ICON_PX}
       style={{ flexShrink: 0 }}
       styles={{
-        // Same seeded monogram the store card uses for a missing icon.
         placeholder: {
           background: listingPlaceholderGradient({
             slug: app.slug,
@@ -108,6 +117,7 @@ function AppIcon({ app, src }: IconProps) {
           }),
           color: 'var(--mantine-color-white)',
           fontWeight: 700,
+          fontSize: 24,
         },
       }}
     >
@@ -130,103 +140,125 @@ export function AppsHomeTile({
   app,
   canManagePermissions,
   onLaunchExternal,
+  onRemove,
 }: {
   app: AppsHomeTileModel;
   canManagePermissions: boolean;
   /** Records an off-site launch — following the link leaves the SPA, so this is the only chance. */
   onLaunchExternal?: (recent: RecentApp) => void;
+  /** "Remove from My apps". */
+  onRemove?: (app: AppsHomeTileModel) => void;
 }) {
   // The primary click LAUNCHES: an in-site link for a page app, a new tab for an off-site
-  // one. The menu is a sibling of the link, never inside it, so the tile nests no controls.
+  // one. The ⋮ menu is a sibling of the link, never inside it, so the tile nests no controls.
+  // The name is one line, truncated; the full name is the link's `title` (hover) and is in
+  // its accessible name.
   const launchBody = (
-    <Group gap="sm" wrap="nowrap">
-      {app.iconFromServer ? <AppIcon app={app} src={app.iconUrl} /> : <LiveAppIcon app={app} />}
-      <Stack gap={2} style={{ minWidth: 0 }}>
-        <Text fw={700} lineClamp={1}>
-          {app.name}
-        </Text>
+    <>
+      <div style={{ position: 'relative' }}>
+        {app.iconFromServer ? <AppIcon app={app} src={app.iconUrl} /> : <LiveAppIcon app={app} />}
         {app.external && (
-          <Group gap={4} wrap="nowrap">
+          <span
+            aria-hidden
+            data-testid="apps-home-tile-external"
+            className="absolute -bottom-1 -right-1 flex size-5 items-center justify-center rounded-full border border-solid border-gray-3 bg-white text-gray-7 dark:border-dark-4 dark:bg-dark-6 dark:text-dark-0"
+          >
             <IconExternalLink size={12} />
-            <Text size="xs" c="dimmed">
-              Opens on its own site
-            </Text>
-          </Group>
+          </span>
         )}
-      </Stack>
-    </Group>
+      </div>
+      <Text
+        size="xs"
+        fw={500}
+        ta="center"
+        truncate="end"
+        w="100%"
+        data-testid="apps-home-tile-name"
+      >
+        {app.name}
+      </Text>
+    </>
   );
-  const launchStyle = { flex: 1, minWidth: 0 };
+  const launchClass =
+    'flex w-full min-w-0 flex-col items-center gap-1.5 rounded-lg px-1 py-1.5 hover:bg-gray-0 dark:hover:bg-dark-6';
   return (
-    <Card
-      padding="sm"
-      radius={0}
-      className="rounded-md"
-      data-testid="apps-home-tile"
-      data-source={app.source}
-    >
-      <Group gap="sm" wrap="nowrap" align="center">
-        {app.external ? (
-          <Anchor
-            href={app.launchHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            underline="never"
-            c="inherit"
-            aria-label={`Open ${app.name} (opens in a new tab)`}
-            data-testid="apps-home-tile-launch"
-            onClick={() => onLaunchExternal?.(app.recent)}
-            style={launchStyle}
+    <div data-testid="apps-home-tile" data-source={app.source} className="group relative min-w-0">
+      {app.external ? (
+        <Anchor
+          href={app.launchHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          underline="never"
+          c="inherit"
+          title={app.name}
+          aria-label={`Open ${app.name} (opens in a new tab)`}
+          data-testid="apps-home-tile-launch"
+          onClick={() => onLaunchExternal?.(app.recent)}
+          className={launchClass}
+        >
+          {launchBody}
+        </Anchor>
+      ) : (
+        <Anchor
+          component={Link}
+          href={app.launchHref}
+          underline="never"
+          c="inherit"
+          title={app.name}
+          aria-label={`Open ${app.name}`}
+          data-testid="apps-home-tile-launch"
+          className={launchClass}
+        >
+          {launchBody}
+        </Anchor>
+      )}
+      <Menu position="bottom-end" withinPortal>
+        <Menu.Target>
+          <ActionIcon
+            variant="default"
+            radius="xl"
+            size="sm"
+            aria-label={`More options for ${app.name}`}
+            data-testid="apps-home-tile-menu"
+            // Revealed on hover and on keyboard focus with a fine pointer; ALWAYS shown on a
+            // touch screen (no hover there), and while its menu is open. It stays in the tab
+            // order throughout, so a keyboard user reaches it right after the launch link.
+            className="absolute right-0 top-0 opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 data-[expanded=true]:opacity-100 [@media(hover:none)]:opacity-100"
           >
-            {launchBody}
-          </Anchor>
-        ) : (
-          <Anchor
-            component={Link}
-            href={app.launchHref}
-            underline="never"
-            c="inherit"
-            aria-label={`Open ${app.name}`}
-            data-testid="apps-home-tile-launch"
-            style={launchStyle}
-          >
-            {launchBody}
-          </Anchor>
-        )}
-        <Menu position="bottom-end" withinPortal>
-          <Menu.Target>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              aria-label={`More options for ${app.name}`}
-              data-testid="apps-home-tile-menu"
-            >
-              <IconDotsVertical size={16} />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            {canManagePermissions && (
-              <Menu.Item
-                component={Link}
-                href={APPS_HOME_PERMISSIONS_HREF}
-                leftSection={<IconShieldLock size={14} />}
-                data-testid="apps-home-tile-permissions"
-              >
-                Manage permissions
-              </Menu.Item>
-            )}
+            <IconDotsVertical size={14} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {canManagePermissions && (
             <Menu.Item
               component={Link}
-              href={getListingDetailHref(app.slug)}
-              leftSection={<IconEye size={14} />}
-              data-testid="apps-home-tile-store"
+              href={APPS_HOME_PERMISSIONS_HREF}
+              leftSection={<IconShieldLock size={14} />}
+              data-testid="apps-home-tile-permissions"
             >
-              View in store
+              Manage permissions
             </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </Group>
-    </Card>
+          )}
+          <Menu.Item
+            component={Link}
+            href={getListingDetailHref(app.slug)}
+            leftSection={<IconEye size={14} />}
+            data-testid="apps-home-tile-store"
+          >
+            View in store
+          </Menu.Item>
+          {onRemove && (
+            <Menu.Item
+              leftSection={<IconEyeOff size={14} />}
+              onClick={() => onRemove(app)}
+              data-testid="apps-home-tile-remove"
+            >
+              Remove from My apps
+            </Menu.Item>
+          )}
+        </Menu.Dropdown>
+      </Menu>
+    </div>
   );
 }
 
@@ -261,10 +293,57 @@ function EmptyState() {
   );
 }
 
+/**
+ * The "Removed … from My apps · Undo" bar. A live region so the removal is announced, and the
+ * Undo button takes focus when it appears: the menu item that was focused is gone with its
+ * tile, so this is where a keyboard user's focus lands instead of the page body.
+ */
+function RemovedBar({
+  name,
+  onUndo,
+  onDismiss,
+}: {
+  name: string;
+  onUndo: () => void;
+  onDismiss: () => void;
+}) {
+  const undoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    undoRef.current?.focus();
+  }, [name]);
+  return (
+    <Paper p="xs" radius="md" withBorder role="status" data-testid="apps-home-removed">
+      <Group justify="space-between" wrap="nowrap" gap="sm">
+        <Text size="sm" lineClamp={1} style={{ minWidth: 0 }}>
+          Removed {name} from My apps
+        </Text>
+        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+          <Button
+            ref={undoRef}
+            size="xs"
+            variant="subtle"
+            onClick={onUndo}
+            data-testid="apps-home-undo"
+          >
+            Undo
+          </Button>
+          <CloseButton size="sm" aria-label="Dismiss" onClick={onDismiss} />
+        </Group>
+      </Group>
+    </Paper>
+  );
+}
+
+/** Local hide state layered over the server's: an ISO time = hidden, `null` = un-hidden. */
+type HiddenOverrides = Record<string, string | null>;
+
 export function AppsHomeBody() {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const utils = trpc.useUtils();
   const myApps = trpc.appListings.listMyApps.useQuery();
+  const hideMutation = trpc.appListings.hideMyApp.useMutation();
+  const unhideMutation = trpc.appListings.unhideMyApp.useMutation();
   // "Manage permissions" deep-links to a tab only the slot flag shows, on a page only the
   // activity gate admits. Offer it only where both would render it.
   const canManagePermissions =
@@ -288,9 +367,91 @@ export function AppsHomeBody() {
     setRecents(recordRecentlyOpenedApp(recent, ownerId));
   }
 
+  // ── "Remove from My apps", optimistic ────────────────────────────────────────
+  // A removal hides the tile at once (a local override), then persists. On failure the
+  // override is dropped, so the grid falls back to the server's state — which never took
+  // the hide — and the tile returns. Undo is the same in reverse. A successful write keeps
+  // its override (it now agrees with the server) and refreshes the list.
+  const [overrides, setOverrides] = useState<HiddenOverrides>({});
+  const [removed, setRemoved] = useState<{ slug: string; name: string } | null>(null);
+  // An Undo waits for its own hide to settle, so the two writes reach the server in order.
+  const pendingHides = useRef(new Map<string, Promise<unknown>>());
+
+  /** Drop `slug`'s override, but only if it still holds the value this action set. */
+  function dropOverride(slug: string, expected: string | null) {
+    setOverrides((prev) => {
+      if (!(slug in prev) || prev[slug] !== expected) return prev;
+      const next = { ...prev };
+      delete next[slug];
+      return next;
+    });
+  }
+
+  async function handleRemove(app: AppsHomeTileModel) {
+    const optimistic = new Date().toISOString();
+    setOverrides((prev) => ({ ...prev, [app.slug]: optimistic }));
+    setRemoved({ slug: app.slug, name: app.name });
+    const write = hideMutation.mutateAsync({ slug: app.slug });
+    pendingHides.current.set(
+      app.slug,
+      write.catch(() => undefined)
+    );
+    try {
+      await write;
+      void utils.appListings.listMyApps.invalidate();
+    } catch (error) {
+      dropOverride(app.slug, optimistic);
+      setRemoved((prev) => (prev?.slug === app.slug ? null : prev));
+      showErrorNotification({
+        title: `Couldn't remove ${app.name}`,
+        error: error instanceof Error ? error : { message: 'Please try again.' },
+      });
+    }
+  }
+
+  async function handleUndo() {
+    if (!removed) return;
+    const { slug, name } = removed;
+    setRemoved(null);
+    setOverrides((prev) => ({ ...prev, [slug]: null }));
+    await pendingHides.current.get(slug);
+    try {
+      await unhideMutation.mutateAsync({ slug });
+      void utils.appListings.listMyApps.invalidate();
+    } catch (error) {
+      dropOverride(slug, null);
+      showErrorNotification({
+        title: `Couldn't restore ${name}`,
+        error: error instanceof Error ? error : { message: 'Please try again.' },
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!removed) return;
+    const timer = setTimeout(() => setRemoved(null), APPS_HOME_UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [removed]);
+
+  const serverHidden = myApps.data?.hidden;
+  const hidden = useMemo(() => {
+    const merged: Record<string, string> = { ...(serverHidden ?? {}) };
+    for (const [slug, value] of Object.entries(overrides)) {
+      if (value === null) delete merged[slug];
+      else merged[slug] = value;
+    }
+    return merged;
+  }, [serverHidden, overrides]);
+
   const tiles = useMemo(
-    () => mergeHomeApps({ server: myApps.data ?? [], recents, canOpenPage }),
-    [myApps.data, recents, canOpenPage]
+    () =>
+      mergeHomeApps({
+        server: myApps.data?.apps ?? [],
+        recents,
+        canOpenPage,
+        hidden,
+      }),
+    [myApps.data?.apps, recents, canOpenPage, hidden]
   );
 
   return (
@@ -301,6 +462,14 @@ export function AppsHomeBody() {
         </Title>
         <BrowseStoreButton testId="apps-home-browse" />
       </Group>
+
+      {removed && (
+        <RemovedBar
+          name={removed.name}
+          onUndo={() => void handleUndo()}
+          onDismiss={() => setRemoved(null)}
+        />
+      )}
 
       {myApps.isError && (
         <Paper p="lg" radius="md" withBorder data-testid="apps-home-error">
@@ -316,7 +485,14 @@ export function AppsHomeBody() {
       {myApps.isLoading ? (
         <TileGrid testId="apps-home-skeleton">
           {Array.from({ length: APPS_HOME_SKELETON_TILES }, (_, i) => (
-            <Skeleton key={i} height={APPS_HOME_ICON_PX + 24} radius="md" />
+            <Stack key={i} align="center" gap={6}>
+              <Skeleton
+                height={APPS_HOME_ICON_PX}
+                width={APPS_HOME_ICON_PX}
+                radius={APPS_HOME_ICON_RADIUS}
+              />
+              <Skeleton height={10} width="70%" radius="sm" />
+            </Stack>
           ))}
         </TileGrid>
       ) : tiles.length === 0 ? (
@@ -332,6 +508,7 @@ export function AppsHomeBody() {
               app={app}
               canManagePermissions={canManagePermissions}
               onLaunchExternal={handleLaunchExternal}
+              onRemove={(a) => void handleRemove(a)}
             />
           ))}
         </TileGrid>

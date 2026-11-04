@@ -14,10 +14,14 @@ import { TRPCError } from '@trpc/server';
  * router's import graph never loads Prisma.
  */
 
-const { mockResolveStoreVisibilityScope, mockListMyApps } = vi.hoisted(() => ({
-  mockResolveStoreVisibilityScope: vi.fn(),
-  mockListMyApps: vi.fn(),
-}));
+const { mockResolveStoreVisibilityScope, mockListMyApps, mockHidden, mockHide, mockUnhide } =
+  vi.hoisted(() => ({
+    mockResolveStoreVisibilityScope: vi.fn(),
+    mockListMyApps: vi.fn(),
+    mockHidden: vi.fn(),
+    mockHide: vi.fn(),
+    mockUnhide: vi.fn(),
+  }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
@@ -25,6 +29,11 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/services/blocks/my-apps.service', () => ({
   listMyApps: (...a: unknown[]) => mockListMyApps(...a),
+}));
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  getMyHiddenApps: (...a: unknown[]) => mockHidden(...a),
+  hideMyApp: (...a: unknown[]) => mockHide(...a),
+  unhideMyApp: (...a: unknown[]) => mockUnhide(...a),
 }));
 vi.mock('~/server/services/blocks/app-listing.service', () => ({
   listAvailableListings: vi.fn(),
@@ -71,6 +80,17 @@ beforeEach(() => {
   mockListMyApps.mockImplementation(async (args: { userId: number }) => [
     { listingId: `apl_for_${args.userId}` },
   ]);
+  mockHidden.mockReset();
+  mockHidden.mockImplementation(async (userId: number) => ({
+    [`hidden-for-${userId}`]: '2026-10-10T11:22:33.000Z',
+  }));
+  mockHide.mockReset();
+  mockHide.mockImplementation(async (args: { slug: string }) => ({
+    slug: args.slug,
+    hiddenAt: '2026-10-10T11:22:33.000Z',
+  }));
+  mockUnhide.mockReset();
+  mockUnhide.mockImplementation(async (args: { slug: string }) => ({ slug: args.slug }));
 });
 
 async function codeOf(p: Promise<unknown>): Promise<string | null> {
@@ -102,8 +122,16 @@ describe('appListings.listMyApps', () => {
   it('reads the CALLER — two users, each gets their own rows', async () => {
     const a = await appListingsRouter.createCaller(fakeCtx(modUser) as never).listMyApps();
     const b = await appListingsRouter.createCaller(fakeCtx(otherMod) as never).listMyApps();
-    expect(a).toEqual([{ listingId: 'apl_for_41' }]);
-    expect(b).toEqual([{ listingId: 'apl_for_73' }]);
+    // The apps AND the caller's own hides, each read for the caller.
+    expect(a).toEqual({
+      apps: [{ listingId: 'apl_for_41' }],
+      hidden: { 'hidden-for-41': '2026-10-10T11:22:33.000Z' },
+    });
+    expect(b).toEqual({
+      apps: [{ listingId: 'apl_for_73' }],
+      hidden: { 'hidden-for-73': '2026-10-10T11:22:33.000Z' },
+    });
+    expect(mockHidden.mock.calls.map(([id]) => id)).toEqual([41, 73]);
     expect(mockListMyApps.mock.calls.map(([args]) => (args as { userId: number }).userId)).toEqual([
       41, 73,
     ]);
@@ -125,5 +153,50 @@ describe('appListings.listMyApps', () => {
     expect(
       mockListMyApps.mock.calls.map(([args]) => (args as { canOpenPage: boolean }).canOpenPage)
     ).toEqual([true, false]);
+  });
+});
+
+describe.each([
+  ['hideMyApp', () => mockHide],
+  ['unhideMyApp', () => mockUnhide],
+] as const)('appListings.%s', (proc, mock) => {
+  const call = (user: unknown, input: unknown) =>
+    (
+      appListingsRouter.createCaller(fakeCtx(user) as never) as unknown as Record<
+        string,
+        (i: unknown) => Promise<unknown>
+      >
+    )[proc](input);
+
+  it('🔴 rejects a signed-out caller, and never writes', async () => {
+    expect(await codeOf(call(undefined, { slug: 'pixel-forge' }))).toBe('UNAUTHORIZED');
+    expect(mock()).not.toHaveBeenCalled();
+  });
+
+  it('rejects a caller the store gate leaves dark, and never writes', async () => {
+    expect(await codeOf(call(normalUser, { slug: 'pixel-forge' }))).toBe('UNAUTHORIZED');
+    expect(mock()).not.toHaveBeenCalled();
+  });
+
+  it('🔴 writes for the CALLER only — an input naming another user is ignored', async () => {
+    await call(modUser, { slug: 'pixel-forge', userId: 73 });
+    expect(mock()).toHaveBeenCalledTimes(1);
+    expect(mock().mock.calls[0][0]).toEqual({ userId: 41, slug: 'pixel-forge' });
+  });
+
+  it.each([
+    ['empty', { slug: '' }],
+    ['too long', { slug: 'x'.repeat(65) }],
+    ['missing', {}],
+  ])('rejects a slug that is %s (BAD_REQUEST), and never writes', async (_l, input) => {
+    expect(await codeOf(call(modUser, input))).toBe('BAD_REQUEST');
+    expect(mock()).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent at the boundary: two identical calls both succeed', async () => {
+    const first = await call(modUser, { slug: 'pixel-forge' });
+    const second = await call(modUser, { slug: 'pixel-forge' });
+    expect(second).toEqual(first);
+    expect(mock()).toHaveBeenCalledTimes(2);
   });
 });

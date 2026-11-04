@@ -141,6 +141,10 @@ export type RecentAppKind = 'onsite' | 'offsite';
  *  - `externalUrl` — off-site only: the https destination actually visited.
  *  - `name` — a display enrichment so a consumer can render the entry WITHOUT
  *    re-fetching the listing.
+ *  - `openedAt` — epoch ms of the open, stamped by `recordRecentlyOpenedApp` itself
+ *    (callers never supply it). The `/apps` home compares it with a "Remove from My
+ *    apps" time (`isHiddenFromHome`) so opening a removed app brings it back. Absent on
+ *    entries written before the field existed, which then simply count as "no known use".
  *  - `iconUrl` — 🔴 NEVER PERSISTED AND NEVER READ BACK (see `coerce`). It exists
  *    on the type only for an IN-MEMORY entry built from a live, server-gated card
  *    (`toRecentAppFromListing`); the write path strips it.
@@ -164,6 +168,7 @@ export type RecentApp = {
   hasPage?: boolean;
   externalUrl?: string;
   name?: string;
+  openedAt?: number;
   iconUrl?: string;
 };
 
@@ -223,6 +228,9 @@ function coerce(raw: unknown): RecentApp[] {
     if (typeof src.hasPage === 'boolean') entry.hasPage = src.hasPage;
     if (typeof src.externalUrl === 'string') entry.externalUrl = src.externalUrl;
     if (typeof src.name === 'string') entry.name = src.name;
+    if (typeof src.openedAt === 'number' && Number.isFinite(src.openedAt)) {
+      entry.openedAt = src.openedAt;
+    }
     // `iconUrl` is deliberately NOT carried, in either direction — see `RecentApp`. This
     // also neutralises every icon url already sitting in a viewer's localStorage.
     out.push(entry);
@@ -338,6 +346,9 @@ export function recordRecentlyOpenedApp(app: RecentApp, ownerId: RecentsOwnerId)
   // directions — they cannot drift.
   const [clean] = coerce([app]);
   if (!clean) return getRecentlyOpenedApps(ownerId);
+  // Stamped HERE, never by a caller: this is the moment of the open, and one writer of the
+  // timestamp is what lets the home's re-appear rule trust it.
+  clean.openedAt = Date.now();
   const next = capPerKind([
     clean,
     ...getRecentlyOpenedApps(ownerId).filter((a) => a.id !== clean.id),

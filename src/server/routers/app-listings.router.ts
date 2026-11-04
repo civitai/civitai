@@ -19,6 +19,7 @@ import {
   listAllListingsForModerationSchema,
   listAppListingsSchema,
   listListingForksSchema,
+  myAppsHideInputSchema,
   startForkSchema,
   type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
@@ -2040,6 +2041,11 @@ export const appListingsRouter = router({
    * `listAvailable` (scope + audience floor, so a listing appears only if this viewer could
    * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
    * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
+   *
+   * Returns the derived `apps` AND the viewer's "Remove from My apps" `hidden` map
+   * (slug → ISO time). The server does NOT filter hidden apps out: whether one shows again
+   * depends on this browser's recently-opened time too, so the client merge applies the one
+   * rule (`isHiddenFromHome`) to both sources (`mergeHomeApps`).
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)
@@ -2055,15 +2061,72 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
       }
-      const { listMyApps } = await import('~/server/services/blocks/my-apps.service');
-      return listMyApps({
-        userId: ctx.user.id,
-        scope,
-        floor,
-        redCapable: isRedCapableRequest(ctx),
-        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-        canOpenPage: !!ctx.features?.appBlocksPages,
-      });
+      const [{ listMyApps }, { getMyHiddenApps }] = await Promise.all([
+        import('~/server/services/blocks/my-apps.service'),
+        import('~/server/services/blocks/my-apps-hidden.service'),
+      ]);
+      const [apps, hidden] = await Promise.all([
+        listMyApps({
+          userId: ctx.user.id,
+          scope,
+          floor,
+          redCapable: isRedCapableRequest(ctx),
+          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+          canOpenPage: !!ctx.features?.appBlocksPages,
+        }),
+        getMyHiddenApps(ctx.user.id),
+      ]);
+      return { apps, hidden };
+    }),
+
+  /**
+   * "Remove from My apps": hide one app (by listing slug) from the CALLER's `/apps` home
+   * until they use it again. Writes only `User.settings.hiddenApps[slug]`, atomically (see
+   * `my-apps-hidden.service.ts`). Idempotent: repeating it leaves the app hidden, with the
+   * hide time moved to now. No input names a user — it is always `ctx.user.id`.
+   */
+  hideMyApp: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many requests — slow down.',
+      })
+    )
+    .input(myAppsHideInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
+      // through `applyStoreGates`, whose scope metric counts store READS.
+      if (narrowStoreScope((ctx as { _storeScope?: unknown })._storeScope) === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { hideMyApp } = await import('~/server/services/blocks/my-apps-hidden.service');
+      return hideMyApp({ userId: ctx.user.id, slug: input.slug });
+    }),
+
+  /**
+   * The Undo of `hideMyApp`: drop the caller's hide for one slug. Idempotent — unhiding an
+   * app that is not hidden is a no-op success.
+   */
+  unhideMyApp: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many requests — slow down.',
+      })
+    )
+    .input(myAppsHideInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
+      // through `applyStoreGates`, whose scope metric counts store READS.
+      if (narrowStoreScope((ctx as { _storeScope?: unknown })._storeScope) === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { unhideMyApp } = await import('~/server/services/blocks/my-apps-hidden.service');
+      return unhideMyApp({ userId: ctx.user.id, slug: input.slug });
     }),
 
   /**
