@@ -9,8 +9,7 @@ import type * as HatTurfDetailProviderModule from '~/components/HatTurf/detail/H
 
 import '~/styles/globals.css';
 
-// The layout around the media and the bottom sheet is what is under test; every child that
-// fetches or draws media is a stub of fixed size.
+// Layout test: children are fixed-size stubs so only the media column and bottom sheet are measured.
 const ctx = vi.hoisted(() => ({ active: false }));
 const image = {
   id: 1,
@@ -82,7 +81,6 @@ vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (o) => ({
   ...(await o<object>()),
   BrowsingSettingsAddonsProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
-// Sidebar and toolbar children: each needs app providers this layout test has no use for.
 const stub = vi.hoisted(() => () => null);
 vi.mock('~/components/Storyline/StorylineDetail', async (o) => ({
   ...(await o<object>()),
