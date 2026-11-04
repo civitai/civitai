@@ -71,7 +71,7 @@ function HatButton({ imageId }: { imageId: number }) {
     { enabled: !!feed && !!user, staleTime: 30_000 }
   );
 
-  // A closed image (its owner has not joined) still invites: joining is what opens images.
+  // Closed images still invite: an unjoined viewer has no other way to opt in.
   const closed = feed?.open[imageId] === false;
   if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;

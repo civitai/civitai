@@ -38,7 +38,6 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
     onSuccess: () => {
       setJoin(false);
       void utils.hatTurf.getStock.invalidate();
-      // Joining opens the player's own images to hats.
       void utils.hatTurf.getSummaries.invalidate();
     },
     onError: (error) => showErrorNotification({ title: "Couldn't join Hat Turf", error }),
@@ -46,8 +45,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
 
   if (!feed || !card || !user) return null;
   const joined = stock?.optedIn !== false;
-  // A closed image (its owner has not joined) takes no hats, but still offers Join: joining is
-  // what opens images, so hiding it there would leave no way in.
+  // Closed images must still offer Join: a viewer who has not joined has no other way to opt in.
   if (joined && feed.open[imageId] === false) return null;
 
   const { draft, setDraft } = card;
