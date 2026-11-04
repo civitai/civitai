@@ -100,7 +100,10 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   if (!events.length) return none;
 
   const imageIds = events.map((e) => Number(e.imageId));
-  const states = await getImageStates(userId, imageIds);
+  const [states, refused] = await Promise.all([
+    getImageStates(userId, imageIds),
+    getAppealRefusedImageIds({ imageIds, userId }),
+  ]);
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
   // An image with no state row is left out rather than shown unchecked.
@@ -112,10 +115,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   });
 
   const existing = listed.filter((e) => e.state.owned).map((e) => e.id);
-  const [appeals, refused] = await Promise.all([
-    getLatestAppeals(userId, existing),
-    getAppealRefusedImageIds({ imageIds: existing, userId }),
-  ]);
+  const appeals = await getLatestAppeals(userId, existing);
 
   const items: RemovedImage[] = listed.map(({ id, removedAt, state }) => ({
     removedAt: new Date(Number(removedAt) * 1000),
