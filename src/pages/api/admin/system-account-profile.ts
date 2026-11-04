@@ -32,7 +32,7 @@ const RESERVED_NAME = MODERATION_ACCOUNT_USERNAME.toLowerCase();
 function masksReservedName(value: string) {
   const form = Array.from(
     foldConfusables(value)
-      .replace(/[\s\p{M}\p{Pc}\p{Pd}.\u00B7]/gu, '')
+      .replace(/[\s\p{M}\p{Pc}\p{Pd}\p{Default_Ignorable_Code_Point}.\u00B7\u2800]/gu, '')
       .replace(/[1l]/g, 'i')
   );
   if (form.length !== RESERVED_NAME.length) return false;
@@ -51,8 +51,8 @@ const schema = z
     name: displayName
       .min(1)
       .refine(
-        (value) => !/[\p{Cc}\p{Cf}]/u.test(value),
-        'name may not hold control or format characters'
+        (value) => !/[\p{Cc}\p{Cf}\p{Cn}]/u.test(value),
+        'name may not hold control, format or unassigned characters'
       )
       .refine(
         (value) =>
