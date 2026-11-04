@@ -12,6 +12,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }
 
 const {
   BRADLEY_TERRY_INGEST_WAIT_MS,
+  BRADLEY_TERRY_RANKING_FROM,
   CrucibleRankingDeferredError,
   fitBradleyTerry,
   fitBradleyTerryStrengths,
@@ -257,9 +258,13 @@ describe('usesBradleyTerryRanking — which crucibles the fit ranks', () => {
     createdAt: new Date(createdAt),
   });
 
-  // Deliberately off: the fit must honour the per-judge, per-entry cap before it pays prizes.
-  it('ranks no crucible while the switch date is unset', () => {
-    expect(usesBradleyTerryRanking(crucible('2030-01-01T00:00:00Z'))).toBe(false);
+  // The fit freezes anchors only for votes cast after anchor recording was live in prod
+  // (2026-11-04T21:25Z); a crucible starting before that has anchorless votes and must stay on Elo.
+  it('switches on no earlier than the release that records anchors', () => {
+    expect(BRADLEY_TERRY_RANKING_FROM).not.toBeNull();
+    expect(BRADLEY_TERRY_RANKING_FROM!.getTime()).toBeGreaterThanOrEqual(
+      Date.parse('2026-11-04T21:25:00Z')
+    );
   });
 
   it('ranks crucibles starting on or after the date, and leaves earlier ones on Elo', () => {
