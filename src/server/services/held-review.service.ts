@@ -5,6 +5,7 @@ import {
   accountHoldSql,
   holdMarkerViewExists,
 } from '~/server/services/legal-hold.service';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 
 /**
  * A `WITH` entry, ahead of a DELETE that cascades "ResourceReview", that copies each review a held
@@ -47,11 +48,46 @@ export const reviewsOnModelsSql = (models: Prisma.Sql) =>
 export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>
   Prisma.sql`SELECT rr.id FROM "ResourceReview" rr WHERE rr."modelVersionId" IN (${versions})`;
 
-/** Drops the copies whose author is no longer held. Returns how many went. */
+/**
+ * A storyline copy is kept while either user it records is held, the placeholder owner included, as
+ * when `removeStorylineChapter` made it. The reader on a branch choice or create click never
+ * releases one, even once their account is gone.
+ */
+const storylineCopyReleasedSql = (markerView: boolean) => {
+  const held = (id: Prisma.Sql) =>
+    Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
+  return Prisma.sql`NOT ${held(Prisma.raw('h."ownerId"'))} AND NOT ${held(
+    Prisma.raw('h."authorId"')
+  )}`;
+};
+
+/** Drops the copies whose users are no longer held. Returns how many went. */
 export async function purgeReleasedHeldCopies() {
   const markerView = await holdMarkerViewExists();
   const released = accountHoldSql(Prisma.raw('h."userId"'), markerView);
   const reviews = await dbWrite.$executeRaw`
     DELETE FROM "HeldResourceReview" h WHERE NOT ${released}`;
-  return { reviews };
+  // One statement, so a hold placed meanwhile cannot leave a chapter's copy without its edges.
+  const storylineReleased = storylineCopyReleasedSql(markerView);
+  const [storyline] = await dbWrite.$queryRaw<
+    { chapters: number; edges: number; choices: number; clicks: number }[]
+  >`
+    WITH chapters AS (
+      DELETE FROM "HeldStorylineChapter" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    edges AS (
+      DELETE FROM "HeldStorylineChapterEdge" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    choices AS (
+      DELETE FROM "HeldStorylineBranchChoice" h WHERE ${storylineReleased} RETURNING 1
+    ),
+    clicks AS (
+      DELETE FROM "HeldStorylineCreateClick" h WHERE ${storylineReleased} RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM chapters)::int AS chapters,
+      (SELECT count(*) FROM edges)::int AS edges,
+      (SELECT count(*) FROM choices)::int AS choices,
+      (SELECT count(*) FROM clicks)::int AS clicks
+  `;
+  return { reviews, storyline };
 }
