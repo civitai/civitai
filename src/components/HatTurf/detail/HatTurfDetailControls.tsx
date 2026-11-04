@@ -7,11 +7,11 @@ import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import buttonClasses from '~/components/HatTurf/HatTurfButton.module.css';
 import { HatButtonFace, HatTurfGear } from '~/components/HatTurf/HatTurfButton';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
-import { DEFAULT_SPOT, HatTurfPanelPopover, useSetOptIn } from '~/components/HatTurf/HatTurfPanel';
+import { DEFAULT_SPOT, HatTurfPanelPopover } from '~/components/HatTurf/HatTurfPanel';
 import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import classes from '~/components/HatTurf/detail/HatTurfDetailControls.module.css';
-import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -46,7 +46,7 @@ function HatButton({ imageId }: { imageId: number }) {
     getInitialValueInEffect: true,
   });
   const [inviteOpen, setInviteOpen] = useState<boolean | undefined>(undefined);
-  const join = useSetOptIn();
+  const join = useJoin();
   const placed = usePlacedHere(imageId);
 
   // Closed images still invite: an unjoined viewer has no other way to opt in.

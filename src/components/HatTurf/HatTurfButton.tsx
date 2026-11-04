@@ -8,8 +8,8 @@ import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfButton.module.css';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
-import { DEFAULT_SPOT, HatTurfPanelPopover, useSetOptIn } from '~/components/HatTurf/HatTurfPanel';
-import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { DEFAULT_SPOT, HatTurfPanelPopover } from '~/components/HatTurf/HatTurfPanel';
+import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showInfoNotification } from '~/utils/notifications';
@@ -28,7 +28,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   const { cosmeticId } = useChosenHat();
   const [join, setJoin] = useState(false);
   const track = useHatTurfAction('feed-card');
-  const setOptIn = useSetOptIn(() => setJoin(false));
+  const setOptIn = useJoin(() => setJoin(false));
 
   // Until the viewer's stock is read, neither the hat nor the invite is known to be right.
   if (!feed || !card || !user || !stock || feed.hidden?.[imageId]) return null;

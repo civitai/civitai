@@ -14,30 +14,17 @@ import { HatTurfTray } from '~/components/HatTurf/HatTurfTray';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { FALLBACK_COLOR, badgeLeader, orderedTeams } from '~/components/HatTurf/hat-turf.utils';
-import { useChosenHat, useHatLooks, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { useChosenHat, useHatLooks, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
 import dayjs from '~/shared/utils/dayjs';
-import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const DEFAULT_SPOT = { x: 0.5, y: 0.4 };
 
 const capitalise = (team: string) => team[0].toUpperCase() + team.slice(1);
-
-export function useSetOptIn(onDone?: () => void) {
-  const utils = trpc.useUtils();
-  return trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => {
-      onDone?.();
-      void utils.hatTurf.getStock.invalidate();
-      void utils.hatTurf.getSummaries.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
-  });
-}
 
 /**
  * The Hat Turf panel for one image, opened from `target`: a popover on desktop, a bottom sheet on a
@@ -165,7 +152,7 @@ export function HatTurfPanel({
   const track = useHatTurfAction(surface);
   const showHats = useHatTurfStore((state) => state.showHats);
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
-  const optIn = useSetOptIn();
+  const optIn = useJoin();
   const { cosmeticId } = useChosenHat();
   if (!feed) return null;
 

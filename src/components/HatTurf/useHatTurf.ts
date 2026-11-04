@@ -1,6 +1,7 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /** Undefined while signed out or Hat Turf is off. */
@@ -55,4 +56,18 @@ export function useHatLooks(enabled = true) {
         : hat.name;
     return { ...hat, name };
   };
+}
+
+/** Joins or leaves Hat Turf, refreshing the stock and the images it opens or closes. */
+export function useJoin(onDone?: () => void) {
+  const utils = trpc.useUtils();
+  return trpc.hatTurf.setOptIn.useMutation({
+    onSuccess: () => {
+      onDone?.();
+      void utils.hatTurf.getStock.invalidate();
+      // Joining opens the player's own images to hats.
+      void utils.hatTurf.getSummaries.invalidate();
+    },
+    onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
+  });
 }

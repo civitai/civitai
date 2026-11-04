@@ -1,9 +1,9 @@
 import { Switch } from '@mantine/core';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
 import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
+import { useJoin } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const HAT_TURF_SETTING_LABEL = 'Take part in Hat Turf';
@@ -19,18 +19,11 @@ export function HatTurfSetting() {
     !!user && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard)
   );
   const event = definition?.event;
-  const utils = trpc.useUtils();
   const { data: stock } = trpc.hatTurf.getStock.useQuery(
     { event: event ?? '' },
     { enabled: !!event, staleTime: 30_000 }
   );
-  const setOptIn = trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => {
-      void utils.hatTurf.getStock.invalidate();
-      void utils.hatTurf.getSummaries.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
-  });
+  const setOptIn = useJoin();
   if (!event || !stock || stock.mode === 'off') return null;
 
   return (
