@@ -351,17 +351,18 @@ async function save(run: StorageMigrationRun, done: boolean): Promise<void> {
 
 /**
  * The collection as the approved request declares it; whether a newer approval superseded it; and
- * `wait` while the request is still pending (reserved at approve, approval not written yet — or an
+ * `awaitingApproval` while the request is still pending (reserved at approve, approval not written yet — or an
  * approve that failed and will be retried).
  */
 async function loadTarget(
   run: Pick<StorageMigrationRun, 'publishRequestId' | 'collection'>
-): Promise<{ collection: DocCollection | null; superseded: boolean; wait?: boolean }> {
+): Promise<{ collection: DocCollection | null; superseded: boolean; awaitingApproval?: boolean }> {
   const request = await dbWrite.appBlockPublishRequest.findUnique({
     where: { id: run.publishRequestId },
     select: { slug: true, manifest: true, status: true },
   });
-  if (request?.status === 'pending') return { collection: null, superseded: false, wait: true };
+  if (request?.status === 'pending')
+    return { collection: null, superseded: false, awaitingApproval: true };
   if (!request || request.status !== 'approved') return { collection: null, superseded: true };
   const latest = await dbWrite.appBlockPublishRequest.findFirst({
     where: { slug: request.slug, status: 'approved' },
@@ -406,7 +407,7 @@ export async function advanceStorageMigrationRun(
       await deps.persist(state, false);
       return state;
     }
-    if (target.wait) {
+    if (target.awaitingApproval) {
       state.status = 'pending';
       await deps.persist(state, false);
       return state;

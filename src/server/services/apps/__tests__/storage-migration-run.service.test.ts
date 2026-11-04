@@ -245,7 +245,7 @@ describe('advanceStorageMigrationRun', () => {
     const persisted: [string, number, boolean][] = [];
     const left = await advanceStorageMigrationRun(run({ attempts: 2 }), {
       store,
-      load: async () => ({ collection: null, superseded: false, wait: true }),
+      load: async () => ({ collection: null, superseded: false, awaitingApproval: true }),
       persist: async (r, done) => void persisted.push([r.status, r.attempts, done]),
     });
     expect(store.migrateDocuments).not.toHaveBeenCalled();

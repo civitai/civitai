@@ -100,9 +100,6 @@ const {
       appBlockBuildAttempt: { findMany: vi.fn<DelegateMock>(async () => []) },
     },
     mockDbWrite: {
-      // The storage-migration approve gate (`reserveStorageMigrationRuns`); the reset loop strips
-      // it to a no-op (no open run, nothing reserved).
-      $transaction: vi.fn(),
       // approveRequest records the run its trigger started (the stale-run guard's key).
       appBlockBuildAttempt: { create: vi.fn<DelegateMock>(async () => ({ id: 1 })) },
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
@@ -237,7 +234,10 @@ vi.mock('~/server/notifications/client', () => ({
 
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
+  // `$transaction`: the storage-migration approve gate (`reserveStorageMigrationRuns`), a no-op
+  // here (no open run, nothing reserved). Added in the factory, not on the surface, so the reset
+  // loop's typed walk over the surfaces is unchanged.
+  dbWrite: Object.assign(mockDbWrite, { $transaction: async () => undefined }),
 }));
 
 // The post-commit history write is a seam: these suites pin what each go-live HANDS it;
