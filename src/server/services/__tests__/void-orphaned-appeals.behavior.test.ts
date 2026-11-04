@@ -54,7 +54,9 @@ import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
   getAppealExcludedIds,
+  canAppealOwnImage,
   isAppealBlockedByHoldMarker,
+  isImageAppealRefused,
   ROUTED_APPEAL_REVIEW_DAYS,
   voidOrphanedAppeals,
 } from '~/server/services/report.service';
@@ -564,5 +566,23 @@ describe('isAppealBlockedByHoldMarker against Postgres', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
 
     expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 63 })).toBe(true);
+  });
+});
+
+// The appeal endpoint and the owner's image page refuse on `isImageAppealRefused`; the removed-images
+// list on the same report lookup. 1009 is named in a report, 1003 is not.
+describe('an image a CSAM report names, against Postgres', () => {
+  it('is refused by the shared check, and not offered on the owner’s page', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "needsReview" text;
+      INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (1009, 71, 'moderated');
+      UPDATE "Image" SET "userId" = 71, "blockedFor" = 'moderated' WHERE id = 1003;
+    `);
+
+    expect(await isImageAppealRefused({ imageId: 1009, userId: 71 })).toBe(true);
+    expect(await canAppealOwnImage({ imageId: 1009, userId: 71 })).toBe(false);
+    // The control: the same owner's moderator-blocked image no report names.
+    expect(await isImageAppealRefused({ imageId: 1003, userId: 71 })).toBe(false);
+    expect(await canAppealOwnImage({ imageId: 1003, userId: 71 })).toBe(true);
   });
 });

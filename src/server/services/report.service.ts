@@ -1260,6 +1260,25 @@ export async function isAppealBlockedByHoldMarker({
 }
 
 /**
+ * Whether an appealable-looking image is refused anyway: a hold marker keeps it, or a CSAM report
+ * names it. The appeal endpoint, the owner's image page and the removed-images list all refuse on
+ * this, so none of them offers what another refuses.
+ */
+export async function isImageAppealRefused({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  const [held, excluded] = await Promise.all([
+    isAppealBlockedByHoldMarker({ imageId, userId }),
+    getAppealExcludedIds({ imageIds: [imageId], userIds: [] }),
+  ]);
+  return held || excluded.images.has(imageId);
+}
+
+/**
  * The rule `createEntityAppealHandler` refuses an image appeal on, so the owner's page offers one
  * only when it would be accepted. Anyone else's image reads as no.
  */
@@ -1270,7 +1289,7 @@ export async function canAppealOwnImage({ imageId, userId }: { imageId: number; 
     SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
   `;
   if (!image || !isAppealableImage(image)) return false;
-  return !(await isAppealBlockedByHoldMarker({ imageId, userId }));
+  return !(await isImageAppealRefused({ imageId, userId }));
 }
 
 // Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
