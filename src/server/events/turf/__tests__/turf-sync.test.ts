@@ -204,7 +204,7 @@ const contestOf = (sql: string) => {
   return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
 };
 const OWNER_ALLOWS_TURF =
-  'NOT EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND (ow.settings -> ? ->> ?) = \'true\')';
+  'EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL AND (ow.settings -> ? ->> ?) IS DISTINCT FROM \'true\')';
 const sqlOf = (call: unknown[]) => {
   const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
   return Prisma.sql(strings, ...values).sql.replace(/\s+/g, ' ');

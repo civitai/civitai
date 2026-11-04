@@ -51,11 +51,13 @@ const inTurf = (alias: string, event: string) => {
 };
 
 /**
- * The owner of image `i` has not kept Hat Turf off their images. Their images then take no new
- * stickers, and those already placed are neither drawn nor counted; turning it back on restores them.
+ * The owner of image `i` is neither banned nor deleted, and has not kept Hat Turf off their images.
+ * Otherwise their images take no new stickers, and those already placed are neither drawn nor
+ * counted; turning the switch back on (or lifting a ban) restores them.
  */
-const ownerAllowsTurf = (event: string) => Prisma.sql`NOT EXISTS (SELECT 1 FROM "User" ow
-  WHERE ow.id = i."userId" AND (ow.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event}) = 'true')`;
+const ownerAllowsTurf = (event: string) => Prisma.sql`EXISTS (SELECT 1 FROM "User" ow
+  WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL
+    AND (ow.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event}) IS DISTINCT FROM 'true')`;
 
 const CONFIG_TTL_MS = 30_000;
 const MAP_LOG_MAX = 50_000;

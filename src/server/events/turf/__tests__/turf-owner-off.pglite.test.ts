@@ -197,6 +197,19 @@ describe("an owner's switch: keep Hat Turf off my images", () => {
   });
 });
 
+describe("a banned or deleted owner's images", () => {
+  // Stickers on an image whose owner is later banned or deleted stop counting and drawing.
+  it.each([
+    ['banned', '"bannedAt"'],
+    ['deleted', '"deletedAt"'],
+  ])('%s: draw and count nothing, and take no new stickers', async (_, column) => {
+    await db.exec(`UPDATE "User" SET ${column} = now() WHERE id = ${ALLOWS}`);
+    expect(await drawnOn(IMAGES[0])).toBe(0);
+    expect(await countedImages()).toEqual([]);
+    await expect(place(IMAGES[0])).rejects.toThrow('keeps Hat Turf off their images');
+  });
+});
+
 describe('when the switch takes effect', () => {
   const counted = () => Object.keys(lua.hash(turfKeys('e').counts) ?? {}).sort();
   // Counts and the scoring map are rewritten by the switch itself, not by the next reconcile.
