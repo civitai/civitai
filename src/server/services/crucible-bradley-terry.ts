@@ -1,7 +1,3 @@
-import { clickhouse } from '~/server/clickhouse/client';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-
 export type PairTally = { winnerEntryId: number; loserEntryId: number; votes: number };
 
 const ELO_BASE = 1500;
@@ -69,42 +65,4 @@ export const BRADLEY_TERRY_RANKING_FROM: Date | null = null;
 export function usesBradleyTerryRanking(crucible: { startAt: Date | null; createdAt: Date }) {
   if (!BRADLEY_TERRY_RANKING_FROM) return false;
   return (crucible.startAt ?? crucible.createdAt) >= BRADLEY_TERRY_RANKING_FROM;
-}
-
-function getBradleyTerryKey(crucibleId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.BRADLEY_TERRY}:${crucibleId}` as RedisKeyTemplateSys;
-}
-
-const BRADLEY_TERRY_TTL_SECONDS = 30 * 24 * 60 * 60;
-
-/**
- * Refits one crucible from every vote in ClickHouse and stores the scores in Redis. Shadow only for
- * now: nothing reads them for display or prizes yet, the live Elo stays the ranking.
- * @returns how many entries were scored, or null when ClickHouse is not configured
- */
-export async function refitCrucibleBradleyTerry(crucibleId: number): Promise<number | null> {
-  if (!clickhouse) return null;
-  const tallies = await clickhouse.$query<PairTally>`
-    SELECT winnerEntryId, loserEntryId, toUInt32(count()) AS votes
-    FROM crucible_votes
-    WHERE crucibleId = ${crucibleId}
-    GROUP BY winnerEntryId, loserEntryId
-  `;
-  const scores = fitBradleyTerry(
-    tallies.map((t) => ({
-      winnerEntryId: Number(t.winnerEntryId),
-      loserEntryId: Number(t.loserEntryId),
-      votes: Number(t.votes),
-    }))
-  );
-  if (!scores.size) return 0;
-
-  const key = getBradleyTerryKey(crucibleId);
-  await sysRedis.del(key);
-  await sysRedis.hSet(
-    key,
-    Object.fromEntries([...scores].map(([id, score]) => [String(id), String(score)]))
-  );
-  await sysRedis.expire(key, BRADLEY_TERRY_TTL_SECONDS);
-  return scores.size;
 }
