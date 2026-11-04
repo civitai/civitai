@@ -197,7 +197,9 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   const team = await event.getUserTeam(userId, { strict: true });
   if (!team) throw throwBadRequestError("You aren't on a team yet");
   // The art is the sticker, so it must be the team it scores for.
-  if (placer.team !== team) throw throwBadRequestError("That hat isn't your team's");
+  // Cosmetics spell teams in lowercase, assignments as the event lists them ('Blue'): compare loosely.
+  if (placer.team.toLowerCase() !== team.toLowerCase())
+    throw throwBadRequestError("That hat isn't your team's");
 
   const [image] = await dbWrite.$queryRaw<
     {
@@ -914,7 +916,7 @@ export async function getMyStickerHats(eventName: string, userId: number) {
     WHERE uc."userId" = ${userId} AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${
     event.name
   }
-      AND c.data ->> 'team' = ${team}
+      AND lower(c.data ->> 'team') = lower(${team})
     GROUP BY uc."cosmeticId"
     ORDER BY "lastUsedAt" DESC NULLS LAST, "usageCount" DESC, uc."cosmeticId"
   `;

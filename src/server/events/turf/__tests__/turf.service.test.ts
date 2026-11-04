@@ -130,6 +130,16 @@ describe('placeTurfSticker', () => {
     expect(spent()[0].values[0]).toBe(2);
   });
 
+  // Cosmetics spell teams in lowercase ('blue') and the event lists them capitalised ('Blue'); an
+  // exact comparison here refused every placement.
+  it("places a hat whose team is spelled in the cosmetic's lowercase", async () => {
+    given({ optedIn: true, team: 'blue' }, OK_IMAGE, 3);
+    await placeTurfSticker(input, NOW);
+    expect(dbMock.dbWrite.eventTurfSticker.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ team: 'Blue' }),
+    });
+  });
+
   it('a second sticker on the same image is refused by the unique key, in words', async () => {
     given(OK_PLACER, OK_IMAGE, 3);
     dbMock.dbWrite.eventTurfSticker.create.mockRejectedValueOnce(
