@@ -254,3 +254,29 @@
     }
   }
 }
+
+/* Phase 2: an XP gauge ring fills in from empty (the ring's path is normalised to length 100). */
+@keyframes mo-gauge-fill {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* A hero crest catches the light once when the home screen loads. */
+@keyframes mo-crest-shimmer {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes mo-crest-shimmer {
+    from,
+    to {
+      transform: translateX(120%);
+    }
+  }
+}

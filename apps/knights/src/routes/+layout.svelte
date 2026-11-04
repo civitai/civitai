@@ -31,6 +31,9 @@
       {status}
       {streak}
       recapUnseen={data.recapUnseen}
+      goldPerBuzz={data.goldPerBuzz}
+      ladder={data.ladder}
+      badges={data.badges}
     />
     <main>
       {@render children()}

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const playerRow = vi.hoisted(() => ({ value: undefined as { userId: number } | undefined }));
 
 const getRecapState = vi.hoisted(() => vi.fn());
+const BADGES = { small: { Knight: 'k48' }, large: { Knight: 'k450' } };
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({
   db: {
@@ -13,6 +14,7 @@ vi.mock('$lib/server/db', () => ({
 }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState }));
+vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES }));
 
 const { load } = await import('./+layout.server');
 
@@ -56,6 +58,20 @@ describe('layout load', () => {
     process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
     expect(await load(event())).toMatchObject({ conversionOpen: true });
   });
+  it('hands the header the Buzz rate, the rank badge images and the ladder rows from config', async () => {
+    const data = await run();
+    expect(data).toMatchObject({ goldPerBuzz: 1000, badges: BADGES });
+    expect(data.ladder.map((row: { rank: string }) => row.rank)).toEqual([
+      'Knight',
+      'Templar',
+      'Paladin',
+    ]);
+    expect(data.ladder[0]).toMatchObject({
+      fromLevel: expect.any(Number),
+      accuracyBar: expect.any(Number),
+    });
+  });
+
   it('tells the menu whether the viewer has a career to restart', async () => {
     expect(await load(event({ username: 'Sir', id: 4 }))).toMatchObject({ isPlayer: false });
     playerRow.value = { userId: 4 };
