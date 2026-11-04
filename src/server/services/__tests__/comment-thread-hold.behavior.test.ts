@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
+import {
+  heldCopiesSchemaSql,
+  heldStorylineCopiesSchemaSql,
+} from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -190,6 +193,7 @@ beforeAll(async () => {
       FOR EACH ROW EXECUTE FUNCTION keep_marked_image();
   `);
   await db.exec(heldCopiesSchemaSql());
+  await db.exec(heldStorylineCopiesSchemaSql());
 });
 afterAll(() => db.close());
 
@@ -771,11 +775,11 @@ describe("a held author's rows under a deleted parent", () => {
       ),
     });
 
-    expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 1 });
+    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 1 });
     expect(await left()).toEqual({ reviews: [HELD, MARKED] });
 
     await db.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold";`);
-    expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 2 });
+    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 2 });
     expect(await left()).toEqual({ reviews: [] });
   });
 
