@@ -57,6 +57,8 @@ const OWNER = 7;
 const PLACER = 5;
 const CONTEST_ENTRY = 900;
 const BOOKMARKED = 901;
+const OTHER = 902;
+const counts = JSON.stringify({ shown: { Blue: 1 }, counted: { Blue: 1 }, leader: 'Blue' });
 
 let db: PGlite;
 
@@ -110,7 +112,6 @@ beforeEach(() => {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
   }
-  const counts = JSON.stringify({ shown: { Blue: 1 }, counted: { Blue: 1 }, leader: 'Blue' });
   redisMock.sysRedis.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
     fields.map(() => counts)) as never);
 });
@@ -121,6 +122,17 @@ describe('Hat Turf on contest entries', () => {
     expect(summary.hidden).toEqual({ [CONTEST_ENTRY]: true });
     expect(summary.open).toEqual({ [CONTEST_ENTRY]: false, [BOOKMARKED]: true });
     expect(Object.keys(summary.images)).toEqual([String(BOOKMARKED)]);
+  });
+
+  it('summaries: a hatted image names the team of the hat that protects it', async () => {
+    const hat = JSON.stringify({ ownerId: 7, cosmeticId: 11, claimKey: 'k', team: 'Pink' });
+    redisMock.sysRedis.hmGet.mockImplementation((async (key: string, fields: string[]) =>
+      fields.map((field) =>
+        key.endsWith(':hats') ? (field === `Image:${BOOKMARKED}` ? hat : null) : counts
+      )) as never);
+    const { images } = await getTurfSummaries('e', [BOOKMARKED, OTHER], PLACER);
+    expect(images[BOOKMARKED]).toMatchObject({ hatted: true, hattedTeam: 'Pink' });
+    expect(images[OTHER]).toMatchObject({ hatted: false, hattedTeam: null });
   });
 
   it('no stickers are drawn on a contest entry on image detail', async () => {

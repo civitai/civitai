@@ -448,6 +448,7 @@ describe('hats on a feed ImageCard', () => {
     leader: 'pink',
     leaderCosmeticId: 11,
     hatted: false,
+    hattedTeam: null,
     ...over,
   });
   const sticker = (id: number, team: string, userId = 9) => ({

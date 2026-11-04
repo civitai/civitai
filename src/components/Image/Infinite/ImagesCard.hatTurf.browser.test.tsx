@@ -171,6 +171,7 @@ const turf = (): TurfSummaries => ({
       leader: 'blue',
       leaderCosmeticId: 11,
       hatted: false,
+      hattedTeam: null,
     },
   },
   open: { 77: true },
