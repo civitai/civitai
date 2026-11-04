@@ -312,7 +312,11 @@ describe('recordStorageMigrationRuns', () => {
 describe('resumeStorageMigrationRuns', () => {
   it('🔴 F2: first fails every open run at the attempt cap (pending, or running and stale), so none blocks approves forever', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([1]).mockResolvedValueOnce([]);
-    expect(await resumeStorageMigrationRuns()).toEqual({ advanced: 0, tableMissing: false });
+    expect(await resumeStorageMigrationRuns()).toEqual({
+      advanced: 0,
+      held: 0,
+      tableMissing: false,
+    });
     const [giveUp, pick] = dbMock.dbWrite.$queryRaw.mock.calls;
     const giveUpSql = (giveUp[0] as readonly string[]).join('?');
     expect(giveUpSql).toContain(`SET "status" = 'failed'`);
