@@ -115,6 +115,8 @@ type ResourceRow = {
   amount: number;
   accountType: BuzzAccountType;
   source: 'tip' | 'compensation' | 'licenseFee';
+  /** A tip on a version whose earnings stopped: never paid, but still part of the compensation floor. */
+  withheld?: boolean;
 };
 
 const BATCH_SIZE = 100;
@@ -157,9 +159,21 @@ export function buildPayoutTransactions(
       // the tips are paid, so splitting never changes what a creator receives.
       const compTotals: Partial<Record<BuzzAccountType, number>> = {};
       const tipTotals: Partial<Record<BuzzAccountType, number>> = {};
+      // Withheld tips stay in the compensation floor so the comp transaction is exactly what it was
+      // before they were withheld: a retried date must not turn a comp amount of 0 into 1 under a key
+      // that run never sent.
+      const withheldTipTotals: Partial<Record<BuzzAccountType, number>> = {};
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
+        if (row.withheld) {
+          if (splitTips) {
+            compTotals[row.accountType] = (compTotals[row.accountType] || 0) + row.amount;
+            withheldTipTotals[row.accountType] =
+              (withheldTipTotals[row.accountType] || 0) + row.amount;
+          }
+          continue;
+        }
         const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
         const amount =
           row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
@@ -179,7 +193,12 @@ export function buildPayoutTransactions(
         toAccountType: accountType as BuzzAccountType,
         // Sum-then-floor once at the daily boundary (amounts arrive fractional from the query now that we no
         // longer floor per row — required so sub-buzz license fees accumulate instead of flooring to 0).
-        amount: Math.floor(amount) - Math.floor(tipTotals[accountType as BuzzAccountType] ?? 0),
+        amount:
+          Math.floor(amount) -
+          Math.floor(
+            (tipTotals[accountType as BuzzAccountType] ?? 0) +
+              (withheldTipTotals[accountType as BuzzAccountType] ?? 0)
+          ),
         // Matches the "Generation compensation" channel label in Creator Studio. The externalTransactionId
         // keeps its prefix — it's a dedup key.
         description: `Generation compensation (${dateLabel})`,
@@ -299,9 +318,11 @@ export async function runPayout(lastUpdate: Date) {
         withheld[r.source][r.accountType] = (withheld[r.source][r.accountType] ?? 0) + r.amount;
         return false;
       };
-      creatorsToPay[userId].push(
-        ...batch.filter((r) => modelVersionIds.includes(r.modelVersionId) && keep(r))
-      );
+      for (const r of batch) {
+        if (!modelVersionIds.includes(r.modelVersionId)) continue;
+        if (keep(r)) creatorsToPay[userId].push(r);
+        else if (r.source === 'tip') creatorsToPay[userId].push({ ...r, withheld: true });
+      }
     }
   }
 

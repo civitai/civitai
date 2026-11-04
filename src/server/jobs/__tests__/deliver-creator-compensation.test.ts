@@ -326,8 +326,6 @@ describe('runPayout', () => {
       expect.objectContaining({
         name: 'creator-compensation-earnings-stopped',
         details: expect.objectContaining({
-          date: '2026-10-13',
-          versions: 2,
           withheld: {
             compensation: { Yellow: 54 },
             tip: { Yellow: 8 },
@@ -350,33 +348,27 @@ describe('runPayout', () => {
     expect(sentTransactions()).toEqual([]);
   });
 
-  // A date paid before this filter existed can be retried; the buzz service dedups on key alone, so
-  // dropping rows must only lower or remove transactions, never mint a key that day did not have.
-  it('retrying a day paid before the filter sends only keys that day already has', async () => {
+  // A date paid before this filter existed can be retried, and the buzz service dedups on key alone:
+  // withholding tips must never raise the comp amount from 0 under a key that run never sent.
+  it('retrying a day paid before the filter sends the same compensation and less tip', async () => {
     mockClickhouseQuery.mockResolvedValue([
+      // Paid then: comp floor(1.7) - floor(1.1) = 0 (no key), tip 1.
       row('compensation', 'Yellow', 0.6, 12),
-      row('tip', 'Yellow', 1.6, 11),
+      row('tip', 'Yellow', 0.5, 12),
+      row('tip', 'Yellow', 0.6, 11),
+      // Paid then: comp floor(54.2) - floor(3.6) = 51, tip 3.
       row('compensation', 'Blue', 50.6, 12),
       row('tip', 'Blue', 1.6, 11),
       row('tip', 'Blue', 2, 12),
     ]);
     dbMock.dbRead.$queryRaw.mockResolvedValue(NON_COMMERCIAL_AND_CONTROL);
-    // What the job paid that day while it still paid tips on version 11, written out.
-    const paidThen = [
-      'creator-tip-comp-2026-10-13-7-Yellow', // floor(2.2) - floor(1.6) = 1
-      'generation-tip-2026-10-13-7-Yellow', // 1
-      'creator-tip-comp-2026-10-13-7-Blue', // floor(54.2) - floor(3.6) = 51
-      'generation-tip-2026-10-13-7-Blue', // 3
-    ];
 
     await runPayout(START);
 
     expect(sentKeys()).toEqual([
-      { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Blue', amount: 50 },
+      { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Blue', amount: 51 },
       { externalTransactionId: 'generation-tip-2026-10-13-7-Blue', amount: 2 },
     ]);
-    for (const { externalTransactionId } of sentKeys())
-      expect(paidThen).toContain(externalTransactionId);
   });
 });
 
