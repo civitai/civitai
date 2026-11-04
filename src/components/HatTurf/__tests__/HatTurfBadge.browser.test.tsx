@@ -173,6 +173,7 @@ const feedWith = (
   images,
   open,
   stickers: {},
+  joined: true,
   watch: () => () => undefined,
 });
 

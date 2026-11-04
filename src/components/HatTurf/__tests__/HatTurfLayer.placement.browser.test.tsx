@@ -156,6 +156,7 @@ function renderPicture(fit: 'contain' | 'cover', natural: [number, number]) {
         images: {},
         open: {},
         stickers: {},
+        joined: h.stock.optedIn,
         watch: () => () => undefined,
       }}
     >

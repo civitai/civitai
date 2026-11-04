@@ -176,6 +176,7 @@ const turf = (): TurfSummaries => ({
   },
   open: { 77: true },
   stickers: {},
+  joined: h.stock.optedIn,
   watch: () => () => undefined,
 });
 
@@ -203,11 +204,22 @@ afterEach(() => {
 });
 
 describe('Hat Turf on the /images feed card', () => {
-  test('a joined player on a flagged feed gets the hat button and the standings badge', async () => {
+  test('a joined player on a flagged feed gets the hat button, the standings badge and the hat layer', async () => {
     renderCard(turf());
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     expect(q('hat-turf-stock')!.textContent).toBe('3');
     expect(q('hat-turf-badge')).not.toBeNull();
+    expect(q('hat-turf-layer')).not.toBeNull();
+  });
+
+  // Turf is seen by joined players only; a viewer who has not joined keeps the hat button as the
+  // way in. The joined test above is the positive control for the badge and the layer.
+  test('a viewer who has not joined gets the hat button but no standings badge or hat layer', async () => {
+    h.stock = { available: 3, optedIn: false };
+    renderCard(turf());
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(q('hat-turf-layer')).toBeNull();
   });
 
   test('with Hat Turf off for the viewer the card has none of it', async () => {
