@@ -11,7 +11,7 @@ import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
-import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { overMobileSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
@@ -138,7 +138,7 @@ export function DumbMarkerFiltersDropdown({
   // The bottom sheet's body is the scroll container, so an unportalled dropdown is
   // clipped by it — and a portalled one then has to clear the sheet in turn.
   const overlayProps = mobile
-    ? { withinPortal: true, zIndex: mobileMenuSheetZIndex + 1 }
+    ? { withinPortal: true, zIndex: overMobileSheetZIndex }
     : { withinPortal: false };
 
   // In the mobile generator these open as sheets, where search waits for a tap; a dropdown with

@@ -37,6 +37,7 @@ import {
 } from '~/server/services/block-token.service';
 import {
   ANON_SUBJECT,
+  HUB_TOKEN_JTI_PREFIX,
   isValidSubject,
   subjectForUserId,
   USER_SUB_RE,
@@ -1292,6 +1293,14 @@ export function enforceContextBinding(
         // where the operation is known. No request-shape binding; presence is the check.
         break;
       }
+      case 'apps:storage:import': {
+        // An import acts AS the viewer in another app, under a grant that viewer gave, so an
+        // anonymous subject can never hold it. The storage route checks the grant per source.
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       case 'apps:storage:publish': {
         // Authoring a document in a shared collection is ALWAYS attributed to a user, so
         // an anonymous subject can never hold it (mirrors apps:storage:shared:write).
@@ -1453,7 +1462,7 @@ async function resolveDevTunnelHubClaims(args: {
     sub: subjectForUserId(userId),
     iat,
     exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
-    jti: `hub_${apiKeyId}`,
+    jti: `${HUB_TOKEN_JTI_PREFIX}${apiKeyId}`,
     blockId,
     appId: clientId,
     appBlockId,
@@ -1500,7 +1509,11 @@ async function resolveHubTokenClaims(
     scopes?: unknown;
     page?: { buzzBudgetPerGen?: unknown };
   };
-  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  // `apps:storage:import` is never carried, and its grant ledger is never read or pruned here: the
+  // storage route refuses an import on any hub token (`import_hub_token`).
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes)
+    .filter(isKnownBlockScope)
+    .filter((s) => s !== 'apps:storage:import');
   const scopes = partitionByConsent(declared, granted).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
@@ -1518,7 +1531,7 @@ async function resolveHubTokenClaims(
     sub: subjectForUserId(userId),
     iat,
     exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
-    jti: `hub_${session.apiKeyId}`,
+    jti: `${HUB_TOKEN_JTI_PREFIX}${session.apiKeyId}`,
     blockId: block.blockId,
     appId: clientId,
     appBlockId: block.id,

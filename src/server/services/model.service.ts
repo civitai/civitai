@@ -1,6 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
   coverageColumn,
   coveragePair,
@@ -167,6 +168,7 @@ import {
   assertBaseModelAttestations,
   assertNoUnattestedScopeEntry,
 } from '~/server/services/base-model-attestation.service';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
@@ -1486,7 +1488,9 @@ export const getModelsRaw = async ({
               username: userBasicData[model.userId]?.username ?? null,
               deletedAt: userBasicData[model.userId]?.deletedAt ?? null,
               image: userBasicData[model.userId]?.image ?? null,
-              profilePicture: profilePictures?.[model.userId] ?? null,
+              profilePicture:
+                (profilePictures?.[model.userId] as (typeof profilePictures)[number] | undefined) ??
+                null,
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
@@ -2222,6 +2226,8 @@ export const deleteModelById = async ({
   });
 
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  if (deletedVersionIds.length)
+    void onStorySparkPostsHidden({ modelVersionIds: deletedVersionIds });
   // Refunded before the cache and index steps below: the delete has committed, and a failure in one
   // of them must not leave the bids standing. Without `onBidRefundFailed` its error is thrown last.
   let refundError: unknown;
@@ -4677,7 +4683,10 @@ export const publishModelById = async ({
       })
     : undefined;
   const versionIds = ownVersions ? ownVersions.map((v) => v.id) : requestedVersionIds;
-  if (ownVersions) assertBaseModelAttestations({ versions: ownVersions });
+  if (ownVersions) {
+    assertBaseModelAttestations({ versions: ownVersions });
+    await assertNonCommercialVersionsUnmonetized(ownVersions);
+  }
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -4873,13 +4882,13 @@ export const publishModelById = async ({
     description: model.description,
     rules: false,
   }).catch(() => null);
-  if (includeVersions)
-    scanEntitiesInBackground(
-      'Post',
-      posts
-        .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
-        .map((p) => p.id)
-    );
+  if (includeVersions) {
+    const versionPostIds = posts
+      .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
+      .map((p) => p.id);
+    scanEntitiesInBackground('Post', versionPostIds);
+    void onStorySparkPostsRestored({ postIds: versionPostIds });
+  }
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5106,6 +5115,7 @@ export const unpublishModelById = async ({
       where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
       select: { id: true },
     });
+    void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },
@@ -5528,8 +5538,14 @@ export const getAllModelsWithCategories = async ({
   viewer?: { id?: number; isModerator?: boolean | null } | null;
 }) => {
   const { take, skip } = getPagination(limit, page);
+  const seesUnpublished = !!viewer?.isModerator || (!!viewer?.id && userId === viewer.id);
   const where: Prisma.ModelFindManyArgs['where'] = {
-    status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
+    status: {
+      in: seesUnpublished
+        ? [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training]
+        : [ModelStatus.Published],
+    },
+    ...(!seesUnpublished && { availability: { not: Availability.Private } }),
     deletedAt: null,
     userId,
     // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
@@ -7118,11 +7134,13 @@ export const publishPrivateModel = async (
     throw throwBadRequestError('Model has no published versions');
   }
 
-  if (publishVersions)
+  if (publishVersions) {
     assertBaseModelAttestations({
       versions: versions.map((version) => ({ ...version, model })),
       grandfatherPublished: false,
     });
+    await assertNonCommercialVersionsUnmonetized(versions);
+  }
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();

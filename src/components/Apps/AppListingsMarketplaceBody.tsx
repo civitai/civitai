@@ -1,4 +1,4 @@
-import { Button, Center, Group, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Center, Group, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
@@ -452,6 +452,23 @@ export function AppListingsMarketplaceBody() {
 
   return (
     <Stack gap="md">
+      {/* RECENTLY OPENED — ABOVE the page header and search, so the "jump back in" shortcut
+          is the first thing in the column.
+          🔴 The rail is seeded EMPTY for SSR + the first client render (reading localStorage
+          during render is a hydration mismatch) and hydrates in a post-mount effect, so for a
+          viewer WITH recents it appears one frame late and pushes the header, search and grid
+          down. Accepted: the placement was asked for by design review (recording 2582).
+          Renders null when empty → a first-time viewer sees no gap and nothing shifts. */}
+      <RecentlyOpenedListingsView
+        entries={recentEntries}
+        canOpenPage={!!features.appBlocksPages}
+        onOpenRecent={handleOpenRecent}
+      />
+
+      <Title order={2} data-testid="apps-store-heading">
+        App Marketplace
+      </Title>
+
       {/*
         Search only. Sort and Filters live in the site sub-nav (`AppsStoreFeedFilters`,
         mounted by `SubNav2`), the way the images feed does it; all three write the same
@@ -471,26 +488,6 @@ export function AppListingsMarketplaceBody() {
           style={{ flex: 1, minWidth: 220 }}
         />
       </Group>
-
-      {/* RECENTLY OPENED — BELOW the search/sort/filter controls and ABOVE the
-          grid.
-          🔴 Deliberately not at the very top. The rail is seeded EMPTY for SSR +
-          the first client render (reading localStorage during render is a
-          hydration mismatch) and hydrates in a post-mount effect, so for a
-          viewer WITH recents it appears one frame late. Above the search input
-          that insertion pushes the whole page down by ~90px after paint — a pure
-          CLS hit on the primary controls, and one we would actually see, since
-          Faro RUM reports web-vitals for this page. Below the controls, the late
-          insertion only moves the grid, which the viewer has not yet aimed at.
-          The rail is still above the fold and above every result card, so the
-          "jump back in" shortcut keeps its priority over browsing.
-          Renders null when empty → a first-time viewer's layout is byte-identical
-          to before, and nothing shifts at all. */}
-      <RecentlyOpenedListingsView
-        entries={recentEntries}
-        canOpenPage={!!features.appBlocksPages}
-        onOpenRecent={handleOpenRecent}
-      />
 
       {/* THE FIRST-LOAD STATE. This used to be `<Center py="xl"><Loader /></Center>`
           — a spinner in a box whose height had nothing to do with the grid that

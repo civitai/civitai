@@ -212,9 +212,10 @@ function createRouting({ routesManifest, nextConfig }) {
   const i18n = nextConfig.i18n || null;
 
   // `redirects()` are deliberately NOT ported. Next answers a redirected path (the trailing-slash
-  // and repeated-slash 308s, every user redirect) before any route runs, and the router in front
-  // of this server sends it only single-segment `/api/trpc/<seg>` paths, which none of them match.
-  // A redirected path that does arrive is not a page here, so it gets the plain 404.
+  // and repeated-slash 308s, every user redirect) before any route runs, and what reaches this
+  // server is single-segment `/api/trpc/<seg>` and `/api/internal/image-delivery/<key>` paths,
+  // which none of them match. A redirected path that does arrive is not a page here, so it gets
+  // the plain 404.
   return { headers, i18n };
 }
 

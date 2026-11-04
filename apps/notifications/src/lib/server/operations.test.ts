@@ -21,7 +21,11 @@ vi.mock('./lag', () => ({
 vi.mock('./clients/db', () => ({ notifDbWrite: () => fakePool, notifDbRead: () => fakePool }));
 // count() consults the cache first; force a miss so it always runs the DB query under test.
 vi.mock('./cache', () => ({
-  notificationCache: { getUser: async () => undefined, setUser: async () => {}, bustUser: async () => {} },
+  notificationCache: {
+    getUser: async () => undefined,
+    setUser: async () => {},
+    bustUser: async () => {},
+  },
 }));
 
 import { countNotifications, queryNotifications } from './operations';
@@ -38,6 +42,20 @@ describe('queryNotifications SQL', () => {
     expect(sql).toContain('un.viewed IS FALSE');
     expect(sql).toContain('n.category = $2::"NotificationCategory"');
     expect(sql).toContain('un."createdAt" < $3');
+    expect(sql).toContain('LIMIT $4');
+  });
+
+  it('binds a keyset cursor as two params, never into the SQL text', async () => {
+    captured.length = 0;
+    const cursor = { createdAt: '2026-07-01T00:00:00.123456', id: '2586946432' };
+    await queryNotifications({ userId: 42, limit: 10, cursor });
+
+    const { sql, params } = captured[0];
+    expect(params).toEqual([42, cursor.createdAt, cursor.id, 10]);
+    // Text pinned for the bare `<=`, the index bound; the paging behaviour is tested against PGlite.
+    expect(sql).toContain(
+      'un."createdAt" <= $2::timestamp AND (un."createdAt" < $2::timestamp OR un.id < $3::bigint)'
+    );
     expect(sql).toContain('LIMIT $4');
   });
 

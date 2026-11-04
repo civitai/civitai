@@ -13,12 +13,14 @@ import {
   assistantSystemPrompt,
   buildAssistantInstructions,
   createAppTools,
+  createDocsTool,
   createFeedbackTools,
   createGateCore,
   chosenAppOf,
   createSandboxClient,
   openApp,
   GENERATE_APP_COVER,
+  READ_DOCS,
   type CoverEstimator,
   unconfiguredFeedbackSource,
   type AppFeedbackSource,
@@ -44,6 +46,11 @@ import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
+import {
+  RUNNER_ACTIVITY_TOOLS,
+  runnerActivityTools,
+  type CivitaiAppActivity,
+} from './app-activity';
 import { runnerCoverTools, unconfiguredCoverTools, type CoverListings } from './cover';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
@@ -123,6 +130,8 @@ const RUNNER_PAGE_TOOLS = [
   ...APP_FEEDBACK_TOOLS,
   // Offers a store cover; the page's card makes it.
   GENERATE_APP_COVER,
+  // What the open app did while it ran (`app_activity`), read by civitai as the run's user.
+  ...RUNNER_ACTIVITY_TOOLS,
 ] as const;
 
 export interface AppAssistantToolsOptions {
@@ -146,6 +155,11 @@ export interface AppAssistantToolsOptions {
    * feedback tools say they cannot read it here.
    */
   appFeedback?(runId: string, signal: AbortSignal): AppFeedbackSource;
+  /**
+   * civitai's app-activity read with one run's grant (`CivitaiAppActivity.forRun`). Unset,
+   * `app_activity` says it cannot read it here.
+   */
+  appActivity?(runId: string, signal: AbortSignal): ReturnType<CivitaiAppActivity['forRun']>;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
@@ -156,6 +170,10 @@ export interface AppAssistantToolsOptions {
   sdkPinReadTimeoutMs?: number;
   /** The `@civitai/sdk` upgrade's budget before it is rolled back (`SDK_UPGRADE_TIMEOUT_MS`; tests). */
   sdkUpgradeTimeoutMs?: number;
+  /** The fetch `read_docs` reads Civitai's developer docs with (the global one unless set; tests). */
+  docsFetch?: typeof fetch;
+  /** How long one `read_docs` read may take (`DOCS_TIMEOUT_MS` unless set; tests). */
+  docsTimeoutMs?: number;
 }
 
 /** No dev-tunnel endpoints configured: every start is refused as not set up. */
@@ -270,6 +288,8 @@ export class AppAssistantTools implements ToolProvider {
         openApp: () => sandbox.active?.app ?? null,
         // civitai refuses a submission whose sensitive scopes have no justification.
         unjustifiedScopes: () => unjustifiedManifestScopes(sandbox, signal),
+        // A sandbox with run_checks is told to run it; the others, npm test and tsc.
+        sandboxFeatures: () => sandbox.features,
       });
       core.restore({
         conversationId,
@@ -335,6 +355,11 @@ export class AppAssistantTools implements ToolProvider {
         [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),
         ...coverTools,
+        ...runnerActivityTools({
+          // The preview's block id, not the app's key: the two differ when the key's was taken.
+          currentApp: () => livePreview.previewBlockId(signal),
+          source: this.#options.appActivity?.(runId, signal),
+        }),
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.
@@ -347,7 +372,21 @@ export class AppAssistantTools implements ToolProvider {
           resolveArgs: async (args) => args,
         }
       );
-      const tools: ToolSet = { ...sandboxTools, ...page };
+      // Civitai's developer docs, which the sandbox cannot reach: the runner reads them itself. Not a
+      // page tool (`hostTools`): the page has its own fetch_page. One per reply, so its cache is too.
+      const docs = hostToolSet(
+        {
+          [READ_DOCS]: createDocsTool({
+            ...(this.#options.docsFetch ? { fetch: this.#options.docsFetch } : {}),
+            ...(this.#options.docsTimeoutMs !== undefined
+              ? { timeoutMs: this.#options.docsTimeoutMs }
+              : {}),
+          }),
+        },
+        sandboxTools,
+        { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
+      );
+      const tools: ToolSet = { ...sandboxTools, ...page, ...docs };
       // Aborts when the gate ends the reply on one of its own calls: its subagents stop with it.
       const replyEnded = new AbortController();
       const gate: GateDeps = {
@@ -386,7 +425,8 @@ export class AppAssistantTools implements ToolProvider {
           await sandbox.close();
         },
         // The runner's variant names only tools it has (no web or guide tool, no tunnel).
-        rules: assistantSystemPrompt('remote', subagents),
+        // …and the newer sandbox tools' rules only when the open app's sandbox lists them.
+        rules: assistantSystemPrompt('remote', subagents, sandbox.features),
         instructions: [
           buildAssistantInstructions({
             sandbox: sandbox.active,

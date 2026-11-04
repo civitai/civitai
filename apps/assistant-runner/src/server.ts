@@ -3,6 +3,7 @@ import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
 import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
+import { CivitaiAppActivity } from './app-assistant/app-activity';
 import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
@@ -108,6 +109,12 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // What the open app did while it ran, which civitai reads as a run's user, by its grant.
+  const appActivity = new CivitaiAppActivity({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
@@ -119,6 +126,7 @@ if (civitai) {
           estimator: runnerCoverEstimator(orchestration, credentials.forRun(runId)),
         }),
         appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
+        appActivity: (runId, signal) => appActivity.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;

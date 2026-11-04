@@ -85,6 +85,16 @@ import {
   publishedImageWhere,
 } from '~/server/selectors/image.selector';
 import {
+  fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
+} from '~/server/services/crucible-bradley-terry';
+import {
+  createPairKey,
+  createVoteOutcome,
+  decidedPairKeys,
+} from '~/server/services/crucible-judge-closure';
+import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
+import {
   getCrucibleJudgingConfig,
   recordSessionVote,
   resolveWatchSeconds,
@@ -2400,11 +2410,17 @@ export const submitEntry = async ({
   }
 };
 
-/**
- * Redis key for tracking voted pairs per user per crucible
- */
-function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
+/** Pairs this judge is not served again: those they voted on, and those their votes decide. */
+async function getDecidedPairKeys(crucibleId: number, userId: number) {
+  const [votedPairKeys = [], outcomes = []] = await Promise.all([
+    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    sysRedis.sMembers(getVoteOutcomesKey(crucibleId, userId)),
+  ]);
+  return decidedPairKeys(votedPairKeys, outcomes);
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -2449,14 +2465,6 @@ async function reserveJudgeEntryVotes(
 }
 
 /**
- * Create a canonical pair key (always sorted so a:b == b:a)
- */
-function createPairKey(entryId1: number, entryId2: number): string {
-  const [smaller, larger] = entryId1 < entryId2 ? [entryId1, entryId2] : [entryId2, entryId1];
-  return `${smaller}:${larger}`;
-}
-
-/**
  * The served pair, plus its anchor when it has one. A vote must name the same anchor: deciding it
  * from the counts at vote time alone would let a concurrent submit push an entry over the cap for a
  * moment and turn a normal vote into one that moves only one side.
@@ -2480,13 +2488,6 @@ export async function markPairVoted(
   await sysRedis.sAdd(key, pairKey);
   // Set TTL to 30 days (for crucible cleanup)
   await sysRedis.expire(key, 30 * 24 * 60 * 60);
-}
-
-/**
- * Redis key for tracking unique judges (voters) per crucible
- */
-function getJudgesKey(crucibleId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGES}:${crucibleId}` as RedisKeyTemplateSys;
 }
 
 /**
@@ -2887,9 +2888,9 @@ export async function countJudgingPairs({
 
   const judgeState = await Promise.all(
     uniqueIds.map(async (id) => {
-      const [judgeEntryVotes, votedPairKeys = []] = await Promise.all([
+      const [judgeEntryVotes, votedPairKeys] = await Promise.all([
         sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
-        sysRedis.sMembers(getVotedPairsKey(id, userId)),
+        getDecidedPairKeys(id, userId),
       ]);
       return { id, judgeEntryVotes, votedPairKeys };
     })
@@ -3158,7 +3159,7 @@ export const getJudgingPair = async ({
     getAllEntryElos(crucibleId),
     crucibleEloRedis.getAllVoteCounts(crucibleId),
     sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    getDecidedPairKeys(crucibleId, userId),
   ]);
   const votedPairs = new Set(votedPairKeys);
   const judgeVotesOn = (entry: EntryForJudging) => Number(judgeEntryVotes?.[entry.id] ?? 0);
@@ -3400,7 +3401,6 @@ export const submitVote = async ({
         'You have already voted on this pair. Please wait for the next pair to load.'
       );
     }
-
     ({ winnerElo, loserElo } = await processEloVote(
       crucibleId,
       winnerEntryId,
@@ -3423,7 +3423,16 @@ export const submitVote = async ({
     throw error;
   }
 
+  // Only once the vote has counted: a refused or failed vote must not decide pairs for this judge.
+  const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
   await Promise.all([
+    // A lost outcome only means this judge is served a pair they could have skipped.
+    (async () => {
+      await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+      await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+    })().catch((error: unknown) =>
+      log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+    ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
     crucible.minViewSeconds &&
@@ -3655,7 +3664,8 @@ export const getCrucibleJudgesCount = async ({
  *
  * This function:
  * 1. Copies ELO scores from Redis to PostgreSQL CrucibleEntry.score
- * 2. Places entries with enough votes by ELO (entry time breaks ties); the rest stay unplaced
+ * 2. Places entries with enough votes by ELO, or by the Bradley-Terry fit where
+ *    `usesBradleyTerryRanking` (entry time breaks ties); the rest stay unplaced
  * 3. Updates CrucibleEntry records with final positions
  * 4. Calculates prize amounts based on configured percentages
  * 5. Updates crucible status to 'completed'
@@ -3690,6 +3700,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       prizePositions: true,
       startAt: true,
       endAt: true,
+      createdAt: true,
       timeAdjustedPlacement: true,
       nsfwLevel: true,
       _count: {
@@ -3830,8 +3841,11 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${allEntries[0].id}`);
   }
 
+  const fittedScores = usesBradleyTerryRanking(crucible)
+    ? await fitCrucibleScoresForPrizes(crucibleId, { endedAt: crucible.endAt })
+    : null;
   const ranking = rankEntries(allEntries, {
-    redisElos,
+    redisElos: fittedScores ? Object.fromEntries(fittedScores) : redisElos,
     redisVoteCounts,
     prizePositions,
     totalPrizePool,

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import homeClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
@@ -213,4 +214,57 @@ describe('a hat on a shelf card sits on its corner', () => {
     const card = rect(cards()[0]);
     expect(document.elementFromPoint(card.left + 40, card.top + 80)).toBe(grid);
   });
+});
+
+describe('a card in a collapsed row shows none of its hat', () => {
+  // 3 columns at 900px: two rows show 6 cards, the rest sit in 0px rows whose hats would
+  // otherwise poke up into the clip below row 2.
+  const shown = (wrapper: Element) => {
+    const h = wrapper.querySelector('button[data-event-decoration="hat"]')!;
+    return getComputedStyle(h).visibility === 'visible';
+  };
+  const wrappers = () => cards().map((c) => c.parentElement!);
+  const collapsed = () => wrappers().filter((w) => rect(w).height === 0);
+
+  let setIds: (ids: number[]) => void = () => undefined;
+  function Shelf({ initial }: { initial: number[] }) {
+    const [ids, set] = useState(initial);
+    setIds = set;
+    return (
+      <ShowcaseGrid itemCount={ids.length} rows={2} minWidth={280}>
+        {ids.map((i) => (
+          <Card key={i} i={i} />
+        ))}
+      </ShowcaseGrid>
+    );
+  }
+
+  const first = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+  test('at mount', async () => {
+    await shelf(900, <Shelf initial={first} />);
+    await vi.waitFor(() => {
+      expect(collapsed()).toHaveLength(3);
+      expect(collapsed().filter(shown)).toHaveLength(0);
+    });
+    expect(wrappers().filter(shown)).toHaveLength(6);
+  });
+
+  async function change(ids: number[], collapsedCount: number) {
+    await shelf(900, <Shelf initial={first} />);
+    await vi.waitFor(() => {
+      expect(collapsed()).toHaveLength(3);
+      expect(collapsed().filter(shown)).toHaveLength(0);
+    });
+    setIds(ids);
+    await vi.waitFor(() => {
+      expect(collapsed()).toHaveLength(collapsedCount);
+      expect(collapsed().filter(shown)).toHaveLength(0);
+      expect(wrappers().filter(shown)).toHaveLength(6);
+    });
+  }
+
+  test('after a new card pushes a shown one into a collapsed row', () => change([1, ...first], 4));
+  test('after a card is added straight into a collapsed row', () => change([...first, 99], 4));
+  test('a card that leaves a collapsed row shows again', () => change(first.slice(1), 2));
 });

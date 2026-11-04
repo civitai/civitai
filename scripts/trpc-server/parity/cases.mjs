@@ -283,3 +283,219 @@ export function buildCases(ctx) {
     },
   ];
 }
+
+// --- image delivery (`--cases image-delivery`) ---------------------------------------------------
+//
+// Compares Next (`server.js`, the reference) with the standalone server serving
+// `/api/internal/image-delivery/[id]`. Every answer must be Next's, byte for byte, except the
+// paths that are not an exact one-segment match (declared below, as for the tRPC route): the
+// route's caller never sends them.
+//
+// `counted` is the status label the route's own counter (`civitai_app_image_delivery_request_total`)
+// must move by for the case: 'found', 'not_found', or null when the route answers before counting
+// (auth) or the path is not the route. With `--route-counter` the harness checks the counter on
+// BOTH servers moved by exactly these amounts, so a candidate that never ran the route cannot pass,
+// and the reference is the positive control that the counter can be read at all.
+//
+// The rows below are written to the job's empty database by `seed-image-delivery.mjs` before
+// these cases run. Ids are the image url keys the caller sends; none is a real image.
+
+const UUID = (n) => `0d1e2f3a-4b5c-4d6e-8f70-${String(n).padStart(12, '0')}`;
+export const IMAGE_DELIVERY_IDS = {
+  image: UUID(1),
+  video: UUID(2),
+  gone: UUID(3),
+  shared: UUID(4),
+  goneHidden: UUID(5),
+  unknown: UUID(99),
+};
+
+/** [id, url, hideMeta, type, mimeType, ingestion] */
+export const IMAGE_DELIVERY_ROWS = [
+  [910001, IMAGE_DELIVERY_IDS.image, false, 'image', 'image/jpeg', 'Scanned'],
+  // `mimeType` blank: the endpoint answers null.
+  [910002, IMAGE_DELIVERY_IDS.video, true, 'video', '  ', 'Scanned'],
+  // Source known gone and metadata visible: not deliverable, so 404.
+  [910003, IMAGE_DELIVERY_IDS.gone, false, 'image', 'image/png', 'NotFound'],
+  // Two rows share a url: the most restrictive (hideMeta) wins.
+  [910004, IMAGE_DELIVERY_IDS.shared, false, 'image', 'image/webp', 'Scanned'],
+  [910005, IMAGE_DELIVERY_IDS.shared, true, 'image', 'image/webp', 'Scanned'],
+  // Source gone but metadata hidden: still delivered.
+  [910006, IMAGE_DELIVERY_IDS.goneHidden, true, 'image', null, 'NotFound'],
+];
+
+/**
+ * @param {{ webhookToken: string }} ctx
+ */
+export function buildImageDeliveryCases(ctx) {
+  const auth = { authorization: `Bearer ${ctx.webhookToken}` };
+  const at = (id) => `/api/internal/image-delivery/${id}`;
+  const { image, video, gone, shared, goneHidden, unknown } = IMAGE_DELIVERY_IDS;
+  return [
+    // --- found: from the database, then from the cache the first request filled ----------------
+    { id: 'image-db', path: at(image), headers: auth, counted: 'found' },
+    { id: 'image-cached', path: at(image), headers: auth, warm: true, counted: 'found' },
+    { id: 'video-blank-mime', path: at(video), headers: auth, counted: 'found' },
+    { id: 'video-blank-mime-cached', path: at(video), headers: auth, warm: true, counted: 'found' },
+    { id: 'shared-url-most-restrictive', path: at(shared), headers: auth, counted: 'found' },
+    { id: 'gone-but-hidden', path: at(goneHidden), headers: auth, counted: 'found' },
+
+    // --- not found ---------------------------------------------------------------------------------
+    { id: 'unknown-id', path: at(unknown), headers: auth, counted: 'not_found' },
+    // Negative results are not cached: the second request reads the database again.
+    { id: 'unknown-id-again', path: at(unknown), headers: auth, warm: true, counted: 'not_found' },
+    { id: 'gone-source', path: at(gone), headers: auth, counted: 'not_found' },
+
+    // --- odd ids: decoded the same way by both, still one segment ---------------------------------
+    {
+      id: 'id-encoded-slash-and-space',
+      path: at('a%20b%2Fc'),
+      headers: auth,
+      counted: 'not_found',
+    },
+    { id: 'id-utf8', path: at('%C3%A9t%C3%A9.png'), headers: auth, counted: 'not_found' },
+    { id: 'id-very-long', path: at('x'.repeat(2048)), headers: auth, counted: 'not_found' },
+    {
+      // The path's id wins over a query `id`, under Next and here.
+      id: 'id-also-in-query',
+      path: `${at(image)}?id=${unknown}&id=${gone}`,
+      headers: auth,
+      counted: 'found',
+    },
+
+    // --- auth -------------------------------------------------------------------------------------
+    { id: 'auth-missing', path: at(image), headers: {}, counted: null },
+    {
+      id: 'auth-wrong-bearer',
+      path: at(image),
+      headers: { authorization: 'Bearer not-the-token' },
+      counted: null,
+    },
+    {
+      id: 'auth-query-token',
+      path: `${at(image)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      // The caller's exact request shape (`?token=`, no Bearer) on a hideMeta row: the value
+      // that decides whether metadata is stripped.
+      id: 'hidemeta-query-token',
+      path: `${at(video)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      id: 'hidemeta-shared-url-query-token',
+      path: `${at(shared)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      // A repeated ?token= arrives as an array and is refused.
+      id: 'auth-repeated-query-token',
+      path: `${at(image)}?token={WEBHOOK_TOKEN}&token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: null,
+    },
+    {
+      // An unrelated Bearer next to a valid ?token= still passes.
+      id: 'auth-other-bearer-plus-query-token',
+      path: `${at(image)}?token={WEBHOOK_TOKEN}`,
+      headers: { authorization: 'Bearer something-else' },
+      counted: 'found',
+    },
+
+    // --- what the router does before a route runs -------------------------------------------------
+    {
+      // Next strips these; not stripping `x-nextjs-data` makes the route module add
+      // `x-nextjs-matched-path` to the response.
+      id: 'client-sent-internal-headers',
+      path: at(image),
+      headers: {
+        ...auth,
+        'x-nextjs-data': '1',
+        'x-matched-path': '/api/trpc/[trpc]',
+        'x-middleware-override-headers': 'authorization',
+        'x-middleware-request-authorization': 'Bearer not-the-token',
+        'x-now-route-matches': `nxtPid=${unknown}`,
+      },
+      counted: 'found',
+    },
+    {
+      // Next drops `nxtP…` query keys; a route module invoked directly would take `nxtPid` as the
+      // route param and answer for that image instead.
+      id: 'internal-query-param-override',
+      path: `${at(unknown)}?nxtPid=${image}`,
+      headers: auth,
+      counted: 'not_found',
+    },
+    {
+      // Pins that edge-sent x-forwarded-* headers do not change the answer. It does NOT cover the
+      // server's own x-forwarded-* fill: this handler reads no forwarded header, so removing the
+      // fill changes nothing here (a mutation check confirmed it survives).
+      id: 'edge-forwarded-headers-do-not-change-the-answer',
+      path: at(image),
+      headers: {
+        ...auth,
+        'x-forwarded-for': '198.51.100.23',
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'example.test',
+      },
+      counted: 'found',
+    },
+    {
+      id: 'post-with-json-body',
+      method: 'POST',
+      path: at(image),
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: '{"a":1}',
+      counted: 'found',
+    },
+    { id: 'head', method: 'HEAD', path: at(image), headers: auth, counted: 'found' },
+
+    // --- not an exact match: this server's plain answers; the caller never sends these ---------
+    {
+      id: 'trailing-slash',
+      path: `${at(image)}/`,
+      headers: auth,
+      counted: null,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+    },
+    {
+      id: 'more-segments',
+      path: `${at(image)}/extra`,
+      headers: auth,
+      counted: null,
+      divergence: { reason: PAGE_RENDERED, candidate: NOT_FOUND },
+    },
+    {
+      id: 'no-id',
+      path: '/api/internal/image-delivery/',
+      headers: auth,
+      counted: null,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+    },
+    {
+      id: 'bad-percent-escape',
+      path: at('%E0%A4%A'),
+      headers: auth,
+      counted: null,
+      divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
+    },
+
+    // --- the server's other routes, next to this one ---------------------------------------------
+    {
+      id: 'other-internal-route',
+      path: '/api/live?token={WEBHOOK_TOKEN}',
+      headers: {},
+      counted: null,
+    },
+    {
+      id: 'trpc-call',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+      counted: null,
+    },
+  ];
+}

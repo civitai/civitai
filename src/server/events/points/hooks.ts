@@ -2,8 +2,8 @@
 // they never throw and are never awaited, so a points failure cannot fail or slow the reaction,
 // comment, approval or tracking request it rides on.
 //
-// Every award and removal is gated on `isHattedEntity`, an in-memory check, so content without an
-// event hat costs nothing past that check. The one exception is a comment reply or a deleted
+// Every award and removal is gated on `isHattedEntity`, an in-memory check (true for a hat or a Hat
+// Turf leader), so content that earns nothing costs nothing past that check. The one exception is a comment reply or a deleted
 // comment, whose thread must be read to learn which Image or Article it belongs to.
 //
 // Each action carries `time`, taken synchronously at the write site, so two quick opposite writes
@@ -13,19 +13,25 @@
 // reaction, comment, approved sticker, recommended review), so `sourceId` is one per
 // (kind, entity, actor) and an add and its removal always pair. Accepted limitation: if the hat
 // came off before the removal, the gate skips it and no removal is sent.
+import { Prisma } from '@prisma/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import type { TrackBatchInput } from '~/server/schema/track.schema';
 import type { PlacementSurface, PlacementTargetType } from '~/shared/utils/placement';
 import type { Session } from '~/types/session';
 import { dbWrite } from '~/server/db/client';
+import { sysRedis } from '~/server/redis/client';
+import { loadEvents } from '~/server/events/load-events';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   awardEventPoints,
+  hasTurfMark,
   isHattedEntity,
   isHattedEntityOnceLoaded,
   removeEventPoints,
 } from './award';
 import { isEventPointsEnabledSync } from './enabled';
+import { storySparksScoredKey, utcDay } from './keys';
 import type { EventPointAction, EventPointEntityType, EventPointType } from './types';
 
 const POINT_ENTITY_TYPES: ReadonlySet<string> = new Set<EventPointEntityType>([
@@ -115,7 +121,12 @@ async function removeIfLast(
     Pick<EventPointAction, 'time'>,
   stillHas: () => Promise<number>
 ) {
-  if (!(await isHattedEntityOnceLoaded(action.entityType, action.entityId))) return;
+  // A turf lead can end between the add and its removal; the earned mark still finds it.
+  if (
+    !(await isHattedEntityOnceLoaded(action.entityType, action.entityId)) &&
+    !(await hasTurfMark(action))
+  )
+    return;
   if ((await stillHas()) > 0) return;
   await removeEventPoints([action]);
 }
@@ -308,6 +319,12 @@ const IMAGE_TARGET: PlacementTargetType = 'image';
 
 type PlacementLike = { surface: string; targetType: string; targetId: number; placerId: number };
 
+const placementSourceId = (
+  type: Extract<EventPointType, 'sticker' | 'remix'>,
+  imageId: number,
+  placerId: number
+) => `Placement:${type}:${imageId}:${placerId}`;
+
 const placementAction = (
   { surface, targetType, targetId, placerId }: PlacementLike,
   time: Date
@@ -320,7 +337,7 @@ const placementAction = (
     entityType: 'Image' as const,
     entityId: targetId,
     time,
-    sourceId: `Placement:${type}:${targetId}:${placerId}`,
+    sourceId: placementSourceId(type, targetId, placerId),
   };
 };
 
@@ -351,19 +368,220 @@ export async function onPlacementsTakenDown(placementIds: number[]): Promise<voi
       if (!action || seen.has(action.sourceId)) continue;
       seen.add(action.sourceId);
       await removeIfLast(action, () =>
-        dbWrite.placement.count({
-          where: {
-            surface: row.surface,
-            targetType: row.targetType,
-            targetId: row.targetId,
-            placerId: row.placerId,
-            status: 'approved',
-          },
-        })
+        action.type === 'remix'
+          ? remixEarnersLeft(row.placerId, row.targetId)
+          : dbWrite.placement.count({
+              where: {
+                surface: row.surface,
+                targetType: row.targetType,
+                targetId: row.targetId,
+                placerId: row.placerId,
+                status: 'approved',
+              },
+            })
       );
     }
   } catch (error) {
     swallow('event-points:placement')(error);
+  }
+}
+// #endregion
+
+// #region story sparks
+// A story started from a hatted image (its spark) scores as that image's remix, for the storyline's
+// owner. It shares the accepted remix's sourceId, so one person earns the remix once per image
+// whether they remix it, write a story from it, or both, and the points go only when neither is left.
+
+const remixAction = (actorId: number, imageId: number, time: Date) => ({
+  type: 'remix' as const,
+  actorId,
+  entityType: 'Image' as const,
+  entityId: imageId,
+  time,
+  sourceId: placementSourceId('remix', imageId, actorId),
+});
+
+type LiveSparkedStory = { storylineId: number; actorId: number; imageId: number };
+
+/**
+ * Storylines whose spark scores: up, started from someone else's image, chapter 1 there and shown
+ * to readers (published, not removed or taken down). `where` narrows them, over `st` and chapter 1
+ * `rc`.
+ */
+async function liveSparkedStories(where: Prisma.Sql): Promise<LiveSparkedStory[]> {
+  // Imported on use: the storyline layer imports this module.
+  const { storylineRootVisibleSql } = await import('~/server/services/storyline.service');
+  return dbWrite.$queryRaw<LiveSparkedStory[]>`
+    SELECT st.id AS "storylineId", st."userId" AS "actorId", st."sparkImageId" AS "imageId"
+    FROM "Storyline" st
+    JOIN "Image" i ON i.id = st."sparkImageId"
+    JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
+    LEFT JOIN "Post" rp ON rp.id = rc."postId"
+    LEFT JOIN "User" ru ON ru.id = rp."userId"
+    WHERE st."tosViolation" = false AND i."userId" <> st."userId"
+      AND ${storylineRootVisibleSql} AND ${where}
+  `;
+}
+
+/** What still earns this person the remix on this image: approved remixes and live sparked stories. */
+async function remixEarnersLeft(actorId: number, imageId: number) {
+  const [placements, stories] = await Promise.all([
+    dbWrite.placement.count({
+      where: {
+        surface: 'remixGallery',
+        targetType: IMAGE_TARGET,
+        targetId: imageId,
+        placerId: actorId,
+        status: 'approved',
+      },
+    }),
+    liveSparkedStories(Prisma.sql`st."userId" = ${actorId} AND st."sparkImageId" = ${imageId}`),
+  ]);
+  return placements + stories.length;
+}
+
+// The fewest scoring sparks per person per UTC day of any registered event that sets one, whether
+// or not it is running; with none set, stories do not score.
+async function storySparksPerDay() {
+  const caps = (await loadEvents())
+    .map((e) => e.scoring?.storySparksPerActorPerDay)
+    .filter((cap): cap is number => cap !== undefined);
+  return caps.length ? Math.min(...caps) : 0;
+}
+
+const STORY_SPARKS_SCORED_TTL = 2 * 24 * 60 * 60;
+
+/**
+ * Chapter 1 of a storyline was just written, or the storyline came back up. Call after the write
+ * commits. Scores the spark if the story is live and its owner has not used up the day's scoring
+ * sparks: their stories that scored today. A slot stays used when its story is later hidden or
+ * deleted, since the remix it earned can outlive it. A repeat (the remix already held, a second
+ * restore) records nothing and uses no slot.
+ */
+export async function onStorySparked(storylineId: number): Promise<void> {
+  const time = new Date();
+  try {
+    const perDay = await storySparksPerDay();
+    if (!perDay) return;
+    const [story] = await liveSparkedStories(Prisma.sql`st.id = ${storylineId}`);
+    if (!story || !isHattedEntity('Image', story.imageId)) return;
+    const day = utcDay(time);
+    const key = storySparksScoredKey(story.actorId, day);
+    // One writer's stories at a time, so parallel creates cannot all pass the cap. Not acquired
+    // within the retries: the story does not score.
+    await withDistributedLock(
+      { key: `story-spark-cap:${story.actorId}:${day}`, maxRetries: 50, autoRenew: true },
+      async () => {
+        const scored = (await sysRedis.sMembers(key)).filter((id) => id !== String(storylineId));
+        if (scored.length >= perDay) return;
+        // Reserve the slot before awarding; give it back if the award records nothing.
+        const reserved = (await sysRedis.sAdd(key, String(storylineId))) === 1;
+        await sysRedis.expire(key, STORY_SPARKS_SCORED_TTL);
+        let firsts = 0;
+        try {
+          firsts = await awardEventPoints([remixAction(story.actorId, story.imageId, time)]);
+        } finally {
+          if (reserved && !firsts) await sysRedis.sRem(key, String(storylineId));
+        }
+      }
+    );
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
+  }
+}
+
+/**
+ * A sparked story stopped being live: chapter 1 removed, the storyline taken down or deleted. Call
+ * after the write commits, with the storyline's owner and spark read before it (a delete leaves
+ * nothing to read).
+ */
+export async function onStorySparkRemoved({
+  actorId,
+  imageId,
+}: {
+  actorId: number;
+  imageId: number | null;
+}): Promise<void> {
+  const time = new Date();
+  try {
+    if (!imageId) return;
+    await removeIfLast(remixAction(actorId, imageId, time), () =>
+      remixEarnersLeft(actorId, imageId)
+    );
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
+  }
+}
+
+/** `onStorySparkRemoved` for a storyline that still exists. */
+export async function onStorySparkLost(storylineId: number): Promise<void> {
+  try {
+    const storyline = await dbWrite.storyline.findUnique({
+      where: { id: storylineId },
+      select: { userId: true, sparkImageId: true },
+    });
+    if (storyline)
+      await onStorySparkRemoved({ actorId: storyline.userId, imageId: storyline.sparkImageId });
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
+  }
+}
+
+type StorySparkPosts = { postIds: number[] } | { modelVersionIds: number[] } | { authorId: number };
+
+// Over chapter 1 `rc`; undefined when there is nothing to match.
+const storySparkPostsWhere = (by: StorySparkPosts) =>
+  'postIds' in by
+    ? by.postIds.length
+      ? Prisma.sql`rc."postId" = ANY(${by.postIds}::int[])`
+      : undefined
+    : 'modelVersionIds' in by
+    ? by.modelVersionIds.length
+      ? Prisma.sql`rc."postId" IN (SELECT id FROM "Post" WHERE "modelVersionId" = ANY(${by.modelVersionIds}::int[]))`
+      : undefined
+    : Prisma.sql`rc."userId" = ${by.authorId}`;
+
+/**
+ * Chapter 1 of these sparked stories may no longer be shown: a moderation or account write hid it
+ * (unpublished, rated Blocked, its model taken down, its author banned or deleted). Call after the
+ * write commits; it never throws. Each story's remix goes only if nothing else still earns it, so
+ * a story that is still live keeps it.
+ */
+export async function onStorySparkPostsHidden(by: StorySparkPosts): Promise<void> {
+  try {
+    const where = storySparkPostsWhere(by);
+    if (!where || !(await storySparksPerDay())) return;
+    const sparks = await dbWrite.$queryRaw<{ actorId: number; imageId: number }[]>`
+      SELECT DISTINCT st."userId" AS "actorId", st."sparkImageId" AS "imageId"
+      FROM "StorylineChapter" rc
+      JOIN "Storyline" st ON st.id = rc."storylineId"
+      WHERE rc.depth = 0 AND st."sparkImageId" IS NOT NULL AND ${where}
+    `;
+    for (const spark of sparks) await onStorySparkRemoved(spark);
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
+  }
+}
+
+/**
+ * The reverse of `onStorySparkPostsHidden`: a write that may show chapter 1 of these sparked
+ * stories again (republished, rated again, its model back up, its author unbanned). Call after the
+ * write commits, without awaiting. Each story scores again only if it is live now and the day's cap
+ * allows; one that never lost its points records nothing.
+ */
+export async function onStorySparkPostsRestored(by: StorySparkPosts): Promise<void> {
+  try {
+    const where = storySparkPostsWhere(by);
+    if (!where || !(await storySparksPerDay())) return;
+    const stories = await dbWrite.$queryRaw<{ storylineId: number }[]>`
+      SELECT DISTINCT rc."storylineId"
+      FROM "StorylineChapter" rc
+      JOIN "Storyline" st ON st.id = rc."storylineId"
+      WHERE rc.depth = 0 AND st."sparkImageId" IS NOT NULL AND ${where}
+    `;
+    for (const { storylineId } of stories) await onStorySparked(storylineId);
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
   }
 }
 // #endregion

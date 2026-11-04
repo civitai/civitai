@@ -45,7 +45,7 @@ import {
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
@@ -63,6 +63,7 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { RequestLockReviewMenuItem } from '~/components/Model/LockReview/RequestLockReview';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
@@ -116,6 +117,18 @@ import {
   TagDivider,
   UpdatedText,
 } from '~/components/Model/ModelPageDs/ModelPageDs';
+import {
+  ComCardPreviewScope,
+  ComCardPreviewToggle,
+  useComCardBrowsingLevel,
+  RedCardLink,
+} from '~/components/Model/ComCardPreview/ComCardPreview';
+import {
+  canLinkToRedCard,
+  canPreviewComCard,
+  getCardViewer,
+  withComCard,
+} from '~/components/Model/ComCardPreview/com-card-preview';
 import {
   modelVersionAccessInput,
   toModelVersionPermissionData,
@@ -191,6 +204,7 @@ import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
@@ -453,10 +467,24 @@ export default function ModelDetailsV2({
 
   const { blockedUsers } = useHiddenPreferencesData();
 
-  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({
+  const { data: storedModel, isLoading: loadingModel } = trpc.model.getById.useQuery({
     id,
     excludeTrainingData: true,
   });
+  const cardViewer = getCardViewer(currentUser, storedModel?.user.id, !!features.isGreen);
+  // Keyed on the model id: the page stays mounted across in-app links to another model.
+  const [previewedModelId, setPreviewedModelId] = useState<number>();
+  const previewComCard = previewedModelId === id;
+  const setPreviewComCard = (on: boolean) => setPreviewedModelId(on ? id : undefined);
+  const showComCardToggle = canPreviewComCard(cardViewer, storedModel);
+  const showRedCardLink = canLinkToRedCard(cardViewer, storedModel?.sfwName);
+  const model = useMemo(
+    () =>
+      storedModel && showComCardToggle && previewComCard ? withComCard(storedModel) : storedModel,
+    [storedModel, showComCardToggle, previewComCard]
+  );
+  const previewingComCard = showComCardToggle && previewComCard;
+  const comCardBrowsingLevel = useComCardBrowsingLevel(previewingComCard);
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
@@ -516,6 +544,7 @@ export default function ModelDetailsV2({
       pending: true,
       include: [],
       withMeta: false,
+      browsingLevel: comCardBrowsingLevel,
     },
     { enabled: !!selectedVersion }
   );
@@ -787,11 +816,15 @@ export default function ModelDetailsV2({
   useEffect(() => {
     if (loadingModel || !selectedVersion || selectedVersion.id === modelVersionId) return;
     router.replace(
-      getModelUrl({ modelId: id, modelName: model?.name, modelVersionId: selectedVersion.id }),
+      getModelUrl({
+        modelId: id,
+        modelName: storedModel?.name,
+        modelVersionId: selectedVersion.id,
+      }),
       undefined,
       { shallow: true }
     );
-  }, [id, model?.name, selectedVersion, modelVersionId, loadingModel, router]);
+  }, [id, storedModel?.name, selectedVersion, modelVersionId, loadingModel, router]);
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
@@ -928,721 +961,743 @@ export default function ModelDetailsV2({
           model.availability === Availability.Unsearchable,
       }}
     >
-      <TrackView entityId={model.id} entityType="Model" type="ModelView" />
-      <RenderAdUnitOutstream minContainerWidth={2800} />
-      <div className={showRail ? `${classes.mainRegion} ${classes.withRail}` : classes.mainRegion}>
-        <Container size="xl" px={0} className={classes.contentCol} data-tour="model:start">
-          <PageStack ds={ds} gap="xl">
-            <PageStack ds={ds} gap="xs">
-              <PageStack ds={ds} gap={4}>
-                <PageGroup ds={ds} align="flex-start" justify="space-between" nowrap>
-                  <PageGroup ds={ds} className={classes.titleWrapper}>
-                    <ModelTitle ds={ds} className={classes.title}>
-                      {model?.name}
-                    </ModelTitle>
-                    <StatHoverCard
-                      label="Unique Reviews"
-                      value={model.rank?.thumbsUpCountAllTime ?? 0}
-                    >
-                      <div>
-                        <LoginRedirect reason="favorite-model">
-                          <ModelStatBadge
-                            ds={ds}
-                            color={isFavorite ? 'green' : 'gray'}
-                            icon={
-                              <ThumbsUpIcon
-                                size={18}
-                                color={isFavorite ? 'green' : undefined}
-                                filled={isFavorite}
-                              />
-                            }
-                            className={isFavoriteKnown ? 'cursor-pointer' : 'cursor-progress'}
-                            onClick={() => {
-                              // F1: don't toggle until Recommended membership is known —
-                              // a cold store reads not-favorited and would flip intent.
-                              if (!isFavoriteKnown) return;
-                              handleToggleFavorite({ setTo: !isFavorite });
-                            }}
-                          >
-                            <ModelStatText ds={ds} className={classes.modelBadgeText}>
-                              {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
-                            </ModelStatText>
-                          </ModelStatBadge>
-                        </LoginRedirect>
-                      </div>
-                    </StatHoverCard>
-                    <StatHoverCard
-                      label="Unique Downloads"
-                      value={model.rank?.downloadCountAllTime ?? 0}
-                      message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
-                    >
-                      <ModelStatBadge ds={ds} icon={<IconDownload size={18} />}>
-                        <ModelStatText ds={ds} className={classes.modelBadgeText}>
-                          {model.hiddenMetrics?.downloads ? (
-                            <HiddenMetricNotice size={18} withTooltip={false} />
-                          ) : (
-                            abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
-                          )}
-                        </ModelStatText>
-                      </ModelStatBadge>
-                    </StatHoverCard>
-                    {latestGenerationVersion && (
-                      <GenerateButton
-                        versionId={latestGenerationVersion.id}
-                        modelId={model.id}
-                        data-activity="create:model-stat"
+      <ComCardPreviewScope previewing={previewingComCard}>
+        <TrackView entityId={model.id} entityType="Model" type="ModelView" />
+        <RenderAdUnitOutstream minContainerWidth={2800} />
+        <div
+          className={showRail ? `${classes.mainRegion} ${classes.withRail}` : classes.mainRegion}
+        >
+          <Container size="xl" px={0} className={classes.contentCol} data-tour="model:start">
+            <PageStack ds={ds} gap="xl">
+              <PageStack ds={ds} gap="xs">
+                {showComCardToggle && (
+                  <ComCardPreviewToggle checked={previewComCard} onChange={setPreviewComCard} />
+                )}
+                {showRedCardLink && <RedCardLink path={router.asPath} />}
+                <PageStack ds={ds} gap={4}>
+                  <PageGroup ds={ds} align="flex-start" justify="space-between" nowrap>
+                    <PageGroup ds={ds} className={classes.titleWrapper}>
+                      <ModelTitle ds={ds} className={classes.title}>
+                        {model?.name}
+                      </ModelTitle>
+                      <StatHoverCard
+                        label="Unique Reviews"
+                        value={model.rank?.thumbsUpCountAllTime ?? 0}
                       >
-                        <ModelStatBadge ds={ds} icon={<IconBrush size={18} />}>
+                        <div>
+                          <LoginRedirect reason="favorite-model">
+                            <ModelStatBadge
+                              ds={ds}
+                              color={isFavorite ? 'green' : 'gray'}
+                              icon={
+                                <ThumbsUpIcon
+                                  size={18}
+                                  color={isFavorite ? 'green' : undefined}
+                                  filled={isFavorite}
+                                />
+                              }
+                              className={isFavoriteKnown ? 'cursor-pointer' : 'cursor-progress'}
+                              onClick={() => {
+                                // F1: don't toggle until Recommended membership is known —
+                                // a cold store reads not-favorited and would flip intent.
+                                if (!isFavoriteKnown) return;
+                                handleToggleFavorite({ setTo: !isFavorite });
+                              }}
+                            >
+                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
+                                {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
+                              </ModelStatText>
+                            </ModelStatBadge>
+                          </LoginRedirect>
+                        </div>
+                      </StatHoverCard>
+                      <StatHoverCard
+                        label="Unique Downloads"
+                        value={model.rank?.downloadCountAllTime ?? 0}
+                        message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
+                      >
+                        <ModelStatBadge ds={ds} icon={<IconDownload size={18} />}>
                           <ModelStatText ds={ds} className={classes.modelBadgeText}>
-                            {model.hiddenMetrics?.generations ? (
-                              <HiddenMetricNotice size={18} />
+                            {model.hiddenMetrics?.downloads ? (
+                              <HiddenMetricNotice size={18} withTooltip={false} />
                             ) : (
-                              abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
+                              abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
                             )}
                           </ModelStatText>
                         </ModelStatBadge>
-                      </GenerateButton>
-                    )}
-                    {features.collections && (
-                      <StatHoverCard
-                        label="Collections"
-                        value={model.rank?.collectedCountAllTime ?? 0}
-                      >
-                        <div>
-                          <LoginRedirect reason="add-to-collection">
-                            <ModelStatBadge
-                              ds={ds}
-                              icon={<IconBookmark size={18} />}
-                              className="cursor-pointer"
-                              onClick={handleCollect}
-                            >
-                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
-                                {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
-                              </ModelStatText>
-                            </ModelStatBadge>
-                          </LoginRedirect>
-                        </div>
                       </StatHoverCard>
-                    )}
-                    {!model.poi && (
-                      <StatHoverCard
-                        label="Buzz Earned"
-                        value={buzzEarned}
-                        message={model.hiddenMetrics?.buzz ? HIDDEN_METRIC_MESSAGE : undefined}
-                      >
-                        <div>
-                          <InteractiveTipBuzzButton
-                            toUserId={model.user.id}
-                            entityId={model.id}
-                            entityType="Model"
-                          >
-                            <ModelStatBadge
-                              ds={ds}
-                              className="cursor-pointer"
-                              icon={
-                                <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
-                              }
-                            >
-                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
-                                {model.hiddenMetrics?.buzz ? (
-                                  <HiddenMetricNotice size={18} withTooltip={false} />
-                                ) : (
-                                  abbreviateNumber(buzzEarned)
-                                )}
-                              </ModelStatText>
-                            </ModelStatBadge>
-                          </InteractiveTipBuzzButton>
-                        </div>
-                      </StatHoverCard>
-                    )}
-                    {inEarlyAccess && (
-                      <Tooltip
-                        label={
-                          <Text>
-                            Early Access helps creators monetize,{' '}
-                            <Anchor href="/articles/6341">learn more here</Anchor>
-                          </Text>
-                        }
-                      >
-                        <ModelStatBadge ds={ds} color="green" icon={<IconClock size={18} />}>
-                          Early Access
-                        </ModelStatBadge>
-                      </Tooltip>
-                    )}
-                  </PageGroup>
-
-                  <PageGroup ds={ds} gap={8} nowrap>
-                    <HowToButton
-                      size={30}
-                      stroke={1.5}
-                      href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
-                      tooltip="What is this?"
-                    />
-                    {features.appTour && (
-                      <HelpButton
-                        size="xl"
-                        tooltip="Need help? Start the tour!"
-                        iconProps={{ size: 30, stroke: 1.5 }}
-                        onClick={() =>
-                          runTour({
-                            key: activeTour === 'welcome' ? 'welcome' : 'model-page',
-                            step: 0,
-                            forceRun: true,
-                            trigger: 'help',
-                          })
-                        }
-                      />
-                    )}
-                    <Menu
-                      position="bottom-end"
-                      transitionProps={{ transition: 'pop-top-right' }}
-                      withinPortal
-                    >
-                      <Menu.Target>
-                        <LegacyActionIcon
-                          className={classes.headerButton}
-                          variant="light"
-                          aria-label="Model options"
+                      {latestGenerationVersion && (
+                        <GenerateButton
+                          versionId={latestGenerationVersion.id}
+                          modelId={model.id}
+                          data-activity="create:model-stat"
                         >
-                          <IconDotsVertical size={20} />
-                        </LegacyActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown className="max-h-[70vh] overflow-y-auto">
-                        {currentUser && isCreator && published && (
-                          <Menu.Item
-                            leftSection={<IconBan size={14} stroke={1.5} />}
-                            color="yellow"
-                            onClick={handleUnpublishModel}
-                            disabled={unpublishModelMutation.isPending}
-                          >
-                            Unpublish
-                          </Menu.Item>
-                        )}
-                        {currentUser &&
-                          ((model.status === ModelStatus.Unpublished &&
-                            (isCreator || isModerator)) ||
-                            (model.status === ModelStatus.UnpublishedViolation && isModerator)) && (
-                            <Menu.Item
-                              leftSection={<IconRepeat size={14} stroke={1.5} />}
-                              color="green"
-                              onClick={handlePublishModel}
-                              disabled={publishModelMutation.isPending}
+                          <ModelStatBadge ds={ds} icon={<IconBrush size={18} />}>
+                            <ModelStatText ds={ds} className={classes.modelBadgeText}>
+                              {model.hiddenMetrics?.generations ? (
+                                <HiddenMetricNotice size={18} />
+                              ) : (
+                                abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
+                              )}
+                            </ModelStatText>
+                          </ModelStatBadge>
+                        </GenerateButton>
+                      )}
+                      {features.collections && (
+                        <StatHoverCard
+                          label="Collections"
+                          value={model.rank?.collectedCountAllTime ?? 0}
+                        >
+                          <div>
+                            <LoginRedirect reason="add-to-collection">
+                              <ModelStatBadge
+                                ds={ds}
+                                icon={<IconBookmark size={18} />}
+                                className="cursor-pointer"
+                                onClick={handleCollect}
+                              >
+                                <ModelStatText ds={ds} className={classes.modelBadgeText}>
+                                  {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
+                                </ModelStatText>
+                              </ModelStatBadge>
+                            </LoginRedirect>
+                          </div>
+                        </StatHoverCard>
+                      )}
+                      {!model.poi && (
+                        <StatHoverCard
+                          label="Buzz Earned"
+                          value={buzzEarned}
+                          message={model.hiddenMetrics?.buzz ? HIDDEN_METRIC_MESSAGE : undefined}
+                        >
+                          <div>
+                            <InteractiveTipBuzzButton
+                              toUserId={model.user.id}
+                              entityId={model.id}
+                              entityType="Model"
                             >
-                              Republish
-                            </Menu.Item>
-                          )}
-                        {currentUser && isOwner && !modelDeleted && (
-                          <>
-                            <Menu.Item
-                              color="red.6"
-                              leftSection={<IconTrash size={14} stroke={1.5} />}
-                              onClick={() => handleDeleteModel()}
-                            >
-                              Delete Model
-                            </Menu.Item>
-                            <Menu.Item
-                              leftSection={<IconEdit size={14} stroke={1.5} />}
-                              component={Link}
-                              href={`/models/${model.id}/edit`}
-                            >
-                              Edit Model
-                            </Menu.Item>
-                          </>
-                        )}
-                        {isCreator && published && features.creatorPromotions && (
-                          <Menu.Item
-                            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
-                            onClick={() =>
-                              dialogStore.trigger({
-                                component: ModelPromotionModal,
-                                props: { modelId: model.id },
-                              })
-                            }
-                          >
-                            Promote this model
-                          </Menu.Item>
-                        )}
-                        {features.collections && (
-                          <AddToCollectionMenuItem
-                            onClick={() =>
-                              openAddToCollectionModal({
-                                props: {
-                                  modelId: model.id,
-                                  type: CollectionType.Model,
-                                },
-                              })
-                            }
-                          />
-                        )}
-                        <AddToHubMenuItem
+                              <ModelStatBadge
+                                ds={ds}
+                                className="cursor-pointer"
+                                icon={
+                                  <IconBolt
+                                    size={18}
+                                    className="text-yellow-7"
+                                    fill="currentColor"
+                                  />
+                                }
+                              >
+                                <ModelStatText ds={ds} className={classes.modelBadgeText}>
+                                  {model.hiddenMetrics?.buzz ? (
+                                    <HiddenMetricNotice size={18} withTooltip={false} />
+                                  ) : (
+                                    abbreviateNumber(buzzEarned)
+                                  )}
+                                </ModelStatText>
+                              </ModelStatBadge>
+                            </InteractiveTipBuzzButton>
+                          </div>
+                        </StatHoverCard>
+                      )}
+                      {inEarlyAccess && (
+                        <Tooltip
+                          label={
+                            <Text>
+                              Early Access helps creators monetize,{' '}
+                              <Anchor href="/articles/6341">learn more here</Anchor>
+                            </Text>
+                          }
+                        >
+                          <ModelStatBadge ds={ds} color="green" icon={<IconClock size={18} />}>
+                            Early Access
+                          </ModelStatBadge>
+                        </Tooltip>
+                      )}
+                    </PageGroup>
+
+                    <PageGroup ds={ds} gap={8} nowrap>
+                      <HowToButton
+                        size={30}
+                        stroke={1.5}
+                        href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
+                        tooltip="What is this?"
+                      />
+                      {features.appTour && (
+                        <HelpButton
+                          size="xl"
+                          tooltip="Need help? Start the tour!"
+                          iconProps={{ size: 30, stroke: 1.5 }}
                           onClick={() =>
-                            openAddToHubModal({
-                              props: {
-                                source: {
-                                  type: UserHubSourceType.Model,
-                                  targetId: model.id,
-                                  alias: model.name,
-                                },
-                              },
+                            runTour({
+                              key: activeTour === 'welcome' ? 'welcome' : 'model-page',
+                              step: 0,
+                              forceRun: true,
+                              trigger: 'help',
                             })
                           }
                         />
-                        {isOwner && (
-                          <AddToShowcaseMenuItem
-                            key="add-to-showcase"
-                            entityType="Model"
-                            entityId={model.id}
-                          />
-                        )}
-                        {/* The model itself, so its showcase images are not the nearest thing to hat. */}
-                        {isCreator && versionImages[0] && (
-                          <AddEventDecorationMenuItem
-                            entityType={CosmeticEntity.Model}
-                            entityId={model.id}
-                            image={versionImages[0]}
-                            findWornHat
-                          />
-                        )}
-                        {(!currentUser || !isOwner || isModerator) && (
-                          <LoginRedirect reason="report-model">
+                      )}
+                      <Menu
+                        position="bottom-end"
+                        transitionProps={{ transition: 'pop-top-right' }}
+                        withinPortal
+                      >
+                        <Menu.Target>
+                          <LegacyActionIcon
+                            className={classes.headerButton}
+                            variant="light"
+                            aria-label="Model options"
+                          >
+                            <IconDotsVertical size={20} />
+                          </LegacyActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown className="max-h-[70vh] overflow-y-auto">
+                          {currentUser && isCreator && published && (
                             <Menu.Item
-                              leftSection={<IconFlag size={14} stroke={1.5} />}
-                              onClick={() =>
-                                openReportModal({
-                                  entityType: ReportEntity.Model,
-                                  entityId: model.id,
-                                })
-                              }
+                              leftSection={<IconBan size={14} stroke={1.5} />}
+                              color="yellow"
+                              onClick={handleUnpublishModel}
+                              disabled={unpublishModelMutation.isPending}
                             >
-                              Report
+                              Unpublish
                             </Menu.Item>
-                          </LoginRedirect>
-                        )}
-                        {currentUser && (
-                          <>
-                            <Menu.Label>Moderation</Menu.Label>
-                            <HideUserButton as="menu-item" userId={model.user.id} />
-                            <BlockUserButton as="menu-item" userId={model.user.id} />
-                            <HideModelButton as="menu-item" model={model} />
-                            <Menu.Item
-                              leftSection={<IconTagOff size={14} stroke={1.5} />}
-                              onClick={() =>
-                                openBlockModelTagsModal({ props: { modelId: model.id } })
-                              }
-                            >
-                              Hide content with these tags
-                            </Menu.Item>
-                            {isModerator && (
-                              <>
-                                <ModeratorLookupMenuItem
-                                  path={moderatorModelLookupPath(model.id, selectedVersion?.id)}
-                                >
-                                  Lookup Model
-                                </ModeratorLookupMenuItem>
-                                {published && (
-                                  <Menu.Item
-                                    color="yellow"
-                                    leftSection={<IconBan size={14} stroke={1.5} />}
-                                    onClick={() =>
-                                      openUnpublishModal({ props: { modelId: model.id } })
-                                    }
-                                  >
-                                    Unpublish as Violation
-                                  </Menu.Item>
-                                )}
-                                <Menu.Item
-                                  color="orange"
-                                  leftSection={<IconBan size={14} stroke={1.5} />}
-                                  onClick={() => handleToggleCannotPromote()}
-                                >
-                                  {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
-                                </Menu.Item>
-                                <Menu.Item
-                                  color="blue"
-                                  leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
-                                  onClick={() => handleSetOfficial(!model.isOfficial)}
-                                >
-                                  {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
-                                </Menu.Item>
-                                <Menu.Item
-                                  color="red.6"
-                                  leftSection={<IconTrash size={14} stroke={1.5} />}
-                                  onClick={() => handleDeleteModel({ permanently: true })}
-                                >
-                                  Permanently Delete Model
-                                </Menu.Item>
-                                {modelDeleted && (
-                                  <Menu.Item
-                                    leftSection={<IconRecycle size={14} stroke={1.5} />}
-                                    color="green"
-                                    onClick={() => restoreModelMutation.mutate({ id })}
-                                    disabled={restoreModelMutation.isPending}
-                                  >
-                                    Restore
-                                  </Menu.Item>
-                                )}
-                                <Menu.Item
-                                  leftSection={
-                                    rescanModelMutation.isPending ? (
-                                      <Loader size={14} />
-                                    ) : (
-                                      <IconRadar2 size={14} stroke={1.5} />
-                                    )
-                                  }
-                                  onClick={() => handleRescanModel()}
-                                >
-                                  Rescan Files
-                                </Menu.Item>
-                                <ToggleLockModel modelId={model.id} locked={model.locked}>
-                                  {({ onClick }) => (
-                                    <Menu.Item
-                                      leftSection={
-                                        model.locked ? (
-                                          <IconLockOff size={14} stroke={1.5} />
-                                        ) : (
-                                          <IconLock size={14} stroke={1.5} />
-                                        )
-                                      }
-                                      onClick={onClick}
-                                    >
-                                      {model.locked ? 'Unlock' : 'Lock'} model discussion
-                                    </Menu.Item>
-                                  )}
-                                </ToggleLockModel>
-                                <ToggleMinorModel modelId={model.id} minor={model.minor}>
-                                  {({ onClick }) => (
-                                    <Menu.Item
-                                      leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
-                                      onClick={onClick}
-                                    >
-                                      {model.minor ? 'Unset as Minor' : 'Set as Minor'}
-                                    </Menu.Item>
-                                  )}
-                                </ToggleMinorModel>
-                                {/* Minor already forces (and locks) sfwOnly, so the toggle would
-                                    only ever offer an "Unset" the server refuses. */}
-                                {!model.minor && (
-                                  <ToggleSfwOnlyModel modelId={model.id} sfwOnly={model.sfwOnly}>
-                                    {({ onClick }) => (
-                                      <Menu.Item
-                                        leftSection={<IconShieldCheck size={14} stroke={1.5} />}
-                                        onClick={onClick}
-                                      >
-                                        {model.sfwOnly ? 'Unset as SFW' : 'Set as SFW'}
-                                      </Menu.Item>
-                                    )}
-                                  </ToggleSfwOnlyModel>
-                                )}
-                                <ToggleLockModelComments
-                                  modelId={model.id}
-                                  locked={model.meta?.commentsLocked}
-                                >
-                                  {({ onClick }) => (
-                                    <Menu.Item
-                                      leftSection={
-                                        model.meta?.commentsLocked ? (
-                                          <IconLockOff size={14} stroke={1.5} />
-                                        ) : (
-                                          <IconLock size={14} stroke={1.5} />
-                                        )
-                                      }
-                                      onClick={onClick}
-                                    >
-                                      {model.meta?.commentsLocked ? 'Unlock' : 'Lock'} model
-                                      comments
-                                    </Menu.Item>
-                                  )}
-                                </ToggleLockModelComments>
-                                <ToggleSearchableMenuItem
-                                  entityType="Model"
-                                  entityId={model.id}
-                                  key="toggle-searchable-menu-item"
-                                />
-                                {!model.mode ? (
-                                  <>
-                                    <Menu.Item
-                                      leftSection={<IconArchive size={14} stroke={1.5} />}
-                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                    >
-                                      Archive
-                                    </Menu.Item>
-                                    <Menu.Item
-                                      leftSection={<IconCircleMinus size={14} stroke={1.5} />}
-                                      onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                    >
-                                      Take Down
-                                    </Menu.Item>
-                                  </>
-                                ) : (
-                                  <Menu.Item
-                                    leftSection={<IconReload size={14} stroke={1.5} />}
-                                    onClick={() => handleChangeMode(null)}
-                                  >
-                                    Bring Back
-                                  </Menu.Item>
-                                )}
-                                <Menu.Item
-                                  leftSection={<IconArrowsLeftRight size={14} stroke={1.5} />}
-                                  onClick={() =>
-                                    dialogStore.trigger({
-                                      component: TransferModelOwnership,
-                                      props: { modelId: model.id },
-                                    })
-                                  }
-                                >
-                                  Transfer Ownership
-                                </Menu.Item>
-                              </>
+                          )}
+                          {currentUser &&
+                            ((model.status === ModelStatus.Unpublished &&
+                              (isCreator || isModerator)) ||
+                              (model.status === ModelStatus.UnpublishedViolation &&
+                                isModerator)) && (
+                              <Menu.Item
+                                leftSection={<IconRepeat size={14} stroke={1.5} />}
+                                color="green"
+                                onClick={handlePublishModel}
+                                disabled={publishModelMutation.isPending}
+                              >
+                                Republish
+                              </Menu.Item>
                             )}
-                          </>
-                        )}
-                        {published && (isOwner || isModerator) && (
-                          <>
-                            <Menu.Label>Advanced</Menu.Label>
+                          {currentUser && isOwner && !modelDeleted && (
+                            <>
+                              <Menu.Item
+                                color="red.6"
+                                leftSection={<IconTrash size={14} stroke={1.5} />}
+                                onClick={() => handleDeleteModel()}
+                              >
+                                Delete Model
+                              </Menu.Item>
+                              <Menu.Item
+                                leftSection={<IconEdit size={14} stroke={1.5} />}
+                                component={Link}
+                                href={`/models/${model.id}/edit`}
+                              >
+                                Edit Model
+                              </Menu.Item>
+                            </>
+                          )}
+                          {isCreator && published && features.creatorPromotions && (
                             <Menu.Item
+                              leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
                               onClick={() =>
                                 dialogStore.trigger({
-                                  component: MigrateModelToCollection,
+                                  component: ModelPromotionModal,
                                   props: { modelId: model.id },
                                 })
                               }
                             >
-                              Migrate to Collection
+                              Promote this model
                             </Menu.Item>
-                            {isOwner && model.modelVersions.length > 1 && (
+                          )}
+                          {features.collections && (
+                            <AddToCollectionMenuItem
+                              onClick={() =>
+                                openAddToCollectionModal({
+                                  props: {
+                                    modelId: model.id,
+                                    type: CollectionType.Model,
+                                  },
+                                })
+                              }
+                            />
+                          )}
+                          <AddToHubMenuItem
+                            onClick={() =>
+                              openAddToHubModal({
+                                props: {
+                                  source: {
+                                    type: UserHubSourceType.Model,
+                                    targetId: model.id,
+                                    alias: storedModel?.name ?? model.name,
+                                  },
+                                },
+                              })
+                            }
+                          />
+                          {isOwner && (
+                            <AddToShowcaseMenuItem
+                              key="add-to-showcase"
+                              entityType="Model"
+                              entityId={model.id}
+                            />
+                          )}
+                          {/* The model itself, so its showcase images are not the nearest thing to hat. */}
+                          {isCreator && versionImages[0] && (
+                            <AddEventDecorationMenuItem
+                              entityType={CosmeticEntity.Model}
+                              entityId={model.id}
+                              image={versionImages[0]}
+                              findWornHat
+                            />
+                          )}
+                          {(!currentUser || !isOwner || isModerator) && (
+                            <LoginRedirect reason="report-model">
+                              <Menu.Item
+                                leftSection={<IconFlag size={14} stroke={1.5} />}
+                                onClick={() =>
+                                  openReportModal({
+                                    entityType: ReportEntity.Model,
+                                    entityId: model.id,
+                                  })
+                                }
+                              >
+                                Report
+                              </Menu.Item>
+                            </LoginRedirect>
+                          )}
+                          <RequestLockReviewMenuItem model={model} />
+                          {currentUser && (
+                            <>
+                              <Menu.Label>Moderation</Menu.Label>
+                              <HideUserButton as="menu-item" userId={model.user.id} />
+                              <BlockUserButton as="menu-item" userId={model.user.id} />
+                              <HideModelButton as="menu-item" model={model} />
+                              <Menu.Item
+                                leftSection={<IconTagOff size={14} stroke={1.5} />}
+                                onClick={() =>
+                                  openBlockModelTagsModal({ props: { modelId: model.id } })
+                                }
+                              >
+                                Hide content with these tags
+                              </Menu.Item>
+                              {isModerator && (
+                                <>
+                                  <ModeratorLookupMenuItem
+                                    path={moderatorModelLookupPath(model.id, selectedVersion?.id)}
+                                  >
+                                    Lookup Model
+                                  </ModeratorLookupMenuItem>
+                                  <TrainingAuditMenuItem
+                                    modelId={model.id}
+                                    uploadType={model.uploadType}
+                                    isModerator={isModerator}
+                                  />
+                                  {published && (
+                                    <Menu.Item
+                                      color="yellow"
+                                      leftSection={<IconBan size={14} stroke={1.5} />}
+                                      onClick={() =>
+                                        openUnpublishModal({ props: { modelId: model.id } })
+                                      }
+                                    >
+                                      Unpublish as Violation
+                                    </Menu.Item>
+                                  )}
+                                  <Menu.Item
+                                    color="orange"
+                                    leftSection={<IconBan size={14} stroke={1.5} />}
+                                    onClick={() => handleToggleCannotPromote()}
+                                  >
+                                    {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    color="blue"
+                                    leftSection={
+                                      <IconRosetteDiscountCheck size={14} stroke={1.5} />
+                                    }
+                                    onClick={() => handleSetOfficial(!model.isOfficial)}
+                                  >
+                                    {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    color="red.6"
+                                    leftSection={<IconTrash size={14} stroke={1.5} />}
+                                    onClick={() => handleDeleteModel({ permanently: true })}
+                                  >
+                                    Permanently Delete Model
+                                  </Menu.Item>
+                                  {modelDeleted && (
+                                    <Menu.Item
+                                      leftSection={<IconRecycle size={14} stroke={1.5} />}
+                                      color="green"
+                                      onClick={() => restoreModelMutation.mutate({ id })}
+                                      disabled={restoreModelMutation.isPending}
+                                    >
+                                      Restore
+                                    </Menu.Item>
+                                  )}
+                                  <Menu.Item
+                                    leftSection={
+                                      rescanModelMutation.isPending ? (
+                                        <Loader size={14} />
+                                      ) : (
+                                        <IconRadar2 size={14} stroke={1.5} />
+                                      )
+                                    }
+                                    onClick={() => handleRescanModel()}
+                                  >
+                                    Rescan Files
+                                  </Menu.Item>
+                                  <ToggleLockModel modelId={model.id} locked={model.locked}>
+                                    {({ onClick }) => (
+                                      <Menu.Item
+                                        leftSection={
+                                          model.locked ? (
+                                            <IconLockOff size={14} stroke={1.5} />
+                                          ) : (
+                                            <IconLock size={14} stroke={1.5} />
+                                          )
+                                        }
+                                        onClick={onClick}
+                                      >
+                                        {model.locked ? 'Unlock' : 'Lock'} model discussion
+                                      </Menu.Item>
+                                    )}
+                                  </ToggleLockModel>
+                                  <ToggleMinorModel modelId={model.id} minor={model.minor}>
+                                    {({ onClick }) => (
+                                      <Menu.Item
+                                        leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
+                                        onClick={onClick}
+                                      >
+                                        {model.minor ? 'Unset as Minor' : 'Set as Minor'}
+                                      </Menu.Item>
+                                    )}
+                                  </ToggleMinorModel>
+                                  {/* Minor already forces (and locks) sfwOnly, so the toggle would
+                                    only ever offer an "Unset" the server refuses. */}
+                                  {!model.minor && (
+                                    <ToggleSfwOnlyModel modelId={model.id} sfwOnly={model.sfwOnly}>
+                                      {({ onClick }) => (
+                                        <Menu.Item
+                                          leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                                          onClick={onClick}
+                                        >
+                                          {model.sfwOnly ? 'Unset as SFW' : 'Set as SFW'}
+                                        </Menu.Item>
+                                      )}
+                                    </ToggleSfwOnlyModel>
+                                  )}
+                                  <ToggleLockModelComments
+                                    modelId={model.id}
+                                    locked={model.meta?.commentsLocked}
+                                  >
+                                    {({ onClick }) => (
+                                      <Menu.Item
+                                        leftSection={
+                                          model.meta?.commentsLocked ? (
+                                            <IconLockOff size={14} stroke={1.5} />
+                                          ) : (
+                                            <IconLock size={14} stroke={1.5} />
+                                          )
+                                        }
+                                        onClick={onClick}
+                                      >
+                                        {model.meta?.commentsLocked ? 'Unlock' : 'Lock'} model
+                                        comments
+                                      </Menu.Item>
+                                    )}
+                                  </ToggleLockModelComments>
+                                  <ToggleSearchableMenuItem
+                                    entityType="Model"
+                                    entityId={model.id}
+                                    key="toggle-searchable-menu-item"
+                                  />
+                                  {!model.mode ? (
+                                    <>
+                                      <Menu.Item
+                                        leftSection={<IconArchive size={14} stroke={1.5} />}
+                                        onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                      >
+                                        Archive
+                                      </Menu.Item>
+                                      <Menu.Item
+                                        leftSection={<IconCircleMinus size={14} stroke={1.5} />}
+                                        onClick={() => handleChangeMode(ModelModifier.TakenDown)}
+                                      >
+                                        Take Down
+                                      </Menu.Item>
+                                    </>
+                                  ) : (
+                                    <Menu.Item
+                                      leftSection={<IconReload size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(null)}
+                                    >
+                                      Bring Back
+                                    </Menu.Item>
+                                  )}
+                                  <Menu.Item
+                                    leftSection={<IconArrowsLeftRight size={14} stroke={1.5} />}
+                                    onClick={() =>
+                                      dialogStore.trigger({
+                                        component: TransferModelOwnership,
+                                        props: { modelId: model.id },
+                                      })
+                                    }
+                                  >
+                                    Transfer Ownership
+                                  </Menu.Item>
+                                </>
+                              )}
+                            </>
+                          )}
+                          {published && (isOwner || isModerator) && (
+                            <>
+                              <Menu.Label>Advanced</Menu.Label>
                               <Menu.Item
                                 onClick={() =>
                                   dialogStore.trigger({
-                                    component: MergeVersions,
+                                    component: MigrateModelToCollection,
                                     props: { modelId: model.id },
                                   })
                                 }
                               >
-                                Merge Versions
+                                Migrate to Collection
                               </Menu.Item>
-                            )}
-                          </>
-                        )}
-                      </Menu.Dropdown>
-                    </Menu>
+                              {isOwner && model.modelVersions.length > 1 && (
+                                <Menu.Item
+                                  onClick={() =>
+                                    dialogStore.trigger({
+                                      component: MergeVersions,
+                                      props: { modelId: model.id },
+                                    })
+                                  }
+                                >
+                                  Merge Versions
+                                </Menu.Item>
+                              )}
+                            </>
+                          )}
+                        </Menu.Dropdown>
+                      </Menu>
+                    </PageGroup>
                   </PageGroup>
-                </PageGroup>
-                <PageGroup ds={ds} gap={4}>
-                  <UpdatedText ds={ds}>Updated: {formatDate(model.updatedAt)}</UpdatedText>
-                  {category && (
-                    <>
-                      <TagDivider ds={ds} />
-                      <CategoryBadge ds={ds} name={category.name} />
-                    </>
-                  )}
-
-                  {tags.length > 0 && <TagDivider ds={ds} />}
-                  <Collection
-                    items={tags}
-                    ds={ds}
-                    renderItem={(tag) => (
-                      <TagBadge ds={ds} name={tag.name} colorScheme={colorScheme} />
+                  <PageGroup ds={ds} gap={4}>
+                    <UpdatedText ds={ds}>Updated: {formatDate(model.updatedAt)}</UpdatedText>
+                    {category && (
+                      <>
+                        <TagDivider ds={ds} />
+                        <CategoryBadge ds={ds} name={category.name} />
+                      </>
                     )}
-                  />
-                </PageGroup>
-              </PageStack>
-              {(model.status === ModelStatus.Unpublished || modelDeleted) && (
-                <Alert color="red">
-                  <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <ThemeIcon color="red">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="md">
-                      This model has been {modelDeleted ? 'deleted' : 'unpublished'} and is not
-                      visible to the community.
-                    </Text>
-                  </Group>
-                </Alert>
-              )}
-              {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
-                <ModelUnpublishedAlert
-                  reason={model.meta?.unpublishedReason}
-                  customMessage={model.meta?.customMessage}
-                  appealHref={
-                    isCreator && features.siteAppealForm
-                      ? siteAppealHref(true, { category: AppealCategory.Model, id: model.id })
-                      : undefined
-                  }
-                />
-              )}
-              {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
-                <Alert color="yellow">
-                  <Group gap="xs" wrap="nowrap">
-                    <ThemeIcon color="yellow">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="md">
-                      This model is currently being reviewed by our moderators. It will be visible
-                      to the community once it has been approved.
-                    </Text>
-                  </Group>
-                </Alert>
-              )}
-              {isOwner && model.meta?.cannotPublish && (
-                <Alert color="red">
-                  <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <ThemeIcon color="red">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="sm" mt={-3}>
-                      Due to the nature of the training data used to create this model, it cannot be
-                      Published. If you believe this to be an error, please{' '}
-                      <Text component="a" c="blue.4" href="/contact" target="_blank">
-                        contact our support team
+
+                    {tags.length > 0 && <TagDivider ds={ds} />}
+                    <Collection
+                      items={tags}
+                      ds={ds}
+                      renderItem={(tag) => (
+                        <TagBadge ds={ds} name={tag.name} colorScheme={colorScheme} />
+                      )}
+                    />
+                  </PageGroup>
+                </PageStack>
+                {(model.status === ModelStatus.Unpublished || modelDeleted) && (
+                  <Alert color="red">
+                    <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <ThemeIcon color="red">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="md">
+                        This model has been {modelDeleted ? 'deleted' : 'unpublished'} and is not
+                        visible to the community.
                       </Text>
-                      .
-                    </Text>
-                  </Group>
-                </Alert>
-              )}
-              {isCreator && (model.minorFlagged || model.poiFlagged) && (
-                <ModelMinorFlagAlert model={model} />
-              )}
-              <OwnerRatingControls entityType="Model" entityId={model.id} isOwner={isCreator} />
-              {inaccurate && (
-                <Alert color="yellow">
-                  <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <ThemeIcon color="yellow">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="md">
-                      The images on this {splitUppercase(model.type).toLowerCase()} are inaccurate.
-                      Please submit reviews with images so that we can improve this page.
-                    </Text>
-                  </Group>
-                </Alert>
-              )}
-              {(model.mode === ModelModifier.TakenDown ||
-                model.mode === ModelModifier.Archived) && (
-                <AlertWithIcon color="blue" icon={<IconExclamationMark />} size="md">
-                  {model.mode === ModelModifier.Archived
-                    ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
-                    : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
-                </AlertWithIcon>
-              )}
-              {model.status === ModelStatus.Published && (
-                <FirstPublishCard
-                  entityType="model"
-                  entityId={model.id}
-                  ownerId={model.user.id}
-                  publishedAt={model.publishedAt}
+                    </Group>
+                  </Alert>
+                )}
+                {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
+                  <ModelUnpublishedAlert
+                    reason={model.meta?.unpublishedReason}
+                    customMessage={model.meta?.customMessage}
+                    appealHref={
+                      isCreator && features.siteAppealForm
+                        ? siteAppealHref(true, { category: AppealCategory.Model, id: model.id })
+                        : undefined
+                    }
+                  />
+                )}
+                {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
+                  <Alert color="yellow">
+                    <Group gap="xs" wrap="nowrap">
+                      <ThemeIcon color="yellow">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="md">
+                        This model is currently being reviewed by our moderators. It will be visible
+                        to the community once it has been approved.
+                      </Text>
+                    </Group>
+                  </Alert>
+                )}
+                {isOwner && model.meta?.cannotPublish && (
+                  <Alert color="red">
+                    <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <ThemeIcon color="red">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="sm" mt={-3}>
+                        Due to the nature of the training data used to create this model, it cannot
+                        be Published. If you believe this to be an error, please{' '}
+                        <Text component="a" c="blue.4" href="/contact" target="_blank">
+                          contact our support team
+                        </Text>
+                        .
+                      </Text>
+                    </Group>
+                  </Alert>
+                )}
+                {isCreator && (model.minorFlagged || model.poiFlagged) && (
+                  <ModelMinorFlagAlert model={model} />
+                )}
+                <OwnerRatingControls entityType="Model" entityId={model.id} isOwner={isCreator} />
+                {inaccurate && (
+                  <Alert color="yellow">
+                    <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <ThemeIcon color="yellow">
+                        <IconExclamationMark />
+                      </ThemeIcon>
+                      <Text size="md">
+                        The images on this {splitUppercase(model.type).toLowerCase()} are
+                        inaccurate. Please submit reviews with images so that we can improve this
+                        page.
+                      </Text>
+                    </Group>
+                  </Alert>
+                )}
+                {(model.mode === ModelModifier.TakenDown ||
+                  model.mode === ModelModifier.Archived) && (
+                  <AlertWithIcon color="blue" icon={<IconExclamationMark />} size="md">
+                    {model.mode === ModelModifier.Archived
+                      ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
+                      : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
+                  </AlertWithIcon>
+                )}
+                {model.status === ModelStatus.Published && (
+                  <FirstPublishCard
+                    entityType="model"
+                    entityId={model.id}
+                    ownerId={model.user.id}
+                    publishedAt={model.publishedAt}
+                  />
+                )}
+              </PageStack>
+              <PageGroup ds={ds} gap={4} nowrap>
+                {isOwner ? (
+                  <>
+                    {model.availability !== Availability.Private && (
+                      <ButtonTooltip label="Add Version">
+                        <Link href={`/models/${model.id}/model-versions/create`}>
+                          <LegacyActionIcon variant="light" color="blue">
+                            <IconPlus size={14} />
+                          </LegacyActionIcon>
+                        </Link>
+                      </ButtonTooltip>
+                    )}
+
+                    {versionCount > 1 && (
+                      <ButtonTooltip label="Rearrange Versions">
+                        <LegacyActionIcon onClick={toggle}>
+                          <IconArrowsLeftRight size={14} />
+                        </LegacyActionIcon>
+                      </ButtonTooltip>
+                    )}
+                  </>
+                ) : null}
+                <ModelVersionList
+                  ds={ds}
+                  versions={model.modelVersions}
+                  selected={selectedVersion?.id}
+                  onVersionClick={(version) => {
+                    if (version.id !== selectedVersion?.id) {
+                      router.replace(
+                        getModelUrl({
+                          modelId: model.id,
+                          modelName: storedModel?.name ?? model.name,
+                          modelVersionId: version.id,
+                        }),
+                        undefined,
+                        { shallow: true }
+                      );
+                    }
+                  }}
+                  showExtraIcons={isOwner || isModerator}
+                  showToggleCoverage={model.type === ModelType.Checkpoint}
+                />
+              </PageGroup>
+              {!!selectedVersion && (
+                <ModelVersionDetails
+                  ds={ds}
+                  model={model}
+                  version={selectedVersion}
+                  image={image}
+                  onFavoriteClick={handleToggleFavorite}
                 />
               )}
             </PageStack>
-            <PageGroup ds={ds} gap={4} nowrap>
-              {isOwner ? (
-                <>
-                  {model.availability !== Availability.Private && (
-                    <ButtonTooltip label="Add Version">
-                      <Link href={`/models/${model.id}/model-versions/create`}>
-                        <LegacyActionIcon variant="light" color="blue">
-                          <IconPlus size={14} />
-                        </LegacyActionIcon>
-                      </Link>
-                    </ButtonTooltip>
-                  )}
-
-                  {versionCount > 1 && (
-                    <ButtonTooltip label="Rearrange Versions">
-                      <LegacyActionIcon onClick={toggle}>
-                        <IconArrowsLeftRight size={14} />
-                      </LegacyActionIcon>
-                    </ButtonTooltip>
-                  )}
-                </>
-              ) : null}
-              <ModelVersionList
-                ds={ds}
-                versions={model.modelVersions}
-                selected={selectedVersion?.id}
-                onVersionClick={(version) => {
-                  if (version.id !== selectedVersion?.id) {
-                    router.replace(
-                      getModelUrl({
-                        modelId: model.id,
-                        modelName: model.name,
-                        modelVersionId: version.id,
-                      }),
-                      undefined,
-                      { shallow: true }
-                    );
-                  }
-                }}
-                showExtraIcons={isOwner || isModerator}
-                showToggleCoverage={model.type === ModelType.Checkpoint}
-              />
-            </PageGroup>
-            {!!selectedVersion && (
-              <ModelVersionDetails
-                ds={ds}
-                model={model}
-                version={selectedVersion}
-                image={image}
-                onFavoriteClick={handleToggleFavorite}
-              />
-            )}
-          </PageStack>
-          {versionCount > 1 ? (
-            <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
-          ) : null}
-        </Container>
-        {showRail && <div className={classes.rail}>{canShowRail && <AdUnitSide_1 />}</div>}
-      </div>
-      {canLoadBelowTheFold && (
-        <>
-          {/* A sponsored card can run on a page with no suggestions of its own. */}
-          {(isOwner || model.hasSuggestedResources || features.creatorPromotions) && (
-            <>
-              {model.hasSuggestedResources && <AdUnitTopSection />}
-              {selectedVersion && (
-                <AssociatedModels
-                  fromId={model.id}
-                  type="Suggested"
-                  ownerId={model.user.id}
-                  label={
-                    <Group gap={8} wrap="nowrap">
-                      Suggested Resources{' '}
-                      <InfoPopover>
-                        <Text size="sm" fw={400}>
-                          These are resources suggested by the creator of this model. They may be
-                          related to this model or created by the same user.
-                        </Text>
-                      </InfoPopover>
-                    </Group>
-                  }
-                />
-              )}
-            </>
-          )}
-          <AdUnitTopSection />
-          <Container size="xl" my="xl">
-            <ModelDiscussion
-              canDiscuss={canDiscuss}
-              onlyEarlyAccess={onlyEarlyAccess}
-              modelId={model.id}
-              modelUserId={model.user.id}
-              locked={model.locked || model.meta?.commentsLocked}
-            />
+            {versionCount > 1 ? (
+              <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
+            ) : null}
           </Container>
-        </>
-      )}
-      {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
-        <Box id="gallery" mt="md">
-          <ModelGallery
-            model={model}
-            selectedVersionId={selectedVersion?.id}
-            modelVersions={model.modelVersions}
-            showModerationOptions={isOwner}
-            showPOIWarning={model.poi}
-            canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
-          />
-        </Box>
-      )}
+          {showRail && <div className={classes.rail}>{canShowRail && <AdUnitSide_1 />}</div>}
+        </div>
+        {canLoadBelowTheFold && (
+          <>
+            {/* A sponsored card can run on a page with no suggestions of its own. */}
+            {(isOwner || model.hasSuggestedResources || features.creatorPromotions) && (
+              <>
+                {model.hasSuggestedResources && <AdUnitTopSection />}
+                {selectedVersion && (
+                  <AssociatedModels
+                    fromId={model.id}
+                    type="Suggested"
+                    ownerId={model.user.id}
+                    label={
+                      <Group gap={8} wrap="nowrap">
+                        Suggested Resources{' '}
+                        <InfoPopover>
+                          <Text size="sm" fw={400}>
+                            These are resources suggested by the creator of this model. They may be
+                            related to this model or created by the same user.
+                          </Text>
+                        </InfoPopover>
+                      </Group>
+                    }
+                  />
+                )}
+              </>
+            )}
+            <AdUnitTopSection />
+            <Container size="xl" my="xl">
+              <ModelDiscussion
+                canDiscuss={canDiscuss}
+                onlyEarlyAccess={onlyEarlyAccess}
+                modelId={model.id}
+                modelUserId={model.user.id}
+                locked={model.locked || model.meta?.commentsLocked}
+              />
+            </Container>
+          </>
+        )}
+        {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
+          <Box id="gallery" mt="md">
+            <ModelGallery
+              model={model}
+              selectedVersionId={selectedVersion?.id}
+              modelVersions={model.modelVersions}
+              showModerationOptions={isOwner}
+              showPOIWarning={model.poi}
+              canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
+            />
+          </Box>
+        )}
+      </ComCardPreviewScope>
     </Gated>
   );
 }

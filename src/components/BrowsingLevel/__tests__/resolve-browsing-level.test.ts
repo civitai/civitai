@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  domainForcedBrowsingLevel,
   intersectBrowsingCaps,
   resolvePageBrowsingLevel,
   resolveViewerBrowsingLevel,
@@ -13,6 +14,17 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+
+describe('domainForcedBrowsingLevel', () => {
+  it.each([
+    { canViewNsfw: false, loggedIn: false, expected: publicBrowsingLevelsFlag },
+    { canViewNsfw: false, loggedIn: true, expected: sfwBrowsingLevelsFlag },
+    { canViewNsfw: true, loggedIn: false, expected: undefined },
+    { canViewNsfw: true, loggedIn: true, expected: undefined },
+  ])('canViewNsfw $canViewNsfw, loggedIn $loggedIn', ({ expected, ...viewer }) => {
+    expect(domainForcedBrowsingLevel(viewer)).toBe(expected);
+  });
+});
 
 describe('resolvePageBrowsingLevel', () => {
   it('lets a page override the viewer for its own subtree', () => {

@@ -11,8 +11,6 @@ export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
 export const commentConnectorSchema = z.object({
   entityId: z.number(),
   entityType: z.enum([
-    'question',
-    'answer',
     'image',
     'post',
     'model',
@@ -55,8 +53,6 @@ export const toggleHideCommentSchema = z.object({
   id: z.number(),
   entityId: z.number(),
   entityType: z.enum([
-    'question',
-    'answer',
     'image',
     'post',
     'model',

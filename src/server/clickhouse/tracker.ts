@@ -205,10 +205,6 @@ export const ReactionType = [
   'CommentV2_Delete',
   'Review_Create',
   'Review_Delete',
-  'Question_Create',
-  'Question_Delete',
-  'Answer_Create',
-  'Answer_Delete',
   'BountyEntry_Create',
   'BountyEntry_Delete',
   'Article_Create',
@@ -241,8 +237,6 @@ export type ImageActivityType =
   | 'Tags'
   | 'Resources'
   | 'Restore';
-export type QuestionType = 'Create' | 'Delete';
-export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
 export type BountyActivity = 'Create' | 'Update' | 'Delete' | 'Expire' | 'Refund';
 export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
@@ -318,7 +312,20 @@ export const ActionType = [
   // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
   // tracker restart in migrations/README.md); the item, group and section ride in `details`.
   'UserMenu_Click',
+  // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
+  // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
+  'Push_Prompt',
+  // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
+  'Experiment_Exposure',
+  'HatTurf_Action',
 ] as const;
+
+// Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
+// experiment readouts that need only the user id.
+const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+  'Experiment_Exposure',
+  'HatTurf_Action',
+]);
 export type ActionType = (typeof ActionType)[number];
 
 // No deviceId here. The browser fingerprint that populated the ClickHouse `deviceId`
@@ -554,7 +561,7 @@ export class Tracker {
               message: `Tracker returned ${res.status}`,
             },
             'clickhouse'
-          ).catch(() => {});
+          ).catch(() => undefined);
           failure = new Error(`tracker: ${table} rejected with ${res.status}`);
           break;
         }
@@ -577,7 +584,7 @@ export class Tracker {
             message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => undefined);
       } catch (e) {
         const error = e as Error;
         failure = error;
@@ -594,7 +601,7 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => undefined);
       }
     }
 
@@ -776,6 +783,7 @@ export class Tracker {
   // not what a reversible, private product control should leave behind.
   public action(values: { type: ActionType; details?: any }, options?: { skipActorMeta: boolean }) {
     const { details, ...rest } = values;
+    if (ACTOR_META_FREE_ACTION_TYPES.has(values.type)) options = { skipActorMeta: true };
     return this.track(
       'actions',
       {
@@ -866,14 +874,6 @@ export class Tracker {
     nsfw: NsfwLevelDeprecated;
   }) {
     return this.track('reactions', values);
-  }
-
-  public question(values: { type: QuestionType; questionId: number }) {
-    return this.track('questions', values);
-  }
-
-  public answer(values: { type: AnswerType; questionId: number; answerId: number }) {
-    return this.track('answers', values);
   }
 
   public comment(values: { type: CommentType; entityId: number; nsfw: boolean }) {

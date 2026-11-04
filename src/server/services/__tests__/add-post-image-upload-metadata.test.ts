@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
   readImageUploadObjectHead: mocks.readImageUploadObjectHead,

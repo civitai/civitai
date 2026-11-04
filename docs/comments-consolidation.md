@@ -10,7 +10,8 @@ Execution tracking lives in the companion checklist:
 Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-20** (Briant). What
 changed after the 2026-08-25 merged design is listed under _Changes since 2026-08-25_ below.
 
-1. Questions & Answers comments are **not migrated** — dropped with the surface.
+1. Questions & Answers comments are **not migrated** to CommentV3. Amended 2026-11-02 (Briant):
+   they are kept, archived in the `qa_archive` schema before `Thread` is dropped (Phase 6).
 2. The model page **keeps its current UI** for now — the migration swaps the storage under it,
    not the presentation (display depth 1, flat root+replies).
 3. Hard stored-depth cap of **20** with clamp-to-sibling: approved.
@@ -1328,13 +1329,12 @@ Per-surface cutover checklist additions from the residue sweep:
 - **image flip**: `EntityMetric` rows with `metricType='Comment'` (surfaced by the
   `EntityMetricImage` view) are written on comment create/delete — re-point that writer with the
   image surface.
-- **comicChapter flip**: `ChapterComments.tsx` bypasses the comment providers and passes
-  `parentThreadId` in its mutation input — the comics client changes shape with its surface flip,
-  unlike every provider-based surface. It also feeds the `Thread` id into `CommentsCtx` as the
-  `entityId`; after the flip the entity id is `ComicChapter.id`, which `getChapterThread` (or the
-  chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
-  also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it is removed with this
-  flip, and chapter comments write through the `commentv3` mutations (decided 2026-10-30).
+- **comicChapter flip**: reads built 2026-11-03 (`CommentSection` on the comics page, keyed by
+  `ComicChapter.id`; `ChapterComments.tsx` and `getChapterThread` removed). Its server side,
+  `createChapterComment` in `comics.router.ts` (now `{ chapterId, content }`), still bypasses
+  `upsertComment` and writes `Thread`/`CommentV2` directly, because `commentv2.upsert` cannot
+  address a thread keyed by project and position. It is removed with the write flip, and chapter
+  comments write through the `commentv3` mutations (decided 2026-10-30).
 - **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
   with it (#5780).
 - **storyline flip**: the newest surface (#6628); `getCommentThreadStorylineId` /
@@ -1354,8 +1354,7 @@ moderator app are the two largest consumers and get their own sections below. Th
   flip (end of _Phase 2_), not earlier: under dual-write the old handlers already count every
   mirrored row, so the new one dedupes on comment id until each surface's writes flip.
 - Metrics jobs (`article/bounty/post/model3d.metrics.ts`): count from CommentV3.
-  Preserve `ModelMetric.commentCount` = **distinct commenters** semantics. `question/answer.metrics.ts`
-  retire with that surface.
+  Preserve `ModelMetric.commentCount` = **distinct commenters** semantics.
 - Creator-studio analytics (`analytics.ts` all-time tile + per-image series): one `CommentV3` query
   each since Phase 3, still scoped to the creator's images (`entityType = 'image'`).
 - Unify exclusion logic (`boundExcludedUserIds` + hidden/blocked handling) into one shared helper —
@@ -1406,10 +1405,8 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   tombstones), `src/server/services/collection.service.ts` (judged check) and
   `src/server/services/challenge.service.ts` (four counts), both on `CommentV3` the same way,
   `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3), `src/pages/api/mod/daily-challenge/re-review.ts`,
-  `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
-  `CommentV3Report` arm since Phase 3), and the
-  Q&A thread `_count` reads in `answer.controller.ts`/`question.controller.ts` (retire with the
-  surface, decision 1).
+  and `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
+  `CommentV3Report` arm since Phase 3).
 - Entity-label/URL maps: `src/utils/string-helpers.ts` (`commentV2`/`CommentV2` → 'Comment'
   entries), `src/pages/moderator/strikes.tsx` entity→URL map, and
   `src/server/utils/moderator-endpoint-catalog.generated.ts` (regenerate). The
@@ -1628,8 +1625,9 @@ mute check and block-hide alike.
 ### Explicitly not migrated
 
 - `clubPost` threads — clubs are dead code; rows (if any) are left behind and dropped with Thread.
-- `question`/`answer` — decided (decision 1): not migrated; rows drop with Thread, and
-  `QuestionAnswerComments.tsx` + `question/answer.metrics.ts` retire alongside.
+- `question`/`answer` — decided (decision 1): not migrated; archived in `qa_archive` before
+  Thread is dropped. The feature code, `QuestionAnswerComments.tsx` and
+  `question/answer.metrics.ts` included, is removed; the Q&A tables themselves stay.
 - Comments attached to orphaned Threads (all entity FKs null) — purged and archived 2026-10-19;
   the backfill still skips any that recur (inventory in _Orphaned-thread comments — decided_).
 

@@ -76,6 +76,7 @@ export function CreatorCard({
               withUsername
               linkToProfile
               withHoverCard={false}
+              withShowcaseHat
             />
             {withActions && (
               <Group gap={8} wrap="nowrap">

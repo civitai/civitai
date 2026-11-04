@@ -129,6 +129,50 @@
   display: none !important;
 }
 
+// While jobs run, a ring spins around the form's down chevron and a badge counts them.
+.closeForm {
+  position: relative;
+  overflow: visible;
+
+  &[data-running]::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--mantine-color-blue-filled) 25%, transparent);
+    border-top-color: var(--mantine-color-blue-filled);
+    animation: close-form-spin 0.9s linear infinite;
+  }
+}
+
+.runningCount {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 4px;
+  border-radius: 8px;
+  background: var(--mantine-color-blue-filled);
+  color: var(--mantine-color-white);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+@keyframes close-form-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .closeForm[data-running]::before {
+    animation: none;
+  }
+}
+
 .body {
   flex: 1;
   min-height: 0;

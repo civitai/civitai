@@ -22,6 +22,12 @@ import {
   refundShopPurchase,
   sendBuzz,
   mintMembershipCode,
+  previewMembershipExtension,
+  extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
   revokeMembershipCode,
   grantCreatorScore,
   revokeCreatorScoreGrant,
@@ -53,6 +59,7 @@ import { accountEnforcementActions } from '$lib/server/account-actions';
 import { sendAsCivitai } from '$lib/server/message-as-civitai';
 import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
+import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 import {
   CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_MAX_AMOUNT,
@@ -96,6 +103,12 @@ const contentFail = (message: string) => fail(400, { scope: 'content' as const, 
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
 const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
+const membershipExtendFail = (message: string) =>
+  fail(400, { scope: 'membershipExtend' as const, error: message });
+const membershipCancelFail = (message: string) =>
+  fail(400, { scope: 'membershipCancel' as const, error: message });
+const membershipResyncFail = (message: string) =>
+  fail(400, { scope: 'membershipResync' as const, error: message });
 const creatorScoreFail = (message: string) =>
   fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
@@ -104,8 +117,7 @@ const reactionsFail = (message: string) =>
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
-const messageFail = (message: string) =>
-  fail(400, { scope: 'message' as const, error: message });
+const messageFail = (message: string) => fail(400, { scope: 'message' as const, error: message });
 
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
 
@@ -591,6 +603,89 @@ export const actions: Actions = {
     const result = await revokeMembershipCode(input);
     if (!result.ok) return membershipCodeFail(result.error);
     return { success: true, revoked: input.code };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  previewMembershipExtension: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        days: z.coerce.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipExtendFail(input);
+
+    const result = await previewMembershipExtension(input);
+    if (!result.ok) return membershipExtendFail(result.error);
+    return { success: true, extendPreview: result.preview };
+  }),
+
+  extendMembership: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        days: z.coerce.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS),
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+        expectedCurrentPeriodEnd: z.coerce.number().int().positive(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipExtendFail(input);
+
+    const result = await extendMembership(input);
+    if (!result.ok) return membershipExtendFail(result.error);
+    return { success: true, extended: result.result };
+  }),
+
+  previewMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ cancelAtPeriodEnd: z.stringbool() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCancelFail(input);
+
+    const result = await previewMembershipCancel(input);
+    if (!result.ok) return membershipCancelFail(result.error);
+    return { success: true, cancelPreview: result.preview };
+  }),
+
+  setMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        cancelAtPeriodEnd: z.stringbool(),
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCancelFail(input);
+
+    const result = await setMembershipCancel(input);
+    if (!result.ok) return membershipCancelFail(result.error);
+    return { success: true, cancelChanged: result.result };
+  }),
+
+  previewMembershipResync: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return membershipResyncFail(input);
+
+    const result = await previewMembershipResync(input);
+    if (!result.ok) return membershipResyncFail(result.error);
+    return { success: true, resyncPreview: result.preview };
+  }),
+
+  resyncMembership: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+        // The checkbox carries the preview's confirm token; absent when unticked.
+        confirmEndBuzzMembership: z.string().max(200).optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipResyncFail(input);
+
+    const result = await resyncMembership(input);
+    if (!result.ok) return membershipResyncFail(result.error);
+    return { success: true, resynced: result.result };
   }),
 
   grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request, locals }) => {

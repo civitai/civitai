@@ -59,6 +59,7 @@ import {
   aiToolkitStepDefault,
   aiToolkitSaveEveryDefault,
   aiToolkitBatchMax,
+  networkDimSizeHint,
 } from '~/utils/training';
 import type { AudioSampleOverride } from '~/utils/training';
 import { buildSamplePromptsFromCaptions } from '~/components/Training/Form/trainingSamplePrompts';
@@ -424,7 +425,18 @@ export const AdvancedSettings = ({
     const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
 
     const disabledOverride = override?.disabled;
-    const hint = override?.hint ?? ts.hint;
+    const baseHint = override?.hint ?? ts.hint;
+    const sizeHint =
+      ts.name === 'networkDim'
+        ? networkDimSizeHint(selectedRun.baseType, selectedRun.params.networkDim)
+        : null;
+    const hint = sizeHint ? (
+      <>
+        {baseHint} {sizeHint}
+      </>
+    ) : (
+      baseHint
+    );
     const disabled =
       selectedRun.params.engine === 'rapid'
         ? true

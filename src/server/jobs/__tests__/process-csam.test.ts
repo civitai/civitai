@@ -18,7 +18,9 @@ const mocks = vi.hoisted(() => ({
   archiveCsamDataForReport: vi.fn(),
   processCsamReport: vi.fn(),
   logBlockedCsamReports: vi.fn(),
+  logOverdueEvidenceApprovals: vi.fn(async () => undefined),
   getCsamsToRemoveContent: vi.fn(async () => []),
+  sweepStaleSendDirs: vi.fn(async (): Promise<string[]> => []),
 }));
 
 vi.mock('~/server/services/csam.service-new', () => mocks);
@@ -262,6 +264,48 @@ describe('send-csam-reports batch isolation', () => {
       .filter((arg) => arg?.subType === 'send-report');
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toBe('undefined');
+  });
+
+  it("names the report that failed, and its open CyberTip, on the batch's error line", async () => {
+    mocks.getCsamsToReport.mockResolvedValueOnce([{ id: 8801 }, { id: 8802, reportId: 4401 }]);
+    mocks.processCsamReport
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('http status 500 - ServerError'));
+
+    await sendJob!.run({}).result;
+
+    expect(
+      loggingMock.logToAxiom.mock.calls
+        .map(([arg]) => arg as { subType?: string })
+        .filter((arg) => arg?.subType === 'send-report')
+    ).toEqual([
+      expect.objectContaining({
+        message: 'http status 500 - ServerError',
+        reportId: 8802,
+        ncmecReportId: 4401,
+      }),
+    ]);
+  });
+});
+
+describe('send-csam-reports scratch sweep', () => {
+  it('sweeps before the first report is claimed', async () => {
+    await sendJob!.run({}).result;
+    expect(mocks.sweepStaleSendDirs.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.processCsamReport.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still sends every report when the sweep fails, and logs the failure', async () => {
+    mocks.sweepStaleSendDirs.mockRejectedValueOnce(new Error('EACCES'));
+
+    await sendJob!.run({}).result;
+
+    expect(mocks.processCsamReport).toHaveBeenCalledTimes(reports.length);
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as { subType?: string; message?: unknown })
+      .filter((arg) => arg?.subType === 'send-scratch-sweep');
+    expect(logged).toEqual([expect.objectContaining({ message: 'EACCES' })]);
   });
 });
 

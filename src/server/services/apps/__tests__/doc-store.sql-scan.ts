@@ -15,6 +15,9 @@
 // ACCOUNT-WIPE ENUMERATION: a SELECT on `usage_user` / `doc_mark` only, whose every alias
 // carries `<alias>.user_id = $1::int` in place of the app and namespace predicates. It only
 // works inside the store's account-wipe transaction; `isAccountWipeStatement` names it.
+// APP-PURGE ENUMERATION: a SELECT on `usage_app` / `doc` only, whose every alias carries
+// `<alias>.app_id = $1` and `<alias>.ns > $2::text` (a keyset cursor) in place of `ns = $2`. It
+// only works inside the store's app-purge transaction; `isAppPurgeStatement` names it.
 
 export const APPDATA_TABLES = [
   'doc',
@@ -27,10 +30,19 @@ export const APPDATA_TABLES = [
 ] as const;
 
 /** The RLS settings (`appdata.<name>`), which are not relations. */
-const SETTING_NAMES = new Set(['app_id', 'ns', 'review_maintenance', 'account_wipe_uid']);
+const SETTING_NAMES = new Set([
+  'app_id',
+  'ns',
+  'review_maintenance',
+  'account_wipe_uid',
+  'app_purge_id',
+]);
 
 /** The two tables that record which namespaces a user has rows in. */
 const ACCOUNT_WIPE_TABLES = new Set(['usage_user', 'doc_mark']);
+
+/** The two tables that record which namespaces an app has rows in. */
+const APP_PURGE_TABLES = new Set(['usage_app', 'doc']);
 
 const NOT_AN_ALIAS = new Set([
   'where',
@@ -61,7 +73,7 @@ export function scanStatement(sql: string): string[] {
     /\bappdata\b/i.test(
       sql
         .replace(/appdata\.(?:[a-z_]+)/g, '')
-        .replace(/'appdata\.(?:app_id|ns|review_maintenance|account_wipe_uid)'/g, '')
+        .replace(/'appdata\.(?:app_id|ns|review_maintenance|account_wipe_uid|app_purge_id)'/g, '')
     )
   ) {
     violations.push('appdata referenced in a non-canonical spelling');
@@ -123,6 +135,19 @@ export function scanStatement(sql: string): string[] {
       }
       continue;
     }
+    if (new RegExp(`\\b${a}\\.ns\\s*>\\s*\\$2::text\\b`).test(sql)) {
+      // App-purge enumeration: read only, only the two per-app tables, keyed on the app.
+      if (!/^\s*SELECT\b/i.test(sql)) {
+        violations.push(`app-purge statement on appdata.${table} is not a SELECT`);
+      }
+      if (!APP_PURGE_TABLES.has(table)) {
+        violations.push(`app-purge statement reads appdata.${table}`);
+      }
+      if (!new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
+        violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
+      }
+      continue;
+    }
     if (!new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
       violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
     }
@@ -141,4 +166,9 @@ export function isReviewMaintenanceStatement(sql: string): boolean {
 /** A statement written in the account-wipe enumeration shape (`user_id = $1::int`). */
 export function isAccountWipeStatement(sql: string): boolean {
   return /\.user_id\s*=\s*\$1::int\b/.test(sql);
+}
+
+/** A statement written in the app-purge enumeration shape (`ns > $2::text`). */
+export function isAppPurgeStatement(sql: string): boolean {
+  return /\.ns\s*>\s*\$2::text\b/.test(sql);
 }

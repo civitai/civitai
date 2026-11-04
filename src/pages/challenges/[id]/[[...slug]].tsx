@@ -32,7 +32,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { Page } from '~/components/AppLayout/Page';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
@@ -1819,6 +1819,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 disableStoreFilters
                 judgeInfo={judgeInfo}
                 judgingCategories={challenge.judgingCategories}
+                hideHatTurf
               />
             )}
           </Stack>

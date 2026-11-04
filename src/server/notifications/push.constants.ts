@@ -1,3 +1,4 @@
+import { systemNoticeTypes } from '@civitai/notifications';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 
 /**
@@ -13,3 +14,11 @@ import { notificationProcessors } from '~/server/notifications/utils.notificatio
 export const DEFAULT_PUSH_TYPES = Object.entries(notificationProcessors)
   .filter(([, processor]) => processor.defaultPush)
   .map(([type]) => type);
+
+// Only a notice's title is a push title: other types keep the content's own title in details.title,
+// often a creator-written string.
+export function getPushTitle(type: string, details: Record<string, unknown>) {
+  const isNotice = (systemNoticeTypes as readonly string[]).includes(type);
+  if (isNotice && typeof details.title === 'string' && details.title) return details.title;
+  return notificationProcessors[type]?.displayName ?? 'Civitai';
+}

@@ -434,23 +434,26 @@ describe('the image detail wears the image hat on the picture', () => {
       };
       watch(layer);
       document.querySelectorAll<HTMLElement>('[data-testid="drawn-media-hat"]').forEach(watch);
-      await sleep(700);
-      expect(measure).not.toHaveBeenCalled();
+      // Wait for quiet, not a fixed sleep from mount: the first layout can still be settling when
+      // the hat appears.
+      const quietThenNothing = async () => {
+        await vi.waitFor(
+          async () => {
+            measure.mockClear();
+            await sleep(300);
+            expect(measure).not.toHaveBeenCalled();
+          },
+          { timeout: 4000, interval: 50 }
+        );
+        await sleep(700);
+        expect(measure).not.toHaveBeenCalled();
+      };
+      await quietThenNothing();
       // The same count sees the move, so zero at rest is not a spy that cannot count.
       goNext();
       await settledOn(1);
       expect(measure.mock.calls.length).toBeGreaterThan(10);
-      // And it stops once the slide has: a quiet stretch comes, and then nothing is read.
-      await vi.waitFor(
-        async () => {
-          measure.mockClear();
-          await sleep(300);
-          expect(measure).not.toHaveBeenCalled();
-        },
-        { timeout: 4000, interval: 50 }
-      );
-      await sleep(700);
-      expect(measure).not.toHaveBeenCalled();
+      await quietThenNothing();
     });
   });
 

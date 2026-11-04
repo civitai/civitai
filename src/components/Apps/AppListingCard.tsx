@@ -229,17 +229,13 @@ export interface AppListingCardProps {
   preview?: boolean;
   /**
    * The card as a sidebar panel (the post and image detail pages), not a store grid cell: the
-   * divider runs edge to edge, the footer is tighter, the title and Open sit lower under the
-   * cover, and the creator is a `UserAvatar` (hover card) like everywhere else on the site.
+   * divider runs edge to edge, the footer is tighter, and the creator is a `UserAvatar` (hover card) like everywhere else on the site.
    * The grid never sets it, so the skeleton's geometry (`appListingCardGeometry`) still holds there.
    */
   embedded?: boolean;
   /** A label pinned over the cover's top-left corner, opposite the `⋮` menu. */
   coverBadge?: ReactNode;
 }
-
-/** How far an embedded card drops its title and Open below the icon-centred line. */
-const EMBEDDED_HEADER_NUDGE_PX = 8;
 
 /** An embedded card's CTA keeps its glyph 4px from the label (Mantine's default is 10). */
 const EMBEDDED_CTA_STYLES = { section: { marginInlineStart: 4 } };
@@ -319,7 +315,6 @@ export function AppListingCard({
   // The whole card is one click target: the title link is stretched over it (`after:inset-0`),
   // and every other control (Open, `⋮`, creator link) sits above that layer (`relative z-10`).
   const creator = card.creator;
-  const headerNudge = embedded ? EMBEDDED_HEADER_NUDGE_PX : 0;
   return (
     <Card padding={0} radius={0} className="h-full rounded-md">
       <ListingCover
@@ -405,8 +400,7 @@ export function AppListingCard({
               minWidth: 0,
               flex: 1,
               marginTop:
-                LISTING_CARD_HEADER_CENTER_PX +
-                headerNudge -
+                LISTING_CARD_HEADER_CENTER_PX -
                 (LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT) / 2,
             }}
           >
@@ -438,11 +432,11 @@ export function AppListingCard({
               target="_blank"
               rel="noopener noreferrer"
               size="compact-sm"
-              variant="light"
+              variant="filled"
               className="relative z-10"
               style={{
                 flexShrink: 0,
-                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX + headerNudge}px - ${
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
@@ -464,17 +458,16 @@ export function AppListingCard({
               component={Link}
               href={cta.href}
               size="compact-sm"
-              variant={cta.action === 'open' ? 'filled' : 'light'}
+              variant="filled"
               className="relative z-10"
               style={{
                 flexShrink: 0,
-                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX + headerNudge}px - ${
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
-              // Embedded (a sidebar panel, Open on the right edge): the glyph trails the label, close to it.
-              leftSection={embedded ? undefined : <CtaGlyph size={14} />}
-              rightSection={embedded ? <CtaGlyph size={14} /> : undefined}
+              // The CTA is right-aligned, so the glyph trails the label — the same as Visit.
+              rightSection={<CtaGlyph size={14} />}
               styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
             >
               {cta.label}
@@ -566,9 +559,10 @@ export function AppListingCard({
             🔴 `wrap="nowrap"` is load-bearing: a wrapped footer is a second line, i.e. a card
             taller than its skeleton on every card in that grid row. The rollup and the creator
             name truncate (`minWidth: 0`); the play count is short and `flexShrink: 0`. */}
+        {/* Full-bleed: the divider runs edge to edge while the content keeps its padding. */}
         <Divider
           mt="auto"
-          style={embedded ? { marginInline: 'calc(var(--mantine-spacing-md) * -1)' } : undefined}
+          style={{ marginInline: 'calc(var(--mantine-spacing-md) * -1)' }}
           data-testid="apps-listing-card-divider"
         />
         <Group
@@ -613,12 +607,12 @@ export function AppListingCard({
               </Group>
             )}
           </Group>
-          {embedded && creator?.username && (
-            // The card fill is dark in both themes and Paper takes its text colour from the root
-            // scheme, so the name states its own light colour.
+          {creator?.username && (
+            // The embedded card fill is dark in both themes and Paper takes its text colour from
+            // the root scheme, so there the name states its own light colour.
             <div
               className="relative z-10 min-w-0 shrink"
-              style={{ color: 'var(--mantine-color-dark-0)' }}
+              style={embedded ? { color: 'var(--mantine-color-dark-0)' } : undefined}
               data-testid="apps-listing-card-creator"
             >
               <UserAvatar
@@ -630,30 +624,6 @@ export function AppListingCard({
                 textSize="xs"
               />
             </div>
-          )}
-          {!embedded && creator?.username && (
-            <Anchor
-              component={Link}
-              href={`/user/${encodeURIComponent(creator.username)}`}
-              underline="hover"
-              c="dimmed"
-              className="relative z-10"
-              style={{ minWidth: 0, flexShrink: 1 }}
-              data-testid="apps-listing-card-creator"
-            >
-              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }} justify="flex-end">
-                <Avatar
-                  src={creator.image ?? undefined}
-                  alt=""
-                  size={LISTING_CARD_CREATOR_AVATAR_PX}
-                  radius="xl"
-                  style={{ flexShrink: 0 }}
-                />
-                <Text size="xs" c="dimmed" truncate>
-                  {creator.username}
-                </Text>
-              </Group>
-            </Anchor>
           )}
         </Group>
       </Stack>

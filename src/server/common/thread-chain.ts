@@ -8,13 +8,13 @@ export const UNRESOLVED_THREAD_CHAIN_MESSAGE = 'comment thread is no longer avai
  * link upward is gone while its replies remain. A column missing from this list turns that
  * entity's threads into apparent orphans and refuses writes on them, so it must stay complete.
  * `threadContentSelect` in `block-check.service.ts` lists the same owners, minus `clubPostId`, which
- * has no owner lookup.
+ * has no owner lookup. `questionId` and `answerId` are left out on purpose: Q&A threads are kept as
+ * data and refuse writes, so anything that purges or repairs "orphans" off this must exempt them.
  */
 export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
-  ${Prisma.raw(alias)}."questionId", ${Prisma.raw(alias)}."answerId", ${Prisma.raw(
+  ${Prisma.raw(alias)}."imageId", ${Prisma.raw(alias)}."postId", ${Prisma.raw(
   alias
-)}."imageId",
-  ${Prisma.raw(alias)}."postId", ${Prisma.raw(alias)}."reviewId", ${Prisma.raw(alias)}."modelId",
+)}."reviewId", ${Prisma.raw(alias)}."modelId",
   ${Prisma.raw(alias)}."articleId", ${Prisma.raw(alias)}."bountyId",
   ${Prisma.raw(alias)}."bountyEntryId", ${Prisma.raw(alias)}."clubPostId",
   ${Prisma.raw(alias)}."comicProjectId", ${Prisma.raw(alias)}."challengeId",

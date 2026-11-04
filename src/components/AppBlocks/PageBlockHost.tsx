@@ -7,6 +7,11 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
+import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   countGuestFrameEvent,
@@ -154,6 +159,7 @@ import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -782,6 +788,12 @@ export interface PageBlockHostProps {
    */
   onRefreshEntryUrl?: () => Promise<string>;
   /**
+   * DEV-TUNNEL ONLY: every `BLOCK_ERROR` payload the block posts (unvalidated), for the dev host
+   * to keep for App Assistant's app activity (`useDevPreviewErrorReporter`). Unset on every other
+   * surface, so a production block's errors go nowhere new.
+   */
+  onBlockError?: (payload: unknown) => void;
+  /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
    * side-effecting / money / private / cross-user handler replies with a
@@ -934,6 +946,7 @@ export function PageBlockHost({
   onRetryToken,
   onGuestReloaded,
   onRefreshEntryUrl,
+  onBlockError,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -1874,12 +1887,15 @@ export function PageBlockHost({
     });
   }, [status, appBlockId, blockInstanceId]);
 
-  // BLOCK_ERROR{fatal:true} → fatal.
+  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel only).
+  const onBlockErrorRef = useRef(onBlockError);
+  onBlockErrorRef.current = onBlockError;
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_ERROR', (raw) => {
       if (raw && typeof raw === 'object' && (raw as { fatal?: unknown }).fatal === true) {
         setStatus((current) => (current === 'loading' || current === 'ready' ? 'fatal' : current));
       }
+      onBlockErrorRef.current?.(raw);
     });
     return off;
   }, [onMessage]);
@@ -2059,6 +2075,28 @@ export function PageBlockHost({
           color: 'yellow',
           title: notification.title,
           message: notification.message,
+        });
+        return;
+      }
+
+      // `apps:storage:publish` in the SOURCE app of one of this app's imports (`from`): a prompt
+      // for that app, not for this one, so it never reaches the missing-set path below. The
+      // modal names the source from this app's approved imports, and the server records the grant
+      // only for a source this app imports with `readwrite`. A malformed request is refused.
+      const sourcePublish = resolveSourcePublishConsentRequest(payload);
+      if (sourcePublish === 'invalid') {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
+      if (sourcePublish !== null) {
+        openBlockConsentModal({
+          appBlockId,
+          blockName: appName,
+          missingScopes: [APP_STORAGE_PUBLISH_SCOPE],
+          from: sourcePublish.from,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
         });
         return;
       }
@@ -5824,6 +5862,16 @@ export function PageBlockHost({
           onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
         />
       )}
+      {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when
+          the app opens, never one per storage call. Live runs of a storage app only; a review
+          or the dev tunnel writes to a namespace this does not measure. */}
+      {!reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' &&
+        declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
+          <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

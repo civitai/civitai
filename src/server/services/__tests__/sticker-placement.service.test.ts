@@ -49,10 +49,18 @@ const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The two Kysely reads behind the listing and the counts (`listStickerPlacementRows` for
+// `getStickerPlacements` / `getStickerPlacementsAndCounts`, `listApprovedPlacementRows` for
+// `getStickerPlacementCounts`). Which rows they return for which viewer, against a real database,
+// is pinned in placement-reads.kysely-parity.test.ts; here they hand back the rows a test names.
+const { stickerRows, approvedRows } = vi.hoisted(() => ({
+  stickerRows: vi.fn(),
+  approvedRows: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => ({
+  listStickerPlacementRows: stickerRows,
+  listApprovedPlacementRows: approvedRows,
+}));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
@@ -151,6 +159,8 @@ placementDeleteMany.mockImplementation(async () => {
 });
 placementFindMany.mockImplementation(async () => []);
 placementGroupBy.mockImplementation(async () => []);
+stickerRows.mockImplementation(async () => []);
+approvedRows.mockImplementation(async () => []);
 placementFindFirst.mockImplementation(async () => null);
 imageFindMany.mockImplementation(async () => []);
 transactionFindMany.mockImplementation(async () => []);
@@ -413,7 +423,7 @@ describe("the creator's size limit", () => {
    * happens: the sticker just quietly gets smaller.
    */
   it('never consults the space when reading placements back', async () => {
-    placementFindMany.mockResolvedValueOnce([]);
+    stickerRows.mockResolvedValueOnce([]);
 
     await getStickerPlacements({ imageIds: [IMAGE] });
 
@@ -424,7 +434,7 @@ describe("the creator's size limit", () => {
   });
 
   it('leaves an existing placement at the size it was accepted at', async () => {
-    placementFindMany.mockResolvedValueOnce([
+    stickerRows.mockResolvedValueOnce([
       {
         id: 7,
         targetId: IMAGE,
@@ -452,7 +462,7 @@ describe("the creator's size limit", () => {
    */
   it('carries when each placement was made', async () => {
     const placedAt = new Date('2026-08-12T12:00:00Z');
-    placementFindMany.mockResolvedValueOnce([
+    stickerRows.mockResolvedValueOnce([
       {
         id: 7,
         targetId: IMAGE,
@@ -467,10 +477,9 @@ describe("the creator's size limit", () => {
 
     const [placed] = await getStickerPlacements({ imageIds: [IMAGE] });
 
+    // The rows arrive in placement order: the read's own `ORDER BY "createdAt"`, pinned against a
+    // real database in placement-reads.kysely-parity.test.ts.
     expect(placed.placedAt).toEqual(placedAt);
-    expect(placementFindMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: 'asc' } })
-    );
   });
 });
 
@@ -617,35 +626,27 @@ describe('what gets written to the row', () => {
 describe.each(LISTINGS)(
   'a pending placement is visible to the person who paid for it and nobody else (%s)',
   (_name, listPlacements) => {
-    it('scopes pending to the placer and the owner, and to nobody else', async () => {
+    // The read scopes a pending row to the viewer as its placer or its owner, and a signed-out
+    // viewer to approved rows only; that scoping is pinned against a real database in
+    // placement-reads.kysely-parity.test.ts. What this service owns is handing it the viewer.
+    it('hands the read the signed-in viewer', async () => {
       await listPlacements({ imageIds: [IMAGE], viewerId: PLACER });
 
-      const { where } = placementFindMany.mock.calls[0][0] as {
-        where: { OR: { status: string; placerId?: number; ownerId?: number }[] };
-      };
-      const pending = where.OR.filter((clause) => clause.status === 'pending');
-
-      // Asserted as whole clauses, not as a list of ids. The viewer is the same
-      // person in both roles, so `placerId ?? ownerId` collapsed them to the same
-      // value — and the test then passed with either clause duplicated, which is
-      // exactly the mutation it exists to catch. The key name is the discriminator.
-      expect(pending).toEqual([
-        { status: 'pending', placerId: PLACER },
-        { status: 'pending', ownerId: PLACER },
+      expect(stickerRows.mock.calls.map(([, input]) => input)).toEqual([
+        { surface: 'sticker', targetType: 'image', targetIds: [IMAGE], viewerId: PLACER },
       ]);
     });
 
-    it('asks for approved placements only when nobody is signed in', async () => {
+    it('hands the read no viewer when nobody is signed in', async () => {
       await listPlacements({ imageIds: [IMAGE] });
 
-      const { where } = placementFindMany.mock.calls[0][0] as {
-        where: { OR: { status: string }[] };
-      };
-      expect(where.OR.map((clause) => clause.status)).toEqual(['approved']);
+      expect(stickerRows.mock.calls.map(([, input]) => input)).toEqual([
+        { surface: 'sticker', targetType: 'image', targetIds: [IMAGE], viewerId: undefined },
+      ]);
     });
 
     it('drops a row whose payload is not a placement rather than rendering a hole', async () => {
-      placementFindMany.mockResolvedValueOnce([
+      stickerRows.mockResolvedValueOnce([
         {
           id: 1,
           targetId: IMAGE,
@@ -1238,7 +1239,7 @@ describe('the note on a placement', () => {
    */
   describe.each(LISTINGS)('is never carried by the feed listing (%s)', (_name, listPlacements) => {
     const givenListed = (data: Record<string, unknown>) =>
-      placementFindMany.mockResolvedValueOnce([
+      stickerRows.mockResolvedValueOnce([
         {
           id: PLACEMENT,
           targetId: IMAGE,
@@ -2157,10 +2158,8 @@ describe('a sticker flagged SFW placements only', () => {
         [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
         [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
       });
-      placementFindMany.mockResolvedValue([
-        row(FLAGGED_ROW, COSMETIC),
-        row(PLAIN_ROW, OTHER_COSMETIC),
-      ]);
+      for (const read of [stickerRows, approvedRows])
+        read.mockResolvedValue([row(FLAGGED_ROW, COSMETIC), row(PLAIN_ROW, OTHER_COSMETIC)]);
       imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
     });
 
@@ -2187,7 +2186,7 @@ describe('a sticker flagged SFW placements only', () => {
       });
 
       it('come back on a PG-13 image', async () => {
-        placementFindMany.mockResolvedValue([
+        stickerRows.mockResolvedValue([
           row(FLAGGED_ROW, COSMETIC, SFW_IMAGE),
           row(PLAIN_ROW, OTHER_COSMETIC, SFW_IMAGE),
         ]);
@@ -2387,10 +2386,8 @@ describe('a sticker flagged NSFW placements only', () => {
         [COSMETIC]: { flags: CosmeticFlag.NsfwPlacementsOnly },
         [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
       });
-      placementFindMany.mockResolvedValue([
-        row(FLAGGED_ROW, COSMETIC),
-        row(PLAIN_ROW, OTHER_COSMETIC),
-      ]);
+      for (const read of [stickerRows, approvedRows])
+        read.mockResolvedValue([row(FLAGGED_ROW, COSMETIC), row(PLAIN_ROW, OTHER_COSMETIC)]);
       imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.PG }]);
     });
 
@@ -2413,7 +2410,7 @@ describe('a sticker flagged NSFW placements only', () => {
       });
 
       it('come back on an R image', async () => {
-        placementFindMany.mockResolvedValue([
+        stickerRows.mockResolvedValue([
           row(FLAGGED_ROW, COSMETIC, MATURE_IMAGE),
           row(PLAIN_ROW, OTHER_COSMETIC, MATURE_IMAGE),
         ]);
@@ -2506,7 +2503,7 @@ describe('the listing and the counts from one read', () => {
       [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
     });
     imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
-    placementFindMany.mockResolvedValue([
+    stickerRows.mockResolvedValue([
       row(FLAGGED_ROW, { cosmeticId: COSMETIC }),
       row(PLAIN_ROW, {}),
       row(PENDING_ROW, { status: 'pending' }),
@@ -2547,8 +2544,6 @@ describe('the listing and the counts from one read', () => {
     expect(result.counts).toEqual({ [IMAGE]: 2, [SECOND_IMAGE]: 1 });
   });
 
-  // The whole `where` is pinned on purpose: its `OR` is what keeps a pending placement visible to
-  // its two parties and nobody else, and a looser clause would pass every count assertion here.
   it('marks the kept-off row on a moderator’s listing, and only there', async () => {
     const asModerator = await getStickerPlacementsAndCounts({
       imageIds: [IMAGE, SECOND_IMAGE],
@@ -2567,25 +2562,26 @@ describe('the listing and the counts from one read', () => {
     expect(asStranger.placements.some((placement) => 'keptOff' in placement)).toBe(false);
   });
 
+  // The counts come from the listing's own rows: one read, and never the count-only one. The input
+  // is pinned whole; which rows it returns for that viewer (the pending ones only to their two
+  // parties) is pinned against a real database in placement-reads.kysely-parity.test.ts.
   it('reads the placement rows once, scoped the way the listing has always been', async () => {
     await getStickerPlacementsAndCounts({ imageIds: [IMAGE, SECOND_IMAGE], viewerId: PLACER });
 
-    expect(placementFindMany).toHaveBeenCalledTimes(1);
-    expect((placementFindMany.mock.calls[0][0] as { where: unknown }).where).toEqual({
-      surface: 'sticker',
-      targetType: 'image',
-      targetId: { in: [IMAGE, SECOND_IMAGE] },
-      OR: [
-        { status: 'approved' },
-        { status: 'pending', placerId: PLACER },
-        { status: 'pending', ownerId: PLACER },
-      ],
-    });
+    expect(stickerRows.mock.calls.map(([, input]) => input)).toEqual([
+      {
+        surface: 'sticker',
+        targetType: 'image',
+        targetIds: [IMAGE, SECOND_IMAGE],
+        viewerId: PLACER,
+      },
+    ]);
+    expect(approvedRows).not.toHaveBeenCalled();
   });
 
   it('agrees with the count-only call, which keeps working for older clients', async () => {
     // The count-only read asks the database for approved rows; the mock hands back what it would.
-    placementFindMany.mockResolvedValue([
+    approvedRows.mockResolvedValue([
       row(FLAGGED_ROW, { cosmeticId: COSMETIC }),
       row(PLAIN_ROW, {}),
       row(BROKEN_ROW, { data: { nonsense: true } }),
@@ -2603,6 +2599,6 @@ describe('the listing and the counts from one read', () => {
       placements: [],
       counts: {},
     });
-    expect(placementFindMany).not.toHaveBeenCalled();
+    expect(stickerRows).not.toHaveBeenCalled();
   });
 });

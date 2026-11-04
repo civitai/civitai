@@ -1,6 +1,7 @@
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',
+  // A B2 lifecycle rule hides this prefix 7 days after upload; never use it for anything durable.
   TrainingImagesTemp = 'training-images-temp',
   Model = 'model',
   Default = 'default',
@@ -37,16 +38,6 @@ export enum ReviewSort {
 export enum ReviewFilter {
   NSFW = 'nsfw',
   IncludesImages = 'includes-images',
-}
-
-export enum QuestionSort {
-  Newest = 'Newest',
-  MostLiked = 'Most Liked',
-}
-
-export enum QuestionStatus {
-  Answered = 'Answered',
-  Unanswered = 'Unanswered',
 }
 
 export enum ImageSort {
@@ -193,6 +184,7 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  EventPointsTurf = 'event-points:turf',
 }
 
 export enum BountySort {

@@ -22,8 +22,6 @@ export const THREAD_CONTENT_OWNERS = [
   { column: 'reviewId', table: '"ResourceReview"', owner: '"userId"', key: 'id' },
   { column: 'bountyId', table: '"Bounty"', owner: '"userId"', key: 'id' },
   { column: 'bountyEntryId', table: '"BountyEntry"', owner: '"userId"', key: 'id' },
-  { column: 'questionId', table: '"Question"', owner: '"userId"', key: 'id' },
-  { column: 'answerId', table: '"Answer"', owner: '"userId"', key: 'id' },
   { column: 'model3dId', table: '"Model3D"', owner: '"userId"', key: 'id' },
   { column: 'model3dReviewId', table: '"Model3DReview"', owner: '"userId"', key: 'id' },
   { column: 'comicProjectId', table: '"ComicProject"', owner: '"userId"', key: 'id' },

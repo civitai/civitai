@@ -61,6 +61,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/model/bring-back': () => import('~/pages/api/mod/model/bring-back'),
   '/api/mod/model/bump': () => import('~/pages/api/mod/model/bump'),
   '/api/mod/model/republish': () => import('~/pages/api/mod/model/republish'),
+  '/api/mod/model/resolve-lock-review': () => import('~/pages/api/mod/model/resolve-lock-review'),
   '/api/mod/model/set-poi': () => import('~/pages/api/mod/model/set-poi'),
   '/api/mod/model/set-sfw-only': () => import('~/pages/api/mod/model/set-sfw-only'),
   '/api/mod/model/take-down': () => import('~/pages/api/mod/model/take-down'),
@@ -92,6 +93,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/creator-score-grant-revoke': () =>
     import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
+  '/api/mod/user/expire-generation-credentials': () =>
+    import('~/pages/api/mod/user/expire-generation-credentials'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/legal-hold': () => import('~/pages/api/mod/user/legal-hold'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),

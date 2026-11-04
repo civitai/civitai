@@ -56,3 +56,15 @@ export const placeableContentPageSchema = eventSchema.extend({
 
 export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
 export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });
+
+export type ShowcaseHatInput = z.infer<typeof showcaseHatSchema>;
+// Either a pick (null clears it, so the avatar shows the default hat again) or the on/off switch.
+// Off shows no hat; back on is the default, not the last pick.
+export const showcaseHatSchema = eventSchema
+  .extend({
+    cosmeticId: z.number().int().positive().nullable().optional(),
+    off: z.boolean().optional(),
+  })
+  .refine((x) => (x.cosmeticId === undefined) !== (x.off === undefined), {
+    message: 'Send a cosmeticId or off, not both',
+  });

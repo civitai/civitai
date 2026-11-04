@@ -21,7 +21,6 @@ import {
   getCommentReactions,
   getComments,
   getCommentsViaKysely,
-  getPinnedComments,
   getPinnedCommentsViaKysely,
   isLegacyCommentHidden,
   toggleHideComment,
@@ -30,7 +29,6 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { isKyselyCommentListPage } from '~/server/services/hot-reads-4.reads';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createNotification } from '~/server/services/notification.service';
 import { maskHiddenReactors } from '~/server/services/reaction-privacy.service';
 import {
@@ -61,19 +59,12 @@ export const getCommentsInfiniteHandler = async ({
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const { user } = ctx;
-  // `kysely-hot-reads-4`, evaluated once for this request: the first page (newest or oldest
-  // first) and the pinned block read through Kysely, on the client the same lag decision picks.
-  // A cursor page or another sort reads through Prisma either way.
-  const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4);
+  // The first page (newest or oldest first) and the pinned block read through Kysely, on the
+  // client the same lag decision picks. A cursor page or another sort reads through Prisma.
   const pageInput = { ...input, limit };
-  const comments =
-    viaKysely && isKyselyCommentListPage(pageInput)
-      ? await getCommentsViaKysely({ input: pageInput, user })
-      : await getComments({
-          input: pageInput,
-          user,
-          select: getAllCommentsWithCachedUserSelect,
-        });
+  const comments = isKyselyCommentListPage(pageInput)
+    ? await getCommentsViaKysely({ input: pageInput, user })
+    : await getComments({ input: pageInput, user, select: getAllCommentsWithCachedUserSelect });
 
   let nextCursor: number | undefined;
   if (comments.length > input.limit) {
@@ -82,11 +73,7 @@ export const getCommentsInfiniteHandler = async ({
   }
 
   // Pinned comments surface at the top of the first page only.
-  const pinnedComments = input.cursor
-    ? []
-    : viaKysely
-    ? await getPinnedCommentsViaKysely({ input, user })
-    : await getPinnedComments({ input, user, select: getAllCommentsWithCachedUserSelect });
+  const pinnedComments = input.cursor ? [] : await getPinnedCommentsViaKysely({ input, user });
 
   const allComments = [...pinnedComments, ...comments];
   const commentIds = allComments.map((c) => c.id);
@@ -102,7 +89,10 @@ export const getCommentsInfiniteHandler = async ({
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
   const [userCosmetics] = await Promise.all([
-    getCosmeticsAndProfilePicturesForUsers(allComments.map((c) => c.user.id)),
+    getCosmeticsAndProfilePicturesForUsers(
+      allComments.map((c) => c.user.id),
+      { showcaseHat: true }
+    ),
     maskHiddenReactors(
       allComments.map((c) => c.reactions),
       user

@@ -14,6 +14,9 @@ const source = ts.createSourceFile(
   ts.ScriptKind.TSX
 );
 
+// Context providers that render no box of their own, so they cannot cap a width.
+const TRANSPARENT = new Set(['ComCardPreviewScope']);
+
 function jsxAncestries(tag: string) {
   const found: string[][] = [];
   const visit = (node: ts.Node, chain: string[]) => {
@@ -24,7 +27,7 @@ function jsxAncestries(tag: string) {
     }
     const name = element.tagName.getText();
     if (name === tag) found.push(chain);
-    const inside = [...chain, name];
+    const inside = TRANSPARENT.has(name) ? chain : [...chain, name];
     visit(element.attributes, inside);
     if (ts.isJsxElement(node)) node.children.forEach((child) => visit(child, inside));
   };

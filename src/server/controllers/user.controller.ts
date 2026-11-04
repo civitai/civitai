@@ -1209,7 +1209,6 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             downloadCountAllTime: true,
             thumbsUpCountAllTime: true,
             uploadCountAllTime: true,
-            answerCountAllTime: true,
           },
         },
         cosmetics: {

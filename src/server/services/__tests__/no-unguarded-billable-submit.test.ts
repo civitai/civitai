@@ -73,6 +73,13 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
       'No persisted workflow and no debit, so there is no attribution to check. The real load ' +
       'submit beside it IS guarded.',
   },
+  'src/server/services/orchestrator/training/training-canary.ts': {
+    unguarded: 1,
+    reason:
+      "quoteEntry — the training canary's price check at `query: { whatif: true }`, made with " +
+      'the system token. No persisted workflow and no debit, so there is no attribution to ' +
+      'check. The live canary submit beside it IS guarded.',
+  },
   'src/server/services/orchestrator/promptEnhancement.ts': {
     unguarded: 1,
     reason:

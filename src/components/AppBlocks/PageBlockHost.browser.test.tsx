@@ -492,6 +492,41 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     expect(onConsentGranted).toHaveBeenCalledTimes(1);
   });
 
+  test('REQUEST_CONSENT for apps:storage:publish with from opens the publish prompt for that SOURCE app', async () => {
+    const onConsentGranted = vi.fn();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={onConsentGranted} />);
+    await driveToReady();
+
+    // A `from` that is not a blockId, and a `from` alongside any other scope, are not this
+    // request, and never fall through to the app's own consent prompt either.
+    postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'], from: 'Not A Block' });
+    postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'], from: 'notes-app' });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+
+    // Positive control on the same mount: the well-formed request opens exactly one prompt.
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'], from: 'notes-app' });
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const dialogProps = useDialogStore.getState().dialogs[0].props as {
+      appBlockId: string;
+      blockName?: string;
+      missingScopes: string[];
+      from?: string;
+      onGranted: () => void;
+    };
+    // The consumer's id (the modal reads its approved imports to name the source) and the source.
+    expect(dialogProps).toMatchObject({
+      appBlockId: 'apb_test',
+      blockName: 'Budgeted Generator',
+      missingScopes: ['apps:storage:publish'],
+      from: 'notes-app',
+    });
+    dialogProps.onGranted();
+    expect(onConsentGranted).toHaveBeenCalledTimes(1);
+  });
+
   test('REQUEST_CONSENT before BLOCK_READY is dropped (no pre-handshake permission modal)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
@@ -1998,9 +2033,20 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     await driveToReady();
     await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
 
+    // The 2nd click is a DOM click on purpose: this test is about store dedupe, and a
+    // second `locator.click()` runs Playwright's actionability wait, which stalled in CI
+    // until the 15s test timeout. One real click keeps the pointer path covered.
     await page.getByTestId('block-consent-notice-review').click();
-    await page.getByTestId('block-consent-notice-review').click();
+    (page.getByTestId('block-consent-notice-review').element() as HTMLElement).click();
 
+    await expect.poll(() => useDialogStore.getState().dialogs.length).toBe(1);
+    let settled = 0;
+    await expect
+      .poll(() => {
+        if (useDialogStore.getState().dialogs.length !== 1) throw new Error('dialog count changed');
+        return ++settled;
+      })
+      .toBeGreaterThanOrEqual(5);
     expect(useDialogStore.getState().dialogs).toHaveLength(1);
   });
 

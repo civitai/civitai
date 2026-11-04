@@ -11,6 +11,7 @@ import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPre
 import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
+import { useMyTeamHatUrl } from '~/components/Events/ScoredEvent/useMyTeamHatUrl';
 import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
 import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
 import { ShowEventHomeBlock } from '~/components/HomeBlocks/ShowEventHomeBlock';
@@ -86,6 +87,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
 
   const color = (team && teamColor(team)) ?? 'var(--mantine-color-blue-5)';
   const myStanding = team ? standings?.teams.find((t) => t.team === team) : undefined;
+  const myHat = useMyTeamHatUrl(event, team, standings?.teamHats.find((h) => h.team === team)?.url);
   const points = hats.reduce((sum, h) => sum + h.points, 0);
 
   const sections: Record<ScoredSection, ReactNode> = {
@@ -160,6 +162,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           finalizing={finalizing}
           winner={settledWinner(data, standings, now)}
           teamHats={standings?.teamHats}
+          myHat={myHat}
           onJoin={handleJoin}
           joining={equipping}
           rosterOnJoin={

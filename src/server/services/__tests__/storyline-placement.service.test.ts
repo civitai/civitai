@@ -14,10 +14,10 @@ const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn();
 const assertCanContinueStoryline = vi.fn();
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The free tier's display count (`getFreePlacementAllowance`, `hasUsedFreePlacementOn`), a Kysely
+// read. It answers from the same table the fakes below write (`givenTable`).
+const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
+vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,
@@ -69,6 +69,11 @@ const matches = (row: Row, where: Where) =>
     if (condition === undefined) return true;
     if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
       const ops = condition as Record<string, unknown>;
+      // A JSON path match on one key, as the team-waived share of a free-tier count asks.
+      if ('path' in ops && 'equals' in ops && Object.keys(ops).length === 2) {
+        const json = row[key] as Record<string, unknown> | null | undefined;
+        return json?.[(ops.path as string[])[0]] === ops.equals;
+      }
       for (const op of Object.keys(ops))
         if (op !== 'gte' && op !== 'in') throw new Error(`fake: unsupported operator ${op}`);
       if ('gte' in ops && !((row[key] as Date) >= (ops.gte as Date))) return false;
@@ -197,8 +202,8 @@ const givenTable = () => {
     fn(tx)
   );
   // The free tier's display reads, against the same table.
-  dbMock.dbRead.placement.count.mockImplementation(
-    async ({ where }: { where: Where }) => rows.filter((row) => matches(row, where)).length
+  displayCount.mockImplementation(
+    async (_db: unknown, where: Where) => rows.filter((row) => matches(row, where)).length
   );
 };
 

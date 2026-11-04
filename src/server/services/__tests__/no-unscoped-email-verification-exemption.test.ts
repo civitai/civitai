@@ -60,6 +60,7 @@ const MUST_STAY_GUARDED: Record<string, string[]> = {
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
+  'remix-app.router.ts': ['run'],
 };
 
 /**
@@ -88,6 +89,8 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  */
 const DERIVED_BASES: Record<string, string> = {
   appStorageProcedure: 'publicProcedure',
+  // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
+  appStorageUserProcedure: 'protectedProcedure',
   auctionProcedure: 'protectedProcedure',
   blurbProcedure: 'protectedProcedure',
   blurbWriteProcedure: 'guardedProcedure',
@@ -99,14 +102,19 @@ const DERIVED_BASES: Record<string, string> = {
   comicModeratorProcedure: 'moderatorProcedure',
   comicProtectedProcedure: 'protectedProcedure',
   comicPublicProcedure: 'publicProcedure',
+  // `csam.router.ts`: moderators with CSAM reporting access.
+  csamProcedure: 'moderatorProcedure',
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
+  orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
+  // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  remixAppProcedure: 'protectedProcedure',
   semanticSearchProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
