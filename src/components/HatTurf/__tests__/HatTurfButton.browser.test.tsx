@@ -173,6 +173,7 @@ function renderCard(ctx: Ctx = {}, ownerId = 2, width = PHONE_CARD) {
         images: {},
         open: {},
         stickers: {},
+        joined: h.stock.optedIn,
         watch: () => () => undefined,
         ...ctx,
       }}
@@ -544,6 +545,7 @@ describe('hats on a feed ImageCard', () => {
           images: {},
           open: {},
           stickers: {},
+          joined: true,
           watch,
         }}
       >

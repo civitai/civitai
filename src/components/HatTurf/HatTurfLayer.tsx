@@ -64,7 +64,7 @@ export type HatTurfLayerProps = {
 
 export function HatTurfLayer(props: HatTurfLayerProps) {
   // Hooks stay in the inner component so flag-off cards run none.
-  return useTurfFeed() ? <HatTurfLayerContent {...props} /> : null;
+  return useTurfFeed()?.joined ? <HatTurfLayerContent {...props} /> : null;
 }
 
 function HatTurfLayerContent({

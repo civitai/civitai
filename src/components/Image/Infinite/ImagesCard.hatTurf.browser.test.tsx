@@ -176,6 +176,7 @@ const turf = (): TurfSummaries => ({
   },
   open: { 77: true },
   stickers: {},
+  joined: h.stock.optedIn,
   watch: () => () => undefined,
 });
 

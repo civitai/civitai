@@ -12,6 +12,7 @@ import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
@@ -35,8 +36,13 @@ export type TurfSummaries = {
   arm: HatTurfFeedArm | null;
   /** The viewer's team, or null (signed out, or not in the event). */
   team: string | null;
+  /**
+   * The viewer opted in to Hat Turf. Only a joined viewer sees turf: hats, counts and pushes. Anyone
+   * else gets the join invite and nothing drawn.
+   */
+  joined: boolean;
   images: Record<number, TurfSummary>;
-  /** Per requested image: published, visible and its owner opted in, so it can take a hat now. */
+  /** Per requested image: published and visible, so it can take a hat now. */
   open: Record<number, boolean>;
   /** Contest entries: no Hat Turf on them at all. */
   hidden?: Record<number, boolean>;
@@ -69,6 +75,13 @@ export function TurfSummaryProvider({
   const event = gate?.event;
   const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
+  const user = useCurrentUser();
+  // The same query as useHatStock, so the two share one cache entry.
+  const { data: stock } = trpc.hatTurf.getStock.useQuery(
+    { event: event ?? '' },
+    { enabled: !!event && !!user, staleTime: 30_000 }
+  );
+  const joined = !!user && stock?.optedIn === true;
 
   const chunks = useMemo(
     () => (event ? chunkIds(imageIds, SUMMARY_CHUNK) : []),
@@ -82,7 +95,7 @@ export function TurfSummaryProvider({
     )
   );
   const stickerQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    (joined ? chunks : []).map((chunk) =>
       t.hatTurf.getStickersForImages(
         { event: event ?? '', imageIds: chunk, perImage: TURF_FEED_STICKERS },
         { staleTime: 30_000 }
@@ -206,18 +219,31 @@ export function TurfSummaryProvider({
       event,
       arm,
       team: base.team,
-      images,
+      joined,
+      images: joined ? images : {},
       open: base.open,
       hidden: base.hidden,
-      stickers,
+      stickers: joined ? stickers : {},
       watch,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event, arm, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);
+  }, [
+    event,
+    arm,
+    joined,
+    base,
+    pushed,
+    baseStickers,
+    reread,
+    watch,
+    summaryStamp,
+    stickerStamp,
+    chunkOf,
+  ]);
 
   return (
     <TurfSummaryContext.Provider value={value}>
-      {event && (
+      {event && joined && (
         <>
           <TurfPushes onPush={onPush} />
           <TurfWatcher event={event} watching={watching} version={watchVersion} />
@@ -230,7 +256,7 @@ export function TurfSummaryProvider({
 
 type Pushed = NonNullable<ReturnType<typeof readTurfPush>> & { at: number };
 
-/** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
+/** Mounted only for a joined viewer, so the signals hub isn't required otherwise. */
 function TurfPushes({ onPush }: { onPush: (raw: unknown) => void }) {
   useSignalConnection(SignalMessages.EventPointsTurf, onPush);
   return null;

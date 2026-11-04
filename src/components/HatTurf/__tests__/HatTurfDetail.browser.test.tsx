@@ -124,6 +124,7 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
         },
         open: { 9: true },
         stickers: {},
+        joined: h.stock.optedIn,
         watch: () => () => undefined,
         ...ctx,
       }}
@@ -435,8 +436,21 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-hat')!.getBoundingClientRect().height).toBe(30);
   });
 
+  // Deliberate (event owner's call, 2026-11-04): turf is seen by joined players only. A viewer who
+  // has not joined gets the hat button as their way in, and no standings, counts or hats.
+  test('not joined: no standings badge and no hats, but the hat button still joins', async () => {
+    h.stock = { available: 3, optedIn: false, mode: 'live' };
+    localStorage.setItem('hat-turf-detail-invite-dismissed', String(Date.now()));
+    render({ joined: false });
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    expect(q('hat-turf-detail-badge')).toBeNull();
+    expect(q('hat-turf-layer')).toBeNull();
+    expect(hats().length).toBe(0);
+    click(q('hat-turf-detail-hat'));
+    await vi.waitFor(() => expect(text(/^Join$/)).toBeTruthy());
+  });
+
   test.each([
-    ['not joined', { available: 3, optedIn: false }, /Join Hat Turf to put/, true],
     ['joined', { available: 3, optedIn: true }, /tap the hat button/, false],
     ['joined, out of hats', { available: 0, optedIn: true }, /out of hats for now/, false],
   ])('no hats yet, %s: the card says what to do', async (_, stock, says, joinButton) => {

@@ -178,10 +178,9 @@ function HatButton({ imageId }: { imageId: number }) {
 function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
-  const user = useCurrentUser();
   const [open, setOpen] = useState(false);
   const [tray, setTray] = useState(false);
-  if (!feed || (!summary && !user)) return null;
+  if (!feed?.joined) return null;
 
   return (
     <>
