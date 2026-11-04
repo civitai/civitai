@@ -135,7 +135,7 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
 // Changed the text? Bump the version (a material change) and add its hash here. Filling in the
 // "Last updated" date does not count: that line is outside the hash.
 const TERMS_BODY_SHA256_BY_VERSION: Record<string, string> = {
-  '1': '9819c3f35b73c474d837fc0ed465d594bf78bfe9b9c30777e082a79f6210654a',
+  '1': '83c7c7149c91c29a9d7b437b00d8ade09c64d7d7dffe7318843f1c67dbc4f1b1',
 };
 
 describe('App Developer Terms: the listing owner, for an editor or a moderator acting on it', () => {

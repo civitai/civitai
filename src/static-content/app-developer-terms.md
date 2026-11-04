@@ -38,4 +38,4 @@ These App Developer Terms ("Developer Terms") apply to you if you build, publish
 
 **9. Liability.** Your App is your User Content. Sections 9.5 (disclaimer), 15 (indemnity) and the limitation of liability in the Terms apply to it, and your indemnity under Section 15 covers claims arising from your App, its goods and your breach of these Developer Terms.
 
-**10. Changes.** We may update these Developer Terms. Continuing to publish or run an App after an update takes effect means you accept it.
+**10. Changes.** We may update these Developer Terms. We will give you at least 15 days' notice of a material change before it takes effect, unless a law, or a security, fraud or safety risk, requires a faster change. Continuing to publish or run an App after an update takes effect means you accept it.
