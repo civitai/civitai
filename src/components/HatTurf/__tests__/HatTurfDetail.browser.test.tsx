@@ -375,6 +375,45 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-more')).toBeNull();
   });
 
+  test.each([
+    ['joined', true],
+    ['not joined', false],
+  ])('a contest entry shows no Hat Turf controls (%s)', async (_, optedIn) => {
+    h.stock = { available: 3, optedIn, mode: 'live' };
+    render({ hidden: { 9: true } });
+    // The same render without `hidden` shows the badge within this window (the tests above).
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(q('hat-turf-detail-controls')).toBeNull();
+    expect(q('hat-turf-detail-invite')).toBeNull();
+  });
+
+  test('the hat controls fit the 30px reaction row, standings ring included', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(q('hat-turf-detail-controls')!.getBoundingClientRect().height).toBeLessThanOrEqual(30);
+    expect(q('hat-turf-detail-hat')!.getBoundingClientRect().height).toBe(30);
+  });
+
+  test.each([
+    ['not joined', { available: 3, optedIn: false }, /Join Hat Turf to put/, true],
+    ['joined', { available: 3, optedIn: true }, /tap the hat button/, false],
+    ['joined, out of hats', { available: 0, optedIn: true }, /out of hats for now/, false],
+  ])('no hats yet, %s: the card says what to do', async (_, stock, says, joinButton) => {
+    h.stock = { ...stock, mode: 'live' };
+    localStorage.setItem('hat-turf-detail-invite-dismissed', String(Date.now()));
+    render({ images: {} });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-empty')).not.toBeNull());
+    expect(q('hat-turf-detail-empty')!.textContent).toMatch(says);
+    const join = text(/^Join Hat Turf$/);
+    expect(!!join).toBe(joinButton);
+    if (join) {
+      click(join);
+      expect(h.optIn).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: true });
+    }
+  });
+
   test('Leave Hat Turf turns it off', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
