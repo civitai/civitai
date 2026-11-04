@@ -54,7 +54,7 @@ const log = createLogger('stripe', 'blue');
 const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
 // The `canceled_at` of the cancel a ban / restriction flow made. reinstateSubscription resumes only
 // while it matches: a member's own later cancel gets a new `canceled_at`.
-const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
+export const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
 // A gift subscription's own `cancel_at` (the end of all its gifted months), saved when a moderation
 // cancel cuts it to the current period so a reinstate can put it back.
 const MODERATION_PREV_CANCEL_AT = 'civitai_moderation_prev_cancel_at';

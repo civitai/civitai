@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
 
-const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/HiddenCommentsModal'), {
+const HiddenCommentsModal = dynamic(() => import('~/components/Model/ModelDiscussion/HiddenCommentsModal'), {
   ssr: false,
 });
 

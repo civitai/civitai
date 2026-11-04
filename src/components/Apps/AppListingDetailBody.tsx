@@ -1488,11 +1488,7 @@ export function AppListingDetailBody({
         </Stack>
       )}
 
-      {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
-          on the listing's Thread (`entityType="appListing"`, integer surrogate).
-          Additive + separate from the recommend-style reviews above. Only reached
-          for an APPROVED listing (getListingDetail is approved-only) — omitted in
-          preview (a shadow listing has no thread; loading it would 404/N+1). */}
+      {/* Not in preview: a shadow listing has no comments to load. */}
       {!preview && (
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
       )}

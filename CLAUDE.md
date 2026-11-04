@@ -124,9 +124,9 @@ anything committed counts as disclosed and must be fixed and rotated.
    `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
 5. Before merging, check the PR's CI — `main` has no required checks, so a red run doesn't block.
-6. Run `comment-review` over the diff and `docs-drift-review` over the commits — the two lanes with no
-   automated gate. Required when you moved a file, renamed a script or command, retired an env var, or
-   completed a tracked item.
+6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, the lanes with no
+   automated gate. Required when you moved a file, renamed a script or command, retired an env var,
+   completed a tracked item, or a pushback has turned up an overstatement.
 
 **Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the
 version-bump commit a release script (`release[:minor|:major]`, `release:<app>`) pushes, run only with
