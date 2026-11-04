@@ -61,6 +61,8 @@ type GetJsonCompletionInput = {
   temperature?: number;
   maxTokens?: number;
   retries?: number;
+  // Per request. The client has no timeout of its own, so a hung provider call never returns.
+  timeoutMs?: number;
 };
 
 /**
@@ -244,19 +246,23 @@ function createOpenRouterClient() {
     temperature = 1,
     maxTokens = 2048,
     retries = 0,
+    timeoutMs,
   }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
-    const response = await client.chat.send({
-      model,
-      messages: sdkMessages,
-      temperature,
-      maxTokens,
-      responseFormat: { type: 'json_object' },
-      provider: {
-        allowFallbacks: true,
+    const response = await client.chat.send(
+      {
+        model,
+        messages: sdkMessages,
+        temperature,
+        maxTokens,
+        responseFormat: { type: 'json_object' },
+        provider: {
+          allowFallbacks: true,
+        },
       },
-    });
+      timeoutMs ? { timeoutMs } : undefined
+    );
     const usage = extractUsage(response);
 
     const content = response.choices?.[0]?.message?.content;
@@ -268,6 +274,7 @@ function createOpenRouterClient() {
           temperature,
           maxTokens,
           retries: retries - 1,
+          timeoutMs,
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
@@ -295,6 +302,7 @@ function createOpenRouterClient() {
           temperature,
           maxTokens,
           retries: retries - 1,
+          timeoutMs,
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
