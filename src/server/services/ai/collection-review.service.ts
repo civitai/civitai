@@ -34,6 +34,7 @@ const GENERIC_REJECTION = "It doesn't meet this collection's guidelines.";
 // Anything at or above R means the image does not belong on an all-ages surface. 'R+' is what the
 // prompt asks for; the rest are the labels a model reaches for on its own.
 const ADULT_RATINGS = ['r+', 'r', 'x', 'xxx', 'nsfw', 'explicit'];
+const SAFE_RATINGS = ['g', 'pg', 'pg-13', 'pg13', 'sfw'];
 
 // The booleans the rules depend on are required: a response missing them is one we cannot read,
 // and it must not resolve to approve.
@@ -103,9 +104,15 @@ export function decideFromObservations(
   if (anyMinorSignal && o.minorInappropriate) escalations.push(MINOR_ESCALATIONS.inappropriate);
   if (o.depictsRealPerson) escalations.push('real person likeness');
 
-  const adultRating = ADULT_RATINGS.includes((o.nsfwEstimate ?? '').toLowerCase().trim());
+  const rating = (o.nsfwEstimate ?? '').toLowerCase().trim();
+  const adultRating = ADULT_RATINGS.includes(rating);
+  const unrecognizedRating = !adultRating && !SAFE_RATINGS.includes(rating);
   if (o.sexualContent || adultRating) violations.push('sexual/adult content');
   else if (o.suggestiveStyling) escalations.push('suggestive styling');
+  const ratingEscalation = unrecognizedRating
+    ? `unrecognized nsfwEstimate: ${o.nsfwEstimate?.slice(0, 40) || '(none)'}`
+    : undefined;
+  if (ratingEscalation) escalations.push(ratingEscalation);
 
   // Escalating on this hedge alone would sweep up much of the stylized art these collections are
   // made of, which is exactly what the prompt invites the model to be unsure about. It matters
@@ -135,7 +142,15 @@ export function decideFromObservations(
     decision,
     violations,
     escalations,
-    neverReject: uncertainAge || (isVideo && !o.hasBuzzReference) || undefined,
+    // An unreadable label is only our uncertainty while it is the response's sole finding; it must
+    // not shield a real escalation from a collection that rejects escalations.
+    neverReject:
+      uncertainAge ||
+      (!!ratingEscalation &&
+        !violations.length &&
+        escalations.every((e) => e === ratingEscalation)) ||
+      (isVideo && !o.hasBuzzReference) ||
+      undefined,
   };
 }
 

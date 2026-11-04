@@ -42,6 +42,11 @@ export type RemixGalleryPlacementData = {
   pinnedAt?: string | null;
   /** Order among pinned entries only. The rest are shuffled. */
   position?: number | null;
+  /**
+   * An event's team waiver paid for this submission instead of the owner's
+   * price or the free tier (see `TEAM_WAIVER`). Set by `createFreePlacement`.
+   */
+  waiver?: 'team';
 };
 
 export const isRemixGalleryPlacementData = (value: unknown): value is RemixGalleryPlacementData =>

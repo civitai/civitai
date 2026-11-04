@@ -15,7 +15,7 @@ import {
   HiddenCommentLabel,
   HideAgainButton,
   useHiddenCommentReveal,
-} from '~/components/CommentsV2/Comment/HiddenComment';
+} from '~/components/CommentsV3/HiddenComment';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

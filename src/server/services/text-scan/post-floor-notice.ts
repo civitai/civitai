@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { highestNsfwLevel } from '~/server/services/text-scan/evaluate';
-import { notifyTextScanRatingRaised, ratingRose } from '~/server/services/text-scan/notify';
+import {
+  logRatingNoticeDecision,
+  notifyTextScanRatingRaised,
+  ratingRose,
+  type RatingNoticeDecision,
+} from '~/server/services/text-scan/notify';
 
 type Candidate = {
   id: number;
@@ -31,25 +36,66 @@ export async function notifyPostFloorRaises(
     WHERE p.id IN (${Prisma.join([...firstRated.keys()])})
       AND 'nsfw' = ANY(em."triggeredLabels")
   `);
+  const decide = (
+    id: number,
+    decision: RatingNoticeDecision,
+    workflowId: string | null = null,
+    baseline: number | null = null
+  ) =>
+    logRatingNoticeDecision({
+      path: 'job',
+      entityType: 'Post',
+      entityId: id,
+      workflowId,
+      decision,
+      before: 0,
+      baseline,
+      after: firstRated.get(id)?.after ?? null,
+    });
+  const found = new Set(candidates.map((c) => c.id));
+  for (const id of firstRated.keys()) if (!found.has(id)) decide(id, 'no-nsfw-verdict');
+
   for (const post of candidates) {
     const labels = post.triggeredLabels;
-    if (labels.includes('poi') || labels.includes('minor')) continue;
-    if (post.moderatorNsfwLevel != null || !post.userId || !post.workflowId) continue;
+    const images = post.images ?? 0;
+    const { userId, workflowId } = post;
+    const skip = (decision: RatingNoticeDecision) => decide(post.id, decision, workflowId, images);
+    if (labels.includes('poi') || labels.includes('minor')) {
+      skip('deferred-poi-minor');
+      continue;
+    }
+    if (post.moderatorNsfwLevel != null) {
+      skip('moderator-rated');
+      continue;
+    }
+    if (!userId) {
+      skip('no-owner');
+      continue;
+    }
+    if (!workflowId) {
+      skip('no-workflow');
+      continue;
+    }
     const change = firstRated.get(post.id);
     // change.before is 0 here; compare against the images alone, as raiseToFloor does.
-    if (!change || !ratingRose(post.images ?? 0, change.after)) continue;
+    if (!change || !ratingRose(images, change.after)) {
+      decide(post.id, 'no-rise', workflowId, images);
+      continue;
+    }
     // One failed notice must not drop the rest of the batch.
     try {
       await notifyTextScanRatingRaised({
         entityType: 'Post',
         entityId: post.id,
-        userId: post.userId,
+        userId,
         level: highestNsfwLevel(change.after),
         title: post.title,
         url: `/posts/${post.id}`,
-        workflowId: post.workflowId,
+        workflowId,
       });
+      decide(post.id, 'sent', workflowId, images);
     } catch (error) {
+      decide(post.id, 'notice-failed', workflowId, images);
       logToAxiom({
         name: 'text-scan',
         type: 'error',

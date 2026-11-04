@@ -4,6 +4,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import type * as NotificationsModule from '~/utils/notifications';
@@ -89,7 +90,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
 // requested module '/src/utils/notifications.tsx' does not provide an export named
 // 'showWarningNotification'`. #5102
@@ -103,34 +104,38 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appListings: {
-          listPendingRequests: { invalidate: hoisted.invalidate },
-          listApprovedRequests: { invalidate: hoisted.invalidate },
-          listRejectedRequests: { invalidate: hoisted.invalidate },
-        },
-      }),
-      appListings: {
-        listPendingRequests: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.listPendingRequests': {
           useQuery: () => ({
             data: { items: [hoisted.row], nextCursor: null },
             isLoading: false,
             error: null,
           }),
         },
-        getAssets: { useQuery: () => ({ data: null, isLoading: false, error: null }) },
-        approveExternalRequest: {
+        'appListings.getAssets': {
+          useQuery: () => ({ data: null, isLoading: false, error: null }),
+        },
+        'appListings.approveExternalRequest': {
           useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
         },
-        rejectExternalRequest: {
+        'appListings.rejectExternalRequest': {
           useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
         },
-        getListingPreviewForReview: {
+        'appListings.getListingPreviewForReview': {
           useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
       },
-    },
+      {
+        useUtils: () => ({
+          appListings: {
+            listPendingRequests: { invalidate: hoisted.invalidate },
+            listApprovedRequests: { invalidate: hoisted.invalidate },
+            listRejectedRequests: { invalidate: hoisted.invalidate },
+          },
+        }),
+      }
+    ),
   };
 });
 
