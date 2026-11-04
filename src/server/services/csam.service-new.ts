@@ -69,8 +69,10 @@ import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import {
   isAwaitingEvidenceApproval,
+  isEvidenceMediaType,
   isGeneratorEvidenceDetails,
   unsentGeneratorEvidenceWhere,
 } from '~/server/services/generator-evidence/evidence-meta';
@@ -113,6 +115,7 @@ import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
+  isMissingObject,
   probeOriginalImage,
   readOriginalImage,
 } from '~/server/services/csam-original-image';
@@ -217,6 +220,68 @@ export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
 const baseDir = `${isProd && env.DIRNAME ? env.DIRNAME : process.cwd()}/csam`;
 
 const IMAGES_ARCHIVE_MANIFEST_NAME = 'manifest.json';
+
+/** Each file of a report filed with preserved generator evidence, once, by blob id. */
+function uniqueEvidenceBlobs(details: unknown): StoredEvidenceBlob[] {
+  if (!isGeneratorEvidenceDetails(details)) return [];
+  const byId = new Map<string, StoredEvidenceBlob>();
+  for (const job of details.generatedImages)
+    for (const blob of job.blobs) {
+      // The same file can appear in more than one job; the occurrence holding a copy wins.
+      const seen = byId.get(blob.blobId);
+      if (!seen || (!seen.evidenceKey && blob.evidenceKey)) byId.set(blob.blobId, blob);
+    }
+  return [...byId.values()];
+}
+
+/** The files that have a preserved copy, a moderator-excluded one included: its copy is retained. */
+const preservedEvidenceBlobs = (details: unknown) =>
+  uniqueEvidenceBlobs(details).filter((blob) => !!blob.evidenceKey);
+
+const zipSafeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'unnamed';
+
+/**
+ * The verified preserved copy, or why not: `permanent` when every later run would fail the same
+ * way, `transient` when reading it again could succeed.
+ */
+async function readPreservedCopy(blob: StoredEvidenceBlob) {
+  if (!blob.sha256)
+    return { ok: false as const, permanent: 'no sha256 recorded for the preserved copy' };
+  if (blob.contentType !== undefined && !isEvidenceMediaType(blob.contentType))
+    return { ok: false as const, permanent: 'recorded type is not an evidence media type' };
+  let notFound = false;
+  const read = await readVerifiedEvidence(
+    blob,
+    async (key) => {
+      try {
+        return await streamEvidenceObject(key);
+      } catch (e) {
+        notFound = isMissingObject(e);
+        throw e;
+      }
+    },
+    MAX_EVIDENCE_BYTES
+  );
+  if (read.ok) return read;
+  if (read.shaMismatch || read.overLimit) return { ok: false as const, permanent: read.reason };
+  // NoSuchKey only: a plain 404 is also what a wrong bucket answers, and that must be retried.
+  if (notFound)
+    return { ok: false as const, permanent: 'preserved copy not found in the evidence store' };
+  // Set only by the type check, which runs after the whole copy was read and its hash matched.
+  if (read.notMedia)
+    return { ok: false as const, permanent: 'stored type is not an evidence media type' };
+  return { ok: false as const, transient: read.reason };
+}
+
+/** One file of `generated-images.zip`'s manifest, for a report filed with preserved evidence. */
+type PreservedArchiveRecord = {
+  blobId: string;
+  source: 'preserved' | 'missing';
+  sha256?: string;
+  bytes?: number;
+  contentType?: string;
+  reason?: string;
+};
 
 export async function getImageResources({ ids }: GetImageResourcesOutput) {
   return await dbRead.imageResourceHelper.findMany({
@@ -2950,6 +3015,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     ];
     const appendedUrls = new Set<string>();
     let entries = 0;
+    // A report filed with preserved generator evidence names its files by the copy kept in the
+    // evidence store (`evidenceKey`), not by a URL, so the URL list above never sees them.
+    const preserved = preservedEvidenceBlobs(report.details);
+    const appendedBlobIds = new Set<string>();
 
     const stored = await archiveAndUpload({
       userId,
@@ -2958,7 +3027,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       stream: streamArchivesToStorage,
       // Known upfront here, unlike `archiveImages` — no extra round trip needed. This is an upper
       // bound: a URL whose fetch returns nothing is skipped, so the real archive can be smaller.
-      expectedBytes: imageUrls.length * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+      expectedBytes: (imageUrls.length + preserved.length) * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
       append: async (boundedArchive) => {
         // concurrency limiter
         const limit = plimit(10);
@@ -2982,6 +3051,61 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             });
           })
         );
+
+        if (!isGeneratorEvidenceDetails(report.details)) return;
+        // One file at a time: a verified read holds the whole file until it is appended.
+        const manifest: PreservedArchiveRecord[] = [];
+        const usedNames = new Set<string>();
+        for (const blob of preserved) {
+          const read = await readPreservedCopy(blob);
+          if (!read.ok) {
+            // A failure that would repeat every run is recorded and the rest archived; anything
+            // else (a storage read failing) is retried with the report.
+            if ('transient' in read)
+              throw new Error(`preserved file ${blob.blobId} could not be read: ${read.transient}`);
+            manifest.push({ blobId: blob.blobId, source: 'missing', reason: read.permanent });
+            logToAxiom({
+              name: 'csam-report',
+              type: 'warning',
+              subType: 'archive-generated-images',
+              message: `preserved file could not be archived: ${read.permanent}`,
+              reportId: report.id,
+              blobId: blob.blobId,
+            });
+            continue;
+          }
+          const extension = extensionForContentType(read.contentType);
+          const base = `evidence/${zipSafeName(blob.blobId)}`;
+          let name = `${base}.${extension}`;
+          // Two blob ids can reduce to one safe name: never let one entry shadow another.
+          for (let n = 2; usedNames.has(name); n++) name = `${base}-${n}.${extension}`;
+          usedNames.add(name);
+          let written!: () => void;
+          const done = new Promise<void>((resolve) => (written = resolve));
+          await boundedArchive.append(
+            Readable.fromWeb(read.body.stream() as NodeReadableStream<Uint8Array>),
+            { name },
+            () => written()
+          );
+          await done;
+          entries += 1;
+          appendedBlobIds.add(blob.blobId);
+          manifest.push({
+            blobId: blob.blobId,
+            source: 'preserved',
+            sha256: blob.sha256,
+            bytes: read.body.size,
+            contentType: read.contentType,
+          });
+        }
+        // Files the report names but holds no copy of, listed so the archive shows every one.
+        for (const blob of uniqueEvidenceBlobs(report.details))
+          if (!blob.evidenceKey)
+            manifest.push({ blobId: blob.blobId, source: 'missing', reason: blob.status });
+        await boundedArchive.append(Buffer.from(JSON.stringify({ files: manifest }, null, 2)), {
+          name: IMAGES_ARCHIVE_MANIFEST_NAME,
+        });
+        entries += 1;
       },
     });
 
@@ -2989,8 +3113,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       kind: 'generatedImages',
       ...stored,
       entries,
-      namedExpected: namedUrls.size,
-      namedMissing: [...namedUrls].filter((url) => !appendedUrls.has(url)).length,
+      namedExpected: namedUrls.size + preserved.length,
+      namedMissing:
+        [...namedUrls].filter((url) => !appendedUrls.has(url)).length +
+        preserved.filter((blob) => !appendedBlobIds.has(blob.blobId)).length,
     });
   }
 

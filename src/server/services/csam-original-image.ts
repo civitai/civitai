@@ -77,7 +77,8 @@ const ABSENT_STATUSES = new Set([404, 410]);
 
 // Only NoSuchKey: a plain 404 is also what a wrong bucket returns, and that must not quietly turn
 // every original into an edge copy.
-const isMissingObject = (e: unknown) => (e as { name?: string } | undefined)?.name === 'NoSuchKey';
+export const isMissingObject = (e: unknown) =>
+  (e as { name?: string } | undefined)?.name === 'NoSuchKey';
 // A HEAD has no error body, so a missing key is only `NotFound`, and so is a wrong bucket. That
 // passes the probe; the read then throws.
 const isMissingHead = (e: unknown) =>

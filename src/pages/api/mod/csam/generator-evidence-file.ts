@@ -6,7 +6,7 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
-  EVIDENCE_MEDIA_TYPES,
+  isEvidenceMediaType,
   isGeneratorEvidenceDetails,
 } from '~/server/services/generator-evidence/evidence-meta';
 import { readVerifiedEvidence } from '~/server/services/generator-evidence/evidence-payload';
@@ -51,7 +51,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     .find((b) => b.blobId === blobId && b.status === 'preserved');
   if (!blob) return void res.status(404).json({ error: 'Not found' });
   const contentType = blob.contentType?.toLowerCase() ?? '';
-  if (!EVIDENCE_MEDIA_TYPES.has(contentType))
+  if (!isEvidenceMediaType(contentType))
     return void res.status(415).json({ error: 'This file cannot be shown here' });
   const tooLarge = () =>
     void res.status(413).json({ error: 'This file is too large to show here' });
