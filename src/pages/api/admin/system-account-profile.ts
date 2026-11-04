@@ -26,22 +26,26 @@ const SYSTEM_ACTOR_ID = -1;
 
 const RESERVED_NAME = MODERATION_ACCOUNT_USERNAME.toLowerCase();
 
-// After folding, a character that isn't a plain letter may stand in for a letter of the reserved name
-// or be skipped, so padding and lookalike glyphs can't shift the match. Up to half the letters may be
-// stood in for, so a name of only digits or symbols isn't refused.
+// A character that isn't a letter as typed may stand in for a letter of the reserved name or be skipped,
+// even when folding turns it into letters, so padding and lookalike glyphs can't shift the match. Up to
+// half the letters may be stood in for, so a name of only digits or symbols isn't refused.
 // shortcut: an inserted or doubled plain letter (rn for m) still passes.
 function masksReservedName(value: string) {
+  const tokens = Array.from(value).flatMap((char) => {
+    const folded = foldConfusables(char).replace(/[1l]/g, 'i');
+    if (!/\p{L}/u.test(char)) return [{ text: folded, letter: false }];
+    return Array.from(folded, (text) => ({ text, letter: /[a-z]/.test(text) }));
+  });
   const n = RESERVED_NAME.length;
   // fewest stand-ins needed to have matched the first j reserved letters so far
   let best: number[] = [0, ...Array<number>(n).fill(Infinity)];
-  for (const char of foldConfusables(value).replace(/[1l]/g, 'i')) {
-    const letter = /[a-z]/.test(char);
+  for (const { text, letter } of tokens) {
     const next = Array<number>(n + 1).fill(Infinity);
     for (let j = 0; j <= n; j++) {
       if (best[j] === Infinity) continue;
       if (!letter) next[j] = Math.min(next[j], best[j]);
       if (j === n) continue;
-      if (char === RESERVED_NAME[j]) next[j + 1] = Math.min(next[j + 1], best[j]);
+      if (text === RESERVED_NAME[j]) next[j + 1] = Math.min(next[j + 1], best[j]);
       else if (!letter) next[j + 1] = Math.min(next[j + 1], best[j] + 1);
     }
     best = next;
@@ -55,8 +59,8 @@ const schema = z
     name: displayName
       .min(1)
       .refine(
-        (value) => !/[\p{Cc}\p{Cf}]/u.test(value),
-        'name may not hold control or format characters'
+        (value) => !/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(value),
+        'name may not hold control, format or invisible characters'
       )
       .refine(
         (value) =>

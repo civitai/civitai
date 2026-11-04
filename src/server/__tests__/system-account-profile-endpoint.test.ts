@@ -151,6 +151,8 @@ describe('POST /api/admin/system-account-profile', () => {
     ['a blank name', { name: '   ' }],
     ['a name with a bidi override', { name: 'Agent\u202Eevil' }],
     ['a name with a zero-width space', { name: 'Ag\u200Bent' }],
+    ['a name with an invisible unassigned character', { name: 'Ag\u2065ent' }],
+    ['a name with a Hangul filler', { name: 'Ag\u3164ent' }],
     ['the reserved moderation name', { name: 'civitai moderation' }],
   ])('refuses %s with no write', async (_, extra) => {
     const { status } = await call({ userId: SYSTEM_ID, name: 'Agent', ...extra });
@@ -174,6 +176,7 @@ describe('POST /api/admin/system-account-profile', () => {
     ['mixed l and 0', 'Clvitai M0deration'],
     ['padded with a blank symbol', 'C\u2503vitai Moderation\u2800'],
     ['padded with a private-use character', 'C\u2503vitai\uE000 Moderation'],
+    ['separated by a symbol that folds to letters', 'Civitai\u2122Moderation'],
     ['capital lunate sigma', '\u03F9ivitai Moderation'],
     ['divides-sign-for-i', 'C\u2223vitai Moderation'],
     ['inverted-exclamation-for-i', 'C\u00A1vitai Moderation'],
