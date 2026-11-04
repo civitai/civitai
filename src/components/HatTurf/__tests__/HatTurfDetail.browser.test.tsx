@@ -436,22 +436,37 @@ describe('Hat Turf on image detail', () => {
 
   // Deliberate (event owner's call, 2026-11-04): turf is seen by joined players only. A viewer who
   // has not joined gets the hat button as their way in, and no standings, counts or hats.
-  test('not joined: no standings badge and no hats, but the hat button still joins', async () => {
-    h.stock = { available: 3, optedIn: false, mode: 'live' };
+  // The same picture with hats and counts on it, joined and not: the joined row is the positive
+  // control that hats and the badge do draw from this context.
+  test.each([
+    { who: 'joined', optedIn: true },
+    { who: 'not joined', optedIn: false },
+  ])('$who: hats and the standings badge only when joined', async ({ optedIn }) => {
+    h.stock = { available: 3, optedIn, mode: 'live' };
     localStorage.setItem('hat-turf-detail-invite-dismissed', String(Date.now()));
-    render({ joined: false });
+    render({ joined: optedIn, stickers: { 9: h.stickers as never } });
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
-    expect(q('hat-turf-detail-badge')).toBeNull();
-    expect(q('hat-turf-layer')).toBeNull();
+    if (optedIn) {
+      await vi.waitFor(() => expect(hats().length).toBe(3));
+      expect(q('hat-turf-detail-badge')).not.toBeNull();
+      return;
+    }
+    // Give a gate that let them through the time the joined row needs to draw them.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(hats().length).toBe(0);
+    expect(q('hat-turf-layer')).toBeNull();
+    expect(q('hat-turf-detail-badge')).toBeNull();
     click(q('hat-turf-detail-hat'));
     await vi.waitFor(() => expect(text(/^Join$/)).toBeTruthy());
   });
 
-  test('signed out: the badge stays, and its card invites them to sign in and join', async () => {
+  test('signed out: no hats, but the badge stays and its card invites them to sign in and join', async () => {
     h.user = null;
-    render({ joined: false, images: {} });
+    // The provider hands a viewer who has not joined no counts (images empty) but the stickers stay
+    // in reach of the layer, which must still not draw them.
+    render({ joined: false, images: {}, stickers: { 9: h.stickers as never } });
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(hats().length).toBe(0);
     click(q('hat-turf-detail-badge'));
     await vi.waitFor(() => expect(q('hat-turf-detail-empty')).not.toBeNull());

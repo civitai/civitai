@@ -15,6 +15,9 @@ const h = vi.hoisted(() => ({
   utils: undefined as unknown,
   user: { id: 1 } as { id: number } | null,
   stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
+  // A cached stock answer survives a disabled query (react-query keeps data), so the gate must not
+  // trust it alone: rows set this to answer even when the provider disables the read.
+  stockIgnoresEnabled: false,
 }));
 h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
 
@@ -44,7 +47,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'hatTurf.watch': { useMutation: () => ({ mutate: h.mark }) },
         'hatTurf.getStock': {
           useQuery: (_input: unknown, opts: { enabled?: boolean }) => ({
-            data: opts.enabled === false ? undefined : h.stock,
+            data: opts.enabled === false && !h.stockIgnoresEnabled ? undefined : h.stock,
           }),
         },
       },
@@ -129,6 +132,7 @@ beforeEach(() => {
   h.gate = { event: 'birthday2026', arm: 'control' };
   h.user = { id: 1 };
   h.stock = { available: 3, optedIn: true };
+  h.stockIgnoresEnabled = false;
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
@@ -176,11 +180,19 @@ describe('TurfSummaryProvider', () => {
     { who: 'joined', user: { id: 1 }, stock: { available: 3, optedIn: true }, joined: true },
     { who: 'not joined', user: { id: 1 }, stock: { available: 3, optedIn: false }, joined: false },
     { who: 'stock not loaded', user: { id: 1 }, stock: undefined, joined: false },
-    // Stock that says joined: only the signed-in check can keep turf hidden here.
-    { who: 'signed out', user: null, stock: { available: 3, optedIn: true }, joined: false },
-  ])('$who: hats, counts and pushes only when joined', async ({ user, stock, joined }) => {
+    // Stock that says joined, served even though the read is disabled: only the signed-in check can
+    // keep turf hidden here.
+    {
+      who: 'signed out',
+      user: null,
+      stock: { available: 3, optedIn: true },
+      joined: false,
+      cached: true,
+    },
+  ])('$who: hats, counts and pushes only when joined', async ({ user, stock, joined, ...row }) => {
     h.user = user;
     h.stock = stock;
+    h.stockIgnoresEnabled = 'cached' in row;
     await mount([1, 3]);
     await vi.waitFor(() => expect(latest).not.toBeNull());
     const procs = new Set(h.asked.map((a) => a.proc));
