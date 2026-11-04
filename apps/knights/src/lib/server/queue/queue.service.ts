@@ -106,14 +106,15 @@ export function servableItems(db: Executor) {
   );
 }
 
-/** The latest buckets the player judged, newest first, read from the ledger (hidden checks included). */
-async function recentBuckets(db: Executor, userId: number) {
+/** The latest buckets the player judged within the recent window, newest first, read from the ledger (hidden checks included). */
+async function recentBuckets(db: Executor, userId: number, now: Date) {
   const rows = await db
     .selectFrom('KnightsVote as v')
     .innerJoin('Image as img', 'img.id', 'v.imageId')
     .leftJoin('KnightsQueueItem as it', 'it.id', 'v.itemId')
     .select(['it.prediction', 'img.nsfwLevel'])
     .where('v.playerId', '=', userId)
+    .where('v.createdAt', '>', utc(addHours(now, -FEED.recentJudgedHours)))
     .orderBy('v.createdAt', 'desc')
     .limit(FEED.recentJudged)
     .execute();
@@ -239,7 +240,7 @@ export async function getFeed(
     if (pool.length === 0) continue;
 
     if (recent === null && new Set(pool.map((c) => c.bucket)).size > 1) {
-      recent = await recentBuckets(db, userId);
+      recent = await recentBuckets(db, userId, now);
     }
     const served: typeof pool = orderFeed(pool, {
       playerId: userId,
