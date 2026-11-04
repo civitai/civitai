@@ -53,6 +53,9 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
   return images.slice(minIndex, index + 50);
 }
 
+/** The masonry adds this to each card's image height for the reaction footer. */
+export const IMAGES_CARD_FOOTER_HEIGHT = 38;
+
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   return (
     <HatTurfCardProvider>
@@ -430,7 +433,7 @@ function ImageReactions({
               }
             }}
           >
-            <div className={cardClasses.actions}>
+            <div className={clsx(cardClasses.actions, cardClasses.oneLine)}>
               <div className={cardClasses.actionRow}>
                 <Reactions
                   className={clsx(cardClasses.reactions, classes.bar)}

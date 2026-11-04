@@ -136,6 +136,7 @@ vi.mock('~/env/server', () => ({
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockAppBlockFindUnique = dbMock.dbWrite.appBlock.findUnique;
 const mockPublishRequestFindFirst = dbMock.dbWrite.appBlockPublishRequest.findFirst;
@@ -398,6 +399,32 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  describe('a system account', () => {
+    const owned = (meta: Record<string, unknown>) => ({
+      ...MOD_SESSION,
+      user: { ...MOD_SESSION.user, meta },
+    });
+
+    it('403 and nothing signed, even when an app author with an AI-services key', async () => {
+      mockGetSession.mockResolvedValueOnce(owned({ systemAccount: true }));
+      mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(403);
+      expect(res._getJSONData()).toEqual({ message: APPS_RESTRICTED_MESSAGE });
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('the same session without the system-account mark mints with spend', async () => {
+      mockGetSession.mockResolvedValueOnce(owned({}));
+      mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toContain('ai:write:budgeted');
+    });
   });
 
   it('503 (dark) when the App Blocks flag is OFF for the user', async () => {

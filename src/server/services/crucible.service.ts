@@ -109,6 +109,8 @@ import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/
 import { delIfValue } from '~/server/redis/atomic';
 import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
+import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
+import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getEntryElo,
@@ -668,28 +670,6 @@ const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
       ? Prisma.sql`AND NOT c."textNsfw"`
       : Prisma.empty
   }
-`;
-
-/** `enteredImageWhere` for entry image `i`. */
-const enteredEntryImageSql = Prisma.sql`
-  i."needsReview" IS NULL
-  AND NOT i."tosViolation"
-  AND EXISTS (SELECT 1 FROM "Post" ep WHERE ep.id = i."postId" AND ep."publishedAt" IS NOT NULL)
-`;
-
-/**
- * Entry image `i` as someone else may see it: still scanned and published as `submitEntry` required
- * (a review hold, a ToS flag or an unpublished post can come later), still inside the crucible's
- * levels (a re-rating can move it out), and inside the viewer's level.
- */
-const visibleEntryImageSql = (
-  crucibleLevel: number | Prisma.Sql,
-  viewerLevel: number
-) => Prisma.sql`
-  i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-  AND ${enteredEntryImageSql}
-  AND (i."nsfwLevel" & ${crucibleLevel}) <> 0
-  ${viewerLevel > 0 ? Prisma.sql`AND (i."nsfwLevel" & ${viewerLevel}) <> 0` : Prisma.empty}
 `;
 
 /** A viewer always sees their own entries, whatever the image filter hides. */
@@ -4657,6 +4637,7 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
   }
 
   if (entry.imageId) await revealCrucibleEntryPosts({ imageId: entry.imageId });
+  await revokeCrucibleEntry({ entryId, crucibleId, userId: entry.userId });
 
   logToAxiom({
     type: 'info',
@@ -4718,6 +4699,7 @@ export const withdrawCrucibleEntry = async ({
   if (!withdrawn) throw throwNotFoundError('Entry not found');
 
   await revealCrucibleEntryPosts({ imageId });
+  await revokeCrucibleEntry({ entryId, crucibleId, userId });
 
   logToAxiom({
     type: 'info',
