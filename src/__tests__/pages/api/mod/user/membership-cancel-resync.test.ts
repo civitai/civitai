@@ -596,7 +596,10 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
   it('a confirm from before a repeat Buzz purchase (same row, new period) is refused (400)', async () => {
     fakeStripe();
     // The confirm comes from a real preview, so a token without the period would still match.
-    const stale = (await previewResync()).body.endsBuzzMembership.confirm;
+    const preview = (await previewResync()).body.endsBuzzMembership as { confirm?: string };
+    const stale = preview?.confirm;
+    // A missing confirm would be refused anyway, and this test would pass for nothing.
+    expect(stale).toMatch(/^buzz_sub_1\|/);
     dbMock.dbWrite.customerSubscription.findFirst.mockResolvedValue({
       ...BUZZ_MEMBERSHIP,
       currentPeriodEnd: toDateTime(PERIOD_END + 30 * 86_400),
