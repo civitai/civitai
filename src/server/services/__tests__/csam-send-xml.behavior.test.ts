@@ -522,9 +522,15 @@ describe('an archive past the per-file cap, at the real caps', () => {
 
   it('is sent as training data', async () => {
     serveTrainingData(Buffer.alloc(0));
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response(ReadableStream.from(paddedZip(PAD)))
-    );
+    const chunks = paddedZip(PAD);
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const { done, value } = await chunks.next();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+    });
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(body));
 
     await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
 

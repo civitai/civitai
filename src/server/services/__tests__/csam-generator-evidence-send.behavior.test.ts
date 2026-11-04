@@ -558,7 +558,7 @@ describe('sending a report of preserved generator evidence', () => {
   describe("a file viewed on the user's earlier report", () => {
     const earlierWith = (inputSha: string) => {
       const details = evidenceDetails();
-      details.generatedImages[0].blobs[1].sha256 = inputSha;
+      Object.assign(details.generatedImages[0].blobs[1], { sha256: inputSha });
       return details;
     };
 
