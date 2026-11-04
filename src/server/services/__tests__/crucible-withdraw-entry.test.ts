@@ -89,7 +89,7 @@ describe('withdrawCrucibleEntry', () => {
 
     revokeCrucibleEntry.mockClear();
     lockCrucible.mockResolvedValue([]);
-    await expect(withdraw()).rejects.toThrow();
+    await expect(withdraw()).rejects.toThrow(/only be removed while the crucible is running/);
     expect(revokeCrucibleEntry).not.toHaveBeenCalled();
   });
 

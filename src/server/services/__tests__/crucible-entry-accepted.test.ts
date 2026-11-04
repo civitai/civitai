@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
 import type { CrucibleEntrySubscriber } from '~/server/services/crucible-entry-accepted';
 
-const { acceptCrucibleEntry, revokeCrucibleEntry, sweepAcceptedCrucibleEntries } = await import(
-  '~/server/services/crucible-entry-accepted'
-);
+const {
+  acceptCrucibleEntry,
+  getJudgeableTaggedEntries,
+  revokeCrucibleEntry,
+  sweepAcceptedCrucibleEntries,
+} = await import('~/server/services/crucible-entry-accepted');
+const { visibleEntryImageSql } = await import('~/server/services/crucible-entry-sql');
 
 const REVIEW_KEY = 'system:crucible-theme-review';
 const TAG = 'rally';
@@ -284,5 +288,62 @@ describe('sweepAcceptedCrucibleEntries', () => {
     await sweepAcceptedCrucibleEntries([]);
 
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+// The fakes above stand in for the queries, so the clauses themselves are pinned here as text.
+describe('the SQL the sweep runs', () => {
+  const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  /** The value bound to the one `?` in `fragment`, which must appear in the query once. */
+  const bound = (query: Prisma.Sql, fragment: string) => {
+    const sql = squash(query.sql);
+    const at = sql.indexOf(fragment);
+    expect(at, fragment).toBeGreaterThanOrEqual(0);
+    expect(sql.indexOf(fragment, at + 1), fragment).toBe(-1);
+    const placeholder = at + fragment.indexOf('?');
+    return query.values[(sql.slice(0, placeholder).match(/\?/g) ?? []).length];
+  };
+  const visible = squash(visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0).sql);
+  const lastQuery = (fn: typeof dbMock.dbRead.$queryRaw) =>
+    sqlOf(fn.mock.calls.at(-1) as unknown[]);
+
+  it('lists only visible entries of running crucibles, skipping the excluded ones', async () => {
+    await getJudgeableTaggedEntries([TAG], [8, 9]);
+    const query = lastQuery(dbMock.dbRead.$queryRaw);
+
+    expect(bound(query, 'c."eventTags" && ?::text[]')).toEqual([TAG]);
+    expect(bound(query, 'c.status = ?::"CrucibleStatus"')).toBe('Active');
+    expect(squash(query.sql)).toContain('AND c."endAt" > now()');
+    expect(bound(query, 'AND c.id <> ALL(?::int[])')).toEqual([8, 9]);
+    expect(squash(query.sql)).toContain(`AND ${visible}`);
+  });
+
+  it('adds no exclusion clause when nothing is excluded', async () => {
+    await getJudgeableTaggedEntries([TAG], []);
+    const query = lastQuery(dbMock.dbRead.$queryRaw);
+
+    expect(query.sql).not.toMatch(/c\.id\s*(<>|=|!=)/);
+    expect(query.values.some((v) => Array.isArray(v) && typeof v[0] === 'number')).toBe(false);
+    expect(squash(query.sql)).toContain(`c."endAt" > now() AND ${visible}`);
+  });
+
+  it('looks for departed entries only in running tagged crucibles', async () => {
+    await sweepAcceptedCrucibleEntries([subscriber()]);
+    const query = sqlOf(dbMock.dbRead.$queryRaw.mock.calls[0] as unknown[]);
+
+    expect(squash(query.sql)).toMatch(/^SELECT c\.id FROM "Crucible" c WHERE/);
+    expect(bound(query, 'c."eventTags" && ?::text[]')).toEqual([TAG]);
+    expect(bound(query, 'c.status = ?::"CrucibleStatus"')).toBe('Active');
+    expect(squash(query.sql)).toContain('AND c."endAt" > now()');
+  });
+
+  it('accepts only an entry judges can still see in a running crucible', async () => {
+    await acceptCrucibleEntry(enter(1), [subscriber()]);
+    const query = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[]);
+
+    expect(bound(query, 'WHERE ce.id = ?')).toBe(1);
+    expect(bound(query, 'c.status = ?::"CrucibleStatus"')).toBe('Active');
+    expect(squash(query.sql)).toContain('AND c."endAt" > now()');
+    expect(squash(query.sql)).toContain(`AND ${visible}`);
   });
 });

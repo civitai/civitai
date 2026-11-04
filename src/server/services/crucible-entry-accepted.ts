@@ -12,7 +12,8 @@ export type CrucibleEntryRef = { entryId: number; crucibleId: number; userId: nu
  * Something that acts once a crucible entry is accepted: it has passed the crucible's checks and,
  * when the crucible has an AI theme review, that review. `accept` can be called more than once for
  * one entry (a failed run is retried) and `revoke` for an entry never accepted, so both must be
- * idempotent. Only entries of crucibles carrying one of `eventTags` reach a subscriber.
+ * idempotent. `accept` only reaches subscribers whose eventTags match the crucible; `revoke` reaches
+ * every subscriber.
  */
 export type CrucibleEntrySubscriber = {
   name: string;
@@ -61,7 +62,7 @@ async function isStillAcceptable(entryId: number) {
 /**
  * Accepts an entry: every interested subscriber runs, and only once all of them succeed is the
  * entry recorded as accepted. A failure throws and leaves it unrecorded for the next sweep.
- * Returns false when it was already accepted, or is no longer in the crucible.
+ * Returns false when it was already accepted, or judges can no longer see it.
  *
  * A removal or withdrawal commits before it revokes, so the entry is checked on the primary before
  * the subscribers run and again once it is recorded: a revoke that landed in between, before a
