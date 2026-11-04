@@ -5,7 +5,6 @@ import {
   accountHoldSql,
   holdMarkerViewExists,
 } from '~/server/services/legal-hold.service';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 
 /**
  * A `WITH` entry, ahead of a DELETE that cascades "ResourceReview", that copies each review a held
@@ -49,17 +48,13 @@ export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>
   Prisma.sql`SELECT rr.id FROM "ResourceReview" rr WHERE rr."modelVersionId" IN (${versions})`;
 
 /**
- * A storyline copy is kept while either user it records is held, the placeholder owner included, as
- * when `removeStorylineChapter` made it. The reader on a branch choice or create click never
- * releases one, even once their account is gone.
+ * A storyline copy is kept while either user it records is held. The reader on a branch choice or
+ * create click never releases one, even once their account is gone. Unlike a kept model, no
+ * storyline or chapter passes to the placeholder owner, so every copy is released with its holds.
  */
-const storylineCopyReleasedSql = (markerView: boolean) => {
-  const held = (id: Prisma.Sql) =>
-    Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
-  return Prisma.sql`NOT ${held(Prisma.raw('h."ownerId"'))} AND NOT ${held(
-    Prisma.raw('h."authorId"')
-  )}`;
-};
+const storylineCopyReleasedSql = (markerView: boolean) =>
+  Prisma.sql`NOT ${accountHoldSql(Prisma.raw('h."ownerId"'), markerView)}
+    AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
 
 /** Drops the copies whose users are no longer held. Returns how many went. */
 export async function purgeReleasedHeldCopies() {

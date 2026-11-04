@@ -58,6 +58,7 @@ const COPIES: [chapterId: number, ownerId: number, authorId: number][] = [
   [13, FREE, SENT_RECENTLY],
   [14, SENT_LONG_AGO, FREE],
   [15, PLACEHOLDER_OWNER_ID, FREE],
+  [16, PLACEHOLDER_OWNER_ID, MARKED],
 ];
 
 beforeEach(async () => {
@@ -113,20 +114,21 @@ describe('purging held storyline chapter copies', () => {
   it('drops a copy once neither its owner nor its author is held, and keeps the rest', async () => {
     const { storyline } = await purgeReleasedHeldCopies();
 
-    // 10: no one held. 14: the only report was sent and archived over a year ago.
-    expect(storyline).toEqual({ chapters: 2, edges: 2, choices: 2, clicks: 2 });
-    // 11 and 12: owner or author held. 13: the report was sent under a year ago. 15: the
-    // placeholder owner. Their readers' rows stay with them, though the reader's account is gone.
-    expect(await left()).toEqual(everywhere([11, 12, 13, 15]));
+    // 10: no one held. 14: the only report was sent and archived over a year ago. 15: the
+    // placeholder owner is not held forever.
+    expect(storyline).toEqual({ chapters: 3, edges: 3, choices: 3, clicks: 3 });
+    // 11, 12 and 16: owner or author held. 13: the report was sent under a year ago. Their
+    // readers' rows stay with them, though the reader's account is gone.
+    expect(await left()).toEqual(everywhere([11, 12, 13, 16]));
   });
 
-  it('releases the rest as their holds end, all but the placeholder owner', async () => {
+  it('releases the rest as their holds end', async () => {
     await purgeReleasedHeldCopies();
     await db.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold";`);
 
     const { storyline } = await purgeReleasedHeldCopies();
-    expect(storyline).toEqual({ chapters: 3, edges: 3, choices: 3, clicks: 3 });
-    expect(await left()).toEqual(everywhere([15]));
+    expect(storyline).toEqual({ chapters: 4, edges: 4, choices: 4, clicks: 4 });
+    expect(await left()).toEqual(everywhere([]));
   });
 
   // A hold placed between two statements must not leave a chapter's copy without its edges.
