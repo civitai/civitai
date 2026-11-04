@@ -130,7 +130,8 @@ export function usesBradleyTerryRanking(
 
 /**
  * Every judge's votes in a crucible, one per judge and pair. ClickHouse can hold repeated rows,
- * and a repeat never flips the winner, so any one row of the group stands for the vote. The inner
+ * and any one row of the group stands for the vote; winner and loser come from the same row, so
+ * even a group holding both A>B and B>A yields a real vote, never A>A. The inner
  * aliases must not reuse a column name: ClickHouse would read the GROUP BY's columns as them.
  *
  * shortcut: one row per vote, read on every sync and finalize. A judge casts at most
@@ -140,9 +141,9 @@ export function usesBradleyTerryRanking(
 async function fetchJudgeVotes(crucibleId: number): Promise<JudgeVote[]> {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const rows = await clickhouse.$query<JudgeVote>`
-    SELECT judge AS userId, w AS winnerEntryId, l AS loserEntryId
+    SELECT judge AS userId, p.1 AS winnerEntryId, p.2 AS loserEntryId
     FROM (
-      SELECT userId AS judge, any(winnerEntryId) AS w, any(loserEntryId) AS l
+      SELECT userId AS judge, any((winnerEntryId, loserEntryId)) AS p
       FROM crucible_votes
       WHERE crucibleId = ${crucibleId}
       GROUP BY userId, least(winnerEntryId, loserEntryId), greatest(winnerEntryId, loserEntryId)
