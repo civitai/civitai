@@ -313,7 +313,8 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-stats')!.textContent).toMatch(/Blue/);
   });
 
-  test('a hat-protected image shows its hats muted', async () => {
+  test("a hat-protected image shows its hats muted, the viewer's own included", async () => {
+    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
     render({
       images: {
         9: {
@@ -325,8 +326,11 @@ describe('Hat Turf on image detail', () => {
         },
       },
     });
-    await vi.waitFor(() => expect(hats().length).toBe(3));
+    await vi.waitFor(() => expect(hats().length).toBe(4));
     for (const hat of hats()) expect(hat.getAttribute('data-tone')).toBe('muted');
+    const opacities = new Set([...hats()].map((hat) => getComputedStyle(hat).opacity));
+    expect(opacities.size).toBe(1);
+    expect(Number([...opacities][0])).toBeLessThan(1);
     expect(q('hat-turf-lock')).not.toBeNull();
   });
 
