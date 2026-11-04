@@ -74,6 +74,8 @@
     gap: 24px;
     width: min(100%, 640px);
     max-height: 100%;
+    /* Room below Onward for its focus ring, which the scroll container would otherwise clip. */
+    padding-bottom: 4px;
     overflow-y: auto;
   }
   /* The design's M7 (1200ms, skippable): the banner unrolls under a gold roller, the crest rises, a shimmer crosses, and
@@ -86,6 +88,8 @@
     align-items: center;
     gap: 10px;
     width: 100%;
+    /* The shimmer ends parked at translateX(100%); unclipped it widens the dialog and adds a horizontal scrollbar. */
+    overflow: hidden;
     padding: 36px 32px;
     border: 1px solid var(--io-gold);
     border-radius: 8px;
