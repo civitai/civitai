@@ -29,7 +29,11 @@ describe('User.settings.hiddenApps — the stored shape', () => {
     expect(() => userSettingsSchema.parse({ hiddenApps: value })).toThrow();
   });
 
-  it('🔴 the cap: exactly HIDDEN_APPS_MAX entries pass, one more does not', () => {
+  // TYPE-LEVEL ONLY, not the enforced cap. `hiddenAppsSettingSchema` types the stored key;
+  // no write path parses the blob through it (the hide is an atomic per-slug SQL merge). The
+  // RUNTIME cap is `hiddenAppsOverflow` applied by `hideMyApp`, covered by the PGlite test
+  // (`my-apps-hidden.behavior.test.ts`). This pins only that the declared type agrees with it.
+  it('the declared type agrees with the cap (HIDDEN_APPS_MAX entries pass, one more does not)', () => {
     const map = (n: number) =>
       Object.fromEntries(Array.from({ length: n }, (_, i) => [`app-${i}`, HIDE]));
     expect(hiddenAppsSettingSchema.safeParse(map(HIDDEN_APPS_MAX)).success).toBe(true);
