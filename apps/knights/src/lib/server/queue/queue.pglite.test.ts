@@ -10,12 +10,15 @@ import {
   enqueueItem,
   ensureVotePartitions,
   escalateExpired,
-  getFeed,
+  getFeed as serveFeed,
   MAX_APPLY_ATTEMPTS,
   type QueueDeps,
 } from './queue.service';
 
 const Q = 'knights.image.nsfwLevel';
+/** The starvation draw is random in production; these tests pin the ordinary path. */
+const getFeed: typeof serveFeed = (db, userId, options = {}) =>
+  serveFeed(db, userId, { random: () => 0.99, ...options });
 const NOW = new Date('2026-12-15T12:00:00Z');
 
 let pg: PGlite;
@@ -247,8 +250,9 @@ describe('castVote rejections', () => {
     await player(1, 'Acolyte');
     await player(2, 'Knight');
     await image(10);
+    await image(11);
     const high = await item(10);
-    const escalated = await item(10, { minRank: 'Templar' });
+    const escalated = await item(11, { minRank: 'Templar' });
 
     expect(await vote(1, high, '4')).toMatchObject({ status: 'rejected', reason: 'not-eligible' });
     expect(await vote(2, high, '999')).toMatchObject({ status: 'rejected', reason: 'bad-answer' });
@@ -437,21 +441,21 @@ describe('resolution', () => {
     const answers = ['1', '2', '4', '8', '16', '1', '2', '4', '8', '16'];
     for (let i = 0; i < 10; i++) await vote(i + 1, id, answers[i]);
 
-    for (let u = 20; u < 24; u++) await vote(u, id, '4');
-    expect((await vote(24, id, '4')).status).toBe('resolved');
+    for (let u = 20; u < 22; u++) await vote(u, id, '4');
+    expect((await vote(22, id, '4')).status).toBe('resolved');
 
     const graded = await verdicts(id);
-    expect(graded.filter((v) => v.verdict === 'correct').length).toBe(2 + 5);
+    expect(graded.filter((v) => v.verdict === 'correct').length).toBe(2 + 3);
     expect(graded.filter((v) => v.verdict === 'failed').length).toBe(8);
     expect(applyConsensus).toHaveBeenCalledTimes(1);
   });
 
-  it('hands a Templar split to the Inquisitors without applying anything', async () => {
-    for (let u = 20; u < 30; u++) await player(u, 'Templar');
+  it('hands a Paladin split to the Inquisitors without applying anything', async () => {
+    for (let u = 20; u < 24; u++) await player(u, 'Paladin');
     await image(10, 4);
-    const id = await item(10, { minRank: 'Templar' });
-    const answers = ['1', '2', '4', '8', '16', '1', '2', '4', '8', '16'];
-    for (let i = 0; i < 10; i++) await vote(20 + i, id, answers[i]);
+    const id = await item(10, { minRank: 'Paladin' });
+    const answers = ['1', '2', '4', '8'];
+    for (let i = 0; i < 4; i++) await vote(20 + i, id, answers[i]);
 
     expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', minRank: 'Inquisitor' });
     expect((await itemRow(id)).expiresAt).toBeNull();
@@ -946,8 +950,8 @@ describe('escalateExpired', () => {
     await image(11);
     await image(12);
     const stale = await item(10, { expires: new Date('2026-12-15T11:00:00Z') });
-    const staleTemplar = await item(11, {
-      minRank: 'Templar',
+    const stalePaladin = await item(11, {
+      minRank: 'Paladin',
       expires: new Date('2026-12-15T11:00:00Z'),
     });
     const fresh = await item(12, { expires: new Date('2026-12-16T11:00:00Z') });
@@ -955,7 +959,7 @@ describe('escalateExpired', () => {
     const res = await escalateExpired(db, { now: NOW });
     expect(res).toEqual({ escalated: 1, toInquisitor: 1 });
     expect(await itemRow(stale)).toMatchObject({ status: 'Open', minRank: 'Templar' });
-    expect(await itemRow(staleTemplar)).toMatchObject({
+    expect(await itemRow(stalePaladin)).toMatchObject({
       status: 'Inquisitor',
       minRank: 'Inquisitor',
     });

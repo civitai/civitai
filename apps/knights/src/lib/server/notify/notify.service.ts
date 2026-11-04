@@ -182,16 +182,12 @@ async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
 }
 
 async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
-  // A vote cannot predate its item, so no open item has votes before the oldest one; the constant
-  // bound on the partition key lets Postgres skip older monthly partitions (a bound that references
-  // the item's own createdAt does not prune).
   const oldest = await db
     .selectFrom('KnightsQueueItem')
     .select((eb) => eb.fn.min('createdAt').as('at'))
     .where('status', '=', 'Open')
     .executeTakeFirst();
   if (!oldest?.at) return [];
-  const oldestOpen = oldest.at;
   const found: number[] = [];
   for (const rank of RANKS) {
     const stages = stagesWorkedBy(rank);
@@ -205,11 +201,6 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
           servableItems(db)
             .select(sql<number>`1`.as('one'))
             .where('i.minRank', 'in', stages)
-            .where(
-              sql<boolean>`not exists (select 1 from "KnightsVote" v where v."itemId" = i."id" and v."playerId" = pl."userId" and v."createdAt" >= ${utc(
-                oldestOpen
-              )})`
-            )
             .where(
               // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
               sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`

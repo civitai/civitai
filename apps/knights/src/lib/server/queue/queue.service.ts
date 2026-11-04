@@ -12,6 +12,16 @@ import { RANKS, type Rank } from '../ranks';
 import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
 import { FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
+  FEED,
+  itemBucket,
+  lowestTierPerItem,
+  orderFeed,
+  TIER_ESCALATED,
+  TIER_NORMAL,
+  type LevelBucket,
+} from './feed';
+import { stageDecisionRule, votesNeededAt } from './stage-rules';
+import {
   decideChoice,
   decideWriteback,
   isBlockedLevel,
@@ -96,22 +106,35 @@ export function servableItems(db: Executor) {
   );
 }
 
-export async function getFeed(
+/** The latest buckets the player judged, newest first, read from the ledger (hidden checks included). */
+async function recentBuckets(db: Executor, userId: number) {
+  const rows = await db
+    .selectFrom('KnightsVote as v')
+    .innerJoin('Image as img', 'img.id', 'v.imageId')
+    .leftJoin('KnightsQueueItem as it', 'it.id', 'v.itemId')
+    .select(['it.prediction', 'img.nsfwLevel'])
+    .where('v.playerId', '=', userId)
+    .orderBy('v.createdAt', 'desc')
+    .limit(FEED.recentJudged)
+    .execute();
+  return rows.map((r) => itemBucket(r.prediction, r.nsfwLevel));
+}
+
+/**
+ * One stage's candidates, read in index order: the items escalated within the priority window, then the
+ * stage's normal order (priority, age). Both reads stop at the window size, and neither includes an image the
+ * player has already judged for the question, at any stage or in any earlier item.
+ */
+function stageWindow(
   db: Executor,
   userId: number,
-  { limit = FEED_STRETCH_SIZE, exclude = [] }: { limit?: number; exclude?: number[] } = {}
-): Promise<Feed | null> {
-  const player = await db
-    .selectFrom('NewOrderPlayer')
-    .select('rankType')
-    .where('userId', '=', userId)
-    .executeTakeFirst();
-  const stages = player ? stagesWorkedBy(player.rankType) : [];
-  if (stages.length === 0) return null;
-
+  stage: Rank,
+  exclude: number[],
+  escalatedSince: Date
+) {
   const candidates = () =>
     servableItems(db)
-      .where('i.minRank', 'in', stages)
+      .where('i.minRank', '=', stage)
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
@@ -119,76 +142,121 @@ export async function getFeed(
             eb
               .selectFrom('KnightsVote as v')
               .select(sql<number>`1`.as('one'))
-              .whereRef('v.itemId', '=', 'i.id')
               .where('v.playerId', '=', userId)
+              .whereRef('v.imageId', '=', 'i.imageId')
+              .whereRef('v.questionKey', '=', 'i.questionKey')
           )
         )
       )
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('KnightsVote as h')
-              .select(sql<number>`1`.as('one'))
-              .where('h.itemId', '<', 0)
-              .whereRef('h.imageId', '=', 'i.imageId')
-              .where('h.playerId', '=', userId)
-          )
-        )
-      )
-      .where((eb) =>
-        // One judgment per image and question (see `insertVote`): a re-queue of an image the player judged is not theirs to serve.
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('KnightsVote as j')
-              .select(sql<number>`1`.as('one'))
-              .where('j.playerId', '=', userId)
-              .whereRef('j.imageId', '=', 'i.imageId')
-              .whereRef('j.questionKey', '=', 'i.questionKey')
-          )
-        )
-      )
-      .orderBy(rankOrder, 'desc')
-      .orderBy('i.priority', 'asc')
-      .orderBy('i.createdAt', 'asc')
-      .orderBy('i.id', 'asc');
+      .select([
+        'i.id',
+        'q.key as questionKey',
+        'q.kind',
+        'q.prompt',
+        'q.options',
+        'i.priority',
+        'i.createdAt',
+        'i.prediction',
+        'img.url as imageKey',
+        'img.width',
+        'img.height',
+        'img.nsfwLevel as imageLevel',
+      ])
+      .limit(FEED.windowSize);
 
-  const next = await candidates().select('q.key').limit(1).executeTakeFirst();
-  if (!next) return null;
-
-  const rows = await candidates()
-    .where('q.key', '=', next.key)
-    .select([
-      'i.id',
-      'q.key as questionKey',
-      'q.kind',
-      'q.prompt',
-      'q.options',
-      'img.url as imageKey',
-      'img.width',
-      'img.height',
-    ])
-    .limit(limit)
+  return db
+    .with('escalated', () =>
+      candidates()
+        .select(sql<number>`${TIER_ESCALATED}`.as('tier'))
+        .where('i.escalatedAt', '>', utc(escalatedSince))
+        .orderBy('i.escalatedAt', 'asc')
+        .orderBy('i.id', 'asc')
+    )
+    .with('normal', () =>
+      candidates()
+        .select(sql<number>`${TIER_NORMAL}`.as('tier'))
+        .orderBy('i.priority', 'asc')
+        .orderBy('i.createdAt', 'asc')
+        .orderBy('i.id', 'asc')
+    )
+    .selectFrom('escalated')
+    .selectAll()
+    .unionAll((qb) => qb.selectFrom('normal').selectAll())
     .execute();
+}
 
-  const first = rows[0];
-  if (!first) return null;
+/**
+ * What a player is served next: the highest stage they may judge that has an open item they have not judged,
+ * escalated items first for a day, then by priority and age; within that, a pick that varies the level bucket from
+ * what they judged lately, in an order that differs per player. A stretch holds one question's items.
+ */
+export async function getFeed(
+  db: Executor,
+  userId: number,
+  {
+    limit = FEED_STRETCH_SIZE,
+    exclude = [],
+    now = new Date(),
+    random = Math.random,
+  }: { limit?: number; exclude?: number[]; now?: Date; random?: () => number } = {}
+): Promise<Feed | null> {
+  const player = await db
+    .selectFrom('NewOrderPlayer')
+    .select('rankType')
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  const stages = player ? stagesWorkedBy(player.rankType) : [];
+  const escalatedSince = addHours(now, -FEED.escalationPriorityHours);
 
-  return {
-    question: {
-      key: first.questionKey,
-      kind: first.kind,
-      prompt: first.prompt,
-      options: first.options as QuestionOption[],
-    },
-    items: rows.map((r) => ({
-      id: r.id,
-      imageKey: r.imageKey,
-      width: r.width,
-      height: r.height,
-    })),
-  };
+  let question: Feed['question'] | null = null;
+  let recent: (LevelBucket | null)[] | null = null;
+  const items: Feed['items'] = [];
+
+  for (const stage of [...stages].reverse()) {
+    if (items.length >= limit) break;
+    const rows = lowestTierPerItem(
+      await stageWindow(db, userId, stage, exclude, escalatedSince)
+    ).sort(
+      (a, b) =>
+        a.tier - b.tier || a.priority - b.priority || +a.createdAt - +b.createdAt || a.id - b.id
+    );
+    const lead = rows[0];
+    if (lead && !question) {
+      question = {
+        key: lead.questionKey,
+        kind: lead.kind,
+        prompt: lead.prompt,
+        options: lead.options as QuestionOption[],
+      };
+    }
+    const pool = rows
+      .filter((r) => r.questionKey === (question as Feed['question'] | null)?.key)
+      .map((r) => ({
+        ...r,
+        createdAt: +r.createdAt,
+        bucket: itemBucket(r.prediction, r.imageLevel),
+      }));
+    if (pool.length === 0) continue;
+
+    if (recent === null && new Set(pool.map((c) => c.bucket)).size > 1) {
+      recent = await recentBuckets(db, userId);
+    }
+    const served: typeof pool = orderFeed(pool, {
+      playerId: userId,
+      recent: recent ?? [],
+      random,
+      limit: limit - items.length,
+    });
+    recent = [...served.map((r) => r.bucket).reverse(), ...(recent ?? [])].slice(
+      0,
+      FEED.recentJudged
+    );
+    for (const r of served) {
+      items.push({ id: r.id, imageKey: r.imageKey, width: r.width, height: r.height });
+    }
+  }
+
+  return question && items.length > 0 ? { question, items } : null;
 }
 
 export type NewItem = {
@@ -244,6 +312,8 @@ async function escalate(
       .updateTable('KnightsQueueItem')
       .set({
         minRank: next,
+        votesNeeded: votesNeededAt(next),
+        escalatedAt: utc(now),
         expiresAt: utc(addHours(now, KNIGHTS_STAGE_TTL_HOURS)),
         updatedAt: utc(now),
       })
@@ -360,8 +430,6 @@ export async function castVote(
             'i.votesNeeded',
             'img.nsfwLevel as imageLevel',
             'q.options',
-            'q.maxVotes',
-            'q.threshold',
           ])
           .executeTakeFirst();
         if (!item) return rejected('unavailable');
@@ -386,11 +454,10 @@ export async function castVote(
           .where('stage', '=', item.minRank)
           .execute();
 
-        const decision = decideChoice(stageVotes, {
-          votesNeeded: item.votesNeeded,
-          maxVotes: item.maxVotes,
-          threshold: item.threshold,
-        });
+        const decision = decideChoice(
+          stageVotes,
+          stageDecisionRule(item.minRank, item.votesNeeded)
+        );
         const voted: XpDelta = { playerId: input.userId, xp: PROGRESSION.voteXp };
         const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
 
