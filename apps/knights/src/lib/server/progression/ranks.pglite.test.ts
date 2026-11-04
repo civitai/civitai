@@ -60,7 +60,7 @@ async function newItem(): Promise<number> {
 
 async function settleCorrect(userId: number) {
   const itemId = await newItem();
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 3; i++) {
     const voter = 9000 + i;
     await player(voter, 'Knight');
     await castVote(db, { userId: voter, itemId, answer: '4' }, deps);

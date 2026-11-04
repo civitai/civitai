@@ -79,13 +79,13 @@ describe('a yes/no answer and a rating vote with the same outcome', () => {
     );
 
     const deps = { applyConsensus: async () => ({ outcome: 'applied' as const }), now: () => NOW };
-    // Three of five agree. Players 4 and 5 (14 and 15) are with the minority.
+    // Four of five agree, so a rating item (Knight rule) settles; player 5 (15) is the dissenter and votes before the last agreeing vote.
     for (const [yn, rate, agree] of [
       [1, 11, true],
       [2, 12, true],
       [3, 13, true],
-      [4, 14, false],
       [5, 15, false],
+      [4, 14, true],
     ] as const) {
       expect(
         await castYesNoVote(

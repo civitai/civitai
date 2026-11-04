@@ -51,17 +51,31 @@ describe('stage rules', () => {
   const at = (stage: keyof typeof STAGE_RULES, answers: string[]) =>
     decideChoice(votes(answers), stageDecisionRule(stage));
 
-  it('Knights settle five votes at 60%', () => {
-    expect(at('Knight', ['4', '4', '4', '2', '8'])).toEqual({ kind: 'resolved', value: '4' });
-    expect(at('Knight', ['4', '4', '2', '2', '8'])).toEqual({ kind: 'pending' });
+  it('Knights settle four unanimous votes, then 75%', () => {
+    expect(at('Knight', ['4', '4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Knight', ['4', '4', '4'])).toEqual({ kind: 'pending' });
+    expect(at('Knight', ['4', '4', '4', '2'])).toEqual({ kind: 'pending' });
+    expect(at('Knight', ['4', '4', '4', '2', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Knight', ['4', '4', '4', '2', '2'])).toEqual({ kind: 'pending' });
+    expect(at('Knight', ['4', '4', '4', '2', '2', '4'])).toEqual({ kind: 'pending' });
+    expect(at('Knight', ['4', '4', '4', '2', '2', '4', '4', '4'])).toEqual({
+      kind: 'resolved',
+      value: '4',
+    });
   });
 
-  it('Templars settle three votes at two-thirds, so two of three is enough', () => {
+  it('gives up on a Knight split at ten votes', () => {
+    expect(at('Knight', ['4', '4', '4', '2', '2', '4', '2', '4', '2', '4'])).toEqual({
+      kind: 'split',
+    });
+  });
+
+  it('Templars settle three unanimous votes, then 75%', () => {
     expect(at('Templar', ['4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
-    expect(at('Templar', ['4', '4', '2'])).toEqual({ kind: 'resolved', value: '4' });
-    expect(at('Templar', ['4', '2', '8'])).toEqual({ kind: 'pending' });
-    expect(at('Templar', ['4', '2', '8', '4', '4'])).toEqual({ kind: 'pending' });
-    expect(at('Templar', ['4', '2', '8', '4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Templar', ['4', '4', '2'])).toEqual({ kind: 'pending' });
+    expect(at('Templar', ['4', '4', '2', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Templar', ['4', '4', '2', '2', '4'])).toEqual({ kind: 'pending' });
+    expect(at('Templar', ['4', '4', '2', '2', '4', '4'])).toEqual({ kind: 'split' });
   });
 
   it('gives up on a Templar split at six votes', () => {
@@ -92,11 +106,12 @@ describe('stage rules', () => {
   });
 
   it('is not thrown off by float rounding at the threshold', () => {
-    const exact = [0.68, 0.68, 0.68, 0.68, 0.68].map((weight, i) => ({
+    // 3 × 1.48 / 4 × 1.48 is 0.7499999999999999 in floating point.
+    const exact = [1.48, 1.48, 1.48, 1.48].map((weight, i) => ({
       answer: i < 3 ? '4' : '2',
       weight,
     }));
-    expect(decideChoice(exact, stageDecisionRule('Knight'))).toEqual({
+    expect(decideChoice(exact, stageDecisionRule('Templar'))).toEqual({
       kind: 'resolved',
       value: '4',
     });

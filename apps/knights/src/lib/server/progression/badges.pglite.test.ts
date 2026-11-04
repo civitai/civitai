@@ -43,7 +43,7 @@ async function settleCorrect(userId: number, imageId: number) {
     { questionKey: Q, imageId, source: 'test', expiresAt: null },
     NOW
   );
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 3; i++) {
     await seedPlayer(pg, 9000 + i + imageId * 10, 'Knight');
     await castVote(db, { userId: 9000 + i + imageId * 10, itemId, answer: '4' }, deps);
   }

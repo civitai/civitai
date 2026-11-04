@@ -57,7 +57,7 @@ describe('simulateOtherVoters', () => {
 
     const result = await simulateOtherVoters(db, { callerId: 1, itemId: id, answer: '4' }, deps);
 
-    expect(result).toEqual({ itemId: id, cast: 4, itemStatus: 'Resolved', settled: true });
+    expect(result).toEqual({ itemId: id, cast: 3, itemStatus: 'Resolved', settled: true });
     expect(await player(1)).toMatchObject({
       exp: PROGRESSION.voteXp + PROGRESSION.correctXp,
       goldEarned: PROGRESSION.baseGold,
@@ -118,7 +118,7 @@ describe('simulateOtherVoters', () => {
 
     const result = await simulateOtherVoters(db, { callerId: 1, itemId: id, answer: '4' }, deps);
 
-    expect(result).toMatchObject({ cast: 4, itemStatus: 'Resolved' });
+    expect(result).toMatchObject({ cast: 3, itemStatus: 'Resolved' });
     expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=2`)).rows).toHaveLength(0);
   });
 });

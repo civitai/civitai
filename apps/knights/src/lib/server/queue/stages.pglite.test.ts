@@ -114,16 +114,28 @@ beforeEach(async () => {
 });
 
 describe('stage consensus and escalation', () => {
-  it('settles a Knight stage at five votes with 60% agreement', async () => {
+  it('settles a Knight stage at four unanimous votes', async () => {
+    await players('Knight', 1, 4);
+    await image(10);
+    const id = await item(10);
+
+    expect(await voteAll(1, id, ['4', '4', '4', '4'])).toBe('resolved');
+    expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '4' });
+  });
+
+  it('keeps a Knight 3-1 split open at four votes and settles it at 4 of 5', async () => {
     await players('Knight', 1, 5);
     await image(10);
     const id = await item(10);
 
-    expect(await voteAll(1, id, ['4', '4', '8', '4', '2'])).toBe('resolved');
+    expect(await voteAll(1, id, ['4', '4', '8', '4'])).toBe('recorded');
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
+
+    expect((await vote(5, id, '4')).status).toBe('resolved');
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '4' });
   });
 
-  it('keeps collecting past five Knight votes and sends a split at ten to the Templars', async () => {
+  it('keeps collecting past four Knight votes and sends a split at ten to the Templars', async () => {
     await players('Knight', 1, 10);
     await image(10);
     const id = await item(10);
@@ -140,15 +152,24 @@ describe('stage consensus and escalation', () => {
     });
   });
 
-  it('settles a Templar stage at three votes with two-thirds agreement', async () => {
+  it('settles a Templar stage at three unanimous votes', async () => {
     await players('Templar', 1, 3);
     await image(10);
     const id = await item(10, { minRank: 'Templar' });
 
     expect((await vote(1, id, '4')).status).toBe('recorded');
-    expect((await vote(2, id, '8')).status).toBe('recorded');
+    expect((await vote(2, id, '4')).status).toBe('recorded');
     expect((await vote(3, id, '4')).status).toBe('resolved');
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '4' });
+  });
+
+  it('keeps a Templar 2-1 split open at three votes', async () => {
+    await players('Templar', 1, 3);
+    await image(10);
+    const id = await item(10, { minRank: 'Templar' });
+
+    expect(await voteAll(1, id, ['4', '8', '4'])).toBe('recorded');
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
   });
 
   it('sends a Templar split at six votes to the Paladins', async () => {

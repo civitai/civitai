@@ -31,7 +31,7 @@ export function voteWeight({
   return Math.max(0, Math.round(weight * penaltyFactor(belowBar) * 100) / 100);
 }
 
-/** Weights are rounded floats: 3 of 5 equal votes must still reach 60%. */
+/** Weights are rounded floats: 3 of 4 equal votes must still reach 75%. */
 const SHARE_EPSILON = 1e-9;
 
 export type WeightedAnswer = { answer: string; weight: number };
