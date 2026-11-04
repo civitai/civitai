@@ -615,13 +615,14 @@ export function buildBeaconCases(ctx) {
       JSON.stringify(PAGE_VIEW),
       ['pageViews']
     ),
-    // An empty path matches no page: answered 200 with no row.
+    // An empty path still soft-matches a page in `getMatchingPathname`, so it writes a row (measured
+    // on both servers).
     post(
       'ping-empty-path',
       PING,
       { ...beaconFrom, ...TEXT },
       JSON.stringify({ ...PAGE_VIEW, path: '' }),
-      []
+      ['pageViews']
     ),
     // application/json is parsed to an object by the body parser, and this route only JSON.parses.
     post(
@@ -808,10 +809,13 @@ export function buildBeaconCases(ctx) {
     ),
 
     // --- methods ------------------------------------------------------------------------------------
+    // `PublicEndpoint` does not refuse a method outside its list (it only answers an OPTIONS
+    // preflight), so these reach the handler, under Next as here: a bodiless GET or HEAD fails its
+    // body parse, and a PUT with a valid body is tracked like a POST.
     { id: 'ping-get', path: PING, headers: beaconFrom, tracked: [] },
     { id: 'pulse-get', path: PULSE, headers: beaconFrom, tracked: [] },
     { id: 'batch-head', method: 'HEAD', path: BATCH, headers: beaconFrom, tracked: [] },
-    post('batch-put', BATCH, { ...beaconFrom, ...JSON_CT }, JSON.stringify([SEARCH]), [], {
+    post('batch-put', BATCH, { ...beaconFrom, ...JSON_CT }, JSON.stringify([SEARCH]), ['search'], {
       method: 'PUT',
     }),
     {
