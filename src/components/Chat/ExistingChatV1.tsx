@@ -10,15 +10,14 @@ import {
   Group,
   Image,
   Loader,
-  Menu,
   Spoiler,
   Stack,
   Text,
   Textarea,
   Title,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,

@@ -5,12 +5,12 @@ import {
   Group,
   Input,
   Loader,
-  Popover,
   Stack,
   Text,
   TextInput,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { keepPreviousData } from '@tanstack/react-query';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';

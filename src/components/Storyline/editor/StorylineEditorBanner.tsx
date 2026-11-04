@@ -1,4 +1,5 @@
-import { ActionIcon, Anchor, Badge, Menu, Text, ThemeIcon } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Text, ThemeIcon } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBooks, IconDots, IconShieldHalf, IconUnlink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

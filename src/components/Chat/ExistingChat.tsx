@@ -13,10 +13,10 @@ import {
   Stack,
   Text,
   Textarea,
-  Tooltip,
   UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {

@@ -3,12 +3,11 @@ import {
   Button,
   createPolymorphicComponent,
   Group,
-  Menu,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
   alpha,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconChevronDown } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 

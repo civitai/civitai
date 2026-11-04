@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Popover } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { HatIcon } from '~/components/HatTurf/HatIcon';

@@ -1,4 +1,5 @@
-import { Button, CloseButton, Popover, Text } from '@mantine/core';
+import { Button, CloseButton, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';

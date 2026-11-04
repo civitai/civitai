@@ -1,5 +1,6 @@
 import type { PopoverDropdownProps, PopoverProps } from '@mantine/core';
-import { Modal, Popover, Text } from '@mantine/core';
+import { Modal, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import type { ReactElement, ReactNode } from 'react';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { useGeneratorLayout } from '~/hooks/useMobileGenerator';

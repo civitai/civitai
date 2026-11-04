@@ -6,13 +6,13 @@ import {
   Card,
   CloseButton,
   Group,
-  Menu,
   RingProgress,
   ScrollArea,
   Text,
   useMantineTheme,
   rgba,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {

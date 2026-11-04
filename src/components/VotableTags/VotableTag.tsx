@@ -4,16 +4,15 @@ import { immer } from 'zustand/middleware/immer';
 import {
   Badge,
   Group,
-  HoverCard,
   useMantineTheme,
   Text,
   Divider,
-  Menu,
   UnstyledButton,
   useComputedColorScheme,
   lighten,
   alpha,
 } from '@mantine/core';
+import { HoverCard, Menu } from '~/components/MantineOverlays';
 import { useCallback, useRef } from 'react';
 import type { MediaType, TagType } from '~/shared/utils/prisma/enums';
 import {

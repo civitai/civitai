@@ -10,8 +10,8 @@ import {
   Table,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { AppsTableColgroup, APPS_REVENUE_COLUMNS } from '~/components/Apps/appsWideLayout';

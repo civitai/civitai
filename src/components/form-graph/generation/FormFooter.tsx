@@ -8,16 +8,8 @@
  */
 
 import { trackRecentEcosystem } from '~/store/recent-ecosystems.store';
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Card,
-  NumberInput,
-  Popover,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Alert, Button, Card, NumberInput, Text } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCheck,

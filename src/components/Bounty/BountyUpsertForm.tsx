@@ -13,8 +13,8 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconCalendar,
   IconCalendarDue,

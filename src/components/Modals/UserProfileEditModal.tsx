@@ -12,13 +12,13 @@ import {
   Input,
   Loader,
   Paper,
-  Popover,
   Stack,
   Switch,
   Text,
   Modal,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import {

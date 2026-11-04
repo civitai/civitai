@@ -3,7 +3,8 @@ import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
 import React, { useMemo } from 'react';
 
-import { Box, Menu, Text } from '@mantine/core';
+import { Box, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBan, IconDotsVertical, IconFlag } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

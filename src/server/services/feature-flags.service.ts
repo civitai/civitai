@@ -201,6 +201,13 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'model-page-design-system-markup',
   },
+  // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
+  // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
+  // on-switch.
+  ssrClosedOverlayFastPath: {
+    availability: [],
+    fliptKey: 'ssr-closed-overlay-fast-path',
+  },
   // Browser site search through /api/search, which applies the viewer's and the site's rules on
   // the server, instead of straight to Meilisearch with a per-viewer token. OFF = the direct path,
   // unchanged, so this is also the kill switch while the proxy's load on the API pods is unknown.

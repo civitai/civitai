@@ -1,4 +1,5 @@
-import { Box, Button, Container, Drawer, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Box, Button, Container, Drawer, Group, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,

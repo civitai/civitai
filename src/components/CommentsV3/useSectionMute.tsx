@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconDotsVertical } from '@tabler/icons-react';
 import { useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
