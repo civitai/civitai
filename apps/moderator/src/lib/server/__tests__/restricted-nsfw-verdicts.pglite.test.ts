@@ -82,6 +82,13 @@ describe('restricted-verdict leads', () => {
     await model(5, { sfwOnly: true, meta: lead('minor', '2026-11-05T00:00:00Z') });
     await model(6, { minor: true, meta: { other: true } }); // no lead
     await model(7, { minor: true }); // null meta
+    // A verdict a moderator kept is not in the queue until it comes back as a lead.
+    await model(8, {
+      minor: true,
+      meta: {
+        restrictedNsfwVerdictDormant: lead('minor', '2026-11-01T00:00:00Z').restrictedNsfwVerdict,
+      },
+    });
 
     const rows = await getRestrictedVerdicts();
     expect(rows.map((r) => [r.modelId, r.restriction])).toEqual([

@@ -3756,25 +3756,21 @@ async function applyHeldVerdictAfterOwnerSave(
 }
 
 /**
- * For a write that took the model out of Private outside a transaction: the model is a Draft there, so
- * nothing lists it in between. Never fails the caller.
+ * Runs `write`, which takes the model out of Private, and applies a held scan verdict in the same
+ * transaction: if the apply fails, the write rolls back with it and the model stays Private.
  */
-export async function applyHeldVerdictAfterLeavingPrivate(modelId: number) {
+export async function leavePrivateWithHeldVerdict(
+  modelId: number,
+  write: (tx: Prisma.TransactionClient) => Promise<unknown>
+) {
   const { applyHeldVerdictLeavingPrivate, finishHeldVerdictApply } = await import(
     '~/server/services/text-scan/actions/model-nsfw'
   );
-  await dbWrite
-    .$transaction((tx) => applyHeldVerdictLeavingPrivate(tx, modelId))
-    .then((applied) => (applied ? finishHeldVerdictApply(modelId) : undefined))
-    .catch((error: Error) =>
-      logToAxiom({
-        name: 'text-scan',
-        type: 'error',
-        message: 'held restricted nsfw verdict not applied leaving Private',
-        modelId,
-        error: error.message,
-      }).catch(() => null)
-    );
+  const applied = await dbWrite.$transaction(async (tx) => {
+    await write(tx);
+    return applyHeldVerdictLeavingPrivate(tx, modelId);
+  });
+  if (applied) await finishHeldVerdictApply(modelId);
 }
 
 export const upsertModel = async (
@@ -7154,11 +7150,12 @@ export const privateModelFromTraining = async ({
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
-    await dbWrite.model.updateMany({
-      where: { id, ...keepDowned },
-      data: { status: ModelStatus.Draft, availability: Availability.Public },
-    });
-    await applyHeldVerdictAfterLeavingPrivate(id);
+    await leavePrivateWithHeldVerdict(id, (tx) =>
+      tx.model.updateMany({
+        where: { id, ...keepDowned },
+        data: { status: ModelStatus.Draft, availability: Availability.Public },
+      })
+    );
 
     await dbWrite.modelVersion.updateMany({
       where: { modelId: id, ...keepDowned },

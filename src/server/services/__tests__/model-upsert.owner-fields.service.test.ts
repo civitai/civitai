@@ -1091,6 +1091,15 @@ describe('a held scan verdict on a model leaving Private', () => {
   it('is applied in the save when a moderator makes a Private model public', async () => {
     mockStored({ availability: Availability.Private, sfwOnly: true });
     mockLeavingPrivate.mockResolvedValueOnce(true);
+    // Each transaction gets a client of its own, so the apply is seen to share the save's.
+    const clients: unknown[] = [];
+    const previous = mockDbWrite.$transaction.getMockImplementation();
+    mockDbWrite.$transaction.mockImplementation((async (arg: unknown, ...rest: unknown[]) => {
+      if (typeof arg !== 'function') return previous?.(arg as never, ...(rest as []));
+      const tx = Object.create(mockDbWrite);
+      clients.push(tx);
+      return arg(tx);
+    }) as never);
     await upsert({
       id: MODEL_ID,
       userId: MODERATOR_ID,
@@ -1098,7 +1107,12 @@ describe('a held scan verdict on a model leaving Private', () => {
       availability: Availability.Public,
     });
     expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
-    expect(mockLeavingPrivate).toHaveBeenCalledWith(expect.anything(), MODEL_ID);
+    const [db, id] = mockLeavingPrivate.mock.calls[0];
+    expect(id).toBe(MODEL_ID);
+    expect(clients).toContain(db);
+    expect(mockDbWrite.model.update.mock.invocationCallOrder[0]).toBeLessThan(
+      mockLeavingPrivate.mock.invocationCallOrder[0]
+    );
     expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
   });
 

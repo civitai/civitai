@@ -247,10 +247,20 @@ export async function applyHeldVerdictLeavingPrivate(db: RawDb, modelId: number)
   return true;
 }
 
-/** The level and the public cache, after `applyHeldVerdictLeavingPrivate` committed. */
+/** The level and the public cache, after `applyHeldVerdictLeavingPrivate` committed. The write it
+ *  follows has committed, so a failure here is logged, not thrown. */
 export async function finishHeldVerdictApply(modelId: number) {
-  await updateModelNsfwLevels([modelId]);
-  await bustPublicModelResponseCache(modelId).catch(() => null);
+  await updateModelNsfwLevels([modelId])
+    .then(() => bustPublicModelResponseCache(modelId))
+    .catch((error: Error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'held restricted nsfw verdict applied; level not refreshed',
+        modelId,
+        error: error.message,
+      }).catch(() => null)
+    );
 }
 
 /** Moves a dormant verdict back to a held lead, in the queue again. Guarded on the model being

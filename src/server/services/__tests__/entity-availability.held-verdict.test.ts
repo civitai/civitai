@@ -22,10 +22,12 @@ vi.mock('~/server/redis/caches', () => ({
 
 const { entityAvailabilityUpdate } = await import('~/server/services/common.service');
 
+const tx = { $executeRawUnsafe: vi.fn(async () => 1) };
+
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
-    fn(dbMock.dbWrite)) as never);
+  dbMock.dbWrite.$transaction.mockImplementation((async (fn: (t: unknown) => unknown) =>
+    fn(tx)) as never);
 });
 
 describe('entityAvailabilityUpdate', () => {
@@ -37,10 +39,15 @@ describe('entityAvailabilityUpdate', () => {
       availability: 'Public',
     });
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+    // The availability write and the applies share the transaction's client.
+    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
       mockLeavingPrivate.mock.invocationCallOrder[0]
     );
-    expect(mockLeavingPrivate.mock.calls.map(([, id]) => id)).toEqual([1, 2]);
+    expect(mockLeavingPrivate.mock.calls).toEqual([
+      [tx, 1],
+      [tx, 2],
+    ]);
     expect(mockFinishApply.mock.calls).toEqual([[2]]);
   });
 

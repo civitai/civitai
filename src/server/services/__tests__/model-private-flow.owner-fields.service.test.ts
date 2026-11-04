@@ -304,6 +304,32 @@ describe('privateModelFromTraining — a held scan verdict', () => {
     expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
     expect(mockLeavingPrivate).toHaveBeenCalledWith(expect.anything(), MODEL_ID);
   });
+
+  it('puts the model back out of Private only together with the apply', async () => {
+    mockStored({});
+    let inTransaction = false;
+    const writesInTransaction: boolean[] = [];
+    mockDbWrite.$transaction.mockImplementation((async (arg: unknown) => {
+      if (typeof arg !== 'function') return Promise.all(arg as unknown[]);
+      inTransaction = true;
+      try {
+        return await arg(mockDbWrite);
+      } finally {
+        inTransaction = false;
+      }
+    }) as never);
+    mockDbWrite.model.updateMany.mockImplementation((async () => {
+      writesInTransaction.push(inTransaction);
+      return { count: 1 };
+    }) as never);
+    mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
+    mockLeavingPrivate.mockRejectedValueOnce(new Error('apply failed'));
+
+    // A failed apply is not swallowed: the transaction, revert included, fails with it.
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow('apply failed');
+    expect(writesInTransaction).toEqual([true]);
+    expect(mockFinishApply).not.toHaveBeenCalled();
+  });
 });
 
 describe('privateModelFromTraining — moderation-owned meta', () => {
@@ -622,10 +648,14 @@ describe('publishPrivateModel', () => {
 
   it('applies a held scan verdict in the publish transaction, after the availability write', async () => {
     mockPrivateModel({});
+    const tx = Object.create(mockDbWrite);
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
+      fn(tx)) as never);
     mockLeavingPrivate.mockResolvedValueOnce(true);
     await publish(false);
     expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
-    expect(mockLeavingPrivate).toHaveBeenCalledWith(mockDbWrite, MODEL_ID);
+    expect(mockLeavingPrivate.mock.calls[0][0]).toBe(tx);
+    expect(mockLeavingPrivate.mock.calls[0][1]).toBe(MODEL_ID);
     expect(mockLeavingPrivate.mock.invocationCallOrder[0]).toBeGreaterThan(
       mockDbWrite.model.update.mock.invocationCallOrder[0]
     );
