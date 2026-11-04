@@ -232,6 +232,20 @@ describe('play load', () => {
     expect(page.progress).toMatchObject({ kind: 'rank', rank: 'Knight' });
   });
 
+  it("gives a rank-up what changed: the new perks and the rank below's, including the daily gold cap", async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 50 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    const page = await run();
+    expect(page.progress).toMatchObject({
+      kind: 'rank',
+      rank: 'Templar',
+      voteWeight: 1.5,
+      goldMultiplier: 1.25,
+      dailyGoldCap: 7500,
+      previous: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+    });
+  });
+
   it('keeps Knights on the queue', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
     const page = await run();

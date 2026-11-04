@@ -9,6 +9,7 @@ import {
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { requireMember } from '$lib/server/membership';
+import { isRank, RANK_RULES, RANKS, rankIndex } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
@@ -58,21 +59,39 @@ const APPRENTICE_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-type RankPerks = { levels?: string; voteWeight?: number; goldMultiplier?: number };
+type Perks = { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
+type RankPerks = {
+  levels?: string;
+  voteWeight?: number;
+  goldMultiplier?: number;
+  dailyGoldCap?: number;
+  /** The rank below's perks, for the rank-up's "what changed". */
+  previous?: Perks;
+};
 type Notice = ProgressNotice & RankPerks & { milestone?: string; milestoneLevel?: number };
 
-// A rank-up notice says what the rank brings; a level-up carries nothing more.
+const perksOf = (rank: string): Perks | undefined =>
+  isRank(rank)
+    ? {
+        voteWeight: RANK_RULES[rank].voteWeight,
+        goldMultiplier: RANK_RULES[rank].goldMultiplier,
+        dailyGoldCap: RANK_RULES[rank].dailyGoldCap,
+      }
+    : undefined;
+
+// A rank-up notice says what the rank brings and what it replaces; a level-up carries nothing more.
 function withRankPerks(progress: ProgressNotice | null): Notice | null {
   if (progress?.kind !== 'rank') return progress;
   const perks = rankTable().find((entry) => entry.rank === progress.rank);
-  return perks
-    ? {
-        ...progress,
-        levels: perks.levels,
-        voteWeight: perks.voteWeight,
-        goldMultiplier: perks.goldMultiplier,
-      }
-    : progress;
+  if (!perks) return progress;
+  return {
+    ...progress,
+    levels: perks.levels,
+    voteWeight: perks.voteWeight,
+    goldMultiplier: perks.goldMultiplier,
+    dailyGoldCap: perks.dailyGoldCap,
+    previous: perksOf(RANKS[rankIndex(progress.rank) - 1] ?? ''),
+  };
 }
 
 // An Acolyte levels up every few answers, so only the milestone levels are celebrated; every other level is recorded as seen.

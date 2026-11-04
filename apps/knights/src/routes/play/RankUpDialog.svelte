@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import OverlayIcon from '$lib/OverlayIcon.svelte';
+  import Icon from '$lib/Icon.svelte';
+  import RankBadge from '$lib/RankBadge.svelte';
   import { modal } from '$lib/modal';
   import { skippable } from '$lib/motion';
+  import { rankUpChanges } from '$lib/rank-up';
   import { sound } from '$lib/sound';
   import '$lib/overlay.css';
 
@@ -14,6 +16,9 @@
     levels,
     voteWeight,
     goldMultiplier,
+    dailyGoldCap,
+    previous,
+    badge = null,
     message,
     submitting,
     submit,
@@ -23,12 +28,22 @@
     levels?: string;
     voteWeight?: number;
     goldMultiplier?: number;
+    dailyGoldCap?: number;
+    /** The rank below's perks, for the before and after. */
+    previous?: { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
+    /** The rank's badge image; Paladin has none yet and shows the crest. */
+    badge?: string | null;
     message: string | null;
     submitting: boolean;
     submit: SubmitFunction;
   } = $props();
 
   let form = $state<HTMLFormElement>();
+  const changes = $derived(
+    voteWeight === undefined || goldMultiplier === undefined || dailyGoldCap === undefined
+      ? []
+      : rankUpChanges(previous, { voteWeight, goldMultiplier, dailyGoldCap })
+  );
   onMount(() => sound.play(rank === 'Knight' ? 'knighting-ring' : 'rankup'));
   const close = () => {
     if (!submitting) form?.requestSubmit();
@@ -47,11 +62,21 @@
   >
     <section class="card">
       <p class="ov-eyebrow">Rank achieved</p>
-      <span class="ov-crest crest"><OverlayIcon name="shield-plus" size={40} /></span>
+      <span class="glow" aria-hidden="true"></span>
+      <span class="crest"><RankBadge {rank} src={badge} size={160} /></span>
       <p class="rank">{rank}</p>
-      {#if levels}<p class="levels">Levels {levels}</p>{/if}
       <h2 id="rankup-title">You have risen to {rank}</h2>
-      {#if voteWeight !== undefined && goldMultiplier !== undefined}
+      {#if levels}<p class="levels">Levels {levels}. The Order trusts your judgment more.</p>{/if}
+      {#if changes.length > 0}
+        <dl class="changes">
+          {#each changes as change (change.key)}
+            <div>
+              <dt>{change.label}</dt>
+              <dd>{change.from}<Icon name="arrow-right" size={12} /><b>{change.to}</b></dd>
+            </div>
+          {/each}
+        </dl>
+      {:else if voteWeight !== undefined && goldMultiplier !== undefined}
         <p class="lead">Your votes now weigh {voteWeight}x and your gold {goldMultiplier}x.</p>
       {:else}
         <p class="lead">You are now a {rank} of the Order, at level {level}.</p>
@@ -116,10 +141,22 @@
     animation: mo-sweep 500ms var(--ease-in-out) 1000ms both;
   }
   .crest {
+    position: relative;
+    display: inline-flex;
     animation: mo-crest-rise 300ms var(--ease-stamp) 450ms backwards;
-    width: 90px;
-    height: 90px;
     margin: 8px 0 2px;
+  }
+  /* A soft gold glow behind the badge. */
+  .glow {
+    position: absolute;
+    top: 44px;
+    left: 50%;
+    width: 260px;
+    height: 260px;
+    translate: -50% 0;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgb(201 162 74 / 0.32), transparent 68%);
+    pointer-events: none;
   }
   .rank {
     margin: 0;
@@ -132,6 +169,41 @@
     margin: 0;
     color: var(--io-parchment-muted);
     font: 400 13px/1.2 var(--io-font-ui);
+  }
+  .changes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    width: 100%;
+    margin: 14px 0 0;
+  }
+  .changes div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 8px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 8px;
+    background: var(--io-bg);
+  }
+  .changes dt {
+    color: var(--io-parchment-muted);
+    font: 600 11px/1.2 var(--io-font-ui);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .changes dd {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    color: var(--io-parchment-muted);
+    font: 600 16px/1.2 var(--io-font-ui);
+  }
+  .changes dd b {
+    color: var(--io-gold);
+    font-weight: 700;
   }
   h2 {
     margin: 14px 0 0;
@@ -161,10 +233,19 @@
       padding: 28px 20px;
     }
     h2 {
-      font-size: 28px;
+      font-size: 22px;
     }
     .lead {
       font-size: 22px;
+    }
+    .changes {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+    }
+    .changes div {
+      flex-direction: row;
+      justify-content: space-between;
+      padding: 10px 14px;
     }
     form {
       position: fixed;

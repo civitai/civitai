@@ -669,6 +669,9 @@
     levels={data.progress.levels}
     voteWeight={data.progress.voteWeight}
     goldMultiplier={data.progress.goldMultiplier}
+    dailyGoldCap={data.progress.dailyGoldCap}
+    previous={data.progress.previous}
+    badge={data.badges.large[data.progress.rank]}
     message={form?.progressFailed ? form.message : null}
     {submitting}
     {submit}
