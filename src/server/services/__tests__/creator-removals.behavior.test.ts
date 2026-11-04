@@ -107,7 +107,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(
-    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage"`
+    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport"`
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
@@ -170,8 +170,16 @@ describe('the removed-images list', () => {
     expect(comparable(held)).toStrictEqual(comparable(ordinary));
   });
 
-  // Once the hold ends the owner's other removals can be appealed again, but the image it kept stays refused
-  // by the appeal endpoint until it is purged or released. Another removed image in the same list,
+  it('lists an owner a CSAM report names exactly as before the report', async () => {
+    const before = await getMyRemovedImages(OWNER, NOW);
+    await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`);
+
+    expect(before.items.some((i) => i.canAppeal)).toBe(true);
+    expect(await getMyRemovedImages(OWNER, NOW)).toStrictEqual(before);
+  });
+
+  // Once the hold ends the owner's other removals can be appealed again, report or not, but the
+  // image it kept stays refused by the appeal endpoint until it is purged or released. Another removed image in the same list,
   // which no hold kept, keeps its appeal.
   it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
     const ALSO_REMOVED = 9;

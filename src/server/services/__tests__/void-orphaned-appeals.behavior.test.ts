@@ -532,6 +532,16 @@ describe('getAppealExcludedIds against Postgres', () => {
     expect([...images].sort()).toEqual([1009, 1010]);
     expect([...users].sort()).toEqual([21, 23, 24, 30]);
   });
+
+  it('flags images and no owners when asked about no owners', async () => {
+    const { images, users } = await getAppealExcludedIds({
+      imageIds: [1009, 1010, 1011],
+      userIds: [],
+    });
+
+    expect([...images].sort()).toEqual([1009, 1010]);
+    expect(users.size).toBe(0);
+  });
 });
 
 describe('isAppealBlockedByHoldMarker against Postgres', () => {

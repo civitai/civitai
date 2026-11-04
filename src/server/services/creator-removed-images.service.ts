@@ -1,7 +1,5 @@
-import { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   type CreatorRemoval,
   removalWindowStart,
@@ -67,23 +65,17 @@ async function getRemovalEvents(userId: number, now: Date) {
 
 type ImageState = {
   imageId: number;
-  excluded: boolean;
   owned: boolean;
   blockedFor: string | null;
   needsReview: string | null;
 };
 
 function getImageStates(userId: number, imageIds: number[]) {
-  const r = Prisma.raw('r');
   return dbRead.$queryRaw<ImageState[]>`
-    SELECT r."imageId", ${excludedRecord(r)} AS excluded,
-      coalesce(i."userId" = ${userId}, false) AS owned, i."blockedFor", i."needsReview"
-    FROM (
-      SELECT u.id AS "imageId", li."blockedFor"
-      FROM unnest(${imageIds}::int[]) AS u(id)
-      LEFT JOIN "Image" li ON li.id = u.id
-    ) r
-    LEFT JOIN "Image" i ON i.id = r."imageId"
+    SELECT u.id AS "imageId", coalesce(i."userId" = ${userId}, false) AS owned,
+      i."blockedFor", i."needsReview"
+    FROM unnest(${imageIds}::int[]) AS u(id)
+    LEFT JOIN "Image" i ON i.id = u.id
   `;
 }
 
@@ -102,7 +94,7 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 
 /**
  * The member's own removed images that currently cost points, newest first, up to the limit.
- * Removals the appeal flow excludes are left out too, and `total` counts only what is listed.
+ * One the appeal flow excludes is listed like any other, with no appeal.
  */
 export async function getMyRemovedImages(userId: number, now = new Date()) {
   const fetched = await getRemovalEvents(userId, now);
@@ -121,7 +113,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   const listed = events.flatMap((e) => {
     const id = Number(e.imageId);
     const state = stateById.get(id);
-    if (!state || state.excluded || excludedIds.images.has(id)) return [];
+    if (!state) return [];
     return [{ id, removedAt: e.removedAt, state }];
   });
 
@@ -138,6 +130,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
     canAppeal:
       state.owned &&
       isAppealableImage(state) &&
+      !excludedIds.images.has(id) &&
       !holdBlocked.has(id) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
