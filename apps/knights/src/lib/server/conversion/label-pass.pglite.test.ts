@@ -6,6 +6,7 @@ import { bootLabelStore, createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer, seedSettledVote } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { runLabelPass } from './label-pass';
+import { hasUnlabelled, refPrefix } from './labels';
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 
@@ -31,6 +32,13 @@ const labelled = async (playerId: number) =>
 /** Moves every recorded failure back past the retry age, as if the time had passed. */
 const wait = () =>
   pg.exec(`UPDATE label_store.record_failure SET "createdAt" = "createdAt" - interval '1 hour'`);
+/** The prefix a give-up logs for a player: the store's keyed hash, which the user id cannot be recovered from. */
+const prefixOf = async (userId: number) =>
+  (
+    await pg.query<{ p: string }>(`SELECT left(label_store.person_hash('labeller', $1), 12) AS p`, [
+      userId,
+    ])
+  ).rows[0].p;
 const hold = (userId: number) =>
   pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-11' WHERE "userId"=${userId}`);
 const release = (userId: number) =>
@@ -119,6 +127,18 @@ describe('labels', () => {
     expect(written.every((l) => l.question === 'knights.image.nsfwLevel')).toBe(true);
     expect(written.every((l) => /^KnightsVote:\d+:[0-9a-f]{64}$/.test(l.sourceRef))).toBe(true);
     expect(await labelled(1)).toEqual([true, true]);
+  });
+
+  it('never labels a hidden check (negative item id) and the pass still ends', async () => {
+    await seedPlayer(pg, 1);
+    await vote(-5, 1, 101, '4');
+    await vote(2, 1, 102, '8');
+
+    expect(await pass()).toMatchObject({ done: true, labelsWritten: 1, labelFailures: 0 });
+    expect(await pass()).toMatchObject({ done: true, labelsWritten: 0, labelFailures: 0 });
+
+    expect((await labels()).map((l) => l.value)).toEqual(['8']);
+    expect(await hasUnlabelled(db, 'rating')).toBe(false);
   });
 
   it('writes none again on a later tick', async () => {
@@ -233,6 +253,50 @@ describe('labels', () => {
     expect(await labels()).toHaveLength(1);
   });
 
+  it('logs each pass with failures at error level, and the vote it gives up on once', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await vote(1, 1, 101);
+    await vote(2, 2, 102);
+    await pg.exec(
+      `INSERT INTO label_store.erased_subject ("subjectType","subjectId") VALUES ('image','101')`
+    );
+
+    for (let i = 0; i < 8; i++) {
+      await pass();
+      await wait();
+    }
+
+    const named = (name: string) => log.mock.calls.map((c) => c[0]).filter((e) => e.name === name);
+    expect(named('knights-label-failures')).toHaveLength(5);
+    expect(named('knights-label-failures')[0]).toMatchObject({
+      type: 'error',
+      details: { labelFailures: 1 },
+    });
+    const gaveUp = named('knights-label-given-up');
+    expect(gaveUp).toHaveLength(1);
+    expect(gaveUp[0]).toMatchObject({
+      type: 'error',
+      details: { kind: 'rating', itemId: 1, refPrefix: expect.stringMatching(/^[0-9a-f]{12}$/) },
+    });
+    expect(JSON.stringify(gaveUp[0])).not.toMatch(/playerId|userId/);
+    expect(gaveUp[0].details.refPrefix).toBe(await prefixOf(1));
+  });
+
+  it('takes the hash after the last colon of a ref, so a yes/no id with colons keeps its prefix', () => {
+    const hash = 'abcdef0123456789'.repeat(4);
+    expect(refPrefix(`KnightsYesNoVote:set:7:${hash}`)).toBe('abcdef012345');
+    expect(refPrefix(`KnightsVote:9:${hash}`)).toBe('abcdef012345');
+  });
+
+  it('logs and rethrows when the pass itself raises', async () => {
+    await expect(runLabelPass({} as never, { now: NOW, log })).rejects.toThrow();
+
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'knights-label-pass-failed' })
+    );
+  });
+
   it('does not try a refused vote again before the retry age', async () => {
     await seedPlayer(pg, 1);
     await vote(1, 1, 101);
@@ -266,6 +330,39 @@ describe('labels', () => {
                 FROM label_store.secret s);
       END $$`;
     afterEach(() => pg.exec(personHash('')));
+
+    it('logs the same keyed prefix for a player on the row-by-row path as on the batch path', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      await seedPlayer(pg, 2);
+      await vote(1, 2, 102);
+      // A raise outside the store's own error handling, so the batch falls back to one vote at a time.
+      const textHash = (body: string) => `
+        CREATE OR REPLACE FUNCTION label_store.text_hash(p_text TEXT) RETURNS TEXT
+        LANGUAGE plpgsql IMMUTABLE AS $$
+        BEGIN ${body} RETURN encode(sha256(convert_to(p_text, 'UTF8')), 'hex'); END $$`;
+      await pg.exec(textHash(`IF p_text = 'key-102' THEN RAISE EXCEPTION 'boom'; END IF;`));
+
+      try {
+        for (let i = 0; i < 7; i++) {
+          await pass();
+          await wait();
+        }
+      } finally {
+        await pg.exec(`
+          CREATE OR REPLACE FUNCTION label_store.text_hash(p_text TEXT) RETURNS TEXT
+          LANGUAGE sql IMMUTABLE AS $$ SELECT encode(sha256(convert_to(p_text, 'UTF8')), 'hex') $$`);
+      }
+
+      const gaveUp = log.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.name === 'knights-label-given-up');
+      expect(gaveUp).toHaveLength(1);
+      expect(gaveUp[0].details.refPrefix).toBe(await prefixOf(2));
+      const unkeyed = (
+        await pg.query<{ p: string }>(`SELECT left(label_store.text_hash('2'), 12) AS p`)
+      ).rows[0].p;
+      expect(gaveUp[0].details.refPrefix).not.toBe(unkeyed);
+    });
 
     it('still labels every vote once the store is back after being down for several ticks', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -305,6 +402,18 @@ describe('labels', () => {
 
       expect(await labelled(2)).toEqual([true]);
       expect(await labels()).toHaveLength(2);
+      expect(
+        log.mock.calls.map((c) => c[0]).filter((e) => e.name === 'knights-label-given-up')
+      ).toEqual([
+        expect.objectContaining({
+          type: 'error',
+          details: {
+            kind: 'rating',
+            itemId: 2,
+            refPrefix: null, // the fixture breaks the store's hash for this player, so there is none to log
+          },
+        }),
+      ]);
       expect(
         (
           await pg.query(

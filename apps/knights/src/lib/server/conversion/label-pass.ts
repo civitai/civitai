@@ -7,9 +7,11 @@ import {
   hasUnlabelled,
   writeLabelBatch,
   type LabelCursor,
+  logSafely,
+  type LabelLog,
 } from './labels';
 
-export type PassLog = (event: Record<string, unknown>) => unknown;
+export type PassLog = LabelLog;
 
 export type LabelPassResult = {
   /** False when the time budget ran out; the next tick resumes from the data. */
@@ -22,6 +24,27 @@ const DEFAULTS = { budgetMs: 30_000, batchSize: 200 };
 
 /** Writes the labels of every graded vote and every given yes/no answer not yet labelled. Writes are keyed on the data (unlabelled votes), so a cut-short or repeated pass loses and duplicates nothing. */
 export async function runLabelPass(
+  db: Kysely<DB>,
+  args: {
+    now: Date;
+    log?: PassLog;
+    budgetMs?: number;
+    batchSize?: number;
+  }
+): Promise<LabelPassResult> {
+  try {
+    return await labelPass(db, args);
+  } catch (error) {
+    await logSafely(args.log, {
+      type: 'error',
+      name: 'knights-label-pass-failed',
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+    });
+    throw error;
+  }
+}
+
+async function labelPass(
   db: Kysely<DB>,
   {
     now,
@@ -46,7 +69,7 @@ export async function runLabelPass(
     let cursor: LabelCursor | null = null;
     let kindDone = false;
     while (!kindDone && !outOfTime()) {
-      const batch = await writeLabelBatch(db, { after: cursor, limit: batchSize, kind });
+      const batch = await writeLabelBatch(db, { after: cursor, limit: batchSize, kind, log });
       totals.labelsWritten += batch.written;
       totals.labelFailures += batch.failed;
       cursor = batch.cursor;
@@ -55,6 +78,14 @@ export async function runLabelPass(
     done &&= kindDone;
   }
 
+  if (totals.labelFailures > 0) {
+    await logSafely(log, {
+      type: 'error',
+      name: 'knights-label-failures',
+      message: 'The label store refused or raised on votes; they stay unlabelled and are retried',
+      details: { labelFailures: totals.labelFailures, labelsWritten: totals.labelsWritten },
+    });
+  }
   if (totals.labelsWritten > 0 || totals.labelFailures > 0)
     await logPassSummary(db, log, { now, done, ...totals });
   return { done, ...totals };

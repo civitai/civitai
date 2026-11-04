@@ -10,6 +10,21 @@ const MAX_REFUSALS = 5;
 /** A vote the store refused, or whose write raised, is not tried again for this long, so a short outage cannot use up its refusals. */
 const RETRY_AFTER_MINUTES = 10;
 
+export type LabelLog = (event: Record<string, unknown>) => unknown;
+
+/** A log that fails must not change the pass's outcome. */
+export async function logSafely(log: LabelLog | undefined, event: Record<string, unknown>) {
+  if (!log) return;
+  try {
+    await log(event);
+  } catch (error) {
+    console.error('knights: could not log a label pass event', error);
+  }
+}
+
+/** The first characters of the store's player hash, which is the last segment of a ref (a yes/no id may hold colons). */
+export const refPrefix = (ref: string) => ref.slice(ref.lastIndexOf(':') + 1).slice(0, 12);
+
 export type LabelCursor = { settledAt: Date; itemId: number; playerId: number };
 export type LabelBatch = {
   scanned: number;
@@ -62,9 +77,46 @@ type BatchArgs = {
   /** Restricts the batch to one vote (the row-by-row fallback). */
   only?: { itemId: number; playerId: number };
   kind?: LabelKind;
+  log?: LabelLog;
 };
 
-type Row = { itemId: number; playerId: number; settledAt: Date; written: boolean; done: boolean };
+type Row = {
+  itemId: number;
+  playerId: number;
+  settledAt: Date;
+  written: boolean;
+  done: boolean;
+  /** Done by exhausting refusals, not by being labelled or having no image. */
+  gaveUp: boolean;
+  ref: string | null;
+};
+
+/** The same keyed prefix the batch path logs; null when the store's hash cannot be read, which is likely why the vote raised. */
+async function keyedPrefix(db: Kysely<DB>, playerId: number): Promise<string | null> {
+  try {
+    const { rows } = await sql<{ prefix: string }>`
+      SELECT left(label_store.person_hash('labeller', ${playerId}::integer), 12) AS prefix
+    `.execute(db);
+    return rows[0]?.prefix ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Logs the store's player-hash prefix, never a user id (public log sink). */
+async function logGaveUp(
+  log: LabelLog | undefined,
+  kind: LabelKind,
+  itemId: number,
+  prefix: string | null
+) {
+  await logSafely(log, {
+    type: 'error',
+    name: 'knights-label-given-up',
+    message: `A ${kind} vote was refused ${MAX_REFUSALS} times by the label store and will not be labelled`,
+    details: { kind, itemId, refPrefix: prefix },
+  });
+}
 
 /** The SQL that differs between the two kinds of vote. */
 function shapeOf(kind: LabelKind) {
@@ -84,7 +136,8 @@ function shapeOf(kind: LabelKind) {
   return {
     when: sql`v."settledAt"`,
     join: sql``,
-    eligible: sql`v."settledAt" IS NOT NULL
+    // A hidden check (negative item id) is a golden-set answer, not a judgment of a queue item: never labelled, so never scanned.
+    eligible: sql`v."itemId" > 0 AND v."settledAt" IS NOT NULL
         AND EXISTS (SELECT 1 FROM "KnightsQuestion" kq WHERE kq."key" = v."questionKey" AND kq."kind" = 'choice')`,
     externalId: sql`NULL::text`,
     ref: (hash: ReturnType<typeof sql>, at: 'b' | 'source') =>
@@ -95,7 +148,7 @@ function shapeOf(kind: LabelKind) {
 
 async function runBatch(
   db: Kysely<DB>,
-  { after, limit, only, kind = 'rating' }: BatchArgs
+  { after, limit, only, kind = 'rating', log }: BatchArgs
 ): Promise<Row[]> {
   const shape = shapeOf(kind);
   const onlyClause = only
@@ -160,16 +213,25 @@ async function runBatch(
           ELSE (SELECT count(*) FROM label_store.record_failure f WHERE f."sourceRef" = r."ref") >= ${MAX_REFUSALS}
         END AS "done"
       FROM rec r
+    ), verdict AS (
+      SELECT o.*,
+        o."done" AND o."hasSubject" AND o."labelId" IS NULL
+          AND NOT EXISTS (SELECT 1 FROM label_store.label l WHERE l."sourceRef" = o."ref") AS "gaveUp"
+      FROM outcome o
     ), marked AS (
       UPDATE "KnightsVote" v SET "labelled" = true
-      FROM outcome o
+      FROM verdict o
       WHERE o."done" AND v."itemId" = o."itemId" AND v."playerId" = o."playerId" AND v."createdAt" = o."createdAt"
       RETURNING 1
     )
-    SELECT o."itemId", o."playerId", o."settledAt", (o."labelId" IS NOT NULL) AS "written", o."done"
-    FROM outcome o
+    SELECT o."itemId", o."playerId", o."settledAt", (o."labelId" IS NOT NULL) AS "written", o."done",
+      o."gaveUp", o."ref"
+    FROM verdict o
     ORDER BY o."settledAt", o."itemId", o."playerId"
   `.execute(db);
+  for (const r of rows) {
+    if (r.gaveUp) await logGaveUp(log, kind, Number(r.itemId), refPrefix(String(r.ref)));
+  }
   return rows;
 }
 
@@ -243,6 +305,12 @@ async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatc
     if (Number(counted[0].n) >= MAX_REFUSALS) {
       await sql`UPDATE "KnightsVote" SET "labelled" = true WHERE "itemId" = ${only.itemId} AND "playerId" = ${only.playerId}`.execute(
         db
+      );
+      await logGaveUp(
+        args.log,
+        args.kind ?? 'rating',
+        only.itemId,
+        await keyedPrefix(db, only.playerId)
       );
       continue;
     }
