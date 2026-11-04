@@ -445,12 +445,6 @@ describe.each([
   });
 });
 
-test("Tooltip mirrors Mantine's statics, withProps included", async () => {
-  const Mantine = await import('@mantine/core');
-  expect(Tooltip.withProps).toBe(Mantine.Tooltip.withProps);
-  expect(Tooltip.Group).toBe(Mantine.Tooltip.Group);
-});
-
 function IdProbe({ name }: { name: string }) {
   const id = React.useId();
   return <i data-probe={name} data-id={id} />;

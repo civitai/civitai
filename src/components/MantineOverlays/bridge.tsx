@@ -16,26 +16,14 @@ import React, {
 import { flushSync } from 'react-dom';
 
 /**
- * Shared machinery for the closed-overlay fast path (see `./index.ts` for the contract).
- *
- * The problem it solves: a CLOSED Mantine overlay still runs its whole floating stack on every
- * render (floating-ui, `useStyles`, portals, transitions), and on the server none of that produces
- * any markup — a closed overlay's server HTML is just its trigger with a few attributes. So the
- * fast path renders that trigger itself, and mounts the real Mantine component only when the
- * trigger is first used.
- *
- * Mounting Mantine later must not remount the trigger (that would drop its focus, its state and
- * its DOM node in the middle of the interaction). So the trigger never moves: it stays where the
- * caller put it, and the real Mantine component mounts BESIDE it, with an `OverlaySlot` standing
- * where Mantine expects the trigger. Mantine clones the slot exactly as it would clone the trigger;
- * the slot reports what Mantine gave it (`setOut`), and the trigger applies those props and that
- * ref to the real element. The trigger's fiber, DOM node and state are untouched.
- *
- * "First used" is an event on the trigger node — pointer over/move/down, mouse over/down, touch
- * start, focus, click or key down — caught by a capturing listener on the node itself. That
- * listener runs before React's bubble-phase dispatch at the root, and arms with `flushSync`, so by
- * the time React dispatches that same event the trigger already carries Mantine's handlers: the
- * first hover, click, tap or key press is handled by Mantine exactly as it would have been.
+ * Shared machinery for the closed-overlay fast path; the contract is in `./index.ts`. Two
+ * invariants are not obvious from the code:
+ *  - The trigger never remounts when Mantine mounts (that would drop its focus, state and DOM node
+ *    mid-interaction). Mantine mounts BESIDE it and clones an `OverlaySlot` instead; the trigger
+ *    applies what the slot reports.
+ *  - The arming listener is a capturing listener on the trigger node, so it runs before React's
+ *    bubble-phase dispatch at the root: arming there (with `flushSync`) lets that same first event
+ *    reach Mantine's handlers.
  */
 
 export type AnyProps = Record<string, unknown>;
