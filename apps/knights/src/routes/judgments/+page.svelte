@@ -3,6 +3,7 @@
   import Thumbnail from './Thumbnail.svelte';
   import VerdictSeal from '$lib/VerdictSeal.svelte';
   import { count } from '$lib/format';
+  import PageNav from '$lib/PageNav.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -26,6 +27,7 @@
 </script>
 
 <div class="page-wide">
+  <PageNav />
   <header class="head">
     <div>
       <p class="eyebrow">Your record</p>

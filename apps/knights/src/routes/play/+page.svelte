@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { onMount, tick, untrack } from 'svelte';
+  import { applyAction, deserialize, enhance } from '$app/forms';
   import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
@@ -18,6 +19,14 @@
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { answerForKey, answerForKeyPress } from './keys';
+  import {
+    MAX_EXCLUDED,
+    createItemBuffer,
+    createVoteTracker,
+    describeOutcome,
+    refillCount,
+    type PickedItem,
+  } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
 
@@ -25,9 +34,19 @@
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
+  // What is on screen. Right after a vote it is the item fetched ahead (`local`), not what `load` returns, so the next
+  // image never waits for the vote to land; `local` is dropped whenever the page must show the server's own view.
+  let local = $state<PickedItem | null>(null);
+  let view = $derived.by((): PickedItem | null => {
+    if (data.mode !== 'queue') return null;
+    if (local) return local;
+    return data.item && data.question
+      ? { item: data.item, question: data.question, banner: data.banner }
+      : null;
+  });
   let yesNo = $derived(
     data.mode === 'queue'
-      ? data.question?.kind === 'bool'
+      ? view?.question.kind === 'bool'
       : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
@@ -40,9 +59,9 @@
   // The answer being sent, kept highlighted until the next item arrives.
   let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
-  let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
+  let imageFailed = $derived(!!view && failedItem === view.item.key);
   let reasonItem = $state<string | null>(null);
-  let choosingReason = $derived(!!data.item && reasonItem === data.item.id);
+  let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   // The guide and the rank-up come first; the daily recap waits behind them and opens once they are dismissed.
@@ -60,7 +79,7 @@
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
       return;
     }
-    if (dialogOpen || data.mode !== 'queue' || !data.item || submitting) return;
+    if (event.repeat || dialogOpen || !view || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable], header')) return;
@@ -69,8 +88,8 @@
       skipForm?.requestSubmit();
       return;
     }
-    if (imageFailed || !data.question) return;
-    const value = answerForKeyPress(data.question.options, event.key, yesNo);
+    if (imageFailed) return;
+    const value = answerForKeyPress(view.question.options, event.key, yesNo);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
@@ -79,6 +98,16 @@
     reasonItem = null;
     const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
     if (blocked) answers?.requestSubmit(blocked);
+  }
+
+  // The header owns the sound engine's setup, so the saved choice is read once it has run.
+  let soundMuted = $state(false);
+  onMount(() => {
+    void tick().then(() => (soundMuted = sound.muted));
+  });
+  function toggleSound() {
+    soundMuted = !soundMuted;
+    sound.setMuted(soundMuted);
   }
 
   function onApprenticeAnswer(correct: boolean) {
@@ -148,6 +177,238 @@
     };
   };
 
+  // The next items, fetched while this one is judged, so a vote can move on at once. All of them have their image requested
+  // into the browser cache; the first few are also decoded and held, and only a decoded head is swapped to, so a swap never
+  // shows a blank stage. Consuming one promotes the next downloaded item into the decoded window.
+  const buffer = createItemBuffer();
+  let buffered = $state(0);
+  let refilling = $state(false);
+  // Bumped whenever the buffer is thrown away, so a request still in flight cannot refill it afterwards.
+  let epoch = 0;
+  // The current item a refill came back empty for: ask again only once the item on screen changes.
+  let emptyFor: string | undefined;
+  // Holds each decoded image, by item key, so the browser keeps it ready until the item is shown.
+  const preloaded = new Map<string, HTMLImageElement>();
+  // The downloads under way, held only until they finish: the bytes then sit in the HTTP cache for the `<img>` that shows
+  // the same address, and no decoded bitmap is kept for the items still waiting.
+  const downloading = new Map<string, HTMLImageElement>();
+  let note = $state<string | null>(null);
+  let cooling = $state(false);
+  let noteTimer: ReturnType<typeof setTimeout> | undefined;
+  const tracker = createVoteTracker();
+  // A new image takes this long to be seen; an answer sooner than that is a stray press, not a judgment of it.
+  type FinishOptions = Parameters<Exclude<Awaited<ReturnType<SubmitFunction>>, void>>[0];
+  const SETTLE_MS = 250;
+  const NOTE_MS = 5000;
+
+  const JUDGED_NOTICE = 'You have already judged this one.';
+  const syncBuffer = () => {
+    buffered = buffer.size;
+    decodeAhead();
+  };
+  function dropBuffered(key: string) {
+    buffer.drop(key);
+    preloaded.delete(key);
+    downloading.delete(key);
+    syncBuffer();
+  }
+  function clearBuffer() {
+    epoch += 1;
+    buffer.clear();
+    preloaded.clear();
+    downloading.clear();
+    syncBuffer();
+  }
+
+  // Requests the image at its display address, at low priority, so the browser caches exactly what the stage will ask for.
+  function download(entry: PickedItem, mine: number) {
+    const key = entry.item.key;
+    const image = new Image();
+    image.fetchPriority = 'low';
+    image.onload = () => downloading.delete(key);
+    image.onerror = () => {
+      downloading.delete(key);
+      if (mine !== epoch) return;
+      tracker.avoid(entry.item.id);
+      dropBuffered(key);
+    };
+    downloading.set(key, image);
+    image.src = entry.item.src;
+  }
+
+  // Decodes the items at the front of the buffer that are not yet ready, so the image is a bitmap by the time it is shown.
+  // One that will not decode is left out of the next requests instead of being offered again.
+  function decodeAhead() {
+    const mine = epoch;
+    for (const entry of buffer.toDecode()) {
+      const key = entry.item.key;
+      const image = new Image();
+      image.src = entry.item.src;
+      void image
+        .decode()
+        .then(() => {
+          if (mine !== epoch || !buffer.markDecoded(key)) return;
+          preloaded.set(key, image);
+        })
+        .catch(() => {
+          if (mine !== epoch) return;
+          tracker.avoid(entry.item.id);
+          dropBuffered(key);
+        });
+    }
+  }
+
+  // Primitives, so reloading the page data after a vote (same item, same flags) does not re-run the refill and drop
+  // items that are already loaded. The key, not the token: the token is sealed afresh each time an item is served.
+  let currentKey = $derived(view?.item.key);
+  let paused = $derived(Boolean(data.lockoutSeconds || data.muted || data.resetPending));
+
+  // The server's feed can land on a buffered item (after a plain form post): it is on screen now, not ahead. It can
+  // also land on one already judged whose vote is still in flight: that is not shown again, the buffered item is.
+  $effect(() => {
+    const key = currentKey;
+    if (!key) return;
+    untrack(() => {
+      dropBuffered(key);
+      if (local || !tracker.has(key)) return;
+      const next = buffer.next();
+      if (!next) return;
+      preloaded.delete(next.item.key);
+      local = next;
+      syncBuffer();
+    });
+  });
+
+  $effect(() => {
+    const current = currentKey;
+    void buffered;
+    if (!current || paused || refilling || emptyFor === current) return;
+    if (untrack(() => buffer.needsRefill())) void refill(current);
+  });
+
+  async function refill(current: string) {
+    const mine = epoch;
+    refilling = true;
+    let added = 0;
+    try {
+      const shown = untrack(() => view?.item.id) ?? '';
+      const after = [...tracker.excluded(shown), ...buffer.tokens()]
+        .slice(-MAX_EXCLUDED)
+        .map((token) => `after=${encodeURIComponent(token)}`);
+      const count = refillCount(buffer.size);
+      const response = await fetch(`/play/next?count=${count}&${after.join('&')}`, {
+        headers: { accept: 'application/json' },
+      });
+      const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
+      for (const entry of body?.items ?? []) {
+        if (mine !== epoch) return;
+        if (buffer.enqueue(entry, (key) => tracker.has(key) || key === currentKey)) {
+          download(entry, mine);
+          added += 1;
+        }
+      }
+      if (added) syncBuffer();
+    } catch {
+      // Nothing buffered for this round; the vote falls back to the form post.
+    } finally {
+      if (mine === epoch) {
+        if (!added) emptyFor = current;
+        refilling = false;
+      }
+    }
+  }
+
+  // The server's own view wins whenever it has something to say instead of an item.
+  $effect(() => {
+    if (paused) {
+      local = null;
+      clearBuffer();
+      refilling = false;
+    }
+  });
+
+  function tell(message: string) {
+    note = message;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => (note = null), NOTE_MS);
+  }
+
+  async function post(action: URL, body: FormData, key: string) {
+    let outcome = describeOutcome(null);
+    let reached = false;
+    try {
+      const response = await fetch(action, {
+        method: 'POST',
+        body,
+        headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+      });
+      reached = true;
+      const result = deserialize(await response.text());
+      outcome = describeOutcome(result);
+      if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
+    } catch {
+      // Keeps the lost-connection notice.
+    }
+    tracker.settle();
+    if (!reached) tracker.release(key);
+    if (!outcome.ok) {
+      tell(outcome.message);
+      dropBuffered(key);
+      if (outcome.resync) {
+        local = null;
+        clearBuffer();
+        refilling = false;
+      }
+    }
+    // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+    await invalidate('app:play').catch(() => {});
+  }
+
+  // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
+  // as sent from here on, so a reload that serves it again (its vote still in flight) is not posted a second time.
+  const submitAndResync = (input: Parameters<SubmitFunction>[0], key: string, token: string): ReturnType<SubmitFunction> => {
+    tracker.claim(key, token);
+    const finish = submit(input) as (options: FinishOptions) => Promise<void>;
+    return async (options) => {
+      await finish(options);
+      local = null;
+      tracker.settle();
+      const { result } = options;
+      const settled = result.type === 'success' || (result.type === 'failure' && result.status === 409);
+      if (!settled) tracker.release(key);
+    };
+  };
+
+  // A vote or a skip moves on at once to the item buffered ahead and posts in the background. Without that item (or without
+  // JS) the form posts and the page reloads as before. An item already sent is never posted again, whatever token it
+  // came back with: the notice says so, and the page is read again if nothing is left in flight to do it.
+  const submitJudgment: SubmitFunction = (input) => {
+    const shown = view;
+    const token = String(input.formData.get('item') ?? '');
+    if (!shown || !token) return submit(input);
+    const key = shown.item.key;
+    if (tracker.has(key)) {
+      input.cancel();
+      tell(JUDGED_NOTICE);
+      if (!tracker.pending) void invalidate('app:play');
+      return;
+    }
+    const next = buffer.peek();
+    if (!next) return submitAndResync(input, key, token);
+    input.cancel();
+    if (cooling || !tracker.claim(key, token)) return;
+    const answer = answerOf(input.submitter);
+    if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
+    blockReason = null;
+    if (answer) sound.play('press');
+    local = buffer.next();
+    preloaded.delete(next.item.key);
+    syncBuffer();
+    cooling = true;
+    setTimeout(() => (cooling = false), SETTLE_MS);
+    void post(input.action, input.formData, key);
+  };
+
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
   let hearts = $derived(heartsLeft(data.status));
   let formMessage = $derived(
@@ -175,7 +436,7 @@
     onclick={asksReason && option.value === BLOCKED_ANSWER
       ? (event) => {
           event.preventDefault();
-          reasonItem = data.item?.id ?? null;
+          reasonItem = view?.item.key ?? null;
         }
       : undefined}
   >
@@ -183,6 +444,12 @@
     {#if blocked}<span class="ban"><Icon name="ban" size={20} /></span>{/if}
     <span class="level">{option.label}</span>
     <kbd class="key" aria-hidden="true">{index + 1}</kbd>
+  </button>
+{/snippet}
+
+{#snippet soundToggle()}
+  <button type="button" class="quiet sound" aria-label="Sound" aria-pressed={!soundMuted} onclick={toggleSound}>
+    <Icon name={soundMuted ? 'volume-x' : 'volume-2'} size={14} />{soundMuted ? 'Sound off' : 'Sound on'}
   </button>
 {/snippet}
 
@@ -280,6 +547,7 @@
           {#if !yesNo}
             <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
           {/if}
+          {@render soundToggle()}
         </div>
         {#if formMessage}
           <p class="notice flat" role="alert">{formMessage}</p>
@@ -320,38 +588,41 @@
         <p class="muted">Judging resumes by itself.</p>
       </section>
     </div>
-  {:else if data.item && data.question}
+  {:else if view}
     <div class="column">
-      {#if data.banner}
-        <p class="banner" role="status">New questions: {data.banner.heading}</p>
+      {#if view.banner}
+        <p class="banner" role="status">New questions: {view.banner.heading}</p>
       {/if}
-      <p class="question" title={data.question.prompt}>
+      <p class="question" title={view.question.prompt}>
         <span class="eyebrow">Question ·</span>
-        <span class="text">{data.question.prompt}</span>
+        <span class="text">{view.question.prompt}</span>
       </p>
       <div class="stagewrap">
-        {#key data.item.id}
-          {@const itemId = data.item.id}
+        {#key view.item.key}
+          {@const itemKey = view.item.key}
           <ImageStage
-            src={data.item.src}
-            width={data.item.width}
-            height={data.item.height}
+            src={view.item.src}
+            width={view.item.width}
+            height={view.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
-            onfail={() => (failedItem = itemId)}
+            onfail={() => (failedItem = itemKey)}
           />
         {/key}
         {@render levelToast(true)}
+        {#if note}
+          <p class="nudge" role="status">{note}</p>
+        {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
-        <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
-          <input type="hidden" name="item" value={data.item.id} />
-          {#each data.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(data.question.key))}
+        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
+          <input type="hidden" name="item" value={view.item.id} />
+          {#each view.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed, asksBlockReason(view.question.key))}
           {/each}
         </form>
-        <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
-          <input type="hidden" name="item" value={data.item.id} />
+        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
+          <input type="hidden" name="item" value={view.item.id} />
           <button type="submit" class="quiet" disabled={submitting}>
             Skip<span class="space">&nbsp;·&nbsp;Space</span>
           </button>
@@ -359,6 +630,7 @@
         {#if !yesNo}
           <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
         {/if}
+        {@render soundToggle()}
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
@@ -457,6 +729,24 @@
     grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     flex: 1 1 0;
     min-height: 0;
+  }
+
+  /* A refused or lost vote, over the stage so it never moves the pills. */
+  .nudge {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    z-index: 4;
+    max-width: calc(100% - 2rem);
+    margin: 0;
+    padding: 8px 14px;
+    transform: translateX(-50%);
+    border: 1px solid var(--io-crimson);
+    border-radius: 8px;
+    background: #14110dee;
+    color: var(--io-parchment);
+    font: 400 13px/1.3 var(--io-font-ui);
+    text-align: center;
   }
 
   .column {
@@ -655,6 +945,14 @@
   .quiet.guide:hover:not(:disabled) {
     color: var(--io-parchment);
   }
+  .quiet.sound {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .quiet.sound :global(svg) {
+    color: var(--io-gold);
+  }
 
   kbd {
     font-family: inherit;
@@ -720,7 +1018,8 @@
       min-width: 56px;
       min-height: 44px;
     }
-    .quiet.guide {
+    .quiet.guide,
+    .controls.yesno .quiet.sound {
       margin-left: auto;
     }
     .space {

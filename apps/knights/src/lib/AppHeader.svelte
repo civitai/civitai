@@ -5,6 +5,7 @@
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import RecapButton from './RecapButton.svelte';
+  import RestartCareerDialog from './RestartCareerDialog.svelte';
   import { count } from './format';
   import { rankPill } from './chrome';
   import { tween } from './motion';
@@ -19,6 +20,7 @@
     userId = null,
     civitaiUrl,
     conversionOpen,
+    isPlayer = false,
     status,
     streak,
     recapUnseen = false,
@@ -28,6 +30,8 @@
     userId?: number | null;
     civitaiUrl: string;
     conversionOpen: boolean;
+    /** Whether the viewer has a career, and so can restart it. */
+    isPlayer?: boolean;
     status?: PlayerStatus;
     streak?: Streak;
     /** Today's recap has not been seen: the recap button wears a dot. */
@@ -35,6 +39,7 @@
   } = $props();
 
   let open = $state(false);
+  let restarting = $state(false);
   let wrapper = $state<HTMLElement>();
   let trigger = $state<HTMLButtonElement>();
   let panel = $state<HTMLElement>();
@@ -76,17 +81,12 @@
 
   afterNavigate(() => close());
 
-  // Sound stays silent until the first click or key press, and the choice to mute is remembered per player.
-  let muted = $state(false);
+  // Sound stays silent until the first click or key press, and the choice to mute is remembered per player. The toggle
+  // itself sits with the play controls, since sounds only play while judging.
   onMount(() => {
     sound.attach(window);
     sound.setPlayer(userId);
-    muted = sound.muted;
   });
-  function toggleSound() {
-    muted = !muted;
-    sound.setMuted(muted);
-  }
 
   // What a vote just earned floats up from its chip and the gold counter ticks to its new value. Ambient only: nothing
   // here waits on, or blocks, the next answer.
@@ -193,19 +193,21 @@
               <Icon name={link.icon} size={18} />{link.label}
             </a>
           {/each}
-          <button
-            type="button"
-            class="sound"
-            role="switch"
-            aria-checked={!muted}
-            aria-label="Sound"
-            onclick={toggleSound}
-          >
-            <Icon name={muted ? 'volume-x' : 'volume-2'} size={18} />Sound
-            <span class="state">{muted ? 'Off' : 'On'}</span>
-          </button>
           <hr />
           <a href={civitaiUrl}><Icon name="arrow-left" size={18} />Back to Civitai</a>
+          {#if isPlayer}
+            <button
+              type="button"
+              class="restart"
+              onclick={() => {
+                // Focus goes back to the trigger first: the dialog returns focus to whatever opened it, and this item unmounts.
+                close(true);
+                restarting = true;
+              }}
+            >
+              <Icon name="rotate-ccw" size={18} />Restart career…
+            </button>
+          {/if}
           <a class="out" href="/logout" data-sveltekit-reload>
             <Icon name="log-out" size={18} />Sign out
           </a>
@@ -214,6 +216,10 @@
     </div>
   {/if}
 </header>
+
+{#if restarting}
+  <RestartCareerDialog onclose={() => (restarting = false)} />
+{/if}
 
 <style>
   header {
@@ -350,34 +356,7 @@
     font: 600 15px/1.2 var(--io-font-ui);
     text-decoration: none;
   }
-  nav a :global(svg),
-  nav .sound :global(svg) {
-    color: var(--io-gold);
-  }
-  nav .sound {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    min-height: 44px;
-    padding: 0 12px;
-    border: 0;
-    border-radius: 6px;
-    background: none;
-    color: var(--io-parchment);
-    font: 600 15px/1.2 var(--io-font-ui);
-    text-align: left;
-  }
-  nav .sound:hover:not(:disabled) {
-    background: var(--io-bg);
-  }
-  nav .sound .state {
-    margin-left: auto;
-    color: var(--io-parchment-muted);
-    font-size: 12px;
-    font-weight: 400;
-  }
-  nav .sound[aria-checked='true'] .state {
+  nav a :global(svg) {
     color: var(--io-gold);
   }
   nav a:hover,
@@ -402,6 +381,24 @@
     font-size: 12px;
     font-weight: 400;
   }
+  nav .restart {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: flex-start;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    font: 600 15px/1.2 var(--io-font-ui);
+    text-align: left;
+  }
+  nav .restart:hover:not(:disabled) {
+    background: var(--io-bg);
+  }
+  nav .restart,
+  nav .restart :global(svg),
   nav .out,
   nav .out :global(svg) {
     color: var(--io-crimson-text);

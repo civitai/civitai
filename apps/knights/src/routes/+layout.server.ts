@@ -23,11 +23,20 @@ async function recapUnseen(playerId: number | undefined): Promise<boolean> {
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
   depends('app:recap');
   const civitaiUrl = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
+  // Only a player has a career to restart, which the account menu offers.
+  const player = locals.user
+    ? await db
+        .selectFrom('NewOrderPlayer')
+        .select('userId')
+        .where('userId', '=', locals.user.id)
+        .executeTakeFirst()
+    : undefined;
   return {
     civitaiUrl,
     // Keys the player's own sound setting in the browser; never shown.
     userId: locals.user?.id ?? null,
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
+    isPlayer: player !== undefined,
     conversionOpen: conversionEnabled(),
     recapUnseen: await recapUnseen(locals.user?.id),
   };

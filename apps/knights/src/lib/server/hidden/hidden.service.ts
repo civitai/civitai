@@ -89,11 +89,13 @@ export async function pickHiddenCheck(
     rate: number;
     /** Reference ids the player has skipped. */
     exclude?: number[];
+    /** Rolls for an item the player has not reached yet; unset, the roll is fixed by their last vote. */
+    slot?: number;
   }
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
   const digest = createHash('sha256')
-    .update(`${input.secret}:hidden:${input.userId}:${await slotOf(db, input.userId)}`)
+    .update(`${input.secret}:hidden:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`)
     .digest();
 
   const { low, top } = await db
