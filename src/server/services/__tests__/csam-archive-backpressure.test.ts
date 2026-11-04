@@ -124,14 +124,19 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
 }));
 
 const getObjectKeys: string[] = [];
+// Every key storage was asked about, by HEAD or GET: an archive read starts with a HEAD that sizes
+// its byte reservation.
+const requestedKeys = new Set<string>();
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getImageUploadBackend: async () => ({
     bucket: 'test-images',
     backend: 'backblaze',
     s3: {
-      send: (command: { input: { Key: string } }) => {
-        getObjectKeys.push(command.input.Key);
+      // A HEAD answers with the same headers (and errors) as the GET; its body is never read.
+      send: (command: { constructor: { name: string }; input: { Key: string } }) => {
+        requestedKeys.add(command.input.Key);
+        if (command.constructor.name === 'GetObjectCommand') getObjectKeys.push(command.input.Key);
         return mockGetObject(command.input.Key);
       },
     },
@@ -250,6 +255,7 @@ beforeEach(() => {
   uploads.clear();
   uploadFailure = undefined;
   getObjectKeys.length = 0;
+  requestedKeys.clear();
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async () => fakeBlob(IMAGE_BYTES);
@@ -1111,7 +1117,11 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
       new Promise((resolve) => setTimeout(() => resolve('HUNG'), 5_000)),
     ]);
 
-    expect(outcome).toBe('synthetic storage outage');
+    // The failure names the object (by image id, never its key) and keeps storage's own message.
+    expect(outcome).toBe(
+      'stored original read failed for image 2 (backend backblaze, ContentLength unknown, ' +
+        'attempt 1/3): synthetic storage outage'
+    );
     // The readers parked on the budget are refused rather than granted once the archive fails.
     const readAtFailure = bodiesRead;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1156,8 +1166,8 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     // Let any read still queued behind the concurrency limit start, if it is going to.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(getObjectKeys.length).toBeGreaterThan(1);
-    expect(getObjectKeys.length).toBeLessThanOrEqual(10);
+    expect(requestedKeys.size).toBeGreaterThan(1);
+    expect(requestedKeys.size).toBeLessThanOrEqual(10);
   });
 });
 

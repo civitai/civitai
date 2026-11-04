@@ -42,6 +42,12 @@ function edgeResponding(
 
 const image = { url: 'stored-key-uuid', type: 'image' as const, mimeType: 'image/png' };
 
+const getCount = (s3: { send: { mock: { calls: unknown[][] } } }) =>
+  s3.send.mock.calls.filter(([command]) => command instanceof GetObjectCommand).length;
+
+/** What Node raises when a response is cut off mid-body. */
+const connectionReset = () => Object.assign(new Error('aborted'), { code: 'ECONNRESET' });
+
 describe('readOriginalImage', () => {
   it('reads the stored object under Image.url from the upload bucket, with its sha256', async () => {
     const data = Buffer.from('the uploaded bytes');
@@ -326,9 +332,9 @@ describe('readOriginalImage', () => {
     expect(object.Body.destroy).toHaveBeenCalled();
   });
 
-  it('frees the socket when the reservation is refused', async () => {
+  it('opens no body when the reservation is refused', async () => {
     const object = storedObject(Buffer.alloc(10));
-    const { backend } = backendReturning(async () => object);
+    const { s3, backend } = backendReturning(async () => object);
 
     await expect(
       readOriginalImage(image, {
@@ -337,7 +343,7 @@ describe('readOriginalImage', () => {
       })
     ).rejects.toThrow('archive failed');
     expect(object.Body.transformToByteArray).not.toHaveBeenCalled();
-    expect(object.Body.destroy).toHaveBeenCalled();
+    expect(getCount(s3)).toBe(0);
   });
 
   it('prefers the stored object content type over the row, and the row over octet-stream', async () => {
@@ -352,6 +358,221 @@ describe('readOriginalImage', () => {
     await expect(
       readOriginalImage({ url: 'k', type: 'video', mimeType: 'video/mp4' }, octet)
     ).resolves.toMatchObject({ contentType: 'video/mp4' });
+  });
+});
+
+describe('readOriginalImage on a dropped connection', () => {
+  const stored = { ...image, id: 4242 };
+  const data = Buffer.alloc(10, 7);
+
+  /** Every GET answers with a fresh body; the bodies' reads fail per `outcomes`, then succeed. */
+  function flakyBodies(outcomes: (() => Error)[]) {
+    let reads = 0;
+    const { s3, backend } = backendReturning(async () => {
+      const object = storedObject(data);
+      object.Body.transformToByteArray.mockImplementation(async () => {
+        const fail = outcomes[reads++];
+        if (fail) throw fail();
+        return new Uint8Array(data);
+      });
+      return object;
+    });
+    return { s3, backend: { ...backend, backend: 'backblaze' } };
+  }
+
+  it.each([
+    ['ECONNRESET mid-body', connectionReset],
+    ['a bare "aborted"', () => new Error('aborted')],
+    ['a socket hang up', () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })],
+    ['ETIMEDOUT', () => Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' })],
+    ['a reset wrapped as a cause', () => new Error('stream failed', { cause: connectionReset() })],
+  ])('re-issues the GET after %s and returns the image', async (_, error) => {
+    const { s3, backend } = flakyBodies([error]);
+    const sleep = vi.fn(async () => undefined);
+
+    const read = await readOriginalImage(stored, { backend, sleep });
+
+    expect(read).toMatchObject({ source: 'original', sha256: sha256(data) });
+    expect(getCount(s3)).toBe(2);
+    expect(sleep.mock.calls).toEqual([[2000]]);
+  });
+
+  it('throws after 3 attempts, naming the image, backend, length and attempt', async () => {
+    const { s3, backend } = flakyBodies([connectionReset, connectionReset, connectionReset]);
+    const sleep = vi.fn(async () => undefined);
+
+    const error = await readOriginalImage(stored, { backend, sleep }).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      'stored original read failed for image 4242 (backend backblaze, ContentLength 10, attempt 3/3): aborted'
+    );
+    expect((error as Error & { code?: string }).code).toBe('ECONNRESET');
+    expect((error as Error).message).not.toContain(stored.url);
+    expect(getCount(s3)).toBe(3);
+    expect(sleep.mock.calls).toEqual([[2000], [8000]]);
+  });
+
+  it("gives each failed attempt's reservation back before taking the next", async () => {
+    const { backend } = flakyBodies([connectionReset, connectionReset, connectionReset]);
+    let held = 0;
+    let peakHeld = 0;
+    const reserve = vi.fn(async () => {
+      held += 1;
+      peakHeld = Math.max(peakHeld, held);
+      return () => {
+        held -= 1;
+      };
+    });
+
+    await expect(
+      readOriginalImage(stored, { backend, reserve, sleep: async () => undefined })
+    ).rejects.toThrow('attempt 3/3');
+
+    expect(reserve.mock.calls).toEqual([[10], [10], [10]]);
+    expect(peakHeld).toBe(1);
+    expect(held).toBe(0);
+  });
+
+  it('holds exactly one reservation once a retry succeeds', async () => {
+    const { backend } = flakyBodies([connectionReset]);
+    let held = 0;
+    const reserve = vi.fn(async () => {
+      held += 1;
+      return () => {
+        held -= 1;
+      };
+    });
+
+    const read = await readOriginalImage(stored, {
+      backend,
+      reserve,
+      sleep: async () => undefined,
+    });
+
+    expect(held).toBe(1);
+    if (read.source === 'missing') throw new Error('unreachable');
+    read.release();
+    expect(held).toBe(0);
+  });
+
+  it.each([
+    ['a server error the SDK already retried', 'InternalError', 500],
+    ['denied access', 'AccessDenied', 403],
+  ])('does not retry %s', async (_, name, httpStatusCode) => {
+    const { s3, backend } = backendReturning(storageError(name, httpStatusCode));
+    const sleep = vi.fn(async () => undefined);
+
+    await readOriginalImage(stored, { backend, sleep, fetchImpl: edgeResponding(404) }).catch(
+      () => undefined
+    );
+
+    expect(getCount(s3)).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('still falls back to the edge for a missing key, without retrying', async () => {
+    const { s3, backend } = backendReturning(missingKey);
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      readOriginalImage(stored, { backend, sleep, fetchImpl: edgeResponding(404) })
+    ).resolves.toEqual({ source: 'missing', reason: 'edge 404' });
+    expect(getCount(s3)).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('does not retry its own read timeout', async () => {
+    const timeout = () =>
+      Object.assign(new Error('aborted'), { name: 'TimeoutError', code: 'ECONNRESET' });
+    const { s3, backend } = flakyBodies([timeout]);
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(readOriginalImage(stored, { backend, sleep })).rejects.toThrow('attempt 1/3');
+    expect(getCount(s3)).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('passes a refused reservation through as is, without retrying, even if it reads like a reset', async () => {
+    // A failed archive rejects every reservation with the error that failed it.
+    const refusal = connectionReset();
+    const { s3, backend } = flakyBodies([]);
+    const sleep = vi.fn(async () => undefined);
+
+    const error = await readOriginalImage(stored, {
+      backend,
+      sleep,
+      reserve: () => Promise.reject(refusal),
+    }).catch((e: unknown) => e);
+
+    expect(error).toBe(refusal);
+    expect(getCount(s3)).toBe(0);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('reserves before the GET is issued, so no response idles on a socket waiting for budget', async () => {
+    const { s3, backend } = flakyBodies([]);
+    let getsAtReserve: number | undefined;
+    const reserve = vi.fn(async () => {
+      getsAtReserve = getCount(s3);
+      return () => undefined;
+    });
+
+    await readOriginalImage(stored, { backend, reserve });
+
+    expect(getsAtReserve).toBe(0);
+    expect(s3.send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+    expect(s3.send.mock.calls[0][0].input).toEqual({ Bucket: BUCKET, Key: stored.url });
+  });
+
+  it('reserves after the GET headers when the HEAD finds nothing, as before', async () => {
+    const { s3, backend } = backendReturning(async (command) => {
+      if (command instanceof HeadObjectCommand)
+        throw Object.assign(new Error('NotFound'), { name: 'NotFound' });
+      return storedObject(data);
+    });
+    const reserve = vi.fn(async () => () => undefined);
+
+    await expect(readOriginalImage(stored, { backend, reserve })).resolves.toMatchObject({
+      source: 'original',
+    });
+    expect(reserve.mock.calls).toEqual([[10]]);
+    expect(getCount(s3)).toBe(1);
+  });
+
+  it('tops the reservation up when the GET declares more than the HEAD did', async () => {
+    const { backend } = backendReturning(async (command) =>
+      command instanceof HeadObjectCommand ? { ContentLength: 4 } : storedObject(data)
+    );
+    let held = 0;
+    const reserve = vi.fn(async (bytes: number) => {
+      held += bytes;
+      return () => {
+        held -= bytes;
+      };
+    });
+
+    const read = await readOriginalImage(stored, { backend, reserve });
+
+    expect(reserve.mock.calls).toEqual([[4], [10]]);
+    expect(held).toBe(10);
+    if (read.source === 'missing') throw new Error('unreachable');
+    read.release();
+    expect(held).toBe(0);
+  });
+
+  it('records a stored object the HEAD finds over the cap as missing, without a GET', async () => {
+    const { s3, backend } = backendReturning(async () => ({
+      ContentLength: MAX_ORIGINAL_IMAGE_BYTES + 1,
+    }));
+    const reserve = vi.fn(async () => () => undefined);
+
+    await expect(readOriginalImage(stored, { backend, reserve })).resolves.toEqual({
+      source: 'missing',
+      reason: 'exceeds the size cap',
+    });
+    expect(getCount(s3)).toBe(0);
+    expect(reserve).not.toHaveBeenCalled();
   });
 });
 
