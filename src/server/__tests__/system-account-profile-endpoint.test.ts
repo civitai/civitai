@@ -190,6 +190,11 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(wrote()).toBe(0);
   });
 
+  it('admits a name with an emoji', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'Agent \u2764\uFE0F' });
+    expect(status).toBe(200);
+  });
+
   it('admits a name of only digits as long as the reserved one', async () => {
     const { status } = await call({ userId: SYSTEM_ID, name: '23456789023456789' });
     expect(status).toBe(200);

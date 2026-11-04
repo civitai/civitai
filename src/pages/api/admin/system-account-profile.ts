@@ -59,7 +59,11 @@ const schema = z
     name: displayName
       .min(1)
       .refine(
-        (value) => !/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(value),
+        // Variation selectors are exempt: emoji need them.
+        (value) =>
+          !/[\p{Cc}\p{Cf}]|(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])\p{Default_Ignorable_Code_Point}/u.test(
+            value
+          ),
         'name may not hold control, format or invisible characters'
       )
       .refine(
