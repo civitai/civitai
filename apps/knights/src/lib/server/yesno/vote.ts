@@ -90,6 +90,7 @@ export async function castYesNoVote(
           imageId: item.imageId,
           stage: item.minRank,
           options: [...YESNO_ANSWERS],
+          ownJudgmentRule: true,
         }
       );
       if (vote.status === 'rejected') return rejected(vote.reason);

@@ -9,7 +9,7 @@ import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { RANKS, type Rank } from '../ranks';
-import { creditVote, insertVote } from './vote-record';
+import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
 import { FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
   decideChoice,
@@ -20,6 +20,8 @@ import {
   type WeightedAnswer,
   type WritebackDecision,
 } from './resolution';
+
+export { lockPlayerVoting };
 
 export type ConsensusApplication = {
   questionKey: string;
@@ -282,14 +284,6 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
   sql` `
 )} ELSE 0 END`;
 
-/** First key of the per-player advisory lock that serialises a player's paced votes. */
-const VOTE_PACING_LOCK_NAMESPACE = 7_301;
-
-/** Held to the end of the transaction; taking it again in the same transaction is free. */
-export async function lockPlayerVoting(trx: Transaction<DB>, userId: number): Promise<void> {
-  await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${userId})`.execute(trx);
-}
-
 /**
  * When a paced player may answer again, or null. Pacing must hold across parallel requests, so one player's answers queue on an
  * advisory lock before they count the ledger. Take it ahead of every row lock; nothing else waits on it while holding a lock of
@@ -328,6 +322,8 @@ export async function castVote(
           result: { status: 'rejected', reason } as const,
         });
 
+        // Ahead of every row lock, so a player's votes always queue in one order (see `insertVote`).
+        await lockPlayerVoting(trx, input.userId);
         const until = await pacingGate(trx, input, now, deps);
         if (until) return { result: { status: 'limited', until } as const };
 

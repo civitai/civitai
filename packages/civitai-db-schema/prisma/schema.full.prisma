@@ -8105,6 +8105,7 @@ model KnightsVote {
 
   @@id([itemId, playerId, createdAt])
   @@index([playerId, createdAt])
+  @@index([playerId, imageId])
   @@index([itemId, stage])
 }
 

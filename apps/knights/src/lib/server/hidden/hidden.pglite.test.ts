@@ -119,6 +119,17 @@ describe('serving a hidden check', () => {
     expect(await pick(2)).toBeNull();
   });
 
+  it('finds the one check left whichever end of the pool the start point falls on', async () => {
+    const ids: number[] = [];
+    for (let i = 10; i < 20; i++) ids.push(await reference(i));
+    for (let user = 1; user <= 6; user++) {
+      await seedPlayer(pg, user);
+      const left = ids[(user * 3) % ids.length];
+      for (const id of ids) if (id !== left) await answer(user, id, '4');
+      expect((await pick(user))?.referenceId).toBe(left);
+    }
+  });
+
   it('is never queued, and a player who voted the image is not offered it', async () => {
     await seedPlayer(pg, 1);
     await seedPlayer(pg, 2);
