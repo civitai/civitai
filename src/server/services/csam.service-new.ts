@@ -1565,8 +1565,12 @@ async function reportPreservedEvidence(claim: SendClaim) {
   if (!files.length)
     return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
 
+  // Each file is read again for its upload, so a send holds at most the two files in flight.
   const reads = await Limiter({ batchSize: 1, limit: 2 }).process(files, ([file]) =>
-    readVerifiedEvidence(file.blob, readEvidenceObject, sha256Hex).then((read) => ({ file, read }))
+    readVerifiedEvidence(file.blob, readEvidenceObject, sha256Hex).then((read) => ({
+      file,
+      read: read.ok ? { ok: true as const } : read,
+    }))
   );
   const mismatched = reads.filter(({ read }) => !read.ok && read.shaMismatch);
   if (mismatched.length)
@@ -1599,7 +1603,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
   const toSend = reads.flatMap(({ file, read }) => {
     if (!read.ok) return [];
     const viewedByEsp = viewed.has(file.blob.blobId);
-    return [{ file, read, viewedByEsp, fileDetails: evidenceFileDetails(file, viewedByEsp) }];
+    return [{ file, viewedByEsp, fileDetails: evidenceFileDetails(file, viewedByEsp) }];
   });
   const cyberTip = {
     ...initialReport,
@@ -1621,7 +1625,10 @@ async function reportPreservedEvidence(claim: SendClaim) {
   let sending: ReturnType<typeof sendEach> | undefined;
   await sendCyberTip(claim, cyberTip, {
     sendFiles: async (reportId) => {
-      sending = sendEach(toSend, async ({ file, read, viewedByEsp, fileDetails }) => {
+      sending = sendEach(toSend, async ({ file, viewedByEsp, fileDetails }) => {
+        const read = await readVerifiedEvidence(file.blob, readEvidenceObject, sha256Hex);
+        if (!read.ok)
+          throw new Error(`preserved file ${file.blob.blobId} failed its re-read: ${read.reason}`);
         const bytes = read.bytes as Uint8Array<ArrayBuffer>;
         const {
           data: { fileId, hash },

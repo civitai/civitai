@@ -61,6 +61,8 @@ const report = (sha256 = sha) => ({
   },
 });
 
+let served: { headers: Record<string, string>; body?: Buffer };
+
 async function get() {
   const req = Object.assign(new EventEmitter(), {
     method: 'GET',
@@ -77,13 +79,18 @@ async function get() {
       res.statusCode = code;
       return res;
     },
-    writeHead(code: number) {
+    writeHead(code: number, headers: Record<string, string> = {}) {
       res.statusCode = code;
+      for (const [name, value] of Object.entries(headers)) res.headers[name.toLowerCase()] = value;
       return res;
     },
     json: () => res,
-    end: () => res,
+    end: (body?: Buffer) => {
+      served.body = body;
+      return res;
+    },
   });
+  served = { headers: res.headers };
   await handler(req, res as unknown as NextApiResponse);
   return res.statusCode;
 }
@@ -114,6 +121,14 @@ describe('generator evidence file route', () => {
 
   it("serves the file to a moderator and records that moderator's view of it", async () => {
     expect(await get()).toBe(200);
+    expect(served.body?.equals(bytes)).toBe(true);
+    expect(served.headers).toMatchObject({
+      'content-type': 'image/png',
+      'content-length': String(bytes.length),
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "sandbox; default-src 'none'",
+      'cache-control': 'private, no-store',
+    });
     expect(trackModActivity).toHaveBeenCalledWith(5, {
       entityType: 'csamReport',
       entityId: 3,
@@ -124,6 +139,7 @@ describe('generator evidence file route', () => {
   it('serves nothing and records no view when the copy no longer matches its sha256', async () => {
     dbMock.dbRead.csamReport.findFirst.mockResolvedValue(report('f'.repeat(64)) as never);
     expect(await get()).toBe(502);
+    expect(served.body).toBeUndefined();
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 });

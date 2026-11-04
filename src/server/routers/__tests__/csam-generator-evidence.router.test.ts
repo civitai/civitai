@@ -8,12 +8,16 @@ const {
   preserveGeneratorEvidence,
   approveGeneratorEvidenceReport,
   getEvidenceTriggers,
+  getEvidenceWorkflows,
+  getGeneratorEvidenceReport,
   recopyGeneratorEvidenceFile,
   excludeGeneratorEvidenceFile,
 } = vi.hoisted(() => ({
   preserveGeneratorEvidence: vi.fn(async () => ({ reportId: 1, refused: [], counts: {} })),
   approveGeneratorEvidenceReport: vi.fn(async () => ({ approved: true })),
   getEvidenceTriggers: vi.fn(async () => []),
+  getEvidenceWorkflows: vi.fn(async () => ({ items: [] })),
+  getGeneratorEvidenceReport: vi.fn(async () => null),
   recopyGeneratorEvidenceFile: vi.fn(async () => ({ status: 'preserved' })),
   excludeGeneratorEvidenceFile: vi.fn(async () => ({ version: 'v' })),
 }));
@@ -23,6 +27,9 @@ vi.mock(
     ...(await importOriginal<typeof EvidenceService>()),
     preserveGeneratorEvidence,
     approveGeneratorEvidenceReport,
+    getEvidenceTriggers,
+    getEvidenceWorkflows,
+    getGeneratorEvidenceReport,
     recopyGeneratorEvidenceFile,
     excludeGeneratorEvidenceFile,
   })
@@ -73,6 +80,8 @@ describe('generator evidence procedures', () => {
       expect(await codeOf(refused.getGeneratorEvidenceReport({ userId: 7 }))).toBe('FORBIDDEN');
     }
     expect(getEvidenceTriggers).not.toHaveBeenCalled();
+    expect(getEvidenceWorkflows).not.toHaveBeenCalled();
+    expect(getGeneratorEvidenceReport).not.toHaveBeenCalled();
   });
 
   it('refuse a moderator without CSAM reporting access', async () => {
@@ -95,5 +104,8 @@ describe('generator evidence procedures', () => {
       expect.objectContaining({ userId: 7, moderatorId: 5 })
     );
     expect(await codeOf(moderator.getGeneratorEvidenceTriggers({ userId: 7 }))).toBe('ok');
+    expect(getEvidenceTriggers).toHaveBeenCalledWith(7);
+    expect(await codeOf(moderator.getGeneratorEvidenceReport({ userId: 7 }))).toBe('ok');
+    expect(getGeneratorEvidenceReport).toHaveBeenCalledWith(7, 5);
   });
 });

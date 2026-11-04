@@ -9,10 +9,7 @@ import type {
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
-import {
-  GENERATOR_EVIDENCE_VERSION,
-  isGeneratorEvidenceDetails,
-} from '~/server/services/generator-evidence/evidence-meta';
+import { isGeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getImageUploadIpEvents } from '~/server/services/image-upload-action.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -184,12 +181,12 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
 
 // A training-data report sends and archives one version's data, so a filing folds only into a
 // report on exactly its versions.
-// A filing with preserved generator evidence folds only into another such report: the send reads its
-// files from the evidence copy, and a legacy URL-only filing is sent by a different path.
-const evidenceFilter = (details?: unknown) =>
-  isGeneratorEvidenceDetails(details)
-    ? { details: { path: ['generatorEvidence', 'version'], equals: GENERATOR_EVIDENCE_VERSION } }
-    : {};
+// A supplemental report's text and file set are fixed when it is filed. A filing with preserved
+// generator evidence folds only into another such report, and a legacy URL-only filing only into a
+// legacy one: the send reads evidence files from the evidence copy and legacy ones by URL.
+const canFoldInto = (stored: unknown, filing: unknown) =>
+  !(isRecord(stored) && 'supplemental' in stored) &&
+  isGeneratorEvidenceDetails(stored) === isGeneratorEvidenceDetails(filing);
 
 const trainingVersionFilter = (type: CsamReportType, details?: CsamReportFormOutput) =>
   type === CsamReportType.TrainingData
@@ -230,15 +227,20 @@ export async function createCsamReport({
           type,
           reportSentAt: null,
           ...trainingVersionFilter(type, details as CsamReportFormOutput),
-          ...evidenceFilter(details),
         };
-        const unsent = await tx.csamReport.findFirst({
-          where: {
-            ...unsentWhere,
-            OR: [{ sendClaimId: null }, { sendClaimedAt: { lt: cutoff } }],
-          },
-          select: { id: true },
-          orderBy: { id: 'asc' },
+        // Filtered here, not in the query: an earlier report this filing cannot fold into must not
+        // hide a later one it can.
+        const firstFoldable = async (where: Prisma.CsamReportWhereInput) =>
+          (
+            await tx.csamReport.findMany({
+              where,
+              select: { id: true, details: true },
+              orderBy: { id: 'asc' },
+            })
+          ).find((row) => canFoldInto(row.details, details));
+        const unsent = await firstFoldable({
+          ...unsentWhere,
+          OR: [{ sendClaimId: null }, { sendClaimedAt: { lt: cutoff } }],
         });
         const fileSeparately = async (claimedId?: number) => {
           const created = await tx.csamReport.create({ data });
@@ -254,10 +256,7 @@ export async function createCsamReport({
           return created;
         };
         if (!unsent) {
-          const claimed = await tx.csamReport.findFirst({
-            where: unsentWhere,
-            select: { id: true },
-          });
+          const claimed = await firstFoldable(unsentWhere);
           return fileSeparately(claimed?.id);
         }
 
@@ -270,10 +269,7 @@ export async function createCsamReport({
           WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
           FOR UPDATE`;
         if (!locked) return fileSeparately();
-        // A supplemental report's text and file set are fixed when it is filed.
-        if (isRecord(locked.details) && 'supplemental' in locked.details) return fileSeparately();
-        if (isGeneratorEvidenceDetails(locked.details) !== isGeneratorEvidenceDetails(details))
-          return fileSeparately();
+        if (!canFoldInto(locked.details, details)) return fileSeparately();
         if (locked.sendClaimId && !(locked.sendClaimedAt && locked.sendClaimedAt < cutoff))
           return fileSeparately(unsent.id);
 

@@ -360,7 +360,7 @@ describe('sending a report of preserved generator evidence', () => {
   it('sends each preserved file from its evidence copy, inputs first, and marks the report sent', async () => {
     const id = await sendEvidenceReport(evidenceDetails());
 
-    expect(readEvidenceObject.mock.calls.map(([key]) => key).sort()).toEqual([
+    expect([...new Set(readEvidenceObject.mock.calls.map(([key]) => key))].sort()).toEqual([
       `generator-evidence/20/${WORKFLOW}/${INPUT}`,
       `generator-evidence/20/${WORKFLOW}/${OUTPUT}`,
     ]);
@@ -374,6 +374,23 @@ describe('sending a report of preserved generator evidence', () => {
 
     expect(submitReport).not.toHaveBeenCalled();
     expect(uploadFile).not.toHaveBeenCalled();
+    expect((await readRow(id)).reportSentAt).toBeNull();
+  });
+
+  it('cancels the CyberTip when a preserved copy changes after the check, sending none of its bytes', async () => {
+    const OTHER = new Uint8Array([9, 9, 9]);
+    submitReport.mockImplementationOnce(async (report) => {
+      refuseIllFormed(buildReport(report));
+      readEvidenceObject.mockImplementation(async (key: string) => ({
+        bytes: key.endsWith(OUTPUT) ? OTHER : new Uint8Array(stored),
+      }));
+      return { data: { reportId: 900 } };
+    });
+
+    const id = await sendEvidenceReport(evidenceDetails());
+
+    expect(cancelReport).toHaveBeenCalledTimes(1);
+    expect(detailsFor(OUTPUT)).toBeUndefined();
     expect((await readRow(id)).reportSentAt).toBeNull();
   });
 
