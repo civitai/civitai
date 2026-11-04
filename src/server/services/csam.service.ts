@@ -15,8 +15,8 @@ import { getImageUploadIpEvents } from '~/server/services/image-upload-action.se
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { fetchBlob } from '~/utils/file-utils';
-import { S3Client } from '@aws-sdk/client-s3';
 import { env } from '~/env/server';
+import { getCsamBucket } from '~/server/services/csam-bucket';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
@@ -843,28 +843,10 @@ function uploadStream({
   userId: number;
   filename: string;
 }) {
-  if (
-    !env.CSAM_UPLOAD_KEY ||
-    !env.CSAM_UPLOAD_SECRET ||
-    !env.CSAM_UPLOAD_REGION ||
-    !env.CSAM_UPLOAD_ENDPOINT ||
-    !env.CSAM_BUCKET_NAME
-  )
-    throw new Error('missing CSAM env vars');
-
-  const client = new S3Client({
-    credentials: {
-      accessKeyId: env.CSAM_UPLOAD_KEY,
-      secretAccessKey: env.CSAM_UPLOAD_SECRET,
-    },
-    region: env.CSAM_UPLOAD_REGION,
-    endpoint: env.CSAM_UPLOAD_ENDPOINT,
-  });
-
+  const { client, Bucket } = getCsamBucket();
   const passThroughStream = new stream.PassThrough();
 
   const date = new Date();
-  const Bucket = env.CSAM_BUCKET_NAME;
   const Key = `${userId}/${date.getTime()}_${filename}`;
 
   return new Promise<void>(async (resolve, reject) => {

@@ -264,6 +264,27 @@ describe('send-csam-reports batch isolation', () => {
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toBe('undefined');
   });
+
+  it("names the report that failed, and its open CyberTip, on the batch's error line", async () => {
+    mocks.getCsamsToReport.mockResolvedValueOnce([{ id: 8801 }, { id: 8802, reportId: 4401 }]);
+    mocks.processCsamReport
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('http status 500 - ServerError'));
+
+    await sendJob!.run({}).result;
+
+    expect(
+      loggingMock.logToAxiom.mock.calls
+        .map(([arg]) => arg as { subType?: string })
+        .filter((arg) => arg?.subType === 'send-report')
+    ).toEqual([
+      expect.objectContaining({
+        message: 'http status 500 - ServerError',
+        reportId: 8802,
+        ncmecReportId: 4401,
+      }),
+    ]);
+  });
 });
 
 describe('send-csam-reports blocked-report alert', () => {

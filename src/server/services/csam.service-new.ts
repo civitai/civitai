@@ -15,10 +15,11 @@ import {
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { env } from '~/env/server';
+import { getCsamBucket } from '~/server/services/csam-bucket';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
@@ -84,8 +85,7 @@ import {
 } from '~/server/services/generator-evidence/evidence-payload';
 import {
   hashEvidenceObject,
-  readEvidenceObject,
-  sha256Hex,
+  streamEvidenceObject,
 } from '~/server/services/generator-evidence/evidence-store';
 import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
 import { fileDetailsXmlProblem, reportXmlProblem, xmlText } from '~/server/services/ncmec-xml';
@@ -1656,11 +1656,11 @@ async function reportPreservedEvidence(claim: SendClaim) {
   });
 }
 
-/** The verified copy as the File NCMEC's upload takes; the read bytes are not kept past the File's own copy. */
+/** The verified copy as the File NCMEC's upload takes, built on the read's Blob without a copy. */
 async function readEvidenceFile(blob: StoredEvidenceBlob) {
-  const read = await readVerifiedEvidence(blob, readEvidenceObject, sha256Hex);
+  const read = await readVerifiedEvidence(blob, streamEvidenceObject);
   if (!read.ok) throw new Error(`preserved file ${blob.blobId} failed its re-read: ${read.reason}`);
-  return new File([read.bytes as Uint8Array<ArrayBuffer>], blob.blobId, { type: read.contentType });
+  return new File([read.body], blob.blobId, { type: read.contentType });
 }
 
 async function reportTrainingData(claim: SendClaim) {
@@ -1889,26 +1889,6 @@ async function reportExternalLink(claim: SendClaim) {
   });
 }
 
-export function getCsamS3Client() {
-  if (
-    !env.CSAM_UPLOAD_KEY ||
-    !env.CSAM_UPLOAD_SECRET ||
-    !env.CSAM_UPLOAD_REGION ||
-    !env.CSAM_UPLOAD_ENDPOINT ||
-    !env.CSAM_BUCKET_NAME
-  )
-    throw new Error('missing CSAM env vars');
-
-  return new S3Client({
-    credentials: {
-      accessKeyId: env.CSAM_UPLOAD_KEY,
-      secretAccessKey: env.CSAM_UPLOAD_SECRET,
-    },
-    region: env.CSAM_UPLOAD_REGION,
-    endpoint: env.CSAM_UPLOAD_ENDPOINT,
-  });
-}
-
 // Streams a moderator-supplied evidence zip into the locked-down CSAM bucket.
 export async function uploadExternalCsamEvidence({
   stream: readStream,
@@ -1919,8 +1899,7 @@ export async function uploadExternalCsamEvidence({
   moderatorId: number;
   filename: string;
 }) {
-  const client = getCsamS3Client();
-  const Bucket = env.CSAM_BUCKET_NAME;
+  const { client, Bucket } = getCsamBucket();
   const bucketKey = `external-reports/${moderatorId}/${new Date().getTime()}_${filename}`;
 
   const upload = new Upload({
@@ -1936,10 +1915,8 @@ export async function uploadExternalCsamEvidence({
 }
 
 async function getCsamBucketZip(key: string) {
-  const client = getCsamS3Client();
-  const response = await client.send(
-    new GetObjectCommand({ Bucket: env.CSAM_BUCKET_NAME, Key: key })
-  );
+  const { client, Bucket } = getCsamBucket();
+  const response = await client.send(new GetObjectCommand({ Bucket, Key: key }));
   const byteArray = await response.Body?.transformToByteArray();
   if (!byteArray) throw new Error('failed to download evidence from CSAM bucket');
   return await new JSZip().loadAsync(byteArray);
@@ -1990,28 +1967,10 @@ function uploadStream({
    */
   expectedBytes?: number;
 }) {
-  if (
-    !env.CSAM_UPLOAD_KEY ||
-    !env.CSAM_UPLOAD_SECRET ||
-    !env.CSAM_UPLOAD_REGION ||
-    !env.CSAM_UPLOAD_ENDPOINT ||
-    !env.CSAM_BUCKET_NAME
-  )
-    throw new Error('missing CSAM env vars');
-
-  const client = new S3Client({
-    credentials: {
-      accessKeyId: env.CSAM_UPLOAD_KEY,
-      secretAccessKey: env.CSAM_UPLOAD_SECRET,
-    },
-    region: env.CSAM_UPLOAD_REGION,
-    endpoint: env.CSAM_UPLOAD_ENDPOINT,
-  });
-
+  const { client, Bucket } = getCsamBucket();
   const passThroughStream = new stream.PassThrough();
 
   const date = new Date();
-  const Bucket = env.CSAM_BUCKET_NAME;
   const Key = `${userId}/${date.getTime()}_${filename}`;
 
   // 🔴 MEMORY: `Upload` holds up to `queueSize` parts of `partSize` bytes in flight. The pair is

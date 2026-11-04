@@ -1,4 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -7,7 +10,7 @@ import {
   isGeneratorEvidenceDetails,
 } from '~/server/services/generator-evidence/evidence-meta';
 import { readVerifiedEvidence } from '~/server/services/generator-evidence/evidence-payload';
-import { readEvidenceObject, sha256Hex } from '~/server/services/generator-evidence/evidence-store';
+import { streamEvidenceObject } from '~/server/services/generator-evidence/evidence-store';
 import { evidenceViewActivity } from '~/server/services/generator-evidence/evidence-views';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
@@ -53,7 +56,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   if ((blob.bytes ?? 0) > MAX_VIEW_BYTES)
     return void res.status(413).json({ error: 'This file is too large to show here' });
 
-  const read = await readVerifiedEvidence(blob, readEvidenceObject, sha256Hex);
+  const read = await readVerifiedEvidence(blob, streamEvidenceObject);
   if (!read.ok) {
     console.error('[generator-evidence-file] read refused', read.reason);
     return void res.status(502).json({ error: 'The preserved copy could not be read' });
@@ -67,13 +70,13 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
 
   res.writeHead(200, {
     'content-type': contentType,
-    'content-length': String(read.bytes.length),
+    'content-length': String(read.body.size),
     'content-disposition': 'inline',
     'x-content-type-options': 'nosniff',
     'content-security-policy': "sandbox; default-src 'none'",
     'cache-control': 'private, no-store',
   });
-  res.end(Buffer.from(read.bytes.buffer, read.bytes.byteOffset, read.bytes.byteLength));
+  await pipeline(Readable.fromWeb(read.body.stream() as NodeReadableStream), res);
 }
 
 export default ModEndpoint(handler);
