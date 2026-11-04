@@ -114,8 +114,18 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
 export function SearchableMultiSelectRefinementList({
   title,
   renderOption,
+  remoteSearch = true,
   ...props
-}: RefinementListProps & { title: string; renderOption?: MultiSelectProps['renderOption'] }) {
+}: RefinementListProps & {
+  title: string;
+  renderOption?: MultiSelectProps['renderOption'];
+  /**
+   * Query the facet index as the user types. Turn off for a short facet whose full list is already
+   * loaded: the remote result replaces `items`, so an empty or failed one hides options the
+   * MultiSelect's own client-side filter would still match.
+   */
+  remoteSearch?: boolean;
+}) {
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -153,7 +163,7 @@ export function SearchableMultiSelectRefinementList({
   };
 
   useEffect(() => {
-    if (props.searchable) {
+    if (props.searchable && remoteSearch) {
       searchForItems(debouncedSearchValue);
     }
   }, [debouncedSearchValue]);
