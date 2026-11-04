@@ -69,7 +69,10 @@ import {
 import { ruleFlagAppeal, type FlagAppealDecision } from '$lib/server/minor-flag-appeal-ruling';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { bounded } from '$lib/server/bounded';
-import { getRestrictedVerdicts } from '$lib/server/restricted-nsfw-verdicts';
+import {
+  getRestrictedVerdictCount,
+  getRestrictedVerdicts,
+} from '$lib/server/restricted-nsfw-verdicts';
 import { RESTRICTED_VERDICT_RULINGS } from '$lib/minor-flags/restricted-verdicts';
 import {
   confirmMinorFlag,
@@ -179,12 +182,14 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
   const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
   const sources = needsReviewSources(grants);
   const use = needsReviewBranches(sources, needsReviewFilters);
-  const [queue, { total, chipCounts }, restrictedVerdicts] = await Promise.all([
-    getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
-    needsReviewCounts(sources, use, search, needsReviewFilters),
-    // Ruled under the detections permission; listed apart from the merged leads, minor first.
-    sources.detections ? getRestrictedVerdicts() : [],
-  ]);
+  const [queue, { total, chipCounts }, restrictedVerdicts, restrictedVerdictTotal] =
+    await Promise.all([
+      getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
+      needsReviewCounts(sources, use, search, needsReviewFilters),
+      // Ruled under the detections permission; listed apart from the merged leads, minor first.
+      sources.detections ? getRestrictedVerdicts() : [],
+      sources.detections ? getRestrictedVerdictCount() : 0,
+    ]);
   return {
     limit,
     page,
@@ -195,6 +200,7 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
     total,
     chipCounts,
     restrictedVerdicts,
+    restrictedVerdictTotal,
     ...queue,
     fullBleed: true,
   };

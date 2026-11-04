@@ -38,7 +38,10 @@ vi.mock('$lib/server/minor-hash.service', () => ({
   getModelFlagState,
   bustMinorQueueCounts,
 }));
-vi.mock('$lib/server/restricted-nsfw-verdicts', () => ({ getRestrictedVerdicts }));
+vi.mock('$lib/server/restricted-nsfw-verdicts', () => ({
+  getRestrictedVerdicts,
+  getRestrictedVerdictCount: async () => 0,
+}));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag: vi.fn(),
   dismissMinorHashMatch,

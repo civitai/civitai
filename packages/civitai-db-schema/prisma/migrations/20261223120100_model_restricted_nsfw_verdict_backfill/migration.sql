@@ -5,7 +5,8 @@
 --
 -- HAND-APPLIED, after the release that ships the lead. Predicate only. Idempotent: a model already
 -- carrying a lead is skipped. Excluded: any model a moderator ruled on its nsfw rating after the system
--- lock (the same activities rating-review.entities.ts treats as a moderator's lock).
+-- lock (the same activities rating-review.entities.ts treats as a moderator's lock). A malformed lock
+-- time counts every such activity, so it skips rather than aborts the run.
 --
 -- 1. Dry run: the count to expect.
 SELECT count(*) AS to_backfill
@@ -20,7 +21,10 @@ WHERE m.nsfw
   AND NOT EXISTS (
     SELECT 1 FROM "ModActivity" a
     WHERE a."entityType" = 'model' AND a."entityId" = m.id
-      AND a."createdAt" > (m.meta->'systemNsfwLock'->>'at')::timestamptz
+      AND a."createdAt" > CASE
+        WHEN m.meta->'systemNsfwLock'->>'at' ~ '^\d{4}-\d{2}-\d{2}T'
+          THEN (m.meta->'systemNsfwLock'->>'at')::timestamptz
+        ELSE '-infinity'::timestamptz END
       AND a.activity IN ('lockProperty:nsfw', 'unlockProperty:nsfw', 'setSfwOnly', 'unsetSfwOnly', 'setMinor', 'setMinorAutoHash',
           'setMinorTextScan', 'unsetMinor', 'rollbackMinorAutoHash', 'setPoi', 'setPoiAutoHash',
           'unsetPoi', 'revertPoiAutoHash')
@@ -47,7 +51,10 @@ WITH stamped AS (
     AND NOT EXISTS (
       SELECT 1 FROM "ModActivity" a
       WHERE a."entityType" = 'model' AND a."entityId" = m.id
-        AND a."createdAt" > (m.meta->'systemNsfwLock'->>'at')::timestamptz
+        AND a."createdAt" > CASE
+        WHEN m.meta->'systemNsfwLock'->>'at' ~ '^\d{4}-\d{2}-\d{2}T'
+          THEN (m.meta->'systemNsfwLock'->>'at')::timestamptz
+        ELSE '-infinity'::timestamptz END
         AND a.activity IN ('lockProperty:nsfw', 'unlockProperty:nsfw', 'setSfwOnly', 'unsetSfwOnly', 'setMinor', 'setMinorAutoHash',
             'setMinorTextScan', 'unsetMinor', 'rollbackMinorAutoHash', 'setPoi', 'setPoiAutoHash',
             'unsetPoi', 'revertPoiAutoHash')

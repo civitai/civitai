@@ -124,7 +124,11 @@
   <div class="flex flex-col gap-2.5">
     <ModelFlagTabs />
     <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
-    <RestrictedVerdicts rows={data.restrictedVerdicts} civitaiUrl={data.civitaiUrl} />
+    <RestrictedVerdicts
+      rows={data.restrictedVerdicts}
+      total={data.restrictedVerdictTotal}
+      civitaiUrl={data.civitaiUrl}
+    />
   </div>
 {/snippet}
 

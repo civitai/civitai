@@ -14,18 +14,27 @@ beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
     CREATE TABLE "Model" (id int PRIMARY KEY, nsfw bool NOT NULL DEFAULT false,
-      "lockedProperties" text[] NOT NULL DEFAULT '{}', meta jsonb, "updatedAt" timestamp(3));
+      "lockedProperties" text[] NOT NULL DEFAULT '{}', meta jsonb, "updatedAt" timestamp(3),
+      minor bool NOT NULL DEFAULT false, poi bool NOT NULL DEFAULT false,
+      "sfwOnly" bool NOT NULL DEFAULT false);
   `);
   db = { $executeRaw: pgliteRaw(pg).executeRaw };
 });
 
 beforeEach(() => pg.exec(`TRUNCATE "Model"`));
 
-const seed = (row: { locked?: string[]; meta?: unknown }) =>
+const seed = (row: { locked?: string[]; meta?: unknown; flag?: 'minor' | 'poi' | 'sfwOnly' }) =>
   pg.query(
-    `INSERT INTO "Model" (id, "lockedProperties", meta, "updatedAt")
-     VALUES ($1, $2, $3, '2026-01-01')`,
-    [ID, row.locked ?? [], row.meta === undefined ? null : JSON.stringify(row.meta)]
+    `INSERT INTO "Model" (id, "lockedProperties", meta, "updatedAt", minor, poi, "sfwOnly")
+     VALUES ($1, $2, $3, '2026-01-01', $4, $5, $6)`,
+    [
+      ID,
+      row.locked ?? [],
+      row.meta === undefined ? null : JSON.stringify(row.meta),
+      row.flag === 'minor',
+      row.flag === 'poi',
+      row.flag === 'sfwOnly',
+    ]
   );
 
 const read = async () =>
@@ -67,6 +76,19 @@ describe('writeAutoNsfw', () => {
     expect(m).toMatchObject({ nsfw: false, lockedProperties: ['nsfw'], bumped: true });
     expect(m.meta).toEqual({ cannotPromote: true, ...metaPatch });
   });
+
+  it.each(['minor', 'poi', 'sfwOnly'] as const)(
+    'records only the detection on a %s model, as the model save does',
+    async (flag) => {
+      await seed({ flag, meta: { cannotPromote: true } });
+
+      await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+
+      const m = await read();
+      expect(m).toMatchObject({ nsfw: false, lockedProperties: [], bumped: true });
+      expect(m.meta).toEqual({ cannotPromote: true, ...metaPatch });
+    }
+  );
 
   it('records only the detection when the caller has nothing to lock', async () => {
     await seed({});

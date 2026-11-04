@@ -25,7 +25,7 @@ type ModelModActivity = {
     | 'approveLockReview'
     | 'rejectLockReview'
     // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
-    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw'}`
+    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;

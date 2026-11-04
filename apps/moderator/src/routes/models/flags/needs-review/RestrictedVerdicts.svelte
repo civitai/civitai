@@ -8,7 +8,11 @@
   import { LINK_CLASS, shortAge } from '$lib/format';
   import type { Restriction, RestrictedVerdictRow } from '$lib/minor-flags/restricted-verdicts';
 
-  let { rows, civitaiUrl }: { rows: RestrictedVerdictRow[]; civitaiUrl: string } = $props();
+  let {
+    rows,
+    total,
+    civitaiUrl,
+  }: { rows: RestrictedVerdictRow[]; total: number; civitaiUrl: string } = $props();
 
   const RESTRICTION_LABEL: Record<Restriction, string> = {
     minor: 'minor',
@@ -48,11 +52,14 @@
 {#if rows.length}
   <section class="rounded-md border border-red-6/40 bg-dark-6 p-3" aria-label="Scan rated NSFW">
     <h2 class="m-0 text-sm font-semibold">
-      Scan rated NSFW on a restricted model <span class="text-dark-2">({rows.length})</span>
+      Scan rated NSFW on a restricted model
+      <span class="text-dark-2"
+        >({total > rows.length ? `${rows.length} of ${total} shown` : rows.length})</span
+      >
     </h2>
     <p class="m-0 mt-1 text-xs text-dark-2">
-      The owner marked these minor, a real person or SFW-only, so the scan left the rating alone.
-      Minor first.
+      The owner marked these minor, a real person or SFW-only. Minor and real-person models keep their
+      rating until you rule; SFW-only models were rated NSFW, and Keep restores SFW-only. Minor first.
     </p>
     <ul class="m-0 mt-2 flex list-none flex-col gap-2 p-0">
       {#each rows as row (row.modelId)}
@@ -67,7 +74,9 @@
             <MetaChip tone={row.restriction === 'minor' ? 'red' : 'neutral'}>
               {RESTRICTION_LABEL[row.restriction]}
             </MetaChip>
-            {#if row.systemLocked}<MetaChip>locked NSFW by an earlier scan</MetaChip>{/if}
+            {#if row.autoApplied}
+              <MetaChip tone="amber">rated NSFW, SFW-only cleared</MetaChip>
+            {:else if row.systemLocked}<MetaChip>locked NSFW by an earlier scan</MetaChip>{/if}
             <span class="text-xs text-dark-2">
               by {row.username ?? `user #${row.userId}`}
               {#if row.heldAt}· held {shortAge(row.heldAt)}{/if}

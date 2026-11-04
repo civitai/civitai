@@ -441,22 +441,32 @@ describe('upsertModel — system nsfw lock marker', () => {
 
 describe('upsertModel — restricted nsfw verdict lead', () => {
   const lead = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'minor' };
+  const ruling = { ruling: 'keep', at: '2026-11-04T01:00:00.000Z', by: MODERATOR_ID };
 
   // Only the lead's ruling clears it, so a moderator's model form is held to it as well.
   it.each([false, true])(
-    'keeps the stored lead when the client sends meta without it (moderator %s)',
+    'keeps the stored lead and rulings when the client sends them cleared (moderator %s)',
     async (isModerator) => {
-      mockStored({ minor: true, sfwOnly: true, meta: { restrictedNsfwVerdict: lead } });
+      mockStored({
+        minor: true,
+        sfwOnly: true,
+        meta: { restrictedNsfwVerdict: lead, restrictedNsfwVerdictRulings: [ruling] },
+      });
 
       await upsert({
         id: MODEL_ID,
         userId: isModerator ? MODERATOR_ID : OWNER_ID,
         isModerator,
         name: 'Cleaned',
-        meta: {},
+        meta: { restrictedNsfwVerdict: null, restrictedNsfwVerdictRulings: [] },
       } as never);
 
-      expect(updateData().meta).toEqual(expect.objectContaining({ restrictedNsfwVerdict: lead }));
+      expect(updateData().meta).toEqual(
+        expect.objectContaining({
+          restrictedNsfwVerdict: lead,
+          restrictedNsfwVerdictRulings: [ruling],
+        })
+      );
     }
   );
 
@@ -468,10 +478,11 @@ describe('upsertModel — restricted nsfw verdict lead', () => {
       userId: isModerator ? MODERATOR_ID : OWNER_ID,
       isModerator,
       name: 'Cleaned',
-      meta: { restrictedNsfwVerdict: lead },
+      meta: { restrictedNsfwVerdict: lead, restrictedNsfwVerdictRulings: [ruling] },
     } as never);
 
     expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdict');
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictRulings');
   });
 });
 

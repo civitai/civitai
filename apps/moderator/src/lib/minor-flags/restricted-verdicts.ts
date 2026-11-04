@@ -17,6 +17,8 @@ export type RestrictedVerdictRow = {
   nsfw: boolean;
   /** An earlier scan had already locked nsfw on this model; Keep lifts that lock. */
   systemLocked: boolean;
+  /** The scan rated this SFW-only model NSFW at once and cleared SFW-only; Keep puts it back. */
+  autoApplied: boolean;
   heldAt: string | null;
   source: string | null;
   /** The text scan's own verdict row, when the text-scan path raised it. */

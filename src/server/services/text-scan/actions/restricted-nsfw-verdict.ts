@@ -46,9 +46,9 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
 /**
  * A moderator's ruling on a restricted-verdict lead: the text scan rated a minor, POI or SFW-only
  * model NSFW and left nsfw alone (`holdRestrictedVerdict`).
- * - `keep`: the owner's rating stands. A model an earlier scan had already locked nsfw on gets nsfw
- *   off and that system lock lifted; a moderator's lock is never the system's, since every moderator
- *   nsfw write drops the `systemNsfwLock` marker.
+ * - `keep`: the owner's rating stands: nsfw off, and SFW-only back on where the scan cleared it. The
+ *   scan's own lock for this lead is lifted; a moderator's lock (every moderator nsfw write drops the
+ *   `systemNsfwLock` marker) or a newer scan's lock stands, and then nothing but the lead changes.
  * - `dismiss`: drops the lead only, after the moderator acted elsewhere. A minor lead needs a reason.
  * - `rateNsfw`: SFW-only leads only. Unsets sfwOnly, sets nsfw and locks it as the moderator's.
  * Each ruling closes the lead, logs a ModActivity row, and appends a record with the prior values.
@@ -96,9 +96,21 @@ export async function resolveRestrictedNsfwVerdict({
     };
     let next = { nsfw: row.nsfw, sfwOnly: row.sfwOnly, lockedProperties: locked };
     let dropSystemLock = false;
-    if (ruling === 'keep' && row.systemNsfwLock && row.nsfw && locked.includes('nsfw')) {
-      next = { ...next, nsfw: false, lockedProperties: locked.filter((p) => p !== 'nsfw') };
-      dropSystemLock = true;
+    if (ruling === 'keep') {
+      // Only the lock the scan set for this lead (or before it) is lifted: a moderator's lock, or a
+      // newer scan's on a model the owner has since unrestricted, is a later call that stands.
+      const leadAt = Date.parse(verdict.applied?.at ?? verdict.at);
+      const lockAt = Date.parse(row.systemNsfwLock?.at ?? '');
+      const lockIsLeads = !!row.systemNsfwLock && lockAt <= leadAt;
+      const nsfwLocked = locked.includes('nsfw');
+      if (!nsfwLocked || lockIsLeads) {
+        next = {
+          nsfw: false,
+          sfwOnly: verdict.applied?.prior.sfwOnly ?? row.sfwOnly,
+          lockedProperties: lockIsLeads ? locked.filter((p) => p !== 'nsfw') : locked,
+        };
+        dropSystemLock = lockIsLeads;
+      }
     } else if (ruling === 'rateNsfw') {
       next = {
         nsfw: true,
@@ -146,9 +158,11 @@ export async function resolveRestrictedNsfwVerdict({
   const { row, prior, next, restriction } = result;
   const changed = prior.nsfw !== next.nsfw || prior.sfwOnly !== next.sfwOnly;
   if (changed) {
-    await preventReplicationLag('model', modelId);
+    // The ruling is committed and its lead is gone, so nothing retries these: the level comes first,
+    // and a failure in the rest must not stop it or read as a failed ruling.
     await updateModelNsfwLevels([modelId]);
-    await bustPublicModelResponseCache(modelId);
+    await preventReplicationLag('model', modelId).catch(() => null);
+    await bustPublicModelResponseCache(modelId).catch(() => null);
     await new Tracker()
       .entityChanges(
         diffEntityChanges({

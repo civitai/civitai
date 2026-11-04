@@ -1,8 +1,11 @@
+import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import {
@@ -13,6 +16,19 @@ import type { RatingFloorResult } from '~/server/services/text-scan/rated-entiti
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+
+const SYSTEM_USER_ID = constants.system.user.id;
+
+/** What an automatic SFW-only flip replaced, read from the row being written. */
+const appliedRecord = Prisma.sql`jsonb_build_object(
+  'at', now(),
+  'prior', jsonb_build_object(
+    'nsfw', m.nsfw,
+    'sfwOnly', m."sfwOnly",
+    'lockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
+    'systemNsfwLock', m.meta->'systemNsfwLock'
+  )
+)`;
 
 export async function applySystemModelNsfwFlag({
   model,
@@ -45,27 +61,54 @@ export async function applySystemModelNsfwFlag({
     return 'skipped_locked';
   }
 
-  // A minor, POI or SFW-only model stays SFW, as the model form and the profanity check keep it: the
-  // verdict waits in Needs review for a moderator instead.
-  if (model.minor || model.poi || model.sfwOnly) return holdRestrictedVerdict(model.id, source);
+  // A minor or POI model stays SFW, as the model form and the profanity check keep it: the verdict
+  // waits in Needs review for a moderator instead. Held from the caller's read, which can be stale: an
+  // owner who cleared the flag since falls through to the flip, whose guard has the final say.
+  if (model.minor || model.poi) {
+    const held = await holdRestrictedVerdict(model.id, source);
+    if (held) return 'held_restricted';
+  }
 
   // Guarded in the WHERE, not by the caller's read: a moderator ruling that lands between
   // the read and this write would otherwise be overwritten. `array_append` in the database
   // for the same reason — writing back the array we read would drop a concurrent lock.
   // The marker rides the same guarded write as the lock, merged in jsonb so no other meta key is
   // rewritten from a stale read.
+  // An SFW-only model is rated as any other, with SFW-only cleared (the two cannot stand together),
+  // and also gets a lead that records what was replaced, so a moderator can put the owner's rating
+  // back. The lead and its ruling record are decided on the row as written, not on the read.
   const flipped = await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET nsfw = TRUE,
+        "sfwOnly" = FALSE,
         "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
-        meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+        meta = ${asJsonbObjectSql('m.meta')} || CASE WHEN m."sfwOnly" THEN jsonb_build_object(
+          'restrictedNsfwVerdict', COALESCE(
+            m.meta->'restrictedNsfwVerdict',
+            jsonb_build_object('source', ${source}::text, 'at', now(), 'restriction', 'sfwOnly')
+          ) || jsonb_build_object('applied', ${appliedRecord}),
+          'restrictedNsfwVerdictRulings',
+            (CASE WHEN jsonb_typeof(m.meta->'restrictedNsfwVerdictRulings') = 'array'
+              THEN m.meta->'restrictedNsfwVerdictRulings' ELSE '[]'::jsonb END)
+            || jsonb_build_array(${appliedRecord} || jsonb_build_object(
+              'ruling', 'autoApply', 'by', ${SYSTEM_USER_ID}::int, 'restriction', 'sfwOnly'))
+        ) ELSE '{}'::jsonb END || jsonb_build_object(
           'systemNsfwLock', jsonb_build_object('source', ${source}::text, 'at', now())
         )
     WHERE m.id = ${model.id}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
-      AND NOT (m.minor OR m.poi OR m."sfwOnly")
+      AND NOT (m.minor OR m.poi)
   `;
-  if (!flipped) return holdRestrictedVerdict(model.id, source, 'declined_race');
+  if (!flipped)
+    return (await holdRestrictedVerdict(model.id, source)) ? 'held_restricted' : 'declined_race';
+
+  // From the read: the lead and its record above are the row's own, this is the audit trail beside them.
+  if (model.sfwOnly)
+    await trackModActivity(SYSTEM_USER_ID, {
+      entityType: 'model',
+      entityId: model.id,
+      activity: 'restrictedNsfwVerdict:autoApply',
+    }).catch(() => null);
 
   await updateModelNsfwLevels([model.id]);
   // The origin-side public response cache keys off browsing level and is otherwise only
@@ -78,10 +121,10 @@ export async function applySystemModelNsfwFlag({
         entityType: 'Model',
         entityId: model.id,
         ownerId: model.userId,
-        before: { nsfw: model.nsfw, lockedProperties: stored },
-        after: { nsfw: true, lockedProperties: [...stored, 'nsfw'] },
+        before: { nsfw: model.nsfw, sfwOnly: model.sfwOnly, lockedProperties: stored },
+        after: { nsfw: true, sfwOnly: false, lockedProperties: [...stored, 'nsfw'] },
         actorRole: 'system',
-        systemFields: { nsfw: source, lockedProperties: source },
+        systemFields: { nsfw: source, sfwOnly: source, lockedProperties: source },
       })
     )
     .catch(() => null);
@@ -90,17 +133,12 @@ export async function applySystemModelNsfwFlag({
 }
 
 /**
- * Records the verdict as a moderator's lead on a restricted model, without touching nsfw. Guarded on
+ * Records the verdict as a moderator's lead on a minor or POI model, without touching nsfw. Guarded on
  * the restriction and on there being no nsfw lock: a moderator's lock is already a ruling. A lead
  * already waiting keeps its time and restriction, so a redelivery does not move it in the queue and
- * an owner who later unticks the flag does not relabel it. `otherwise` is the outcome when the guard
- * matches nothing.
+ * an owner who later unticks the flag does not relabel it. True when it wrote.
  */
-async function holdRestrictedVerdict(
-  modelId: number,
-  source: string,
-  otherwise: ModelTextModerationOutcome = 'declined_race'
-): Promise<ModelTextModerationOutcome> {
+async function holdRestrictedVerdict(modelId: number, source: string): Promise<boolean> {
   const held = await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
@@ -109,15 +147,15 @@ async function holdRestrictedVerdict(
             jsonb_build_object(
               'source', ${source}::text,
               'at', now(),
-              'restriction', CASE WHEN m.minor THEN 'minor' WHEN m.poi THEN 'poi' ELSE 'sfwOnly' END
+              'restriction', CASE WHEN m.minor THEN 'minor' ELSE 'poi' END
             )
           )
         )
     WHERE m.id = ${modelId}
-      AND (m.minor OR m.poi OR m."sfwOnly")
+      AND (m.minor OR m.poi)
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
   `;
-  return held ? 'held_restricted' : otherwise;
+  return held > 0;
 }
 
 export async function applyModelNsfwTextScan({

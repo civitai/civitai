@@ -394,26 +394,31 @@ export type PoiFlagSnapshot = {
   prevLockedProperties?: string[];
 };
 
+type RestrictedNsfwPrior = {
+  nsfw: boolean;
+  sfwOnly: boolean;
+  lockedProperties: string[];
+  systemNsfwLock: { source: string; at: string } | null;
+};
+
 export type RestrictedNsfwVerdict = {
   source: string;
   at: string;
   restriction: 'minor' | 'poi' | 'sfwOnly';
+  /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
+  applied?: { at: string; prior: RestrictedNsfwPrior };
 };
 
-/** One moderator ruling on a restricted-verdict lead, with the values it replaced. */
+/** One ruling on a restricted-verdict lead, with the values it replaced. `autoApply` is the scan's own
+ *  flip of an SFW-only model, by the system user; the others are a moderator's. */
 export type RestrictedNsfwVerdictRulingRecord = {
   at: string;
   by: number;
-  ruling: 'keep' | 'dismiss' | 'rateNsfw';
+  ruling: 'keep' | 'dismiss' | 'rateNsfw' | 'autoApply';
   restriction: RestrictedNsfwVerdict['restriction'];
-  reason: string | null;
-  verdict: RestrictedNsfwVerdict;
-  prior: {
-    nsfw: boolean;
-    sfwOnly: boolean;
-    lockedProperties: string[];
-    systemNsfwLock: { source: string; at: string } | null;
-  };
+  reason?: string | null;
+  verdict?: RestrictedNsfwVerdict;
+  prior: RestrictedNsfwPrior;
 };
 
 export type ModelMeta = Partial<{

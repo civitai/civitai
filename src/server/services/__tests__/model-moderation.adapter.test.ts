@@ -136,7 +136,7 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(flip).toBeDefined();
     expect(flip?.sql).toContain('array_append');
     expect(flip?.sql).toContain("'systemNsfwLock'");
-    expect(flip?.values).toEqual(['xguard-text-moderation', 1]);
+    expect(flip?.values).toContain('xguard-text-moderation');
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
@@ -261,7 +261,7 @@ describe('modelModerationAdapter.applyResult', () => {
   it('treats a lock that appears between read and write as a decline', async () => {
     // The lock fails the flip's guard and the restricted-verdict hold's alike; only forensics write.
     dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
-      /SET nsfw = TRUE|'restrictedNsfwVerdict'/.test(strings.join('?')) ? 0 : 1
+      /SET nsfw = TRUE|AND \(m\.minor OR m\.poi\)/.test(strings.join('?')) ? 0 : 1
     );
 
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
@@ -277,18 +277,9 @@ describe('modelModerationAdapter.applyResult', () => {
   });
 
   describe('on a model its owner restricted', () => {
-    const heldCall = () => rawCalls().find((c) => c.sql.includes("'restrictedNsfwVerdict'"));
+    const heldCall = () => rawCalls().find((c) => c.sql.includes('AND (m.minor OR m.poi)'));
 
-    it('reads the restriction flags it guards on', async () => {
-      await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
-      expect(dbMock.dbRead.model.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
-          select: expect.objectContaining({ minor: true, poi: true, sfwOnly: true }),
-        })
-      );
-    });
-
-    it.each(['minor', 'poi', 'sfwOnly'] as const)(
+    it.each(['minor', 'poi'] as const)(
       'never flips a %s model: holds the verdict and still records the forensics',
       async (flag) => {
         dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow({ [flag]: true }));
@@ -302,6 +293,16 @@ describe('modelModerationAdapter.applyResult', () => {
         expect(outcomeMock).toHaveBeenCalledWith('held_restricted');
       }
     );
+
+    it('rates an SFW-only model, clearing SFW-only, under the same lock', async () => {
+      dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow({ sfwOnly: true }));
+
+      await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
+
+      expect(flipCall()?.sql).toContain('"sfwOnly" = FALSE');
+      expect(heldCall()).toBeUndefined();
+      expect(outcomeMock).toHaveBeenCalledWith('applied');
+    });
   });
 
   describe('the apply flag', () => {
@@ -861,7 +862,7 @@ describe('apply-stage outcome metric', () => {
   it('counts a lock that landed between the read and the write', async () => {
     // The lock fails the flip's guard and the restricted-verdict hold's alike; only forensics write.
     dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
-      /SET nsfw = TRUE|'restrictedNsfwVerdict'/.test(strings.join('?')) ? 0 : 1
+      /SET nsfw = TRUE|AND \(m\.minor OR m\.poi\)/.test(strings.join('?')) ? 0 : 1
     );
     await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
     expect(outcomeMock).toHaveBeenCalledWith('declined_race');

@@ -19,6 +19,7 @@ export async function getRestrictedVerdicts(limit = 100): Promise<RestrictedVerd
       ${restrictionSql} AS restriction,
       m.minor, m.poi, m."sfwOnly", m.nsfw,
       (m.meta ? 'systemNsfwLock' AND 'nsfw' = ANY(m."lockedProperties")) AS "systemLocked",
+      (m.meta->'restrictedNsfwVerdict' ? 'applied') AS "autoApplied",
       m.meta->'restrictedNsfwVerdict'->>'at' AS "heldAt",
       m.meta->'restrictedNsfwVerdict'->>'source' AS source,
       em."nsfwLevel" AS "scanLevel",

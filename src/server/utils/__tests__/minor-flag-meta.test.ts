@@ -99,7 +99,7 @@ describe('stripMinorHashMeta', () => {
     ).toEqual({});
   });
 
-  it('hides a restricted-verdict lead from every client', () => {
+  it('hides a restricted-verdict lead and its rulings from every client', () => {
     expect(
       stripMinorHashMeta({
         restrictedNsfwVerdict: {
@@ -107,6 +107,7 @@ describe('stripMinorHashMeta', () => {
           at: '2026-11-04T00:00:00Z',
           restriction: 'minor',
         },
+        restrictedNsfwVerdictRulings: [],
       })
     ).toEqual({});
   });

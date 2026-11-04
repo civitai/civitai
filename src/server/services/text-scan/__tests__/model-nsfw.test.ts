@@ -66,7 +66,7 @@ describe('applyModelNsfwTextScan', () => {
     expect(flipSql()).toContain('array_append(');
     // Merged into meta in the same guarded write as the lock, never written back from a read.
     expect(flipSql()).toMatch(
-      /meta = \(CASE WHEN jsonb_typeof\(m\.meta\) = 'object' THEN m\.meta ELSE '\{\}'::jsonb END\) \|\| jsonb_build_object\(\s*'systemNsfwLock', jsonb_build_object\('source', \?::text, 'at', now\(\)\)/
+      /meta = \(CASE WHEN jsonb_typeof\(m\.meta\) = 'object' THEN m\.meta ELSE '\{\}'::jsonb END\) \|\| CASE WHEN m\."sfwOnly"[\s\S]*ELSE '\{\}'::jsonb END \|\| jsonb_build_object\(\s*'systemNsfwLock', jsonb_build_object\('source', \?::text, 'at', now\(\)\)/
     );
     const flipCall = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
       (c[0] as readonly string[]).join('?').includes('SET nsfw = TRUE')
@@ -158,19 +158,10 @@ describe('applyModelNsfwTextScan', () => {
 describe('applyModelNsfwTextScan on a model its owner restricted', () => {
   const heldCall = () =>
     dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
-      (c[0] as readonly string[]).join('?').includes("'restrictedNsfwVerdict'")
+      (c[0] as readonly string[]).join('?').includes('AND (m.minor OR m.poi)')
     );
 
-  it('reads the restriction flags it guards on', async () => {
-    await applyModelNsfwTextScan(args(true));
-    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({
-        select: expect.objectContaining({ minor: true, poi: true, sfwOnly: true }),
-      })
-    );
-  });
-
-  it.each(['minor', 'poi', 'sfwOnly'] as const)(
+  it.each(['minor', 'poi'] as const)(
     'never marks a %s model nsfw: holds the verdict for a moderator instead',
     async (flag) => {
       dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ [flag]: true }));
@@ -186,7 +177,16 @@ describe('applyModelNsfwTextScan on a model its owner restricted', () => {
 
   it('guards the flip on the restriction too, so a flag set after the read still holds', async () => {
     await applyModelNsfwTextScan(args(true));
-    expect(flipSql()).toMatch(/NOT \(m\.minor OR m\.poi OR m\."sfwOnly"\)/);
+    expect(flipSql()).toMatch(/NOT \(m\.minor OR m\.poi\)/);
+  });
+
+  it('rates an SFW-only model as any other, clears SFW-only, and tells the owner', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ sfwOnly: true }));
+    await applyModelNsfwTextScan(args(true));
+    expect(flipSql()).toContain('"sfwOnly" = FALSE');
+    expect(heldCall()).toBeUndefined();
+    expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
+    expect(createNotification).toHaveBeenCalled();
   });
 
   it('holds the verdict when a restriction landed between read and write', async () => {
