@@ -39,6 +39,7 @@ describe('POST /api/auth/impersonate/exit', () => {
     );
     expect(h.setSessionCookie).not.toHaveBeenCalled();
     expect(h.trackImpersonation).toHaveBeenCalledWith(100, 200, 'off');
+    expect(h.invalidateUserSessions).not.toHaveBeenCalled();
   });
 
   it.each([
