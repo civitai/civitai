@@ -2,6 +2,7 @@ import { chunk } from 'lodash-es';
 import { SignalMessages } from '~/server/common/enums';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventTurfTopic, turfKeys, type TurfCounts } from '~/server/events/turf/turf-map';
+import type { FeedSticker } from '~/server/events/turf/turf.service';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 import { signalClient } from '~/utils/signal-client';
@@ -64,7 +65,13 @@ export async function markTurfWatched(
   return marked.length;
 }
 
-export type TurfPush = { imageId: number; counts: TurfCounts | null };
+export type TurfPush = {
+  imageId: number;
+  counts: TurfCounts | null;
+  // What a feed card draws, so a watcher need not read it back; ids as strings (bigint is not JSON).
+  // null: this push does not say, so watchers keep what they draw (never [], which draws no hats).
+  stickers: FeedSticker[] | null;
+};
 
 /**
  * Sends the changed counts of the images someone is watching. `counts: null` means the image has no
@@ -90,11 +97,11 @@ export async function pushTurfCounts(
     // A reconcile can change thousands of watched images at once: a few sends at a time.
     for (const part of chunk(watched, PUSH_CONCURRENCY)) {
       const results = await Promise.allSettled(
-        part.map(({ imageId, counts }) =>
+        part.map(({ imageId, counts, stickers }) =>
           send({
             topic: eventTurfTopic(event, imageId),
             target: SignalMessages.EventPointsTurf,
-            data: { event, imageId, counts },
+            data: { event, imageId, counts, stickers },
           })
         )
       );

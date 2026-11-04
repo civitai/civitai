@@ -153,8 +153,8 @@ vi.mock('~/components/Storyline/StorylineThumb', () => ({
     </div>
   ),
 }));
-vi.mock('~/components/CommentsV2/EntityDiscussion', () => ({
-  EntityDiscussion: ({ entityType, entityId }: { entityType: string; entityId: number }) => {
+vi.mock('~/components/CommentsV3/CommentSection', () => ({
+  CommentSection: ({ entityType, entityId }: { entityType: string; entityId: number }) => {
     mocks.discussion(entityType, entityId);
     return (
       <div>

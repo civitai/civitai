@@ -555,6 +555,30 @@ describe('the section lock on a surface that writes CommentV3', () => {
     expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
   });
 
+  it('is read from the topic on a surface that reads CommentV3 but still writes v2', async () => {
+    kysely.state.answers = [{ locked: true }];
+    expect(await getCommentsThreadDetails2({ entityType: 'image', entityId: 5 })).toEqual({
+      id: 0,
+      locked: true,
+    });
+    expect(kysely.state.calls.map((c) => c.table)).toEqual(['CommentTopic']);
+    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is null, so unlocked, when a read surface has no topic yet', async () => {
+    expect(await getCommentsThreadDetails2({ entityType: 'image', entityId: 5 })).toBeNull();
+    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is read from the thread on a surface that still reads v2', async () => {
+    dbMock.dbRead.thread.findUnique.mockResolvedValueOnce({ id: 40, locked: true });
+    expect(await getCommentsThreadDetails2({ entityType: 'model', entityId: 5 })).toEqual({
+      id: 40,
+      locked: true,
+    });
+    expect(kysely.state.calls).toEqual([]);
+  });
+
   it('is toggled on the topic, with no thread', async () => {
     db.$queryRawUnsafe.mockResolvedValueOnce([{ locked: true }]);
     expect(await toggleLockCommentsThread({ entityType: 'article', entityId: 5 })).toEqual({
@@ -622,8 +646,8 @@ describe('getSectionMuted', () => {
 /**
  * The exclusion is the only thing between the comics page and a 500 — `Thread` has no
  * `comicChapterId`, comic threads hang off `@@unique([comicProjectId, comicChapterPosition])`, and
- * `ChapterComments` supplies `comicChapter` to the same context the control reads. Deleting the
- * `.exclude(...)` used to fail nothing.
+ * the comics page's `CommentSection` supplies `comicChapter` to the composer that reads it.
+ * Deleting the `.exclude(...)` used to fail nothing.
  */
 describe('sectionMuteSchema', () => {
   it.each(['comicChapter', 'comment'])('refuses %s, which has no single unique column', (type) => {

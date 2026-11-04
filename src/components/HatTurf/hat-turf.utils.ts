@@ -1,4 +1,5 @@
 import { SignalTopic } from '~/server/common/enums';
+import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
@@ -52,16 +53,6 @@ export function badgeLeader(summary: Pick<TurfSummary, 'counted' | 'leader'>): s
   return null;
 }
 
-/** The viewer's standing when their team is not the leader; null when they lead or are not on a team. */
-export function viewerBehind(
-  summary: Pick<TurfSummary, 'counted' | 'leader'>,
-  viewerTeam: string | null | undefined
-): { team: string; count: number } | null {
-  const lead = badgeLeader(summary);
-  if (!lead || !viewerTeam || viewerTeam === lead) return null;
-  return { team: viewerTeam, count: summary.counted[viewerTeam] ?? 0 };
-}
-
 /** The spoken form of the badge: who leads, every team's count, and where the viewer stands. */
 export function standingsLabel(
   summary: Pick<TurfSummary, 'counted' | 'leader'>,
@@ -73,6 +64,25 @@ export function standingsLabel(
   return `Hat Turf: ${lead} leads with ${summary.counted[lead]}. ${rows.join(', ')}.${
     viewerTeam ? ` You are on ${viewerTeam}.` : ''
   }`;
+}
+
+/**
+ * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
+ * viewer's team needs to lead outright: a tie stays with the current leader.
+ */
+export function teamStandings(
+  summary: Pick<TurfSummary, 'counted' | 'leader'>,
+  viewerTeam: string | null | undefined
+) {
+  const counted = { ...summary.counted };
+  if (viewerTeam && !(viewerTeam in counted)) counted[viewerTeam] = 0;
+  const rows = orderedTeams(counted)
+    .map((team) => ({ team, count: counted[team] }))
+    .sort((a, b) => b.count - a.count);
+  const lead = badgeLeader(summary);
+  const toTake =
+    lead && viewerTeam && viewerTeam !== lead ? counted[lead] - counted[viewerTeam] + 1 : null;
+  return { rows, total: rows.reduce((sum, row) => sum + row.count, 0), lead, toTake };
 }
 
 /** A placed hat's width as a fraction of the drawn image (the sticker system's own default). */
@@ -141,9 +151,16 @@ export function applyTurfPush(
 
 /** Reads a turf push off the wire; null for anything not for this event or not shaped like one. */
 export function readTurfPush(push: unknown, event: string) {
-  const { event: e, imageId, counts } = (push ?? {}) as Record<string, unknown>;
+  const {
+    event: e,
+    imageId,
+    counts,
+    stickers: rawStickers,
+  } = (push ?? {}) as Record<string, unknown>;
   if (e !== event || typeof imageId !== 'number' || !Number.isInteger(imageId)) return null;
-  if (counts === null) return { imageId, counts: null };
+  // null: the push does not say (keep what is drawn); undefined: none usable, read them back.
+  const stickers = rawStickers === null ? null : readPushedStickers(rawStickers);
+  if (counts === null) return { imageId, counts: null, stickers };
   if (!counts || typeof counts !== 'object') return null;
   const c = counts as Record<string, unknown>;
   const record = (v: unknown) =>
@@ -163,7 +180,30 @@ export function readTurfPush(push: unknown, event: string) {
       leader: typeof c.leader === 'string' ? c.leader : null,
       leaderCosmeticId: typeof c.leaderCosmeticId === 'number' ? c.leaderCosmeticId : null,
     },
+    stickers,
   };
+}
+
+/** The hats a push carries; undefined when it carries none usable (an older server), so the card reads them. */
+function readPushedStickers(raw: unknown): HatSticker[] | undefined {
+  if (!Array.isArray(raw) || raw.length > TURF_FEED_STICKERS) return undefined;
+  const ok = raw.every((s) => {
+    const r = (s ?? {}) as Record<string, unknown>;
+    return (
+      (typeof r.id === 'string' || typeof r.id === 'number') &&
+      typeof r.userId === 'number' &&
+      typeof r.team === 'string' &&
+      typeof r.cosmeticId === 'number'
+    );
+  });
+  if (!ok) return undefined;
+  return raw.map(({ id, userId, team, cosmeticId, data }) => ({
+    id,
+    userId,
+    team,
+    cosmeticId,
+    data,
+  }));
 }
 
 /** The signal topic a card listens on for one image's counts; must match the server's `eventTurfTopic`. */

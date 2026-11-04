@@ -7,6 +7,7 @@ import {
   BIRTHDAY_2026_PREVIEW_FROM,
 } from '~/shared/constants/birthday2026.constants';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as UseExperimentModule from '~/components/Experiments/useExperiment';
 
 /**
  * The feed card is flag-gated here and nowhere else: with the flag off the hook must return null
@@ -20,6 +21,19 @@ const act = (React as unknown as { act: (callback: () => void) => void }).act;
 let flag = false;
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ hatTurfFeedCard: flag }),
+}));
+
+let armReady = true;
+let armVariant = 'control';
+let experimentEnabled: unknown;
+vi.mock('~/components/Experiments/useExperiment', async (importOriginal) => ({
+  ...(await importOriginal<typeof UseExperimentModule>()),
+  useExperiment: (_key: string, opts?: { enabled?: boolean }) => {
+    experimentEnabled = opts?.enabled;
+    return armReady
+      ? { ready: true, variant: armVariant, assignment: 'rule' }
+      : { ready: false, variant: undefined, assignment: undefined };
+  },
 }));
 
 let askedWith: { enabled?: unknown } | undefined;
@@ -49,6 +63,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 60 * 60 * 1000));
   askedWith = undefined;
+  armReady = true;
+  armVariant = 'control';
 });
 
 function feed() {
@@ -67,11 +83,25 @@ describe('useHatTurfFeed', () => {
     flag = false;
     expect(feed()).toBeNull();
     expect(askedWith?.enabled).toBe(false);
+    expect(experimentEnabled).toBe(false);
   });
 
   it('returns the event with the flag on and the event open', () => {
     flag = true;
-    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT });
+    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'control' });
     expect(askedWith?.enabled).toBe(true);
+    expect(experimentEnabled).toBe(true);
+  });
+
+  it('returns null with the flag on and the event open until the viewer arm is known', () => {
+    flag = true;
+    armReady = false;
+    expect(feed()).toBeNull();
+  });
+
+  it('carries the viewer arm', () => {
+    flag = true;
+    armVariant = 'badge-popover';
+    expect(feed()).toEqual({ event: BIRTHDAY_2026_EVENT, arm: 'badge-popover' });
   });
 });

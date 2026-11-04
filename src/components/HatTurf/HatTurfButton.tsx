@@ -10,6 +10,7 @@ import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -31,6 +32,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
   const [menu, setMenu] = useState(false);
   const [join, setJoin] = useState(false);
+  const track = useHatTurfAction('feed-card');
   const utils = trpc.useUtils();
   const setOptIn = trpc.hatTurf.setOptIn.useMutation({
     onSuccess: () => {
@@ -71,8 +73,9 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
         id: 'hat-turf-empty',
         message: 'Out of hats. You get more as the event goes on.',
       });
-    if (!cosmeticId) return;
-    setDraft(draft ?? { x: 0.5, y: 0.4 });
+    if (!cosmeticId || draft) return;
+    setDraft({ x: 0.5, y: 0.4 });
+    track('feed_place_start', feed.event);
   };
 
   return (
@@ -139,7 +142,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
               setMenu((open) => !open);
             }}
           >
-            <IconSettings size={10} stroke={2.5} />
+            <IconSettings size={16} stroke={2.25} />
           </button>
         </Popover.Target>
         <Popover.Dropdown p={6} onClick={(event) => event.stopPropagation()}>
@@ -150,7 +153,11 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
             size="xs"
             label="Show hats"
             checked={showHats}
-            onChange={(event) => setShowHats(event.currentTarget.checked)}
+            onChange={(event) => {
+              const show = event.currentTarget.checked;
+              setShowHats(show);
+              track(show ? 'hide_all_hats_off' : 'hide_all_hats_on', feed.event);
+            }}
           />
         </Popover.Dropdown>
       </Popover>
