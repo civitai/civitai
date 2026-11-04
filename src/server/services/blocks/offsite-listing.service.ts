@@ -5,7 +5,10 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { assertAcceptedAppDeveloperTermsTrpc } from '~/server/services/blocks/app-developer-terms.service';
+import {
+  assertAcceptedAppDeveloperTermsTrpc,
+  assertOwnerAcceptedAppDeveloperTerms,
+} from '~/server/services/blocks/app-developer-terms.service';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -2003,6 +2006,11 @@ export async function submitListingRevision(opts: {
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
     throw new OffsiteRequestError('INVALID_REVISION', 'this listing is not a revision draft');
   }
+  // The canonical owner, not the shadow's or parent's denormalized `userId` (see resolveListingRole).
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const ownerUserId = (await resolveListingAccess(shadowId, userId))?.ownerUserId;
+  if (ownerUserId != null && ownerUserId !== userId)
+    await assertOwnerAcceptedAppDeveloperTerms(ownerUserId);
   if (shadow.status !== 'draft') {
     throw new OffsiteRequestError(
       'INVALID_REVISION',

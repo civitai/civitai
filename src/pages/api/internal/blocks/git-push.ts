@@ -13,9 +13,9 @@ import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/bloc
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { AppDeveloperTermsNotAcceptedError } from '~/server/services/blocks/app-developer-terms.service';
 import {
   APP_DEVELOPER_TERMS_ACCEPT_PATH,
+  AppDeveloperTermsNotAcceptedError,
   appDeveloperTermsRefusalMessage,
 } from '~/shared/constants/app-developer-terms.constants';
 

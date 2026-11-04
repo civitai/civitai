@@ -1,3 +1,6 @@
+import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
@@ -112,5 +115,26 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
     const err = await assertAcceptedAppDeveloperTermsTrpc(DEV).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TRPCError);
     expect((err as TRPCError).code).toBe('FORBIDDEN');
+    expect((err as TRPCError).message).toContain('/content/app-developer-terms');
+  });
+});
+
+// Developers who accepted version N are never asked again until the version changes, so an edit to
+// the terms text that does not bump APP_DEVELOPER_TERMS_VERSION binds them to words they never saw.
+// Changed the text? Bump the version (a material change) and add its hash here. Filling in the
+// "Last updated" date does not count: that line is outside the hash.
+const TERMS_BODY_SHA256_BY_VERSION: Record<string, string> = {
+  '1': '9819c3f35b73c474d837fc0ed465d594bf78bfe9b9c30777e082a79f6210654a',
+};
+
+describe('App Developer Terms text is pinned to its version', () => {
+  it('the published terms body is the text of the current version', () => {
+    const md = readFileSync(
+      join(process.cwd(), 'src/static-content/app-developer-terms.md'),
+      'utf8'
+    );
+    const body = md.slice(md.indexOf('\n', md.indexOf('Last updated:')) + 1);
+    const sha = createHash('sha256').update(body).digest('hex');
+    expect(sha).toBe(TERMS_BODY_SHA256_BY_VERSION[APP_DEVELOPER_TERMS_VERSION]);
   });
 });

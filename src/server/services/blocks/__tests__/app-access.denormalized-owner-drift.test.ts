@@ -1,12 +1,14 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
-// These suites exercise publish paths for a developer who has already accepted the App Developer
-// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
 vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppDeveloperTermsService>()),
   hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 /**
@@ -407,6 +409,25 @@ describe('offsite-listing::submitListingRevision', () => {
       message: 'you can only submit your own revision',
     });
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("🔴 an editor's revision needs the CANONICAL owner to have accepted the App Developer Terms, not the stale column", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const ownerGate = vi.mocked(terms.assertOwnerAcceptedAppDeveloperTerms);
+    const refuse = (notAccepted: number) => async (id: number) => {
+      if (id === notAccepted) throw new TRPCError({ code: 'FORBIDDEN', message: 'owner' });
+    };
+    seatFor(EDITOR);
+    ownerGate.mockImplementation(refuse(REAL_OWNER));
+    await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' }
+    );
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+    ownerGate.mockImplementation(refuse(STALE_NAME));
+    await expect(
+      submitListingRevision({ shadowId: SHADOW, userId: EDITOR })
+    ).resolves.toMatchObject({ shadowId: SHADOW });
+    ownerGate.mockImplementation(async () => undefined);
   });
 
   it('still admits an ACCEPTED editor on the parent, and still refuses a stranger', async () => {

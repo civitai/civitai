@@ -8,9 +8,19 @@ export const APP_DEVELOPER_TERMS_PATH = '/content/app-developer-terms';
 /** Where a developer who publishes from the CLI or by git push can accept on the web. */
 export const APP_DEVELOPER_TERMS_ACCEPT_PATH = '/apps/submit';
 
+export const APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE =
+  "The app's owner has not accepted the current App Developer Terms yet.";
+
 export function appDeveloperTermsRefusalMessage(baseUrl: string) {
   return (
     `Accept the App Developer Terms (${baseUrl}${APP_DEVELOPER_TERMS_PATH}) on the web at ` +
     `${baseUrl}${APP_DEVELOPER_TERMS_ACCEPT_PATH}, then publish again.`
   );
+}
+
+export class AppDeveloperTermsNotAcceptedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AppDeveloperTermsNotAcceptedError';
+  }
 }

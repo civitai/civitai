@@ -5,15 +5,12 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { BLOCK_GOOD_APP_OWNER_SHARE } from '~/shared/constants/block-goods.constants';
 import {
   APP_DEVELOPER_TERMS_VERSION,
+  APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE,
+  AppDeveloperTermsNotAcceptedError,
   appDeveloperTermsRefusalMessage,
 } from '~/shared/constants/app-developer-terms.constants';
 
-export class AppDeveloperTermsNotAcceptedError extends Error {
-  constructor() {
-    super(appDeveloperTermsRefusalMessage(getBaseUrl()));
-    this.name = 'AppDeveloperTermsNotAcceptedError';
-  }
-}
+export { AppDeveloperTermsNotAcceptedError };
 
 export async function hasAcceptedAppDeveloperTerms(userId: number): Promise<boolean> {
   // dbWrite: a developer who ticks the box and submits in the same breath must not be refused by
@@ -51,7 +48,8 @@ export async function acceptAppDeveloperTerms({
 }
 
 export async function assertAcceptedAppDeveloperTerms(userId: number): Promise<void> {
-  if (!(await hasAcceptedAppDeveloperTerms(userId))) throw new AppDeveloperTermsNotAcceptedError();
+  if (!(await hasAcceptedAppDeveloperTerms(userId)))
+    throw new AppDeveloperTermsNotAcceptedError(appDeveloperTermsRefusalMessage(getBaseUrl()));
 }
 
 /** For tRPC callers: a FORBIDDEN the client shows as is, instead of a masked 500. */
@@ -81,4 +79,11 @@ export function getDeveloperRateCard() {
       viewer_global: share.viewer_global,
     },
   };
+}
+
+/** For an editor acting on someone else's app: the owner, in whose name it publishes, must have accepted. */
+export async function assertOwnerAcceptedAppDeveloperTerms(ownerUserId: number): Promise<void> {
+  if (!(await hasAcceptedAppDeveloperTerms(ownerUserId))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE });
+  }
 }

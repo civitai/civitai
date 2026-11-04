@@ -68,6 +68,10 @@ import {
 // invariant that module documents holds on all write paths — not just the
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
+import {
+  APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE,
+  AppDeveloperTermsNotAcceptedError,
+} from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 
@@ -1127,12 +1131,19 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // read: the row gated here is the row the request links to below (`appBlockId`).
   const existingApp = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
-    select: { id: true, appId: true },
+    select: { id: true, appId: true, app: { select: { userId: true } } },
   });
   if (existingApp && !submitterIsModerator) {
     const { mayShipAppVersion } = await import('./app-access.service');
     if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
       throw new Error(appOwnedByAnotherUser(slug));
+  }
+  // An editor ships in the owner's name, so the owner must have accepted too.
+  const ownerUserId = existingApp?.app?.userId;
+  if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
+    const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE);
   }
 
   // Block double-submit on the same slug — only one pending request per
@@ -2153,19 +2164,6 @@ export async function recordPendingFromPush(args: {
     import('~/server/utils/app-block-ids'),
   ]);
 
-  // Already captured this exact (slug, sha) as pending? Refresh + done.
-  const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
-    where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
-    select: { id: true },
-  });
-  if (existingForSha) {
-    await dbWrite.appBlockPublishRequest.update({
-      where: { id: existingForSha.id },
-      data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
-    });
-    return { publishRequestId: existingForSha.id };
-  }
-
   // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
   // is required + FK-constrained, and the owner is the most meaningful actor for
   // a commit to their repo.
@@ -2178,9 +2176,22 @@ export async function recordPendingFromPush(args: {
     throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
   }
   // A push has no checkbox, so the app owner, in whose name the request is filed, must have accepted.
-  // Before the supersede below: a refused push must not withdraw the owner's other pending request.
+  // Before the refresh and the supersede below: a refused push changes no pending request.
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTerms(ownerUserId);
+
+  // Already captured this exact (slug, sha) as pending? Refresh + done.
+  const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
+    where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
+    select: { id: true },
+  });
+  if (existingForSha) {
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: existingForSha.id },
+      data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
+    });
+    return { publishRequestId: existingForSha.id };
+  }
 
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)

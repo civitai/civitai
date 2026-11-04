@@ -38,13 +38,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
-// These suites exercise publish paths for a developer who has already accepted the App Developer
-// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
 vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppDeveloperTermsService>()),
   hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 const { submitVersion } = await import('~/server/services/blocks/publish-request.service');

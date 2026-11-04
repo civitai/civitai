@@ -1224,7 +1224,8 @@ export const appListingsRouter = router({
     return getAppDeveloperTermsStatus(ctx.user.id);
   }),
 
-  getDeveloperRateCard: appDeveloperProcedure.query(async () => {
+  getDeveloperRateCard: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.features?.appDeveloperRateCard) throw new TRPCError({ code: 'NOT_FOUND' });
     const { getDeveloperRateCard } = await import(
       '~/server/services/blocks/app-developer-terms.service'
     );

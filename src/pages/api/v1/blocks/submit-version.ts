@@ -1,4 +1,5 @@
 import type { Logger } from '@civitai/next-axiom';
+import { AppDeveloperTermsNotAcceptedError } from '~/shared/constants/app-developer-terms.constants';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
@@ -258,7 +259,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // The service throws plain Errors with human-readable messages (bundle too
     // large, missing manifest, invalid blockId/version/name, etc). Surface as
     // 400 so the CLI can print them — parity with the session route.
-    if (err instanceof Error && err.name === 'AppDeveloperTermsNotAcceptedError') {
+    if (err instanceof AppDeveloperTermsNotAcceptedError) {
       res.status(403).json({ message: err.message });
       return;
     }

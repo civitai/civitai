@@ -4,13 +4,14 @@ import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
-// These suites exercise publish paths for a developer who has already accepted the App Developer
-// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
 vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppDeveloperTermsService>()),
   hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 /**
@@ -494,7 +495,11 @@ describe('submitVersion', () => {
     ownerUserId: number,
     seats: { userId: number; status: string }[] = []
   ) => {
-    mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      app: { userId: ownerUserId },
+    });
     mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: 'apb_existing',
       app: { userId: ownerUserId },
@@ -520,6 +525,21 @@ describe('submitVersion', () => {
     expect(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.appBlockId).toBe(
       'apb_existing'
     );
+  });
+
+  it('🔴 refuses an accepted editor while the OWNER has not accepted the App Developer Terms, inserting nothing', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+    const buf = await makeValidBundle();
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+    ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
   });
 
   it.each(['pending', 'declined'])(
@@ -3937,6 +3957,7 @@ describe('recordPendingFromPush', () => {
 
   it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
     // A pending row for THIS exact (slug, sha) already exists → refresh + done.
     mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
       id: 'pubreq_existing_sha',
@@ -3958,9 +3979,9 @@ describe('recordPendingFromPush', () => {
       })
     );
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
-    // No supersede, no owner lookup — the early-return short-circuits them.
+    // No supersede: the early-return short-circuits it. The owner IS looked up first, because the
+    // App Developer Terms gate (keyed on the owner) must cover a refresh too.
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
-    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('(b) supersede-then-create happy path — no existing row → supersedes other pending, then creates', async () => {
