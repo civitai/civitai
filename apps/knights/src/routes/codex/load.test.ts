@@ -55,6 +55,7 @@ describe('codex load', () => {
     const page = await run();
     expect(page.facts.yesNo.judgesNeeded).toBe(5);
     expect(page.facts.fervor).toMatchObject({ scale: 100, windowDays: 7 });
+    expect(page.fervorExample.sum).toBe('100 × 100 × 80% × 80% = 6,400');
   });
 
   it('has no sworn-in date for someone without a career yet', async () => {

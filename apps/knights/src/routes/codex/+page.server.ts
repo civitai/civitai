@@ -4,6 +4,7 @@ import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import { rankTable } from '$lib/server/progression/rating';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
 import { rulesFacts } from '$lib/server/rules';
+import { fervorSum } from '$lib/server/leaderboard-view';
 import { judgesNeeded } from '$lib/server/yesno/items';
 import type { PageServerLoad } from './$types';
 
@@ -27,6 +28,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       return minDaysPlayed ? { ...rank, minDaysPlayed } : rank;
     }),
     facts: rulesFacts(judges),
+    fervorExample: { correct: 100, accuracyPercent: 80, sum: fervorSum(100, 125) },
     badges: badges.large,
     swornIn: player?.startAt.toISOString() ?? null,
   };

@@ -66,7 +66,6 @@
             <div><dt>Days played</dt><dd>{rank.minDaysPlayed}+</dd></div>
           {/if}
         </dl>
-        {#if !badges[rank.rank]}<p class="soon">Badge coming</p>{/if}
       </div>
     </li>
   {/each}
@@ -93,7 +92,11 @@
       </p>
       <div class="bar" aria-hidden="true"><div style:width="{accuracyFill}%"></div></div>
     </div>
-    {#if nextDays}<p class="days">Also at least {nextDays} days played.</p>{/if}
+    {#if nextDays}
+      <p class="days">
+        Also at least {nextDays} days played{next.daysMet ? ' (reached)' : ` (you have ${next.daysPlayed})`}.
+      </p>
+    {/if}
   </div>
 {/if}
 
@@ -179,12 +182,6 @@
     color: var(--io-parchment);
     font-weight: 600;
     text-align: right;
-  }
-  .soon {
-    margin: 10px 0 0;
-    color: var(--io-parchment-muted);
-    font: 400 12px/1.3 var(--io-font-ui);
-    font-style: italic;
   }
 
   .progress {

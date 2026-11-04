@@ -39,12 +39,6 @@
   });
 
   const half = $derived(Math.ceil(facts.ratingGuide.length / 2));
-  // The worked example in the fervor section runs the config's scale, never a number of its own.
-  const example = $derived({
-    correct: 100,
-    accuracy: 0.8,
-    fervor: Math.floor(100 * facts.fervor.scale * 0.8 * 0.8),
-  });
 </script>
 
 <div class="page-wide codex">
@@ -69,6 +63,8 @@
       for more and your gold multiplies. Your accuracy is the share of your last {facts.accuracy.window}
       graded judgments that were right; until {facts.accuracy.minGraded} are graded you are not yet
       rated, and no bar applies. You can skip ranks when you meet both for a higher one.
+      The top rank also asks for days played: days on which you cast at least one judgment since your
+      career began.
     </p>
     <RankLadder
       ranks={data.ranks}
@@ -216,9 +212,8 @@
       <article>
         <h3>Accuracy counts twice</h3>
         <p>
-          Accuracy is squared, so careful judging beats raw volume. {example.correct} correct at
-          {example.accuracy * 100}% accuracy: {example.correct} × {facts.fervor.scale} × {example.accuracy ** 2} =
-          {count(example.fervor)}.
+          Accuracy is squared, so careful judging beats raw volume. {data.fervorExample.correct} correct at
+          {data.fervorExample.accuracyPercent}% accuracy: {data.fervorExample.sum}.
         </p>
       </article>
       <article>
