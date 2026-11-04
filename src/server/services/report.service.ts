@@ -1259,10 +1259,25 @@ export async function isAppealBlockedByHoldMarker({
 }
 
 /**
- * Whether an appealable-looking image is refused anyway: a hold marker keeps it, or the appeal flow
- * excludes the image or its owner. Used by the appeal endpoint and the owner's image page.
- * getMyRemovedImages composes the same checks by hand, so change them together.
+ * The images whose appealable-looking block is refused anyway: a hold marker keeps them, or the
+ * appeal flow excludes the image or its owner. The endpoint, the owner's image page and the
+ * removed-images list all read this. The owner query runs even with no images.
  */
+export async function getAppealRefusedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  const [held, excluded] = await Promise.all([
+    getHoldMarkerBlockedImageIds({ imageIds, userId }),
+    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+  ]);
+  if (excluded.users.has(userId)) return new Set(imageIds);
+  return new Set(imageIds.filter((id) => held.has(id) || excluded.images.has(id)));
+}
+
 export async function isImageAppealRefused({
   imageId,
   userId,
@@ -1270,17 +1285,13 @@ export async function isImageAppealRefused({
   imageId: number;
   userId: number;
 }) {
-  const [held, excluded] = await Promise.all([
-    isAppealBlockedByHoldMarker({ imageId, userId }),
-    getAppealExcludedIds({ imageIds: [imageId], userIds: [userId] }),
-  ]);
-  return held || excluded.images.has(imageId) || excluded.users.has(userId);
+  return (await getAppealRefusedImageIds({ imageIds: [imageId], userId })).has(imageId);
 }
 
 /**
- * Whether the owner's page shows the appeal prompt. An image whose appeal was already decided shows
- * it; the prompt then says the decision stands, as the endpoint's refusal does. Anyone else's image
- * reads as no.
+ * Whether the owner's page shows the appeal prompt. An image with a pending or decided appeal shows
+ * it; the prompt then says the appeal is under review or the decision stands, as the endpoint's
+ * refusal does. Anyone else's image reads as no.
  */
 export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
   const [image] = await dbWrite.$queryRaw<
