@@ -28,7 +28,8 @@ import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type Box = { width: number; height: number; left: number; top: number };
+/** `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider. */
+type Box = { width: number; height: number; left: number; top: number; shownWidth: number };
 
 /** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
@@ -123,13 +124,15 @@ function HatTurfLayerContent({
         height: drawn.height,
         left: at.x - self.x + drawn.left,
         top: at.y - self.y + drawn.top,
+        shownWidth: Math.min(drawn.width, media.offsetWidth),
       };
       setBox((current) =>
         current &&
         current.width === next.width &&
         current.height === next.height &&
         current.left === next.left &&
-        current.top === next.top
+        current.top === next.top &&
+        current.shownWidth === next.shownWidth
           ? current
           : next
       );
@@ -163,11 +166,11 @@ function HatTurfLayerContent({
   const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
-  const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
+  const hatSize = (scale: number) => (box ? Math.max(22, box.shownWidth * scale) : 0);
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
-  const limit = drawLimit ?? (box && box.width < NARROW_PICTURE ? 3 : 5);
+  const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
   const drawn = showHats ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
   const overflow = showHats ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;

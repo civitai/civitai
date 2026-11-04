@@ -146,7 +146,9 @@ function OpenDraft() {
 
 const CARD = { width: 171, height: 228 };
 
-function renderPicture(fit: 'contain' | 'cover', natural: [number, number]) {
+type Fit = 'contain' | 'cover';
+
+function renderPictures(pictures: [Fit, [number, number]][]) {
   return renderWithProviders(
     <TurfSummaryContext.Provider
       value={{
@@ -160,20 +162,24 @@ function renderPicture(fit: 'contain' | 'cover', natural: [number, number]) {
         watch: () => () => undefined,
       }}
     >
-      <HatTurfCardProvider>
-        <div data-testid="frame" style={{ position: 'relative', overflow: 'hidden', ...CARD }}>
-          <img
-            src={svg(...natural)}
-            alt=""
-            style={{ width: '100%', height: '100%', objectFit: fit, display: 'block' }}
-          />
-          <HatTurfLayer imageId={5} />
-          <OpenDraft />
-        </div>
-      </HatTurfCardProvider>
+      {pictures.map(([fit, natural], i) => (
+        <HatTurfCardProvider key={i}>
+          <div data-testid="frame" style={{ position: 'relative', overflow: 'hidden', ...CARD }}>
+            <img
+              src={svg(...natural)}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: fit, display: 'block' }}
+            />
+            <HatTurfLayer imageId={5 + i} />
+            <OpenDraft />
+          </div>
+        </HatTurfCardProvider>
+      ))}
     </TurfSummaryContext.Provider>
   );
 }
+
+const renderPicture = (fit: Fit, natural: [number, number]) => renderPictures([[fit, natural]]);
 
 const q = (id: string) =>
   document.body.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
@@ -252,5 +258,25 @@ describe('hat placement against the drawn picture', () => {
     const onCardY = rect.top + spot.y * rect.height;
     expect(onCardY).toBeGreaterThanOrEqual(0);
     expect(onCardY).toBeLessThanOrEqual(CARD.height);
+  });
+
+  test('a wide picture cropped by a tall card draws the same size hat as a tall one', async () => {
+    renderPictures([
+      ['cover', [900, 1600]],
+      ['cover', [1600, 900]],
+    ]);
+    let widths: number[] = [];
+    await vi.waitFor(() => {
+      const drafts = [
+        ...document.body.querySelectorAll<HTMLElement>('[data-testid="hat-turf-draft"]'),
+      ];
+      expect(drafts).toHaveLength(2);
+      // Until the wide picture has loaded it measures as the card, which would pass vacuously.
+      expect(parseFloat(drafts[1].parentElement!.style.width)).toBeGreaterThan(CARD.width * 2);
+      widths = drafts.map((draft) => draft.querySelector('svg')!.getBoundingClientRect().width);
+    });
+    const [tall, wide] = widths;
+    expect(tall).toBeGreaterThan(0);
+    expect(wide).toBeCloseTo(tall, 0);
   });
 });
