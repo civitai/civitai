@@ -1,12 +1,15 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { writeAutoNsfw } from '~/server/services/auto-nsfw';
+import { writeAutoNsfw, type AutoNsfwResult } from '~/server/services/auto-nsfw';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const ID = 1;
-const metaPatch = { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } };
+const metaPatch = {
+  profanityMatches: ['x'],
+  profanityEvaluation: { reason: 'r', metrics: {} },
+} as unknown as AutoNsfwResult['metaPatch'];
 let pg: PGlite;
 let db: { $executeRaw: ReturnType<typeof pgliteRaw>['executeRaw'] };
 

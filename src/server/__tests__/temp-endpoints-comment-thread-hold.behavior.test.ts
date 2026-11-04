@@ -19,6 +19,15 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 vi.mock('~/server/services/article.service', () => ({ recomputeArticleIngestion: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({ invalidateManyImageExistence: vi.fn() }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
+// The held-verdict apply has its own suite; here only that the reset takes the model out of Private
+// through it.
+const { mockLeavingPrivate } = vi.hoisted(() => ({
+  mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
+}));
+vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
+  applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
+  finishHeldVerdictApply: vi.fn(async () => undefined),
+}));
 
 import resetTrainingModel from '~/pages/api/admin/temp/reset-training-model';
 import migrateArticleImages from '~/pages/api/admin/temp/migrate-article-images';
@@ -86,8 +95,9 @@ beforeEach(async () => {
   await db.exec(
     `TRUNCATE "CommentV2", "Thread", "Image", "Post", "ImageConnection", "TagsOnImageNew" CASCADE`
   );
-  vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (ops: Promise<unknown>[]) =>
-    Promise.all(ops)) as never);
+  vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (
+    ops: Promise<unknown>[] | ((tx: unknown) => unknown)
+  ) => (typeof ops === 'function' ? ops(dbMock.dbWrite) : Promise.all(ops))) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
     (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
       (await run(first, values)).rows) as never
@@ -128,6 +138,20 @@ describe('reset-training-model', () => {
     await call();
     expect(await left('Post')).toEqual([]);
     expect(await left('Image')).toEqual([]);
+  });
+
+  it('takes the model out of Private with any held scan verdict, in one transaction', async () => {
+    await seed(OWNER);
+    const tx = Object.create(dbMock.dbWrite);
+    vi.mocked(dbMock.dbWrite.$transaction).mockImplementationOnce((async (
+      fn: (t: unknown) => unknown
+    ) => fn(tx)) as never);
+    await call();
+    expect(tx.model.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
+    );
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate.mock.calls[0]).toEqual([tx, 5]);
   });
 
   it.each([

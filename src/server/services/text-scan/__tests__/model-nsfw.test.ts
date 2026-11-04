@@ -23,6 +23,7 @@ const { createNotification } = await import('~/server/services/notification.serv
 const args = (raised: boolean) => ({
   entityId: 1,
   workflowId: 'wf',
+  textHash: 'hash',
   outcome: {
     nsfw: { detectedLevel: NsfwLevel.X, declaredLevel: NsfwLevel.PG13, raised, reason: 'r' },
     triggeredLabels: raised ? ['nsfw' as const] : [],

@@ -1070,7 +1070,7 @@ describe('upsertModel — content flags the row ends up with', () => {
         meta: { systemNsfwLock: scanLock, restrictedNsfwVerdict: waiting },
       });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
-      expect(updateData().meta.restrictedNsfwVerdict).toEqual(waiting);
+      expect((updateData().meta as Record<string, unknown>).restrictedNsfwVerdict).toEqual(waiting);
     });
 
     it('takes no lead the owner sends, and the owner cannot strip the one it writes', async () => {
@@ -1089,7 +1089,7 @@ describe('upsertModel — content flags the row ends up with', () => {
           },
         },
       } as never);
-      expect(updateData().meta.restrictedNsfwVerdict).toEqual({
+      expect((updateData().meta as Record<string, unknown>).restrictedNsfwVerdict).toEqual({
         source: 'text-scan',
         at: scanLock.at,
         restriction: 'minor',

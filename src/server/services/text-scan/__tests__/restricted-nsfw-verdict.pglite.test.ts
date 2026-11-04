@@ -127,7 +127,7 @@ const row = async () =>
   ).rows[0];
 
 // What the scan's caller read, which a flag landing after the read makes stale.
-const scanned = (over: Seed = {}) => ({
+const scanned = (over: Partial<Parameters<typeof applySystemModelNsfwFlag>[0]['model']> = {}) => ({
   id: MODEL,
   nsfw: false,
   nsfwLevel: 1,
@@ -529,7 +529,7 @@ describe('a Private model, which must stay SFW-only', () => {
     db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = $1`, [MODEL]);
   const publish = async () => {
     await db.query(`UPDATE "Model" SET availability = 'Public' WHERE id = $1`, [MODEL]);
-    return applyHeldVerdictLeavingPrivate(dbMock.dbWrite, MODEL);
+    return applyHeldVerdictLeavingPrivate(dbMock.dbWrite as never, MODEL);
   };
   const expectHeld = async () => {
     const after = await row();
@@ -582,7 +582,7 @@ describe('a Private model, which must stay SFW-only', () => {
     await applyHeldRestrictedVerdict(MODEL);
     expect(await publish()).toBe(true);
     const applied = (await row()).meta;
-    expect(await applyHeldVerdictLeavingPrivate(dbMock.dbWrite, MODEL)).toBe(false);
+    expect(await applyHeldVerdictLeavingPrivate(dbMock.dbWrite as never, MODEL)).toBe(false);
     expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
     expect(
       await applySystemModelNsfwFlag({
