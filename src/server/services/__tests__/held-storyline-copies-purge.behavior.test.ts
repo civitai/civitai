@@ -61,6 +61,7 @@ const COPIES: [chapterId: number, ownerId: number, authorId: number][] = [
 ];
 
 beforeEach(async () => {
+  vi.clearAllMocks();
   await db.exec(`
     TRUNCATE "CsamReport", "EvidenceHold", "HeldStorylineChapter", "HeldStorylineChapterEdge",
       "HeldStorylineBranchChoice", "HeldStorylineCreateClick";
@@ -126,5 +127,15 @@ describe('purging held storyline chapter copies', () => {
     const { storyline } = await purgeReleasedHeldCopies();
     expect(storyline).toEqual({ chapters: 3, edges: 3, choices: 3, clicks: 3 });
     expect(await left()).toEqual(everywhere([15]));
+  });
+
+  // A hold placed between two statements must not leave a chapter's copy without its edges.
+  it('purges the four tables in one statement', async () => {
+    await purgeReleasedHeldCopies();
+    const statements = [
+      ...vi.mocked(dbMock.dbWrite.$queryRaw).mock.calls,
+      ...vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls,
+    ].map(([first, ...values]) => asSql(first as TemplateStringsArray, values).sql);
+    expect(statements.filter((sql) => sql.includes('"HeldStoryline'))).toHaveLength(1);
   });
 });
