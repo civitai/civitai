@@ -14,6 +14,12 @@ export function turfKeys(event: string) {
     log: `${root}:map-log` as const,
     // `Image:{id}` -> TurfCounts, for every image with a live sticker. Display only.
     counts: `${root}:counts` as const,
+    // A ticket each sync or reconcile batch takes before its read: a higher ticket read later.
+    // Reset only with `stamp`: alone, every later write would fall below the stored stamps.
+    seq: `${root}:seq` as const,
+    // `Image:{id}` -> the ticket of the read last written for it, so an older read never overwrites a
+    // newer one. Kept after an image empties: deleting it would let a stale read write the image back.
+    stamp: `${root}:stamp` as const,
     // Image ids on someone's screen -> when that lapses (ms): which counts to push (turf-watch.ts).
     watch: `${root}:watch` as const,
   };
