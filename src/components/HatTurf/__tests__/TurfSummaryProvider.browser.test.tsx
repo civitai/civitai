@@ -173,7 +173,7 @@ describe('TurfSummaryProvider', () => {
     expect(latest).toBeNull();
   });
 
-  // Deliberate (event owner's call, 2026-11-04): only a viewer who joined Hat Turf sees turf. The
+  // Only a viewer who joined Hat Turf sees turf. The
   // others keep the context (the join invite needs it) but get no hats, counts or pushes. The joined
   // row is the positive control for the rest.
   test.each([

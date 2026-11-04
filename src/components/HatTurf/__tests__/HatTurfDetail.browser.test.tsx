@@ -434,7 +434,7 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-hat')!.getBoundingClientRect().height).toBe(30);
   });
 
-  // Deliberate (event owner's call, 2026-11-04): turf is seen by joined players only. A viewer who
+  // Turf is seen by joined players only. A viewer who
   // has not joined gets the hat button as their way in, and no standings, counts or hats.
   // The same picture with hats and counts on it, joined and not: the joined row is the positive
   // control that hats and the badge do draw from this context.
