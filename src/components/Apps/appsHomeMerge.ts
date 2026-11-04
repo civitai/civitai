@@ -173,3 +173,15 @@ export function mergeHomeApps(args: {
   }
   return out;
 }
+
+/**
+ * Why an EMPTY home is empty — call it only when `mergeHomeApps` returned nothing.
+ * `'all-removed'`: the viewer has apps, and every one is off the grid only because of their own
+ * "Remove from My apps" hides (the same merge with no hides is non-empty), so "No apps yet"
+ * would be false. `'no-apps'`: nothing to show even with every hide ignored.
+ */
+export function homeEmptyKind(
+  args: Parameters<typeof mergeHomeApps>[0]
+): 'no-apps' | 'all-removed' {
+  return mergeHomeApps({ ...args, hidden: {} }).length > 0 ? 'all-removed' : 'no-apps';
+}

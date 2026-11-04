@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { chromeRecentAppIconSrc } from '~/components/AppBlocks/chromeRecentAppIconSrc';
 import { useChromeListingDetail } from '~/components/AppBlocks/useChromeListingDetail';
 import {
+  homeEmptyKind,
   mergeHomeApps,
   type AppsHomeTile as AppsHomeTileModel,
 } from '~/components/Apps/appsHomeMerge';
@@ -275,17 +276,22 @@ function BrowseStoreButton({ testId }: { testId: string }) {
   );
 }
 
-function EmptyState() {
+/**
+ * The empty home. `all-removed` — the viewer has apps but removed every one — must not claim
+ * "No apps yet"; it says what happened and how they come back (`homeEmptyKind`).
+ */
+function EmptyState({ kind }: { kind: 'no-apps' | 'all-removed' }) {
   return (
-    <Paper p="xl" radius="md" withBorder data-testid="apps-home-empty">
+    <Paper p="xl" radius="md" withBorder data-testid="apps-home-empty" data-empty-kind={kind}>
       <Stack align="center" gap="sm">
         <IconBuildingStore size={40} stroke={1.5} />
         <Title order={3} ta="center">
-          No apps yet
+          {kind === 'all-removed' ? "You've removed all your apps from this page" : 'No apps yet'}
         </Title>
         <Text c="dimmed" ta="center" maw={480}>
-          Apps you open, connect or buy show up here, so you can get back to them in one click. Find
-          something to try in the store.
+          {kind === 'all-removed'
+            ? 'Apps you open again will come back here.'
+            : 'Apps you open, connect or buy show up here, so you can get back to them in one click. Find something to try in the store.'}
         </Text>
         <BrowseStoreButton testId="apps-home-empty-browse" />
       </Stack>
@@ -294,9 +300,10 @@ function EmptyState() {
 }
 
 /**
- * The "Removed … from My apps · Undo" bar. A live region so the removal is announced, and the
- * Undo button takes focus when it appears: the menu item that was focused is gone with its
- * tile, so this is where a keyboard user's focus lands instead of the page body.
+ * The "Removed … from My apps · Undo" bar. Rendered INSIDE the home's always-mounted
+ * `role="status"` region (a live region inserted together with its content is not reliably
+ * announced). The Undo button takes focus when it appears: the menu item that was focused is
+ * gone with its tile, so this is where a keyboard user's focus lands instead of the page body.
  */
 function RemovedBar({
   name,
@@ -312,7 +319,7 @@ function RemovedBar({
     undoRef.current?.focus();
   }, [name]);
   return (
-    <Paper p="xs" radius="md" withBorder role="status" data-testid="apps-home-removed">
+    <Paper p="xs" radius="md" withBorder data-testid="apps-home-removed">
       <Group justify="space-between" wrap="nowrap" gap="sm">
         <Text size="sm" lineClamp={1} style={{ minWidth: 0 }}>
           Removed {name} from My apps
@@ -323,6 +330,7 @@ function RemovedBar({
             size="xs"
             variant="subtle"
             onClick={onUndo}
+            aria-label={`Undo removing ${name}`}
             data-testid="apps-home-undo"
           >
             Undo
@@ -401,7 +409,7 @@ export function AppsHomeBody() {
       void utils.appListings.listMyApps.invalidate();
     } catch (error) {
       dropOverride(app.slug, optimistic);
-      setRemoved((prev) => (prev?.slug === app.slug ? null : prev));
+      closeRemovedBar(app.slug);
       showErrorNotification({
         title: `Couldn't remove ${app.name}`,
         error: error instanceof Error ? error : { message: 'Please try again.' },
@@ -412,7 +420,7 @@ export function AppsHomeBody() {
   async function handleUndo() {
     if (!removed) return;
     const { slug, name } = removed;
-    setRemoved(null);
+    closeRemovedBar();
     setOverrides((prev) => ({ ...prev, [slug]: null }));
     await pendingHides.current.get(slug);
     try {
@@ -427,11 +435,48 @@ export function AppsHomeBody() {
     }
   }
 
+  // The bar's auto-dismiss PAUSES while the pointer is over it or focus is inside it (a timed
+  // control must not vanish under the user), and restarts in full when they leave. Focus lands
+  // on Undo when the bar appears, so a keyboard user's bar stays until they move on.
+  const statusRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [barHovered, setBarHovered] = useState(false);
+  const [barFocused, setBarFocused] = useState(false);
+  const barPaused = barHovered || barFocused;
+  // Set when the bar closes with focus inside it, so focus goes to the page heading rather
+  // than falling to <body> with the unmounted button.
+  const refocusHeading = useRef(false);
+
+  /**
+   * Close the bar (only if it is showing `onlyFor`, when given); if focus was inside it, hand
+   * focus to the heading once it is gone. The ref write in the updater is idempotent, so a
+   * double-invoked updater is harmless.
+   */
+  function closeRemovedBar(onlyFor?: string) {
+    const active = typeof document === 'undefined' ? null : document.activeElement;
+    const focusInside = !!active && !!statusRef.current?.contains(active);
+    setRemoved((prev) => {
+      if (!prev || (onlyFor !== undefined && prev.slug !== onlyFor)) return prev;
+      if (focusInside) refocusHeading.current = true;
+      return null;
+    });
+  }
+
   useEffect(() => {
-    if (!removed) return;
+    if (removed) return;
+    setBarHovered(false);
+    setBarFocused(false);
+    if (refocusHeading.current) {
+      refocusHeading.current = false;
+      headingRef.current?.focus();
+    }
+  }, [removed]);
+
+  useEffect(() => {
+    if (!removed || barPaused) return;
     const timer = setTimeout(() => setRemoved(null), APPS_HOME_UNDO_MS);
     return () => clearTimeout(timer);
-  }, [removed]);
+  }, [removed, barPaused]);
 
   const serverHidden = myApps.data?.hidden;
   const hidden = useMemo(() => {
@@ -456,20 +501,37 @@ export function AppsHomeBody() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
-        <Title order={1} size="h2">
-          My apps
-        </Title>
-        <BrowseStoreButton testId="apps-home-browse" />
-      </Group>
+      {/* The heading and the status region share one stack whose gap exists only while the bar
+          shows, so the always-mounted (empty) region adds no space when idle. */}
+      <Stack gap={removed ? 'lg' : 0}>
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+          <Title order={1} size="h2" ref={headingRef} tabIndex={-1}>
+            My apps
+          </Title>
+          <BrowseStoreButton testId="apps-home-browse" />
+        </Group>
 
-      {removed && (
-        <RemovedBar
-          name={removed.name}
-          onUndo={() => void handleUndo()}
-          onDismiss={() => setRemoved(null)}
-        />
-      )}
+        {/* Always mounted, empty when idle, so the removal message is announced. */}
+        <div
+          ref={statusRef}
+          role="status"
+          data-testid="apps-home-removed-status"
+          onMouseEnter={() => setBarHovered(true)}
+          onMouseLeave={() => setBarHovered(false)}
+          onFocus={() => setBarFocused(true)}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setBarFocused(false);
+          }}
+        >
+          {removed && (
+            <RemovedBar
+              name={removed.name}
+              onUndo={() => void handleUndo()}
+              onDismiss={() => closeRemovedBar()}
+            />
+          )}
+        </div>
+      </Stack>
 
       {myApps.isError && (
         <Paper p="lg" radius="md" withBorder data-testid="apps-home-error">
@@ -498,7 +560,14 @@ export function AppsHomeBody() {
       ) : tiles.length === 0 ? (
         // Empty only when BOTH sources are: nothing from the server AND no local recents.
         myApps.isError ? null : (
-          <EmptyState />
+          <EmptyState
+            kind={homeEmptyKind({
+              server: myApps.data?.apps ?? [],
+              recents,
+              canOpenPage,
+              hidden,
+            })}
+          />
         )
       ) : (
         <TileGrid testId="apps-home-grid">

@@ -2,7 +2,7 @@
 // the shared scaffold omits; without it every geometry assertion below measures nothing.
 // Browser mode gives each file its own iframe, so this does not leak into sibling suites.
 import '@mantine/core/styles.css';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -408,6 +408,28 @@ describe('the launcher tile', () => {
   });
 });
 
+describe('the empty state after removing everything', () => {
+  test('🔴 every app removed → says so (not "No apps yet") and still offers the store', async () => {
+    mocks.myApps = {
+      data: served([{ ...PAGE_APP, lastUsedAt: new Date('2019-12-01T00:00:00.000Z') }], {
+        'pixel-forge': '2020-01-05T00:00:00.000Z',
+      }),
+      isLoading: false,
+      isError: false,
+    };
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByTestId('apps-home-empty')).toBeVisible();
+    await expect
+      .element(page.getByRole('heading', { name: "You've removed all your apps from this page" }))
+      .toBeVisible();
+    await expect.element(page.getByText('Apps you open again will come back here.')).toBeVisible();
+    expect(page.getByRole('heading', { name: 'No apps yet' }).elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-home-empty-browse').element().getAttribute('href')).toBe(
+      '/apps/store'
+    );
+  });
+});
+
 describe('Remove from My apps', () => {
   async function removeViaMenu(name: string) {
     await userEvent.click(page.getByRole('button', { name: `More options for ${name}` }));
@@ -442,6 +464,112 @@ describe('Remove from My apps', () => {
     expect(mocks.unhide).toHaveBeenCalledTimes(1);
     expect(mocks.unhide.mock.calls[0][0]).toEqual({ slug: 'pixel-forge' });
     expect(page.getByTestId('apps-home-removed').elements()).toHaveLength(0);
+  });
+
+  test('🔴 the status region is mounted while idle, so the removal is announced into it', async () => {
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+    const region = page.getByTestId('apps-home-removed-status');
+    // Present and EMPTY before anything is removed — a live region inserted together with its
+    // message is not reliably announced.
+    expect(region.element().getAttribute('role')).toBe('status');
+    expect(region.element().textContent).toBe('');
+    const before = region.element();
+    await removeViaMenu('Pixel Forge');
+    await expect.element(region).toHaveTextContent('Removed Pixel Forge from My apps');
+    // The SAME element carries the message (not a new region mounted with it).
+    expect(region.element()).toBe(before);
+    expect(region.element().contains(page.getByTestId('apps-home-removed').element())).toBe(true);
+  });
+
+  test('Undo names what it undoes', async () => {
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+    await removeViaMenu('Pixel Forge');
+    await expect
+      .element(page.getByRole('button', { name: 'Undo removing Pixel Forge' }))
+      .toBeVisible();
+  });
+
+  test('🔴 Undo returns focus to the page heading, not <body>', async () => {
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+    await removeViaMenu('Pixel Forge');
+    const undo = page.getByTestId('apps-home-undo');
+    await expect.poll(() => document.activeElement).toBe(undo.element());
+    await userEvent.click(undo);
+    const heading = page.getByRole('heading', { name: 'My apps' }).element();
+    await expect.poll(() => document.activeElement).toBe(heading);
+  });
+
+  test('Dismiss with focus inside also returns focus to the heading', async () => {
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+    await removeViaMenu('Pixel Forge');
+    await userEvent.click(page.getByRole('button', { name: 'Dismiss' }));
+    await expect.poll(() => page.getByTestId('apps-home-removed').elements().length).toBe(0);
+    const heading = page.getByRole('heading', { name: 'My apps' }).element();
+    await expect.poll(() => document.activeElement).toBe(heading);
+  });
+
+  describe('auto-dismiss pauses while the bar is focused or hovered', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Remove Pixel Forge and wait for the bar, with focus on its Undo (set on appear). */
+    async function removeAndWaitForBar() {
+      renderWithProviders(<AppsHomeBody />);
+      await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+      await removeViaMenu('Pixel Forge');
+      const undo = page.getByTestId('apps-home-undo');
+      await expect.poll(() => document.activeElement).toBe(undo.element());
+      // Fake timers only from here, so the menu interaction above ran on real time. Advances
+      // below are far past any plausible dismiss delay, so they do not restate the constant.
+      // `shouldAdvanceTime` keeps the test runner's own timers alive; it cannot dismiss a
+      // paused bar, because a paused bar has no timer at all.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+      return undo;
+    }
+    const barCount = () => page.getByTestId('apps-home-removed').elements().length;
+    /** Yield a frame (rAF is not faked) so React commits whatever the last event queued. */
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    test('🔴 focused: the bar stays; once focus leaves it, the timer dismisses it', async () => {
+      const undo = await removeAndWaitForBar();
+      vi.advanceTimersByTime(60_000);
+      await frame();
+      expect(barCount()).toBe(1);
+      (undo.element() as HTMLElement).blur();
+      // The blur re-arms the timer in an effect; advance until it has fired.
+      await expect
+        .poll(() => {
+          vi.advanceTimersByTime(60_000);
+          return barCount();
+        })
+        .toBe(0);
+    });
+
+    test('🔴 hovered: the bar stays; leaving it lets the timer dismiss it', async () => {
+      const undo = await removeAndWaitForBar();
+      await userEvent.hover(page.getByTestId('apps-home-removed'));
+      (undo.element() as HTMLElement).blur();
+      // Let React commit the blur, then prove the hover alone holds the bar.
+      await expect.poll(() => document.activeElement === undo.element()).toBe(false);
+      for (let i = 0; i < 3; i++) {
+        await frame();
+        vi.advanceTimersByTime(60_000);
+      }
+      await frame();
+      expect(barCount()).toBe(1);
+      await userEvent.unhover(page.getByTestId('apps-home-removed'));
+      await expect
+        .poll(() => {
+          vi.advanceTimersByTime(60_000);
+          return barCount();
+        })
+        .toBe(0);
+    });
   });
 
   test('🔴 a failed remove rolls back: the tile comes back', async () => {

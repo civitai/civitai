@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeHomeApps } from '~/components/Apps/appsHomeMerge';
+import { homeEmptyKind, mergeHomeApps } from '~/components/Apps/appsHomeMerge';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import {
   parseRecentsForOwner,
@@ -350,5 +350,27 @@ describe('mergeHomeApps — launch origin', () => {
       'https://promptlab.example.org/app',
       '/apps/store-preview/pixel-forge',
     ]);
+  });
+});
+
+describe('homeEmptyKind — why an empty home is empty', () => {
+  const forgeOld = { ...FORGE, lastUsedAt: T_SERVER_OLD };
+
+  it('🔴 every app removed → all-removed (not "No apps yet")', () => {
+    const args = {
+      server: [forgeOld],
+      recents: [],
+      canOpenPage: true,
+      hidden: { 'pixel-forge': T_HIDE },
+    };
+    expect(mergeHomeApps(args)).toEqual([]); // precondition: the home IS empty
+    expect(homeEmptyKind(args)).toBe('all-removed');
+  });
+
+  it('nothing at all → no-apps, with or without stale hides', () => {
+    expect(homeEmptyKind({ server: [], recents: [], canOpenPage: true })).toBe('no-apps');
+    expect(
+      homeEmptyKind({ server: [], recents: [], canOpenPage: true, hidden: { gone: T_HIDE } })
+    ).toBe('no-apps');
   });
 });
