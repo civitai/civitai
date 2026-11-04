@@ -4,7 +4,9 @@ import type * as RemixAppService from '~/server/services/remix-app.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const h = vi.hoisted(() => ({
-  quoteTeamRemix: vi.fn(async (_args: { getToken: () => Promise<string> }) => null),
+  quoteTeamRemix: vi.fn<(args: { getToken: () => Promise<string> }) => Promise<null>>(
+    async () => null
+  ),
   getToken: vi.fn(async () => 'orch-token'),
 }));
 
