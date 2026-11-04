@@ -364,8 +364,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
 export const ImagesCardMemoized = memo(ImagesCard);
 
-// The same action row as Cards/ImageCard: reactions on one line, the Buzz tip and sticker badge on
-// the next (or beside them once the card is wide enough), so no count is ever clipped.
+// Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
 function ImageReactions({
   image,
   readonly,
@@ -390,42 +389,64 @@ function ImageReactions({
       }}
       useLive={inView !== false}
     >
-      {(metrics) => (
-        <div className={clsx(cardClasses.footer, classes.actionsFooter)}>
-          <div className={cardClasses.actions}>
-            <div className={cardClasses.actionRow}>
-              <Reactions
-                className={clsx(cardClasses.reactions, classes.bar)}
-                entityId={image.id}
-                entityType="image"
-                reactions={image.reactions}
-                metrics={metrics}
-                metricsUnknown={image.stats?.statsUnknown}
-                targetUserId={image.user.id}
-                readonly={readonly}
-                invisibleEmpty
-                disableBuzzTip
-                abbreviate
-              />
-            </div>
-            <div className={cardClasses.tipRow}>
-              {!image.poi && (
-                <ImageBuzzTip
+      {(metrics) => {
+        // A read-only card with nothing to show renders no row at all, tip included.
+        const hasReactions =
+          !!image.stats?.statsUnknown ||
+          image.reactions.length > 0 ||
+          [
+            metrics.likeCount,
+            metrics.dislikeCount,
+            metrics.heartCount,
+            metrics.laughCount,
+            metrics.cryCount,
+          ].some((n) => (n ?? 0) > 0);
+        return (
+          <div
+            className={clsx(cardClasses.footer, classes.actionsFooter)}
+            onClick={(e) => {
+              // The padding around the buttons must not open the card's image link.
+              if (!readonly) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+          >
+            <div className={cardClasses.actions}>
+              <div className={cardClasses.actionRow}>
+                <Reactions
+                  className={clsx(cardClasses.reactions, classes.bar)}
                   entityId={image.id}
-                  targetUserId={image.user.id}
-                  tippedAmountCount={metrics.tippedAmountCount}
+                  entityType="image"
+                  reactions={image.reactions}
+                  metrics={metrics}
                   metricsUnknown={image.stats?.statsUnknown}
+                  targetUserId={image.user.id}
                   readonly={readonly}
-                  className={clsx(cardClasses.reactions, classes.bar, 'flex items-center pl-0.5')}
+                  invisibleEmpty
+                  disableBuzzTip
+                  abbreviate
                 />
-              )}
-              <div className={cardClasses.tipEnd}>
-                {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
+              </div>
+              <div className={cardClasses.tipRow}>
+                {!image.poi && !(readonly && !hasReactions) && (
+                  <ImageBuzzTip
+                    entityId={image.id}
+                    targetUserId={image.user.id}
+                    tippedAmountCount={metrics.tippedAmountCount}
+                    metricsUnknown={image.stats?.statsUnknown}
+                    readonly={readonly}
+                    className={clsx(cardClasses.reactions, classes.bar, 'flex items-center pl-0.5')}
+                  />
+                )}
+                <div className={cardClasses.tipEnd}>
+                  {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      }}
     </Metrics>
   );
 }

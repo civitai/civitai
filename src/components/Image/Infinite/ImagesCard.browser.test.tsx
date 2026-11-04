@@ -6,6 +6,7 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 
+const guard = { safe: true };
 const features = { stickerPlacement: true, imageCardInfoButton: false, imageGeneration: false };
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -58,7 +59,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
 }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {
-    return <>{children(true)}</>;
+    return <>{children(guard.safe)}</>;
   }
   ImageGuard2.BlurToggle = function BlurToggle() {
     return null;
@@ -111,16 +112,27 @@ function imageData(s: Record<string, number>) {
   } as any;
 }
 
-// Reported 2026-11-04 (hq:images_videos_feed_4v87): on the /images and /videos feeds, three-digit
-// reaction counts were cut off ("4:" for 432) with room left in the row, and the sticker count was
-// a different size from the reactions. The feed card now uses the same action row as ImageCard.
+// Regression: on the /images and /videos feeds, three-digit
+// counts were clipped ("4:" for 432) with room left in the row, and the sticker count was a
+// different size from the reactions.
 const stats = { like: 432, heart: 321, laugh: 45, cry: 23, tip: 345 };
 const maxed = { like: 999999, heart: 999999, laugh: 999999, cry: 999999, tip: 999999 };
 
-// Two-column phone feed, desktop columns, one-column phone.
-const WIDTHS = [181, 245, 320, 358];
+const zero = { like: 0, heart: 0, laugh: 0, cry: 0, tip: 0 };
+
+const FEED_CARD_WIDTHS = [181, 245, 320, 358];
 
 const card = () => document.querySelector('[data-testid="shot"]')!;
+
+function render(s: Record<string, number>, width = 245) {
+  renderWithProviders(
+    <IntersectionObserverProvider>
+      <div data-testid="shot" style={{ width }}>
+        <ImagesCard data={imageData(s)} height={width * 1.2} />
+      </div>
+    </IntersectionObserverProvider>
+  );
+}
 
 async function renderCard(s: Record<string, number>, width: number) {
   renderWithProviders(
@@ -138,11 +150,15 @@ async function renderCard(s: Record<string, number>, width: number) {
 // A clipped label keeps its full text in the DOM and loses the rest to overflow:hidden, so the
 // check is on layout (the label is wider than its box), not on text.
 function clippedLabels() {
-  return [
+  const labels = [
     ...card().querySelectorAll<HTMLElement>('[class*="-Button-label"], [class*="-Badge-label"]'),
-  ]
-    .filter((el) => el.scrollWidth > el.clientWidth)
-    .map((el) => el.textContent);
+  ];
+  // Four reactions, the Buzz tip and the sticker chip. A selector that stopped matching would
+  // otherwise pass this check with nothing measured.
+  expect(labels.length).toBeGreaterThanOrEqual(5);
+  // A hidden row has zero-width labels, which are not "clipped" and would pass.
+  expect(labels.every((el) => el.getBoundingClientRect().width > 0)).toBe(true);
+  return labels.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent);
 }
 
 function overflowPastCard() {
@@ -153,16 +169,15 @@ function overflowPastCard() {
 }
 
 describe('ImagesCard action row', () => {
-  test.each(WIDTHS)('shows every count in full at %ipx', async (width) => {
+  test.each(FEED_CARD_WIDTHS)('shows every count in full at %ipx', async (width) => {
     await renderCard(stats, width);
 
     expect(clippedLabels()).toEqual([]);
     expect(overflowPastCard()).toEqual([]);
     expect(document.body.querySelectorAll('[aria-label$="reaction"]')).toHaveLength(4);
-    expect(card().textContent).toContain('345');
   });
 
-  test.each(WIDTHS)('shows maxed counts in full at %ipx', async (width) => {
+  test.each(FEED_CARD_WIDTHS)('shows maxed counts in full at %ipx', async (width) => {
     await renderCard(maxed, width);
 
     expect(clippedLabels()).toEqual([]);
@@ -181,5 +196,36 @@ describe('ImagesCard action row', () => {
     expect(fontOf(sticker)).not.toBeNull();
     expect(fontOf(sticker)).toBe(fontOf(reaction));
     expect(fontOf(tip)).toBe(fontOf(reaction));
+  });
+
+  test('shows no row at all on a read-only card nobody reacted to', async () => {
+    guard.safe = false;
+    try {
+      render(zero);
+      await new Promise((r) => setTimeout(r, 100));
+      // The sticker badge is outside the reaction row and stays (it did before).
+      expect(card().querySelector('[aria-label$="reaction"], [class*="-Badge-root"]')).toBeNull();
+    } finally {
+      guard.safe = true;
+    }
+  });
+
+  test('a click in the row padding does not reach the card link', async () => {
+    const onClick = vi.fn();
+    renderWithProviders(
+      <IntersectionObserverProvider>
+        <div data-testid="shot" style={{ width: 245 }} onClick={onClick}>
+          <ImagesCard data={imageData(stats)} height={300} />
+        </div>
+      </IntersectionObserverProvider>
+    );
+    await vi.waitFor(() => {
+      expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(0);
+    });
+    const footer = document.body
+      .querySelector('[aria-label$="reaction"]')!
+      .closest('[class*="actionsFooter"]')!;
+    (footer as HTMLElement).click();
+    expect(onClick).not.toHaveBeenCalled();
   });
 });

@@ -16,8 +16,7 @@
   padding: var(--mantine-spacing-xs);
 }
 
-// Padding lives here, not on the rows, so a card whose reactions are all hidden (readonly with
-// none, or no tip) gets no empty strip.
+// Padding is on this wrapper, not the rows, so the :has() rule below can hide it when nothing rendered.
 .actionsFooter {
   padding: 8px;
 
