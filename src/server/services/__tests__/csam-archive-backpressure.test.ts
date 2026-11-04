@@ -292,7 +292,7 @@ describe('getCsamsToArchive', () => {
     expect(reports.map((r) => r.id)).toEqual([1, 3]);
   });
 
-  it('leaves generator-evidence reports unarchived and counts them, while the rest archive', async () => {
+  it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
     const generatorEvidence = {
       id: 11,
       userId: 707070,
@@ -315,7 +315,12 @@ describe('getCsamsToArchive', () => {
       details: {},
       images: [],
     };
-    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([generatorEvidence, control] as never);
+    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
+      generatorEvidence,
+      control,
+      namesNoUrl,
+    ] as never);
     dbMock.dbRead.image.findMany.mockResolvedValue([]);
     dbMock.dbRead.user.findUnique.mockResolvedValue({ id: control.userId });
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
@@ -334,8 +339,11 @@ describe('getCsamsToArchive', () => {
       vi
         .mocked(logToAxiom)
         .mock.calls.map(([p]) => p as Record<string, unknown>)
-        .find((p) => p.subType === 'archive-skipped-generator-evidence')
-    ).toMatchObject({ count: 1, message: expect.stringContaining('not supported') });
+        .filter((p) => p.subType === 'archive-skipped-unsupported')
+    ).toEqual([
+      expect.objectContaining({ count: 1, reason: 'generator evidence archive not supported' }),
+      expect.objectContaining({ count: 1, reason: 'no generated image URL to archive' }),
+    ]);
   });
 });
 
@@ -735,6 +743,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
 
     await archiveCsamDataForReport({
       ...report,
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
       details: { generatedImages: [{ jobId: 'job-1', blobs: named.map((url) => ({ url })) }] },
     } as never);
 
@@ -795,7 +804,18 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
       unreadable: 1,
       type: 'error',
     });
-    expect(JSON.stringify(line)).not.toContain('example.invalid');
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).not.toContain('example.invalid');
+    expect(logged).not.toContain('synthetic timeout');
+  });
+
+  it('stamps a pass that read nothing once the give-up window has passed', async () => {
+    mockFetchBlob = async () => null;
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
   });
 
   it('archives the blobs the report names when the strikes list is not found', async () => {
@@ -815,7 +835,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
       strikesNotFound: true,
       strikeUrls: 0,
       entries: 1,
-      type: 'error',
+      type: 'info',
     });
   });
 
@@ -828,13 +848,28 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(stamped()).toBe(false);
   });
 
-  it('does not stamp a pass that read none of its generated images', async () => {
-    mockFetchBlob = async () => null;
+  it('fails the pass, inside the window, on an error status or a body that is not media', async () => {
+    for (const answer of [null, { ...fakeBlob(8), type: 'text/html' }]) {
+      mockFetchBlob = async (url: unknown) =>
+        url === 'https://example.invalid/blob-3.jpeg' ? answer : fakeBlob(8);
 
-    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
-      `none of ${IMAGE_COUNT} generated images could be read`
-    );
-    expect(stamped()).toBe(false);
+      await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+        'a generated image gave no media'
+      );
+      expect(stamped()).toBe(false);
+    }
+  });
+
+  it('stops queued downloads once the pass has failed', async () => {
+    let calls = 0;
+    mockFetchBlob = async () => {
+      calls += 1;
+      return null;
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow();
+    // At most the first round of the concurrency limit was started.
+    expect(calls).toBeLessThanOrEqual(10);
   });
 
   it('holds a bounded number of generated-image buffers', async () => {
