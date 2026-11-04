@@ -68,6 +68,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
   APPEAL_ALREADY_PENDING,
+  getAppealRefusal,
   IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   OrphanedAppealReason,
@@ -1279,8 +1280,9 @@ export async function isImageAppealRefused({
 }
 
 /**
- * The rule `createEntityAppealHandler` refuses an image appeal on, so the owner's page offers one
- * only when it would be accepted. Anyone else's image reads as no.
+ * Whether the owner's page shows the appeal prompt, in the order `createEntityAppealHandler`
+ * refuses on. An image whose appeal was already decided shows it, and the prompt then says the
+ * decision stands, as the endpoint would. Anyone else's image reads as no.
  */
 export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
   const [image] = await dbWrite.$queryRaw<
@@ -1289,6 +1291,8 @@ export async function canAppealOwnImage({ imageId, userId }: { imageId: number; 
     SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
   `;
   if (!image || !isAppealableImage(image)) return false;
+  const latest = await getLatestAppeal({ entityType: EntityType.Image, entityId: imageId, userId });
+  if (getAppealRefusal(EntityType.Image, latest)) return true;
   return !(await isImageAppealRefused({ imageId, userId }));
 }
 

@@ -586,3 +586,28 @@ describe('an image a CSAM report names, against Postgres', () => {
     expect(await canAppealOwnImage({ imageId: 1003, userId: 71 })).toBe(true);
   });
 });
+
+// A decided appeal shows the same prompt (which then says the decision stands) whether or not the
+// image is one the endpoint would otherwise refuse.
+describe('an image whose appeal was rejected, against Postgres', () => {
+  it('shows the owner the same prompt whether or not a CSAM report names it', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "needsReview" text;
+      INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (1009, 71, 'moderated');
+      UPDATE "Image" SET "userId" = 71, "blockedFor" = 'moderated' WHERE id = 1003;
+    `);
+    dbMock.dbRead.appeal.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Rejected',
+      resolvedAt: new Date(),
+    } as never);
+    try {
+      expect(await canAppealOwnImage({ imageId: 1009, userId: 71 })).toBe(
+        await canAppealOwnImage({ imageId: 1003, userId: 71 })
+      );
+      expect(await canAppealOwnImage({ imageId: 1003, userId: 71 })).toBe(true);
+    } finally {
+      dbMock.dbRead.appeal.findFirst.mockReset();
+    }
+  });
+});
