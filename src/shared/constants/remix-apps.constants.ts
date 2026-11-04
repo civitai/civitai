@@ -92,6 +92,32 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
   },
 ];
 
+export const TEAM_REMIX_SLUG = 'team-remix';
+
+/**
+ * `{{team}}` is the viewer's own team, filled in on the server from their event join.
+ * 🔴 No number beside "birthday" or "years": the prompt audit reads "4th birthday" as a minor's
+ * age and refuses it.
+ */
+export const TEAM_REMIX_PROMPT =
+  "Turn this image into a Civitai anniversary party for Team {{team}}. Keep the main subject, their pose, the composition and the art style exactly the same. Add a festive {{team}}-colored party hat on the main subject, plus a light scatter of {{team}}-toned confetti and streamers. Keep the additions tasteful, and don't cover faces or the focal point. Don't add any text or lettering.";
+
+/** Offered only on a hatted image's remix gallery, to a viewer who joined a team; not in the menu. */
+export const TEAM_REMIX_APP: RemixAppDefinition = {
+  slug: TEAM_REMIX_SLUG,
+  name: 'Remix for your team',
+  icon: 'sparkles',
+  output: 'image',
+  engine: { safe: editEngine('safe') },
+  prompt: TEAM_REMIX_PROMPT,
+  params: { aspectRatio: 'source', quantity: 1 },
+  after: 'remixGallery',
+};
+
+export function teamRemixApp(team: string): RemixAppDefinition {
+  return { ...TEAM_REMIX_APP, prompt: TEAM_REMIX_PROMPT.replaceAll('{{team}}', team) };
+}
+
 export function getSystemRemixApp(slug: string) {
   return SYSTEM_REMIX_APPS.find((app) => app.slug === slug);
 }
