@@ -247,8 +247,8 @@ describe('MasonryColumnsVirtual landscape span', () => {
     );
   });
 
-  test('the wide image goes where the pair can begin highest', async () => {
-    // Four columns end at 426, 320, 256 and 426 high: the middle pair (320, 256) is the lowest.
+  test('the wide image goes where the pair wastes least', async () => {
+    // Four columns end at 426, 320, 256 and 426 high: the middle pair (320, 256) starts highest and leaves the smallest hole.
     const tall = { width: 900, height: 1200 };
     const square = { width: 1000, height: 1000 };
     const short = { width: 1000, height: 800 };

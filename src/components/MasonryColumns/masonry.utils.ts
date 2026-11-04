@@ -147,21 +147,22 @@ export function useMasonryColumns<TData>(
         continue;
       }
 
-      // The adjacent pair that can begin lowest; ties go to the smaller hole, then the left.
+      // The adjacent pair that costs least: how far down the item begins plus the blank room left
+      // beside it in the shorter column. Ties go to the left.
       let pair = 0;
-      let pairStart = Infinity;
-      let pairHole = Infinity;
+      let pairStart = 0;
+      let pairCost = Infinity;
       for (let j = 0; j < columnCount - 1; ++j) {
         let start = Math.max(nextStart(j), nextStart(j + 1));
         // A spacer is at least a gap tall, so a shorter lead column cannot be padded by less.
         if (nextStart(j) < start && start - nextStart(j) < MASONRY_GAP) {
           start = nextStart(j) + MASONRY_GAP;
         }
-        const hole = Math.abs(nextStart(j) - nextStart(j + 1));
-        if (start < pairStart || (start === pairStart && hole < pairHole)) {
+        const cost = start + Math.abs(nextStart(j) - nextStart(j + 1));
+        if (cost < pairCost) {
           pair = j;
           pairStart = start;
-          pairHole = hole;
+          pairCost = cost;
         }
       }
 
