@@ -142,7 +142,7 @@ describe('reset-training-model', () => {
 
   it('takes the model out of Private with any held scan verdict, in one transaction', async () => {
     await seed(OWNER);
-    const tx = Object.create(dbMock.dbWrite);
+    const tx = { model: { update: vi.fn() } };
     vi.mocked(dbMock.dbWrite.$transaction).mockImplementationOnce((async (
       fn: (t: unknown) => unknown
     ) => fn(tx)) as never);
@@ -150,6 +150,7 @@ describe('reset-training-model', () => {
     expect(tx.model.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
     );
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
     expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
     expect(mockLeavingPrivate.mock.calls[0]).toEqual([tx, 5]);
   });

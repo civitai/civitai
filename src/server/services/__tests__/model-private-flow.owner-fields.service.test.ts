@@ -655,16 +655,27 @@ describe('publishPrivateModel', () => {
 
   it('applies a held scan verdict in the publish transaction, after the availability write', async () => {
     mockPrivateModel({});
+    // The transaction's own model.update, so a write on the global client cannot satisfy it.
+    const txModelUpdate = vi.fn();
     const tx = Object.create(mockDbWrite);
+    Object.defineProperty(tx, 'model', {
+      value: { findUnique: mockDbWrite.model.findUnique, update: txModelUpdate },
+    });
     mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
       fn(tx)) as never);
     mockLeavingPrivate.mockResolvedValueOnce(true);
     await publish(false);
+    expect(txModelUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ availability: Availability.Public }),
+      })
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
     expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
     expect(mockLeavingPrivate.mock.calls[0][0]).toBe(tx);
     expect(mockLeavingPrivate.mock.calls[0][1]).toBe(MODEL_ID);
     expect(mockLeavingPrivate.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mockDbWrite.model.update.mock.invocationCallOrder[0]
+      txModelUpdate.mock.invocationCallOrder[0]
     );
     expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
   });

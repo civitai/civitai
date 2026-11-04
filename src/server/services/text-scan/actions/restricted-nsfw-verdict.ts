@@ -1,6 +1,7 @@
 import { Tracker } from '~/server/clickhouse/tracker';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import type {
   RestrictedNsfwVerdict,
   RestrictedNsfwVerdictRulingRecord,
@@ -46,18 +47,9 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
     : 'sfwOnly';
 
 /**
- * A moderator's ruling on a restricted-verdict lead: the text scan rated a restricted model NSFW and
- * held the verdict (`holdRestrictedVerdict`), or rated an SFW-only model and recorded what it replaced.
- * - `keep`: the owner's rating stands: nsfw off, and SFW-only back on where the scan cleared it. The
- *   scan's own lock for this lead is lifted; a moderator's lock (every moderator nsfw write drops the
- *   `systemNsfwLock` marker) or a newer scan's lock stands, and then nothing but the lead changes. On a
- *   model still minor or POI the verdict is kept dormant, to come back if the owner clears the flag.
- * - `dismiss`: drops the lead only: the moderator judged the scan wrong, or acted elsewhere. A minor
- *   lead needs a reason. Refused on a model left NSFW and SFW-only (its owner cannot save it), or NSFW
- *   and minor or POI.
- * - `rateNsfw`: only while the model is neither minor, POI nor Private, and with a reason on a minor
- *   lead. Unsets sfwOnly, sets nsfw and locks it as the moderator's.
- * Each ruling closes the lead, logs a ModActivity row, and appends a record with the prior values.
+ * A moderator's ruling on a lead the text scan left on a restricted model. A moderator's or a newer
+ * scan's lock outlives Keep, and Keep on a model still minor or POI parks the verdict dormant, to come
+ * back if the owner clears the flag.
  */
 export async function resolveRestrictedNsfwVerdict({
   modelId,
@@ -195,9 +187,20 @@ export async function resolveRestrictedNsfwVerdict({
   const { row, prior, next, restriction } = result;
   const changed = prior.nsfw !== next.nsfw || prior.sfwOnly !== next.sfwOnly;
   if (changed) {
-    // The ruling is committed and its lead is gone, so nothing retries these: the level comes first,
-    // and a failure in the rest must not stop it or read as a failed ruling.
-    await updateModelNsfwLevels([modelId]);
+    // The ruling is committed and its lead is gone, so nothing retries these and no failure here may
+    // read as a failed ruling. A level left stale can under-rate the model, so that failure is logged.
+    try {
+      await updateModelNsfwLevels([modelId]);
+    } catch (error) {
+      logToAxiom({
+        name: 'restricted-nsfw-verdict',
+        type: 'error',
+        message: 'ruling committed but the model nsfwLevel was not recomputed',
+        modelId,
+        ruling,
+        error: (error as Error).message,
+      });
+    }
     await preventReplicationLag('model', modelId).catch(() => null);
     await bustPublicModelResponseCache(modelId).catch(() => null);
     await new Tracker()

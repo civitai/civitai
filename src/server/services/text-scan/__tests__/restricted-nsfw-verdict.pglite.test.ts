@@ -89,7 +89,7 @@ beforeAll(async () => {
     (async () =>
       (
         await db.query(
-          `SELECT id, nsfw, 1 AS "nsfwLevel", "lockedProperties", "userId", minor, poi, "sfwOnly", meta
+          `SELECT id, nsfw, 1 AS "nsfwLevel", "lockedProperties", "userId", minor, poi, "sfwOnly", availability, meta
          FROM "Model" WHERE id = $1`,
           [MODEL]
         )

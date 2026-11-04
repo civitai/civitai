@@ -181,6 +181,13 @@ describe('applyModelNsfwTextScan on a model its owner restricted', () => {
       strings.join('?').includes('SET nsfw = TRUE') ? 0 : 1
     );
     await applyModelNsfwTextScan(args(true));
+    expect(
+      vi
+        .mocked(dbMock.dbWrite.$executeRaw)
+        .mock.calls.some(([strings]) =>
+          (strings as unknown as string[]).join('?').includes("'restriction', CASE WHEN m.minor")
+        )
+    ).toBe(true);
     expect(updateModelNsfwLevels).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
   });
