@@ -8,13 +8,14 @@ vi.mock('~/providers/BrowserSettingsProvider', () => ({
     select({ blurNsfw: false }),
 }));
 
-// Stored descriptions carry the CSS-module class of the build that saved them. A class from
-// another build matches no rule here, which is the state every older description is in.
+// RenderHtml calls this hook unconditionally and it needs a tRPC context.
 vi.mock('~/components/Sticker/sticker.util', async (orig) => ({
   ...(await orig<object>()),
   useStickerCosmetics: () => ({ sticker: {} }),
 }));
 
+// Stored descriptions carry the CSS-module class of the build that saved them. A class from
+// another build matches no rule here, which is the state every older description is in.
 const STALE = 'MentionNode_mention__0old0';
 const mention = (name: string) =>
   `<span class="${STALE}" data-type="mention" data-id="1" data-label="${name}">@${name}</span>`;
