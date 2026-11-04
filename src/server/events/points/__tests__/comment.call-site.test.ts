@@ -82,7 +82,7 @@ beforeEach(() => {
   db.thread.findMany.mockResolvedValue([IMAGE_THREAD]);
 });
 
-/** The owner's single delete reads `comment`, then deletes it under the hold check. */
+/** The owner's single delete reads `comment`, then deletes it. */
 function deletes(comment: { id: number; userId: number; threadId: number }) {
   db.commentV2.findUnique.mockResolvedValue(comment as never);
   vi.mocked(db.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown) =>
@@ -157,22 +157,19 @@ describe('CommentV2 event points', () => {
     expect(removeEventPoints).not.toHaveBeenCalled();
   });
 
-  it('removes for each author the bulk delete deleted, and none it kept', async () => {
-    // The DELETE returns the rows it took; a held author's comment stays and is not among them.
+  it('removes for each author the bulk delete deleted', async () => {
+    // The DELETE returns the rows it took; an id it did not find is not among them.
     vi.mocked(db.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('DELETE FROM')
         ? [
             { userId: USER, threadId: 70 },
             { userId: 6, threadId: 70 },
           ]
-        : strings.join('').includes('UPDATE')
-        ? [{ userId: 8, threadId: 70 }]
         : []) as never);
 
     await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [1, 2, 3] })).resolves.toEqual({
       commentDeleted: 0,
       commentV2Deleted: 2,
-      retainedHidden: 1,
     });
     await settle();
 
