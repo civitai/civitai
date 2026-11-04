@@ -3,6 +3,7 @@ import { Button, Drawer, Popover, Switch, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
@@ -448,6 +449,8 @@ function HatTray({
       onClose={onClose}
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '45%' : 340}
+      // The image modal is a PageModal; at Mantine's default the drawer opens hidden under it.
+      zIndex={PAGE_MODAL_Z_INDEX + 1}
       title="Your hats"
       data-image-id={imageId}
     >
