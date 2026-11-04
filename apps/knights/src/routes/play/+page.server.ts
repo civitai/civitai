@@ -152,7 +152,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const [picked, daily, rail] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
-    railFor(locals.user.id, now),
+    railFor(locals.user.id, now, status.fervor),
   ]);
   const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil

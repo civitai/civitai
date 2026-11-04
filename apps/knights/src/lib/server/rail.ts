@@ -16,22 +16,37 @@ export type RailStanding = {
   gap: number | null;
 };
 
-/** Where the player stands on the board and who is beside them, from the cached board. Null when they are not ranked. */
-export function railStanding(board: { rows: BoardRow[] }, userId: number): RailStanding | null {
+/**
+ * Where the player stands on the board and who is beside them, from the cached board. Null when they are not ranked.
+ * The board is a daily snapshot; pass the player's live `fervor` and their own row and place are read from that, the
+ * neighbours staying the cached ones, so the rail never shows a row that disagrees with the big number above it. On a tie
+ * the player keeps the side of it the snapshot had them on.
+ */
+export function railStanding(
+  board: { rows: BoardRow[] },
+  userId: number,
+  liveFervor?: number
+): RailStanding | null {
   const index = board.rows.findIndex((row) => row.userId === userId);
   if (index === -1) return null;
-  const at = (i: number): Neighbour | null => {
-    const row = board.rows[i];
-    return row ? { position: i + 1, username: row.username, fervor: row.fervor } : null;
+  const fervor = liveFervor ?? board.rows[index].fervor;
+  const others = board.rows.filter((_, i) => i !== index);
+  // `others` keeps the board's order, so everyone ahead of the player is a prefix of it.
+  const ahead = others.filter(
+    (row, i) => row.fervor > fervor || (row.fervor === fervor && i < index)
+  ).length;
+  const at = (i: number, position: number): Neighbour | null => {
+    const row = others[i];
+    return row ? { position, username: row.username, fervor: row.fervor } : null;
   };
-  const above = at(index - 1);
+  const above = at(ahead - 1, ahead);
   return {
-    position: index + 1,
+    position: ahead + 1,
     total: board.rows.length,
-    fervor: board.rows[index].fervor,
+    fervor,
     above,
-    below: at(index + 1),
-    gap: above ? above.fervor - board.rows[index].fervor : null,
+    below: at(ahead, ahead + 2),
+    gap: above ? above.fervor - fervor : null,
   };
 }
 
@@ -77,12 +92,13 @@ export async function getRail(
   deps: {
     getBoard: () => Promise<{ rows: BoardRow[] }>;
     activity: (now: Date) => Promise<number | null>;
-  }
+  },
+  liveFervor?: number
 ): Promise<Rail> {
   const [standing, activity] = await Promise.all([
     deps
       .getBoard()
-      .then((board) => railStanding(board, userId))
+      .then((board) => railStanding(board, userId, liveFervor))
       .catch((error) => {
         console.error('knights: could not read the leaderboard for the rail', { error });
         return null;

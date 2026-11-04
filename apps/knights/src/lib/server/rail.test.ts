@@ -38,6 +38,47 @@ describe('railStanding', () => {
   });
 });
 
+describe('railStanding with live fervor', () => {
+  it('moves the player row and the gap to live fervor, keeping the cached neighbours', () => {
+    // Snapshot says 420 (2nd); live says 25 under it: last place, below nobody, gap to Brynn.
+    expect(railStanding({ rows }, 7, 25)).toEqual({
+      position: 3,
+      total: 3,
+      fervor: 25,
+      above: { position: 2, username: 'Brynn', fervor: 401 },
+      below: null,
+      gap: 376,
+    });
+  });
+
+  it('climbs past neighbours the live number has overtaken', () => {
+    expect(railStanding({ rows }, 7, 500)).toMatchObject({
+      position: 1,
+      fervor: 500,
+      above: null,
+      gap: null,
+      below: { position: 2, username: 'Aldric', fervor: 458 },
+    });
+  });
+
+  it('agrees with the cached board when live equals the snapshot', () => {
+    expect(railStanding({ rows }, 7, 420)).toEqual(railStanding({ rows }, 7));
+  });
+
+  it('keeps the snapshot side of a tie', () => {
+    const tied = [
+      { userId: 1, username: 'A', fervor: 100 },
+      { userId: 2, username: 'B', fervor: 100 },
+    ];
+    expect(railStanding({ rows: tied }, 2, 100)).toMatchObject({ position: 2, gap: 0 });
+    expect(railStanding({ rows: tied }, 1, 100)).toMatchObject({ position: 1, gap: null });
+  });
+
+  it('is still null for a player the board does not rank', () => {
+    expect(railStanding({ rows }, 99, 50)).toBeNull();
+  });
+});
+
 describe('createActivityCounter', () => {
   it('reads once per ttl and again once the day or the ttl has moved on', async () => {
     const read = vi
@@ -72,6 +113,16 @@ describe('getRail', () => {
       activity: async () => 1240,
     });
     expect(rail).toMatchObject({ standing: { position: 2 }, activity: 1240 });
+  });
+
+  it('places the player at their live fervor', async () => {
+    const rail = await getRail(
+      7,
+      new Date(),
+      { getBoard: async () => ({ rows }), activity: async () => 1 },
+      25
+    );
+    expect(rail.standing).toMatchObject({ position: 3, fervor: 25 });
   });
 
   it('keeps the rest when the board is down', async () => {

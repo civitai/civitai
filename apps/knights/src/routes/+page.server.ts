@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     ? await Promise.all([
         getDailyStatus(db, { playerId, rank: status.rank, now }),
         findRecap(db, { playerId, now }),
-        railFor(playerId, now),
+        railFor(playerId, now, status.fervor),
       ])
     : [null, null, null];
 
