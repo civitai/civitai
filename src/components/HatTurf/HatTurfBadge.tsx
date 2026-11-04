@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
+import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
@@ -22,7 +23,9 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId }: { imageId: number }) {
   // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
-  return useTurfFeed()?.joined ? <HatTurfBadgeContent imageId={imageId} /> : null;
+  const joined = !!useTurfFeed()?.joined;
+  const showHats = useHatTurfStore((state) => state.showHats);
+  return joined && showHats ? <HatTurfBadgeContent imageId={imageId} /> : null;
 }
 
 function HatTurfBadgeContent({ imageId }: { imageId: number }) {

@@ -18,13 +18,13 @@
 
 // Padding is on this wrapper, not the rows, so the :has() rule below can hide it when nothing rendered.
 .actionsFooter {
-  // IMAGES_CARD_FOOTER_HEIGHT: the masonry reserves exactly this, so a 22px row and the 26px hat
-  // button both come out 38px tall.
+  // --footer-height is IMAGES_CARD_FOOTER_HEIGHT: the masonry reserves exactly that, and a taller
+  // footer takes its excess from the picture.
   display: flex;
   flex-direction: column;
   justify-content: center;
   box-sizing: border-box;
-  min-height: 38px;
+  min-height: var(--footer-height);
   padding: 6px 8px;
 
   &:not(:has(:is(button, [class*='mantine-Badge-root']))) {
