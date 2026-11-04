@@ -268,11 +268,11 @@ describe('sendNcEarningsNotice', () => {
     const sleep = vi.fn<Sleep>(async () => undefined);
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     try {
-      await run({ minIntervalMs: 500, sleep });
+      await run({ minIntervalMs: 300, sleep });
     } finally {
       now.mockRestore();
     }
-    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500, 1_000]);
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([300, 600]);
   });
 
   it('sends at most `count` per run', async () => {

@@ -248,11 +248,11 @@ describe('sendKlein9bNotice', () => {
         count: 50,
         batchSize: 1,
         date: 'x',
-        minIntervalMs: 500,
+        minIntervalMs: 300,
         sleep,
       })
     );
-    expect(waits).toEqual([500]);
+    expect(waits).toEqual([300]);
   });
 
   it('encodes the username into the models link', () => {

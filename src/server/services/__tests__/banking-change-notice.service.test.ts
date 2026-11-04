@@ -194,9 +194,9 @@ describe('sendBankingChangeNotice', () => {
 
   it('paces its sends', async () => {
     const waits = await pacedSleeps((sleep) =>
-      sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 1, minIntervalMs: 500, sleep })
+      sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 1, minIntervalMs: 300, sleep })
     );
-    expect(waits).toEqual([500, 1_000]);
+    expect(waits).toEqual([300, 600]);
   });
 
   it('refuses to send, and records nobody, when email is not configured', async () => {
