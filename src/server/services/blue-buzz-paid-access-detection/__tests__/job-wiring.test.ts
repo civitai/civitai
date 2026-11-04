@@ -1,11 +1,33 @@
+import { abuseReportInput } from '@civitai/moderation';
 import { describe, expect, it, vi } from 'vitest';
 import {
   bluePaidAccessDetection,
   runBluePaidAccessJob,
 } from '~/server/jobs/blue-buzz-paid-access-detection';
 import { jobsArrayEntries } from '~/server/jobs/__tests__/run-jobs-array';
-import { RUN_INTERVAL_HOURS, type RingThresholds } from '../detect';
+import type * as ModeratorAppService from '~/server/services/moderator-app.service';
+import { BLUE_PAID_ACCESS_DETECTOR, RUN_INTERVAL_HOURS, type RingThresholds } from '../detect';
 import type { RunDeps, RunResult } from '../run';
+
+// Every call the job makes on the moderator-app client, by method name. A Proxy rather than an
+// object of spies, so a call to a method that does not exist today is recorded too.
+const moderatorCalls = vi.hoisted(() => [] as { method: string; args: unknown[] }[]);
+vi.mock('~/server/services/moderator-app.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeratorAppService>()),
+  moderatorApp: new Proxy(
+    {},
+    {
+      // `then` stays undefined so the client is never mistaken for a thenable.
+      get: (_target, method) =>
+        typeof method !== 'string' || method === 'then'
+          ? undefined
+          : (...args: unknown[]) => {
+              moderatorCalls.push({ method, args });
+              return Promise.resolve(undefined);
+            },
+    }
+  ),
+}));
 
 /** How many times a day a five-field cron fires. Only `*` and a single number are understood; any
  *  other field shape (lists, ranges, steps) is NaN, so the assertion below fails on it. */
@@ -53,5 +75,34 @@ describe('the blue-buzz paid-access detection job', () => {
       minBuyers: 6,
       minSharePct: 70,
     });
+  });
+
+  it('sends the report to the moderator app through abuseReport and nothing else', async () => {
+    const report = abuseReportInput.parse({
+      detector: BLUE_PAID_ACCESS_DETECTOR,
+      startedAt: '2026-01-02T07:30:00.000Z',
+      finishedAt: '2026-01-02T07:31:00.000Z',
+      summary: 'synthetic run',
+      counters: { pairs: 3, rings: 0 },
+      findings: [],
+    });
+    const run = vi.fn<(deps: RunDeps) => Promise<RunResult>>(async (deps) => {
+      await deps.sendReport(report);
+      return { pairs: 3, rings: 0, reported: 0 };
+    });
+    moderatorCalls.length = 0;
+
+    await runBluePaidAccessJob(
+      {
+        BLUE_PAID_ACCESS_RING_WINDOW_DAYS: 11,
+        BLUE_PAID_ACCESS_RING_MIN_BUYERS: 6,
+        BLUE_PAID_ACCESS_RING_MIN_SHARE_PCT: 70,
+      },
+      run
+    );
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(moderatorCalls.map((c) => c.method)).toEqual(['abuseReport']);
+    expect(moderatorCalls[0].args).toEqual([report]);
   });
 });
