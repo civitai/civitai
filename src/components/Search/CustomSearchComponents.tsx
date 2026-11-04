@@ -120,9 +120,9 @@ export function SearchableMultiSelectRefinementList({
   title: string;
   renderOption?: MultiSelectProps['renderOption'];
   /**
-   * Query the facet index as the user types. Turn it off for a short facet whose full list is
-   * already loaded: the remote result replaces `items`, so an empty or failed one hides options
-   * the local filter was still showing.
+   * Query the facet index as the user types. Turn off for a short facet whose full list is already
+   * loaded: the remote result replaces `items`, so an empty or failed one hides options the
+   * MultiSelect's own client-side filter would still match.
    */
   remoteSearch?: boolean;
 }) {

@@ -8,12 +8,11 @@ type Item = { label: string; value: string; isRefined: boolean; count: number };
 
 const mocks = vi.hoisted(() => ({
   loaded: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
-  // What the remote facet search answers with, whatever was typed.
   remoteResult: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
   searchForItems: vi.fn(),
 }));
 
-// Behaves like instantsearch: `searchForItems` swaps `items` for the facet search result.
+// Mirrors instantsearch: a non-empty searchForItems replaces items with the facet result.
 vi.mock('react-instantsearch', async (importOriginal) => ({
   ...(await importOriginal<typeof InstantSearch>()),
   useRefinementList: () => {
@@ -52,8 +51,8 @@ describe('SearchableMultiSelectRefinementList', () => {
     );
     const input = page.getByPlaceholder('Search Filter by Base Model');
     await input.fill('h3');
-    // Past the 300ms debounce, where the remote result used to replace the options.
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Outlast the 300ms debounce so a remote search would have fired by now.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     await expect.element(page.getByRole('option', { name: 'MiniMax H3' })).toBeInTheDocument();
     expect(mocks.searchForItems).not.toHaveBeenCalledWith('h3');
   });
