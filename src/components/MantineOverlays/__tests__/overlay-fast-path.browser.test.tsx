@@ -206,7 +206,7 @@ describe.each([
       </Popover>,
       1
     );
-    page.getByRole('button', { name: 'Scripted' }).element().click();
+    (page.getByRole('button', { name: 'Scripted' }).element() as HTMLElement).click();
     await expect.element(page.getByRole('dialog')).toHaveTextContent('Scripted body');
   });
 
