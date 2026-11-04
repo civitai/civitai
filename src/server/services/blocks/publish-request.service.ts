@@ -1771,6 +1771,24 @@ async function deleteOnsiteDraftListingForSlug(opts: { slug: string }): Promise<
 }
 
 /**
+ * Close a decided-against request's App Storage migration runs (reserved at a refused or failed
+ * approve) at once, so they stop gating the app's next approve. Fire-and-forget and never rejects,
+ * like the review teardowns beside its calls; the resume job closes them anyway.
+ */
+function closeStorageMigrationRunsOf(publishRequestId: string): void {
+  void (async () => {
+    try {
+      const { closeStorageMigrationRunsForRequest } = await import(
+        '~/server/services/apps/storage-migration-run.service'
+      );
+      await closeStorageMigrationRunsForRequest(publishRequestId);
+    } catch {
+      // The job's `loadTarget` closes a run whose request is no longer pending or approved.
+    }
+  })();
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1871,6 +1889,7 @@ export async function withdrawRequest(opts: {
     void teardownAgentReviewForRequest(publishRequestId);
     // Review document-store data — unconditional for the same reason (no preview needed).
     void teardownReviewStorageForRequest(publishRequestId);
+    closeStorageMigrationRunsOf(publishRequestId);
     return;
   }
   if (count === 0) {
@@ -1890,6 +1909,7 @@ export async function withdrawRequest(opts: {
       // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
       void teardownAgentReviewForRequest(publishRequestId);
       void teardownReviewStorageForRequest(publishRequestId);
+      closeStorageMigrationRunsOf(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -3002,9 +3022,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // request's storage there, the latest approved request; earlier approvals, this request
   // excluded, for a re-declared collection): a push-originated request never passed
   // `submitVersion`, and this is the comparison the plan below must be computed from. Refused
-  // before anything is written — and so is any approve (plan or not) while an earlier run of the
-  // app is unfinished, and a plan that could not be recorded. The plan is reserved here, under a
-  // per-app lock, so it survives a later failure of this approve.
+  // before anything is written. The plan is reserved further down (after every other refusal).
   const [
     { assertStorageMigrationsCover, checkStorageMigrations },
     { reserveStorageMigrationRuns, loadStorageMigrationBaseline },
@@ -3021,13 +3039,6 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       });
   const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
-  if (existingAppBlock) {
-    await reserveStorageMigrationRuns({
-      appBlockId: existingAppBlock.id,
-      publishRequestId: request.id,
-      plans: storageMigrations.plans,
-    });
-  }
 
   // The listing writes below log and continue on failure, so a split decision they could not
   // write is refused HERE, before anything is written or built — otherwise the app would deploy
@@ -3078,6 +3089,20 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           access
         );
     }
+  }
+
+  // APP STORAGE SCHEMA MIGRATIONS — the approve gate, LAST among the refusals and still before
+  // anything is written (so a refused approve reserves nothing): refused while an earlier run of
+  // the app is unfinished on a collection this version touches, or when a plan could not be
+  // recorded. The plan is reserved here, under a per-app lock, so it survives a later failure of
+  // this approve.
+  if (existingAppBlock) {
+    await reserveStorageMigrationRuns({
+      appBlockId: existingAppBlock.id,
+      publishRequestId: request.id,
+      manifest,
+      plans: storageMigrations.plans,
+    });
   }
 
   let appBlockId: string;
@@ -6101,6 +6126,7 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   void teardownAgentReviewForRequest(row.id);
   // Review document-store data — unconditional too (an on-site run needs no preview).
   void teardownReviewStorageForRequest(row.id);
+  closeStorageMigrationRunsOf(row.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

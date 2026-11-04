@@ -18,10 +18,12 @@
 // {@link STORAGE_MIGRATION_MAX_ATTEMPTS} is `failed` and no longer picked.
 //
 // FAIL-CLOSED AT APPROVE ({@link reserveStorageMigrationRuns}, on every approve of an existing app,
-// under a per-app lock): refused while an earlier run of the same app is still pending or running —
-// so a run is never left half-done by the next approval — and, for a version with a plan, while the
-// runs table is missing. The plan is reserved in the same locked transaction. (A run is still
-// marked `superseded` if a newer approval is somehow found, defensively.)
+// under a per-app lock): refused while an earlier run of the app is still pending or running on a
+// collection the new version touches (plans a migration for, or declares differently) — so a run is
+// never left half-done — and, for a version with a plan, while the runs table is missing. An approve
+// that leaves the run's collection alone goes through, and the run continues against the newer
+// approval (`loadTarget` supersedes a run only when a later approval changed its collection). The
+// plan is reserved in the same locked transaction.
 //
 // FORKS need nothing here: a fork writes its parent's collections in the PARENT's app, under the
 // parent's schema, so the parent's run migrates the fork's documents too.
@@ -35,7 +37,10 @@ import { getDocStoreMaintenance } from '~/server/services/apps/doc-store-mainten
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import type { MigrationMutationOp } from '~/server/services/apps/storage-schema-migrations';
-import { applyMigrationOps } from '~/server/services/apps/storage-schema-migrations';
+import {
+  applyMigrationOps,
+  collectionStorageKey,
+} from '~/server/services/apps/storage-schema-migrations';
 import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
 import {
   APP_STORAGE_ENABLED_FEATURES,
@@ -105,6 +110,7 @@ export class StorageMigrationClaimLost extends Error {
 type RawClient = {
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
   $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+  $executeRawUnsafe: (query: string) => Promise<unknown>;
 };
 const raw = () => dbWrite as unknown as RawClient;
 
@@ -179,13 +185,62 @@ const TABLE_MISSING_REFUSAL =
   'Cannot approve: this version migrates stored App Storage documents, but the app_storage_migration_runs table does not exist yet. Apply migration 20261221120000_app_storage_migration_runs first, then approve again.';
 
 /**
- * THE approve gate, run on EVERY approve of an existing app, before anything is written. Under a
- * per-app advisory lock (so two concurrent approves of one app are serialised), it refuses — with a
- * message for the moderator — while a run of this app belonging to ANOTHER publish request is still
- * pending or running (approving now would leave it half-done), and otherwise RESERVES this
- * request's plan: its run rows are inserted `pending` in the same transaction, so a concurrent
- * approve sees them and is refused. A reserved run whose request is not approved yet is left alone
- * by the runner (`loadTarget`), and one whose request ends rejected or withdrawn is closed.
+ * How long the approve gate waits for another approve of the same app to release the per-app lock.
+ * Compiled into the statement (`SET` has no parameter form), like `free-placement.service.ts`.
+ */
+const RESERVE_LOCK_TIMEOUT = '5s';
+
+/** An open run (another request's) that an approve would leave half-done. */
+export type BlockingStorageMigrationRun = {
+  publishRequestId: string;
+  collection: string;
+  status: string;
+  lastError: string | null;
+};
+
+/**
+ * THE per-collection rule of the approve gate: whether approving `manifest` (with `plans`) would
+ * touch the storage of `run`'s collection — it plans a migration for it, or declares the
+ * collection's storage ({@link collectionStorageKey}) differently from the approved manifest the
+ * open run targets. An approve that leaves the collection untouched neither waits for the run nor
+ * supersedes it (`loadTarget` applies the same key).
+ */
+export function approveTouchesOpenRun(args: {
+  collection: string;
+  manifest: unknown;
+  plans: ReadonlyMap<string, unknown>;
+  runManifest: unknown;
+}): boolean {
+  return (
+    args.plans.has(args.collection) ||
+    collectionStorageKey(args.manifest, args.collection) !==
+      collectionStorageKey(args.runManifest, args.collection)
+  );
+}
+
+/** The moderator's refusal for an approve blocked by an open run. */
+export function openRunRefusal(run: BlockingStorageMigrationRun): string {
+  const which = `publish request ${run.publishRequestId}, collection ${run.collection}`;
+  if (run.lastError?.startsWith('storage_disabled:')) {
+    return `Cannot approve: this version changes the storage of collection ${run.collection}, and an earlier storage migration of that collection (${which}) is waiting because app storage is turned off. It resumes by itself once storage is turned back on; approve again after it has finished.`;
+  }
+  return `Cannot approve: this version changes the storage of collection ${run.collection}, and an earlier storage migration of that collection is still ${run.status} (${which}); approving now would leave it half-done. Approve again once it has finished.`;
+}
+
+/** The retryable refusal when another approve of the same app holds the gate's lock. */
+export const RESERVE_LOCK_BUSY_REFUSAL =
+  'Cannot approve right now: another approve of this app is in progress. Try again in a moment.';
+
+/**
+ * THE approve gate, run on every approve of an existing app, after every other refusal and before
+ * anything is written. Under a per-app advisory lock (so two concurrent approves of one app are
+ * serialised; bounded by {@link RESERVE_LOCK_TIMEOUT}, a retryable refusal on timeout), it refuses —
+ * with a message for the moderator — when a run of another publish request is still pending or
+ * running on a collection this approve touches ({@link approveTouchesOpenRun}); an open run on a
+ * collection it leaves alone does not block it. Otherwise it RESERVES this request's plan: its run
+ * rows are inserted `pending` in the same transaction, so a concurrent approve sees them. A reserved
+ * run whose request is not approved yet is left alone by the runner (`loadTarget`); reject and
+ * withdraw close it ({@link closeStorageMigrationRunsForRequest}).
  *
  * Without the runs table: a version with a plan is refused (nothing could record or resume it); a
  * version without one passes (no run can be open).
@@ -193,23 +248,42 @@ const TABLE_MISSING_REFUSAL =
 export async function reserveStorageMigrationRuns(args: {
   appBlockId: string;
   publishRequestId: string;
+  manifest: unknown;
   plans: ReadonlyMap<string, readonly MigrationMutationOp[]>;
 }): Promise<void> {
   const collections = [...args.plans.keys()];
   const ops = collections.map((c) => JSON.stringify(args.plans.get(c)));
-  let open: Record<string, unknown> | undefined;
+  let blocking: BlockingStorageMigrationRun | undefined;
   try {
-    open = await dbWrite.$transaction(async (tx) => {
+    blocking = await dbWrite.$transaction(async (tx) => {
       const t = tx as unknown as RawClient;
+      await t.$executeRawUnsafe(`SET LOCAL lock_timeout = '${RESERVE_LOCK_TIMEOUT}'`);
       await t.$executeRaw`SELECT pg_advisory_xact_lock(${RESERVE_LOCK_CLASS}::int, hashtext(${args.appBlockId}))`;
-      const rows = (await t.$queryRaw`
-        SELECT "publish_request_id", "collection", "status" FROM "app_storage_migration_runs"
-        WHERE "app_block_id" = ${args.appBlockId}
-          AND "publish_request_id" <> ${args.publishRequestId}
-          AND "status" IN ('pending', 'running')
-        ORDER BY "created_at" LIMIT 1
+      const open = (await t.$queryRaw`
+        SELECT r."publish_request_id", r."collection", r."status", r."last_error", p."manifest"
+        FROM "app_storage_migration_runs" r
+        JOIN "app_block_publish_requests" p ON p."id" = r."publish_request_id"
+        WHERE r."app_block_id" = ${args.appBlockId}
+          AND r."publish_request_id" <> ${args.publishRequestId}
+          AND r."status" IN ('pending', 'running')
+        ORDER BY r."created_at"
       `) as Record<string, unknown>[];
-      if (rows[0]) return rows[0];
+      const hit = open.find((r) =>
+        approveTouchesOpenRun({
+          collection: r.collection as string,
+          manifest: args.manifest,
+          plans: args.plans,
+          runManifest: r.manifest,
+        })
+      );
+      if (hit) {
+        return {
+          publishRequestId: hit.publish_request_id as string,
+          collection: hit.collection as string,
+          status: hit.status as string,
+          lastError: (hit.last_error as string | null) ?? null,
+        };
+      }
       if (collections.length > 0) {
         await t.$queryRaw`
           INSERT INTO "app_storage_migration_runs"
@@ -227,16 +301,35 @@ export async function reserveStorageMigrationRuns(args: {
       if (collections.length > 0) throw new Error(TABLE_MISSING_REFUSAL);
       return;
     }
+    const { isPrismaLockTimeout } = await import('~/server/utils/errorHandling');
+    if (isPrismaLockTimeout(err)) throw new Error(RESERVE_LOCK_BUSY_REFUSAL);
     throw err;
   }
-  if (open) {
-    throw new Error(
-      `Cannot approve: an earlier storage migration of this app is still ${String(
-        open.status
-      )} (publish request ${String(open.publish_request_id)}, collection ${String(
-        open.collection
-      )}), and approving a newer version now would leave it half-done. Approve again once it has finished.`
-    );
+  if (blocking) throw new Error(openRunRefusal(blocking));
+}
+
+/**
+ * Close a decided-against request's runs (reject, withdraw): any of its rows still pending or
+ * running become `superseded`, so they stop blocking the app's next approve at once rather than at
+ * the job's next tick. Never rejects; a missing table is nothing to close.
+ */
+export async function closeStorageMigrationRunsForRequest(publishRequestId: string): Promise<void> {
+  try {
+    await raw().$queryRaw`
+      UPDATE "app_storage_migration_runs"
+      SET "status" = 'superseded', "finished_at" = CURRENT_TIMESTAMP,
+          "last_error" = 'the publish request was not approved'
+      WHERE "publish_request_id" = ${publishRequestId} AND "status" IN ('pending', 'running')
+      RETURNING 1
+    `;
+  } catch (err) {
+    if (await isRunsTableMissing(err)) return;
+    log('error', {
+      publishRequestId,
+      message: `could not close the request's storage migration runs (the job closes them): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    });
   }
 }
 
@@ -367,12 +460,23 @@ async function loadTarget(
   const latest = await dbWrite.appBlockPublishRequest.findFirst({
     where: { slug: request.slug, status: 'approved' },
     orderBy: { reviewedAt: 'desc' },
-    select: { id: true },
+    select: { id: true, manifest: true },
   });
-  if (latest && latest.id !== run.publishRequestId) return { collection: null, superseded: true };
-  const config = parseManifestStorage(request.manifest, ALL_FEATURES).collections.get(
-    run.collection
-  );
+  // A later approval supersedes the run only if it changed THIS collection's storage (the gate
+  // refuses that while the run is open; this is the defensive half). One that left it alone
+  // continues the run, against the latest approved declaration — the same storage config, and
+  // whatever else (indexes) the store now enforces for the collection.
+  let manifest: unknown = request.manifest;
+  if (latest && latest.id !== run.publishRequestId) {
+    if (
+      collectionStorageKey(latest.manifest, run.collection) !==
+      collectionStorageKey(request.manifest, run.collection)
+    ) {
+      return { collection: null, superseded: true };
+    }
+    manifest = latest.manifest;
+  }
+  const config = parseManifestStorage(manifest, ALL_FEATURES).collections.get(run.collection);
   return { collection: config ? { name: run.collection, config } : null, superseded: false };
 }
 
@@ -436,9 +540,11 @@ export async function advanceStorageMigrationRun(
       const message = err instanceof Error ? err.message.slice(0, 500) : String(err);
       // Transient, or ours (the store switched off, unreachable, lock contention): not this run's
       // fault, so not an attempt. The run stays pending and is retried.
-      if (TRANSIENT_STORE_CODES.some((code) => isDocStoreError(err, code))) {
+      const transient = TRANSIENT_STORE_CODES.find((code) => isDocStoreError(err, code));
+      if (transient) {
         state.status = 'pending';
-        state.lastError = message;
+        // Prefixed with the code, so the approve gate can say WHY the run waits (storage off).
+        state.lastError = `${transient}: ${message}`;
         await deps.persist(state, false);
         return state;
       }
@@ -552,14 +658,16 @@ export async function resumeStorageMigrationRuns(
 ): Promise<{ advanced: number; tableMissing: boolean }> {
   let rows: Record<string, unknown>[];
   try {
-    // A run re-claimed STORAGE_MIGRATION_MAX_ATTEMPTS times whose runner died again is never
-    // claimable (attempts at the cap) and would stay "running" — and block approves — forever.
+    // A run at the attempt cap is never claimable again, so it would stay open — and block
+    // approves — forever: one left `pending` (a reclaim raised it to the cap, then a transient
+    // error saved it), or `running` with a stale heartbeat (its runner died once more).
     await raw().$queryRaw`
       UPDATE "app_storage_migration_runs"
       SET "status" = 'failed', "finished_at" = CURRENT_TIMESTAMP,
-          "last_error" = 'gave up: the run stopped without finishing too many times (its process was lost each time)'
-      WHERE "status" = 'running' AND "attempts" >= ${STORAGE_MIGRATION_MAX_ATTEMPTS}::int
-        AND "heartbeat_at" < CURRENT_TIMESTAMP - ${STALE_INTERVAL}
+          "last_error" = 'gave up: the run reached the attempt cap without finishing (its last error, if any, was: ' || COALESCE("last_error", 'none') || ')'
+      WHERE "attempts" >= ${STORAGE_MIGRATION_MAX_ATTEMPTS}::int
+        AND ("status" = 'pending'
+          OR ("status" = 'running' AND "heartbeat_at" < CURRENT_TIMESTAMP - ${STALE_INTERVAL}))
       RETURNING 1
     `;
     rows = (await raw().$queryRaw`

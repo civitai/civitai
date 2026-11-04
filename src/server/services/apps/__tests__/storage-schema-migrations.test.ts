@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BreakingChange } from '~/server/services/apps/storage-schema-migrations';
 import {
   applyMigrationOps,
+  collectionStorageKey,
   assertStorageMigrationsCover,
   checkStorageMigrations,
   diffCollectionSchemas,
@@ -862,5 +863,40 @@ describe('applyMigrationOps — never undoes a write made under the new schema',
         NEW
       )
     ).toBeNull();
+  });
+});
+
+describe('collectionStorageKey — what the approve gate and the runner compare', () => {
+  const m = (cards: unknown) => ({ storage: { collections: { cards } } });
+  it('ignores key order, and fields outside schema/migrations/visibility/write/exportable', () => {
+    expect(
+      collectionStorageKey(
+        m({ visibility: 'private', schema: { type: 'object', maxProperties: 1 } }),
+        'cards'
+      )
+    ).toBe(
+      collectionStorageKey(
+        m({
+          schema: { maxProperties: 1, type: 'object' },
+          indexes: { a: 'string' },
+          visibility: 'private',
+        }),
+        'cards'
+      )
+    );
+  });
+  it.each<[string, unknown]>([
+    ['schema', { visibility: 'private', schema: { type: 'object' } }],
+    ['migrations', { visibility: 'private', migrations: [{ op: 'remove', path: '/a' }] }],
+    ['visibility', { visibility: 'shared', write: 'own' }],
+    ['exportable', { visibility: 'private', exportable: false }],
+  ])('differs when %s differs', (_l, other) => {
+    expect(collectionStorageKey(m(other), 'cards')).not.toBe(
+      collectionStorageKey(m({ visibility: 'private' }), 'cards')
+    );
+  });
+  it('is null for a collection the manifest does not declare', () => {
+    expect(collectionStorageKey(m({ visibility: 'private' }), 'notes')).toBeNull();
+    expect(collectionStorageKey(null, 'cards')).toBeNull();
   });
 });

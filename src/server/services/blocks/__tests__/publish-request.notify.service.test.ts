@@ -24,7 +24,11 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     // The storage-migration approve gate (`reserveStorageMigrationRuns`): no open run.
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({ $queryRaw: async () => [], $executeRaw: async () => 0 })
+      fn({
+        $queryRaw: async () => [],
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
     ),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),

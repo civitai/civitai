@@ -1,8 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const {
+  advanceStorageMigrationRun,
+  closeStorageMigrationRunsForRequest,
   loadStorageMigrationBaseline,
   recordStorageMigrationRuns,
   reserveStorageMigrationRuns,
@@ -32,16 +35,44 @@ beforeEach(() => {
 });
 
 describe('reserveStorageMigrationRuns', () => {
-  const PLAN = new Map([['cards', [{ op: 'remove' as const, path: '/legacy' }]]]);
-  const NO_PLAN = new Map<string, { op: 'remove'; path: string }[]>();
-  const reserve = (plans: ReadonlyMap<string, readonly { op: 'remove'; path: string }[]>) =>
-    reserveStorageMigrationRuns({ appBlockId: APP, publishRequestId: 'pubreq_SELF', plans });
-  const OPEN_MESSAGE =
-    'Cannot approve: an earlier storage migration of this app is still running (publish request pubreq_OPEN1, collection cards), and approving a newer version now would leave it half-done. Approve again once it has finished.';
+  type Plans = ReadonlyMap<string, readonly { op: 'remove'; path: string }[]>;
+  const PLAN_CARDS: Plans = new Map([['cards', [{ op: 'remove' as const, path: '/legacy' }]]]);
+  const PLAN_NOTES: Plans = new Map([['notes', [{ op: 'remove' as const, path: '/old' }]]]);
+  const NO_PLAN: Plans = new Map();
+  /** The approved manifest the open `cards` run targets. */
+  const RUN_MANIFEST = {
+    storage: {
+      collections: {
+        cards: { visibility: 'private', schema: { type: 'object', required: ['status'] } },
+        notes: { visibility: 'private' },
+      },
+    },
+  };
+  const withCollections = (collections: Record<string, unknown>) => ({
+    ...RUN_MANIFEST,
+    name: 'Cards v3',
+    storage: { collections: { ...RUN_MANIFEST.storage.collections, ...collections } },
+  });
+  const OPEN_CARDS = {
+    publish_request_id: 'pubreq_OPEN1',
+    collection: 'cards',
+    status: 'running',
+    last_error: null,
+    manifest: RUN_MANIFEST,
+  };
+  const reserve = (plans: Plans, manifest: unknown = RUN_MANIFEST) =>
+    reserveStorageMigrationRuns({
+      appBlockId: APP,
+      publishRequestId: 'pubreq_SELF',
+      manifest,
+      plans,
+    });
+  const CARDS_REFUSAL =
+    'Cannot approve: this version changes the storage of collection cards, and an earlier storage migration of that collection is still running (publish request pubreq_OPEN1, collection cards); approving now would leave it half-done. Approve again once it has finished.';
 
   it('🔴 refuses a plan while the runs table is missing', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(tableMissing);
-    await expect(reserve(PLAN)).rejects.toThrow(
+    await expect(reserve(PLAN_CARDS)).rejects.toThrow(
       'Cannot approve: this version migrates stored App Storage documents, but the app_storage_migration_runs table does not exist yet. Apply migration 20261221120000_app_storage_migration_runs first, then approve again.'
     );
   });
@@ -51,25 +82,69 @@ describe('reserveStorageMigrationRuns', () => {
     await expect(reserve(NO_PLAN)).resolves.toBeUndefined();
   });
 
-  it.each([
-    ['with a plan', PLAN],
-    ['🔴 WITHOUT a plan (a copy change must not strand the run either)', NO_PLAN],
-  ])('refuses %s while an earlier run of the app is open, naming it', async (_l, plans) => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
-      { publish_request_id: 'pubreq_OPEN1', collection: 'cards', status: 'running' },
-    ]);
-    await expect(reserve(plans)).rejects.toThrow(OPEN_MESSAGE);
-    // Nothing reserved: the only statement after the lock was the read.
+  it("🔴 F1: an approve that leaves the open run's collection untouched goes through (a copy change)", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([OPEN_CARDS]);
+    await expect(reserve(NO_PLAN, { ...RUN_MANIFEST, name: 'Cards v3, new copy' })).resolves.toBe(
+      undefined
+    );
+    // Read under the lock; nothing to reserve.
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('🔴 takes the per-app lock, excludes its own request from the open check, then reserves the plan, in one transaction', async () => {
+  it("🔴 F1: an approve that changes the open run's collection is refused, naming the run", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([OPEN_CARDS]);
+    const changed = withCollections({ cards: { visibility: 'private', exportable: false } });
+    await expect(reserve(NO_PLAN, changed)).rejects.toThrow(CARDS_REFUSAL);
+  });
+
+  it("🔴 F1: an approve that plans a migration for the open run's collection is refused", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([OPEN_CARDS]);
+    await expect(reserve(PLAN_CARDS)).rejects.toThrow(CARDS_REFUSAL);
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 F1: an approve that changes a DIFFERENT collection is accepted and reserves its own run beside the open one', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([OPEN_CARDS]).mockResolvedValueOnce([1]);
+    const notesChanged = withCollections({
+      notes: { visibility: 'private', schema: { type: 'object', additionalProperties: false } },
+    });
+    await expect(reserve(PLAN_NOTES, notesChanged)).resolves.toBeUndefined();
+    const insert = dbMock.dbWrite.$queryRaw.mock.calls[1];
+    expect(insert.slice(1)).toEqual([
+      'pubreq_SELF',
+      APP,
+      ['notes'],
+      ['[{"op":"remove","path":"/old"}]'],
+    ]);
+  });
+
+  it('🔴 F3: a run waiting because app storage is off is named as such', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      {
+        ...OPEN_CARDS,
+        status: 'pending',
+        last_error: 'storage_disabled: document storage is disabled',
+      },
+    ]);
+    await expect(reserve(PLAN_CARDS)).rejects.toThrow(
+      'Cannot approve: this version changes the storage of collection cards, and an earlier storage migration of that collection (publish request pubreq_OPEN1, collection cards) is waiting because app storage is turned off. It resumes by itself once storage is turned back on; approve again after it has finished.'
+    );
+  });
+
+  it('🔴 F5: bounds the lock wait, takes the per-app lock, reads the open runs of OTHER requests, then reserves', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([1]);
-    await expect(reserve(PLAN)).resolves.toBeUndefined();
+    await expect(reserve(PLAN_CARDS)).resolves.toBeUndefined();
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRawUnsafe.mock.calls).toEqual([
+      [`SET LOCAL lock_timeout = '5s'`],
+    ]);
     const lock = dbMock.dbWrite.$executeRaw.mock.calls[0];
     expect((lock[0] as readonly string[]).join('?')).toContain('pg_advisory_xact_lock');
     expect(lock.slice(1)).toEqual([0x41534d01, APP]);
+    // The timeout is set before the lock is taken.
+    expect(dbMock.dbWrite.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]
+    );
     const [check, insert] = dbMock.dbWrite.$queryRaw.mock.calls;
     expect(check.slice(1)).toEqual([APP, 'pubreq_SELF']);
     expect((insert[0] as readonly string[]).join('?')).toContain(
@@ -83,16 +158,39 @@ describe('reserveStorageMigrationRuns', () => {
     ]);
   });
 
-  it('without a plan, checks under the lock and reserves nothing', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
-    await expect(reserve(NO_PLAN)).resolves.toBeUndefined();
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+  it('🔴 F5: a lock that times out is a retryable refusal', async () => {
+    dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('canceling statement due to lock timeout', {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: { code: '55P03' },
+      })
+    );
+    await expect(reserve(PLAN_CARDS)).rejects.toThrow(
+      'Cannot approve right now: another approve of this app is in progress. Try again in a moment.'
+    );
   });
 
   it('rethrows any other error (fail-closed)', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
     await expect(reserve(NO_PLAN)).rejects.toThrow('connection reset');
+  });
+});
+
+describe('closeStorageMigrationRunsForRequest (F4)', () => {
+  it("supersedes the request's open rows at once", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([1]);
+    await closeStorageMigrationRunsForRequest('pubreq_REJ');
+    const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
+    const sql = (call[0] as readonly string[]).join('?');
+    expect(sql).toContain(`SET "status" = 'superseded'`);
+    expect(sql).toContain(`WHERE "publish_request_id" = ? AND "status" IN ('pending', 'running')`);
+    expect(call.slice(1)).toEqual(['pubreq_REJ']);
+  });
+
+  it('never rejects (a missing table is nothing to close)', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(tableMissing);
+    await expect(closeStorageMigrationRunsForRequest('pubreq_REJ')).resolves.toBeUndefined();
   });
 });
 
@@ -212,16 +310,121 @@ describe('recordStorageMigrationRuns', () => {
 });
 
 describe('resumeStorageMigrationRuns', () => {
-  it('first fails the runs whose runner was lost at the attempt cap, so they stop blocking approves', async () => {
+  it('🔴 F2: first fails every open run at the attempt cap (pending, or running and stale), so none blocks approves forever', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([1]).mockResolvedValueOnce([]);
     expect(await resumeStorageMigrationRuns()).toEqual({ advanced: 0, tableMissing: false });
     const [giveUp, pick] = dbMock.dbWrite.$queryRaw.mock.calls;
     const giveUpSql = (giveUp[0] as readonly string[]).join('?');
     expect(giveUpSql).toContain(`SET "status" = 'failed'`);
-    expect(giveUpSql).toContain(`WHERE "status" = 'running' AND "attempts" >= ?::int`);
+    // F2: at the cap, a PENDING run (a reclaim raised it, then a transient error saved it) is
+    // failed too, not only a running one whose heartbeat went stale.
+    expect(giveUpSql).toContain(`WHERE "attempts" >= ?::int`);
+    expect(giveUpSql).toContain(`("status" = 'pending'`);
+    expect(giveUpSql).toContain(
+      `OR ("status" = 'running' AND "heartbeat_at" < CURRENT_TIMESTAMP - `
+    );
     expect(giveUp[1]).toBe(5);
     expect((pick[0] as readonly string[]).join('?')).toContain(
       'ORDER BY "heartbeat_at" NULLS FIRST'
     );
+  });
+});
+
+describe("the runner after a later approval (F1: loadTarget supersedes only on a change to the run's collection)", () => {
+  const RUN_MANIFEST = {
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: { type: 'object', additionalProperties: false, properties: { keep: {} } },
+        },
+        notes: { visibility: 'private' },
+      },
+    },
+  };
+  const run = {
+    publishRequestId: 'pubreq_RUN',
+    collection: 'cards',
+    appBlockId: APP,
+    ops: [{ op: 'remove' as const, path: '/legacy' }],
+    status: 'running' as const,
+    cursor: null,
+    scanned: 0,
+    migrated: 0,
+    unchanged: 0,
+    failed: 0,
+    invalid: 0,
+    failures: [],
+    lastError: null,
+    attempts: 0,
+    claimToken: 'claim-1',
+  };
+  const page = {
+    scanned: 1,
+    migrated: 1,
+    unchanged: 0,
+    failed: 0,
+    invalid: 0,
+    failures: [],
+    next: null,
+  };
+  const wire = (latest: { id: string; manifest: unknown } | null, status = 'approved') => {
+    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      slug: 'card-app',
+      manifest: RUN_MANIFEST,
+      status,
+    });
+    dbMock.dbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(latest);
+  };
+  const storeReturning = () => {
+    const migrateDocuments = vi.fn(async () => page);
+    return { migrateDocuments, store: { migrateDocuments } as never };
+  };
+
+  it('🔴 a later approval that left the collection untouched does NOT supersede the run: it continues', async () => {
+    // v3: a copy change plus a change to ANOTHER collection.
+    const v3 = {
+      name: 'Cards v3',
+      storage: {
+        collections: {
+          ...RUN_MANIFEST.storage.collections,
+          notes: { visibility: 'private', schema: { type: 'object' } },
+        },
+      },
+    };
+    wire({ id: 'pubreq_V3', manifest: v3 });
+    const { migrateDocuments, store } = storeReturning();
+    const left = await advanceStorageMigrationRun(run, { store, persist: async () => undefined });
+    expect(left.status).toBe('completed');
+    expect(migrateDocuments).toHaveBeenCalledTimes(1);
+    // Against the latest approved declaration of `cards` (the same storage config).
+    expect((migrateDocuments.mock.calls[0] as unknown[])[1]).toEqual({
+      name: 'cards',
+      config: expect.objectContaining({
+        visibility: 'private',
+        schema: RUN_MANIFEST.storage.collections.cards.schema,
+      }),
+    });
+  });
+
+  it('🔴 a later approval that changed the collection supersedes the run, without touching the store', async () => {
+    const v3 = {
+      storage: {
+        collections: { ...RUN_MANIFEST.storage.collections, cards: { visibility: 'private' } },
+      },
+    };
+    wire({ id: 'pubreq_V3', manifest: v3 });
+    const { migrateDocuments, store } = storeReturning();
+    const left = await advanceStorageMigrationRun(run, { store, persist: async () => undefined });
+    expect(left.status).toBe('superseded');
+    expect(migrateDocuments).not.toHaveBeenCalled();
+  });
+
+  it("the run's own request still being the latest approval runs normally", async () => {
+    wire({ id: 'pubreq_RUN', manifest: RUN_MANIFEST });
+    const { store } = storeReturning();
+    expect(
+      (await advanceStorageMigrationRun(run, { store, persist: async () => undefined })).status
+    ).toBe('completed');
   });
 });

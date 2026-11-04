@@ -152,7 +152,8 @@ describe('advanceStorageMigrationRun', () => {
     // Transient: not counted as an attempt (an outage must not fail every run in flight).
     expect([left.status, left.lastError, left.attempts]).toEqual([
       'pending',
-      'storage is temporarily unavailable',
+      // Prefixed with the code, so the approve gate can say why the run waits.
+      'service_unavailable: storage is temporarily unavailable',
       0,
     ]);
   });

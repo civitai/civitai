@@ -562,6 +562,46 @@ export function assertStorageMigrationsCover(check: StorageMigrationCheck): void
 }
 
 // ---------------------------------------------------------------------------
+// Whether two manifests declare one collection's STORAGE alike
+// ---------------------------------------------------------------------------
+
+/** The declaration fields whose change can affect how a collection's stored documents migrate. */
+export const COLLECTION_STORAGE_FIELDS = [
+  'schema',
+  'migrations',
+  'visibility',
+  'write',
+  'exportable',
+] as const;
+
+/** JSON with object keys sorted at every depth, so equal values compare equal as text. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (isObj(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * A comparable key of how `manifest` declares `collection`'s storage — {@link
+ * COLLECTION_STORAGE_FIELDS} of its raw declaration, or `null` when it is not declared. Two
+ * manifests with the same key leave that collection's stored documents, and a migration over
+ * them, untouched.
+ */
+export function collectionStorageKey(manifest: unknown, collection: string): string | null {
+  const collections = (manifest as { storage?: { collections?: unknown } } | null)?.storage
+    ?.collections;
+  if (!isObj(collections) || !Object.hasOwn(collections, collection)) return null;
+  const decl = collections[collection];
+  if (!isObj(decl)) return stableJson(decl);
+  return stableJson(Object.fromEntries(COLLECTION_STORAGE_FIELDS.map((f) => [f, decl[f] ?? null])));
+}
+
+// ---------------------------------------------------------------------------
 // Applying ops to one document
 // ---------------------------------------------------------------------------
 
