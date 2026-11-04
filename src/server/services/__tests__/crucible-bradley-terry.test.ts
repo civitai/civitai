@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { redisMock } from '~/__tests__/mocks';
-import type * as Logging from '~/server/logging/client';
+import { loggingMock, redisMock } from '~/__tests__/mocks';
 
 const chQuery = vi.fn();
-const logToAxiom = vi.fn(async () => undefined);
+const logToAxiom = loggingMock.logToAxiom;
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof Logging>()),
-  logToAxiom,
-}));
 
 const {
   BRADLEY_TERRY_INGEST_WAIT_MS,
