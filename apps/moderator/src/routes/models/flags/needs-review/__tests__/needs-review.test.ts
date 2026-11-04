@@ -23,6 +23,11 @@ const {
   getMinorQueueCounts: vi.fn(),
   getHeldDetectionModelCount: vi.fn(),
 }));
+const { getRestrictedVerdicts, ruleRestrictedVerdict, bustMinorQueueCounts } = vi.hoisted(() => ({
+  getRestrictedVerdicts: vi.fn(),
+  ruleRestrictedVerdict: vi.fn(),
+  bustMinorQueueCounts: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
@@ -31,7 +36,9 @@ vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorQueueCounts,
   getHeldDetectionModelCount,
   getModelFlagState,
+  bustMinorQueueCounts,
 }));
+vi.mock('$lib/server/restricted-nsfw-verdicts', () => ({ getRestrictedVerdicts }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag: vi.fn(),
   dismissMinorHashMatch,
@@ -40,6 +47,7 @@ vi.mock('$lib/server/minor-flag.service', () => ({
   resolveRedetection,
   revertMinorFlag: vi.fn(),
   ruleTextScanFlag: vi.fn(),
+  ruleRestrictedVerdict,
   setModelMinorFlag,
   setModelPoiFlag,
   dismissPoiHashMatch,
@@ -88,6 +96,8 @@ beforeEach(() => {
   setModelPoiFlag.mockResolvedValue({ ok: true });
   dismissPoiHashMatch.mockResolvedValue({ ok: true });
   getModelFlagState.mockResolvedValue({ minor: false, poi: false, poiMatchQueued: true });
+  getRestrictedVerdicts.mockResolvedValue([]);
+  ruleRestrictedVerdict.mockResolvedValue({ ok: true });
 });
 
 describe('held detections', () => {
@@ -346,6 +356,22 @@ describe('queue load', () => {
     );
   });
 
+  it('lists restricted-verdict leads only to a viewer who may rule detections', async () => {
+    const lead = { modelId: 7, restriction: 'minor' };
+    getRestrictedVerdicts.mockResolvedValue([lead]);
+    expect(
+      (
+        (await loadQueue('', { 'modelFlags.fileMatches.decide': true })) as Loaded & {
+          restrictedVerdicts: unknown[];
+        }
+      ).restrictedVerdicts
+    ).toEqual([]);
+    expect(getRestrictedVerdicts).not.toHaveBeenCalled();
+    expect(
+      ((await loadQueue()) as Loaded & { restrictedVerdicts: unknown[] }).restrictedVerdicts
+    ).toEqual([lead]);
+  });
+
   it('totals both kinds in models from the counts, a model with both once', async () => {
     expect((await loadQueue()).total).toBe(12);
     expect(getNeedsReviewCount).not.toHaveBeenCalled();
@@ -388,5 +414,50 @@ describe('queue load', () => {
     expect(getNeedsReviewModels).toHaveBeenLastCalledWith(
       expect.objectContaining({ filters: { source: 'all', flag: 'all', sort: 'oldest' } })
     );
+  });
+});
+
+describe('restricted-verdict leads', () => {
+  const rule = (fields: Record<string, string>, grants: Grants = BOTH) => {
+    const body = new FormData();
+    for (const [key, value] of Object.entries(fields)) body.set(key, value);
+    const event = {
+      request: new Request('http://x/models/flags/needs-review', { method: 'POST', body }),
+      locals: { grants },
+    };
+    return actions!.ruleRestrictedVerdict(event as unknown as ActionEvent) as Promise<
+      Record<string, unknown>
+    >;
+  };
+
+  it('forwards the ruling and the reason', async () => {
+    expect(await rule({ modelId: '42', ruling: 'dismiss', reason: ' escalated ' })).toMatchObject({
+      success: true,
+      modelId: 42,
+    });
+    expect(ruleRestrictedVerdict).toHaveBeenCalledWith(42, 'dismiss', 'escalated');
+    expect(bustMinorQueueCounts).toHaveBeenCalled();
+  });
+
+  it('is refused without the detections permission, before anything is sent', async () => {
+    const result = await rule(
+      { modelId: '42', ruling: 'keep' },
+      { 'modelFlags.fileMatches.decide': true }
+    );
+    expect(result).toMatchObject({ status: 403 });
+    expect(ruleRestrictedVerdict).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown ruling', async () => {
+    expect(await rule({ modelId: '42', ruling: 'unlock' })).toMatchObject({ status: 400 });
+    expect(ruleRestrictedVerdict).not.toHaveBeenCalled();
+  });
+
+  it("shows the main app's refusal", async () => {
+    ruleRestrictedVerdict.mockResolvedValue({ ok: false, error: 'cannot be rated NSFW' });
+    expect(await rule({ modelId: '42', ruling: 'rateNsfw' })).toMatchObject({
+      status: 400,
+      data: { error: 'cannot be rated NSFW' },
+    });
   });
 });

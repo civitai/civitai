@@ -20,6 +20,7 @@ import {
   withRuling,
 } from '$lib/minor-flags/flagged-decision';
 import {
+  bustMinorQueueCounts,
   getHeldDetectionModelCount,
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
@@ -68,6 +69,8 @@ import {
 import { ruleFlagAppeal, type FlagAppealDecision } from '$lib/server/minor-flag-appeal-ruling';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { bounded } from '$lib/server/bounded';
+import { getRestrictedVerdicts } from '$lib/server/restricted-nsfw-verdicts';
+import { RESTRICTED_VERDICT_RULINGS } from '$lib/minor-flags/restricted-verdicts';
 import {
   confirmMinorFlag,
   confirmPoiFlag,
@@ -79,6 +82,7 @@ import {
   resolveRedetection,
   revertMinorFlag,
   revertPoiFlag,
+  ruleRestrictedVerdict,
   ruleTextScanFlag,
   setModelMinorFlag,
   setModelPoiFlag,
@@ -175,9 +179,11 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
   const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
   const sources = needsReviewSources(grants);
   const use = needsReviewBranches(sources, needsReviewFilters);
-  const [queue, { total, chipCounts }] = await Promise.all([
+  const [queue, { total, chipCounts }, restrictedVerdicts] = await Promise.all([
     getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
     needsReviewCounts(sources, use, search, needsReviewFilters),
+    // Ruled under the detections permission; listed apart from the merged leads, minor first.
+    sources.detections ? getRestrictedVerdicts() : [],
   ]);
   return {
     limit,
@@ -188,6 +194,7 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
     sources,
     total,
     chipCounts,
+    restrictedVerdicts,
     ...queue,
     fullBleed: true,
   };
@@ -613,7 +620,30 @@ export const needsReviewActions: Actions = {
     const id = NEEDS_REVIEW_PERMISSION_OF[flag.source as keyof typeof NEEDS_REVIEW_PERMISSION_OF];
     return event.locals.grants[id] ? null : denied(id);
   }),
+  ruleRestrictedVerdict: async (event) => {
+    const id = NEEDS_REVIEW_PERMISSIONS.detections;
+    if (!event.locals.grants[id]) return fail(403, { error: denied(id) });
+    const form = await event.request.formData();
+    const parsed = restrictedVerdictForm.safeParse({
+      modelId: form.get('modelId'),
+      ruling: form.get('ruling'),
+      reason: form.get('reason') ?? undefined,
+    });
+    if (!parsed.success) return fail(400, { error: 'Missing model or ruling.' });
+    const { modelId, ruling, reason } = parsed.data;
+    const result = await ruleRestrictedVerdict(modelId, ruling, reason || undefined);
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
+    await bustMinorQueueCounts();
+    return { success: true, modelId, restrictedRuling: ruling };
+  },
 };
+
+const restrictedVerdictForm = z.object({
+  modelId: z.coerce.number().int().positive().max(MAX_INT4),
+  ruling: z.enum(RESTRICTED_VERDICT_RULINGS),
+  reason: z.string().trim().max(1000).optional(),
+});
 
 const reasonFields = z.object(resolutionReasonFields);
 

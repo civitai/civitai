@@ -40,6 +40,15 @@ Notes on the tabs:
   as minor" on a match whose model is already minor for another reason is refused. A row's time is when the
   scan held the detection or, for a match, when the shared file was uploaded (no match timestamp is stored), and
   the list sorts oldest first.
+- Needs review also lists, above its merged leads, models the text scan rated NSFW while their owner had them
+  marked minor, a real person or SFW-only ("Scan rated NSFW on a restricted model"). The scan never sets nsfw on
+  such a model; it writes the server-owned `meta.restrictedNsfwVerdict` lead instead, and the block reads it,
+  minor first, then real person, then SFW-only. A lead held as minor stays minor after the owner unticks the
+  flag. Ruled under `modelFlags.detections.decide` through `model/resolve-restricted-nsfw-verdict`: **Keep
+  owner's rating** (also turns off and unlocks nsfw an earlier scan had locked), **Dismiss** (a minor lead needs
+  a reason) or, on SFW-only leads only, **Rate NSFW** (refused by the main app on minor or real-person models).
+  Each ruling logs a ModActivity row and keeps the values it replaced in `meta.restrictedNsfwVerdictRulings`.
+  The sidebar's Needs review badge adds these leads to the held-detection count; a model with both counts twice.
 - Each row and detail header says which other tabs the model waits in ("also in Appeals", "also in
   Auto-flagged", "also in Needs review"). In the header the chip links to the model in that tab when the viewer
   holds it. With an open appeal, confirming an applied flag is disabled (the main app refuses it) while reverting

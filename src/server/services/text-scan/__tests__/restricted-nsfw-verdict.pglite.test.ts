@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -63,7 +65,16 @@ beforeAll(async () => {
       poi boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false,
       "sfwOnly" boolean NOT NULL DEFAULT false,
-      meta jsonb NOT NULL DEFAULT '{}'
+      meta jsonb NOT NULL DEFAULT '{}',
+      "deletedAt" timestamp(3)
+    );
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      activity text NOT NULL,
+      "entityType" text,
+      "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
   `);
   const raw = pgliteRaw(db);
@@ -274,5 +285,72 @@ describe('resolveRestrictedNsfwVerdict', () => {
     await rule('dismiss');
     await expect(rule('keep')).rejects.toThrow(/ruled on meanwhile/);
     expect((await row()).meta.restrictedNsfwVerdictRulings).toHaveLength(1);
+  });
+});
+
+describe('the backfill migration', () => {
+  const sqlFile = readFileSync(
+    path.resolve(
+      __dirname,
+      '../../../../../packages/civitai-db-schema/prisma/migrations/20261223120100_model_restricted_nsfw_verdict_backfill/migration.sql'
+    ),
+    'utf-8'
+  );
+  // The dry run and the write, as a person applies them: the write's transaction is left open by the
+  // file (COMMIT is commented out) and committed here once the counts agree.
+  const [dryRun, write] = sqlFile
+    .split(/^BEGIN;$/m)
+    .map((part) => part.replace(/^--.*$/gm, '').trim());
+
+  const insert = (id: number, cols: Record<string, unknown>) =>
+    db.query(
+      `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, minor, poi, "sfwOnly", meta)
+       VALUES ($1, 1, $2, $3, $4, $5, $6, $7)`,
+      [
+        id,
+        cols.locked ?? ['nsfw'],
+        cols.nsfw ?? true,
+        !!cols.minor,
+        !!cols.poi,
+        !!cols.sfwOnly,
+        cols.meta ?? { systemNsfwLock: SYSTEM_LOCK },
+      ]
+    );
+
+  it('stamps exactly the stuck models, and counts them first', async () => {
+    await db.exec(`DELETE FROM "Model"; DELETE FROM "ModActivity";`);
+    await insert(1, { minor: true, sfwOnly: true }); // stuck: minor
+    await insert(2, { sfwOnly: true }); // stuck: SFW-only
+    await insert(3, {}); // an ordinary system lock: not restricted
+    await insert(4, { minor: true, sfwOnly: true, meta: {} }); // a moderator's lock: no marker
+    await insert(5, { poi: true, sfwOnly: true }); // ruled by a moderator after the lock
+    await db.query(
+      `INSERT INTO "ModActivity" (activity, "entityType", "entityId", "createdAt")
+       VALUES ('setPoi', 'model', 5, '2026-11-02')`
+    );
+    await insert(6, { sfwOnly: true, meta: { systemNsfwLock: SYSTEM_LOCK, ...lead('minor') } });
+
+    expect((await db.query<{ to_backfill: number }>(dryRun)).rows[0].to_backfill).toBe(2);
+    await db.exec('BEGIN');
+    const statements = write.split(/;\s*$/m).filter((s) => s.trim());
+    const result = await db.query<{ backfilled: number }>(statements[0]);
+    expect(result.rows[0].backfilled).toBe(2);
+    await db.exec('COMMIT');
+
+    const leads = await db.query<{ id: number; lead: unknown }>(
+      `SELECT id, meta->'restrictedNsfwVerdict' AS lead FROM "Model" ORDER BY id`
+    );
+    expect(leads.rows).toEqual([
+      { id: 1, lead: { source: 'text-scan', at: SYSTEM_LOCK.at, restriction: 'minor' } },
+      { id: 2, lead: { source: 'text-scan', at: SYSTEM_LOCK.at, restriction: 'sfwOnly' } },
+      { id: 3, lead: null },
+      { id: 4, lead: null },
+      { id: 5, lead: null },
+      { id: 6, lead: lead('minor').restrictedNsfwVerdict },
+    ]);
+    // Nothing but the lead changed.
+    expect((await db.query(`SELECT count(*)::int AS n FROM "Model" WHERE nsfw`)).rows[0]).toEqual({
+      n: 6,
+    });
   });
 });
