@@ -1,11 +1,10 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { PGlite } from '@electric-sql/pglite';
-import fs from 'fs';
-import fsAsync from 'fs/promises';
 import JSZip from 'jszip';
-import type { Readable } from 'stream';
+import { Readable } from 'stream';
 import { Parser } from 'xml2js';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { crc32 } from 'zlib';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as NcmecXml from '~/server/services/ncmec-xml';
@@ -33,9 +32,10 @@ const {
   cancelReport,
   getObject,
   csamBucketObject,
-  fetchBlobAsFile,
+  generatedFile,
   getFileForModelVersion,
   cyberTipXmlProblem,
+  spoolCap,
 } = vi.hoisted(() => ({
   submitReport: vi.fn(),
   uploadFile: vi.fn(),
@@ -44,10 +44,23 @@ const {
   cancelReport: vi.fn(),
   getObject: vi.fn(),
   csamBucketObject: vi.fn(),
-  fetchBlobAsFile: vi.fn(),
+  generatedFile: vi.fn(),
   getFileForModelVersion: vi.fn(),
   cyberTipXmlProblem: vi.fn(),
+  // The bytes one report's send may write to disk, when a test sets it.
+  spoolCap: { bytes: undefined as number | undefined },
 }));
+
+vi.mock('~/server/services/csam-evidence-spool', async (importOriginal) => {
+  const actual = await importOriginal<typeof EvidenceSpool>();
+  return {
+    ...actual,
+    spoolBudget: (...caps: Parameters<typeof actual.spoolBudget>) =>
+      spoolCap.bytes === undefined
+        ? actual.spoolBudget(...caps)
+        : actual.spoolBudget(spoolCap.bytes),
+  };
+});
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   ...(await importOriginal<typeof CybertiplineTools>()),
@@ -95,17 +108,14 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   }),
 }));
 
-vi.mock('~/utils/file-utils', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  fetchBlobAsFile,
-}));
-
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getFileForModelVersion,
 }));
 
 import { buildReport, buildSubmitFileDetails } from '@civitai/cybertipline-tools';
+import type * as EvidenceSpool from '~/server/services/csam-evidence-spool';
+import { MAX_SPOOL_FILE_BYTES } from '~/server/services/csam-evidence-spool';
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import { processCsamReport as processClaimedReport } from '~/server/services/csam.service-new';
 import { env } from '~/env/server';
@@ -197,7 +207,9 @@ function serveCsamBucket(zips: Record<string, Buffer>) {
     input: { Key: string };
   }) => csamBucketObject(command.input.Key)) as never);
   csamBucketObject.mockImplementation(async (key: string) => ({
-    Body: { transformToByteArray: async () => new Uint8Array(zips[key]) },
+    Body: Object.assign(Readable.from([Buffer.from(zips[key])]), {
+      transformToByteArray: async () => new Uint8Array(zips[key]),
+    }),
   }));
 }
 
@@ -207,20 +219,6 @@ function serveTrainingData(zip: Buffer) {
     url: 'https://example.invalid/td.zip',
   });
   vi.mocked(globalThis.fetch).mockResolvedValue(new Response(new Uint8Array(zip)));
-  // The zip passes through the job's disk; here, through memory.
-  let written = Buffer.alloc(0);
-  vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-  vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
-  vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
-  vi.spyOn(fsAsync, 'writeFile').mockImplementation(async (_, data) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of data as Readable) chunks.push(Buffer.from(chunk));
-    written = Buffer.concat(chunks);
-  });
-  vi.spyOn(fs, 'readFile').mockImplementation(((
-    _: unknown,
-    done: (e: Error | null, data: Buffer) => void
-  ) => done(null, written)) as never);
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 7, model: { id: 3 } }]);
 }
 
@@ -259,8 +257,12 @@ beforeEach(() => {
     ContentType: 'image/png',
     ContentLength: stored.length,
   }));
-  fetchBlobAsFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
-  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
+  generatedFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
+  // Each generated-image URL answers with `generatedFile`'s file, or an error response for null.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const file = await generatedFile(String(input));
+    return file ? new Response(file) : new Response(null, { status: 404 });
+  });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
     where.id === 10
       ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
@@ -456,5 +458,238 @@ describe('XML NCMEC would refuse', () => {
     expect(lines('send-decision-needed')).toEqual([
       expect.objectContaining({ ncmecReportId: 4242 }),
     ]);
+  });
+});
+
+const MiB = 1024 * 1024;
+/**
+ * A stored zip, streamed as it is built, holding `stored` as a.png beside `pad` zero bytes in a file
+ * that is not media: an archive that passes `pad` bytes and sends one small image.
+ */
+async function* paddedZip(pad: number) {
+  const zeros = Buffer.alloc(MiB);
+  const padChunks = function* () {
+    for (let left = pad; left > 0; left -= MiB) yield left >= MiB ? zeros : zeros.subarray(0, left);
+  };
+  let padCrc = 0;
+  for (const chunk of padChunks()) padCrc = crc32(chunk, padCrc);
+  const entries = [
+    { name: Buffer.from('a.png'), size: stored.length, crc: crc32(stored), body: [stored] },
+    { name: Buffer.from('pad.bin'), size: pad, crc: padCrc, body: padChunks() },
+  ];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const { name, size, crc, body } of entries) {
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(size, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(name.length, 26);
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(20, 6);
+    header.writeUInt32LE(crc, 16);
+    header.writeUInt32LE(size, 20);
+    header.writeUInt32LE(size, 24);
+    header.writeUInt16LE(name.length, 28);
+    header.writeUInt32LE(offset, 42);
+    central.push(header, name);
+    yield Buffer.concat([local, name]);
+    yield* body;
+    offset += local.length + name.length + size;
+  }
+  const directory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  yield directory;
+  yield end;
+}
+
+describe('an archive past the per-file cap, at the real caps', () => {
+  const PAD = MAX_SPOOL_FILE_BYTES + MiB;
+  const sentWhole = () => {
+    expect(lines('evidence-too-large')).toEqual([]);
+    expect(markedSent()).toBe(true);
+    expect(fileDetailsSent()).toEqual([expect.objectContaining({ originalFileName: 'a.png' })]);
+  };
+
+  it('is sent as training data', async () => {
+    serveTrainingData(Buffer.alloc(0));
+    const chunks = paddedZip(PAD);
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const { done, value } = await chunks.next();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+    });
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(body));
+
+    await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
+
+    sentWhole();
+  });
+
+  it('is sent as external evidence', async () => {
+    serveCsamBucket({});
+    csamBucketObject.mockImplementation(async () => ({ Body: Readable.from(paddedZip(PAD)) }));
+
+    await processCsamReport(
+      report('ExternalLink', {
+        email: 'x@example.invalid',
+        evidence: { bucketKey: 'evidence-key', filename: 'evidence.zip' },
+      })
+    );
+
+    sentWhole();
+  });
+});
+
+describe('an archive with entries yauzl would refuse by name, or that are empty', () => {
+  it('is sent with every image it holds, and records what it skipped', async () => {
+    const zip = new JSZip();
+    zip.file('../x.txt', 'not media');
+    zip.file('/abs.jpg', stored);
+    zip.file('C:\\y.jpg', stored);
+    zip.file('empty.png', '');
+    zip.file('ok.png', stored);
+    serveTrainingData(await zip.generateAsync({ type: 'nodebuffer' }));
+
+    await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
+
+    expect(markedSent()).toBe(true);
+    expect(fileDetailsSent().map(({ originalFileName }) => originalFileName)).toEqual([
+      '/abs.jpg',
+      'C:/y.jpg',
+      'ok.png',
+    ]);
+    const recorded = dbMock.dbWrite.$executeRaw.mock.calls.find(([strings]) =>
+      strings.join('').includes('skippedArchiveEntries')
+    );
+    expect(JSON.parse(recorded?.[1] as string)).toMatchObject({
+      count: 1,
+      empty: 1,
+      unreadable: 0,
+    });
+    expect(lines('send-entries-skipped')).toHaveLength(1);
+  });
+});
+
+describe('a report whose files pass what one send may write', () => {
+  const CAP = 64 * 1024;
+  // Compresses to almost nothing and inflates past the cap.
+  const bombOf = async (name: string) => {
+    const zip = new JSZip();
+    zip.file(name, Buffer.alloc(16 * CAP));
+    return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  };
+  beforeEach(() => {
+    spoolCap.bytes = CAP;
+    vi.mocked(logToAxiom).mockClear();
+  });
+  afterEach(() => {
+    spoolCap.bytes = undefined;
+  });
+  const refused = () => {
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(lines('evidence-too-large')).toEqual([expect.objectContaining({ reportId: 1 })]);
+    expect(markedSent()).toBe(false);
+  };
+
+  it('opens no CyberTip for training data that inflates past it', async () => {
+    const zip = await bombOf('td.png');
+    expect(zip.byteLength).toBeLessThan(CAP / 8);
+    serveTrainingData(zip);
+
+    await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
+
+    refused();
+  });
+
+  it('opens no CyberTip for external evidence that inflates past it, across both zips', async () => {
+    const half = await zipOf(['a.png']);
+    const big = new JSZip();
+    big.file('b.png', Buffer.alloc(CAP));
+    serveCsamBucket({
+      'evidence-key': half,
+      'supplemental-key': await big.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
+    });
+
+    await processCsamReport(
+      report('ExternalLink', {
+        email: 'x@example.invalid',
+        evidence: { bucketKey: 'evidence-key', filename: 'evidence.zip' },
+        supplementalEvidence: { bucketKey: 'supplemental-key', filename: 'chat.zip' },
+      })
+    );
+
+    refused();
+  });
+
+  it('opens no CyberTip for generated images that pass it together', async () => {
+    generatedFile.mockImplementation(async () => new File([Buffer.alloc(CAP / 2 + 1)], 'g.png'));
+
+    await processCsamReport(
+      report('GeneratedImage', {
+        generatedImages: [
+          { jobId: 'job-1', blobs: [{ url: 'blob-1' }] },
+          { jobId: 'job-2', blobs: [{ url: 'blob-2' }] },
+        ],
+      })
+    );
+
+    refused();
+  });
+
+  it('uploads external files one at a time, since each upload holds its file whole', async () => {
+    spoolCap.bytes = undefined;
+    serveCsamBucket({
+      'evidence-key': await zipOf(['a.png', 'b.png']),
+      'supplemental-key': await zipOf(['c.png']),
+    });
+    let inFlight = 0;
+    let most = 0;
+    uploadFile.mockImplementation(async () => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+    });
+
+    await processCsamReport(
+      report('ExternalLink', {
+        email: 'x@example.invalid',
+        evidence: { bucketKey: 'evidence-key', filename: 'evidence.zip' },
+        supplementalEvidence: { bucketKey: 'supplemental-key', filename: 'chat.zip' },
+      })
+    );
+
+    expect(uploadFile).toHaveBeenCalledTimes(3);
+    expect(most).toBe(1);
+  });
+
+  it('sends what stays under it', async () => {
+    generatedFile.mockImplementation(async () => new File([Buffer.alloc(CAP / 2 - 1)], 'g.png'));
+
+    await processCsamReport(
+      report('GeneratedImage', {
+        generatedImages: [
+          { jobId: 'job-1', blobs: [{ url: 'blob-1' }] },
+          { jobId: 'job-2', blobs: [{ url: 'blob-2' }] },
+        ],
+      })
+    );
+
+    expect(uploadFile).toHaveBeenCalledTimes(2);
+    for (const [{ file }] of uploadFile.mock.calls) expect((file as File).size).toBe(CAP / 2 - 1);
+    expect(lines('evidence-too-large')).toEqual([]);
   });
 });

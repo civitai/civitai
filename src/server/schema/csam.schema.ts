@@ -166,3 +166,9 @@ export const generatorEvidenceFileSchema = generatorEvidenceUserSchema.extend({
 export const excludeGeneratorEvidenceFileSchema = generatorEvidenceFileSchema.extend({
   reason: z.string().trim().min(3).max(1000),
 });
+
+export const clearUnconfirmedOpenSchema = z.object({
+  reportId: z.number().int().positive(),
+  /** What the moderator checked with NCMEC before clearing it. */
+  note: z.string().trim().min(3).max(1000),
+});

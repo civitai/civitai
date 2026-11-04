@@ -9,6 +9,7 @@ import {
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
   approveGeneratorEvidenceSchema,
+  clearUnconfirmedOpenSchema,
   excludeGeneratorEvidenceFileSchema,
   generatorEvidenceFileSchema,
   generatorEvidenceUserSchema,
@@ -25,6 +26,7 @@ import {
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
+import { clearUnconfirmedOpens } from '~/server/services/csam-unconfirmed-open';
 import {
   getCsamReportStats,
   getCsamReportsPaged,
@@ -79,4 +81,7 @@ export const csamRouter = router({
     .mutation(({ input, ctx }) =>
       excludeGeneratorEvidenceFile({ ...input, moderatorId: ctx.user.id })
     ),
+  clearUnconfirmedOpen: csamProcedure
+    .input(clearUnconfirmedOpenSchema)
+    .mutation(({ input, ctx }) => clearUnconfirmedOpens({ ...input, moderatorId: ctx.user.id })),
 });
