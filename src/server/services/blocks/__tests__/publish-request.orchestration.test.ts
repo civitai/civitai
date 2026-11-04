@@ -234,10 +234,7 @@ vi.mock('~/server/notifications/client', () => ({
 
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
-  // `$transaction`: the storage-migration approve gate (`reserveStorageMigrationRuns`), a no-op
-  // here (no open run, nothing reserved). Added in the factory, not on the surface, so the reset
-  // loop's typed walk over the surfaces is unchanged.
-  dbWrite: Object.assign(mockDbWrite, { $transaction: async () => undefined }),
+  dbWrite: mockDbWrite,
 }));
 
 // The post-commit history write is a seam: these suites pin what each go-live HANDS it;
