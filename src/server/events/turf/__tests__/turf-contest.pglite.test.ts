@@ -46,6 +46,7 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
 const {
   getTurfEvent,
   getTurfSummaries,
+  getMyStickerHats,
   getTurfStickers,
   getTurfStickersForImages,
   placeTurfSticker,
@@ -98,8 +99,11 @@ beforeAll(async () => {
     INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES
       (1, ${CONTEST_ENTRY}), (2, ${BOOKMARKED});
     INSERT INTO "Cosmetic" VALUES
-      (11, 'ContentDecoration', '{"event": "e", "team": "Blue", "url": "blue-cap-art"}');
-    INSERT INTO "UserCosmetic" VALUES (${PLACER}, 11);
+      (11, 'ContentDecoration',
+        '{"event": "e", "team": "Blue", "url": "blue-cap-art",
+          "fit": {"canvas": [128, 160], "bounds": [20, 40, 108, 150], "outline": [[1, 2]]}}'),
+      (12, 'ContentDecoration', '{"event": "e", "team": "Pink", "url": "pink-cap-art"}');
+    INSERT INTO "UserCosmetic" VALUES (${PLACER}, 11), (${PLACER}, 12);
     INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data) VALUES
       ('e', ${CONTEST_ENTRY}, ${PLACER}, 'Blue', 11, '{}'),
       ('e', ${BOOKMARKED}, ${PLACER}, 'Blue', 11, '{}');
@@ -143,9 +147,11 @@ describe('Hat Turf on contest entries', () => {
 
   // The hat's own art is the sticker: every read that draws one carries it.
   it('a sticker carries its hat art on image detail, feed cards and pushes', async () => {
-    expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.url).toBe('blue-cap-art');
+    const art = { url: 'blue-cap-art', canvas: [128, 160], bounds: [20, 40, 108, 150] };
+    // The fit's outline is not needed to draw, so it does not ride along.
+    expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.art).toEqual(art);
     const feed = await getTurfStickersForImages('e', [BOOKMARKED], 5);
-    expect(feed[BOOKMARKED]?.[0]?.url).toBe('blue-cap-art');
+    expect(feed[BOOKMARKED]?.[0]?.art).toEqual(art);
     redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
     redisMock.sysRedis.incr.mockResolvedValue(1 as never);
     redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
@@ -153,9 +159,16 @@ describe('Hat Turf on contest entries', () => {
     await syncTurfImages((await getTurfEvent('e'))!, [BOOKMARKED]);
     const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
     const push = pushed.find((p: { imageId: number }) => p.imageId === BOOKMARKED) as
-      | { stickers: { url: string | null }[] }
+      | { stickers: { art: unknown }[] }
       | undefined;
-    expect(push?.stickers[0]?.url).toBe('blue-cap-art');
+    expect(push?.stickers[0]?.art).toEqual(art);
+  });
+
+  // Placing refuses another team's hat, so the picker offers only the player's own team's.
+  it("a player's hats to place are their current team's only", async () => {
+    const hats = await getMyStickerHats('e', PLACER);
+    expect(hats.map((hat) => hat.cosmeticId)).toEqual([11]);
+    expect(hats[0].art?.url).toBe('blue-cap-art');
   });
 
   it('feed cards get no stickers for a contest entry', async () => {

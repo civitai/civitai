@@ -451,15 +451,20 @@ describe('Hat Turf on image detail', () => {
   // Deliberate (event owner's call, 2026-11-04): the hat's own art is the sticker, with no team cone
   // and no corner marker on the viewer's own.
   test("a hat draws as its own art, the viewer's own included, with no cone or marker", async () => {
-    h.stickers = [{ ...sticker(1, 'blue', 0.3, 0.3), url: 'blue-cap-art' }];
-    h.mine = { ...sticker(99, 'blue', 0.6, 0.6), userId: 1, url: 'blue-cap-art' };
+    const art = { url: 'blue-cap-art', canvas: [128, 160], bounds: [24, 40, 104, 150] };
+    h.stickers = [{ ...sticker(1, 'blue', 0.3, 0.3), art }];
+    h.mine = { ...sticker(99, 'blue', 0.6, 0.6), userId: 1, art };
     render({}, 900);
     await vi.waitFor(() => expect(hats().length).toBe(2));
     for (const hat of hats()) {
-      const art = hat.querySelector('img[data-testid="hat-turf-art"]');
-      expect(art?.getAttribute('src')).toContain('blue-cap-art');
+      const box = hat.querySelector<HTMLElement>('[data-testid="hat-turf-art"]')!;
+      expect(box.querySelector('img')?.getAttribute('src')).toContain('blue-cap-art');
       expect(hat.querySelector('svg')).toBeNull();
       expect(hat.querySelector('i')).toBeNull();
+      // A square at the hat's drawn size, with the visible art centred in it.
+      const { width, height } = box.getBoundingClientRect();
+      expect(width).toBeGreaterThan(40);
+      expect(height).toBeCloseTo(width, 0);
     }
   });
 
@@ -468,6 +473,7 @@ describe('Hat Turf on image detail', () => {
     render({}, 900);
     await vi.waitFor(() => expect(hats().length).toBe(1));
     expect(hats()[0].querySelector('svg')).not.toBeNull();
+    expect(hats()[0].querySelector('img')).toBeNull();
   });
 
   test('past the draw cap a "more" button asks for the next hats', async () => {

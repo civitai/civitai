@@ -90,7 +90,7 @@ function HatTurfLayerContent({
   const user = useCurrentUser();
   const showHats = useHatTurfStore((state) => state.showHats);
   const { cosmeticId, hats } = useChosenHat();
-  const chosenUrl = hats?.find((hat) => hat.cosmeticId === cosmeticId)?.url;
+  const chosenArt = hats?.find((hat) => hat.cosmeticId === cosmeticId)?.art;
   const teamColor = useTeamColor();
   const utils = trpc.useUtils();
   const place = trpc.hatTurf.place.useMutation();
@@ -266,7 +266,7 @@ function HatTurfLayerContent({
                 }}
               >
                 <TurfHatArt
-                  url={sticker.url}
+                  art={sticker.art}
                   color={colorOf(sticker.team)}
                   size={hatSize(pose.scale)}
                 />
@@ -280,7 +280,7 @@ function HatTurfLayerContent({
               data-testid="hat-turf-placed"
             >
               <TurfHatArt
-                url={chosenUrl}
+                art={chosenArt}
                 color={colorOf(feed.team)}
                 size={hatSize(HAT_DEFAULT_SCALE)}
               />
@@ -311,7 +311,7 @@ function HatTurfLayerContent({
                 onClick={stop}
               >
                 <TurfHatArt
-                  url={chosenUrl}
+                  art={chosenArt}
                   color={colorOf(feed.team)}
                   size={hatSize(HAT_DEFAULT_SCALE)}
                 />

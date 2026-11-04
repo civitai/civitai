@@ -148,11 +148,21 @@ describe('turf pushes', () => {
   });
   it("keeps each pushed sticker's hat art, and drops a malformed one", () => {
     const sticker = { id: '1', userId: 3, team: 'blue', cosmeticId: 11, data: {} };
-    const read = (url: unknown) =>
-      readTurfPush({ event: 'e', imageId: 4, counts, stickers: [{ ...sticker, url }] }, 'e')
+    const read = (art: unknown) =>
+      readTurfPush({ event: 'e', imageId: 4, counts, stickers: [{ ...sticker, art }] }, 'e')
         ?.stickers?.[0];
-    expect(read('blue-cap-art')?.url).toBe('blue-cap-art');
-    expect(read(42)).not.toHaveProperty('url');
+    expect(read({ url: 'cap', canvas: [128, 160], bounds: [1, 2, 3, 4] })?.art).toEqual({
+      url: 'cap',
+      canvas: [128, 160],
+      bounds: [1, 2, 3, 4],
+    });
+    // A bad fit is dropped, the art kept; art without a url is no art.
+    expect(read({ url: 'cap', canvas: ['x'] })?.art).toEqual({
+      url: 'cap',
+      canvas: null,
+      bounds: null,
+    });
+    expect(read({ canvas: [128, 160] })).not.toHaveProperty('art');
   });
   it('refuses a malformed push instead of drawing from it', () => {
     expect(readTurfPush({ event: 'e', imageId: 'x', counts }, 'e')).toBeNull();
