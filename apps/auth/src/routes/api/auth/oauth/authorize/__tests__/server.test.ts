@@ -322,3 +322,16 @@ describe('authorize — scope in a JSON body', () => {
     expect(await redirectedError(pending)).toBe('invalid_scope');
   });
 });
+
+describe('authorize — during impersonation', () => {
+  beforeEach(() => {
+    h.authorize.mockRejectedValue(new Error('code issued'));
+  });
+
+  it('refuses a registered app and issues nothing', async () => {
+    const res = await start({}, { user: { id: 7 }, impersonatedBy: 5 });
+    expect(res.status).toBe(303);
+    expect(res.location).toContain('error=access_denied');
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+});
