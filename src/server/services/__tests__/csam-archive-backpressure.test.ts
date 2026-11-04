@@ -1302,16 +1302,67 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
         reason: 'full url unreadable',
       });
     });
+  });
 
-    it('still fails the archive on a stored object it cannot read, however long ago it was sent', async () => {
-      mockGetObject = async () => {
-        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+  describe('a stored object that fails every read', () => {
+    // Not a dropped connection, so the reader does not wait between attempts here.
+    beforeEach(() => {
+      const base = mockGetObject;
+      mockGetObject = async (key) => {
+        if (key === 'key-seven')
+          throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+        return base(key);
       };
+    });
+    const sentHoursAgo = (hours: number) => ({
+      ...report,
+      reportSentAt: new Date(Date.now() - hours * 3_600_000),
+    });
+    const failure =
+      'stored original read failed for image 7 (backend backblaze, ContentLength unknown, ' +
+      'attempt 1/3): synthetic storage outage';
 
-      await expect(
-        archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS + 1) as never)
-      ).rejects.toThrow('synthetic storage outage');
+    it('fails the archive, to be retried, within a day of sending', async () => {
+      await expect(archiveCsamDataForReport(sentHoursAgo(23) as never)).rejects.toThrow(failure);
       expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('is recorded missing after that, logged by image id, and the rest is archived', async () => {
+      await archiveCsamDataForReport(sentHoursAgo(25) as never);
+      const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+
+      expect(Object.keys(zip.files).sort()).toEqual(['8.jpeg', 'manifest.json']);
+      const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+      expect(manifest.images).toEqual([
+        { imageId: 7, source: 'missing', reason: 'stored original unreadable' },
+        {
+          imageId: 8,
+          source: 'edge-fallback',
+          sha256: sha256(edge),
+          bytes: edge.length,
+          contentType: 'image/jpeg',
+        },
+        { imageId: 9, source: 'missing', reason: 'edge 404' },
+      ]);
+      // A give-up is not silent: the dropped file can be found again from the log.
+      const lines = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+        .filter((payload) => payload.subType === 'archive-image-unreadable');
+      expect(lines).toEqual([
+        {
+          name: 'csam-report',
+          type: 'error',
+          subType: 'archive-image-unreadable',
+          message: failure,
+          reportId: report.id,
+          imageId: 7,
+        },
+      ]);
+      expect(JSON.stringify(lines)).not.toContain('key-seven');
+      expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
+      );
     });
   });
 

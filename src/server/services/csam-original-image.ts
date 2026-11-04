@@ -322,6 +322,12 @@ async function readStoredObjectOnce(
 }
 
 /**
+ * A stored object that could not be read after every attempt. Distinct from a refused reservation
+ * (a failed archive), which is passed through as is, so a caller can act on this one alone.
+ */
+export class StoredOriginalReadError extends Error {}
+
+/**
  * Names the object that failed (by image id and backend label; the key and bucket stay out of logs),
  * keeping the storage error's own message, name and code.
  */
@@ -335,7 +341,7 @@ function describeReadFailure(
 ) {
   const cause = e as { message?: unknown; name?: unknown; code?: unknown; $metadata?: unknown };
   const message = typeof cause?.message === 'string' ? cause.message : String(e);
-  const wrapped = new Error(
+  const wrapped = new StoredOriginalReadError(
     `stored original read failed for image ${image.id ?? 'unknown'} ` +
       `(backend ${backend ?? 'unknown'}, ContentLength ${contentLength ?? 'unknown'}, ` +
       `attempt ${attempt}/${attempts}): ${message}`,

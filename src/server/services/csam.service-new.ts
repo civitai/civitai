@@ -115,6 +115,7 @@ import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  StoredOriginalReadError,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -626,8 +627,14 @@ export const CSAM_SEND_DECISION_AFTER_HOURS = 48;
 
 export const SEND_SHORT_REASON = 'storage read failed after retries';
 
-/** Hours after sending for which the archive retries a full-URL file before recording it missing. */
+/**
+ * Hours after sending for which the archive retries a full-URL file, or a stored object that fails
+ * every read, before recording it missing.
+ */
 export const CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS = 24;
+
+/** Manifest reason for a stored object that failed every read for `CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS`. */
+export const STORED_ORIGINAL_UNREADABLE = 'stored original unreadable';
 
 const hoursSinceFiled = (report: { createdAt: Date }) =>
   Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
@@ -2820,14 +2827,29 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           try {
             original = await readOriginalImage(image, { reserve: budget.reserve });
           } catch (e) {
-            // A full URL may be on a host we do not control: after a day of retries its failing
-            // no longer holds the archive back. A stored object's failure is always retried.
+            // After a day of hourly retries, one unreadable file no longer holds the archive back:
+            // a full URL (on a host we may not control) or a stored object that failed every
+            // attempt is recorded missing. Anything else (a refused reservation, i.e. an archive
+            // already failing) still throws.
+            const passthrough = isEdgeUrlPassthrough(image.url);
             if (
-              !isEdgeUrlPassthrough(image.url) ||
-              hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS
+              hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS ||
+              (!passthrough && !(e instanceof StoredOriginalReadError))
             )
               throw e;
-            original = { source: 'missing', reason: 'full url unreadable' };
+            if (passthrough) original = { source: 'missing', reason: 'full url unreadable' };
+            else {
+              // Not silent: the error names the image, so a dropped file is recoverable from logs.
+              logToAxiom({
+                name: 'csam-report',
+                type: 'error',
+                subType: 'archive-image-unreadable',
+                message: e instanceof Error ? e.message : String(e),
+                reportId: report.id,
+                imageId: image.id,
+              });
+              original = { source: 'missing', reason: STORED_ORIGINAL_UNREADABLE };
+            }
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });
