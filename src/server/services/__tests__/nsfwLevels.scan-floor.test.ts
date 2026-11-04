@@ -9,8 +9,14 @@ import {
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
-const onStorySparkPostsHidden = vi.hoisted(() => vi.fn());
-vi.mock('~/server/events/points/hooks', () => ({ onStorySparkPostsHidden }));
+const { onStorySparkPostsHidden, onStorySparkPostsRestored } = vi.hoisted(() => ({
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+}));
 
 // Hand-listed, as in challenge-moderation-adapter.test.ts: article-rating-review.helpers imports it.
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -107,6 +113,17 @@ describe('updatePostNsfwLevels and story sparks', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([change(3, NsfwLevel.R)]);
     await updatePostNsfwLevels([3]);
     expect(onStorySparkPostsHidden).not.toHaveBeenCalled();
+    expect(onStorySparkPostsRestored).not.toHaveBeenCalled();
+  });
+
+  it('gives the spark back to each post that is no longer Blocked or unrated, in one call', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 1, before: NsfwLevel.Blocked, after: NsfwLevel.PG },
+      { id: 2, before: 0, after: NsfwLevel.R },
+      { id: 3, before: 0, after: NsfwLevel.Blocked },
+    ]);
+    await updatePostNsfwLevels([1, 2, 3]);
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [1, 2] });
   });
 });
 

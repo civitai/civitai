@@ -6,7 +6,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { onStorySparkPostsHidden } from '~/server/events/points/hooks';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
@@ -341,9 +341,12 @@ export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwL
     WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"
     RETURNING p.id, next."before", p."nsfwLevel" "after";
   `);
-  // A story's chapter 1 is not shown once its post is Blocked (or loses its rating).
-  const hidden = changes.filter((c) => c.after === 0 || c.after === NsfwLevel.Blocked);
+  // A story's chapter 1 is not shown while its post is Blocked or unrated.
+  const unshown = (level: number) => level === 0 || level === NsfwLevel.Blocked;
+  const hidden = changes.filter((c) => unshown(c.after));
+  const shown = changes.filter((c) => unshown(c.before) && !unshown(c.after));
   if (hidden.length) void onStorySparkPostsHidden({ postIds: hidden.map((c) => c.id) });
+  if (shown.length) void onStorySparkPostsRestored({ postIds: shown.map((c) => c.id) });
   return changes;
 }
 

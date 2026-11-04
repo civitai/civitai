@@ -30,8 +30,10 @@ const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 // which also supplies the REAL REDIS_*_KEYS tables in place of the placeholder proxy that used to
 // answer every key lookup here. Nothing in this file asserts a key.
 vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparked: vi.fn(),
   onStorySparkLost: vi.fn(),
   onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({

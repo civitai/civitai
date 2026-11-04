@@ -567,7 +567,7 @@ describe('when the dedupe mark cannot be written', () => {
 
   it('still writes the ledger row, with no live points, and never throws', async () => {
     build({ redis: sAddFailsFor(['1']) });
-    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBeUndefined();
+    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBe(1);
     expect(ledger.map((r) => [r.op, r.actorId, r.sourceId])).toEqual([
       ['add', 1, 'ImageReaction:100:1'],
     ]);

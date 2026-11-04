@@ -19,6 +19,7 @@ import type { TrackBatchInput } from '~/server/schema/track.schema';
 import type { PlacementSurface, PlacementTargetType } from '~/shared/utils/placement';
 import type { Session } from '~/types/session';
 import { dbWrite } from '~/server/db/client';
+import { sysRedis } from '~/server/redis/client';
 import { loadEvents } from '~/server/events/load-events';
 import { handleLogError } from '~/server/utils/errorHandling';
 import {
@@ -29,7 +30,7 @@ import {
   removeEventPoints,
 } from './award';
 import { isEventPointsEnabledSync } from './enabled';
-import { startOfUtcDay } from './referee';
+import { storySparksScoredKey, utcDay } from './keys';
 import type { EventPointAction, EventPointEntityType, EventPointType } from './types';
 
 const POINT_ENTITY_TYPES: ReadonlySet<string> = new Set<EventPointEntityType>([
@@ -447,10 +448,13 @@ async function storySparksPerDay() {
   return caps.length ? Math.min(...caps) : 0;
 }
 
+const STORY_SPARKS_SCORED_TTL = 2 * 24 * 60 * 60;
+
 /**
- * Chapter 1 of a storyline was just written (or the storyline came back up). Call after the
- * write commits. Scores the spark if the story is live and its owner has not used up the day's
- * scoring sparks: stories they started today, on other hatted images.
+ * Chapter 1 of a storyline was just written, or the storyline came back up. Call after the write
+ * commits. Scores the spark if the story is live and its owner has not used up the day's scoring
+ * sparks: their stories that scored today and are still live. A repeat (the remix already held,
+ * a second restore) records nothing and uses no slot.
  */
 export async function onStorySparked(storylineId: number): Promise<void> {
   const time = new Date();
@@ -459,15 +463,17 @@ export async function onStorySparked(storylineId: number): Promise<void> {
     if (!perDay) return;
     const [story] = await liveSparkedStories(Prisma.sql`st.id = ${storylineId}`);
     if (!story || !isHattedEntity('Image', story.imageId)) return;
-    const today = await liveSparkedStories(Prisma.sql`st."userId" = ${story.actorId}
-      AND st.id <> ${storylineId} AND rc."createdAt" >= ${startOfUtcDay(time)}`);
-    const scored = new Set(
-      today
-        .map((s) => s.imageId)
-        .filter((id) => id !== story.imageId && isHattedEntity('Image', id))
-    );
-    if (scored.size >= perDay) return;
-    await awardEventPoints([remixAction(story.actorId, story.imageId, time)]);
+    const key = storySparksScoredKey(story.actorId, utcDay(time));
+    const scoredIds = (await sysRedis.sMembers(key))
+      .map(Number)
+      .filter((id) => id && id !== storylineId);
+    const scored = scoredIds.length
+      ? await liveSparkedStories(Prisma.sql`st.id = ANY(${scoredIds}::int[])`)
+      : [];
+    if (scored.length >= perDay) return;
+    if (!(await awardEventPoints([remixAction(story.actorId, story.imageId, time)]))) return;
+    await sysRedis.sAdd(key, String(storylineId));
+    await sysRedis.expire(key, STORY_SPARKS_SCORED_TTL);
   } catch (error) {
     swallow('event-points:story-spark')(error);
   }
@@ -510,23 +516,30 @@ export async function onStorySparkLost(storylineId: number): Promise<void> {
   }
 }
 
+type StorySparkPosts = { postIds: number[] } | { modelVersionIds: number[] } | { authorId: number };
+
+// Over chapter 1 `rc`; undefined when there is nothing to match.
+const storySparkPostsWhere = (by: StorySparkPosts) =>
+  'postIds' in by
+    ? by.postIds.length
+      ? Prisma.sql`rc."postId" = ANY(${by.postIds}::int[])`
+      : undefined
+    : 'modelVersionIds' in by
+    ? by.modelVersionIds.length
+      ? Prisma.sql`rc."postId" IN (SELECT id FROM "Post" WHERE "modelVersionId" = ANY(${by.modelVersionIds}::int[]))`
+      : undefined
+    : Prisma.sql`rc."userId" = ${by.authorId}`;
+
 /**
  * Chapter 1 of these sparked stories may no longer be shown: a moderation or account write hid it
  * (unpublished, rated Blocked, its model taken down, its author banned or deleted). Call after the
- * write commits, without awaiting: moderation never waits on or fails because of points. Each
- * story's remix goes only if nothing else still earns it, so a story that is still live keeps it.
+ * write commits; moderation writes do not await it, so they never wait on or fail because of
+ * points. Each story's remix goes only if nothing else still earns it, so a story that is still
+ * live keeps it.
  */
-export async function onStorySparkPostsHidden(
-  by: { postIds: number[] } | { modelVersionIds: number[] } | { authorId: number }
-): Promise<void> {
+export async function onStorySparkPostsHidden(by: StorySparkPosts): Promise<void> {
   try {
-    const where =
-      'postIds' in by
-        ? by.postIds.length && Prisma.sql`rc."postId" = ANY(${by.postIds}::int[])`
-        : 'modelVersionIds' in by
-        ? by.modelVersionIds.length &&
-          Prisma.sql`rc."postId" IN (SELECT id FROM "Post" WHERE "modelVersionId" = ANY(${by.modelVersionIds}::int[]))`
-        : Prisma.sql`rc."userId" = ${by.authorId}`;
+    const where = storySparkPostsWhere(by);
     if (!where) return;
     const sparks = await dbWrite.$queryRaw<{ actorId: number; imageId: number }[]>`
       SELECT DISTINCT st."userId" AS "actorId", st."sparkImageId" AS "imageId"
@@ -535,6 +548,28 @@ export async function onStorySparkPostsHidden(
       WHERE rc.depth = 0 AND st."sparkImageId" IS NOT NULL AND ${where}
     `;
     for (const spark of sparks) await onStorySparkRemoved(spark);
+  } catch (error) {
+    swallow('event-points:story-spark')(error);
+  }
+}
+
+/**
+ * The reverse of `onStorySparkPostsHidden`: a write that may show chapter 1 of these sparked
+ * stories again (republished, rated again, its model back up, its author unbanned). Call after the
+ * write commits, without awaiting. Each story scores again only if it is live now and the day's cap
+ * allows; one that never lost its points records nothing.
+ */
+export async function onStorySparkPostsRestored(by: StorySparkPosts): Promise<void> {
+  try {
+    const where = storySparkPostsWhere(by);
+    if (!where) return;
+    const stories = await dbWrite.$queryRaw<{ storylineId: number }[]>`
+      SELECT DISTINCT rc."storylineId"
+      FROM "StorylineChapter" rc
+      JOIN "Storyline" st ON st.id = rc."storylineId"
+      WHERE rc.depth = 0 AND st."sparkImageId" IS NOT NULL AND ${where}
+    `;
+    for (const { storylineId } of stories) await onStorySparked(storylineId);
   } catch (error) {
     swallow('event-points:story-spark')(error);
   }

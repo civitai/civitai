@@ -3,12 +3,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 
-// A banned or deleted author's stories stop showing, so their story sparks are forfeited.
+// A banned or deleted author's stories stop showing, so their story sparks are forfeited; an
+// unban gives them back.
 
-const { onStorySparkPostsHidden } = vi.hoisted(() => ({ onStorySparkPostsHidden: vi.fn() }));
+const { onStorySparkPostsHidden, onStorySparkPostsRestored } = vi.hoisted(() => ({
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
 vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
 }));
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Revocation>()),
@@ -56,12 +61,14 @@ describe('toggleBan', () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({ authorId: USER });
+    expect(onStorySparkPostsRestored).not.toHaveBeenCalled();
   });
 
-  it('an unban forfeits nothing', async () => {
+  it("an unban gives the author's story sparks back and forfeits nothing", async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(new Date()) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ authorId: USER });
     expect(onStorySparkPostsHidden).not.toHaveBeenCalled();
   });
 });

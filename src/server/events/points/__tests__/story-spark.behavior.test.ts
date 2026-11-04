@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as Award from '~/server/events/points/award';
 import type { EventPointAction, EventPointRemoval } from '~/server/events/points/types';
@@ -11,25 +12,31 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * A story started from a hatted image scores as that image's remix. Which stories count is SQL (live
  * chapter 1, not taken down, not your own image, the day's limit), so it runs against Postgres. The
  * engine is a small fake of its contract (types.ts): one first per (type, entity, person), a ledger
- * keyed by sourceId, an earning counting while that id's latest row is an add.
+ * keyed by sourceId, an earning counting while that id's latest row is an add. Redis sets are a Map.
  */
 
 const engine = vi.hoisted(() => {
   const seen = new Set<string>();
   const ledger = new Map<string, 'add' | 'remove'>();
+  const adds: string[] = [];
   const hatted = new Set<number>();
   const firstKey = (a: { type: string; entityId: number; actorId: number }) =>
     `${a.type}:${a.entityId}:${a.actorId}`;
   return {
     seen,
     ledger,
+    adds,
     hatted,
     awardEventPoints: vi.fn(async (actions: EventPointAction[]) => {
+      let firsts = 0;
       for (const a of actions) {
         if (seen.has(firstKey(a))) continue;
         seen.add(firstKey(a));
         ledger.set(a.sourceId ?? '', 'add');
+        adds.push(a.sourceId ?? '');
+        firsts++;
       }
+      return firsts;
     }),
     removeEventPoints: vi.fn(async (removals: EventPointRemoval[]) => {
       for (const r of removals) {
@@ -40,6 +47,7 @@ const engine = vi.hoisted(() => {
     reset() {
       seen.clear();
       ledger.clear();
+      adds.length = 0;
       hatted.clear();
     },
   };
@@ -74,6 +82,7 @@ const {
   onStorySparked,
   onStorySparkLost,
   onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
   onStorySparkRemoved,
 } = await import('~/server/events/points/hooks');
 const { unpublishPostAsModerator } = await import('~/server/services/post.service');
@@ -142,9 +151,22 @@ afterAll(async () => {
   await pg.close();
 });
 
+const sets = new Map<string, Set<string>>();
+
 beforeEach(async () => {
   vi.clearAllMocks();
   engine.reset();
+  sets.clear();
+  redisMock.sysRedis.sMembers.mockImplementation((async (key: string) => [
+    ...(sets.get(key) ?? []),
+  ]) as never);
+  redisMock.sysRedis.sAdd.mockImplementation((async (key: string, member: string) => {
+    const set = sets.get(key) ?? new Set<string>();
+    sets.set(key, set);
+    const had = set.has(member);
+    set.add(member);
+    return had ? 0 : 1;
+  }) as never);
   events.list = [{ scoring: { storySparksPerActorPerDay: 3 } }];
   await pg.exec(`
     TRUNCATE "User", "Image", "Post", "Storyline", "StorylineChapter", "Placement";
@@ -257,33 +279,31 @@ describe('onStorySparked', () => {
     expect(engine.awardEventPoints).not.toHaveBeenCalled();
   });
 
-  it("stops at the day's limit, counting only today's live stories on other hatted images", async () => {
-    for (const id of [201, 202, 203]) await image(id);
+  it("stops at the day's limit, counting only today's stories that scored and are still live", async () => {
+    for (const id of [201, 202, 203, 205, 206]) await image(id);
     await image(204, { hatted: false });
-    await image(205);
-    await story({ spark: 201 });
-    await story({ spark: 202 });
-    await story({ spark: 204 }); // no hat: did not score, so does not count
-    await story({ spark: 205, startedAt: new Date(Date.now() - 2 * 86_400_000) }); // another day
-    await story({ spark: 203, takenDown: true }); // not live
-    await onStorySparked(await story());
-    expect(engine.awardEventPoints).toHaveBeenCalledTimes(1);
+    await onStorySparked(await story({ spark: 201 }));
+    await onStorySparked(await story({ spark: 202 }));
+    await onStorySparked(await story({ spark: 204 })); // no hat: did not score, so does not count
+    const down = await story({ spark: 203 });
+    await onStorySparked(down);
+    await pg.query(`UPDATE "Storyline" SET "tosViolation" = true WHERE id = $1`, [down]);
+    await onStorySparkLost(down); // scored, then not live: frees its slot
+    await onStorySparked(await story({ spark: 205 }));
+    expect(engine.adds).toEqual([201, 202, 203, 205].map((id) => remixSource(id)));
 
-    // 201, 202 and the one just scored: the limit is reached.
-    engine.awardEventPoints.mockClear();
-    await image(206);
+    // 201, 202 and 205: the limit is reached.
     await onStorySparked(await story({ spark: 206 }));
-    expect(engine.awardEventPoints).not.toHaveBeenCalled();
+    expect(earning(206)).toBe(false);
   });
 
-  it("a second story from an image already counted today does not use up another of the day's slots", async () => {
+  it("a story whose remix the writer already holds uses none of the day's slots", async () => {
     for (const id of [201, 202]) await image(id);
-    await story({ spark: 201 });
-    await story({ spark: 202 });
-    await story(); // earlier today, from the same image as the new one
-    // 201, 202 and HOST: three images, the limit, but HOST is the new story's own.
-    await onStorySparked(await story());
-    expect(engine.awardEventPoints).toHaveBeenCalledTimes(1);
+    await onStorySparked(await story({ spark: 201 }));
+    await onStorySparked(await story()); // HOST scores
+    await onStorySparked(await story()); // HOST again: a repeat
+    await onStorySparked(await story({ spark: 202 }));
+    expect(earning(202)).toBe(true);
   });
 });
 
@@ -317,7 +337,7 @@ describe('removal', () => {
   // sourceId lets the story's removal net out the remix's add.
   it('remix scored, story added, remix removed, story removed last: nothing earns', async () => {
     const placement = await remix();
-    engine.awardEventPoints([
+    await engine.awardEventPoints([
       {
         type: 'remix',
         actorId: WRITER,
@@ -411,5 +431,67 @@ describe('chapter 1 hidden by moderation', () => {
     await onStorySparkPostsHidden({ postIds: [999] });
     expect(engine.removeEventPoints).not.toHaveBeenCalled();
     expect(earning()).toBe(true);
+  });
+});
+
+// The writes that show chapter 1 again: what a hide took, a restore gives back.
+describe('chapter 1 shown again', () => {
+  const hidden = async (opts: Parameters<typeof story>[0] = {}) => {
+    const id = await story(opts);
+    await onStorySparked(id);
+    await pg.query(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = $1`, [id]);
+    await onStorySparkPostsHidden({ postIds: [id] });
+    expect(earning()).toBe(false);
+    return id;
+  };
+  const republish = (id: number) =>
+    pg.query(`UPDATE "Post" SET "publishedAt" = now() - interval '1 minute' WHERE id = $1`, [id]);
+
+  it('gives the remix back when chapter 1 is published again', async () => {
+    const id = await hidden();
+    await republish(id);
+    await onStorySparkPostsRestored({ postIds: [id] });
+    expect(earning()).toBe(true);
+  });
+
+  it("gives it back when chapter 1's model version is published again", async () => {
+    const id = await hidden({ modelVersionId: 77 });
+    await republish(id);
+    await onStorySparkPostsRestored({ modelVersionIds: [77] });
+    expect(earning()).toBe(true);
+  });
+
+  it("gives it back when chapter 1's author is unbanned", async () => {
+    await onStorySparked(await story());
+    await pg.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [WRITER]);
+    await onStorySparkPostsHidden({ authorId: WRITER });
+    await pg.query(`UPDATE "User" SET "bannedAt" = NULL WHERE id = $1`, [WRITER]);
+    await onStorySparkPostsRestored({ authorId: WRITER });
+    expect(earning()).toBe(true);
+  });
+
+  it('awards once when the same restore runs twice', async () => {
+    const id = await hidden();
+    await republish(id);
+    await onStorySparkPostsRestored({ postIds: [id] });
+    await onStorySparkPostsRestored({ postIds: [id] });
+    expect(engine.adds).toEqual([remixSource(), remixSource()]); // the first spark, one restore
+  });
+
+  it('gives nothing back while chapter 1 is still hidden', async () => {
+    const id = await hidden();
+    await onStorySparkPostsRestored({ postIds: [id] });
+    expect(earning()).toBe(false);
+  });
+
+  it("gives nothing back once the day's limit is used", async () => {
+    const id = await hidden();
+    for (const spark of [201, 202, 203]) {
+      await image(spark);
+      await onStorySparked(await story({ spark }));
+    }
+    await republish(id);
+    await onStorySparkPostsRestored({ postIds: [id] });
+    expect(earning()).toBe(false);
   });
 });

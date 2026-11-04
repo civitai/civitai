@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { onStorySparkPostsHidden } from '~/server/events/points/hooks';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
 import {
   contentKeptError,
@@ -2165,6 +2165,7 @@ export const publishModelVersionById = async ({
     'Post',
     posts.map((p) => p.id)
   );
+  void onStorySparkPostsRestored({ postIds: posts.map((p) => p.id) });
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);

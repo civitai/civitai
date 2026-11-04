@@ -1,7 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
-import { onStorySparkPostsHidden } from '~/server/events/points/hooks';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
   coverageColumn,
   coveragePair,
@@ -4882,13 +4882,13 @@ export const publishModelById = async ({
     description: model.description,
     rules: false,
   }).catch(() => null);
-  if (includeVersions)
-    scanEntitiesInBackground(
-      'Post',
-      posts
-        .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
-        .map((p) => p.id)
-    );
+  if (includeVersions) {
+    const versionPostIds = posts
+      .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
+      .map((p) => p.id);
+    scanEntitiesInBackground('Post', versionPostIds);
+    void onStorySparkPostsRestored({ postIds: versionPostIds });
+  }
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a

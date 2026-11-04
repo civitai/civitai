@@ -23,8 +23,10 @@ const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 const mockModelFindMany = mockDbRead.model.findMany;
 
 vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparked: vi.fn(),
   onStorySparkLost: vi.fn(),
   onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 

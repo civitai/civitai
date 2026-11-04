@@ -69,7 +69,11 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { contestBannedAtSql, contestBannedSql } from '~/server/services/contest-ban';
-import { onModelReviewsChanged, onStorySparkPostsHidden } from '~/server/events/points/hooks';
+import {
+  onModelReviewsChanged,
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+} from '~/server/events/points/hooks';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -2893,7 +2897,7 @@ export const toggleBan = async ({
     : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
-  if (!bannedAt) void onStorySparkPostsHidden({ authorId: id });
+  void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
 

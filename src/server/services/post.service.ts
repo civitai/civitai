@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
-import { onStorySparkLost, onStorySparkPostsHidden } from '~/server/events/points/hooks';
+import {
+  onStorySparkLost,
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+} from '~/server/events/points/hooks';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { uniq } from 'lodash-es';
@@ -1203,6 +1207,7 @@ export async function afterPostPublish(post: { postId: number; userId: number })
 
 export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsRestored({ postIds: posts.map((post) => post.postId) });
   const userIds = uniq(posts.map((post) => post.userId));
   await userPostCountCache.refresh(userIds);
   const images = await dbWrite.image.findMany({

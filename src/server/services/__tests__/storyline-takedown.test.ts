@@ -133,6 +133,7 @@ describe('a moderator takedown and the title scan', () => {
     expect(sparkHooks.onStorySparkLost).toHaveBeenCalledWith(ID);
     await cleanScan();
     expect(state()).toEqual(UP);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(ID);
   });
 
   it('a restore lifts a takedown only a moderator holds', async () => {
@@ -148,6 +149,7 @@ describe('a moderator takedown and the title scan', () => {
     await takeDown();
     await cleanScan();
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+    expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
   });
 
   // A moderator acting on the report of a scan-flagged storyline, then a restore: the scan's
@@ -182,6 +184,14 @@ describe('a moderator takedown and the title scan', () => {
     await moderateStorylineTitle({ id: ID, liftScanTakedown: { reviewedTitle: TITLE } });
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
     expect(row.scanFlagLiftedTextHash).toEqual(expect.any(String));
+    expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+  });
+
+  it("a moderator lifting the scan's takedown alone gives the story spark back", async () => {
+    await flaggingScan();
+    await moderateStorylineTitle({ id: ID, liftScanTakedown: { reviewedTitle: TITLE } });
+    expect(state()).toEqual(UP);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(ID);
   });
 
   it('says when there was nothing to change', async () => {
