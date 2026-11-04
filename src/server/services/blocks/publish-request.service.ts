@@ -2998,13 +2998,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   }
 
   // APP STORAGE SCHEMA MIGRATIONS — the submit gate, again, against what the store enforces now
-  // (`app_blocks.manifest`, not yet overwritten; earlier approvals, this request excluded, for a
-  // re-declared collection): a push-originated request never passed `submitVersion`, and this is
-  // the comparison the plan below must be computed from. Refused before anything is written —
-  // and so is a plan that could not be recorded or would strand an earlier, unfinished run.
+  // (`app_blocks.manifest`; or, when an earlier failed attempt of THIS approve already wrote this
+  // request's storage there, the latest approved request; earlier approvals, this request
+  // excluded, for a re-declared collection): a push-originated request never passed
+  // `submitVersion`, and this is the comparison the plan below must be computed from. Refused
+  // before anything is written — and so is any approve (plan or not) while an earlier run of the
+  // app is unfinished, and a plan that could not be recorded. The plan is reserved here, under a
+  // per-app lock, so it survives a later failure of this approve.
   const [
     { assertStorageMigrationsCover, checkStorageMigrations },
-    { assertStorageMigrationsCanStart, loadStorageMigrationBaseline },
+    { reserveStorageMigrationRuns, loadStorageMigrationBaseline },
   ] = await Promise.all([
     import('~/server/services/apps/storage-schema-migrations'),
     import('~/server/services/apps/storage-migration-run.service'),
@@ -3014,11 +3017,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     : await loadStorageMigrationBaseline({
         slug: request.slug,
         excludePublishRequestId: request.id,
+        selfManifest: manifest,
       });
   const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
-  if (storageMigrations.plans.size > 0 && existingAppBlock) {
-    await assertStorageMigrationsCanStart(existingAppBlock.id);
+  if (existingAppBlock) {
+    await reserveStorageMigrationRuns({
+      appBlockId: existingAppBlock.id,
+      publishRequestId: request.id,
+      plans: storageMigrations.plans,
+    });
   }
 
   // The listing writes below log and continue on failure, so a split decision they could not

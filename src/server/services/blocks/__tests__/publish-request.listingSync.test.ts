@@ -34,6 +34,10 @@ const { db, s3, holder } = vi.hoisted(() => {
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    // The storage-migration approve gate (`reserveStorageMigrationRuns`): no open run.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $queryRaw: async () => [], $executeRaw: async () => 0 })
+    ),
     $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),

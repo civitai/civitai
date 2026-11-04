@@ -1,13 +1,14 @@
--- App Blocks: App Storage schema migrations — one row per (approved publish request, collection)
--- whose declared migration ops run over that collection's stored documents.
+-- App Blocks: App Storage schema migrations — one row per (publish request, collection) whose
+-- declared migration ops run over that collection's stored documents.
 --
 -- NOT AUTO-APPLIED: a human runs this file by hand (see CLAUDE.md -> Database), dev first, then
--- production. Order relative to the code is free: until the table exists, an approval that has a
--- migration plan still runs it once, in-process, and logs the outcome instead of recording it
--- (`storage-migration-run.service.ts`); nothing resumes an interrupted run until it lands.
+-- production. Order relative to the code is free: until the table exists, approve refuses any
+-- version that plans a migration, and every other approve proceeds as before.
 --
 -- Written and read by raw SQL only (`storage-migration-run.service.ts`); the Prisma model is
--- `@no-type`. Additive and idempotent. Bounded by lock_timeout (the foreign keys lock the two
+-- `@no-type`. Additive and idempotent, and SAFE TO RE-RUN over an earlier draft of this file: the
+-- table is created with its full current shape, then the columns and the index that changed
+-- since are brought up to date one by one. Bounded by lock_timeout (the foreign keys lock the two
 -- referenced tables); re-run the file on a timeout.
 
 SET lock_timeout = '5s';
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS "app_storage_migration_runs" (
     -- A sample of the documents whose rewrite was refused: [{ scopeUid, key, code }].
     "failures" JSONB NOT NULL DEFAULT '[]'::jsonb,
     "last_error" TEXT,
-    -- Consecutive attempts that ended in an error; at 5 the run is 'failed' and no longer picked.
+    -- Consecutive failed attempts (a deterministic page failure, or a runner lost mid-page);
+    -- at 5 the run is 'failed' and no longer picked.
     "attempts" INTEGER NOT NULL DEFAULT 0,
     -- The claim the current runner holds; a save under any other token is refused.
     "claim_token" TEXT,
@@ -48,7 +50,13 @@ CREATE TABLE IF NOT EXISTS "app_storage_migration_runs" (
       FOREIGN KEY ("app_block_id") REFERENCES "app_blocks"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- The resume job's read: the runs still to do, least recently touched first.
+-- Columns added after the first draft of this file (no-ops on a table created above).
+ALTER TABLE "app_storage_migration_runs" ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "app_storage_migration_runs" ADD COLUMN IF NOT EXISTS "claim_token" TEXT;
+
+-- The resume job's read: the runs still to do, least recently touched first. Recreated, because
+-- the first draft of this file created an index of this name on ("created_at") alone.
+DROP INDEX IF EXISTS "app_storage_migration_runs_open_idx";
 CREATE INDEX IF NOT EXISTS "app_storage_migration_runs_open_idx"
   ON "app_storage_migration_runs"("heartbeat_at" NULLS FIRST, "created_at")
   WHERE "status" IN ('pending', 'running');

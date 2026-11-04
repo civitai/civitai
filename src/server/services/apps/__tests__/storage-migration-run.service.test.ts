@@ -149,10 +149,11 @@ describe('advanceStorageMigrationRun', () => {
       load: live,
       persist: async () => undefined,
     });
+    // Transient: not counted as an attempt (an outage must not fail every run in flight).
     expect([left.status, left.lastError, left.attempts]).toEqual([
       'pending',
       'storage is temporarily unavailable',
-      1,
+      0,
     ]);
   });
 
@@ -224,5 +225,47 @@ describe('advanceStorageMigrationRun', () => {
       persist: async () => undefined,
     });
     expect([left.status, left.attempts]).toEqual(['completed', 0]);
+  });
+
+  it.each([
+    ['storage_disabled', 'document storage is disabled'],
+    ['rate_limited', 'lock timeout'],
+  ] as const)('🔴 a transient %s error at the cap does not fail the run', async (code, message) => {
+    const { store } = scripted([new DocStoreError(code, message)]);
+    const left = await advanceStorageMigrationRun(run({ attempts: 4 }), {
+      store,
+      load: live,
+      persist: async () => undefined,
+    });
+    expect([left.status, left.attempts]).toEqual(['pending', 4]);
+  });
+
+  it('a request still pending (reserved, approval not written yet) is waited for: no page, no attempt', async () => {
+    const { store } = scripted([]);
+    const persisted: [string, number, boolean][] = [];
+    const left = await advanceStorageMigrationRun(run({ attempts: 2 }), {
+      store,
+      load: async () => ({ collection: null, superseded: false, wait: true }),
+      persist: async (r, done) => void persisted.push([r.status, r.attempts, done]),
+    });
+    expect(store.migrateDocuments).not.toHaveBeenCalled();
+    expect(left.status).toBe('pending');
+    expect(persisted).toEqual([['pending', 2, false]]);
+  });
+
+  it('our own database failing to load the target is transient: pending, no attempt', async () => {
+    const { store } = scripted([]);
+    const left = await advanceStorageMigrationRun(run(), {
+      store,
+      load: async () => {
+        throw new Error('primary unreachable');
+      },
+      persist: async () => undefined,
+    });
+    expect([left.status, left.attempts, left.lastError]).toEqual([
+      'pending',
+      0,
+      'primary unreachable',
+    ]);
   });
 });

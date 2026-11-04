@@ -3,15 +3,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const {
-  assertStorageMigrationsCanStart,
   loadStorageMigrationBaseline,
   recordStorageMigrationRuns,
+  reserveStorageMigrationRuns,
+  resumeStorageMigrationRuns,
 } = await import('~/server/services/apps/storage-migration-run.service');
 
 /**
  * The approve-side guards of App Storage schema migrations, over the canonical db mock:
- *   - approve is refused while the runs table is missing (nothing could record or resume the run),
- *     or while an earlier run of the same app is still open (it would be left half-done);
+ *   - EVERY approve of an existing app is refused while an earlier run of the app (another publish
+ *     request's) is still open, under a per-app advisory lock, and a plan is reserved in the same
+ *     transaction; a plan is refused while the runs table is missing;
  *   - the diff baseline is what the store enforces (`app_blocks.manifest`, on the primary), with
  *     earlier approved manifests as history, and a divergence from the latest approval is logged;
  *   - the plan is recorded in ONE statement.
@@ -29,31 +31,68 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('assertStorageMigrationsCanStart', () => {
-  it('🔴 refuses while the runs table is missing', async () => {
+describe('reserveStorageMigrationRuns', () => {
+  const PLAN = new Map([['cards', [{ op: 'remove' as const, path: '/legacy' }]]]);
+  const NO_PLAN = new Map<string, { op: 'remove'; path: string }[]>();
+  const reserve = (plans: ReadonlyMap<string, readonly { op: 'remove'; path: string }[]>) =>
+    reserveStorageMigrationRuns({ appBlockId: APP, publishRequestId: 'pubreq_SELF', plans });
+  const OPEN_MESSAGE =
+    'Cannot approve: an earlier storage migration of this app is still running (publish request pubreq_OPEN1, collection cards), and approving a newer version now would leave it half-done. Approve again once it has finished.';
+
+  it('🔴 refuses a plan while the runs table is missing', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(tableMissing);
-    await expect(assertStorageMigrationsCanStart(APP)).rejects.toThrow(
+    await expect(reserve(PLAN)).rejects.toThrow(
       'Cannot approve: this version migrates stored App Storage documents, but the app_storage_migration_runs table does not exist yet. Apply migration 20261221120000_app_storage_migration_runs first, then approve again.'
     );
   });
 
-  it('🔴 refuses while an earlier run of the app is still open, naming it', async () => {
+  it('a version without a plan passes while the runs table is missing (no run can be open)', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(tableMissing);
+    await expect(reserve(NO_PLAN)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['with a plan', PLAN],
+    ['🔴 WITHOUT a plan (a copy change must not strand the run either)', NO_PLAN],
+  ])('refuses %s while an earlier run of the app is open, naming it', async (_l, plans) => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       { publish_request_id: 'pubreq_OPEN1', collection: 'cards', status: 'running' },
     ]);
-    await expect(assertStorageMigrationsCanStart(APP)).rejects.toThrow(
-      'Cannot approve: an earlier storage migration of this app is still running (publish request pubreq_OPEN1, collection cards), and approving a newer version now would leave it half-done. Approve again once it has finished.'
-    );
+    await expect(reserve(plans)).rejects.toThrow(OPEN_MESSAGE);
+    // Nothing reserved: the only statement after the lock was the read.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('allows the approve when no run of the app is open', async () => {
+  it('🔴 takes the per-app lock, excludes its own request from the open check, then reserves the plan, in one transaction', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([1]);
+    await expect(reserve(PLAN)).resolves.toBeUndefined();
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    const lock = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    expect((lock[0] as readonly string[]).join('?')).toContain('pg_advisory_xact_lock');
+    expect(lock.slice(1)).toEqual([0x41534d01, APP]);
+    const [check, insert] = dbMock.dbWrite.$queryRaw.mock.calls;
+    expect(check.slice(1)).toEqual([APP, 'pubreq_SELF']);
+    expect((insert[0] as readonly string[]).join('?')).toContain(
+      'INSERT INTO "app_storage_migration_runs"'
+    );
+    expect(insert.slice(1)).toEqual([
+      'pubreq_SELF',
+      APP,
+      ['cards'],
+      ['[{"op":"remove","path":"/legacy"}]'],
+    ]);
+  });
+
+  it('without a plan, checks under the lock and reserves nothing', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
-    await expect(assertStorageMigrationsCanStart(APP)).resolves.toBeUndefined();
+    await expect(reserve(NO_PLAN)).resolves.toBeUndefined();
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('rethrows any other error (fail-closed)', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
-    await expect(assertStorageMigrationsCanStart(APP)).rejects.toThrow('connection reset');
+    await expect(reserve(NO_PLAN)).rejects.toThrow('connection reset');
   });
 });
 
@@ -99,6 +138,38 @@ describe('loadStorageMigrationBaseline', () => {
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
+  it("🔴 RETRY after a failed approve: when app_blocks already holds this request's storage, the latest approval is the baseline", async () => {
+    // Attempt 1 wrote SELF onto app_blocks at step (3) and then failed; the moderator re-approves.
+    const SELF = { storage: { collections: { cards: { visibility: 'private', schema: {} } } } };
+    dbMock.dbWrite.appBlock.findFirst.mockResolvedValueOnce({ id: APP, manifest: SELF });
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValueOnce([
+      { id: 'pubreq_L', manifest: ENFORCED },
+    ]);
+    expect(
+      await loadStorageMigrationBaseline({
+        slug: 'card-app',
+        excludePublishRequestId: 'pubreq_SELF',
+        selfManifest: SELF,
+      })
+    ).toEqual({ prev: ENFORCED, history: [ENFORCED] });
+  });
+
+  it('a version that does not change storage keeps app_blocks as the baseline', async () => {
+    dbMock.dbWrite.appBlock.findFirst.mockResolvedValueOnce({ id: APP, manifest: ENFORCED });
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValueOnce([
+      { id: 'pubreq_L', manifest: ENFORCED },
+    ]);
+    expect(
+      (
+        await loadStorageMigrationBaseline({
+          slug: 'card-app',
+          excludePublishRequestId: 'pubreq_SELF',
+          selfManifest: ENFORCED,
+        })
+      ).prev
+    ).toEqual(ENFORCED);
+  });
+
   it('a first version (no app block) has no baseline', async () => {
     dbMock.dbWrite.appBlock.findFirst.mockResolvedValueOnce(null);
     expect(await loadStorageMigrationBaseline({ slug: 'new-app' })).toEqual({
@@ -137,5 +208,20 @@ describe('recordStorageMigrationRuns', () => {
         plans: new Map([['cards', [{ op: 'remove' as const, path: '/x' }]]]),
       })
     ).toBe('table_missing');
+  });
+});
+
+describe('resumeStorageMigrationRuns', () => {
+  it('first fails the runs whose runner was lost at the attempt cap, so they stop blocking approves', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([1]).mockResolvedValueOnce([]);
+    expect(await resumeStorageMigrationRuns()).toEqual({ advanced: 0, tableMissing: false });
+    const [giveUp, pick] = dbMock.dbWrite.$queryRaw.mock.calls;
+    const giveUpSql = (giveUp[0] as readonly string[]).join('?');
+    expect(giveUpSql).toContain(`SET "status" = 'failed'`);
+    expect(giveUpSql).toContain(`WHERE "status" = 'running' AND "attempts" >= ?::int`);
+    expect(giveUp[1]).toBe(5);
+    expect((pick[0] as readonly string[]).join('?')).toContain(
+      'ORDER BY "heartbeat_at" NULLS FIRST'
+    );
   });
 });

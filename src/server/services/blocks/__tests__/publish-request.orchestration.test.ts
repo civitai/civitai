@@ -100,6 +100,9 @@ const {
       appBlockBuildAttempt: { findMany: vi.fn<DelegateMock>(async () => []) },
     },
     mockDbWrite: {
+      // The storage-migration approve gate (`reserveStorageMigrationRuns`); the reset loop strips
+      // it to a no-op (no open run, nothing reserved).
+      $transaction: vi.fn(),
       // approveRequest records the run its trigger started (the stale-run guard's key).
       appBlockBuildAttempt: { create: vi.fn<DelegateMock>(async () => ({ id: 1 })) },
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes

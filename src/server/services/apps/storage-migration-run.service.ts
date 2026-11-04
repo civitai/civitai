@@ -13,12 +13,14 @@
 // `app_storage_migration_runs` (main database, raw SQL only; MANUAL-APPLY migration
 // `20261221120000_app_storage_migration_runs`): the ops, the status, the cursor, the counts
 // scanned / migrated / unchanged / failed / still-invalid with a sample of failed keys, and the
-// consecutive failed attempts. A run whose attempts reach {@link STORAGE_MIGRATION_MAX_ATTEMPTS}
-// is `failed` and no longer picked.
+// consecutive failed attempts (a deterministic page failure, or a runner that died mid-page;
+// transient store errors do not count). A run whose attempts reach
+// {@link STORAGE_MIGRATION_MAX_ATTEMPTS} is `failed` and no longer picked.
 //
-// FAIL-CLOSED AT APPROVE ({@link assertStorageMigrationsCanStart}): a version with a plan is
-// refused while the runs table is missing, or while an earlier run of the same app is still
-// pending or running — so a run is never left half-done by the next approval. (A run is still
+// FAIL-CLOSED AT APPROVE ({@link reserveStorageMigrationRuns}, on every approve of an existing app,
+// under a per-app lock): refused while an earlier run of the same app is still pending or running —
+// so a run is never left half-done by the next approval — and, for a version with a plan, while the
+// runs table is missing. The plan is reserved in the same locked transaction. (A run is still
 // marked `superseded` if a newer approval is somehow found, defensively.)
 //
 // FORKS need nothing here: a fork writes its parent's collections in the PARENT's app, under the
@@ -55,6 +57,8 @@ const STALE_INTERVAL = Prisma.raw(`make_interval(mins => ${STORAGE_MIGRATION_STA
 export const STORAGE_MIGRATION_MAX_ATTEMPTS = 5;
 /** Approved manifests read for a re-declared collection's baseline (newest first). */
 export const STORAGE_MIGRATION_HISTORY = 50;
+/** Store error codes that are transient or the platform's own state: never counted as an attempt. */
+const TRANSIENT_STORE_CODES = ['storage_disabled', 'service_unavailable', 'rate_limited'] as const;
 /** Failed documents kept on the row, across pages. */
 const FAILURE_SAMPLES_KEPT = 20;
 
@@ -100,6 +104,7 @@ export class StorageMigrationClaimLost extends Error {
 
 type RawClient = {
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+  $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 };
 const raw = () => dbWrite as unknown as RawClient;
 
@@ -167,34 +172,69 @@ export async function recordStorageMigrationRuns(args: {
   }
 }
 
+/** The advisory-lock class of the per-app approve gate ({@link reserveStorageMigrationRuns}). */
+const RESERVE_LOCK_CLASS = 0x41534d01;
+
+const TABLE_MISSING_REFUSAL =
+  'Cannot approve: this version migrates stored App Storage documents, but the app_storage_migration_runs table does not exist yet. Apply migration 20261221120000_app_storage_migration_runs first, then approve again.';
+
 /**
- * THE approve gate for a version with a migration plan: throws (with a message for the moderator)
- * when the runs table is missing — nothing could record or resume the run — or when an earlier run
- * of this app is still pending or running, which the new schema would leave half-done.
+ * THE approve gate, run on EVERY approve of an existing app, before anything is written. Under a
+ * per-app advisory lock (so two concurrent approves of one app are serialised), it refuses — with a
+ * message for the moderator — while a run of this app belonging to ANOTHER publish request is still
+ * pending or running (approving now would leave it half-done), and otherwise RESERVES this
+ * request's plan: its run rows are inserted `pending` in the same transaction, so a concurrent
+ * approve sees them and is refused. A reserved run whose request is not approved yet is left alone
+ * by the runner (`loadTarget`), and one whose request ends rejected or withdrawn is closed.
+ *
+ * Without the runs table: a version with a plan is refused (nothing could record or resume it); a
+ * version without one passes (no run can be open).
  */
-export async function assertStorageMigrationsCanStart(appBlockId: string): Promise<void> {
-  let open: Record<string, unknown>[];
+export async function reserveStorageMigrationRuns(args: {
+  appBlockId: string;
+  publishRequestId: string;
+  plans: ReadonlyMap<string, readonly MigrationMutationOp[]>;
+}): Promise<void> {
+  const collections = [...args.plans.keys()];
+  const ops = collections.map((c) => JSON.stringify(args.plans.get(c)));
+  let open: Record<string, unknown> | undefined;
   try {
-    open = (await raw().$queryRaw`
-      SELECT "publish_request_id", "collection", "status" FROM "app_storage_migration_runs"
-      WHERE "app_block_id" = ${appBlockId} AND "status" IN ('pending', 'running')
-      ORDER BY "created_at" LIMIT 1
-    `) as Record<string, unknown>[];
+    open = await dbWrite.$transaction(async (tx) => {
+      const t = tx as unknown as RawClient;
+      await t.$executeRaw`SELECT pg_advisory_xact_lock(${RESERVE_LOCK_CLASS}::int, hashtext(${args.appBlockId}))`;
+      const rows = (await t.$queryRaw`
+        SELECT "publish_request_id", "collection", "status" FROM "app_storage_migration_runs"
+        WHERE "app_block_id" = ${args.appBlockId}
+          AND "publish_request_id" <> ${args.publishRequestId}
+          AND "status" IN ('pending', 'running')
+        ORDER BY "created_at" LIMIT 1
+      `) as Record<string, unknown>[];
+      if (rows[0]) return rows[0];
+      if (collections.length > 0) {
+        await t.$queryRaw`
+          INSERT INTO "app_storage_migration_runs"
+            ("publish_request_id", "collection", "app_block_id", "ops")
+          SELECT ${args.publishRequestId}, p.collection, ${args.appBlockId}, p.ops::jsonb
+          FROM unnest(${collections}::text[], ${ops}::text[]) AS p(collection, ops)
+          ON CONFLICT ("publish_request_id", "collection") DO NOTHING
+          RETURNING 1
+        `;
+      }
+      return undefined;
+    });
   } catch (err) {
     if (await isRunsTableMissing(err)) {
-      throw new Error(
-        'Cannot approve: this version migrates stored App Storage documents, but the app_storage_migration_runs table does not exist yet. Apply migration 20261221120000_app_storage_migration_runs first, then approve again.'
-      );
+      if (collections.length > 0) throw new Error(TABLE_MISSING_REFUSAL);
+      return;
     }
     throw err;
   }
-  const run = open[0];
-  if (run) {
+  if (open) {
     throw new Error(
       `Cannot approve: an earlier storage migration of this app is still ${String(
-        run.status
-      )} (publish request ${String(run.publish_request_id)}, collection ${String(
-        run.collection
+        open.status
+      )} (publish request ${String(open.publish_request_id)}, collection ${String(
+        open.collection
       )}), and approving a newer version now would leave it half-done. Approve again once it has finished.`
     );
   }
@@ -209,6 +249,12 @@ export async function assertStorageMigrationsCanStart(appBlockId: string): Promi
 export async function loadStorageMigrationBaseline(args: {
   slug: string;
   excludePublishRequestId?: string;
+  /**
+   * At approve: the request's own manifest. If `app_blocks.manifest` already carries this storage,
+   * an earlier attempt of THIS approve wrote it (step 3) and then failed, so the store's schema is
+   * not the documents' schema: the baseline is the latest approved request instead.
+   */
+  selfManifest?: unknown;
 }): Promise<{ prev: unknown | null; history: unknown[] }> {
   const block = await dbWrite.appBlock.findFirst({
     where: { blockId: args.slug },
@@ -229,6 +275,14 @@ export async function loadStorageMigrationBaseline(args: {
   const storageOf = (m: unknown) =>
     JSON.stringify((m as { storage?: unknown } | null)?.storage ?? null);
   const latest = approved[0];
+  if (
+    args.selfManifest !== undefined &&
+    block.manifest &&
+    storageOf(block.manifest) === storageOf(args.selfManifest) &&
+    storageOf(latest?.manifest) !== storageOf(args.selfManifest)
+  ) {
+    return { prev: latest?.manifest ?? null, history: approved.map((r) => r.manifest) };
+  }
   if (block.manifest && latest && storageOf(latest.manifest) !== storageOf(block.manifest)) {
     log('error', {
       slug: args.slug,
@@ -257,6 +311,9 @@ async function claim(
     UPDATE "app_storage_migration_runs"
     SET "status" = 'running',
         "claim_token" = ${token},
+        -- Re-claiming a run whose heartbeat went stale means its runner died mid-page (a crashed
+        -- process never reaches the catch below): that counts as a failed attempt.
+        "attempts" = CASE WHEN "status" = 'running' THEN "attempts" + 1 ELSE "attempts" END,
         "started_at" = COALESCE("started_at", CURRENT_TIMESTAMP),
         "heartbeat_at" = CURRENT_TIMESTAMP
     WHERE "publish_request_id" = ${publishRequestId} AND "collection" = ${collection}
@@ -292,14 +349,19 @@ async function save(run: StorageMigrationRun, done: boolean): Promise<void> {
   if (rows.length === 0) throw new StorageMigrationClaimLost(run);
 }
 
-/** The collection as the approved request declares it, and whether a newer approval superseded it. */
+/**
+ * The collection as the approved request declares it; whether a newer approval superseded it; and
+ * `wait` while the request is still pending (reserved at approve, approval not written yet — or an
+ * approve that failed and will be retried).
+ */
 async function loadTarget(
   run: Pick<StorageMigrationRun, 'publishRequestId' | 'collection'>
-): Promise<{ collection: DocCollection | null; superseded: boolean }> {
+): Promise<{ collection: DocCollection | null; superseded: boolean; wait?: boolean }> {
   const request = await dbWrite.appBlockPublishRequest.findUnique({
     where: { id: run.publishRequestId },
     select: { slug: true, manifest: true, status: true },
   });
+  if (request?.status === 'pending') return { collection: null, superseded: false, wait: true };
   if (!request || request.status !== 'approved') return { collection: null, superseded: true };
   const latest = await dbWrite.appBlockPublishRequest.findFirst({
     where: { slug: request.slug, status: 'approved' },
@@ -334,7 +396,21 @@ export async function advanceStorageMigrationRun(
   const maxPages = deps.maxPages ?? STORAGE_MIGRATION_MAX_PAGES;
   const state: StorageMigrationRun = { ...run, status: 'running' };
   for (let page = 0; page < maxPages; page++) {
-    const target = await load(state);
+    let target: Awaited<ReturnType<typeof loadTarget>>;
+    try {
+      target = await load(state);
+    } catch (err) {
+      // Our own database could not be read: transient, not this run's fault.
+      state.status = 'pending';
+      state.lastError = err instanceof Error ? err.message.slice(0, 500) : String(err);
+      await deps.persist(state, false);
+      return state;
+    }
+    if (target.wait) {
+      state.status = 'pending';
+      await deps.persist(state, false);
+      return state;
+    }
     if (target.superseded) {
       state.status = 'superseded';
       await deps.persist(state, true);
@@ -356,21 +432,23 @@ export async function advanceStorageMigrationRun(
         { after: state.cursor, limit: deps.pageSize ?? STORAGE_MIGRATION_PAGE }
       );
     } catch (err) {
+      const message = err instanceof Error ? err.message.slice(0, 500) : String(err);
+      // Transient, or ours (the store switched off, unreachable, lock contention): not this run's
+      // fault, so not an attempt. The run stays pending and is retried.
+      if (TRANSIENT_STORE_CODES.some((code) => isDocStoreError(err, code))) {
+        state.status = 'pending';
+        state.lastError = message;
+        await deps.persist(state, false);
+        return state;
+      }
       state.attempts += 1;
       const exhausted = state.attempts >= STORAGE_MIGRATION_MAX_ATTEMPTS;
       state.status = exhausted ? 'failed' : 'pending';
-      const message = err instanceof Error ? err.message.slice(0, 500) : String(err);
       state.lastError = exhausted
         ? `gave up after ${state.attempts} failed attempts: ${message}`
         : message;
       await deps.persist(state, exhausted);
-      if (
-        exhausted ||
-        isDocStoreError(err, 'storage_disabled') ||
-        isDocStoreError(err, 'service_unavailable')
-      ) {
-        return state;
-      }
+      if (exhausted) return state;
       throw err;
     }
     state.scanned += result.scanned;
@@ -436,9 +514,9 @@ export async function runStorageMigrationsForRequest(
 
 /**
  * The approve hook: record the plan and start it in the background. Never rejects and never
- * blocks the approval on the run itself. {@link assertStorageMigrationsCanStart} ran before the
- * approval was written, so the table exists; should the insert still fail, nothing was recorded
- * (one statement) and nothing runs — which is logged.
+ * blocks the approval on the run itself. {@link reserveStorageMigrationRuns} already inserted the
+ * rows before the approval was written, so this insert is a backstop (`ON CONFLICT DO NOTHING`);
+ * should it fail, the reserved rows are still picked up by the job.
  */
 export async function startStorageMigrationsOnApprove(args: {
   publishRequestId: string;
@@ -446,25 +524,15 @@ export async function startStorageMigrationsOnApprove(args: {
   plans: ReadonlyMap<string, readonly MigrationMutationOp[]>;
 }): Promise<void> {
   if (args.plans.size === 0) return;
-  let recorded: 'recorded' | 'table_missing';
   try {
-    recorded = await recordStorageMigrationRuns(args);
+    await recordStorageMigrationRuns(args);
   } catch (err) {
-    recorded = 'table_missing';
     log('error', {
       publishRequestId: args.publishRequestId,
-      message: `could not record the storage migration plan: ${
+      message: `could not re-record the storage migration plan (the rows reserved before the approval are still run by the job): ${
         err instanceof Error ? err.message : String(err)
       }`,
     });
-  }
-  if (recorded !== 'recorded') {
-    log('error', {
-      publishRequestId: args.publishRequestId,
-      message:
-        'no storage migration run was recorded for this approval, so none will run: the stored documents keep their old shape until the plan is recorded (re-approve, or insert the rows by hand)',
-    });
-    return;
   }
   void runStorageMigrationsForRequest(args.publishRequestId, [...args.plans.keys()]);
 }
@@ -483,6 +551,16 @@ export async function resumeStorageMigrationRuns(
 ): Promise<{ advanced: number; tableMissing: boolean }> {
   let rows: Record<string, unknown>[];
   try {
+    // A run re-claimed STORAGE_MIGRATION_MAX_ATTEMPTS times whose runner died again is never
+    // claimable (attempts at the cap) and would stay "running" — and block approves — forever.
+    await raw().$queryRaw`
+      UPDATE "app_storage_migration_runs"
+      SET "status" = 'failed', "finished_at" = CURRENT_TIMESTAMP,
+          "last_error" = 'gave up: the run stopped without finishing too many times (its process was lost each time)'
+      WHERE "status" = 'running' AND "attempts" >= ${STORAGE_MIGRATION_MAX_ATTEMPTS}::int
+        AND "heartbeat_at" < CURRENT_TIMESTAMP - ${STALE_INTERVAL}
+      RETURNING 1
+    `;
     rows = (await raw().$queryRaw`
       SELECT "publish_request_id", "collection" FROM "app_storage_migration_runs"
       WHERE "attempts" < ${STORAGE_MIGRATION_MAX_ATTEMPTS}::int
