@@ -62,6 +62,19 @@
   inset: -5px;
 }
 
+/* On the card background the white-on-photo styling vanishes in light mode. */
+.panel {
+  & .gear {
+    color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
+    filter: none;
+  }
+
+  & .empty {
+    background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+    color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
+  }
+}
+
 .option {
   display: flex;
   border: 0;

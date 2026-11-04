@@ -376,6 +376,12 @@
     height: 22px !important;
     padding: 0 6px !important;
   }
+
+  /* !important: Mantine's rules sit in a higher layer than this module. */
+  & .tipEnd > button:not(.infoChip) :global(.mantine-Text-root),
+  & > .reactions :global(.mantine-Badge-label) {
+    font-size: 12px !important;
+  }
 }
 
 .tipEnd {

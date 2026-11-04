@@ -43,7 +43,11 @@ export function HatTurfDetailControls({ imageId }: { imageId: number }) {
 function useJoin() {
   const utils = trpc.useUtils();
   return trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => void utils.hatTurf.getStock.invalidate(),
+    onSuccess: () => {
+      void utils.hatTurf.getStock.invalidate();
+      // Joining opens the player's own images to hats.
+      void utils.hatTurf.getSummaries.invalidate();
+    },
     onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
   });
 }
@@ -67,7 +71,9 @@ function HatButton({ imageId }: { imageId: number }) {
     { enabled: !!feed && !!user, staleTime: 30_000 }
   );
 
-  if (!feed || !card || !user || feed.open[imageId] === false) return null;
+  // Closed images still invite: an unjoined viewer has no other way to opt in.
+  const closed = feed?.open[imageId] === false;
+  if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
   const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
@@ -167,7 +173,7 @@ function HatButton({ imageId }: { imageId: number }) {
 }
 
 /** The feed's badge, tap for every team's count, the hat to place, show hats and leaving. */
-export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
+function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();
@@ -248,6 +254,11 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
 
   return (
     <div>
+      {user && stock?.optedIn && feed.open[imageId] === false && (
+        <Text size="xs" c="dimmed" data-testid="hat-turf-detail-closed">
+          This creator hasn&apos;t joined Hat Turf yet
+        </Text>
+      )}
       {!teams.length && <Text size="xs">No hats on this image yet.</Text>}
       {teams.map((team) => (
         <div key={team} className={classes.row} data-testid="hat-turf-detail-team">

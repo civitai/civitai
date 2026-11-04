@@ -16,7 +16,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
-import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
@@ -359,13 +359,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
               {!contextProps.hideReactions && (
-                <ReactionRow
-                  imageId={image.id}
-                  stickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
+                <ImageReactions
+                  image={image}
+                  readonly={!safe || (isScanned && isBlocked)}
+                  showStickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
                   safe={safe}
-                >
-                  <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                </ReactionRow>
+                />
               )}
             </>
           )}
@@ -377,39 +376,21 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
 export const ImagesCardMemoized = memo(ImagesCard);
 
-/**
- * The row under the media. It becomes a flex row only when something sits beside the reactions:
- * wrapping unconditionally would change every card's layout with nothing behind it. Reads the
- * turf context here rather than in the card, so a live hat push re-renders this row, not the card.
- */
-function ReactionRow({
-  imageId,
-  stickerBadge,
+// Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
+function ImageReactions({
+  image,
+  readonly,
+  showStickerBadge,
   safe,
-  children,
 }: {
-  imageId: number;
-  stickerBadge: boolean;
+  image: ImagesInfiniteModel;
+  readonly: boolean;
+  showStickerBadge: boolean;
   /** The hat layer only draws over shown media, so a blurred card gets no hat button either. */
   safe: boolean;
-  children: React.ReactNode;
 }) {
-  const turf = useTurfFeed() && safe;
-  if (!stickerBadge && !turf) return <div>{children}</div>;
-  return (
-    <div className="flex items-center">
-      <div className="min-w-0 flex-1">{children}</div>
-      {stickerBadge && <StickerPlacementCardBadge imageId={imageId} className="mr-2" />}
-      {turf && (
-        <div className="mr-2">
-          <HatTurfButton imageId={imageId} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; readonly: boolean }) {
+  // Read here, not in the card, so a live hat push re-renders this row only.
+  const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
   return (
     <Metrics
@@ -425,21 +406,65 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
       }}
       useLive={inView !== false}
     >
-      {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          metricsUnknown={image.stats?.statsUnknown}
-          targetUserId={image.user.id}
-          readonly={readonly}
-          className="justify-between p-2"
-          invisibleEmpty
-          disableBuzzTip={image.poi}
-          abbreviate
-        />
-      )}
+      {(metrics) => {
+        // A read-only card with nothing to show renders no row at all, tip included.
+        const hasReactions =
+          !!image.stats?.statsUnknown ||
+          image.reactions.length > 0 ||
+          [
+            metrics.likeCount,
+            metrics.dislikeCount,
+            metrics.heartCount,
+            metrics.laughCount,
+            metrics.cryCount,
+          ].some((n) => (n ?? 0) > 0);
+        return (
+          <div
+            className={clsx(cardClasses.footer, classes.actionsFooter)}
+            onClick={(e) => {
+              // The padding around the buttons must not open the card's image link.
+              if (!readonly) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+          >
+            <div className={cardClasses.actions}>
+              <div className={cardClasses.actionRow}>
+                <Reactions
+                  className={clsx(cardClasses.reactions, classes.bar)}
+                  entityId={image.id}
+                  entityType="image"
+                  reactions={image.reactions}
+                  metrics={metrics}
+                  metricsUnknown={image.stats?.statsUnknown}
+                  targetUserId={image.user.id}
+                  readonly={readonly}
+                  invisibleEmpty
+                  disableBuzzTip
+                  abbreviate
+                />
+              </div>
+              <div className={cardClasses.tipRow}>
+                {!image.poi && !(readonly && !hasReactions) && (
+                  <ImageBuzzTip
+                    entityId={image.id}
+                    targetUserId={image.user.id}
+                    tippedAmountCount={metrics.tippedAmountCount}
+                    metricsUnknown={image.stats?.statsUnknown}
+                    readonly={readonly}
+                    className={clsx(cardClasses.reactions, classes.bar, 'flex items-center pl-0.5')}
+                  />
+                )}
+                <div className={cardClasses.tipEnd}>
+                  {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
+                  {turf && <HatTurfButton imageId={image.id} surface="panel" />}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }}
     </Metrics>
   );
 }

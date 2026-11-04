@@ -15,14 +15,23 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+type Surface = 'media' | 'panel';
+
 /**
- * Hidden when signed out or the image can't take a hat.
+ * Hidden when signed out or the image can't take a hat. `surface` is what it sits on: over the
+ * picture (`media`, the default) or on the card's own background below it (`panel`).
  */
-export function HatTurfButton({ imageId }: { imageId: number }) {
-  return useTurfFeed() ? <HatTurfButtonContent imageId={imageId} /> : null;
+export function HatTurfButton({ imageId, surface }: { imageId: number; surface?: Surface }) {
+  return useTurfFeed() ? <HatTurfButtonContent imageId={imageId} surface={surface} /> : null;
 }
 
-function HatTurfButtonContent({ imageId }: { imageId: number }) {
+function HatTurfButtonContent({
+  imageId,
+  surface = 'media',
+}: {
+  imageId: number;
+  surface?: Surface;
+}) {
   const feed = useTurfFeed();
   const user = useCurrentUser();
   const card = useHatTurfCard();
@@ -38,16 +47,19 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
     onSuccess: () => {
       setJoin(false);
       void utils.hatTurf.getStock.invalidate();
+      void utils.hatTurf.getSummaries.invalidate();
     },
     onError: (error) => showErrorNotification({ title: "Couldn't join Hat Turf", error }),
   });
 
-  if (!feed || !card || !user || feed.open[imageId] === false) return null;
+  if (!feed || !card || !user) return null;
+  const joined = stock?.optedIn !== false;
+  // Closed images must still offer Join: a viewer who has not joined has no other way to opt in.
+  if (joined && feed.open[imageId] === false) return null;
 
   const { draft, setDraft } = card;
   const placed =
     card.placed || feed.stickers[imageId]?.some((sticker) => sticker.userId === user.id);
-  const joined = stock?.optedIn !== false;
   const available = stock?.available;
   const empty = joined && available === 0 && !placed;
   const label = !joined
@@ -79,7 +91,10 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   };
 
   return (
-    <div className={classes.wrap} data-testid="hat-turf-button">
+    <div
+      className={clsx(classes.wrap, surface === 'panel' && classes.panel)}
+      data-testid="hat-turf-button"
+    >
       <button
         type="button"
         className={clsx(

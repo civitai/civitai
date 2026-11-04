@@ -113,3 +113,15 @@ describe('POST /api/auth/switch — device membership', () => {
     expect(h.mintUserSession).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/auth/switch — inactive target', () => {
+  it.each([
+    ['banned', { bannedAt: new Date('2026-01-01') }],
+    ['deleted', { deletedAt: new Date('2026-01-01') }],
+  ])('403s and mints nothing for a %s account', async (_, state) => {
+    linked(ACTIVE, TARGET);
+    h.getOrProduceSessionUser.mockResolvedValue({ id: TARGET, ...state });
+    expect(await statusOf(makeEvent())).toBe(403);
+    expect(h.mintUserSession).not.toHaveBeenCalled();
+  });
+});

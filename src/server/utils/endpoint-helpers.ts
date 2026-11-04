@@ -605,7 +605,8 @@ export function AuthedEndpoint(
     res: NextApiResponse,
     user: SessionUser
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowBanned = false }: { allowBanned?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods, { allowCredentials: true });
@@ -616,6 +617,10 @@ export function AuthedEndpoint(
 
     const session = await getServerAuthSession({ req, res });
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
+    // The cookie session outlives a ban (it renders the banned page); bearer tokens are refused upstream.
+    // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
+    if (session.user.bannedAt && !allowBanned)
+      return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
     await handler(req, res, session.user);
   });
 }
@@ -868,7 +873,6 @@ export function OrchestratorEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return AuthedEndpoint(async (req, res, user) => {
-    if (user.bannedAt) return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
     let token: string;
     try {
       token = await getOrchestratorToken(user.id, { req, res });
