@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { TokenScope, TokenScopePresets } from '~/shared/constants/token-scope.constants';
 import type * as KeyGenerator from '~/server/utils/key-generator';
 
 vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
@@ -17,11 +18,11 @@ const USER_ID = 5;
 const MODERATION = 900;
 const SYSTEM_META = { systemAccount: true };
 
-function keyOwnedBy(userId: number) {
+function keyOwnedBy(userId: number, tokenScope: number = TokenScope.UserRead) {
   dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
     id: 77,
     userId,
-    tokenScope: 1,
+    tokenScope,
     lastUsedAt: new Date(),
     buzzLimit: null,
     clientId: null,
@@ -63,6 +64,54 @@ describe('a bearer key owned by a system account', () => {
     expect(session?.user.id).toBe(USER_ID);
     // The mock answers any id, so the id it was asked for is what pins the key to its owner.
     expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it.each(MODERATOR_ACCESS)(
+    'with every read scope resolves while the account holds %s',
+    async (_, held) => {
+      keyOwnedBy(USER_ID, TokenScopePresets.ReadOnly);
+      dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue({ path: '/' } as never);
+      getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+      await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
+        user: { id: USER_ID },
+      });
+    }
+  );
+
+  describe('with a write scope', () => {
+    beforeEach(() => {
+      keyOwnedBy(USER_ID, TokenScope.UserRead | TokenScope.AIServicesWrite);
+      dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue({ path: '/' } as never);
+    });
+
+    it('resolves while the account holds no moderator access', async () => {
+      dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue(null);
+      getSessionUserById.mockResolvedValue({
+        id: USER_ID,
+        meta: SYSTEM_META,
+        isModerator: false,
+        roles: ['dispute-agent'],
+      });
+      await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
+        user: { id: USER_ID },
+      });
+    });
+
+    it.each(MODERATOR_ACCESS)('is refused while the account holds %s', async (_, held) => {
+      getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+      await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it.each(MODERATOR_ACCESS)(
+      'owned by an ordinary account resolves while it holds %s',
+      async (_, held) => {
+        getSessionUserById.mockResolvedValue({ id: USER_ID, meta: {}, ...held });
+        await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
+          user: { id: USER_ID },
+        });
+      }
+    );
   });
 
   it('is refused once the account is banned', async () => {
