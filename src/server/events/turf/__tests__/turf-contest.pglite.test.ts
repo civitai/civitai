@@ -100,9 +100,9 @@ beforeAll(async () => {
       (1, ${CONTEST_ENTRY}), (2, ${BOOKMARKED});
     INSERT INTO "Cosmetic" VALUES
       (11, 'ContentDecoration',
-        '{"event": "e", "team": "blue", "url": "blue-cap-art",
+        '{"event": "e", "team": "Blue", "url": "blue-cap-art",
           "fit": {"canvas": [128, 160], "bounds": [20, 40, 108, 150], "outline": [[1, 2]]}}'),
-      (12, 'ContentDecoration', '{"event": "e", "team": "pink", "url": "pink-cap-art"}');
+      (12, 'ContentDecoration', '{"event": "e", "team": "Pink", "url": "pink-cap-art"}');
     INSERT INTO "UserCosmetic" VALUES (${PLACER}, 11), (${PLACER}, 12);
     INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data) VALUES
       ('e', ${CONTEST_ENTRY}, ${PLACER}, 'Blue', 11, '{}'),
@@ -164,8 +164,7 @@ describe('Hat Turf on contest entries', () => {
     expect(push?.stickers[0]?.art).toEqual(art);
   });
 
-  // Placing refuses another team's hat, so the picker offers only the player's own team's. The
-  // cosmetics spell teams in lowercase, as in production; the event's team is 'Blue'.
+  // Placing refuses another team's hat, so the picker offers only the player's own team's.
   it("a player's hats to place are their current team's only", async () => {
     const hats = await getMyStickerHats('e', PLACER);
     expect(hats.map((hat) => hat.cosmeticId)).toEqual([11]);

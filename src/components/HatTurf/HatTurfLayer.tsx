@@ -164,7 +164,8 @@ function HatTurfLayerContent({
   const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
-  const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
+  // Capped so a wide image-detail picture does not draw hats past a sticker's size.
+  const hatSize = (scale: number) => (box ? Math.min(96, Math.max(22, box.width * scale)) : 0);
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];

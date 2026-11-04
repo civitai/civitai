@@ -197,7 +197,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   const team = await event.getUserTeam(userId, { strict: true });
   if (!team) throw throwBadRequestError("You aren't on a team yet");
   // The art is the sticker, so it must be the team it scores for.
-  // Cosmetics spell teams in lowercase, assignments as the event lists them ('Blue'): compare loosely.
+  // Case-insensitive, so a cosmetic spelled 'blue' still matches the event's 'Blue'.
   if (placer.team.toLowerCase() !== team.toLowerCase())
     throw throwBadRequestError("That hat isn't your team's");
 
