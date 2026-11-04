@@ -1,7 +1,6 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
-import { createHash } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -13,7 +12,11 @@ import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getRequestCredential, type RequestCredential } from '~/server/auth/request-credential';
+import {
+  credentialLogFields,
+  getRequestCredential,
+  type RequestCredential,
+} from '~/server/auth/request-credential';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
@@ -871,20 +874,14 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
 function logScopeWouldRefuse(
   req: AxiomAPIRequest,
   requiredScope: number,
-  { tokenScope, apiKeyType, subject }: RequestCredential
+  credential: RequestCredential
 ) {
   logToAxiom({
     name: 'orchestrator-endpoint-scope-would-refuse',
     type: 'info',
     route: req.url?.split('?')[0],
     requiredScope,
-    tokenScope,
-    apiKeyType: apiKeyType ?? null,
-    client: subject?.type === 'oauth' ? 'oauth' : 'personal-key',
-    clientIdHash:
-      subject?.type === 'oauth'
-        ? createHash('sha256').update(String(subject.id)).digest('hex').slice(0, 16)
-        : undefined,
+    ...credentialLogFields(credential),
   }).catch(() => undefined);
 }
 

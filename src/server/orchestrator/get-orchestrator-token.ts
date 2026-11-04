@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { env } from '~/env/server';
-import { getRequestCredential } from '~/server/auth/request-credential';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
@@ -180,23 +180,57 @@ export async function getOrchestratorToken(
   return token;
 }
 
+// Off while `orchestrator-token-system-read-would-refuse` counts show which system integrations
+// still use a key without AI Services write scope.
+let enforceSystemReadRefusal = false;
+
+export const __testing = {
+  setEnforceSystemReadRefusal(value: boolean) {
+    enforceSystemReadRefusal = value;
+  },
+};
+
+type RequestSessionUser = { id?: number; meta?: unknown };
+
 /**
  * A system account's bearer key needs AI Services write scope to use the orchestrator token. Other
  * accounts, sessions and server-side calls (no request) pass.
- * The account is read from the primary, and a failed read refuses.
+ * The session user's meta decides when it is this account's and says ordinary; otherwise the
+ * account is read from the primary, and a failed read counts as a system account.
  */
 async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context) {
   if (!ctx?.req) return;
-  const { tokenScope, apiKeyId, apiKeyType, subject } = getRequestCredential(ctx.req);
+  const credential = getRequestCredential(ctx.req);
+  const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
   if (!presentedBearer || Flags.hasFlag(tokenScope, TokenScope.AIServicesWrite)) return;
+
+  const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
+    .context?.session?.user;
+  if (
+    sessionUser?.id === userId &&
+    sessionUser.meta != null &&
+    !isSystemAccountMeta(sessionUser.meta)
+  )
+    return;
 
   const account = await dbWrite.user
     .findUnique({ where: { id: userId }, select: { meta: true } })
     .catch(() => undefined);
-  if (account === undefined || isSystemAccountMeta(account?.meta))
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Your API key does not have the required scope for this action',
-    });
+  if (account !== undefined && !isSystemAccountMeta(account?.meta)) return;
+
+  if (!enforceSystemReadRefusal) {
+    logToAxiom({
+      name: 'orchestrator-token-system-read-would-refuse',
+      type: 'info',
+      route: ctx.req.url?.split('?')[0],
+      accountUnreadable: account === undefined,
+      ...credentialLogFields(credential),
+    }).catch(() => undefined);
+    return;
+  }
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'Your API key does not have the required scope for this action',
+  });
 }

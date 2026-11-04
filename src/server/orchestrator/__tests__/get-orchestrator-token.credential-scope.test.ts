@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_ACCOUNT_META } from '@civitai/auth';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ApiKeyService from '~/server/services/api-key.service';
@@ -22,7 +23,9 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 }));
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(async () => undefined) }));
 
-const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
+const { getOrchestratorToken, __testing: enforcement } = await import(
+  '~/server/orchestrator/get-orchestrator-token'
+);
 const { __testing: perPodCache } = await import('~/server/orchestrator/orchestrator-token-cache');
 const { encodeOwnedToken } = await import('~/server/orchestrator/orchestrator-token-identity');
 
@@ -30,10 +33,14 @@ const USER = 4242;
 const WRITE_SCOPE = TokenScopePresets.ReadOnly | TokenScope.AIServicesWrite;
 let meta: unknown = SYSTEM_ACCOUNT_META;
 
-function keyCaller(tokenScope: number) {
+// `sessionMeta` is the session user's copy of the account meta; by default the same as the row.
+function keyCaller(tokenScope: number, opts: { sessionMeta?: unknown } = {}) {
+  const sessionMeta = 'sessionMeta' in opts ? opts.sessionMeta : meta;
   const req = {
+    url: '/api/trpc/orchestrator.getStatus?batch=1',
     headers: { authorization: 'Bearer k' },
     context: {
+      session: { user: { id: USER, meta: sessionMeta } },
       tokenScope,
       apiKeyId: 7,
       apiKeyType: ApiKeyType.User,
@@ -47,8 +54,20 @@ const sessionCaller = () => ({
   res: {} as NextApiResponse,
 });
 
+const cachedStanding = () =>
+  redisMock.redis.packed.get.mockResolvedValue({
+    data: { muted: false, banned: false, exists: true },
+    cachedAt: Date.now(),
+  } as never);
+const wouldRefuseLogs = () =>
+  loggingMock.logToAxiom.mock.calls.filter(
+    ([event]) =>
+      (event as { name?: string })?.name === 'orchestrator-token-system-read-would-refuse'
+  );
+
 beforeEach(() => {
   vi.clearAllMocks();
+  enforcement.setEnforceSystemReadRefusal(true);
   perPodCache.clear();
   meta = SYSTEM_ACCOUNT_META;
   envMock.set({ ORCHESTRATOR_MODE: 'prod' });
@@ -62,7 +81,7 @@ beforeEach(() => {
   getTemporaryUserApiKey.mockResolvedValue('fresh-token');
 });
 
-describe('the orchestrator token for a system account', () => {
+describe('the orchestrator token for a system account, when enforcing', () => {
   it('is refused to a read-only key, without minting', async () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
@@ -88,15 +107,18 @@ describe('the orchestrator token for a system account', () => {
 
   it('is refused when the account cannot be read', async () => {
     // Standing answered from its cache, so only the account read fails.
-    redisMock.redis.packed.get.mockResolvedValue({
-      data: { muted: false, banned: false, exists: true },
-      cachedAt: Date.now(),
-    } as never);
+    cachedStanding();
     dbMock.dbWrite.user.findUnique.mockRejectedValue(new Error('db down') as never);
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
+  });
+
+  it('is refused when the session copy has no meta', async () => {
+    await expect(
+      getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly, { sessionMeta: undefined }))
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('is refused when the account marker is stored as a string', async () => {
@@ -121,6 +143,41 @@ describe('the orchestrator token for a system account', () => {
   });
 });
 
+describe('the orchestrator token for a system account, before enforcing', () => {
+  beforeEach(() => enforcement.setEnforceSystemReadRefusal(false));
+
+  it('is issued to a read-only key and logs it, without user, key or address', async () => {
+    await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
+      'fresh-token'
+    );
+    const logs = wouldRefuseLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0][0]).toEqual({
+      name: 'orchestrator-token-system-read-would-refuse',
+      type: 'info',
+      route: '/api/trpc/orchestrator.getStatus',
+      accountUnreadable: false,
+      tokenScope: TokenScopePresets.ReadOnly,
+      apiKeyType: ApiKeyType.User,
+      client: 'personal-key',
+      clientIdHash: undefined,
+    });
+  });
+
+  it('logs a read-only key when a token is already cached', async () => {
+    redisMock.sysRedis.hGet.mockResolvedValue(encodeOwnedToken(USER, 'cached-token') as never);
+    await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
+      'cached-token'
+    );
+    expect(wouldRefuseLogs()).toHaveLength(1);
+  });
+
+  it('does not log a key with AI Services write scope', async () => {
+    await getOrchestratorToken(USER, keyCaller(WRITE_SCOPE));
+    expect(wouldRefuseLogs()).toHaveLength(0);
+  });
+});
+
 describe('the orchestrator token for an ordinary account', () => {
   beforeEach(() => {
     meta = {};
@@ -130,6 +187,14 @@ describe('the orchestrator token for an ordinary account', () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
       'fresh-token'
     );
+  });
+
+  it('is issued to a read-only key without reading the account, when the session copy says ordinary', async () => {
+    cachedStanding();
+    await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
+      'fresh-token'
+    );
+    expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('is issued to a session', async () => {
