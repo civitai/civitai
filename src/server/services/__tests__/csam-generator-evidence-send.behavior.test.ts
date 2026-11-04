@@ -115,6 +115,7 @@ import {
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import type { EvidenceStore as PreserveStore } from '~/server/services/generator-evidence/preserve-blob';
+import { clearUnconfirmedOpens } from '~/server/services/csam-unconfirmed-open';
 import { buildReport, buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 import { Parser } from 'xml2js';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -135,6 +136,10 @@ function whereSql(where: Where, params: unknown[]): string {
     if (value instanceof Object && 'lt' in value) {
       params.push(value.lt);
       return `"${column}" < $${params.length}`;
+    }
+    if (value instanceof Object && 'in' in value) {
+      params.push(value.in);
+      return `"${column}" = ANY($${params.length})`;
     }
     params.push(value);
     return `"${column}" = $${params.length}`;
@@ -164,6 +169,15 @@ async function findFirst({ where }: { where: Where }) {
     params
   );
   return rows[0] ?? null;
+}
+
+async function findMany({ where }: { where: Where }) {
+  const params: unknown[] = [];
+  const { rows } = await db.pg.query(
+    `SELECT * FROM "CsamReport" WHERE ${whereSql(where, params)}`,
+    params
+  );
+  return rows;
 }
 
 async function create({ data }: { data: Record<string, unknown> }) {
@@ -267,28 +281,22 @@ beforeEach(() => {
       hash.update(chunk);
     return hash.digest('hex');
   });
-  // A view of the output on THIS report; views of the input on another report or entity, which must not count.
-  const views = [
-    { entityType: 'csamReport', onThisReport: true, activity: `generatorEvidence:view:${OUTPUT}` },
-    { entityType: 'csamReport', onThisReport: false, activity: `generatorEvidence:view:${INPUT}` },
-    { entityType: 'image', onThisReport: true, activity: `generatorEvidence:view:${INPUT}` },
-  ];
+  viewsOf = defaultViews;
   dbMock.dbWrite.modActivity.findMany
     .mockReset()
     .mockImplementation((async ({
       where,
     }: {
-      where: { entityType: string; entityId: number; activity: { in: string[] } };
+      where: { entityType: string; entityId: { in: number[] }; activity: { in: string[] } };
     }) =>
       views
         .filter(
           (v) =>
             v.entityType === where.entityType &&
-            v.onThisReport &&
-            where.entityId > 0 &&
+            where.entityId.in.includes(v.entityId) &&
             where.activity.in.includes(v.activity)
         )
-        .map((v) => ({ activity: v.activity, userId: 10 }))) as never);
+        .map((v) => ({ activity: v.activity, userId: 10, entityId: v.entityId }))) as never);
   finishReport.mockReset();
   cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
@@ -313,6 +321,7 @@ beforeEach(() => {
   dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.updateMany.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(findFirst as never);
+  dbMock.dbWrite.csamReport.findMany.mockReset().mockImplementation(findMany as never);
   dbMock.dbWrite.csamReport.deleteMany.mockReset().mockImplementation(deleteMany as never);
   dbMock.dbWrite.csamReport.create.mockReset().mockImplementation(create as never);
   dbMock.dbWrite.$queryRaw.mockReset().mockImplementation(queryRaw as never);
@@ -364,14 +373,36 @@ function evidenceDetails({ approved = true, outputSha = sha } = {}) {
   };
 }
 
-async function sendEvidenceReport(details: unknown) {
+type View = { entityType: string; entityId: number; activity: string };
+const viewOf = (blobId: string, entityId: number, entityType = 'csamReport'): View => ({
+  entityType,
+  entityId,
+  activity: `generatorEvidence:view:${blobId}`,
+});
+// A view of the output on this report; views of the input on a report that is not the user's, and
+// on another entity, which must not count.
+const defaultViews = (id: number) => [
+  viewOf(OUTPUT, id),
+  viewOf(INPUT, id + 1000),
+  viewOf(INPUT, id, 'image'),
+];
+let viewsOf: (id: number) => View[] = defaultViews;
+let views: View[] = [];
+
+async function insertEvidenceReport(details: unknown, { userId = 20, sent = false } = {}) {
   const { rows } = await db.pg.query<{ id: number }>(
-    `INSERT INTO "CsamReport" ("userId", "reportedById", "type", "details")
-     VALUES (20, 10, 'GeneratedImage', $1::jsonb) RETURNING id`,
-    [JSON.stringify(details)]
+    `INSERT INTO "CsamReport" ("userId", "reportedById", "type", "details", "reportSentAt")
+     VALUES ($1, 10, 'GeneratedImage', $2::jsonb, $3) RETURNING id`,
+    [userId, JSON.stringify(details), sent ? new Date() : null]
   );
-  await processCsamReport(await readRow(rows[0].id));
   return rows[0].id;
+}
+
+async function sendEvidenceReport(details: unknown) {
+  const id = await insertEvidenceReport(details);
+  views = viewsOf(id);
+  await processCsamReport(await readRow(id));
+  return id;
 }
 
 const detailsFor = (blobId: string) =>
@@ -512,16 +543,47 @@ describe('sending a report of preserved generator evidence', () => {
     expect(submitReport.mock.calls[0][0].personOrUserReported.priorCTReports).toEqual([4242]);
   });
 
-  it('reports a file as viewed only when a moderator view of it on this report is recorded', async () => {
-    const id = await sendEvidenceReport(evidenceDetails());
+  it("reports a file as viewed only when a moderator view of it on one of the user's reports is recorded", async () => {
+    await sendEvidenceReport(evidenceDetails());
 
     expect(detailsFor(OUTPUT).fileViewedByEsp).toBe(true);
     expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
-    const [{ where }] = dbMock.dbWrite.modActivity.findMany.mock.calls[0] as [
-      { where: { entityId: number } }
-    ];
-    expect(where.entityId).toBe(id);
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+  });
+
+  describe("a file viewed on the user's earlier report", () => {
+    const earlierWith = (inputSha: string) => {
+      const details = evidenceDetails();
+      details.generatedImages[0].blobs[1].sha256 = inputSha;
+      return details;
+    };
+
+    it('counts as viewed when the earlier report held the same bytes', async () => {
+      const earlier = await insertEvidenceReport(earlierWith(sha), { sent: true });
+      viewsOf = (id) => [viewOf(OUTPUT, id), viewOf(INPUT, earlier)];
+
+      await sendEvidenceReport(evidenceDetails());
+
+      expect(detailsFor(INPUT).fileViewedByEsp).toBe(true);
+    });
+
+    it('does not count when the earlier report held other bytes under the same id', async () => {
+      const earlier = await insertEvidenceReport(earlierWith('0'.repeat(64)), { sent: true });
+      viewsOf = (id) => [viewOf(OUTPUT, id), viewOf(INPUT, earlier)];
+
+      await sendEvidenceReport(evidenceDetails());
+
+      expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
+    });
+
+    it("does not count when the earlier report is another user's", async () => {
+      const other = await insertEvidenceReport(earlierWith(sha), { userId: 21, sent: true });
+      viewsOf = (id) => [viewOf(OUTPUT, id), viewOf(INPUT, other)];
+
+      await sendEvidenceReport(evidenceDetails());
+
+      expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
+    });
   });
 
   it('also writes the prompt, negative prompt and resources into each file as plain text', async () => {
@@ -945,5 +1007,79 @@ describe('markup characters in what NCMEC is sent', () => {
     expect(submitReport).not.toHaveBeenCalled();
     expect(uploadFile).not.toHaveBeenCalled();
     expect((await readRow(id)).reportSentAt).toBeNull();
+  });
+});
+
+describe('an open whose answer cannot be read', () => {
+  // What the client throws for a 2xx answer whose reportId is not a whole number.
+  const unreadable = () =>
+    submitReport.mockRejectedValue(new Error('Response "reportId" must be a number, got: string'));
+  const linesOf = (subType: string, id: number) =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as { subType?: string; reportId?: number })
+      .filter((line) => line.subType === subType && line.reportId === id);
+
+  it('opens exactly once over three runs, and holds the report for a decision', async () => {
+    loggingMock.logToAxiom.mockClear();
+    unreadable();
+
+    const id = await sendEvidenceReport(evidenceDetails());
+    await processCsamReport(await readRow(id));
+    await processCsamReport(await readRow(id));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(uploadFile).not.toHaveBeenCalled();
+    const row = await readRow(id);
+    expect(row.reportSentAt).toBeNull();
+    expect(row.details.unconfirmedOpens).toHaveLength(1);
+    expect(linesOf('send-open-unconfirmed', id)).toHaveLength(1);
+    expect(linesOf('send-decision-needed', id)).toHaveLength(3);
+  });
+
+  it('sends again once a moderator clears it, recording who and why', async () => {
+    unreadable();
+    const id = await sendEvidenceReport(evidenceDetails());
+    submitReport.mockReset().mockResolvedValue({ data: { reportId: 900 } });
+
+    const execute = dbMock.dbWrite.$executeRaw.getMockImplementation()!;
+    const activity: unknown[][] = [];
+    dbMock.dbWrite.$executeRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('"ModActivity"')
+        ? (activity.push(values), 1)
+        : execute(strings, ...values)) as never);
+    await clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' });
+    await processCsamReport(await readRow(id));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const row = await readRow(id);
+    expect(row.reportSentAt).not.toBeNull();
+    expect(row.details.unconfirmedOpens).toBeUndefined();
+    expect(row.details.clearedUnconfirmedOpens).toMatchObject([
+      { clearedById: 10, note: 'checked with NCMEC' },
+    ]);
+    expect(activity).toEqual([[10, 'csamReport', 'csamReport:clearUnconfirmedOpen', [id]]]);
+  });
+
+  it('refuses to clear a report that is not held', async () => {
+    const id = await insertEvidenceReport(evidenceDetails());
+
+    await expect(
+      clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('still lets a refusal or an outage fail the run, to be retried', async () => {
+    submitReport.mockRejectedValue(
+      new Error('Request failed with http status 500 (Request-ID: x)')
+    );
+
+    const id = await insertEvidenceReport(evidenceDetails());
+    views = viewsOf(id);
+
+    await expect(processCsamReport(await readRow(id))).rejects.toThrow('http status 500');
+    expect((await readRow(id)).details.unconfirmedOpens).toBeUndefined();
   });
 });

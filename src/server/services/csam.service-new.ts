@@ -89,6 +89,11 @@ import {
   streamEvidenceObject,
 } from '~/server/services/generator-evidence/evidence-store';
 import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
+import type {
+  ClearedUnconfirmedOpen,
+  UnconfirmedOpen,
+} from '~/server/services/csam-unconfirmed-open';
+import { isUnreadableAnswer } from '~/server/services/csam-unconfirmed-open';
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
@@ -172,6 +177,9 @@ type CsamReportDetails = CsamReportFormOutput & {
   supplemental?: CsamSupplementalDetails;
   /** CyberTips opened for this report that could not be cancelled, so may have reached NCMEC. */
   possibleDuplicateReportIds?: number[];
+  /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
+  unconfirmedOpens?: UnconfirmedOpen[];
+  clearedUnconfirmedOpens?: ClearedUnconfirmedOpen[];
 };
 
 type StoredObject = { key: string; etag: string | null };
@@ -779,7 +787,8 @@ async function deleteUnderClaim(claim: SendClaim, reason: string) {
   const stored = await cancelStoredCyberTip(claim);
   if (stored === 'lost') return;
   const possibleDuplicates = claim.report.details?.possibleDuplicateReportIds ?? [];
-  if (stored === 'held' || possibleDuplicates.length > 0)
+  const unconfirmed = claim.report.details?.unconfirmedOpens ?? [];
+  if (stored === 'held' || possibleDuplicates.length > 0 || unconfirmed.length > 0)
     return logSendLine(
       claim,
       'send-delete-held',
@@ -787,6 +796,7 @@ async function deleteUnderClaim(claim: SendClaim, reason: string) {
         message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
         ncmecReportId: claim.report.reportId ?? undefined,
         possibleDuplicateReportIds: possibleDuplicates,
+        unconfirmedOpens: unconfirmed.length,
       },
       'error'
     );
@@ -909,6 +919,36 @@ function logXmlProblem(claim: SendClaim, problem: string) {
   logSendLine(claim, 'send-decision-needed', { message, hoursPending, ...stored }, 'error');
 }
 
+/**
+ * NCMEC answered the open in a shape the client could not read, so a CyberTip may be open there with
+ * no id here. Another open could leave another on every run, so the report waits for a moderator.
+ */
+async function holdUnconfirmedOpen(claim: SendClaim, e: Error) {
+  const message = `report ${claim.report.id}: the answer to its CyberTip open could not be read, so one may be open at NCMEC with no id here (${e.message})`;
+  logSendLine(claim, 'send-open-unconfirmed', { message }, 'error');
+  logSendLine(claim, 'send-decision-needed', { message }, 'error');
+  if (!isProd) return;
+  const open: UnconfirmedOpen = { at: new Date().toISOString(), message: e.message };
+  await updateUnderClaim(claim, 'open-unconfirmed', {}, (details) => ({
+    ...details,
+    unconfirmedOpens: [...(details.unconfirmedOpens ?? []), open],
+  }));
+}
+
+function logHeldOnUnconfirmedOpen(claim: SendClaim) {
+  const opens = claim.report.details?.unconfirmedOpens ?? [];
+  logSendLine(
+    claim,
+    'send-decision-needed',
+    {
+      message: `report ${claim.report.id} is held: ${opens.length} earlier open(s) may have left a CyberTip at NCMEC with no id here. Check with NCMEC, then clear it to send.`,
+      hoursPending: hoursSinceFiled(claim.report),
+      unconfirmedOpens: opens.length,
+    },
+    'error'
+  );
+}
+
 /** Sends files two at a time; once one fails, none still queued goes to the CyberTip being cancelled. */
 function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>, concurrency = 2) {
   const limit = plimit(concurrency);
@@ -940,7 +980,7 @@ async function uploadToCyberTip(claim: SendClaim, file: File) {
  * the finished CyberTip, so a failure anywhere before leaves it unsent for the next run.
  *
  * A run that dies between opening the CyberTip and storing its id leaves an open CyberTip no run
- * knows of; the next run opens another.
+ * knows of; the next run opens another. An open NCMEC answered unreadably holds the report instead.
  *
  * The report and every file's details are checked as the XML NCMEC is sent before anything is opened.
  *
@@ -963,6 +1003,10 @@ async function sendCyberTip(
     failureSubType?: string;
   }
 ) {
+  if (claim.report.details?.unconfirmedOpens?.length) {
+    logHeldOnUnconfirmedOpen(claim);
+    return false;
+  }
   const xmlProblem = cyberTipXmlProblem(cyberTip, fileDetails);
   if (xmlProblem) {
     logXmlProblem(claim, xmlProblem);
@@ -970,9 +1014,16 @@ async function sendCyberTip(
   }
   if ((await cancelStoredCyberTip(claim)) === 'lost') return false;
 
-  const {
-    data: { reportId: ncmecReportId },
-  } = await cybertipClient.submitReport(cyberTip);
+  let ncmecReportId: number;
+  try {
+    ({
+      data: { reportId: ncmecReportId },
+    } = await cybertipClient.submitReport(cyberTip));
+  } catch (e) {
+    if (!isUnreadableAnswer(e)) throw e;
+    await holdUnconfirmedOpen(claim, e as Error);
+    return false;
+  }
   claim.ncmecReportId = ncmecReportId;
   logSendLine(claim, 'send-open');
 
@@ -1512,8 +1563,8 @@ async function reportPreservedEvidence(claim: SendClaim) {
   let viewed: Map<string, number[]>;
   try {
     viewed = await getViewedEvidence(
-      report.id,
-      files.map(({ blob }) => blob.blobId)
+      report,
+      files.map(({ blob }) => blob)
     );
   } catch (e) {
     return logSendFailure(report, e, 'send-view-check');
