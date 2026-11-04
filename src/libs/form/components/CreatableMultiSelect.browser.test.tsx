@@ -35,27 +35,20 @@ const value = () => JSON.parse(document.querySelector('[data-testid="value"]')!.
 describe('CreatableMultiSelect Enter', () => {
   beforeEach(() => onSubmit.mockClear());
 
-  test('adds typed entries split on commas, and does not submit the form', async () => {
+  test('adds the typed text as one entry, commas included, and does not submit the form', async () => {
     renderWithProviders(<Harness />);
     await field().fill('monochrome, greyscale');
     await userEvent.keyboard('{Enter}');
-    await expect.poll(value).toEqual(['monochrome', 'greyscale']);
+    await expect.poll(value).toEqual(['monochrome, greyscale']);
+    await expect.element(field()).toHaveValue('');
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  test('drops empty and duplicate entries, and clears the input', async () => {
-    renderWithProviders(<Harness />);
-    await field().fill('a,, b, a,');
-    await userEvent.keyboard('{Enter}');
-    await expect.poll(value).toEqual(['a', 'b']);
-    await expect.element(field()).toHaveValue('');
-  });
-
-  test('keeps to maxValues', async () => {
+  test('trims the entry and keeps to maxValues', async () => {
     renderWithProviders(<Harness maxValues={1} />);
-    await field().fill('a, b');
+    await field().fill('  a, b  ');
     await userEvent.keyboard('{Enter}');
-    await expect.poll(value).toEqual(['a']);
+    await expect.poll(value).toEqual(['a, b']);
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -89,6 +82,18 @@ describe('CreatableMultiSelect Enter', () => {
     );
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
     expect(value()).toEqual([]);
+  });
+
+  test('pasting splits on commas and new lines, dropping empty and duplicate entries', async () => {
+    renderWithProviders(<Harness />);
+    await field().click();
+    const input = document.querySelector<HTMLInputElement>('input[placeholder="Trigger words"]')!;
+    const data = new DataTransfer();
+    data.setData('text', 'a,, b\na, ');
+    input.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
+    );
+    await expect.poll(value).toEqual(['a', 'b']);
   });
 
   test('pasting counts existing values toward maxValues', async () => {
