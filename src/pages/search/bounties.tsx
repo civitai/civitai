@@ -50,6 +50,7 @@ const RenderFilters = () => {
         attribute="details.baseModel"
         sortBy={['name']}
         searchable
+        remoteSearch={false}
       />
       <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList title="Tags" attribute="tags.name" searchable />
