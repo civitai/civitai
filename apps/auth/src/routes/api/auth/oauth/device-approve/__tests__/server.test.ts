@@ -23,5 +23,6 @@ describe('POST /api/auth/oauth/device-approve', () => {
   it('reaches code validation for a direct session', async () => {
     const res = await approve({ user: { id: 7 } });
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_request' });
   });
 });

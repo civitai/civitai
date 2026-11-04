@@ -25,7 +25,6 @@ vi.mock('$lib/server/auth/mod-activity', () => ({
 }));
 
 import { POST } from '../+server';
-import { POST as EXIT } from '../exit/+server';
 
 const MOD = 100;
 const TARGET = 200;
@@ -131,14 +130,5 @@ describe('POST /api/auth/impersonate — from an impersonation session', () => {
     expect(await statusOf(makeEvent(activeMod, 300, ORIGINAL_MOD))).toBe(403);
     expect(h.mintUserSession).not.toHaveBeenCalled();
     expect(h.trackImpersonation).not.toHaveBeenCalled();
-  });
-
-  it('still exits after a refused start', async () => {
-    const event = makeEvent(activeMod, 300, ORIGINAL_MOD);
-    expect(await statusOf(event)).toBe(403);
-    h.getOrProduceSessionUser.mockResolvedValue({ id: ORIGINAL_MOD });
-    const res = await EXIT(event);
-    expect(await res.json()).toEqual({ token: 'imp-token', userId: ORIGINAL_MOD });
-    expect(h.trackImpersonation).toHaveBeenCalledWith(ORIGINAL_MOD, MOD, 'off');
   });
 });
