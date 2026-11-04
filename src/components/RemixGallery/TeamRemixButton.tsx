@@ -51,7 +51,7 @@ export function TeamRemixButton({ imageId }: { imageId: number }) {
             cost,
             nonce,
             startedMessage:
-              'Added to your queue. When it is done, post it, then come back here and submit it free for your team.',
+              'Added to your queue. When it is done, post it, then come back here and submit it free for your team (free team submits are limited per day).',
             onSettled: () => {
               setPending(false);
               setNonce(crypto.randomUUID());

@@ -9,6 +9,7 @@ import {
 } from '~/server/services/generation-input-urls';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
+import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -241,9 +242,10 @@ async function quoteApp(
 }
 
 /**
- * The team remix this viewer is offered on this visible image, or null: exactly when the gallery's
- * team waiver would take the result free (`findTeamRemixWaiver`: the owner's hat on their own
- * image, and viewer and owner joined the same team). The team is read from the joins, never from
+ * The team remix this viewer is offered on this visible image, or null: exactly when the gallery
+ * would take the result free under its team waiver today. `getTeamWaiverStanding` is the submit
+ * modal's own read: the gallery open, the owner's hat on their own image, viewer and owner joined
+ * the same team, and free team submits left today. The team is read from the joins, never from
  * the client.
  */
 async function resolveTeamRemix(
@@ -257,13 +259,20 @@ async function resolveTeamRemix(
     isModerator: caller.user.isModerator,
     confirmBlockOnPrimary: onPrimary,
   });
-  const waiver = await findTeamRemixWaiver({
-    placerId: caller.user.id,
-    ownerId,
-    hostImageId: imageId,
-    db: onPrimary ? dbWrite : dbRead,
-  });
-  return waiver && { team: waiver.team, app: teamRemixApp(waiver.team) };
+  // Before a charge, the team rule again on the primary: a hat taken off or a join made seconds
+  // ago is seen. The standing (and its count) is the replica's; the submit re-decides under lock.
+  if (onPrimary) {
+    const waiver = await findTeamRemixWaiver({
+      placerId: caller.user.id,
+      ownerId,
+      hostImageId: imageId,
+      db: dbWrite,
+    });
+    if (!waiver) return null;
+  }
+  const standing = await getTeamWaiverStanding({ hostImageId: imageId, placerId: caller.user.id });
+  if (!standing || standing.remaining <= 0) return null;
+  return { team: standing.team, app: teamRemixApp(standing.team) };
 }
 
 /**
