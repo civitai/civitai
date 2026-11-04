@@ -578,6 +578,18 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     expect(await outcomes(), 'outcomes after a counted vote').toEqual(['20>30']);
   });
 
+  it('still accepts a vote whose outcome could not be stored', async () => {
+    withEntries(10, 20, 30);
+    const sAdd = redisMock.sysRedis.sAdd.getMockImplementation()!;
+    redisMock.sysRedis.sAdd.mockImplementation(async (key: string, value: string) => {
+      if (key.startsWith(REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES)) throw new Error('redis down');
+      return sAdd(key, value);
+    });
+
+    await expect(judge(10, 20)).resolves.toBeUndefined();
+    expect(processVote).toHaveBeenCalledTimes(1);
+  });
+
   it('decides only from this judge’s votes, never another judge’s', async () => {
     withEntries(10, 20, 30);
     await redisMock.sysRedis.sAdd(

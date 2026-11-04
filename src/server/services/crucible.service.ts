@@ -3439,9 +3439,13 @@ export const submitVote = async ({
   // Only once the vote has counted: a refused or failed vote must not decide pairs for this judge.
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
   await Promise.all([
+    // A lost outcome only means this judge is served a pair they could have skipped.
     sysRedis
       .sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId))
-      .then(() => sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS)),
+      .then(() => sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS))
+      .catch((error: unknown) =>
+        log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+      ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
     crucible.minViewSeconds &&
