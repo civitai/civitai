@@ -97,7 +97,8 @@ beforeAll(async () => {
     INSERT INTO "Collection" VALUES (1, 'Contest'), (2, 'Bookmark');
     INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES
       (1, ${CONTEST_ENTRY}), (2, ${BOOKMARKED});
-    INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event": "e", "team": "Blue"}');
+    INSERT INTO "Cosmetic" VALUES
+      (11, 'ContentDecoration', '{"event": "e", "team": "Blue", "url": "blue-cap-art"}');
     INSERT INTO "UserCosmetic" VALUES (${PLACER}, 11);
     INSERT INTO "EventTurfSticker" (event, "imageId", "userId", team, "cosmeticId", data) VALUES
       ('e', ${CONTEST_ENTRY}, ${PLACER}, 'Blue', 11, '{}'),
@@ -138,6 +139,23 @@ describe('Hat Turf on contest entries', () => {
   it('no stickers are drawn on a contest entry on image detail', async () => {
     expect((await getTurfStickers('e', CONTEST_ENTRY, PLACER)).stickers).toEqual([]);
     expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers).toHaveLength(1);
+  });
+
+  // The hat's own art is the sticker: every read that draws one carries it.
+  it('a sticker carries its hat art on image detail, feed cards and pushes', async () => {
+    expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.url).toBe('blue-cap-art');
+    const feed = await getTurfStickersForImages('e', [BOOKMARKED], 5);
+    expect(feed[BOOKMARKED]?.[0]?.url).toBe('blue-cap-art');
+    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
+    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    pushTurfCounts.mockClear();
+    await syncTurfImages((await getTurfEvent('e'))!, [BOOKMARKED]);
+    const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
+    const push = pushed.find((p: { imageId: number }) => p.imageId === BOOKMARKED) as
+      | { stickers: { url: string | null }[] }
+      | undefined;
+    expect(push?.stickers[0]?.url).toBe('blue-cap-art');
   });
 
   it('feed cards get no stickers for a contest entry', async () => {

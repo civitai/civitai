@@ -448,18 +448,26 @@ describe('Hat Turf on image detail', () => {
     expect(toneAt(30, 30)).toBe('lead');
   });
 
-  test("the viewer's own-hat dot sits on the cone, not off in the hat's padding", async () => {
-    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
+  // Deliberate (event owner's call, 2026-11-04): the hat's own art is the sticker, with no team cone
+  // and no corner marker on the viewer's own.
+  test("a hat draws as its own art, the viewer's own included, with no cone or marker", async () => {
+    h.stickers = [{ ...sticker(1, 'blue', 0.3, 0.3), url: 'blue-cap-art' }];
+    h.mine = { ...sticker(99, 'blue', 0.6, 0.6), userId: 1, url: 'blue-cap-art' };
     render({}, 900);
-    await vi.waitFor(() => expect(hats().length).toBe(4));
-    const own = [...hats()].find((hat) => hat.querySelector('i'))!;
-    const svg = own.querySelector('svg')!.getBoundingClientRect();
-    const dot = own.querySelector('i')!.getBoundingClientRect();
-    // The cone's bottom-right corner in TeamHat's 24-unit viewBox is (18, 17).
-    const cornerX = svg.left + (svg.width * 18) / 24;
-    const cornerY = svg.top + (svg.height * 17) / 24;
-    expect(Math.abs(dot.left + dot.width / 2 - cornerX)).toBeLessThan(4);
-    expect(Math.abs(dot.top + dot.height / 2 - cornerY)).toBeLessThan(4);
+    await vi.waitFor(() => expect(hats().length).toBe(2));
+    for (const hat of hats()) {
+      const art = hat.querySelector('img[data-testid="hat-turf-art"]');
+      expect(art?.getAttribute('src')).toContain('blue-cap-art');
+      expect(hat.querySelector('svg')).toBeNull();
+      expect(hat.querySelector('i')).toBeNull();
+    }
+  });
+
+  test('a hat whose art is unknown falls back to the team cone', async () => {
+    h.stickers = [sticker(1, 'blue', 0.3, 0.3)];
+    render({}, 900);
+    await vi.waitFor(() => expect(hats().length).toBe(1));
+    expect(hats()[0].querySelector('svg')).not.toBeNull();
   });
 
   test('past the draw cap a "more" button asks for the next hats', async () => {

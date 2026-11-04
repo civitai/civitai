@@ -77,6 +77,8 @@ describe('placeTurfSticker', () => {
       OK_IMAGE,
       /don't have that hat/,
     ],
+    // The hat art is the sticker: a Pink hat scoring for Blue would show one team and count another.
+    ["the hat is another team's", { optedIn: true, team: 'Pink' }, OK_IMAGE, /isn't your team's/],
     [
       "the image isn't publicly visible",
       OK_PLACER,

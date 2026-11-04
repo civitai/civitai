@@ -106,6 +106,8 @@ export type HatSticker = {
   team: string;
   cosmeticId: number;
   data: unknown;
+  /** The hat's art; absent from an older server's push, which draws the team cone instead. */
+  url?: string | null;
 };
 
 export type HatPose = { x: number; y: number; scale: number; rotation: number; flip: boolean };
@@ -213,12 +215,13 @@ function readPushedStickers(raw: unknown): HatSticker[] | undefined {
     );
   });
   if (!ok) return undefined;
-  return raw.map(({ id, userId, team, cosmeticId, data }) => ({
+  return raw.map(({ id, userId, team, cosmeticId, data, url }) => ({
     id,
     userId,
     team,
     cosmeticId,
     data,
+    ...(typeof url === 'string' && { url }),
   }));
 }
 

@@ -73,6 +73,8 @@ const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> '
   AND i."blockedFor" IS NULL`;
 // Read apart from ownerAllowsTurf so a banned owner's image is not blamed on the owner's switch.
 const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
+// The sticker `s`'s hat art: its cosmetic's image, drawn as the sticker itself.
+const hatUrl = Prisma.sql`(SELECT hc.data ->> 'url' FROM "Cosmetic" hc WHERE hc.id = s."cosmeticId")`;
 // Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
 const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
@@ -189,6 +191,8 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!placer.team) throw throwBadRequestError("You don't have that hat");
   const team = await event.getUserTeam(userId, { strict: true });
   if (!team) throw throwBadRequestError("You aren't on a team yet");
+  // The art is the sticker, so it must be the team it scores for.
+  if (placer.team !== team) throw throwBadRequestError("That hat isn't your team's");
 
   const [image] = await dbWrite.$queryRaw<
     {
@@ -360,6 +364,7 @@ type StickerRow = TurfStickerRow & {
   imageId: number;
   id: bigint;
   data: Prisma.JsonValue;
+  url: string | null;
   // The feed draws it: the placer is not banned or deleted (getTurfStickersForImages' rule).
   drawable: boolean;
   // A contest entry: its stickers still score, but no push carries them or its counts.
@@ -378,6 +383,7 @@ type StickerRow = TurfStickerRow & {
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
+      ${hatUrl} AS url,
       (u."bannedAt" IS NULL AND u."deletedAt" IS NULL) AS drawable,
       ${contestEntry(Prisma.sql`s."imageId"`)} AS contest,
       COALESCE(((u."createdAt" < ${event.startDate}
@@ -736,6 +742,7 @@ type DrawnSticker = {
   team: string;
   cosmeticId: number;
   data: Prisma.JsonValue;
+  url: string | null;
   createdAt: Date;
 };
 
@@ -753,7 +760,7 @@ export async function getTurfStickers(
   const event = await getTurfEvent(eventName);
   if (!event || event.turf.mode === 'off') return { stickers: [], mine: null, nextCursor: null };
   const rows = (only: Prisma.Sql, limit: number) => dbRead.$queryRaw<DrawnSticker[]>`
-    SELECT s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt"
+    SELECT s.id, s."userId", s.team, s."cosmeticId", s.data, ${hatUrl} AS url, s."createdAt"
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
@@ -789,6 +796,7 @@ export type FeedSticker = {
   team: string;
   cosmeticId: number;
   data: Prisma.JsonValue;
+  url: string | null;
 };
 
 /**
@@ -798,7 +806,7 @@ export type FeedSticker = {
 export function pickFeedStickers(
   rows: readonly Pick<
     StickerRow,
-    'id' | 'userId' | 'team' | 'cosmeticId' | 'data' | 'createdAt' | 'drawable'
+    'id' | 'userId' | 'team' | 'cosmeticId' | 'data' | 'url' | 'createdAt' | 'drawable'
   >[],
   perImage = TURF_FEED_STICKERS
 ): FeedSticker[] {
@@ -825,6 +833,7 @@ export function pickFeedStickers(
       team: row.team,
       cosmeticId: row.cosmeticId,
       data: row.data,
+      url: row.url,
     }));
 }
 
@@ -841,8 +850,8 @@ export async function getTurfStickersForImages(
   if (!event || event.turf.mode === 'off' || !imageIds.length) return {};
   const rows = await dbRead.$queryRaw<(DrawnSticker & { imageId: number })[]>`
     WITH ranked AS (
-      SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
-        row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
+      SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, ${hatUrl} AS url,
+        s."createdAt", row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
           AS "teamRank"
       FROM "EventTurfSticker" s
       JOIN "User" u ON u.id = s."userId"
@@ -853,13 +862,13 @@ export async function getTurfStickersForImages(
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
         AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
     ), picked AS (
-      SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
+      SELECT id, "imageId", "userId", team, "cosmeticId", data, url, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC
       ) AS n
       FROM ranked
       WHERE "teamRank" <= ${perImage}
     )
-    SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt"
+    SELECT id, "imageId", "userId", team, "cosmeticId", data, url, "createdAt"
     FROM picked WHERE n <= ${perImage}
     ORDER BY "imageId", n
   `;
@@ -883,14 +892,17 @@ export async function watchTurfImages(eventName: string, imageIds: number[]) {
 export async function getMyStickerHats(eventName: string, userId: number) {
   const event = await getTurfEvent(eventName);
   if (!event) throw throwNotFoundError('This event has no turf');
-  return dbRead.$queryRaw<{ cosmeticId: number; usageCount: number; lastUsedAt: Date | null }[]>`
-    SELECT uc."cosmeticId", count(s.id)::int AS "usageCount", max(s."createdAt") AS "lastUsedAt"
+  return dbRead.$queryRaw<
+    { cosmeticId: number; url: string | null; usageCount: number; lastUsedAt: Date | null }[]
+  >`
+    SELECT uc."cosmeticId", c.data ->> 'url' AS url, count(s.id)::int AS "usageCount",
+      max(s."createdAt") AS "lastUsedAt"
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     LEFT JOIN "EventTurfSticker" s
       ON s.event = ${event.name} AND s."userId" = uc."userId" AND s."cosmeticId" = uc."cosmeticId"
     WHERE uc."userId" = ${userId} AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${event.name}
-    GROUP BY uc."cosmeticId"
+    GROUP BY uc."cosmeticId", c.data ->> 'url'
     ORDER BY "lastUsedAt" DESC NULLS LAST, "usageCount" DESC, uc."cosmeticId"
   `;
 }
