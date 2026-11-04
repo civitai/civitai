@@ -12,7 +12,7 @@ import {
 } from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { env } from '~/env/server';
-import { toDateTime, upsertSubscription } from '~/server/services/stripe.service';
+import { upsertSubscription } from '~/server/services/stripe.service';
 import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import {
   liveBuzzMembershipWhere,
@@ -40,17 +40,9 @@ const ENDED_STATUSES = ['canceled', 'incomplete_expired'];
 // upsertSubscription ends a live Buzz membership only for these.
 const SUPERSEDING_STATUSES = ['active', 'trialing'];
 
-// The upsert stores Stripe times through toDateTime, shifted by 30 min plus a timezone-dependent
-// offset, and around spring-forward two seconds store as one. So a match is checked forward; only a
-// differing row is shown with the shift undone.
-const storedIso = (d: Date | null, stripeEpoch?: number | null) => {
-  if (d == null) return null;
-  if (stripeEpoch != null && toDateTime(stripeEpoch).getTime() === d.getTime())
-    return iso(stripeEpoch);
-  let secs = Math.round(d.getTime() / 1000) - 1800;
-  for (let i = 0; i < 3; i++) secs += Math.round((d.getTime() - toDateTime(secs).getTime()) / 1000);
-  return iso(secs);
-};
+// Rows written before toDateTime was fixed are 30 min late; they show as a change, and a re-sync
+// rewrites them.
+const storedIso = (d: Date | null) => d?.toISOString() ?? null;
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'mod-membership-resync', ...data }, 'webhooks').catch(() => null);
@@ -74,24 +66,21 @@ const rowSelect = {
   product: { select: { provider: true } },
 } as const;
 
-function rowView(
-  row: {
-    id: string;
-    status: string;
-    priceId: string;
-    cancelAtPeriodEnd: boolean | null;
-    cancelAt: Date | null;
-    currentPeriodEnd: Date | null;
-  },
-  sub: Stripe.Subscription | null
-): RowView {
+function rowView(row: {
+  id: string;
+  status: string;
+  priceId: string;
+  cancelAtPeriodEnd: boolean | null;
+  cancelAt: Date | null;
+  currentPeriodEnd: Date | null;
+}): RowView {
   return {
     id: row.id,
     status: row.status,
     priceId: row.priceId,
     cancelAtPeriodEnd: !!row.cancelAtPeriodEnd,
-    cancelAt: storedIso(row.cancelAt, sub?.cancel_at),
-    currentPeriodEnd: storedIso(row.currentPeriodEnd, sub?.current_period_end),
+    cancelAt: storedIso(row.cancelAt),
+    currentPeriodEnd: storedIso(row.currentPeriodEnd),
   };
 }
 
@@ -233,9 +222,9 @@ export async function previewMembershipResync({
   const { problems, row, sub, buzz } = await load(stripe, userId);
   return {
     userId,
-    ours: row ? rowView(row, sub) : null,
+    ours: row ? rowView(row) : null,
     stripe: sub ? stripeView(sub) : null,
-    changes: sub ? diffRow(row ? rowView(row, sub) : null, stripeView(sub)) : [],
+    changes: sub ? diffRow(row ? rowView(row) : null, stripeView(sub)) : [],
     endsBuzzMembership: buzz,
     problems,
   };
@@ -285,7 +274,7 @@ async function resyncLocked({
     throw throwBadRequestError(`Not re-synced: ${problems.join('; ')}`);
   }
 
-  const before = row ? rowView(row, sub) : null;
+  const before = row ? rowView(row) : null;
   const changes = diffRow(before, stripeView(sub));
   const audit = () =>
     trackModActivity(actorId, {
@@ -352,7 +341,7 @@ async function resyncLocked({
       log({ type: 'reread-failed', userId, error: e instanceof Error ? e.message : String(e) });
       return null;
     });
-  const after = afterRow ? rowView(afterRow, sub) : null;
+  const after = afterRow ? rowView(afterRow) : null;
   await log({
     type: 'resynced',
     actorId,
