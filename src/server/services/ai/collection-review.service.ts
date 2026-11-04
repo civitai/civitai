@@ -177,6 +177,9 @@ export function isNsfwLevelAllowed(nsfwLevel: number, allowedNsfwLevels: number)
   return !isUnratedNsfwLevel(nsfwLevel) && (nsfwLevel & allowedNsfwLevels) !== 0;
 }
 
+// A vision call normally answers in seconds; past this the item takes the job's failed-attempt path.
+export const REVIEW_TIMEOUT_MS = 60_000;
+
 export async function reviewImage({
   imageUrl,
   prompt,
@@ -195,6 +198,7 @@ export async function reviewImage({
     temperature: 0,
     maxTokens: 4000,
     retries: 2,
+    timeoutMs: REVIEW_TIMEOUT_MS,
     messages: [
       { role: 'system', content: systemPrompt },
       {
