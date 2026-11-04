@@ -62,24 +62,41 @@ export async function votesOnDay(db: Kysely<DB>, day: string): Promise<number> {
 
 /**
  * Today's judgments across the Order, read at most once per `ttlMs` per process: the counters have no index on the day, and
- * the rail re-reads after every vote. A failed read is null, so the rail leaves the line out.
+ * the rail re-reads after every vote. Callers that miss together share one read, and after a failed read nothing is re-read
+ * for `backoffMs`, so a degraded database is not hit on every play load. A failure serves the last value of the same day, else
+ * null, and the rail leaves the line out.
  */
 export function createActivityCounter(
   read: (day: string) => Promise<number>,
-  ttlMs = 60_000
+  ttlMs = 60_000,
+  backoffMs = 60_000
 ): (now: Date) => Promise<number | null> {
   let held: { day: string; at: number; value: number } | undefined;
+  let failedAt: number | undefined;
+  let inFlight: { day: string; result: Promise<number | null> } | undefined;
+  const lastGood = (day: string) => (held?.day === day ? held.value : null);
   return async (now) => {
     const day = utcDay(now);
-    if (held && held.day === day && now.getTime() - held.at < ttlMs) return held.value;
-    try {
-      const value = await read(day);
-      held = { day, at: now.getTime(), value };
-      return value;
-    } catch (error) {
-      console.error('knights: could not read the order activity', { error });
-      return held?.day === day ? held.value : null;
-    }
+    const at = now.getTime();
+    if (held && held.day === day && at - held.at < ttlMs) return held.value;
+    if (failedAt !== undefined && at - failedAt < backoffMs) return lastGood(day);
+    if (inFlight?.day === day) return inFlight.result;
+    const result = (async () => {
+      try {
+        const value = await read(day);
+        held = { day, at, value };
+        failedAt = undefined;
+        return value;
+      } catch (error) {
+        console.error('knights: could not read the order activity', { error });
+        failedAt = at;
+        return lastGood(day);
+      } finally {
+        inFlight = undefined;
+      }
+    })();
+    inFlight = { day, result };
+    return result;
   };
 }
 
@@ -96,14 +113,19 @@ export async function getRail(
   liveFervor?: number
 ): Promise<Rail> {
   const [standing, activity] = await Promise.all([
-    deps
-      .getBoard()
+    Promise.resolve()
+      .then(() => deps.getBoard())
       .then((board) => railStanding(board, userId, liveFervor))
       .catch((error) => {
         console.error('knights: could not read the leaderboard for the rail', { error });
         return null;
       }),
-    deps.activity(now),
+    Promise.resolve()
+      .then(() => deps.activity(now))
+      .catch((error) => {
+        console.error('knights: could not read the order activity for the rail', { error });
+        return null;
+      }),
   ]);
   return { standing, activity };
 }

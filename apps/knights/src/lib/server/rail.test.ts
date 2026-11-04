@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActivityCounter, getRail, railStanding } from './rail';
 
 const rows = [
@@ -80,6 +80,8 @@ describe('railStanding with live fervor', () => {
 });
 
 describe('createActivityCounter', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('reads once per ttl and again once the day or the ttl has moved on', async () => {
     const read = vi
       .fn()
@@ -104,9 +106,43 @@ describe('createActivityCounter', () => {
     expect(await activity(new Date())).toBeNull();
     expect(log).toHaveBeenCalled();
   });
+
+  it('serves the last good value of the same day on a failed refresh, and does not re-read during the backoff', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const read = vi.fn().mockResolvedValueOnce(120).mockRejectedValue(new Error('down'));
+    const activity = createActivityCounter(read, 60_000);
+    const noon = new Date('2026-12-15T12:00:00Z');
+    expect(await activity(noon)).toBe(120);
+    expect(await activity(new Date(noon.getTime() + 61_000))).toBe(120);
+    expect(await activity(new Date(noon.getTime() + 90_000))).toBe(120);
+    expect(read).toHaveBeenCalledTimes(2);
+    read.mockResolvedValue(200);
+    expect(await activity(new Date(noon.getTime() + 125_000))).toBe(200);
+  });
+
+  it("is null, not yesterday's number, when the read fails after the day rolled over", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const read = vi.fn().mockResolvedValueOnce(120).mockRejectedValue(new Error('down'));
+    const activity = createActivityCounter(read, 60_000);
+    expect(await activity(new Date('2026-12-15T23:59:00Z'))).toBe(120);
+    expect(await activity(new Date('2026-12-16T00:01:00Z'))).toBeNull();
+  });
+
+  it('shares one read between concurrent callers that miss together', async () => {
+    let finish: (n: number) => void = () => undefined;
+    const read = vi.fn(() => new Promise<number>((resolve) => (finish = resolve)));
+    const activity = createActivityCounter(read, 60_000);
+    const noon = new Date('2026-12-15T12:00:00Z');
+    const calls = [activity(noon), activity(noon), activity(noon)];
+    finish(42);
+    expect(await Promise.all(calls)).toEqual([42, 42, 42]);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('getRail', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('combines the standing and the activity', async () => {
     const rail = await getRail(7, new Date(), {
       getBoard: async () => ({ rows }),
@@ -135,5 +171,33 @@ describe('getRail', () => {
     });
     expect(rail).toEqual({ standing: null, activity: 5 });
     expect(log).toHaveBeenCalled();
+  });
+
+  it('survives a getBoard that throws synchronously', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const rail = await getRail(7, new Date(), {
+      getBoard: () => {
+        throw new Error('sync');
+      },
+      activity: async () => 5,
+    });
+    expect(rail).toEqual({ standing: null, activity: 5 });
+  });
+
+  it('survives an activity that rejects or throws', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const base = { getBoard: async () => ({ rows }) };
+    const rejected = await getRail(7, new Date(), {
+      ...base,
+      activity: () => Promise.reject(new Error('down')),
+    });
+    expect(rejected).toMatchObject({ standing: { position: 2 }, activity: null });
+    const thrown = await getRail(7, new Date(), {
+      ...base,
+      activity: () => {
+        throw new Error('sync');
+      },
+    });
+    expect(thrown).toMatchObject({ standing: { position: 2 }, activity: null });
   });
 });
