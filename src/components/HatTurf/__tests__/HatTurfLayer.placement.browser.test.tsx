@@ -148,7 +148,7 @@ const CARD = { width: 171, height: 228 };
 
 type Fit = 'contain' | 'cover';
 
-function renderPictures(pictures: [Fit, [number, number]][]) {
+function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
   return renderWithProviders(
     <TurfSummaryContext.Provider
       value={{
@@ -164,7 +164,7 @@ function renderPictures(pictures: [Fit, [number, number]][]) {
     >
       {pictures.map(([fit, natural], i) => (
         <HatTurfCardProvider key={i}>
-          <div data-testid="frame" style={{ position: 'relative', overflow: 'hidden', ...CARD }}>
+          <div data-testid="frame" style={{ position: 'relative', overflow: 'hidden', ...card }}>
             <img
               src={svg(...natural)}
               alt=""
@@ -278,5 +278,17 @@ describe('hat placement against the drawn picture', () => {
     const [tall, wide] = widths;
     expect(tall).toBeGreaterThan(0);
     expect(wide).toBeCloseTo(tall, 0);
+  });
+
+  test('a big image-detail picture caps the hat at 96px', async () => {
+    // 700px wide at the default scale would be a 154px hat.
+    renderPictures([['contain', [700, 500]]], { width: 700, height: 500 });
+    await vi.waitFor(() => {
+      const draft = q('hat-turf-draft');
+      expect(draft).not.toBeNull();
+      // Until the picture has measured, the hat is drawn at the 22px floor.
+      expect(draft!.querySelector('svg')!.getBoundingClientRect().width).toBeGreaterThan(22);
+    });
+    expect(q('hat-turf-draft')!.querySelector('svg')!.getBoundingClientRect().width).toBe(96);
   });
 });
