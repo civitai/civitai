@@ -1,7 +1,7 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { TokenScope, TokenScopePresets } from '@civitai/auth/token-scope';
+import { TokenScope } from '@civitai/auth/token-scope';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import {
@@ -22,12 +22,18 @@ import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 const SYSTEM_ACTOR_ID = -1;
 const MAX_EXPIRY_DAYS = 365;
 
-const READ_SCOPES = Object.fromEntries(
+// Any named scope inside Full. The opt-in bits above Full are left out; NON_USER_SCOPES among them
+// may only be minted by their own grants, never onto a User key.
+const GRANTABLE_SCOPES = Object.fromEntries(
   Object.entries(TokenScope).filter(
-    ([, bit]) => bit !== 0 && (TokenScopePresets.ReadOnly & bit) === bit
+    ([name, bit]) => bit !== 0 && name !== 'Full' && (TokenScope.Full & bit) === bit
   )
 ) as Record<string, number>;
 
+const scopeMask = (names: string[]) =>
+  names.reduce((mask, name) => mask | (GRANTABLE_SCOPES[name] ?? 0), 0);
+
+// Without `scopes` a key stays read-only.
 const DEFAULT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
 
 const schema = z.object({
@@ -42,8 +48,13 @@ const schema = z.object({
   scopes: z
     .array(z.string())
     .min(1)
-    .refine((names) => names.every((name) => Object.hasOwn(READ_SCOPES, name)), {
-      message: `scopes must be read scopes: ${Object.keys(READ_SCOPES).join(', ')}`,
+    .refine((names) => names.every((name) => Object.hasOwn(GRANTABLE_SCOPES, name)), {
+      message: `scopes must be named from: ${Object.keys(GRANTABLE_SCOPES).join(', ')}`,
+    })
+    // A key of exactly Full counts as a full user credential (isFullScopeUserKey), which may mint
+    // further keys outside this route's expiry, rotation and audit.
+    .refine((names) => scopeMask(names) !== TokenScope.Full, {
+      message: 'scopes must not add up to Full',
     })
     .optional(),
   expiresInDays: z.coerce
@@ -83,9 +94,7 @@ export default HeaderTokenSecuredEndpoint(
     const refused = await refusal(userId);
     if (refused) return res.status(refused.status).json({ error: refused.error });
 
-    const tokenScope = scopes
-      ? scopes.reduce((mask, scope) => mask | READ_SCOPES[scope], 0)
-      : DEFAULT_SCOPE;
+    const tokenScope = scopes ? scopeMask(scopes) : DEFAULT_SCOPE;
 
     // Generated here so that a failure inside the insert can still be revoked by hash.
     const key = generateKey();
