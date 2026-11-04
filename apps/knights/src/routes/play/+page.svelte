@@ -181,10 +181,15 @@
   const SETTLE_MS = 250;
   const NOTE_MS = 5000;
 
+  // Primitives, so reloading the page data after a vote (same item, same flags) does not re-run the prefetch and drop a
+  // next item that is already loaded.
+  let currentId = $derived(view?.item.id);
+  let paused = $derived(Boolean(data.lockoutSeconds || data.muted || data.resetPending));
+
   $effect(() => {
-    const current = view?.item.id;
+    const current = currentId;
     ahead = null;
-    if (!current || data.lockoutSeconds || data.muted || data.resetPending) return;
+    if (!current || paused) return;
     const controller = new AbortController();
     const after = tracker.excluded(current).map((token) => `after=${encodeURIComponent(token)}`);
     fetch(`/play/next?${after.join('&')}`, { signal: controller.signal, headers: { accept: 'application/json' } })
@@ -200,7 +205,7 @@
 
   // The server's own view wins whenever it has something to say instead of an item.
   $effect(() => {
-    if (data.lockoutSeconds || data.muted || data.resetPending) local = null;
+    if (paused) local = null;
   });
 
   function tell(message: string) {
