@@ -97,17 +97,20 @@ type Jar = ReturnType<typeof jar>;
 function jar(initial: Record<string, string>) {
   const values = new Map(Object.entries(initial));
   const sets: { name: string; value: string; opts: Record<string, unknown> }[] = [];
+  const deletes: { name: string; opts: Record<string, unknown> }[] = [];
   return {
     values,
     sets,
+    deletes,
     get: (name: string) => values.get(name),
     getAll: () => [...values].map(([name, value]) => ({ name, value })),
     set: (name: string, value: string, opts: Record<string, unknown>) => {
       values.set(name, value);
       sets.push({ name, value, opts });
     },
-    delete: (name: string) => {
+    delete: (name: string, opts: Record<string, unknown> = {}) => {
       values.delete(name);
+      deletes.push({ name, opts });
     },
   };
 }
@@ -670,6 +673,90 @@ describe('an account change in shared mode after /authorize made a host-only cop
     expect(switched.response.status).toBe(200);
     expect(after.session?.sub).toBe('200');
     expect(after.deviceId).toBe('dev-d');
+  });
+});
+
+describe('an account change at the hub in host mode, before the shared-slot session is retired', () => {
+  beforeEach(() => setMode('host'));
+
+  const sharedExpiredAt = (cookies: Jar) =>
+    cookies.deletes
+      .filter((d) => d.name === SHARED())
+      .map((d) => d.opts.domain ?? 'host-only')
+      .sort();
+
+  it('a rollback to shared mode keeps the account signed in at the hub, and its host-only cookie', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    expect((await visit(cookies)).session?.sub).toBe('100');
+
+    await establishSession(cookies as never, asUser(200));
+    const signedIn = cookies.get(HOST());
+    setMode('shared');
+    const after = await visit(cookies);
+
+    expect(claimsOf(signedIn)?.sub).toBe('200');
+    expect({ hub: after.session?.sub, hostCookie: cookies.get(HOST()) }).toEqual({
+      hub: '200',
+      hostCookie: signedIn,
+    });
+    expect(sharedExpiredAt(cookies)).toEqual(['.civitai.com', 'host-only']);
+    expect(h.sys.hashes.get(TOKEN_STATE)?.has('j0')).toBeFalsy();
+  });
+
+  it('an account switch at the hub clears the shared-slot session of the other account', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    await visit(cookies);
+    await h.sys.hSet(accountsOf('dev-d'), '100', String(Date.now()));
+    await h.sys.hSet(accountsOf('dev-d'), '200', String(Date.now()));
+
+    const switched = await visit(cookies, {
+      path: '/api/auth/switch',
+      routeId: '/api/auth/switch',
+      init: {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: 200 }),
+      },
+      run: (event) => switchPost(event) as Promise<Response>,
+    });
+    setMode('shared');
+    const after = await visit(cookies);
+
+    expect(switched.response.status).toBe(200);
+    expect(cookies.get(SHARED())).toBeUndefined();
+    expect(after.session?.sub).toBe('200');
+    expect(cookies.get(SHARED_DEVICE())).toBe('dev-d');
+  });
+
+  it('a sign-in again as the same account keeps the shared-slot session', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+    await visit(cookies);
+
+    await establishSession(cookies as never, asUser(100));
+
+    expect(claimsOf(cookies.get(HOST()))).toMatchObject({ sub: '100', sid: 'j0' });
+    expect(cookies.get(SHARED())).toBe(J0);
+    expect(sharedExpiredAt(cookies)).toEqual([]);
+  });
+
+  it('re-signing a host-only session keeps a shared-slot session of another account', async () => {
+    sharedSession();
+    h.tokens.set('host-token', {
+      sub: '200',
+      jti: 'hj',
+      sid: 'f',
+      signedAt: Date.now() - 2 * DAY_MS,
+    });
+    const cookies = jar({ [HOST()]: 'host-token', [SHARED()]: J0 });
+
+    const locals = await visit(cookies, { init: { headers: { 'sec-fetch-mode': 'navigate' } } });
+
+    expect(locals.session?.sub).toBe('200');
+    expect(cookies.sets.map((s) => s.name)).toEqual([HOST()]);
+    expect(cookies.get(SHARED())).toBe(J0);
   });
 });
 
