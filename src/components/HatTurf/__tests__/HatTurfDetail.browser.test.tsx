@@ -119,6 +119,7 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
             leader: 'blue',
             leaderCosmeticId: 11,
             hatted: false,
+            hattedTeam: null,
           },
         },
         open: { 9: true },
@@ -323,6 +324,7 @@ describe('Hat Turf on image detail', () => {
           leader: 'pink',
           leaderCosmeticId: 11,
           hatted: true,
+          hattedTeam: null,
         },
       },
     });
@@ -372,6 +374,7 @@ describe('Hat Turf on image detail', () => {
           leader: 'blue',
           leaderCosmeticId: 11,
           hatted: false,
+          hattedTeam: null,
         },
       },
     });
@@ -395,6 +398,7 @@ describe('Hat Turf on image detail', () => {
           leader: 'blue',
           leaderCosmeticId: 11,
           hatted: false,
+          hattedTeam: null,
         },
       },
     });

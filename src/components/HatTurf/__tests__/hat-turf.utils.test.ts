@@ -118,7 +118,7 @@ describe('hatTone', () => {
 
 describe('turf pushes', () => {
   const counts = { shown: { blue: 3 }, counted: { blue: 3 }, leader: 'blue', leaderCosmeticId: 5 };
-  const base = { 1: { ...counts, hatted: true } };
+  const base = { 1: { ...counts, hatted: true, hattedTeam: 'green' } };
 
   it('replaces an image’s counts and keeps what the push does not carry', () => {
     const next = applyTurfPush(base, 1, {
@@ -128,9 +128,10 @@ describe('turf pushes', () => {
     });
     expect(next[1].leader).toBe('pink');
     expect(next[1].hatted).toBe(true);
+    expect(next[1].hattedTeam).toBe('green');
   });
   it('adds an image that had no turf, not hatted', () => {
-    expect(applyTurfPush({}, 9, counts)[9]).toEqual({ ...counts, hatted: false });
+    expect(applyTurfPush({}, 9, counts)[9]).toEqual({ ...counts, hatted: false, hattedTeam: null });
   });
   it('removes the image when the last sticker is gone, and is a no-op if it was not there', () => {
     expect(applyTurfPush(base, 1, null)).toEqual({});

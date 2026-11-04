@@ -3,14 +3,14 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
-import { eventPointKeys } from '~/server/events/points/keys';
+import { decodeHat, eventPointKeys } from '~/server/events/points/keys';
 import {
   applyTurfOverride,
   turfConfigKey,
   TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
 } from '~/server/events/turf/config';
-import { refillStock, stepAt } from '~/server/events/turf/schedule';
+import { nextStickerAt, refillStock, stepAt } from '~/server/events/turf/schedule';
 import {
   capTurfMap,
   computeImageTurf,
@@ -116,6 +116,7 @@ export function turfSupplyAt(
   return {
     stock,
     available: Math.floor(stock),
+    nextAt: nextStickerAt(stock, now, step),
     perHour: step?.perHour ?? 0,
     cap: step?.cap ?? 0,
     creditedPlayers: stepAt(event.turf.creditedPlayers, now)?.players ?? 0,
@@ -593,7 +594,8 @@ export async function reconcileAllTurf(now = new Date()) {
 // #region reads
 /**
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
- * protects the image, so its stickers earn nothing until the hat comes off. `open`: for every image
+ * protects the image, so its stickers earn nothing until the hat comes off; `hattedTeam` is that hat's
+ * team. `open`: for every image
  * asked about, whether it can take a new sticker now (visible, owner in Hat Turf); owners may sticker
  * their own. `mine`: whether the viewer has already stickered it, so cannot again. `hidden`: contest
  * entries, which show no Hat Turf at all (no counts, closed).
@@ -631,10 +633,14 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
   const open = Object.fromEntries(
     imageIds.map((id) => [id, openIds.has(id) && !hiddenIds.has(id)])
   );
-  const images: Record<number, TurfCounts & { hatted: boolean }> = {};
+  const images: Record<number, TurfCounts & { hatted: boolean; hattedTeam: string | null }> = {};
   imageIds.forEach((id, i) => {
     if (counts[i] && !hiddenIds.has(id))
-      images[id] = { ...(JSON.parse(counts[i]!) as TurfCounts), hatted: !!hats[i] };
+      images[id] = {
+        ...(JSON.parse(counts[i]!) as TurfCounts),
+        hatted: !!hats[i],
+        hattedTeam: hats[i] ? decodeHat(hats[i]!)?.team ?? null : null,
+      };
   });
   const team = viewerId ? await event.getUserTeam(viewerId).catch(() => null) : null;
   return { team: team ?? null, images, open, mine, hidden };

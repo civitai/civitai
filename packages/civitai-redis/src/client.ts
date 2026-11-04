@@ -2894,6 +2894,8 @@ export const REDIS_SYS_KEYS = {
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
+    // Per judge: `winner>loser` for each vote, so pairs implied by their own votes can be skipped.
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
     SERVED_PAIR: 'crucible:served-pair',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',

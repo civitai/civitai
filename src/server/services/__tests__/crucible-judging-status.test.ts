@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import {
   countJudgingPairs,
   getJudgingStatuses,
@@ -136,7 +137,10 @@ describe('countJudgingPairs', () => {
     const counts = await countJudgingPairs({ crucibleIds: [1, 1], userId: JUDGE, viewerLevel: 1 });
 
     expect(counts.size).toBe(1);
-    expect(redisMock.sysRedis.sMembers).toHaveBeenCalledTimes(1);
+    const votedPairReads = redisMock.sysRedis.sMembers.mock.calls.filter(([key]) =>
+      String(key).startsWith(`${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:`)
+    );
+    expect(votedPairReads).toHaveLength(1);
   });
 
   it('skips the entries query when judgedOnly and nothing is judged', async () => {

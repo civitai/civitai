@@ -207,7 +207,7 @@ export function CreatableMultiSelect({
 
   const handleValueRemove = (val: string) => onChange?.(value.filter((item) => item !== val));
 
-  const addEntries = (text: string) => {
+  const addPastedEntries = (text: string) => {
     const entries = text
       .split(/[\n,]/)
       .map((x) => x.trim())
@@ -284,11 +284,8 @@ export function CreatableMultiSelect({
                       if (hasHighlightedOption) return;
                       // Stay in the field: without this Enter submits the surrounding form.
                       event.preventDefault();
-                      if (search.trim()) {
-                        addEntries(search);
-                        setSearch('');
-                        combobox.closeDropdown();
-                      }
+                      // One entry, commas included, exactly as clicking "+ Create" adds it.
+                      if (search.trim()) handleValueSelect('$create');
                     }
                   }}
                   onPaste={
@@ -297,7 +294,7 @@ export function CreatableMultiSelect({
                           e.preventDefault();
                           e.stopPropagation();
                           const pastedText = e.clipboardData.getData('text');
-                          addEntries(pastedText);
+                          addPastedEntries(pastedText);
                         }
                       : undefined
                   }
