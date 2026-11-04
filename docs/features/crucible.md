@@ -89,6 +89,10 @@ The crucible card and page show how many different people have entered next to t
 
 The entry count on the crucible page is the number of entries its grid lists to the viewer. An entry whose image was deleted, is not yet scanned, is held for review, is unpublished or falls outside the viewer's browsing level is left out, as it is from the grid; the viewer's own entries still count unless their image was deleted. The crucible cards in the feed and the entry cap still count every entry.
 
+## Accepted entries
+
+Other features can act on an entry once it is accepted, for example an event that gives a team points for each entrant. An entry is accepted when judges can see it, checked every two minutes. Crucibles listed for an AI theme review (internal staff config) are not accepted by this check. Only crucibles carrying an event tag a subscriber listens for are swept. When an entry leaves the crucible, every subscriber is told to take it back: at once when a moderator or the owner removes it or the entrant withdraws it, and at the next check when its image or the entrant's account is deleted. An entry that stays in the crucible but is hidden another way (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels) stays accepted; a subscriber that must not count it checks for that itself. Code: `src/server/services/crucible-entry-accepted.ts`.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).
@@ -110,4 +114,4 @@ The creator is notified of new comments from others ("New comments on your cruci
 
 ## Availability
 
-Crucible is behind a feature flag, currently limited to testers. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.
+Crucible is behind a feature flag. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.

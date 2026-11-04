@@ -132,7 +132,7 @@ vi.mock('~/components/Tours/ToursProvider', async (o) => ({
   useTourContext: () => ({ running: false, helpers: undefined }),
 }));
 
-import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { IMAGES_CARD_FOOTER_HEIGHT, ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
@@ -251,5 +251,45 @@ describe('Hat Turf on the /images feed card', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(q('hat-turf-button')).toBeNull();
     }
+  });
+});
+
+// The masonry sizes a card as image + IMAGES_CARD_FOOTER_HEIGHT, so a taller footer takes its
+// excess from the bottom of the picture. Columns are 320px; a phone's single column is its width.
+describe('the /images card footer fits the height the masonry gives it', () => {
+  const reacted = {
+    ...image,
+    stats: {
+      likeCountAllTime: 35,
+      heartCountAllTime: 22,
+      laughCountAllTime: 14,
+      cryCountAllTime: 4,
+      tippedAmountCountAllTime: 30,
+    },
+  };
+  const footerHeight = () =>
+    document.body.querySelector<HTMLElement>('[class*="actionsFooter"]')!.getBoundingClientRect()
+      .height;
+
+  test.each([
+    [288, 'with the hat button', turf()],
+    [320, 'with the hat button', turf()],
+    [358, 'with the hat button', turf()],
+    [320, 'without Hat Turf', null],
+  ])('a %ipx card with four reaction counts and a tip, %s', async (width, _, value) => {
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={value}>
+        <IntersectionObserverProvider>
+          <div style={{ width }}>
+            <ImagesCard data={reacted} height={400} />
+          </div>
+        </IntersectionObserverProvider>
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() =>
+      expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(3)
+    );
+    if (value) await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
   });
 });

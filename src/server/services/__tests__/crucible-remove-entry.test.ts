@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as CrucibleEntryAccepted from '~/server/services/crucible-entry-accepted';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PostService from '~/server/services/post.service';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
@@ -14,6 +15,12 @@ const getTransactionByExternalId = vi.fn();
 const refundTransaction = vi.fn();
 const createNotification = vi.fn();
 const afterPostsPublish = vi.fn();
+const revokeCrucibleEntry = vi.fn();
+
+vi.mock('~/server/services/crucible-entry-accepted', async (importOriginal) => ({
+  ...(await importOriginal<typeof CrucibleEntryAccepted>()),
+  revokeCrucibleEntry,
+}));
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -144,6 +151,13 @@ describe('removeCrucibleEntry', () => {
     );
   });
 
+  it('takes the removed entry back from whatever accepted it', async () => {
+    await remove();
+
+    expect(revokeCrucibleEntry).toHaveBeenCalledTimes(1);
+    expect(revokeCrucibleEntry).toHaveBeenCalledWith({ entryId: 5, crucibleId: 7, userId: 42 });
+  });
+
   it('keeps the entry, so the moderator can try again, when the refund fails', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
 
@@ -154,6 +168,7 @@ describe('removeCrucibleEntry', () => {
     expect(dbMock.dbWrite.crucibleEntry.delete).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.crucibleEntry.deleteMany).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
+    expect(revokeCrucibleEntry).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',
