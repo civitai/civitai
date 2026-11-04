@@ -4,17 +4,19 @@ import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import * as yauzl from 'yauzl';
+import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
 import { isTrainingMediaEntry } from '~/utils/training';
 
 /**
  * A send whose files come from a URL or a zip writes each one to disk as it streams in, so a file is
- * held in memory only while it is uploaded (the CyberTip client's upload reads its File whole), one at
- * a time. Every byte is counted as it actually arrives or inflates, not as a header declares: one file
- * may not pass MAX_SPOOL_FILE_BYTES, nor one report's files together MAX_SPOOL_BYTES_PER_REPORT.
+ * held in memory only while it is uploaded, one at a time. Bytes are counted as they arrive or
+ * inflate, never as a header declares.
  */
 export const MAX_SPOOL_BYTES_PER_REPORT = 1024 ** 3;
-/** As a preserved evidence file may be (MAX_EVIDENCE_BYTES). */
-export const MAX_SPOOL_FILE_BYTES = 256 * 1024 * 1024;
+export const MAX_SPOOL_FILE_BYTES = MAX_EVIDENCE_BYTES;
+/** A downloaded archive is one file on disk, never read whole: only what it inflates to is sent. */
+export const MAX_ARCHIVE_BYTES = 4 * 1024 ** 3;
+export const MAX_SPOOL_ENTRIES_PER_REPORT = 2_000;
 
 export class SpoolLimitError extends Error {
   constructor(message: string) {
@@ -23,11 +25,30 @@ export class SpoolLimitError extends Error {
   }
 }
 
-export type SpoolBudget = { used: number; readonly cap: number; readonly fileCap: number };
+export type SkippedEntry = { name: string; reason: 'empty' | 'unreadable'; error?: string };
+export type SpoolBudget = {
+  used: number;
+  readonly cap: number;
+  readonly fileCap: number;
+  /** Media entries met across the report's archives, sent or skipped. */
+  entries: number;
+  skipped: SkippedEntry[];
+};
 export const spoolBudget = (
   cap = MAX_SPOOL_BYTES_PER_REPORT,
   fileCap = Math.min(cap, MAX_SPOOL_FILE_BYTES)
-): SpoolBudget => ({ used: 0, cap, fileCap });
+): SpoolBudget => ({ used: 0, cap, fileCap, entries: 0, skipped: [] });
+
+/** What a report's details record of the entries its send skipped, or undefined for none. */
+export function skippedEntries({ skipped }: SpoolBudget) {
+  if (!skipped.length) return;
+  return {
+    count: skipped.length,
+    empty: skipped.filter(({ reason }) => reason === 'empty').length,
+    unreadable: skipped.filter(({ reason }) => reason === 'unreadable').length,
+    examples: skipped.slice(0, 10),
+  };
+}
 
 export type SpooledFile = { path: string; filename: string; type: string };
 
@@ -80,19 +101,24 @@ export async function spoolUrl(url: string, file: string, budget: SpoolBudget) {
 }
 
 /**
- * Each media entry of the zip at `zipFile`, inflated into `dir` one at a time, named there by its
- * position so no name from the archive reaches the file system. Untyped, as an entry read whole is.
+ * Each media entry of the zip at `zipFile`, inflated into `dir` one at a time and named there by its
+ * position, so no name from the archive reaches the file system. An entry that is empty or cannot be
+ * inflated is skipped and recorded on the budget; only the budget's caps fail the archive. Untyped,
+ * as an entry read whole is.
  */
 export async function spoolZip(zipFile: string, dir: string, budget: SpoolBudget) {
   const zip = await new Promise<yauzl.ZipFile>((resolve, reject) =>
     yauzl.open(
       zipFile,
-      // The declared sizes are not trusted to bound what inflates: the budget counts what comes out.
-      { lazyEntries: true, autoClose: false, validateEntrySizes: false },
+      // Undecoded, so yauzl refuses no name ("..", "/x", "C:x"): one entry named so would otherwise
+      // fail the whole archive. Declared sizes bound nothing either: the budget counts what inflates.
+      { lazyEntries: true, autoClose: false, validateEntrySizes: false, decodeStrings: false },
       (error, opened) => (error || !opened ? reject(error) : resolve(opened))
     )
   );
   const files: SpooledFile[] = [];
+  const skip = (name: string, reason: SkippedEntry['reason'], error?: string) =>
+    budget.skipped.push({ name: name.slice(0, 256), reason, ...(error && { error }) });
   try {
     for (;;) {
       const entry = await new Promise<yauzl.Entry | null>((resolve, reject) => {
@@ -107,15 +133,38 @@ export async function spoolZip(zipFile: string, dir: string, budget: SpoolBudget
         zip.readEntry();
       });
       if (!entry) break;
-      if (!isTrainingMediaEntry(entry.fileName)) continue;
-      const stream = await new Promise<Readable>((resolve, reject) =>
-        zip.openReadStream(entry, (error, readable) =>
-          error || !readable ? reject(error) : resolve(readable)
-        )
+      const filename = yauzl.getFileNameLowLevel(
+        entry.generalPurposeBitFlag,
+        entry.fileNameRaw,
+        entry.extraFields,
+        false
       );
+      if (!isTrainingMediaEntry(filename)) continue;
+      if (++budget.entries > MAX_SPOOL_ENTRIES_PER_REPORT)
+        throw new SpoolLimitError(
+          `its archives hold more than ${MAX_SPOOL_ENTRIES_PER_REPORT} files`
+        );
+      // A skipped entry's file is removed, so the next one may take its name.
       const file = path.join(dir, `entry-${files.length}`);
-      await spoolStream(stream, file, budget);
-      files.push({ path: file, filename: entry.fileName, type: '' });
+      try {
+        const stream = await new Promise<Readable>((resolve, reject) =>
+          zip.openReadStream(entry, (error, readable) =>
+            error || !readable ? reject(error) : resolve(readable)
+          )
+        );
+        await spoolStream(stream, file, budget);
+      } catch (e) {
+        if (e instanceof SpoolLimitError) throw e;
+        await fs.promises.rm(file, { force: true });
+        skip(filename, 'unreadable', (e as Error).message);
+        continue;
+      }
+      if ((await fs.promises.stat(file)).size === 0) {
+        await fs.promises.rm(file);
+        skip(filename, 'empty');
+        continue;
+      }
+      files.push({ path: file, filename, type: '' });
     }
   } finally {
     zip.close();

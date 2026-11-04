@@ -329,7 +329,11 @@ beforeEach(() => {
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
-    const sql = strings.map((part, i) => (i ? `$${i}` : '') + part).join('');
+    const sql = strings
+      .map((part, i) => (i ? `$${i}` : '') + part)
+      .join('')
+      // Prisma sends an id list typed; PGlite cannot infer it.
+      .replace(/UNNEST\((\$\d+)\)/g, 'UNNEST($1::int[])');
     return (await db.pg.query(sql, values)).affectedRows ?? 0;
   }) as never);
 });
@@ -1041,15 +1045,6 @@ describe('an open whose answer cannot be read', () => {
     const id = await sendEvidenceReport(evidenceDetails());
     submitReport.mockReset().mockResolvedValue({ data: { reportId: 900 } });
 
-    const execute = dbMock.dbWrite.$executeRaw.getMockImplementation()!;
-    const activity: unknown[][] = [];
-    dbMock.dbWrite.$executeRaw.mockImplementation(((
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) =>
-      strings.join('').includes('"ModActivity"')
-        ? (activity.push(values), 1)
-        : execute(strings, ...values)) as never);
     await clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' });
     await processCsamReport(await readRow(id));
 
@@ -1060,7 +1055,63 @@ describe('an open whose answer cannot be read', () => {
     expect(row.details.clearedUnconfirmedOpens).toMatchObject([
       { clearedById: 10, note: 'checked with NCMEC' },
     ]);
-    expect(activity).toEqual([[10, 'csamReport', 'csamReport:clearUnconfirmedOpen', [id]]]);
+    const { rows: activity } = await db.pg.query(
+      `SELECT "userId", "entityType", activity FROM "ModActivity" WHERE "entityId" = $1`,
+      [id]
+    );
+    expect(activity).toEqual([
+      { userId: 10, entityType: 'csamReport', activity: 'csamReport:clearUnconfirmedOpen' },
+    ]);
+  });
+
+  it('holds the report even when the run lost its claim during the open', async () => {
+    const id = await insertEvidenceReport(evidenceDetails());
+    views = viewsOf(id);
+    // Another run takes the report while this one waits on NCMEC, then its claim expires.
+    submitReport.mockImplementation(async () => {
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "sendClaimId" = '00000000-0000-4000-8000-000000000002', "sendClaimedAt" = $2 WHERE id = $1`,
+        [id, new Date(Date.now() - 6 * 3_600_000)]
+      );
+      throw new Error('Response "reportId" must be a number, got: string');
+    });
+
+    await processCsamReport(await readRow(id));
+    await processCsamReport(await readRow(id));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect((await readRow(id)).details.unconfirmedOpens).toHaveLength(1);
+  });
+
+  const heldWithClaim = async (claimedHoursAgo: number) => {
+    const id = await insertEvidenceReport({
+      ...evidenceDetails(),
+      unconfirmedOpens: [{ at: '2026-11-03T00:00:00Z', message: 'unreadable' }],
+    });
+    await db.pg.query(
+      `UPDATE "CsamReport" SET "sendClaimId" = '00000000-0000-4000-8000-000000000003', "sendClaimedAt" = $2 WHERE id = $1`,
+      [id, new Date(Date.now() - claimedHoursAgo * 3_600_000)]
+    );
+    return id;
+  };
+
+  it('refuses to clear while a send run holds the report', async () => {
+    const id = await heldWithClaim(0);
+
+    await expect(
+      clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect((await readRow(id)).details.unconfirmedOpens).toHaveLength(1);
+  });
+
+  it('takes the report from a run whose claim expired, so nothing it writes lands after the clear', async () => {
+    const id = await heldWithClaim(6);
+
+    await clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' });
+
+    const row = await readRow(id);
+    expect(row.details.unconfirmedOpens).toBeUndefined();
+    expect(row.sendClaimId).toBeNull();
   });
 
   it('refuses to clear a report that is not held', async () => {

@@ -4,7 +4,9 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  MAX_SPOOL_ENTRIES_PER_REPORT,
   SpoolLimitError,
+  skippedEntries,
   spoolBudget,
   spooledFile,
   spoolUrl,
@@ -29,6 +31,15 @@ async function zipFile(name: string, entries: Record<string, Buffer | string>) {
   for (const [entry, bytes] of Object.entries(entries)) zip.file(entry, bytes);
   const file = join(dir, name);
   writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  return file;
+}
+
+/** The zip with its named entry's compressed bytes overwritten, so that entry no longer inflates. */
+function corrupt(file: string, entry: string) {
+  const bytes = readFileSync(file);
+  const at = bytes.indexOf(Buffer.from(entry)) + entry.length;
+  bytes.fill(0xff, at, at + 8);
+  writeFileSync(file, bytes);
   return file;
 }
 
@@ -84,6 +95,67 @@ describe('a zip', () => {
     expect(Buffer.from(await (await spooledFile(files[0])).arrayBuffer()).toString()).toBe(
       'png bytes'
     );
+  });
+});
+
+describe("a zip's entries", () => {
+  it('are kept under names yauzl would refuse, which never reach the file system', async () => {
+    const out = mkdtempSync(join(dir, 'out-'));
+    const zip = await zipFile('names.zip', {
+      '../x.txt': 'not media',
+      '/abs.jpg': 'abs bytes',
+      'C:\\y.jpg': 'drive bytes',
+      'ok.png': 'png bytes',
+    });
+
+    const files = await spoolZip(zip, out, spoolBudget(CAP));
+
+    expect(files.map(({ filename }) => filename)).toEqual(['/abs.jpg', 'C:/y.jpg', 'ok.png']);
+    expect(readdirSync(out).sort()).toEqual(['entry-0', 'entry-1', 'entry-2']);
+    expect(readFileSync(files[2].path, 'utf8')).toBe('png bytes');
+  });
+
+  it('skip and record one that is empty or does not inflate, and keep the rest', async () => {
+    const out = mkdtempSync(join(dir, 'out-'));
+    const zip = corrupt(
+      await zipFile('mixed.zip', {
+        'empty.png': '',
+        'broken.png': Buffer.alloc(4096, 7),
+        'ok.png': 'png bytes',
+      }),
+      'broken.png'
+    );
+    const budget = spoolBudget(CAP);
+
+    const files = await spoolZip(zip, out, budget);
+
+    expect(files.map(({ filename }) => filename)).toEqual(['ok.png']);
+    expect(readdirSync(out)).toEqual(['entry-0']);
+    expect(skippedEntries(budget)).toMatchObject({
+      count: 2,
+      empty: 1,
+      unreadable: 1,
+      examples: [
+        { name: 'empty.png', reason: 'empty' },
+        { name: 'broken.png', reason: 'unreadable', error: expect.any(String) },
+      ],
+    });
+  });
+
+  it('fail the report past the entry cap, counted across its zips', async () => {
+    const half = Object.fromEntries(
+      Array.from({ length: MAX_SPOOL_ENTRIES_PER_REPORT / 2 }, (_, i) => [`${i}.png`, ''])
+    );
+    const budget = spoolBudget(CAP);
+
+    await spoolZip(await zipFile('a.zip', half), mkdtempSync(join(dir, 'a-')), budget);
+    await expect(
+      spoolZip(
+        await zipFile('b.zip', { ...half, 'one-more.png': 'x' }),
+        mkdtempSync(join(dir, 'b-')),
+        budget
+      )
+    ).rejects.toThrow(`more than ${MAX_SPOOL_ENTRIES_PER_REPORT} files`);
   });
 });
 

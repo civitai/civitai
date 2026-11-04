@@ -92,9 +92,15 @@ import type {
   UnconfirmedOpen,
 } from '~/server/services/csam-unconfirmed-open';
 import { isUnreadableAnswer } from '~/server/services/csam-unconfirmed-open';
-import type { SpooledFile } from '~/server/services/csam-evidence-spool';
 import {
+  CSAM_SEND_CLAIM_EXPIRY_SECONDS,
+  csamSendClaimCutoff,
+} from '~/server/services/csam-send-claim';
+import type { SpoolBudget, SpooledFile } from '~/server/services/csam-evidence-spool';
+import {
+  MAX_ARCHIVE_BYTES,
   SpoolLimitError,
+  skippedEntries,
   spoolBudget,
   spooledFile,
   spoolStream,
@@ -652,15 +658,7 @@ export async function logOverdueEvidenceApprovals() {
   }
 }
 
-/**
- * How long a send run's claim on a report holds. Longer than the send job's lock, so a run that
- * still holds the lock never loses its report to the next run.
- */
-export const CSAM_SEND_CLAIM_EXPIRY_SECONDS = 5 * 60 * 60;
-
-/** A claim taken before this time has expired: another run may take the report, and a filing fold into it. */
-export const csamSendClaimCutoff = () =>
-  new Date(Date.now() - CSAM_SEND_CLAIM_EXPIRY_SECONDS * 1000);
+export { CSAM_SEND_CLAIM_EXPIRY_SECONDS, csamSendClaimCutoff };
 
 type SendClaim = {
   claimId: string;
@@ -777,6 +775,32 @@ async function recordReadFailures(claim: SendClaim, readFailures: Record<string,
     UPDATE "CsamReport"
     SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || jsonb_build_object('readFailures', ${JSON.stringify(
       readFailures
+    )}::jsonb)
+    WHERE id = ${claim.report.id} AND "sendClaimId" = ${
+    claim.claimId
+  }::uuid AND "reportSentAt" IS NULL
+  `;
+}
+
+/** Archive entries skipped as empty or unreadable: the report is sent without them, and says so. */
+async function recordSkippedEntries(claim: SendClaim, budget: SpoolBudget) {
+  const skipped = skippedEntries(budget);
+  if (!skipped) return;
+  logSendLine(
+    claim,
+    'send-entries-skipped',
+    {
+      message: `report ${claim.report.id} skips ${skipped.count} archive entries`,
+      empty: skipped.empty,
+      unreadable: skipped.unreadable,
+    },
+    'error'
+  );
+  if (!isProd) return;
+  await dbWrite.$executeRaw`
+    UPDATE "CsamReport"
+    SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || jsonb_build_object('skippedArchiveEntries', ${JSON.stringify(
+      skipped
     )}::jsonb)
     WHERE id = ${claim.report.id} AND "sendClaimId" = ${
     claim.claimId
@@ -936,10 +960,16 @@ async function holdUnconfirmedOpen(claim: SendClaim, e: Error) {
   logSendLine(claim, 'send-decision-needed', { message }, 'error');
   if (!isProd) return;
   const open: UnconfirmedOpen = { at: new Date().toISOString(), message: e.message };
-  await updateUnderClaim(claim, 'open-unconfirmed', {}, (details) => ({
-    ...details,
-    unconfirmedOpens: [...(details.unconfirmedOpens ?? []), open],
-  }));
+  // Appended in one statement and not under the claim: a run that lost its claim mid-open must still
+  // hold the report, or the next run opens again.
+  await dbWrite.$executeRaw`
+    UPDATE "CsamReport"
+    SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || jsonb_build_object(
+      'unconfirmedOpens',
+      COALESCE(details->'unconfirmedOpens', '[]'::jsonb) || ${JSON.stringify([open])}::jsonb
+    )
+    WHERE id = ${claim.report.id} AND "reportSentAt" IS NULL
+  `;
 }
 
 function logHeldOnUnconfirmedOpen(claim: SendClaim) {
@@ -1426,13 +1456,12 @@ async function reportGenerationData(claim: SendClaim) {
   if (!generatedImages?.length)
     return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
-  // Each run's own, so no run reads or removes another's.
+  // Named by claim, so two runs never share a scratch directory.
   const dir = `${baseDir}/generated-send/${report.id}-${claim.claimId}`;
   createDir(dir);
   try {
     await sendGenerationData(claim, initialReport, generatedImages, dir);
   } finally {
-    // A scratch copy of the fetched files: every run fetches its own.
     if (fs.existsSync(dir)) removeDir(dir);
   }
 }
@@ -1665,22 +1694,26 @@ async function reportTrainingData(claim: SendClaim) {
   if (!version)
     return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
-  // Each run's own, so no run (nor the archive's copy) reads or removes another's.
   const dir = `${baseDir}/training-data/${report.id}-${claim.claimId}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
 
   createDir(dir);
   try {
     // Downloaded and read before the CyberTip is opened, so a report that cannot be sent opens none.
+    const inflated = spoolBudget();
     let files: SpooledFile[];
     try {
       const zipStream = await getTrainingDataZipStream({
         reportedById: report.reportedById,
         versionId: version.id,
       });
-      await spoolStream(Readable.from(zipStream), outPath, spoolBudget());
+      await spoolStream(
+        Readable.from(zipStream),
+        outPath,
+        spoolBudget(MAX_ARCHIVE_BYTES, MAX_ARCHIVE_BYTES)
+      );
       createDir(`${dir}/entries`);
-      files = await spoolZip(outPath, `${dir}/entries`, spoolBudget());
+      files = await spoolZip(outPath, `${dir}/entries`, inflated);
     } catch (e) {
       if (e instanceof SpoolLimitError)
         return logSendFailure(
@@ -1690,6 +1723,7 @@ async function reportTrainingData(claim: SendClaim) {
         );
       return logSendFailure(report, e, 'archive-data');
     }
+    await recordSkippedEntries(claim, inflated);
     if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
 
     const fileDetailsOf = (filename: string) =>
@@ -1719,7 +1753,6 @@ async function reportTrainingData(claim: SendClaim) {
       beforeCancel: async () => sending?.settled(),
     });
   } finally {
-    // A scratch copy of the stored training data: every run downloads its own.
     if (fs.existsSync(dir)) removeDir(dir);
   }
 }
@@ -1769,7 +1802,6 @@ async function reportExternalLink(claim: SendClaim) {
   if (details.additionalInfo) reportInfo.push(details.additionalInfo);
   reportInfo.push('All evidence in this report should be independently verified.');
 
-  // Each run's own, so no run reads or removes another's.
   const dir = `${baseDir}/external-send/${report.id}-${claim.claimId}`;
   createDir(dir);
   try {
@@ -1782,7 +1814,6 @@ async function reportExternalLink(claim: SendClaim) {
       userId: report.userId,
     });
   } finally {
-    // A scratch copy of the stored zips: every run downloads its own.
     if (fs.existsSync(dir)) removeDir(dir);
   }
 }
@@ -1832,6 +1863,7 @@ async function sendExternalLink(
       );
     return logSendFailure(report, e, 'archive-data');
   }
+  await recordSkippedEntries(claim, inflated);
 
   // External CSAM is usually real (non-AI) imagery, so generativeAi is
   // opt-in here rather than defaulted to true like the in-app flows.
@@ -1970,12 +2002,16 @@ export async function uploadExternalCsamEvidence({
   return { bucketKey, filename };
 }
 
-/** An object in the CSAM bucket written to `file`, under its own cap. */
+/** An object in the CSAM bucket written to `file`, under the archive cap. */
 async function downloadCsamBucketObject(key: string, file: string) {
   const { client, Bucket } = getCsamBucket();
   const response = await client.send(new GetObjectCommand({ Bucket, Key: key }));
   if (!response.Body) throw new Error('failed to download evidence from CSAM bucket');
-  await spoolStream(response.Body as Readable, file, spoolBudget());
+  await spoolStream(
+    response.Body as Readable,
+    file,
+    spoolBudget(MAX_ARCHIVE_BYTES, MAX_ARCHIVE_BYTES)
+  );
 }
 
 const spoolLimitMessage = (reportId: number, e: SpoolLimitError) =>

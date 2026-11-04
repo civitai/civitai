@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import JSZip from 'jszip';
 import { Readable } from 'stream';
 import { Parser } from 'xml2js';
+import { crc32 } from 'zlib';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -52,7 +53,13 @@ const {
 
 vi.mock('~/server/services/csam-evidence-spool', async (importOriginal) => {
   const actual = await importOriginal<typeof EvidenceSpool>();
-  return { ...actual, spoolBudget: () => actual.spoolBudget(spoolCap.bytes) };
+  return {
+    ...actual,
+    spoolBudget: (...caps: Parameters<typeof actual.spoolBudget>) =>
+      spoolCap.bytes === undefined
+        ? actual.spoolBudget(...caps)
+        : actual.spoolBudget(spoolCap.bytes),
+  };
 });
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
@@ -108,6 +115,7 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 
 import { buildReport, buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 import type * as EvidenceSpool from '~/server/services/csam-evidence-spool';
+import { MAX_SPOOL_FILE_BYTES } from '~/server/services/csam-evidence-spool';
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import { processCsamReport as processClaimedReport } from '~/server/services/csam.service-new';
 import { env } from '~/env/server';
@@ -450,6 +458,121 @@ describe('XML NCMEC would refuse', () => {
     expect(lines('send-decision-needed')).toEqual([
       expect.objectContaining({ ncmecReportId: 4242 }),
     ]);
+  });
+});
+
+const MiB = 1024 * 1024;
+/**
+ * A stored zip, streamed as it is built, holding `stored` as a.png beside `pad` zero bytes in a file
+ * that is not media: an archive that passes `pad` bytes and sends one small image.
+ */
+async function* paddedZip(pad: number) {
+  const zeros = Buffer.alloc(MiB);
+  const padChunks = function* () {
+    for (let left = pad; left > 0; left -= MiB) yield left >= MiB ? zeros : zeros.subarray(0, left);
+  };
+  let padCrc = 0;
+  for (const chunk of padChunks()) padCrc = crc32(chunk, padCrc);
+  const entries = [
+    { name: Buffer.from('a.png'), size: stored.length, crc: crc32(stored), body: [stored] },
+    { name: Buffer.from('pad.bin'), size: pad, crc: padCrc, body: padChunks() },
+  ];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const { name, size, crc, body } of entries) {
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(size, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(name.length, 26);
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(20, 6);
+    header.writeUInt32LE(crc, 16);
+    header.writeUInt32LE(size, 20);
+    header.writeUInt32LE(size, 24);
+    header.writeUInt16LE(name.length, 28);
+    header.writeUInt32LE(offset, 42);
+    central.push(header, name);
+    yield Buffer.concat([local, name]);
+    yield* body;
+    offset += local.length + name.length + size;
+  }
+  const directory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  yield directory;
+  yield end;
+}
+
+describe('an archive past the per-file cap, at the real caps', () => {
+  const PAD = MAX_SPOOL_FILE_BYTES + MiB;
+  const sentWhole = () => {
+    expect(lines('evidence-too-large')).toEqual([]);
+    expect(markedSent()).toBe(true);
+    expect(fileDetailsSent()).toEqual([expect.objectContaining({ originalFileName: 'a.png' })]);
+  };
+
+  it('is sent as training data', async () => {
+    serveTrainingData(Buffer.alloc(0));
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(ReadableStream.from(paddedZip(PAD)))
+    );
+
+    await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
+
+    sentWhole();
+  });
+
+  it('is sent as external evidence', async () => {
+    serveCsamBucket({});
+    csamBucketObject.mockImplementation(async () => ({ Body: Readable.from(paddedZip(PAD)) }));
+
+    await processCsamReport(
+      report('ExternalLink', {
+        email: 'x@example.invalid',
+        evidence: { bucketKey: 'evidence-key', filename: 'evidence.zip' },
+      })
+    );
+
+    sentWhole();
+  });
+});
+
+describe('an archive with entries yauzl would refuse by name, or that are empty', () => {
+  it('is sent with every image it holds, and records what it skipped', async () => {
+    const zip = new JSZip();
+    zip.file('../x.txt', 'not media');
+    zip.file('/abs.jpg', stored);
+    zip.file('C:\\y.jpg', stored);
+    zip.file('empty.png', '');
+    zip.file('ok.png', stored);
+    serveTrainingData(await zip.generateAsync({ type: 'nodebuffer' }));
+
+    await processCsamReport(report('TrainingData', { modelVersionIds: [7] }));
+
+    expect(markedSent()).toBe(true);
+    expect(fileDetailsSent().map(({ originalFileName }) => originalFileName)).toEqual([
+      '/abs.jpg',
+      'C:/y.jpg',
+      'ok.png',
+    ]);
+    const recorded = dbMock.dbWrite.$executeRaw.mock.calls.find(([strings]) =>
+      strings.join('').includes('skippedArchiveEntries')
+    );
+    expect(JSON.parse(recorded?.[1] as string)).toMatchObject({
+      count: 1,
+      empty: 1,
+      unreadable: 0,
+    });
+    expect(lines('send-entries-skipped')).toHaveLength(1);
   });
 });
 

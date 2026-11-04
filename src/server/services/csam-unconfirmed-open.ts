@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
+import { csamSendClaimCutoff } from '~/server/services/csam-send-claim';
 import { trackModActivity } from '~/server/services/moderator.service';
 
 /**
@@ -22,15 +23,25 @@ export const isUnreadableAnswer = (e: unknown) =>
 
 export const clearUnconfirmedOpenActivity = 'csamReport:clearUnconfirmedOpen' as const;
 
-/** Lets an unsent report held on an unconfirmed open be sent again, recording who cleared it and why. */
+/**
+ * Lets an unsent report held on an unconfirmed open be sent again, recording who cleared it and why.
+ * Refused while a send run holds the report. A run whose claim has expired loses it here, so nothing
+ * it writes later can put back what this clears.
+ */
 export async function clearUnconfirmedOpens(input: {
   reportId: number;
   moderatorId: number;
   note: string;
 }) {
   return dbWrite.$transaction(async (tx) => {
-    const [row] = await tx.$queryRaw<{ details: Record<string, unknown> | null }[]>`
-      SELECT details FROM "CsamReport"
+    const [row] = await tx.$queryRaw<
+      {
+        details: Record<string, unknown> | null;
+        sendClaimId: string | null;
+        sendClaimedAt: Date | null;
+      }[]
+    >`
+      SELECT details, "sendClaimId", "sendClaimedAt" FROM "CsamReport"
       WHERE id = ${input.reportId} AND "reportSentAt" IS NULL
       FOR UPDATE
     `;
@@ -40,6 +51,11 @@ export async function clearUnconfirmedOpens(input: {
       throw new TRPCError({
         code: 'NOT_FOUND',
         message: 'This report is not held on an unconfirmed CyberTip.',
+      });
+    if (row.sendClaimId && row.sendClaimedAt && row.sendClaimedAt >= csamSendClaimCutoff())
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'A send run holds this report. Try again once it finishes.',
       });
     const clearedAt = new Date().toISOString();
     const cleared: ClearedUnconfirmedOpen[] = held.map((open) => ({
@@ -52,6 +68,8 @@ export async function clearUnconfirmedOpens(input: {
     await tx.csamReport.update({
       where: { id: input.reportId },
       data: {
+        sendClaimId: null,
+        sendClaimedAt: null,
         details: {
           ...rest,
           clearedUnconfirmedOpens: [
