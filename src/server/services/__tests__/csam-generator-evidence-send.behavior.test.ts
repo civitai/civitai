@@ -98,7 +98,9 @@ import {
   MAX_GENERATION_LINE_CHARS,
   TRUNCATION_MARKER,
 } from '~/server/services/generator-evidence/evidence-payload';
+import { evidenceVersion } from '~/server/services/generator-evidence/evidence-meta';
 import {
+  approveGeneratorEvidenceReport,
   excludeGeneratorEvidenceFile,
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
@@ -706,7 +708,7 @@ describe('a file a moderator excluded', () => {
     expect(submitFileDetails.mock.calls.map(([d]) => d.originalFileName)).toEqual([INPUT]);
   });
 
-  describe('changing a file of a report that is sent or being sent', () => {
+  describe('changing or approving a report that is sent or being sent', () => {
     const config = {
       base: 'https://orchestrator.example.invalid',
       origin: 'https://orchestrator.example.invalid',
@@ -737,12 +739,12 @@ describe('a file a moderator excluded', () => {
       return rows[0] ?? null;
     };
 
-    async function seedReport(state: 'unsent' | 'sent' | 'claimed') {
+    async function seedReport(state: 'unsent' | 'sent' | 'claimed', details = evidenceDetails()) {
       const { rows } = await db.pg.query<{ id: number }>(
         `INSERT INTO "CsamReport" ("userId", "reportedById", "type", "details", "reportSentAt", "sendClaimId", "sendClaimedAt")
          VALUES (20, 10, 'GeneratedImage', $1::jsonb, $2, $3, $4) RETURNING id`,
         [
-          JSON.stringify(evidenceDetails()),
+          JSON.stringify(details),
           state === 'sent' ? new Date() : null,
           state === 'claimed' ? '00000000-0000-4000-8000-000000000001' : null,
           state === 'claimed' ? new Date() : null,
@@ -792,6 +794,63 @@ describe('a file a moderator excluded', () => {
         });
         expect(await outputStatus(id)).toBe('preserved');
       });
+
+    const unapproved = evidenceDetails({ approved: false });
+    const approval = (reportId: number, userId = 20) =>
+      approveGeneratorEvidenceReport({
+        reportId,
+        userId,
+        moderatorId: 10,
+        version: evidenceVersion(unapproved as never),
+      });
+    const approvedById = async (id: number) =>
+      ((await readRow(id)).details as unknown as ReturnType<typeof evidenceDetails>)
+        .generatorEvidence.approvedById;
+
+    it('approves an unsent, unclaimed report (control)', async () => {
+      const id = await seedReport('unsent', unapproved);
+      await expect(approval(id)).resolves.toEqual({ approved: true });
+      expect(await approvedById(id)).toBe(10);
+    });
+
+    for (const state of ['sent', 'claimed'] as const)
+      it(`refuses to approve a ${state} report`, async () => {
+        const id = await seedReport(state, unapproved);
+        await expect(approval(id)).rejects.toMatchObject({ code: 'CONFLICT' });
+        expect(await approvedById(id)).toBeUndefined();
+      });
+
+    it("refuses to approve another user's report", async () => {
+      const id = await seedReport('unsent', unapproved);
+      await expect(approval(id, 21)).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await approvedById(id)).toBeUndefined();
+    });
+  });
+});
+
+describe('a file one workflow preserved and others could not read', () => {
+  it('is sent, and NCMEC is not told it is missing', async () => {
+    const details = evidenceDetails();
+    const [job] = details.generatedImages;
+    const output = job.blobs.find((b) => b.blobId === OUTPUT)!;
+    for (const [n, status] of [
+      [21, 'unavailable'],
+      [22, 'blocked-unreadable'],
+    ] as const)
+      details.generatedImages.push({
+        ...job,
+        jobId: `${n}-20261102000000000000`,
+        workflowId: `${n}-20261102000000000000`,
+        blobs: [{ ...output, status }],
+      });
+
+    await sendEvidenceReport(details);
+
+    expect(submitFileDetails.mock.calls.map(([d]) => d.originalFileName)).toContain(OUTPUT);
+    // The fixture's own withheld file is the only one counted.
+    const info: string = submitReport.mock.calls[0][0].additionalInfo ?? '';
+    expect(info).toMatch(/^1 generated file\(s\) were withheld/m);
+    expect(info).not.toMatch(/file\(s\) could not be read for this report/);
   });
 });
 

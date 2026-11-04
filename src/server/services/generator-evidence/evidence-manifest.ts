@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import type { TriggerRef } from '~/server/services/generator-evidence/evidence-meta';
 import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
 import { workflowOwnerId } from '~/server/services/generator-evidence/evidence-refs';
@@ -17,6 +18,7 @@ export type AdoptableCopy = {
 const MANIFEST_KEY =
   /^([A-Za-z0-9][A-Za-z0-9._-]{0,99})\/(\d{1,10})\/manifest-[0-9A-Za-z]{1,32}\.jsonl$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+export const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 const RESERVED_PREFIXES = new Set(['external-reports', 'generator-evidence']);
 
 const str = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
@@ -29,6 +31,22 @@ export function manifestUserId(key: string) {
   return { prefix: `${match[1]}/${match[2]}/`, userId: Number(match[2]) };
 }
 
+const notThisUsers = () =>
+  new TRPCError({ code: 'BAD_REQUEST', message: 'This manifest is not one of this user.' });
+
+/** The manifest's text, read only when its key is this user's and its size is within the cap. */
+export async function readManifest(store: EvidenceStore, key: string, userId: number) {
+  if (manifestUserId(key)?.userId !== userId) throw notThisUsers();
+  const head = await store.head(key);
+  if (!head) throw new TRPCError({ code: 'NOT_FOUND', message: 'No manifest at this key.' });
+  if (head.bytes > MAX_MANIFEST_BYTES)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `This manifest is over ${MAX_MANIFEST_BYTES / 1024 / 1024} MiB.`,
+    });
+  return new TextDecoder().decode(await store.read(key));
+}
+
 /**
  * What a preserve run's manifest offers for one user: the copies it made, by blob id, and the
  * workflows and triggers it covered. Only rows for that user whose copy sits under the manifest's
@@ -36,7 +54,7 @@ export function manifestUserId(key: string) {
  */
 export function parseManifest(text: string, key: string, userId: number) {
   const scope = manifestUserId(key);
-  if (!scope || scope.userId !== userId) throw new Error('This manifest is not one of this user.');
+  if (!scope || scope.userId !== userId) throw notThisUsers();
   const copies = new Map<string, AdoptableCopy>();
   const workflowIds = new Set<string>();
   const triggers = new Map<string, TriggerRef>();

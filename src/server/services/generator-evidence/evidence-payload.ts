@@ -127,7 +127,7 @@ export const EXCLUDED_FILES_NOTICE =
 /** Report-level lines for files the report names but cannot carry. */
 export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
   const counts = { 'blocked-unreadable': 0, gone: 0, unavailable: 0, external: 0, excluded: 0 };
-  const seen = new Set<string>();
+  const seen = new Set(evidenceFilesToSend(details).map(({ blob }) => blob.blobId));
   for (const job of details.generatedImages)
     for (const blob of job.blobs) {
       if (seen.has(blob.blobId) || blob.status === 'preserved') continue;

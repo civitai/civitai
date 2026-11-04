@@ -38,6 +38,7 @@ import type { EvidenceStore } from '~/server/services/generator-evidence/preserv
 import { evidenceVersion } from '~/server/services/generator-evidence/evidence-meta';
 import { MAX_EVIDENCE_FILES_PER_REPORT } from '~/server/services/generator-evidence/evidence-payload';
 import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
+import { MAX_MANIFEST_BYTES } from '~/server/services/generator-evidence/evidence-manifest';
 
 const config = {
   base: 'https://orchestrator.example.invalid',
@@ -400,9 +401,11 @@ describe('preserveGeneratorEvidence', () => {
       expect(createCsamReport).not.toHaveBeenCalled();
     });
 
-    it("refuses another user's manifest", async () => {
+    it("refuses another user's manifest without reading the store", async () => {
       const other = `case-a/${USER + 1}/manifest-20261103T000000Z.jsonl`;
       const store = memoryStore({ [other]: Buffer.from(row({ userId: USER + 1 }) + '\n') });
+      const read = vi.spyOn(store, 'read');
+      const head = vi.spyOn(store, 'head');
 
       await expect(
         preserveGeneratorEvidence(
@@ -410,6 +413,24 @@ describe('preserveGeneratorEvidence', () => {
           { config, store }
         )
       ).rejects.toThrow(/not one of this user/);
+      expect(read).not.toHaveBeenCalled();
+      expect(head).not.toHaveBeenCalled();
+      expect(createCsamReport).not.toHaveBeenCalled();
+    });
+
+    it('refuses a manifest over the size cap without reading it', async () => {
+      const store = memoryStore({
+        [MANIFEST]: Buffer.alloc(MAX_MANIFEST_BYTES + 1, ' '),
+      });
+      const read = vi.spyOn(store, 'read');
+
+      await expect(
+        preserveGeneratorEvidence(
+          { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: MANIFEST },
+          { config, store }
+        )
+      ).rejects.toThrow(/manifest is over/);
+      expect(read).not.toHaveBeenCalled();
       expect(createCsamReport).not.toHaveBeenCalled();
     });
   });
@@ -421,22 +442,6 @@ describe('preserveGeneratorEvidence', () => {
         { jobId: WORKFLOW, blobs: [{ blobId: OUTPUT, role: 'output', status: 'preserved' }] },
       ],
     };
-
-    it("refuses a report that is sent, claimed, or not this user's (the locked read finds none)", async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
-      await expect(
-        approveGeneratorEvidenceReport({
-          reportId: 3,
-          userId: USER,
-          moderatorId: 1,
-          version: evidenceVersion(preservedDetails as never),
-        })
-      ).rejects.toMatchObject({ code: 'CONFLICT' });
-      const [sql, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
-      expect(sql.join('?')).toMatch(/"reportSentAt" IS NULL AND "sendClaimId" IS NULL/);
-      expect(values).toEqual([3, USER]);
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
-    });
 
     it('refuses a report with no preserved file', async () => {
       const nothingPreserved = {

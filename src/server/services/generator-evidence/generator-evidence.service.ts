@@ -28,7 +28,11 @@ import type {
   TriggerRef,
 } from '~/server/services/generator-evidence/evidence-meta';
 import type { AdoptableCopy } from '~/server/services/generator-evidence/evidence-manifest';
-import { adoptCopy, parseManifest } from '~/server/services/generator-evidence/evidence-manifest';
+import {
+  adoptCopy,
+  parseManifest,
+  readManifest,
+} from '~/server/services/generator-evidence/evidence-manifest';
 import { evidenceSizeProblem } from '~/server/services/generator-evidence/evidence-payload';
 import { MAX_WORKFLOWS_PER_PRESERVE } from '~/server/schema/csam.schema';
 import {
@@ -196,7 +200,7 @@ export async function preserveGeneratorEvidence(
   let copies = new Map<string, AdoptableCopy>();
   if (input.manifestKey) {
     const manifest = parseManifest(
-      new TextDecoder().decode(await deps.store.read(input.manifestKey)),
+      await readManifest(deps.store, input.manifestKey, input.userId),
       input.manifestKey,
       input.userId
     );
