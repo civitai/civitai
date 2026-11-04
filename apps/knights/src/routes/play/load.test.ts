@@ -263,12 +263,12 @@ describe('play load', () => {
   });
 
   it("gives a Knight the rail: board position, gap and the Order's activity, read at the injected clock", async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, fervor: 25 });
     const rail = { standing: { position: 14, total: 312, gap: 38 }, activity: 1240 };
     railFor.mockResolvedValue(rail);
 
     expect((await run()).rail).toEqual(rail);
-    expect(railFor).toHaveBeenCalledWith(7, NOW);
+    expect(railFor).toHaveBeenCalledWith(7, NOW, 25);
   });
 
   it('reads no rail for the apprenticeship, which has no board', async () => {
