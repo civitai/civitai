@@ -63,7 +63,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
 function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { getImages, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
-  const turf = useTurfFeed();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
 
@@ -169,7 +168,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {safe && <HatTurfLayer imageId={image.id} />}
                 {/* Steps clear of an event decoration sitting on the corner. */}
-                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 flex flex-col items-start gap-1">
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-col items-start gap-1">
                   <HatTurfBadge imageId={image.id} />
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
@@ -225,7 +224,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                   </div>
                 </div>
                 {safe && (
-                  <div className="absolute right-2 top-2 flex flex-col gap-2">
+                  <div className="absolute right-2 top-2 z-[4] flex flex-col gap-2">
                     {!isBlocked && <ImageContextMenu image={image} />}
                     {features.imageGeneration && isRemixMenuVisible(image) && (
                       <RemixMenu
@@ -359,32 +358,15 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
-              {!contextProps.hideReactions &&
-                // The row only becomes a flex container when there is something
-                // to put beside the reactions. `StickerPlacementCardBadge`
-                // returns null with the flag off, so wrapping unconditionally
-                // would still change this card's layout for everyone while
-                // adding nothing — a visual regression with no feature behind
-                // it, on the surface the flag exists to keep clear of.
-                ((features.stickerPlacement && !contextProps.hideStickerBadge) || turf ? (
-                  <div className="flex items-center">
-                    <div className="min-w-0 flex-1">
-                      <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                    </div>
-                    {features.stickerPlacement && !contextProps.hideStickerBadge && (
-                      <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
-                    )}
-                    {turf && (
-                      <div className="mr-2">
-                        <HatTurfButton imageId={image.id} />
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                  </div>
-                ))}
+              {!contextProps.hideReactions && (
+                <ReactionRow
+                  imageId={image.id}
+                  stickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
+                  safe={safe}
+                >
+                  <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
+                </ReactionRow>
+              )}
             </>
           )}
         </ImageGuard2>
@@ -394,6 +376,38 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 }
 
 export const ImagesCardMemoized = memo(ImagesCard);
+
+/**
+ * The row under the media. It becomes a flex row only when something sits beside the reactions:
+ * wrapping unconditionally would change every card's layout with nothing behind it. Reads the
+ * turf context here rather than in the card, so a live hat push re-renders this row, not the card.
+ */
+function ReactionRow({
+  imageId,
+  stickerBadge,
+  safe,
+  children,
+}: {
+  imageId: number;
+  stickerBadge: boolean;
+  /** The hat layer only draws over shown media, so a blurred card gets no hat button either. */
+  safe: boolean;
+  children: React.ReactNode;
+}) {
+  const turf = useTurfFeed() && safe;
+  if (!stickerBadge && !turf) return <div>{children}</div>;
+  return (
+    <div className="flex items-center">
+      <div className="min-w-0 flex-1">{children}</div>
+      {stickerBadge && <StickerPlacementCardBadge imageId={imageId} className="mr-2" />}
+      {turf && (
+        <div className="mr-2">
+          <HatTurfButton imageId={imageId} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; readonly: boolean }) {
   const inView = useElementInView();

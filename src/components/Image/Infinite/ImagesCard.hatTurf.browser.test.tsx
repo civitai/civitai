@@ -79,9 +79,6 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
     selector({ autoplayGifs: false }),
 }));
-vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
-  useImagesContext: () => ({ getImages: () => [] }),
-}));
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
   ImageContextMenu: () => null,
 }));
@@ -123,6 +120,9 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalConnection: () => undefined,
 }));
 
+vi.mock('~/components/HatTurf/useHatTurfFeed', () => ({
+  useHatTurfFeed: () => ({ event: 'birthday2026', arm: 'control' }),
+}));
 vi.mock('~/components/Storyline/StorylineBatchProvider', async (o) => ({
   ...(await o<object>()),
   useStorylineForPost: () => undefined,
@@ -133,6 +133,7 @@ vi.mock('~/components/Tours/ToursProvider', async (o) => ({
 }));
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
@@ -212,5 +213,27 @@ describe('Hat Turf on the /images feed card', () => {
     await cardRendered();
     expect(q('hat-turf-button')).toBeNull();
     expect(q('hat-turf-badge')).toBeNull();
+  });
+
+  test.each([
+    ['a feed', false, true],
+    ['the sticker book (hideHatTurf)', true, false],
+  ])('under ImagesProvider, %s shows Hat Turf: %s → %s', async (_, hideHatTurf, shown) => {
+    renderWithProviders(
+      <ImagesProvider images={[image]} hideHatTurf={hideHatTurf}>
+        <IntersectionObserverProvider>
+          <div style={{ width: 300 }}>
+            <ImagesCard data={image} height={400} />
+          </div>
+        </IntersectionObserverProvider>
+      </ImagesProvider>
+    );
+    await cardRendered();
+    if (shown) await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    else {
+      // The feed case shows the button inside this window, so absence here is a real absence.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(q('hat-turf-button')).toBeNull();
+    }
   });
 });
