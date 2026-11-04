@@ -38,6 +38,22 @@ function pageAccessFor(role: string) {
   }) => (args.where.roles.hasSome.includes(role) ? { path: '/' } : null)) as never);
 }
 
+type Held = { isModerator: boolean; roles: readonly string[] };
+
+// The account's own row on the primary.
+function primaryHolds({ isModerator, roles }: Held) {
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({
+    isModerator,
+    roles: roles.map((role) => ({ role })),
+  } as never);
+}
+
+// The primary and the session copy agree.
+function holds(held: Held) {
+  primaryHolds(held);
+  getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   installFakeCacheRedis();
@@ -49,6 +65,7 @@ beforeEach(() => {
     meta: SYSTEM_META,
   });
   keyOwnedBy(USER_ID);
+  primaryHolds({ isModerator: false, roles: [] });
 });
 
 const MODERATOR_ACCESS = [
@@ -66,7 +83,7 @@ describe('a bearer key owned by a system account', () => {
   });
 
   it.each(MODERATOR_ACCESS)('resolves to the account while it holds %s', async (_, held) => {
-    getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+    holds(held);
     const session = await getSessionFromBearerToken('k');
     expect(session?.user.id).toBe(USER_ID);
     // The mock answers any id, so the id it was asked for is what pins the key to its owner.
@@ -78,7 +95,7 @@ describe('a bearer key owned by a system account', () => {
     async (_, held) => {
       keyOwnedBy(USER_ID, TokenScopePresets.ReadOnly);
       pageAccessFor('dispute-agent');
-      getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+      holds(held);
       await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
         user: { id: USER_ID },
       });
@@ -92,19 +109,15 @@ describe('a bearer key owned by a system account', () => {
     });
 
     it('resolves while the account holds no moderator access', async () => {
-      getSessionUserById.mockResolvedValue({
-        id: USER_ID,
-        meta: SYSTEM_META,
-        isModerator: false,
-        roles: ['some-other-role'],
-      });
+      holds({ isModerator: false, roles: ['some-other-role'] });
       await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
         user: { id: USER_ID },
       });
     });
 
+    // The session copy (beforeEach) still shows no access: a grant it has not caught up with counts.
     it.each(MODERATOR_ACCESS)('is refused while the account holds %s', async (_, held) => {
-      getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+      primaryHolds(held);
       await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
       expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
     });
@@ -112,6 +125,7 @@ describe('a bearer key owned by a system account', () => {
     it.each(MODERATOR_ACCESS)(
       'owned by an ordinary account resolves while it holds %s',
       async (_, held) => {
+        primaryHolds(held);
         getSessionUserById.mockResolvedValue({ id: USER_ID, meta: {}, ...held });
         await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
           user: { id: USER_ID },
