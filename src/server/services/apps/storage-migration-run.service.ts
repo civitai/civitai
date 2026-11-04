@@ -25,13 +25,6 @@
 // approval (`loadTarget` supersedes a run only when a later approval changed its collection). The
 // plan is reserved in the same locked transaction.
 //
-// OPERATOR HOLD ({@link isStorageMigrationHeld}): the Flipt flag `app-blocks-storage-migration-hold`,
-// evaluated per app. While it is on for an app, neither the start at approve nor the job claims the
-// app's runs: a reserved run stays `pending`, so it keeps counting as open for the approve gate (an
-// approve touching its collection is refused), it gains no attempt and the cap cleanup leaves it
-// alone. Turning the flag off lets the job's next run take it. Absent, off or unreachable: nothing
-// is held. It exists to make the approve gate observable while a run is open.
-//
 // FORKS need nothing here: a fork writes its parent's collections in the PARENT's app, under the
 // parent's schema, so the parent's run migrates the fork's documents too.
 
@@ -601,61 +594,11 @@ function summary(run: StorageMigrationRun) {
   };
 }
 
-/**
- * Whether the operator holds this app's migration runs (the Flipt flag
- * `app-blocks-storage-migration-hold`, entityId = the app block id, no context). Never rejects: an
- * absent flag, an unreachable Flipt or an error reads as not held.
- */
-export async function isStorageMigrationHeld(appBlockId: string): Promise<boolean> {
-  try {
-    const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
-    return (
-      (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_MIGRATION_HOLD, appBlockId)) === true
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Claim and advance every claimable run of one request (all of one app). Never rejects. While the
- * app is HELD ({@link isStorageMigrationHeld}) nothing is claimed: the request's pending runs only
- * get their heartbeat touched, so the job's least-recently-touched-first sweep rotates them behind
- * other apps' runs instead of filling its batch with them every time.
- */
+/** Claim and advance every claimable run of one request. Never rejects. */
 export async function runStorageMigrationsForRequest(
   publishRequestId: string,
-  collections: readonly string[],
-  appBlockId: string
-): Promise<{ held: boolean }> {
-  if (await isStorageMigrationHeld(appBlockId)) {
-    try {
-      await raw().$queryRaw`
-        UPDATE "app_storage_migration_runs" SET "heartbeat_at" = CURRENT_TIMESTAMP
-        WHERE "publish_request_id" = ${publishRequestId}
-          AND "collection" = ANY(${[...collections]}::text[])
-          AND "status" = 'pending'
-        RETURNING 1
-      `;
-    } catch (err) {
-      log('error', {
-        publishRequestId,
-        appBlockId,
-        message: `could not touch the held runs' heartbeat: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      });
-    }
-    log('info', {
-      publishRequestId,
-      appBlockId,
-      collections,
-      held: true,
-      message:
-        'storage migration run held by the operator flag app-blocks-storage-migration-hold: not claimed, left pending',
-    });
-    return { held: true };
-  }
+  collections: readonly string[]
+): Promise<void> {
   for (const collection of collections) {
     try {
       const run = await claim(publishRequestId, collection);
@@ -671,7 +614,6 @@ export async function runStorageMigrationsForRequest(
       });
     }
   }
-  return { held: false };
 }
 
 /**
@@ -696,11 +638,7 @@ export async function startStorageMigrationsOnApprove(args: {
       }`,
     });
   }
-  void runStorageMigrationsForRequest(
-    args.publishRequestId,
-    [...args.plans.keys()],
-    args.appBlockId
-  );
+  void runStorageMigrationsForRequest(args.publishRequestId, [...args.plans.keys()]);
 }
 
 /** Runs the job resumes per invocation at most. */
@@ -710,13 +648,11 @@ export const STORAGE_MIGRATION_JOB_BATCH = 10;
  * The job's sweep: every pending run, and every running one whose heartbeat went stale, under the
  * attempt cap. Least recently touched first (`heartbeat_at`, never-started first), so a run that
  * keeps failing rotates behind newer runs instead of holding the batch. Returns the runs it
- * advanced and the runs it left alone because their app is HELD ({@link isStorageMigrationHeld});
- * a missing table reads as nothing to do. The cap cleanup never touches a held run that is below
- * the cap: a held run is never claimed, so it gains no attempt.
+ * advanced; a missing table reads as nothing to do.
  */
 export async function resumeStorageMigrationRuns(
   opts: { limit?: number; checkIfCanceled?: () => void } = {}
-): Promise<{ advanced: number; held: number; tableMissing: boolean }> {
+): Promise<{ advanced: number; tableMissing: boolean }> {
   let rows: Record<string, unknown>[];
   try {
     // A run at the attempt cap is never claimable again, so it would stay open — and block
@@ -732,7 +668,7 @@ export async function resumeStorageMigrationRuns(
       RETURNING 1
     `;
     rows = (await raw().$queryRaw`
-      SELECT "publish_request_id", "collection", "app_block_id" FROM "app_storage_migration_runs"
+      SELECT "publish_request_id", "collection" FROM "app_storage_migration_runs"
       WHERE "attempts" < ${STORAGE_MIGRATION_MAX_ATTEMPTS}::int
         AND ("status" = 'pending'
           OR ("status" = 'running'
@@ -741,20 +677,14 @@ export async function resumeStorageMigrationRuns(
       LIMIT ${opts.limit ?? STORAGE_MIGRATION_JOB_BATCH}::int
     `) as Record<string, unknown>[];
   } catch (err) {
-    if (await isRunsTableMissing(err)) return { advanced: 0, held: 0, tableMissing: true };
+    if (await isRunsTableMissing(err)) return { advanced: 0, tableMissing: true };
     throw err;
   }
   let advanced = 0;
-  let held = 0;
   for (const r of rows) {
     opts.checkIfCanceled?.();
-    const outcome = await runStorageMigrationsForRequest(
-      r.publish_request_id as string,
-      [r.collection as string],
-      r.app_block_id as string
-    );
-    if (outcome.held) held += 1;
-    else advanced += 1;
+    await runStorageMigrationsForRequest(r.publish_request_id as string, [r.collection as string]);
+    advanced += 1;
   }
-  return { advanced, held, tableMissing: false };
+  return { advanced, tableMissing: false };
 }
