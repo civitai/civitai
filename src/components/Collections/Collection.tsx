@@ -98,7 +98,8 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import type { ImageSort } from '~/server/common/enums';
+import { ArticleSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
@@ -378,7 +379,13 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
+            {/* Hat counts on entries whose reaction counts are hidden could sway judging. */}
+            <ImagesInfinite
+              filters={filters}
+              disableStoreFilters
+              collectionId={collection.id}
+              hideHatTurf={isContestCollection}
+            />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>

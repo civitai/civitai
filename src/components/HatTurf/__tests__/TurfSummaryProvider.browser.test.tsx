@@ -215,6 +215,19 @@ describe('TurfSummaryProvider', () => {
     expect(last).toEqual([50, 50, 20]);
     stops.forEach((stop) => stop());
   });
+
+  test('cards mounting over a scroll burst are marked in one request', async () => {
+    await mount([1]);
+    const stops: (() => void)[] = [];
+    for (const id of [11, 12, 13, 14, 15]) {
+      stops.push(latest!.watch(id));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await vi.waitFor(() => expect(h.mark).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
+    stops.forEach((stop) => stop());
+  });
 });
 
 describe('one hot image: K viewers × P pushes', () => {
