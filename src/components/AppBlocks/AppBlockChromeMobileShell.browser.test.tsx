@@ -163,6 +163,7 @@ async function renderShell({
   slotId?: string;
   slug?: string;
   appBlockId?: string;
+  launchOrigin?: 'home' | 'store';
 }) {
   await page.viewport(...viewport);
   renderWithProviders(
@@ -294,6 +295,26 @@ describe('AppBlockChrome mobile shell', () => {
     expect(root.scrollWidth, `no horizontal overflow at ${PHONE[0]}px`).toBeLessThanOrEqual(
       root.clientWidth + 1
     );
+  });
+
+  test(`🔴 at ${PHONE[0]}x${PHONE[1]}, launched from the My apps home, the back chevron leads to My apps (/apps)`, async () => {
+    // Breadcrumb by origin, on the mobile rendering: the chevron and the desktop crumb read
+    // one target (`appsRunBackTarget`), so a home launch must change BOTH. The store-origin
+    // half is the REGRESSION test above (no prop → "Back to Marketplace" → /apps/store).
+    const root = await renderShell({ viewport: PHONE, expectCompact: true, launchOrigin: 'home' });
+    expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
+    const back = q('[data-testid="app-block-back"]');
+    expect(back, `at ${PHONE[0]}px the bar must offer a back affordance`).not.toBeNull();
+    expect((back as HTMLElement).getAttribute('href')).toBe('/apps');
+    expect((back as HTMLElement).getAttribute('aria-label')).toBe('Back to My apps');
+  });
+
+  test(`at ${PHONE[0]}x${PHONE[1]}, an explicit store origin keeps "Back to Marketplace" (/apps/store)`, async () => {
+    const root = await renderShell({ viewport: PHONE, expectCompact: true, launchOrigin: 'store' });
+    expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
+    const back = q('[data-testid="app-block-back"]');
+    expect((back as HTMLElement).getAttribute('href')).toBe('/apps/store');
+    expect((back as HTMLElement).getAttribute('aria-label')).toBe('Back to Marketplace');
   });
 
   test(`INVARIANT GUARD — at ${DESKTOP[0]}x${DESKTOP[1]} the breadcrumb chrome is untouched and there is no chevron`, async () => {

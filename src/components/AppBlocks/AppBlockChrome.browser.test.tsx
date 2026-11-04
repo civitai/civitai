@@ -228,6 +228,40 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
     expect((crumbName.textContent ?? '').trim()).toBe('Budgeted Generator');
   });
 
+  // 🔴 BREADCRUMB BY ORIGIN. A run launched from the My apps home (`?from=home` → the run
+  // page's `launchOrigin`) leads back to the home; every other origin — and an omitted prop —
+  // keeps the store. Both are asserted on the SAME element so a regression in either
+  // direction (always "My apps", or never) is red here.
+  test('🔴 launched from the home: the first crumb reads "My apps" and links to /apps', async () => {
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-bc-home"
+        appName="Budgeted Generator"
+        slotId="app.page"
+        launchOrigin="home"
+      />
+    );
+    await expect.element(page.getByTestId('app-block-breadcrumb-apps')).toBeInTheDocument();
+    const crumb = page.getByTestId('app-block-breadcrumb-apps').element();
+    expect(crumb.getAttribute('href')).toBe('/apps');
+    expect((crumb.textContent ?? '').trim()).toBe('My apps');
+  });
+
+  test('launched from the store (explicit): "Marketplace" → /apps/store', async () => {
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-bc-store"
+        appName="Budgeted Generator"
+        slotId="app.page"
+        launchOrigin="store"
+      />
+    );
+    await expect.element(page.getByTestId('app-block-breadcrumb-apps')).toBeInTheDocument();
+    const crumb = page.getByTestId('app-block-breadcrumb-apps').element();
+    expect(crumb.getAttribute('href')).toBe('/apps/store');
+    expect((crumb.textContent ?? '').trim()).toBe('Marketplace');
+  });
+
   // The "Apps" crumb must read as obviously CLICKABLE — visually distinct from the
   // static dimmed crumb text + separators. It carries the SITE'S link treatment
   // (Mantine `Anchor`: the themed `--mantine-color-anchor`, plus an explicit

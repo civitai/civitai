@@ -108,6 +108,7 @@ import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.sc
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
+import { appsRunBackTarget, type AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
@@ -397,6 +398,7 @@ export function AppBlockChrome({
   slotId,
   hostSurface,
   canOpenPage = false,
+  launchOrigin = 'store',
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -445,6 +447,12 @@ export function AppBlockChrome({
   /** The host that mounted this chrome. Decides whether it offers app feedback
    *  (`APP_FEEDBACK_HOST_SURFACES`); omitted → no Feedback button. */
   hostSurface?: BlockHostSurface;
+  /** Where the full-page run was launched from (`?from=home`, read by the run page's
+   *  `getServerSideProps`). Decides where the breadcrumb's first crumb and the mobile back
+   *  chevron lead: `home` → "My apps" (`/apps`); anything else → "Marketplace"
+   *  (`/apps/store`). See `appsRunBackTarget`. Omitted → the store, which is what every
+   *  surface other than a home launch should say. */
+  launchOrigin?: AppsRunOrigin;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -600,6 +608,9 @@ export function AppBlockChrome({
   // through the store. A narrow model sidebar therefore resolves `geometry.compact`
   // TRUE (it is genuinely narrow) and still renders exactly the chrome it always has.
   const compact = isPage && geometry.compact;
+  // The run chrome's way out, shared by the desktop crumb and the mobile back chevron so the
+  // two renderings can never name or link different places.
+  const back = appsRunBackTarget(launchOrigin);
   // The platform-nav destinations, authored ONCE and rendered into whichever surface
   // is carrying them: their own dropdown on a desktop-width bar, the ⋮ sheet below
   // `sm`. `ChromeSurfaceItem` is what makes one authoring serve both — see its header
@@ -861,19 +872,20 @@ export function AppBlockChrome({
               thing, and the thing it says ("up to the Marketplace") is exactly what a
               back chevron says in a third of the space. It is a real anchor
               (`NextLink`), so middle-click / long-press / keyboard all behave, and it
-              points at the SAME store the crumb does (`/apps/store`) — the two
-              renderings share one destination.
+              points at the SAME place the crumb does (`back`, from `appsRunBackTarget`:
+              `/apps` for a launch from the My apps home, `/apps/store` otherwise) — the
+              two renderings share one destination.
 
               `ActionIcon size="sm"` is not a style choice here: it is what keeps the
               row at its pinned 31px resting height (`CHROME_BAR_PX`), the same as the
               icon buttons the desktop bar has always used. */}
             <ActionIcon
               component={Link}
-              href="/apps/store"
+              href={back.href}
               variant="subtle"
               color="gray"
               size="sm"
-              aria-label="Back to Marketplace"
+              aria-label={`Back to ${back.label}`}
               data-testid="app-block-back"
               style={{ flexShrink: 0 }}
             >
@@ -916,6 +928,7 @@ export function AppBlockChrome({
             label={label}
             isPage={isPage}
             slug={slug}
+            back={back}
             onOpenReview={setReviewListingId}
           />
         )}
@@ -1019,7 +1032,7 @@ export function AppBlockChrome({
 
 /**
  * The desktop bar's leading cluster: the platform-nav trigger, the badge app name and
- * the `Marketplace / <app name>` breadcrumb.
+ * the `Marketplace / <app name>` breadcrumb (`My apps / <app name>` after a home launch).
  *
  * 🔴 EXTRACTED PURELY TO KEEP THE COMPACT/DESKTOP BRANCH READABLE — every element
  * inside it is byte-for-byte what shipped, including the testids, the ARIA and the
@@ -1036,6 +1049,7 @@ function ChromeDesktopLeadingGroup({
   label,
   isPage,
   slug,
+  back,
   onOpenReview,
 }: {
   geometry: ChromeGeometry;
@@ -1046,6 +1060,8 @@ function ChromeDesktopLeadingGroup({
   label: string;
   isPage: boolean;
   slug: string | undefined;
+  /** The first crumb's destination and label — see `appsRunBackTarget`. */
+  back: ReturnType<typeof appsRunBackTarget>;
   onOpenReview: (appListingId: string) => void;
 }) {
   return (
@@ -1175,20 +1191,20 @@ function ChromeDesktopLeadingGroup({
                 and long-press all still behave. */}
             <Anchor
               component={Link}
-              href="/apps/store"
+              href={back.href}
               size="xs"
               underline="always"
               style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
-              {/* Reads "Marketplace", not "Apps" — the destination `/apps/store` is what
-                  the store's own nav calls that entry (the `marketplace` row of
-                  `appsSections`), and a crumb that names the page differently from the
-                  page's own tab makes the trail look like it leads somewhere else. The
-                  testid keeps its historical `-apps` spelling (the route was `/apps` until
-                  the store moved), so tests that reach for it do not churn. */}
-              Marketplace
+              {/* Names its destination the way that page's own nav does: "Marketplace" for
+                  `/apps/store` (the `marketplace` row of `appsSections`, not "Apps"), or
+                  "My apps" for `/apps` when the run was launched from the home. A crumb that
+                  names the page differently from the page's own tab makes the trail look
+                  like it leads somewhere else. The testid keeps its historical `-apps`
+                  spelling, so tests that reach for it do not churn. */}
+              {back.label}
             </Anchor>
             <Text size="xs" c="dimmed" aria-hidden>
               /

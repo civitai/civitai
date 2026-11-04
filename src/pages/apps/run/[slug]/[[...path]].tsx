@@ -22,6 +22,11 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { Page } from '~/components/AppLayout/Page';
+import {
+  APPS_RUN_FROM_PARAM,
+  parseAppsRunOrigin,
+  type AppsRunOrigin,
+} from '~/shared/utils/apps-run-origin';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
@@ -104,6 +109,14 @@ interface PageProps {
    * APPROVED bundle, not the re-submitted one, and the viewer has to be told which.
    */
   privateRunStatus: string | null;
+  /**
+   * Where this run was launched from (`?from=home` on the My apps home's tile links), for the
+   * run chrome's way out only: `home` → "My apps" (`/apps`), anything else → "Marketplace"
+   * (`/apps/store`). Read here, server-side, so the first render already says the right
+   * thing; it is passed to the host's chrome and nowhere else — the iframe `src` is
+   * `iframeSrc` above, which never carries the page's query. See `apps-run-origin.ts`.
+   */
+  launchOrigin: AppsRunOrigin;
 }
 
 export const getServerSideProps = createServerSideProps<PageProps>({
@@ -115,6 +128,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     if (!features?.appBlocks || !features?.appBlocksPages) {
       return { notFound: true };
     }
+    const launchOrigin = parseAppsRunOrigin(ctx.query?.[APPS_RUN_FROM_PARAM]);
     const rawSlug = ctx.params?.slug;
     const slug = typeof rawSlug === 'string' ? rawSlug : Array.isArray(rawSlug) ? rawSlug[0] : '';
     if (!slug) return { notFound: true };
@@ -235,6 +249,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
           betaMessage: null,
           audience: access.audience,
           privateRunStatus: block.status,
+          launchOrigin,
         },
       };
     }
@@ -299,6 +314,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // whether an absent key means "public" or "forgot to set it".
         audience: null,
         privateRunStatus: null,
+        launchOrigin,
       },
     };
   },
@@ -452,6 +468,7 @@ function AppPage(props: PageProps) {
     isBeta,
     betaMessage,
     audience,
+    launchOrigin,
     privateRunStatus,
   } = props;
   const currentUser = useCurrentUser();
@@ -743,6 +760,7 @@ function AppPage(props: PageProps) {
           // greppable shape and a future surface can't justify a per-surface
           // constant.)
           canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+          launchOrigin={launchOrigin}
         />
       </Box>
     </>

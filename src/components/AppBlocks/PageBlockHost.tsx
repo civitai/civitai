@@ -27,6 +27,7 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
@@ -852,6 +853,14 @@ export interface PageBlockHostProps {
    */
   canOpenPage?: boolean;
   /**
+   * Where this run was launched from, for the chrome's way out (breadcrumb + mobile back
+   * chevron): `home` → "My apps" (`/apps`), otherwise "Marketplace" (`/apps/store`). Only
+   * the `/apps/run` route sets it (from `?from=home`, in `getServerSideProps`); every other
+   * mounter leaves the store default. Chrome-only: it is never put on the iframe `src` or in
+   * BLOCK_INIT. See `apps-run-origin.ts`.
+   */
+  launchOrigin?: AppsRunOrigin;
+  /**
    * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
    * it is spelled out rather than inferred from `surface`.
    *
@@ -950,6 +959,7 @@ export function PageBlockHost({
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
+  launchOrigin = 'store',
   fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
@@ -5809,6 +5819,7 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         hostSurface={surface}
         canOpenPage={canOpenPage}
+        launchOrigin={launchOrigin}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`

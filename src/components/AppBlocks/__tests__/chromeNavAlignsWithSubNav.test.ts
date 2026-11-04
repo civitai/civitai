@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { appsRunBackTarget } from '~/shared/utils/apps-run-origin';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -691,11 +692,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // `?view=apps`: bare `/apps/build` opens the App Assistant for an author who holds it.
       '/apps/build?view=apps', // My builds — platform nav; the store calls this row "Build"
       '/apps/review', // Review — platform nav, moderator-gated
-      // The three store doors, repointed from `/apps` when the store moved to `/apps/store`
-      // (`/apps` became the viewer's "My apps" home). The sort moved them to the end.
+      // The store door, repointed from `/apps` when the store moved to `/apps/store`
+      // (`/apps` became the viewer's "My apps" home). The sort moved it to the end.
       '/apps/store', // Marketplace — platform nav
-      '/apps/store', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
-      '/apps/store', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
+      // 🔴 NOT LISTED: the compact back chevron and the breadcrumb's first crumb. Their href
+      // is no longer a literal — it is `back.href`, from `appsRunBackTarget(launchOrigin)`:
+      // `/apps` after a launch from the My apps home, `/apps/store` otherwise. Both values are
+      // doors already in this set, and the pair is pinned (values AND the two call sites) by
+      // the "the breadcrumb's first crumb…" test below and by `apps-run-origin.test.ts`.
     ]);
   });
 
@@ -750,7 +754,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     ).toEqual([]);
   });
 
-  it('the breadcrumb’s first crumb reads "Marketplace" and links to the store (/apps/store)', () => {
+  it('the breadcrumb’s first crumb and the back chevron read ONE target: Marketplace (/apps/store), or My apps (/apps) after a home launch', () => {
     const src = code(read(CHROME));
     const anchor = 'data-testid="app-block-breadcrumb-apps"';
     const at = src.indexOf(anchor);
@@ -768,15 +772,25 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // different element, this string moves with it.
     const region = src.slice(at, src.indexOf('</Anchor>', at));
     const label = region.slice(region.indexOf('>') + 1).trim();
-    expect(
-      label,
-      'the leading breadcrumb crumb must name the store the way the store does ("Marketplace"), ' +
-        'not "Apps" — a trail that names the page differently from the page’s own tab reads ' +
-        'as leading somewhere else.'
-    ).toBe('Marketplace');
-
+    // The crumb's text and href both come from ONE resolved target (`back`), so the label
+    // and the destination cannot disagree; what `back` says is pinned below and, per
+    // origin, in `apps-run-origin.test.ts` and the chrome's browser suites.
+    expect(label, 'the leading crumb must render the resolved back target’s label').toBe(
+      '{back.label}'
+    );
     // …and it is still the LINK, not restyled into text.
-    // (`/apps/store` since the store moved; `/apps` is now the viewer's "My apps" home.)
-    expect(src.slice(Math.max(0, at - 400), at)).toContain('href="/apps/store"');
+    expect(src.slice(Math.max(0, at - 400), at)).toContain('href={back.href}');
+    // The mobile back chevron reads the SAME target.
+    const chevronAt = src.indexOf('data-testid="app-block-back"');
+    expect(chevronAt).toBeGreaterThan(-1);
+    const chevron = src.slice(Math.max(0, chevronAt - 400), chevronAt);
+    expect(chevron).toContain('href={back.href}');
+    expect(chevron).toContain('aria-label={`Back to ${back.label}`}');
+
+    // Without a home launch the target is the store, named the way the store names itself
+    // ("Marketplace", not "Apps") — a trail that names the page differently from the page’s
+    // own tab reads as leading somewhere else.
+    expect(appsRunBackTarget('store')).toEqual({ href: '/apps/store', label: 'Marketplace' });
+    expect(appsRunBackTarget('home')).toEqual({ href: '/apps', label: 'My apps' });
   });
 });
