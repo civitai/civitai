@@ -74,7 +74,7 @@
   </section>
 
   <section aria-labelledby="rail-fervor">
-    <h2 id="rail-fervor">This week's fervor</h2>
+    <h2 id="rail-fervor" class="with-icon"><Icon name="zap" size={13} />This week's fervor</h2>
     <p class="big">{count(status.fervor)}</p>
     {#if standing}
       <p class="sub">Board position #{count(standing.position)} of {count(standing.total)}</p>
@@ -170,6 +170,11 @@
     font: 600 11px/1.2 var(--io-font-ui);
     letter-spacing: 0.2em;
     text-transform: uppercase;
+  }
+  h2.with-icon {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   h3 {
     margin: 0 0 6px;

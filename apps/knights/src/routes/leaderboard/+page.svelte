@@ -84,7 +84,7 @@
       </span>
     </span>
     <span class="fervor">
-      <b>{count(entry.fervor)}</b>
+      <b><Icon name="zap" size={14} />{count(entry.fervor)}</b>
       <span>{behind ? `${count(behind.gap)} behind #${behind.place}` : 'fervor'}</span>
     </span>
   </div>
@@ -112,7 +112,7 @@
       <h1 class="heading">Most devoted</h1>
     </div>
     <p class="meta">
-      <span>Fervor from judgments cast in the last {data.windowDays} days</span>
+      <span class="fz"><Icon name="zap" size={14} />Fervor from judgments cast in the last {data.windowDays} days</span>
       <span class="tally"
         ><Icon name="hourglass" size={14} />
         {tally ? `Tallied daily · next tally in ${tally}` : 'New tally ready, refresh'}</span
@@ -159,7 +159,7 @@
                 >{compact(entry.fervor)}</span
               ></b
             >
-            <span class="label">fervor</span>
+            <span class="label"><Icon name="zap" size={11} />fervor</span>
           </span>
         </li>
       {/each}
@@ -201,6 +201,12 @@
     margin: 0;
     color: var(--io-parchment);
     font: 700 34px/1.15 var(--io-font-display);
+  }
+  .fz {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
   }
   .meta {
     display: flex;
@@ -342,6 +348,9 @@
     display: none;
   }
   .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     color: var(--io-parchment-muted);
     font-size: 0.65rem;
     letter-spacing: 0.14em;
@@ -504,6 +513,9 @@
     white-space: nowrap;
   }
   .fervor b {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     color: var(--io-gold);
     font: 700 1.1rem/1.1 var(--io-font-display);
     letter-spacing: 0;

@@ -42,7 +42,7 @@
     if (data.mode !== 'queue') return null;
     if (local) return local;
     return data.item && data.question
-      ? { item: data.item, question: data.question, banner: data.banner }
+      ? { item: data.item, question: data.question, banner: data.banner, category: data.category }
       : null;
   });
   let yesNo = $derived(
@@ -445,8 +445,15 @@
 {/snippet}
 
 {#snippet soundToggle()}
-  <button type="button" class="quiet sound" aria-label="Sound" aria-pressed={!soundMuted} onclick={toggleSound}>
-    <Icon name={soundMuted ? 'volume-x' : 'volume-2'} size={14} />{soundMuted ? 'Sound off' : 'Sound on'}
+  <button
+    type="button"
+    class="quiet sound"
+    aria-label={soundMuted ? 'Sound off' : 'Sound on'}
+    title={soundMuted ? 'Sound off, turn on' : 'Sound on, mute'}
+    aria-pressed={!soundMuted}
+    onclick={toggleSound}
+  >
+    <Icon name={soundMuted ? 'volume-x' : 'volume-2'} size={16} />
   </button>
 {/snippet}
 
@@ -588,13 +595,21 @@
     </div>
   {:else if view}
     <div class="column">
-      {#if view.banner}
-        <p class="banner" role="status">New questions: {view.banner.heading}</p>
-      {/if}
       <p class="question" title={view.question.prompt}>
         <span class="eyebrow">Question ·</span>
+        {#if view.category}
+          <!-- A new chip (and its one-time glow) only when the category changes; the text is part of the question for screen readers. -->
+          {#key view.category.heading}
+            <span class="chip" class:glow={view.banner !== null}>
+              <span class="vh">Category: </span>{view.category.heading}
+            </span>
+          {/key}
+        {/if}
         <span class="text">{view.question.prompt}</span>
       </p>
+      <span class="vh" role="status" aria-live="polite"
+        >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
+      >
       <div class="stagewrap">
         {#key view.item.key}
           {@const itemKey = view.item.key}
@@ -622,7 +637,7 @@
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={view.item.id} />
           <button type="submit" class="quiet" disabled={submitting}>
-            Skip<span class="space">&nbsp;·&nbsp;Space</span>
+            <Icon name="skip-forward" size={14} />Skip<span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
         {#if !yesNo}
@@ -810,13 +825,37 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .banner {
+  .chip {
     flex: none;
-    margin: 0;
-    padding: 0.25rem 0.75rem;
-    border-left: 3px solid var(--gold);
-    color: var(--gold);
-    font: 600 13px/1.3 var(--io-font-ui);
+    padding: 3px 8px;
+    border: 1px solid color-mix(in srgb, var(--io-gold) 45%, transparent);
+    border-radius: 999px;
+    color: var(--io-gold);
+    font: 600 11px/1 var(--io-font-ui);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .chip.glow {
+    animation: chip-glow 1.8s ease-out 1;
+  }
+  @keyframes chip-glow {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--io-gold) 70%, transparent);
+    }
+    40% {
+      box-shadow: 0 0 12px 3px color-mix(in srgb, var(--io-gold) 55%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+  .vh {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .controls {
@@ -874,6 +913,9 @@
       0 0 14px rgb(224 138 130 / 0.35);
   }
   @media (prefers-reduced-motion: reduce) {
+    .chip.glow {
+      animation: none;
+    }
     .pill,
     .pill:active:not(:disabled),
     .pill.picked,
@@ -948,6 +990,11 @@
   .quiet:hover:not(:disabled) {
     background: none;
     color: var(--io-parchment);
+  }
+  .skip .quiet {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
   .quiet.guide {
     color: var(--io-gold);

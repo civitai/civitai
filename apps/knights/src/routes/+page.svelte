@@ -102,7 +102,7 @@
           </li>
         {/if}
         <li>
-          <b><Icon name="trophy" size={18} />{count(shownFervor)}</b>
+          <b><Icon name="zap" size={18} />{count(shownFervor)}</b>
           <span>Fervor{data.fervorPosition ? ` · #${count(data.fervorPosition)}` : ''}</span>
         </li>
       </ul>
