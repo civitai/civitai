@@ -8,7 +8,7 @@ import type { CommentV3Comment } from './types';
 
 /** A comment the write just returned, in the shape the v3 reads give, so it shows before a refetch. */
 function asV3(
-  saved: RouterOutput['commentv2']['upsert'],
+  saved: RouterOutput['commentv2']['upsert'] | RouterOutput['comics']['createChapterComment'],
   parent: { id: number; depth: number } | null
 ): CommentV3Comment {
   return {
@@ -49,6 +49,10 @@ export function useCommentMutations() {
 
   const v3 = constants.comments.v3WriteSurfaces.includes(entityType);
   const upsert = trpc.commentv2.upsert.useMutation({ onError: fail('Could not save comment') });
+  // Top-level chapter comments: see `comics.createChapterComment`.
+  const createChapter = trpc.comics.createChapterComment.useMutation({
+    onError: fail('Could not save comment'),
+  });
   const remove = trpc.commentv2.delete.useMutation({ onError: fail('Could not delete comment') });
   const hide = trpc.commentv2.toggleHide.useMutation({ onError: fail('Unable to hide comment') });
   const pin = trpc.commentv2.togglePinned.useMutation({ onError: fail('Unable to pin comment') });
@@ -68,10 +72,12 @@ export function useCommentMutations() {
   });
 
   return {
-    saving: upsert.isPending || createV3.isPending || updateV3.isPending,
+    saving: upsert.isPending || createChapter.isPending || createV3.isPending || updateV3.isPending,
     async create(content: string, parent: { id: number; depth: number } | null) {
       const saved = v3
         ? await createV3.mutateAsync({ entityType, entityId, parentId: parent?.id, content })
+        : entityType === 'comicChapter' && !parent
+        ? asV3(await createChapter.mutateAsync({ chapterId: entityId, content }), null)
         : asV3(await upsert.mutateAsync({ ...target(parent), content }), parent);
       addCreated(parent?.id ?? null, saved);
       await utils.cosmetic.getStickerBalances.invalidate();
