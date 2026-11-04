@@ -209,14 +209,16 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
-  async function post(action: URL, body: FormData) {
+  async function post(action: URL, body: FormData, token: string) {
     let outcome = describeOutcome(null);
+    let reached = false;
     try {
       const response = await fetch(action, {
         method: 'POST',
         body,
         headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
       });
+      reached = true;
       const result = deserialize(await response.text());
       outcome = describeOutcome(result);
       if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
@@ -224,6 +226,7 @@
       // Keeps the lost-connection notice.
     }
     tracker.settle();
+    if (!reached) tracker.release(token);
     if (!outcome.ok) {
       tell(outcome.message);
       if (outcome.resync) local = null;
@@ -257,7 +260,7 @@
     ahead = null;
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
-    void post(input.action, input.formData);
+    void post(input.action, input.formData, token);
   };
 
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);

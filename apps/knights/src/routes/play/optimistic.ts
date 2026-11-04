@@ -35,6 +35,11 @@ export function createVoteTracker() {
     settle() {
       inFlight = Math.max(0, inFlight - 1);
     },
+    /** A vote that never reached the server: the item may be served again, and must be votable when it is. */
+    release(token: string) {
+      const at = sent.indexOf(token);
+      if (at >= 0) sent.splice(at, 1);
+    },
     get pending() {
       return inFlight;
     },

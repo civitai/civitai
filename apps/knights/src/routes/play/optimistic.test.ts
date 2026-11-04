@@ -9,6 +9,14 @@ describe('createVoteTracker', () => {
     expect(tracker.claim('b')).toBe(true);
   });
 
+  it('lets an item be sent again once a vote that never reached the server is released', () => {
+    const tracker = createVoteTracker();
+    expect(tracker.claim('a')).toBe(true);
+    tracker.release('a');
+    expect(tracker.claim('a')).toBe(true);
+    expect(tracker.excluded('b')).toEqual(['a', 'b']);
+  });
+
   it('counts the votes in flight until each settles, never below zero', () => {
     const tracker = createVoteTracker();
     tracker.claim('a');
