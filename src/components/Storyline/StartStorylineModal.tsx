@@ -4,8 +4,10 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
 import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
+import { StorylineSparkCreditText } from '~/components/Storyline/StorylineSparkCredit';
 import {
   StorylineClosedChip,
   StorylineOpenToAnyoneChip,
@@ -25,21 +27,42 @@ export function openStartStorylineModal(post?: StorylineSourcePost) {
   dialogStore.trigger({ component: StartStorylineModal, props: { post } });
 }
 
+/** Someone's image a storyline starts from: credited above chapter 1, and its rating is the floor. */
+export type StorylineSparkImage = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  username: string | null;
+};
+
+export function openStartStorylineFromImageModal(sparkImage: StorylineSparkImage) {
+  dialogStore.trigger({ component: StartStorylineModal, props: { sparkImage } });
+}
+
 /**
  * Starts a storyline. Without `post` it starts empty and hands the author to the post editor to
- * write chapter 1; with one, that published post is chapter 1. A bottom sheet on a phone.
+ * write chapter 1; with one, that published post is chapter 1. With `sparkImage` it starts empty,
+ * credited to that image. A bottom sheet on a phone.
  */
-export function StartStorylineModal({ post }: { post?: StorylineSourcePost }) {
+export function StartStorylineModal({
+  post,
+  sparkImage,
+}: {
+  post?: StorylineSourcePost;
+  sparkImage?: StorylineSparkImage;
+}) {
   const dialog = useDialogContext();
   const router = useRouter();
   const utils = trpc.useUtils();
   const mobile = useIsMobile({ type: 'media' });
-  // Chapter 1 is already rated, so only the ceilings it fits are offered.
-  const allowed = post
-    ? STORYLINE_CEILING_LEVELS.filter((level) =>
-        storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel: level })
-      )
-    : STORYLINE_CEILING_LEVELS;
+  // Chapter 1 and the spark are already rated, so only the ceilings both fit are offered.
+  const floors = [post?.nsfwLevel, sparkImage?.nsfwLevel].filter(
+    (level): level is number => level !== undefined
+  );
+  const allowed = STORYLINE_CEILING_LEVELS.filter((level) =>
+    floors.every((postLevel) => storylineLevelAllowed({ postLevel, maxNsfwLevel: level }))
+  );
+  const rated = post ?? sparkImage;
   const canStart = allowed.length > 0;
   const [title, setTitle] = useState(post?.title ?? '');
   const [maxNsfwLevel, setMaxNsfwLevel] = useState<number>(
@@ -65,18 +88,33 @@ export function StartStorylineModal({ post }: { post?: StorylineSourcePost }) {
 
   const trimmed = title.trim();
 
+  const credit = sparkImage && (
+    <div className="flex items-center gap-3" data-testid="storyline-spark-credit">
+      <EdgeMedia
+        src={sparkImage.url}
+        type="image"
+        width={96}
+        className="size-12 shrink-0 rounded object-cover"
+      />
+      <StorylineSparkCreditText username={sparkImage.username} />
+    </div>
+  );
+
   const form = !canStart ? (
-    post && isStorylineVerdictLevel(post.nsfwLevel) ? (
+    floors.some(isStorylineVerdictLevel) ? (
       <Alert color="red" icon={<IconAlertTriangle />}>
         {STORYLINE_REFUSALS.cannotSubmit}.
       </Alert>
     ) : (
       <Alert color="yellow" icon={<IconAlertTriangle />}>
-        This post hasn&apos;t been rated yet. Try again once its images have been scanned.
+        {post
+          ? "This post hasn't been rated yet. Try again once its images have been scanned."
+          : "This image hasn't been rated yet. Try again once it has been scanned."}
       </Alert>
     )
   ) : (
     <Stack gap="md">
+      {credit}
       <Text size="sm" c="dimmed">
         {post
           ? 'This post becomes chapter 1. Name the storyline and set the terms.'
@@ -97,11 +135,13 @@ export function StartStorylineModal({ post }: { post?: StorylineSourcePost }) {
         <StorylineRatingInput
           value={maxNsfwLevel}
           onChange={setMaxNsfwLevel}
-          isAllowed={post ? (level) => allowed.includes(level) : undefined}
+          isAllowed={rated ? (level) => allowed.includes(level) : undefined}
         />
         <Text size="xs" c="dimmed">
           {post
             ? "Continuations rated above this can't be added. It can't be lower than chapter 1's rating."
+            : sparkImage
+            ? "Continuations rated above this can't be added. It can't be lower than the image's rating."
             : "Continuations rated above this can't be added. If chapter 1 needs a higher rating, the maximum is raised to fit it."}
         </Text>
       </Stack>
@@ -130,7 +170,13 @@ export function StartStorylineModal({ post }: { post?: StorylineSourcePost }) {
           disabled={!trimmed}
           loading={create.isPending}
           onClick={() =>
-            create.mutate({ postId: post?.id, title: trimmed, maxNsfwLevel, whoCanContinue })
+            create.mutate({
+              postId: post?.id,
+              sparkImageId: sparkImage?.id,
+              title: trimmed,
+              maxNsfwLevel,
+              whoCanContinue,
+            })
           }
         >
           Start storyline

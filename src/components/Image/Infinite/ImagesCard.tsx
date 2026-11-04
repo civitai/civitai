@@ -94,7 +94,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   // The hook is called first and unconditionally — inside the `??` it sits after
   // a short-circuit, which is a conditional hook call.
   const remix = useRemixCardData(image.id);
-  const cosmetic = image.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined);
+  const cosmetic = image.cosmetic?.data ?? (remix.any ? REMIX_FRAME : undefined);
 
   const twCardStyle = useMemo(() => {
     return !cosmetic ? { height } : undefined;

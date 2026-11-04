@@ -5,8 +5,12 @@ import { ncEarningsNoticeEmail } from '~/server/email/templates/ncEarningsNotice
 // The client throws on failure; the service wrapper swallows errors, which would record a failed send.
 import { notifications } from '~/server/notifications/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import type { NoticeLedgerKey } from '~/server/services/notice-ledger.service';
-import { getNoticeSentIds, sendLedgeredNotice } from '~/server/services/notice-ledger.service';
+import type { NoticeLedgerKey, Sleep } from '~/server/services/notice-ledger.service';
+import {
+  getNoticeSentIds,
+  sendLedgeredNotice,
+  withThrottleRetry,
+} from '~/server/services/notice-ledger.service';
 import type { NcEarningsNotice } from '~/shared/constants/nc-earnings-notice.constants';
 import {
   NC_EARNINGS_NOTICE,
@@ -118,6 +122,8 @@ export async function sendNcEarningsNotice({
   count,
   batchSize,
   date,
+  minIntervalMs,
+  sleep,
 }: {
   notice: NcEarningsNotice;
   userIds: number[];
@@ -125,6 +131,8 @@ export async function sendNcEarningsNotice({
   count: number;
   batchSize: number;
   date: string;
+  minIntervalMs?: number;
+  sleep?: Sleep;
 }) {
   const ledgerKey = LEDGER[notice];
   const { recipients, bannedOrDeleted, noVersions, unknown } = await getNcAudience(notice, userIds);
@@ -156,6 +164,8 @@ export async function sendNcEarningsNotice({
     pending,
     count,
     batchSize,
+    minIntervalMs,
+    sleep,
     send: async (user) => {
       const hadFee = user.versions.length > 0;
       await notifications.createNotification({
@@ -172,15 +182,20 @@ export async function sendNcEarningsNotice({
           url: getNcEarningsNoticeUrl(user.username),
         },
       });
-      if (user.email) {
-        await ncEarningsNoticeEmail.send({
-          to: user.email,
-          notice,
-          username: user.username ?? 'there',
-          date,
-          baseModels: user.baseModels,
-          versions: user.versions,
-        });
+      const email = user.email;
+      if (email) {
+        await withThrottleRetry(
+          () =>
+            ncEarningsNoticeEmail.send({
+              to: email,
+              notice,
+              username: user.username ?? 'there',
+              date,
+              baseModels: user.baseModels,
+              versions: user.versions,
+            }),
+          { sleep }
+        );
       }
     },
   });

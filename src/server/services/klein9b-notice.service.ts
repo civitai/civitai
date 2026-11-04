@@ -2,20 +2,24 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { isEmailConfigured } from '~/server/email/client';
 import { klein9bNoticeEmail } from '~/server/email/templates/klein9bNotice.email';
-import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 // The client throws on failure; the service wrapper swallows errors, which would record a failed send.
 import { notifications } from '~/server/notifications/client';
+import type { Sleep } from '~/server/services/notice-ledger.service';
+import {
+  getNoticeSentIds,
+  sendLedgeredNotice,
+  withThrottleRetry,
+} from '~/server/services/notice-ledger.service';
 import type { Klein9bNoticeVariant } from '~/shared/constants/klein9b-notice.constants';
 import {
   KLEIN9B_NOTICE,
   KLEIN9B_NOTICE_BASE_MODELS,
-  KLEIN9B_NOTICE_URL,
+  getKlein9bNoticeUrl,
 } from '~/shared/constants/klein9b-notice.constants';
 
 const SENT_KEY = REDIS_SYS_KEYS.NOTICES.KLEIN9B_SENT;
 const SENT_LEDGER_EXPIRES_AT = new Date('2027-03-01T00:00:00Z');
-const READ_CHUNK = 500;
 
 export type Klein9bVersionRow = {
   userId: number;
@@ -103,33 +107,27 @@ export async function getKlein9bNoticeAudience() {
   return classifyKlein9bAudience(versions, users);
 }
 
-async function getSentIds(ids: number[]) {
-  const sent = new Set<number>();
-  for (let i = 0; i < ids.length; i += READ_CHUNK) {
-    const chunk = ids.slice(i, i + READ_CHUNK);
-    const values = await sysRedis.hmGet(SENT_KEY, chunk.map(String));
-    values.forEach((value, j) => {
-      if (value) sent.add(chunk[j]);
-    });
-  }
-  return sent;
-}
-
 export async function sendKlein9bNotice({
   dryRun,
   count,
   batchSize,
   date,
+  minIntervalMs,
+  sleep,
 }: {
   dryRun: boolean;
   count: number;
   batchSize: number;
   date: string;
+  minIntervalMs?: number;
+  sleep?: Sleep;
 }) {
   const { recipients, excluded } = await getKlein9bNoticeAudience();
-  const alreadySent = await getSentIds(recipients.map((r) => r.id));
+  const alreadySent = await getNoticeSentIds(
+    SENT_KEY,
+    recipients.map((r) => r.id)
+  );
   const pending = recipients.filter((r) => !alreadySent.has(r.id));
-  const batch = pending.slice(0, count);
   const summary = {
     charged: recipients.filter((r) => r.variant === 'charged').length,
     uncharged: recipients.filter((r) => r.variant === 'uncharged').length,
@@ -137,65 +135,45 @@ export async function sendKlein9bNotice({
     noEmail: recipients.filter((r) => !r.email).length,
     alreadySent: alreadySent.size,
   };
-  if (dryRun) return { dryRun: true, ...summary, wouldSend: batch.length };
+  if (dryRun) return { dryRun: true, ...summary, wouldSend: Math.min(count, pending.length) };
   // sendEmail returns without sending when there is no transport, which would record users as sent.
   if (!isEmailConfigured()) throw new Error('Email is not configured on this server');
 
-  let sent = 0;
-  let skipped = 0;
-  const failedUserIds: number[] = [];
-  const stuckUserIds: number[] = [];
-  for (let i = 0; i < batch.length; i += batchSize) {
-    await Promise.all(
-      batch.slice(i, i + batchSize).map(async (user) => {
-        // The claim, not the earlier read, is what stops a concurrent or repeated run sending twice.
-        const claimed = await sysRedis.hSetNX(SENT_KEY, String(user.id), new Date().toISOString());
-        if (!claimed) {
-          skipped++;
-          return;
-        }
-        try {
-          await notifications.createNotification({
-            userId: user.id,
-            category: NotificationCategory.System,
-            type: 'system-announcement',
-            key: `system-announcement:klein9b-notice:${user.id}`,
-            details: { message: KLEIN9B_NOTICE[user.variant].message, url: KLEIN9B_NOTICE_URL },
-          });
-          if (user.email) {
-            await klein9bNoticeEmail.send({
-              to: user.email,
+  const result = await sendLedgeredNotice({
+    ledgerKey: SENT_KEY,
+    expiresAt: SENT_LEDGER_EXPIRES_AT,
+    logName: 'klein9b-notice',
+    pending,
+    count,
+    batchSize,
+    minIntervalMs,
+    sleep,
+    send: async (user) => {
+      await notifications.createNotification({
+        userId: user.id,
+        category: NotificationCategory.System,
+        type: 'system-announcement',
+        key: `system-announcement:klein9b-notice:${user.id}`,
+        details: {
+          message: KLEIN9B_NOTICE[user.variant].message,
+          url: getKlein9bNoticeUrl(user.username),
+        },
+      });
+      const email = user.email;
+      if (email) {
+        await withThrottleRetry(
+          () =>
+            klein9bNoticeEmail.send({
+              to: email,
               variant: user.variant,
               username: user.username ?? 'there',
               date,
               versions: user.versions,
-            });
-          }
-          sent++;
-        } catch (e) {
-          logToAxiom({
-            type: 'error',
-            name: 'klein9b-notice',
-            message: (e as Error).message,
-            details: { userId: user.id },
-          }).catch(() => undefined);
-          failedUserIds.push(user.id);
-          await sysRedis.hDel(SENT_KEY, String(user.id)).catch(() => stuckUserIds.push(user.id));
-        }
-      })
-    );
-  }
-  if (sent) await sysRedis.expireAt(SENT_KEY, SENT_LEDGER_EXPIRES_AT);
-
-  return {
-    dryRun: false,
-    ...summary,
-    sent,
-    skipped,
-    failed: failedUserIds.length,
-    failedUserIds,
-    // Failed AND still recorded as sent, so later runs skip them until they are unmarked.
-    stuckUserIds,
-    remaining: pending.length - sent - skipped,
-  };
+            }),
+          { sleep }
+        );
+      }
+    },
+  });
+  return { dryRun: false, ...summary, ...result };
 }

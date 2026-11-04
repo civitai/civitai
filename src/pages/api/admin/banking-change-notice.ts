@@ -2,13 +2,16 @@
  * Sends the Creator Program banking-change notice email.
  * =============================================================================
  *
- * Hidden ops route. Guarded by the WEBHOOK_TOKEN via `?token=` query param. Under /api/admin, not
+ * Hidden ops route. Guarded by the WEBHOOK_TOKEN: `Authorization: Bearer <token>` or `?token=`. Under /api/admin, not
  * /api/testing, because the send runs in production and /api/testing/* is redirected there.
  *
  * Usage:
  *   POST /api/admin/banking-change-notice?token=$WEBHOOK_TOKEN
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
+ *
+ * Sends are paced (NOTICE_MIN_INTERVAL_MS in notice-ledger.service) and one call sends at most
+ * `count` (max 1000), so send a larger audience in several calls.
  *
  * Actions:
  *   send      - {dryRun?, count?, batchSize?}  Email up to `count` (default 50, max 1000) of the
@@ -31,28 +34,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isEmailConfigured } from '~/server/email/client';
 import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { bankingChangeNoticeSchema as schema } from '~/server/schema/banking-change-notice.schema';
+import { countNoticeSent, removeNoticeSent } from '~/server/services/notice-ledger.service';
 import { sendBankingChangeNotice } from '~/server/services/banking-change-notice.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const KEY = REDIS_SYS_KEYS.NOTICES.BANKING_CHANGE_SENT;
-
-const schema = z.discriminatedUnion('action', [
-  z.object({
-    action: z.literal('send'),
-    dryRun: z.boolean().default(true),
-    count: z.coerce.number().int().min(1).max(1000).default(50),
-    batchSize: z.coerce.number().int().min(1).max(50).default(25),
-  }),
-  z.object({
-    action: z.literal('send-test'),
-    email: z.email(),
-    username: z.string().min(1).default('there'),
-  }),
-  z.object({ action: z.literal('preview'), username: z.string().min(1).default('there') }),
-  z.object({ action: z.literal('sent') }),
-  z.object({ action: z.literal('unmark'), userId: z.coerce.number().int().positive() }),
-]);
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
@@ -76,11 +64,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         .send(bankingChangeNoticeEmail.getHtml({ to: '', username: input.username }));
     }
     case 'sent': {
-      const all = await sysRedis.hGetAll(KEY);
-      return res.status(200).json({ sent: Object.keys(all).length });
+      return res.status(200).json({ sent: await countNoticeSent(KEY) });
     }
     case 'unmark': {
-      const removed = await sysRedis.hDel(KEY, String(input.userId));
+      const removed = await removeNoticeSent(KEY, input.userId);
       return res.status(200).json({ removed });
     }
   }

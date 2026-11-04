@@ -8,6 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   StartStorylineModal,
+  openStartStorylineFromImageModal,
   openStartStorylineModal,
 } from '~/components/Storyline/StartStorylineModal';
 
@@ -169,6 +170,55 @@ describe('StartStorylineModal', () => {
       openStartStorylineModal(post);
 
       expect(trigger).toHaveBeenCalledWith({ component: StartStorylineModal, props: { post } });
+      trigger.mockRestore();
+    });
+  });
+
+  describe("from someone's image", () => {
+    const sparkImage = {
+      id: 77,
+      url: 'spark.jpg',
+      nsfwLevel: NsfwLevel.R,
+      username: 'painter',
+    };
+
+    test('credits the image, floors the rating at it, and sends the author to write chapter 1', async () => {
+      renderWithProviders(<StartStorylineModal sparkImage={sparkImage} />);
+
+      await expect
+        .element(page.getByTestId('storyline-spark-credit'))
+        .toHaveTextContent("Inspired by @painter's image");
+      await expect.element(page.getByRole('radio', { name: 'PG-13', exact: true })).toBeDisabled();
+      await expect.element(page.getByRole('radio', { name: 'R', exact: true })).toBeChecked();
+      await page.getByRole('textbox', { name: 'Title' }).fill('After the painting');
+      await page.getByRole('button', { name: 'Start storyline' }).click();
+
+      expect(mocks.mutate).toHaveBeenCalledWith({
+        sparkImageId: 77,
+        title: 'After the painting',
+        maxNsfwLevel: NsfwLevel.R,
+        whoCanContinue: 'Anyone',
+      });
+      expect(mocks.mutate.mock.calls[0][0].postId).toBeUndefined();
+      await mocks.options.onSuccess?.({ id: 9 });
+      expect(useRouter().push).toHaveBeenCalledWith('/posts/create?storyline=9');
+    });
+
+    test('an unrated image cannot start one yet', async () => {
+      renderWithProviders(<StartStorylineModal sparkImage={{ ...sparkImage, nsfwLevel: 0 }} />);
+
+      await expect.element(page.getByText(/image hasn.t been rated yet/)).toBeVisible();
+      expect(page.getByRole('button', { name: 'Start storyline' }).elements()).toHaveLength(0);
+    });
+
+    test('the opener passes the image through', () => {
+      const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
+      openStartStorylineFromImageModal(sparkImage);
+
+      expect(trigger).toHaveBeenCalledWith({
+        component: StartStorylineModal,
+        props: { sparkImage },
+      });
       trigger.mockRestore();
     });
   });
