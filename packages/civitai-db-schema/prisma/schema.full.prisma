@@ -8136,6 +8136,7 @@ model KnightsPlayerDay {
   bonusGold        Int       @default(0)
 
   @@id([playerId, day])
+  @@index([day, votes])
 }
 
 /// One daily-loop notification per player per UTC day. The primary key is the cap; a send claims its row first.
