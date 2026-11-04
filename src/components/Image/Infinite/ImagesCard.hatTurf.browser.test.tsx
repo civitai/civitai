@@ -255,7 +255,7 @@ describe('Hat Turf on the /images feed card', () => {
 });
 
 // The masonry sizes a card as image + IMAGES_CARD_FOOTER_HEIGHT, so a taller footer takes its
-// excess from the bottom of the picture.
+// excess from the bottom of the picture. Columns are 320px; a phone's single column is its width.
 describe('the /images card footer fits the height the masonry gives it', () => {
   const reacted = {
     ...image,
@@ -272,13 +272,15 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       .height;
 
   test.each([
-    ['with the hat button', turf()],
-    ['without Hat Turf', null],
-  ])('a 300px card with four reaction counts and a tip, %s', async (_, value) => {
+    [288, 'with the hat button', turf()],
+    [320, 'with the hat button', turf()],
+    [358, 'with the hat button', turf()],
+    [320, 'without Hat Turf', null],
+  ])('a %ipx card with four reaction counts and a tip, %s', async (width, _, value) => {
     renderWithProviders(
       <TurfSummaryContext.Provider value={value}>
         <IntersectionObserverProvider>
-          <div style={{ width: 300 }}>
+          <div style={{ width }}>
             <ImagesCard data={reacted} height={400} />
           </div>
         </IntersectionObserverProvider>
@@ -288,6 +290,6 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(3)
     );
     if (value) await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
-    expect(footerHeight()).toBeLessThanOrEqual(IMAGES_CARD_FOOTER_HEIGHT);
+    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
   });
 });
