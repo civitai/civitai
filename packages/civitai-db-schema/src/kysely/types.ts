@@ -3729,6 +3729,10 @@ export type KnightsPlayer = {
    * The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
    */
   startAtSeen: Timestamp | null;
+  /**
+   * The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
+   */
+  recapPopupOptOut: Generated<boolean>;
 };
 export type KnightsPlayerDay = {
   playerId: number;

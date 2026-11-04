@@ -239,19 +239,58 @@ export type Recap = {
   streakBonus: number;
 };
 
-/** The player's last play day since their last career reset and before today, unless they dismissed the recap today. */
+type RecapState = { optedOut: boolean; dismissedToday: boolean };
+
+async function readRecapState(db: Executor, playerId: number, today: Day): Promise<RecapState> {
+  const keeper = await db
+    .selectFrom('KnightsPlayer')
+    .select([sql<string | null>`"recapDismissedFor"::text`.as('dismissed'), 'recapPopupOptOut'])
+    .where('playerId', '=', playerId)
+    .executeTakeFirst();
+  return {
+    optedOut: keeper?.recapPopupOptOut ?? false,
+    dismissedToday: keeper?.dismissed === today,
+  };
+}
+
+/** What the header needs for its recap button, from one cheap read: `hasHistory` is a play day since the last reset before today. */
+export async function getRecapState(
+  db: Executor,
+  { playerId, now }: { playerId: number; now: Date }
+): Promise<RecapState & { hasHistory: boolean }> {
+  const today = utcDay(now);
+  const startAt = await startAtOf(db, playerId);
+  const [state, played] = await Promise.all([
+    readRecapState(db, playerId, today),
+    db
+      .selectFrom('KnightsPlayerDay')
+      .select('day')
+      .where('playerId', '=', playerId)
+      .where('day', '<', dateOf(today))
+      .where('day', '>=', dateOf(utcDay(startAt)))
+      .where('votes', '>', 0)
+      .limit(1)
+      .executeTakeFirst(),
+  ]);
+  return { ...state, hasHistory: !!played };
+}
+
+/** The recap the daily popup shows: null once dismissed today or when the player opted out of the popup. */
 export async function getRecap(
   db: Executor,
   { playerId, now }: { playerId: number; now: Date }
 ): Promise<Recap | null> {
-  const today = utcDay(now);
-  const keeper = await db
-    .selectFrom('KnightsPlayer')
-    .select(sql<string | null>`"recapDismissedFor"::text`.as('dismissed'))
-    .where('playerId', '=', playerId)
-    .executeTakeFirst();
-  if (keeper?.dismissed === today) return null;
+  const state = await readRecapState(db, playerId, utcDay(now));
+  if (state.dismissedToday || state.optedOut) return null;
+  return findRecap(db, { playerId, now });
+}
 
+/** The player's last play day since their last career reset and before today, whatever was dismissed. */
+export async function findRecap(
+  db: Executor,
+  { playerId, now }: { playerId: number; now: Date }
+): Promise<Recap | null> {
+  const today = utcDay(now);
   const startAt = await startAtOf(db, playerId);
   // A day row's counter can hold only votes from before a reset, so look back until a day has votes since it.
   for (let before = today; ; ) {
@@ -307,12 +346,14 @@ export async function getRecap(
   }
 }
 
+/** Dismisses today's recap; `optOut`, when given, also sets whether the daily popup opens at all. */
 export async function dismissRecap(
   db: Executor,
-  { playerId, now }: { playerId: number; now: Date }
+  { playerId, now, optOut }: { playerId: number; now: Date; optOut?: boolean }
 ): Promise<void> {
   const today = utcDay(now);
   const fresh = newPlayerState(today);
+  const optOutSet = optOut === undefined ? {} : { recapPopupOptOut: optOut };
   await db
     .insertInto('KnightsPlayer')
     .values({
@@ -320,7 +361,10 @@ export async function dismissRecap(
       shields: fresh.shields,
       shieldWeek: dateOf(fresh.shieldWeek),
       recapDismissedFor: dateOf(today),
+      ...optOutSet,
     })
-    .onConflict((oc) => oc.column('playerId').doUpdateSet({ recapDismissedFor: dateOf(today) }))
+    .onConflict((oc) =>
+      oc.column('playerId').doUpdateSet({ recapDismissedFor: dateOf(today), ...optOutSet })
+    )
     .execute();
 }
