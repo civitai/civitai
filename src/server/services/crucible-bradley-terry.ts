@@ -118,7 +118,7 @@ export function tallyJudgeVotes(votes: JudgeVote[], anchors: JudgeAnchors): Pair
  * date. Null ranks none. Set it no earlier than the deploy that ships the fit, so crucibles running
  * at deploy finish on Elo.
  */
-export const BRADLEY_TERRY_RANKING_FROM: Date | null = null;
+export const BRADLEY_TERRY_RANKING_FROM: Date | null = new Date('2026-11-06T00:00:00Z');
 
 export function usesBradleyTerryRanking(
   crucible: { startAt: Date | null; createdAt: Date },
