@@ -82,7 +82,14 @@ const routes: {
 const USER = 4242;
 
 /** `tokenScope` set: a bearer key with that scope, recorded the way getServerAuthSession does. */
-async function call(route: (typeof routes)[number], tokenScope?: number) {
+async function call(
+  route: (typeof routes)[number],
+  tokenScope?: number,
+  subject: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string } = {
+    type: 'apiKey',
+    id: 7,
+  }
+) {
   getServerAuthSession.mockImplementation(async ({ req }: { req: NextApiRequest }) => {
     const context = ((req as { context?: Record<string, unknown> }).context ??= {});
     if (tokenScope !== undefined)
@@ -90,7 +97,7 @@ async function call(route: (typeof routes)[number], tokenScope?: number) {
         tokenScope,
         apiKeyId: 7,
         apiKeyType: ApiKeyType.User,
-        subject: { type: 'apiKey', id: 7 },
+        subject,
       });
     return { user: { id: USER, bannedAt: null } };
   });
@@ -170,6 +177,15 @@ describe.each(routes)('/api/$name', (route) => {
         client: 'personal-key',
         clientIdHash: undefined,
       });
+    });
+
+    it('logs an OAuth client by a hash of its id, not the id', async () => {
+      const clientId = 'oauth-client-123';
+      await call(route, TokenScopePresets.ReadOnly, { type: 'oauth', id: clientId });
+      const [[event]] = wouldRefuseLogs() as [[{ client: string; clientIdHash: string }]];
+      expect(event.client).toBe('oauth');
+      expect(event.clientIdHash).toMatch(/^[0-9a-f]{16}$/);
+      expect(JSON.stringify(event)).not.toContain(clientId);
     });
 
     it('logs nothing for a cookie session or a key with the scope', async () => {

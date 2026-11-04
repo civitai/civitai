@@ -76,7 +76,8 @@ describe('the orchestrator token for a system account', () => {
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('fresh-token');
     redisMock.sysRedis.hGet.mockResolvedValue(encodeOwnedToken(USER, 'cached-token') as never);
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('cached-token');
-    vi.clearAllMocks();
+    redisMock.sysRedis.hGet.mockClear();
+    getTemporaryUserApiKey.mockClear();
 
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
