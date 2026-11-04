@@ -51,6 +51,11 @@ export type TurfEvent = EventDef & { turf: EventTurfConfig };
 const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> 'Private'
   AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL`;
+// Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
+const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
+  WHERE ci."imageId" = ${imageId} AND c.mode = 'Contest'
+)`;
 
 const configCache = new Map<string, { at: number; config: EventTurfConfig }>();
 
@@ -147,10 +152,11 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!team) throw throwBadRequestError("You aren't on a team yet");
 
   const [image] = await dbWrite.$queryRaw<
-    { ownerId: number; visible: boolean; ownerOptedIn: boolean | null }[]
+    { ownerId: number; visible: boolean; contest?: boolean; ownerOptedIn: boolean | null }[]
   >`
     SELECT i."userId" AS "ownerId",
       COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
+      ${contestEntry(Prisma.sql`i.id`)} AS contest,
       (o.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true' AS "ownerOptedIn"
     FROM "Image" i JOIN "User" o ON o.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
@@ -159,6 +165,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!image) throw throwNotFoundError('Image not found');
   if (!image.visible)
     throw throwBadRequestError('Hat stickers only go on images in a published post');
+  if (image.contest) throw throwBadRequestError("Hat stickers don't go on contest entries");
   if (!image.ownerOptedIn) throw throwBadRequestError("This creator doesn't accept hat stickers");
   // The same refusals as a regular sticker: a block either way, or a suspended placer. Neither
   // applies to an owner's own image.
@@ -456,14 +463,15 @@ export async function reconcileAllTurf(now = new Date()) {
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
  * protects the image, so its stickers earn nothing until the hat comes off. `open`: for every image
  * asked about, whether it can take a new sticker now (visible, owner opted in); owners may sticker
- * their own. `mine`: whether the viewer has already stickered it, so cannot again.
+ * their own. `mine`: whether the viewer has already stickered it, so cannot again. `hidden`: contest
+ * entries, which show no Hat Turf at all (no counts, closed).
  */
 export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
   const event = await getTurfEvent(eventName);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
-    return { team: null, images: {}, open: {}, mine: {} };
+    return { team: null, images: {}, open: {}, mine: {}, hidden: {} };
   const keys = imageIds.map((id) => `Image:${id}`);
-  const [counts, hats, openRows, mineRows] = await Promise.all([
+  const [counts, hats, openRows, mineRows, contestRows] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
     dbRead.$queryRaw<{ id: number }[]>`
@@ -481,17 +489,26 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
             AND "imageId" = ANY(${imageIds}::int[])
         `
       : [],
+    dbRead.$queryRaw<{ id: number }[]>`
+      SELECT i.id FROM "Image" i
+      WHERE i.id = ANY(${imageIds}::int[]) AND ${contestEntry(Prisma.sql`i.id`)}
+    `,
   ]);
+  const hiddenIds = new Set(contestRows.map((r) => r.id));
+  const hidden = Object.fromEntries([...hiddenIds].map((id) => [id, true]));
   const mineIds = new Set(mineRows.map((r) => r.imageId));
   const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
   const openIds = new Set(openRows.map((r) => r.id));
-  const open = Object.fromEntries(imageIds.map((id) => [id, openIds.has(id)]));
+  const open = Object.fromEntries(
+    imageIds.map((id) => [id, openIds.has(id) && !hiddenIds.has(id)])
+  );
   const images: Record<number, TurfCounts & { hatted: boolean }> = {};
   imageIds.forEach((id, i) => {
-    if (counts[i]) images[id] = { ...(JSON.parse(counts[i]!) as TurfCounts), hatted: !!hats[i] };
+    if (counts[i] && !hiddenIds.has(id))
+      images[id] = { ...(JSON.parse(counts[i]!) as TurfCounts), hatted: !!hats[i] };
   });
   const team = viewerId ? await event.getUserTeam(viewerId).catch(() => null) : null;
-  return { team: team ?? null, images, open, mine };
+  return { team: team ?? null, images, open, mine, hidden };
 }
 
 type DrawnSticker = {
@@ -524,6 +541,7 @@ export async function getTurfStickers(
     JOIN "Post" p ON p.id = i."postId"
     WHERE s.event = ${event.name} AND s."imageId" = ${imageId} AND s."removedAt" IS NULL
       AND ${imageVisible} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL ${only}
+      AND NOT ${contestEntry(Prisma.sql`s."imageId"`)}
     ORDER BY s."createdAt" DESC, s.id DESC
     LIMIT ${limit}
   `;

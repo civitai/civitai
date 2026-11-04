@@ -389,7 +389,7 @@ function ImageReactions({
   /** The hat layer only draws over shown media, so a blurred card gets no hat button either. */
   safe: boolean;
 }) {
-  // Read here, not in the card, so a live hat push re-renders this row only.
+  // Read here, not in the card: a hat push re-renders every mounted card's row, but not the card.
   const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
   return (
