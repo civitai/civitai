@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
+import { refitCrucibleBradleyTerry } from '~/server/services/crucible-bradley-terry';
 
 const BATCH_SIZE = 50;
 
@@ -53,6 +54,7 @@ export const syncCrucibleScoresJob = createJob(
     const results: {
       crucibleId: number;
       entriesSynced: number;
+      btEntries: number | null;
     }[] = [];
 
     // Process each crucible
@@ -126,9 +128,19 @@ export const syncCrucibleScoresJob = createJob(
           log(`Crucible ${crucible.id}: Successfully synced ${successCount} entries`);
         }
 
+        // Shadow ranking: a failed refit must not fail the Elo sync it rides on.
+        const btEntries = await refitCrucibleBradleyTerry(crucible.id).catch((error: unknown) => {
+          logJob({
+            message: 'Bradley-Terry refit failed',
+            data: { crucibleId: crucible.id, error: String(error) },
+          });
+          return null;
+        });
+
         results.push({
           crucibleId: crucible.id,
           entriesSynced: successCount,
+          btEntries,
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

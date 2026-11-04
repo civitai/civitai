@@ -84,6 +84,7 @@ import {
   enteredImageWhere,
   publishedImageWhere,
 } from '~/server/selectors/image.selector';
+import { createVoteOutcome, decidedPairKeys } from '~/server/services/crucible-judge-closure';
 import {
   getCrucibleJudgingConfig,
   recordSessionVote,
@@ -2407,6 +2408,19 @@ function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateS
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
+function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
+/** Pairs this judge is not served again: those they voted on, and those their votes decide. */
+async function getDecidedPairKeys(crucibleId: number, userId: number) {
+  const [votedPairKeys = [], outcomes = []] = await Promise.all([
+    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    sysRedis.sMembers(getVoteOutcomesKey(crucibleId, userId)),
+  ]);
+  return decidedPairKeys(votedPairKeys, outcomes);
+}
+
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
@@ -2887,9 +2901,9 @@ export async function countJudgingPairs({
 
   const judgeState = await Promise.all(
     uniqueIds.map(async (id) => {
-      const [judgeEntryVotes, votedPairKeys = []] = await Promise.all([
+      const [judgeEntryVotes, votedPairKeys] = await Promise.all([
         sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
-        sysRedis.sMembers(getVotedPairsKey(id, userId)),
+        getDecidedPairKeys(id, userId),
       ]);
       return { id, judgeEntryVotes, votedPairKeys };
     })
@@ -3158,7 +3172,7 @@ export const getJudgingPair = async ({
     getAllEntryElos(crucibleId),
     crucibleEloRedis.getAllVoteCounts(crucibleId),
     sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    getDecidedPairKeys(crucibleId, userId),
   ]);
   const votedPairs = new Set(votedPairKeys);
   const judgeVotesOn = (entry: EntryForJudging) => Number(judgeEntryVotes?.[entry.id] ?? 0);
@@ -3400,6 +3414,9 @@ export const submitVote = async ({
         'You have already voted on this pair. Please wait for the next pair to load.'
       );
     }
+    const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
+    await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+    await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
 
     ({ winnerElo, loserElo } = await processEloVote(
       crucibleId,
