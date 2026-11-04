@@ -25,8 +25,8 @@ vi.mock('@mantine/modals', async (importOriginal) => ({
 
 const OWNER = 10;
 const AUTHOR = 20;
-// The reader is on image 1 of chapter 100 (chapter 1), or image 2 or 3 of its two continuations,
-// chapters 101 and 102.
+// The reader is on image 1 of chapter 100 (chapter 1), or image 2, 3 or 4 of its continuations,
+// chapters 101 to 103.
 vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
   useStorylineMode: () => ({
     active: true,
@@ -47,6 +47,14 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
           depth: 1,
           childCount: 0,
           post: { id: 502, title: 'Two, the other way', userId: AUTHOR },
+        },
+        // Someone paid to add it; only the owner's payload says so.
+        {
+          chapterId: 103,
+          depth: 1,
+          childCount: 0,
+          paid: true,
+          post: { id: 503, title: 'Two, paid for', userId: AUTHOR },
         },
       ],
     },
@@ -115,5 +123,17 @@ describe('Remove from storyline in the reader', () => {
     await expect
       .element(item)
       .toHaveTextContent("Chapter 1 can't be removed. Delete the storyline");
+  });
+
+  test('for a chapter someone paid to add, is disabled for the owner and says why', async () => {
+    mocks.currentUser = { id: OWNER };
+    renderItem(4);
+    const item = page.getByRole('menuitem', { name: /Remove from storyline/ });
+    await expect.element(item).toBeDisabled();
+    await expect
+      .element(item)
+      .toHaveTextContent("Someone paid to add this chapter, so it can't be removed");
+    await item.click({ force: true });
+    expect(mocks.remove).not.toHaveBeenCalled();
   });
 });
