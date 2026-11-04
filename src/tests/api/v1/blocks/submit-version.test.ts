@@ -428,6 +428,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       version: '1.2.3',
       status: 'pending',
       listing: null,
+      storageMigrationWarnings: [],
     });
   });
 
@@ -472,6 +473,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       version: '1.2.3',
       status: 'pending',
       listing,
+      storageMigrationWarnings: [],
     });
   });
 

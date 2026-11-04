@@ -232,6 +232,26 @@ describe('Hat Turf button on a feed ImageCard', () => {
     }
   });
 
+  test("the gear and the hat button never take each other's taps", async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    const gear = q('hat-turf-gear')!;
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    const g = gear.getBoundingClientRect();
+    const b = button.getBoundingClientRect();
+    const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button');
+
+    expect(hit(g.left + g.width / 2, g.top + g.height / 2)).toBe(gear);
+    // Every corner of the button, 2px in: the gear's tap halo used to cover the top-right one.
+    for (const [x, y] of [
+      [b.left + 2, b.top + 2],
+      [b.right - 2, b.top + 2],
+      [b.left + 2, b.bottom - 2],
+      [b.right - 2, b.bottom - 2],
+    ])
+      expect(hit(x, y)).toBe(button);
+  });
+
   test('pressing drops a draft hat on the picture without opening the card', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
@@ -360,6 +380,13 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(q('hat-turf-button')).toBeNull();
   });
 
+  test('not joined: a contest entry offers no Join either', async () => {
+    h.stock = { available: 3, optedIn: false };
+    renderCard({ open: { 77: false }, hidden: { 77: true } });
+    await cardRendered();
+    expect(q('hat-turf-button')).toBeNull();
+  });
+
   test('not joined: an image whose owner has not joined still offers Join', async () => {
     h.stock = { available: 3, optedIn: false };
     renderCard({ open: { 77: false } });
@@ -421,6 +448,7 @@ describe('hats on a feed ImageCard', () => {
     leader: 'pink',
     leaderCosmeticId: 11,
     hatted: false,
+    hattedTeam: null,
     ...over,
   });
   const sticker = (id: number, team: string, userId = 9) => ({

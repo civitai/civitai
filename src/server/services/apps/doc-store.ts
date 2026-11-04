@@ -116,6 +116,7 @@ import {
   DOC_STORE_BOUNDS as B,
   DocStoreError,
   DocStoreMigrationPendingError,
+  isDocStoreError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
 
@@ -830,6 +831,31 @@ const SQL_APP_PURGE_BATCH = [
     RETURNING 1) SELECT count(*)::int AS n FROM gone`,
 ] as const;
 
+// SCHEMA MIGRATION (see `migrateDocuments`). Ordinary (app, ns)-scoped statements, run in
+// ordinary `withTx` transactions bound to the app's production namespace.
+//
+// One page of a collection's documents — every key space (private and shared), hidden ones
+// included — in (scope_uid, key) order after a keyset cursor. Keys only: each document is then
+// re-read under its own lock. $1 app, $2 ns, $3 coll, $4 scope_uid and $5 key of the cursor
+// (exclusive), $6 limit.
+const SQL_MIGRATE_PAGE = `SELECT d.scope_uid, d.key FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3
+    AND (d.scope_uid, d.key) > ($4::int, $5::text COLLATE "C")
+  ORDER BY d.scope_uid, d.key LIMIT $6::int`;
+// One document with what its migration needs, locked (LOCK ORDER (1)).
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key
+const SQL_MIGRATE_LOCK_DOC = `SELECT d.data, d.size_bytes, d.author_uid, d.author_kind
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  FOR UPDATE`;
+// The migrated body. A new version (a client holding the old one gets `version_conflict`), and
+// the last writer is kept: no viewer wrote this. $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key,
+// $6 data
+const SQL_MIGRATE_DOC = `UPDATE appdata.doc d
+  SET data = $6::jsonb, version = d.version + 1, updated_at = now()
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING d.size_bytes`;
+
 // VIEWER DATA (see `createDocStoreViewerData`).
 //
 // One user's PRODUCTION usage rows, in app order after a keyset cursor: the apps the user holds
@@ -1159,6 +1185,30 @@ export type ViewerDataEmptyResult = {
   /** Zero unless the shared documents were asked for. */
   sharedDocs: number;
   sharedBytes: number;
+};
+
+/** Where a schema migration's page of documents ends: the last (key space, key) it read. */
+export type MigrationCursor = { scopeUid: number; key: string };
+
+/** Failures sampled per page by `migrateDocuments` (the count is always exact). */
+const MIGRATION_FAILURE_SAMPLES = 5;
+
+/** What one `migrateDocuments` page did. */
+export type MigrateDocumentsResult = {
+  /** Documents read under lock (one deleted between the page read and its lock is not counted). */
+  scanned: number;
+  /** Rewritten by the transform. */
+  migrated: number;
+  /** The transform changed nothing. */
+  unchanged: number;
+  /** The rewrite was refused (size cap, index value, quota) and the document left as it was. */
+  failed: number;
+  /** Changed or not, still not matching the collection's schema afterwards. */
+  invalid: number;
+  /** Up to {@link MIGRATION_FAILURE_SAMPLES} failed documents, with the refusal's code. */
+  failures: { scopeUid: number; key: string; code: string }[];
+  /** The cursor of the next page, or null when there is none. */
+  next: MigrationCursor | null;
 };
 
 /** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
@@ -2142,6 +2192,151 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
+   * SCHEMA MIGRATION (`storage-migration-run.service.ts`): run `transform` over ONE PAGE of one
+   * collection's PRODUCTION documents — every key space, hidden documents included — after
+   * `opts.after` (exclusive), and store what it returns. Development (`dev:`) and review (`rev:`)
+   * namespaces are not touched: they hold test data, which the developer resets.
+   *
+   * Each document is its own transaction: re-read under its row lock, transformed, and written
+   * only when `transform` returns a body (null = unchanged). So a viewer's write that lands
+   * between the page read and the lock is what gets transformed: the transform must leave a
+   * document already in the new shape unchanged (the migration ops do — `applyMigrationOps`), and
+   * then a write racing the run, or a re-run of the same page, is safe. A changed document gets a new version
+   * and seq, its index rows are re-derived, and its size delta is charged exactly as a write
+   * would charge it (the app's ceiling for a shared document, and the user the document is
+   * charged to: its viewer for a private one, its author or counter creator for a shared one).
+   * A document the write would refuse — over the size cap, an index value of the wrong type, a
+   * ceiling it no longer fits under — is left as it was and counted in `failed`.
+   *
+   * `invalid` counts the documents (changed or not) that still do not match the collection's
+   * schema afterwards — what an `acknowledge` op accepted. `next` is the cursor of the next page,
+   * or null when this one was the last.
+   */
+  async function migrateDocuments(
+    appId: string,
+    coll: DocCollection,
+    transform: (data: Record<string, unknown>) => Record<string, unknown> | null,
+    opts: { after?: MigrationCursor | null; limit?: number } = {}
+  ): Promise<MigrateDocumentsResult> {
+    assertCollection(coll);
+    const limit = opts.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
+    }
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const after = opts.after ?? { scopeUid: -1, key: '' };
+    const page = await withTx(ctx, async (c) =>
+      (
+        await c.query(SQL_MIGRATE_PAGE, [
+          appId,
+          ctx.ns,
+          coll.name,
+          after.scopeUid,
+          after.key,
+          limit,
+        ])
+      ).rows.map((r) => ({ scopeUid: Number(r.scope_uid), key: r.key as string }))
+    );
+    const result: MigrateDocumentsResult = {
+      scanned: 0,
+      migrated: 0,
+      unchanged: 0,
+      failed: 0,
+      invalid: 0,
+      failures: [],
+      next: page.length < limit ? null : page[page.length - 1],
+    };
+    const stillInvalid = (data: unknown) => {
+      try {
+        validateDocAgainstCollectionSchema(ctx, coll, data);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    for (const { scopeUid: scope, key } of page) {
+      const base = [appId, ctx.ns, coll.name, scope, key];
+      try {
+        const migrateOne = () =>
+          withTx(ctx, async (c) => {
+            const row = (await c.query(SQL_MIGRATE_LOCK_DOC, base)).rows[0];
+            if (!row) return null; // deleted since the page was read
+            const before = row.data as Record<string, unknown>;
+            const next = transform(before);
+            if (next === null) return { changed: false, invalid: stillInvalid(before) };
+            const json = serializeData(next);
+            const indexRows = indexRowsFor(coll, next);
+            const res = await c.query(SQL_MIGRATE_DOC, [...base, json]);
+            const delta = Number(res.rows[0].size_bytes) - Number(row.size_bytes);
+            const owner =
+              scope !== 0
+                ? scope
+                : (row.author_kind === 'user' || row.author_kind === 'counter') &&
+                  row.author_uid !== null &&
+                  row.author_uid !== undefined
+                ? Number(row.author_uid)
+                : null;
+            await c.query(SQL_SYNC_INDEX, [
+              appId,
+              ctx.ns,
+              coll.name,
+              scope,
+              key,
+              indexRows.map((r) => r.name),
+              indexRows.map((r) => r.vText),
+              indexRows.map((r) => r.vNum),
+              indexRows.map((r) => r.type),
+            ]);
+            const seq = await charge(
+              c,
+              ctx,
+              appDelta(scope, { bytes: delta, docs: 0 }),
+              owner === null
+                ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
+                : {
+                    uid: owner,
+                    bytes: delta,
+                    docs: 0,
+                    ceiling: scope !== 0 ? 'viewer' : 'author',
+                  }
+            );
+            await c.query(SQL_STAMP_SEQ, [...base, seq, null]);
+            return { changed: true, invalid: stillInvalid(next) };
+          });
+        // A lock wait that timed out (a burst of writes to this app) is retried once; the
+        // transform is idempotent, so a second pass over a document is safe.
+        const outcome = await migrateOne().catch((err) => {
+          if (isDocStoreError(err, 'rate_limited')) return migrateOne();
+          throw err;
+        });
+        result.scanned += 1;
+        if (outcome === null) continue;
+        if (outcome.changed) result.migrated += 1;
+        else result.unchanged += 1;
+        if (outcome.invalid) result.invalid += 1;
+      } catch (err) {
+        // A disabled or unreachable store fails every document alike: stop the page.
+        if (
+          isDocStoreError(err, 'storage_disabled') ||
+          isDocStoreError(err, 'service_unavailable')
+        ) {
+          throw err;
+        }
+        result.scanned += 1;
+        result.failed += 1;
+        if (result.failures.length < MIGRATION_FAILURE_SAMPLES) {
+          result.failures.push({
+            scopeUid: scope,
+            key,
+            code: err instanceof DocStoreError ? err.code : 'internal',
+          });
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
    * The apps in which `userId` holds production documents, with their stored usage — the same
    * figure the per-viewer ceiling (`userBytes` / `userDocs`) is checked against: their private
    * documents, the shared documents they authored and the counter documents their increment
@@ -2284,7 +2479,7 @@ function buildDocStore(deps: DocStoreDeps) {
     store,
     lookup: { findSharedByKey },
     moderation: createModeration({ withTx, charge }),
-    maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp },
+    maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
     viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
   };
 }

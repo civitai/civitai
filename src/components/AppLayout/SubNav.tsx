@@ -18,6 +18,9 @@ import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImage
 import { StorylineFeedFilters } from '~/components/Storyline/StorylineFeedFilters';
 import clsx from 'clsx';
 
+// Routes whose filters are narrow enough to share their phone row with the gear (see `SubNav2`).
+const GEAR_ON_FILTER_ROW = ['/apps'];
+
 const filterSections = [
   { pathname: '/models', component: <ModelFeedFilters ml="auto" /> },
   { pathname: '/images', component: <ImageFeedFilters ml="auto" hideMediaTypes /> },
@@ -50,6 +53,7 @@ const filterSections = [
 export function SubNav2() {
   const router = useRouter();
   const section = filterSections.find((x) => x.pathname === router.pathname);
+  const gearOnFilterRow = GEAR_ON_FILTER_ROW.includes(router.pathname);
 
   return (
     // `items-start`, not `items-center`: `HomeTabs` is a horizontal scroller, and on platforms
@@ -68,11 +72,25 @@ export function SubNav2() {
     >
       <HomeTabs />
       <NavCustomizeNotice />
-      {section?.component}
-      <SubNavSettingsButton
-        withHomepageOption={router.pathname === '/'}
-        className={section ? undefined : 'ml-auto'}
-      />
+      {section && gearOnFilterRow ? (
+        // Below `sm` the feed filters and the gear share ONE row under the tabs, so the tabs row
+        // keeps all its width to scroll in. Loose siblings put the gear beside the tabs (or alone
+        // on a third line) and squeezed the tabs down to "Home". `contents` leaves desktop as it was.
+        // Opt-in: a wider filter group (images: audience + sort + Filters) cannot shrink to make room
+        // and pushes the gear off the screen.
+        <div className="contents @max-sm:flex @max-sm:w-full @max-sm:items-start @max-sm:gap-2">
+          {section.component}
+          <SubNavSettingsButton />
+        </div>
+      ) : (
+        <>
+          {section?.component}
+          <SubNavSettingsButton
+            withHomepageOption={router.pathname === '/'}
+            className={section ? undefined : 'ml-auto'}
+          />
+        </>
+      )}
     </div>
   );
 }

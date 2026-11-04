@@ -38,6 +38,8 @@ export type TurfSummaries = {
   images: Record<number, TurfSummary>;
   /** Per requested image: published, visible and its owner opted in, so it can take a hat now. */
   open: Record<number, boolean>;
+  /** Contest entries: no Hat Turf on them at all. */
+  hidden?: Record<number, boolean>;
   stickers: Record<number, HatSticker[]>;
   /** A card on screen says so: its count changes are pushed. Returns the way to stop. */
   watch: (imageId: number) => () => void;
@@ -105,13 +107,15 @@ export function TurfSummaryProvider({
     let team: string | null = null;
     const images: Record<number, TurfSummary> = {};
     const open: Record<number, boolean> = {};
+    const hidden: Record<number, boolean> = {};
     for (const query of summaryQueries) {
       if (!query.data) continue;
       team = query.data.team ?? team;
       Object.assign(images, query.data.images);
       Object.assign(open, query.data.open);
+      Object.assign(hidden, query.data.hidden);
     }
-    return { team, images, open };
+    return { team, images, open, hidden };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summaryStamp]);
 
@@ -192,12 +196,22 @@ export function TurfSummaryProvider({
       queries[chunkOf.get(imageId) ?? -1]?.dataUpdatedAt ?? 0;
     let images = base.images;
     for (const push of Object.values(pushed))
-      if (push.at > stampOf(summaryQueries, push.imageId))
+      if (!base.hidden[push.imageId] && push.at > stampOf(summaryQueries, push.imageId))
         images = applyTurfPush(images, push.imageId, push.counts);
     const stickers = { ...baseStickers };
     for (const [id, read] of Object.entries(reread))
       if (read.at > stampOf(stickerQueries, Number(id))) stickers[Number(id)] = read.stickers;
-    return { event, arm, team: base.team, images, open: base.open, stickers, watch };
+    for (const id of Object.keys(base.hidden)) delete stickers[Number(id)];
+    return {
+      event,
+      arm,
+      team: base.team,
+      images,
+      open: base.open,
+      hidden: base.hidden,
+      stickers,
+      watch,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event, arm, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);
 

@@ -504,6 +504,21 @@ describe('preserveGeneratorEvidence', () => {
       expect(createCsamReport).not.toHaveBeenCalled();
     });
 
+    it('refuses a manifest that grew past the size cap after its HEAD, reading at most the cap', async () => {
+      const store = memoryStore({ [MANIFEST]: Buffer.alloc(MAX_MANIFEST_BYTES + 1, ' ') });
+      vi.spyOn(store, 'head').mockResolvedValue({ bytes: 10 });
+      const read = vi.spyOn(store, 'read');
+
+      await expect(
+        preserveGeneratorEvidence(
+          { userId: USER, moderatorId: 1, workflowIds: [], triggers: [], manifestKey: MANIFEST },
+          { config, store }
+        )
+      ).rejects.toThrow(/manifest is over/);
+      expect(read).toHaveBeenCalledWith(MANIFEST, MAX_MANIFEST_BYTES);
+      expect(createCsamReport).not.toHaveBeenCalled();
+    });
+
     it('refuses a manifest over the size cap without reading it', async () => {
       const store = memoryStore({
         [MANIFEST]: Buffer.alloc(MAX_MANIFEST_BYTES + 1, ' '),
@@ -602,6 +617,7 @@ describe('preserveGeneratorEvidence', () => {
 
     it('records who approved it, and when', async () => {
       dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: preservedDetails }] as never);
+      const before = Date.now();
       await approveGeneratorEvidenceReport({
         reportId: 3,
         userId: USER,
@@ -614,7 +630,9 @@ describe('preserveGeneratorEvidence', () => {
       };
       expect(where).toEqual({ id: 3 });
       expect(data.details.generatorEvidence.approvedById).toBe(1);
-      expect(Date.parse(data.details.generatorEvidence.approvedAt)).not.toBeNaN();
+      const approvedAt = Date.parse(data.details.generatorEvidence.approvedAt);
+      expect(approvedAt).toBeGreaterThanOrEqual(before);
+      expect(approvedAt).toBeLessThanOrEqual(Date.now());
     });
   });
 
@@ -699,7 +717,9 @@ describe('preserveGeneratorEvidence', () => {
       const blob = blobOf(written(), OUTPUT);
       expect(blob.evidenceKey).not.toBe(OLD_KEY);
       expect(blob.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
-      expect(await store.read(blob.evidenceKey as string)).toEqual(new Uint8Array(bytes));
+      expect(await store.read(blob.evidenceKey as string, bytes.length)).toEqual(
+        new Uint8Array(bytes)
+      );
       expect(blob.replaced).toEqual([
         expect.objectContaining({ evidenceKey: OLD_KEY, sha256: 'b'.repeat(64), byId: 2 }),
       ]);

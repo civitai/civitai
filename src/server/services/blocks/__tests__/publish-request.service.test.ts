@@ -44,8 +44,14 @@ vi.mock('~/server/db/client', () => ({
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {
-    appBlockPublishRequest: { create: dbMocks.createPublishRequest },
+    appBlockPublishRequest: {
+      create: dbMocks.createPublishRequest,
+      // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+      findMany: async () => [],
+    },
     appListing: { create: dbMocks.appListingCreate },
+    // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+    appBlock: { findFirst: async () => null },
   },
 }));
 

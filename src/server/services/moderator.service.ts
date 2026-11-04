@@ -185,7 +185,7 @@ type SiteAlertModActivity = {
 
 type CsamReportModActivity = {
   entityType: 'csamReport';
-  activity: `generatorEvidence:view:${string}`;
+  activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
 };
 
 type ModActivity = {

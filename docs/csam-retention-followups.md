@@ -62,7 +62,8 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
       readable file logs `send-all-unreadable` on every run and `send-decision-needed` from
       `CSAM_SEND_DECISION_AFTER_HOURS`. A preserved-evidence report the job skips while it waits for
       approval logs `send-blocked` (with `awaiting: 'evidence-approval'`) once it is older than
-      `CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS`.
+      `CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS`. A report whose XML NCMEC would refuse opens no
+      CyberTip and logs `send-xml` and `send-decision-needed` on every run.
 - [ ] Route those lines to an alert, and alert when a report is unarchived for >7d (the
       `archive-data` error line carries `reportId` and `hoursSinceSent`).
 - [ ] Consider a report-level dead-letter so a permanently-failing report is visible rather than

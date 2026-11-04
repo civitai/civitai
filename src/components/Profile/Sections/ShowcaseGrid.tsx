@@ -22,14 +22,16 @@ export function ShowcaseGrid({
   defaultWidth = 280,
   ...props
 }: Props & { children: React.ReactNode; className?: string }) {
-  const ref = useResizeObserver<HTMLDivElement>((entry) => {
-    const children = [...entry.target.childNodes] as HTMLElement[];
-    for (const child of children) {
-      const { height } = child.getBoundingClientRect();
-      if (height === 0) child.style.visibility = 'hidden';
+  // A card in a collapsed row still paints its hat into the clip's hat room, so it is hidden.
+  // Watched per card: a card can drop into a collapsed row without the grid changing size.
+  const ref = useResizeObserver<HTMLDivElement>(
+    (entry) => {
+      const child = entry.target as HTMLElement;
+      if (child.getBoundingClientRect().height === 0) child.style.visibility = 'hidden';
       else child.style.removeProperty('visibility');
-    }
-  });
+    },
+    { observeChildren: true }
+  );
 
   const styleVars = {
     '--item-count': itemCount,

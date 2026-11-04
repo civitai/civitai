@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as EvidenceStore from '~/server/services/generator-evidence/evidence-store';
+import type * as EvidencePayload from '~/server/services/generator-evidence/evidence-payload';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -35,8 +36,9 @@ const {
   getObject,
   submitReport,
   submitFileDetails,
-  readEvidenceObject,
+  streamEvidenceObject,
   hashEvidenceObject,
+  evidenceFileDetails,
 } = vi.hoisted(() => ({
   uploadFile: vi.fn(),
   finishReport: vi.fn(),
@@ -44,8 +46,9 @@ const {
   getObject: vi.fn(),
   submitReport: vi.fn(),
   submitFileDetails: vi.fn(),
-  readEvidenceObject: vi.fn(),
+  streamEvidenceObject: vi.fn(),
   hashEvidenceObject: vi.fn(),
+  evidenceFileDetails: vi.fn(),
 }));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
@@ -79,9 +82,16 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   }),
 }));
 
+// The real details, unless a test stands in for a field the payload might one day leave unescaped.
+vi.mock('~/server/services/generator-evidence/evidence-payload', async (importOriginal) => {
+  const actual = await importOriginal<typeof EvidencePayload>();
+  evidenceFileDetails.mockImplementation(actual.evidenceFileDetails);
+  return { ...actual, evidenceFileDetails };
+});
+
 vi.mock('~/server/services/generator-evidence/evidence-store', async (importOriginal) => ({
   ...(await importOriginal<typeof EvidenceStore>()),
-  readEvidenceObject,
+  streamEvidenceObject,
   hashEvidenceObject,
 }));
 
@@ -105,6 +115,7 @@ import {
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import type { EvidenceStore as PreserveStore } from '~/server/services/generator-evidence/preserve-blob';
+import { clearUnconfirmedOpens } from '~/server/services/csam-unconfirmed-open';
 import { buildReport, buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 import { Parser } from 'xml2js';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -125,6 +136,10 @@ function whereSql(where: Where, params: unknown[]): string {
     if (value instanceof Object && 'lt' in value) {
       params.push(value.lt);
       return `"${column}" < $${params.length}`;
+    }
+    if (value instanceof Object && 'in' in value) {
+      params.push(value.in);
+      return `"${column}" = ANY($${params.length})`;
     }
     params.push(value);
     return `"${column}" = $${params.length}`;
@@ -154,6 +169,15 @@ async function findFirst({ where }: { where: Where }) {
     params
   );
   return rows[0] ?? null;
+}
+
+async function findMany({ where }: { where: Where }) {
+  const params: unknown[] = [];
+  const { rows } = await db.pg.query(
+    `SELECT * FROM "CsamReport" WHERE ${whereSql(where, params)}`,
+    params
+  );
+  return rows;
 }
 
 async function create({ data }: { data: Record<string, unknown> }) {
@@ -247,36 +271,32 @@ beforeEach(() => {
     refuseIllFormed(buildSubmitFileDetails(details));
     return { data: { responseCode: 0 } };
   });
-  readEvidenceObject
+  streamEvidenceObject
     .mockReset()
-    .mockImplementation(async () => ({ bytes: new Uint8Array(stored) }));
+    .mockImplementation(async () => ({ chunks: [new Uint8Array(stored)] }));
   // The streamed hash of whatever the store holds now, without counting as a read of the file.
   hashEvidenceObject.mockReset().mockImplementation(async (key: string) => {
-    const { bytes } = await readEvidenceObject.getMockImplementation()!(key);
-    return createHash('sha256').update(bytes).digest('hex');
+    const hash = createHash('sha256');
+    for (const chunk of (await streamEvidenceObject.getMockImplementation()!(key)).chunks)
+      hash.update(chunk);
+    return hash.digest('hex');
   });
-  // A view of the output on THIS report; views of the input on another report or entity, which must not count.
-  const views = [
-    { entityType: 'csamReport', onThisReport: true, activity: `generatorEvidence:view:${OUTPUT}` },
-    { entityType: 'csamReport', onThisReport: false, activity: `generatorEvidence:view:${INPUT}` },
-    { entityType: 'image', onThisReport: true, activity: `generatorEvidence:view:${INPUT}` },
-  ];
+  viewsOf = defaultViews;
   dbMock.dbWrite.modActivity.findMany
     .mockReset()
     .mockImplementation((async ({
       where,
     }: {
-      where: { entityType: string; entityId: number; activity: { in: string[] } };
+      where: { entityType: string; entityId: { in: number[] }; activity: { in: string[] } };
     }) =>
       views
         .filter(
           (v) =>
             v.entityType === where.entityType &&
-            v.onThisReport &&
-            where.entityId > 0 &&
+            where.entityId.in.includes(v.entityId) &&
             where.activity.in.includes(v.activity)
         )
-        .map((v) => ({ activity: v.activity, userId: 10 }))) as never);
+        .map((v) => ({ activity: v.activity, userId: 10, entityId: v.entityId }))) as never);
   finishReport.mockReset();
   cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
@@ -301,6 +321,7 @@ beforeEach(() => {
   dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.updateMany.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(findFirst as never);
+  dbMock.dbWrite.csamReport.findMany.mockReset().mockImplementation(findMany as never);
   dbMock.dbWrite.csamReport.deleteMany.mockReset().mockImplementation(deleteMany as never);
   dbMock.dbWrite.csamReport.create.mockReset().mockImplementation(create as never);
   dbMock.dbWrite.$queryRaw.mockReset().mockImplementation(queryRaw as never);
@@ -308,7 +329,11 @@ beforeEach(() => {
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
-    const sql = strings.map((part, i) => (i ? `$${i}` : '') + part).join('');
+    const sql = strings
+      .map((part, i) => (i ? `$${i}` : '') + part)
+      .join('')
+      // Prisma sends an id list typed; PGlite cannot infer it.
+      .replace(/UNNEST\((\$\d+)\)/g, 'UNNEST($1::int[])');
     return (await db.pg.query(sql, values)).affectedRows ?? 0;
   }) as never);
 });
@@ -352,14 +377,36 @@ function evidenceDetails({ approved = true, outputSha = sha } = {}) {
   };
 }
 
-async function sendEvidenceReport(details: unknown) {
+type View = { entityType: string; entityId: number; activity: string };
+const viewOf = (blobId: string, entityId: number, entityType = 'csamReport'): View => ({
+  entityType,
+  entityId,
+  activity: `generatorEvidence:view:${blobId}`,
+});
+// A view of the output on this report; views of the input on a report that is not the user's, and
+// on another entity, which must not count.
+const defaultViews = (id: number) => [
+  viewOf(OUTPUT, id),
+  viewOf(INPUT, id + 1000),
+  viewOf(INPUT, id, 'image'),
+];
+let viewsOf: (id: number) => View[] = defaultViews;
+let views: View[] = [];
+
+async function insertEvidenceReport(details: unknown, { userId = 20, sent = false } = {}) {
   const { rows } = await db.pg.query<{ id: number }>(
-    `INSERT INTO "CsamReport" ("userId", "reportedById", "type", "details")
-     VALUES (20, 10, 'GeneratedImage', $1::jsonb) RETURNING id`,
-    [JSON.stringify(details)]
+    `INSERT INTO "CsamReport" ("userId", "reportedById", "type", "details", "reportSentAt")
+     VALUES ($1, 10, 'GeneratedImage', $2::jsonb, $3) RETURNING id`,
+    [userId, JSON.stringify(details), sent ? new Date() : null]
   );
-  await processCsamReport(await readRow(rows[0].id));
   return rows[0].id;
+}
+
+async function sendEvidenceReport(details: unknown) {
+  const id = await insertEvidenceReport(details);
+  views = viewsOf(id);
+  await processCsamReport(await readRow(id));
+  return id;
 }
 
 const detailsFor = (blobId: string) =>
@@ -371,11 +418,15 @@ describe('sending a report of preserved generator evidence', () => {
   it('sends each preserved file from its evidence copy, inputs first, and marks the report sent', async () => {
     const id = await sendEvidenceReport(evidenceDetails());
 
-    expect([...new Set(readEvidenceObject.mock.calls.map(([key]) => key))].sort()).toEqual([
+    expect([...new Set(streamEvidenceObject.mock.calls.map(([key]) => key))].sort()).toEqual([
       `generator-evidence/20/${WORKFLOW}/${INPUT}`,
       `generator-evidence/20/${WORKFLOW}/${OUTPUT}`,
     ]);
     expect(uploadFile).toHaveBeenCalledTimes(2);
+    for (const [{ file }] of uploadFile.mock.calls)
+      expect(Buffer.from(await (file as File).arrayBuffer()).equals(Buffer.from(stored))).toBe(
+        true
+      );
     expect(submitFileDetails.mock.calls[0][0].originalFileName).toBe(INPUT);
     expect((await readRow(id)).reportSentAt).not.toBeNull();
   });
@@ -384,9 +435,9 @@ describe('sending a report of preserved generator evidence', () => {
     let held = 0;
     let mostHeld = 0;
     hashEvidenceObject.mockResolvedValue(sha);
-    readEvidenceObject.mockImplementation(async () => {
+    streamEvidenceObject.mockImplementation(async () => {
       mostHeld = Math.max(mostHeld, ++held);
-      return { bytes: new Uint8Array(stored) };
+      return { chunks: [new Uint8Array(stored)] };
     });
     uploadFile.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -397,7 +448,7 @@ describe('sending a report of preserved generator evidence', () => {
     const id = await sendEvidenceReport(evidenceDetails());
 
     expect(hashEvidenceObject).toHaveBeenCalledTimes(2);
-    expect(readEvidenceObject).toHaveBeenCalledTimes(2);
+    expect(streamEvidenceObject).toHaveBeenCalledTimes(2);
     expect(mostHeld).toBe(1);
     expect((await readRow(id)).reportSentAt).not.toBeNull();
   });
@@ -437,8 +488,8 @@ describe('sending a report of preserved generator evidence', () => {
     const OTHER = new Uint8Array([9, 9, 9]);
     submitReport.mockImplementationOnce(async (report) => {
       refuseIllFormed(buildReport(report));
-      readEvidenceObject.mockImplementation(async (key: string) => ({
-        bytes: key.endsWith(OUTPUT) ? OTHER : new Uint8Array(stored),
+      streamEvidenceObject.mockImplementation(async (key: string) => ({
+        chunks: [key.endsWith(OUTPUT) ? OTHER : new Uint8Array(stored)],
       }));
       return { data: { reportId: 900 } };
     });
@@ -496,16 +547,47 @@ describe('sending a report of preserved generator evidence', () => {
     expect(submitReport.mock.calls[0][0].personOrUserReported.priorCTReports).toEqual([4242]);
   });
 
-  it('reports a file as viewed only when a moderator view of it on this report is recorded', async () => {
-    const id = await sendEvidenceReport(evidenceDetails());
+  it("reports a file as viewed only when a moderator view of it on one of the user's reports is recorded", async () => {
+    await sendEvidenceReport(evidenceDetails());
 
     expect(detailsFor(OUTPUT).fileViewedByEsp).toBe(true);
     expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
-    const [{ where }] = dbMock.dbWrite.modActivity.findMany.mock.calls[0] as [
-      { where: { entityId: number } }
-    ];
-    expect(where.entityId).toBe(id);
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+  });
+
+  describe("a file viewed on the user's earlier report", () => {
+    const earlierWith = (inputSha: string) => {
+      const details = evidenceDetails();
+      Object.assign(details.generatedImages[0].blobs[1], { sha256: inputSha });
+      return details;
+    };
+
+    it('counts as viewed when the earlier report held the same bytes', async () => {
+      const earlier = await insertEvidenceReport(earlierWith(sha), { sent: true });
+      viewsOf = (id) => [viewOf(OUTPUT, id), viewOf(INPUT, earlier)];
+
+      await sendEvidenceReport(evidenceDetails());
+
+      expect(detailsFor(INPUT).fileViewedByEsp).toBe(true);
+    });
+
+    it('does not count when the earlier report held other bytes under the same id', async () => {
+      const earlier = await insertEvidenceReport(earlierWith('0'.repeat(64)), { sent: true });
+      viewsOf = (id) => [viewOf(OUTPUT, id), viewOf(INPUT, earlier)];
+
+      await sendEvidenceReport(evidenceDetails());
+
+      expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
+    });
+
+    it("does not count when the earlier report is another user's", async () => {
+      const other = await insertEvidenceReport(earlierWith(sha), { userId: 21, sent: true });
+      viewsOf = (id) => [viewOf(OUTPUT, id), viewOf(INPUT, other)];
+
+      await sendEvidenceReport(evidenceDetails());
+
+      expect(detailsFor(INPUT).fileViewedByEsp).toBe(false);
+    });
   });
 
   it('also writes the prompt, negative prompt and resources into each file as plain text', async () => {
@@ -531,7 +613,6 @@ describe('sending a report of preserved generator evidence', () => {
     const [promptLine, ...rest] = detailsFor(OUTPUT).additionalInfo[1].split('\n');
     expect(promptLine).toMatch(/^Prompt: p+… \[truncated; full text preserved\]$/);
     expect([...promptLine]).toHaveLength(MAX_GENERATION_LINE_CHARS);
-    expect(TRUNCATION_MARKER).toContain('truncated; full text preserved');
     expect(rest).toEqual([
       'Negative prompt: the negative text',
       'Resources: urn:air:sdxl:checkpoint:civitai:1@2',
@@ -905,6 +986,20 @@ describe('markup characters in what NCMEC is sent', () => {
     expect(report.personOrUserReported.screenName).toBe('&lt;user&gt;');
   });
 
+  it("opens no CyberTip when one file's details would not be well-formed XML", async () => {
+    const actual = evidenceFileDetails.getMockImplementation()!;
+    evidenceFileDetails.mockImplementationOnce((...args: Parameters<typeof actual>) => ({
+      ...actual(...args),
+      originalFileName: 'unescaped & name',
+    }));
+
+    const id = await sendEvidenceReport(evidenceDetails());
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect((await readRow(id)).reportSentAt).toBeNull();
+  });
+
   it('opens no CyberTip when any part of it would not be well-formed XML', async () => {
     const details = {
       ...evidenceDetails(),
@@ -916,5 +1011,126 @@ describe('markup characters in what NCMEC is sent', () => {
     expect(submitReport).not.toHaveBeenCalled();
     expect(uploadFile).not.toHaveBeenCalled();
     expect((await readRow(id)).reportSentAt).toBeNull();
+  });
+});
+
+describe('an open whose answer cannot be read', () => {
+  // What the client throws for a 2xx answer whose reportId is not a whole number.
+  const unreadable = () =>
+    submitReport.mockRejectedValue(new Error('Response "reportId" must be a number, got: string'));
+  const linesOf = (subType: string, id: number) =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as { subType?: string; reportId?: number })
+      .filter((line) => line.subType === subType && line.reportId === id);
+
+  it('opens exactly once over three runs, and holds the report for a decision', async () => {
+    loggingMock.logToAxiom.mockClear();
+    unreadable();
+
+    const id = await sendEvidenceReport(evidenceDetails());
+    await processCsamReport(await readRow(id));
+    await processCsamReport(await readRow(id));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(uploadFile).not.toHaveBeenCalled();
+    const row = await readRow(id);
+    expect(row.reportSentAt).toBeNull();
+    expect(row.details.unconfirmedOpens).toHaveLength(1);
+    expect(linesOf('send-open-unconfirmed', id)).toHaveLength(1);
+    expect(linesOf('send-decision-needed', id)).toHaveLength(3);
+  });
+
+  it('sends again once a moderator clears it, recording who and why', async () => {
+    unreadable();
+    const id = await sendEvidenceReport(evidenceDetails());
+    submitReport.mockReset().mockResolvedValue({ data: { reportId: 900 } });
+
+    await clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' });
+    await processCsamReport(await readRow(id));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const row = await readRow(id);
+    expect(row.reportSentAt).not.toBeNull();
+    expect(row.details.unconfirmedOpens).toBeUndefined();
+    expect(row.details.clearedUnconfirmedOpens).toMatchObject([
+      { clearedById: 10, note: 'checked with NCMEC' },
+    ]);
+    const { rows: activity } = await db.pg.query(
+      `SELECT "userId", "entityType", activity FROM "ModActivity" WHERE "entityId" = $1`,
+      [id]
+    );
+    expect(activity).toEqual([
+      { userId: 10, entityType: 'csamReport', activity: 'csamReport:clearUnconfirmedOpen' },
+    ]);
+  });
+
+  it('holds the report even when the run lost its claim during the open', async () => {
+    const id = await insertEvidenceReport(evidenceDetails());
+    views = viewsOf(id);
+    // Another run takes the report while this one waits on NCMEC, then its claim expires.
+    submitReport.mockImplementation(async () => {
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "sendClaimId" = '00000000-0000-4000-8000-000000000002', "sendClaimedAt" = $2 WHERE id = $1`,
+        [id, new Date(Date.now() - 6 * 3_600_000)]
+      );
+      throw new Error('Response "reportId" must be a number, got: string');
+    });
+
+    await processCsamReport(await readRow(id));
+    await processCsamReport(await readRow(id));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect((await readRow(id)).details.unconfirmedOpens).toHaveLength(1);
+  });
+
+  const heldWithClaim = async (claimedHoursAgo: number) => {
+    const id = await insertEvidenceReport({
+      ...evidenceDetails(),
+      unconfirmedOpens: [{ at: '2026-11-03T00:00:00Z', message: 'unreadable' }],
+    });
+    await db.pg.query(
+      `UPDATE "CsamReport" SET "sendClaimId" = '00000000-0000-4000-8000-000000000003', "sendClaimedAt" = $2 WHERE id = $1`,
+      [id, new Date(Date.now() - claimedHoursAgo * 3_600_000)]
+    );
+    return id;
+  };
+
+  it('refuses to clear while a send run holds the report', async () => {
+    const id = await heldWithClaim(0);
+
+    await expect(
+      clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect((await readRow(id)).details.unconfirmedOpens).toHaveLength(1);
+  });
+
+  it('takes the report from a run whose claim expired, so nothing it writes lands after the clear', async () => {
+    const id = await heldWithClaim(6);
+
+    await clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' });
+
+    const row = await readRow(id);
+    expect(row.details.unconfirmedOpens).toBeUndefined();
+    expect(row.sendClaimId).toBeNull();
+  });
+
+  it('refuses to clear a report that is not held', async () => {
+    const id = await insertEvidenceReport(evidenceDetails());
+
+    await expect(
+      clearUnconfirmedOpens({ reportId: id, moderatorId: 10, note: 'checked with NCMEC' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('still lets a refusal or an outage fail the run, to be retried', async () => {
+    submitReport.mockRejectedValue(
+      new Error('Request failed with http status 500 (Request-ID: x)')
+    );
+
+    const id = await insertEvidenceReport(evidenceDetails());
+    views = viewsOf(id);
+
+    await expect(processCsamReport(await readRow(id))).rejects.toThrow('http status 500');
+    expect((await readRow(id)).details.unconfirmedOpens).toBeUndefined();
   });
 });

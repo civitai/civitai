@@ -344,8 +344,8 @@ export async function getGeneratorEvidenceReport(userId: number, viewerId: numbe
   });
   if (!report || !isGeneratorEvidenceDetails(report.details)) return null;
   const viewed = await getViewedEvidence(
-    report.id,
-    report.details.generatedImages.flatMap((j) => j.blobs.map((b) => b.blobId))
+    { id: report.id, userId },
+    report.details.generatedImages.flatMap((j) => j.blobs)
   );
   return {
     id: report.id,

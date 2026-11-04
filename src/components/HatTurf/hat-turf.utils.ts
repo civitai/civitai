@@ -14,6 +14,8 @@ export type TurfSummary = {
   leader: string | null;
   leaderCosmeticId: number | null;
   hatted: boolean;
+  /** The team whose hat protects the image; null when none does. */
+  hattedTeam: string | null;
 };
 
 /** Radius of the ring's circle in the badge's 44-unit box; the arcs are drawn on it. */
@@ -128,26 +130,36 @@ export function readHatPose(data: unknown): HatPose | null {
   };
 }
 
-export function hatTone(team: string, leader: string | null): 'lead' | 'dim' | 'plain' {
+/** A viewer's own hat never dims: on a pale picture a dimmed hat reads as missing. */
+export function hatTone(
+  team: string,
+  leader: string | null,
+  own = false
+): 'lead' | 'dim' | 'plain' {
   if (!leader) return 'plain';
-  return team === leader ? 'lead' : 'dim';
+  if (team === leader) return 'lead';
+  return own ? 'plain' : 'dim';
 }
 
 /**
- * A push replaces the image's counts; the push does not carry `hatted`, so that stays what the
- * last read said. `null` counts (the last sticker is gone) removes the image's turf.
+ * A push replaces the image's counts; the push does not carry `hatted` or `hattedTeam`, so those stay
+ * what the last read said. `null` counts (the last sticker is gone) removes the image's turf.
  */
 export function applyTurfPush(
   images: Record<number, TurfSummary>,
   imageId: number,
-  counts: Omit<TurfSummary, 'hatted'> | null
+  counts: Omit<TurfSummary, 'hatted' | 'hattedTeam'> | null
 ): Record<number, TurfSummary> {
   if (!counts) {
     if (!(imageId in images)) return images;
     const { [imageId]: _gone, ...rest } = images;
     return rest;
   }
-  return { ...images, [imageId]: { ...counts, hatted: images[imageId]?.hatted ?? false } };
+  const prev = images[imageId];
+  return {
+    ...images,
+    [imageId]: { ...counts, hatted: prev?.hatted ?? false, hattedTeam: prev?.hattedTeam ?? null },
+  };
 }
 
 /** Reads a turf push off the wire; null for anything not for this event or not shaped like one. */

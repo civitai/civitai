@@ -4963,6 +4963,38 @@ model AppStorageImportGrant {
   @@map("app_storage_import_grants")
 }
 
+// App Blocks App Storage schema migrations: one run per (approved publish request, collection)
+// over that collection's stored documents. RAW SQL ONLY (`storage-migration-run.service.ts`), so
+// the model is stripped from the generated client; the migration
+// `20261221120000_app_storage_migration_runs` is applied by hand (with its FKs, CHECK and partial
+// index, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppStorageMigrationRun {
+  publishRequestId String    @map("publish_request_id")
+  collection       String
+  appBlockId       String    @map("app_block_id")
+  ops              Json
+  status           String    @default("pending")
+  cursor           Json?
+  scanned          Int       @default(0)
+  migrated         Int       @default(0)
+  unchanged        Int       @default(0)
+  failed           Int       @default(0)
+  invalid          Int       @default(0)
+  failures         Json      @default("[]")
+  lastError        String?   @map("last_error")
+  attempts         Int       @default(0)
+  claimToken       String?   @map("claim_token")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(6)
+  heartbeatAt      DateTime? @map("heartbeat_at") @db.Timestamptz(6)
+  finishedAt       DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  @@id([publishRequestId, collection])
+  @@index([appBlockId], map: "app_storage_migration_runs_app_block_idx")
+  @@map("app_storage_migration_runs")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.

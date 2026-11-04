@@ -49,7 +49,8 @@ export type StoredEvidenceBlob = {
 };
 
 export type EvidenceStore = {
-  read(key: string): Promise<Uint8Array>;
+  /** At most `limit` bytes: a longer object comes back cut at `limit + 1`, never read whole. */
+  read(key: string, limit: number): Promise<Uint8Array>;
   upload(key: string, body: Readable, contentType: string): Promise<void>;
   head(key: string): Promise<{ bytes: number } | null>;
   sha256(key: string): Promise<string>;

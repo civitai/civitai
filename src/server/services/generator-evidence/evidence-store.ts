@@ -1,54 +1,38 @@
-import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { createHash } from 'crypto';
 import type { Readable } from 'stream';
-import { env } from '~/env/server';
+import { getCsamBucket } from '~/server/services/csam-bucket';
 import type { EvidenceStore } from '~/server/services/generator-evidence/preserve-blob';
 
-function evidenceBucket() {
-  if (
-    !env.CSAM_UPLOAD_KEY ||
-    !env.CSAM_UPLOAD_SECRET ||
-    !env.CSAM_UPLOAD_REGION ||
-    !env.CSAM_UPLOAD_ENDPOINT ||
-    !env.CSAM_BUCKET_NAME
-  )
-    throw new Error('missing CSAM env vars');
-  const client = new S3Client({
-    credentials: { accessKeyId: env.CSAM_UPLOAD_KEY, secretAccessKey: env.CSAM_UPLOAD_SECRET },
-    region: env.CSAM_UPLOAD_REGION,
-    endpoint: env.CSAM_UPLOAD_ENDPOINT,
-  });
-  return { client, Bucket: env.CSAM_BUCKET_NAME };
-}
-
-/** The whole object, for a send or a moderator's view. */
-export async function readEvidenceObject(key: string) {
-  const { client, Bucket } = evidenceBucket();
+/** The object's bytes as they stream, never collected into one buffer. */
+export async function streamEvidenceObject(key: string) {
+  const { client, Bucket } = getCsamBucket();
   const res = await client.send(new GetObjectCommand({ Bucket, Key: key }));
-  const bytes = await res.Body?.transformToByteArray();
-  if (!bytes) throw new Error('the evidence object has no body');
-  return { bytes, contentType: res.ContentType };
-}
-
-export function sha256Hex(bytes: Uint8Array) {
-  return createHash('sha256').update(bytes).digest('hex');
+  if (!res.Body) throw new Error('the evidence object has no body');
+  return { chunks: res.Body as AsyncIterable<Uint8Array>, contentType: res.ContentType };
 }
 
 /** The object's sha256, hashed as it streams: the file is never held whole. */
 export async function hashEvidenceObject(key: string) {
-  const { client, Bucket } = evidenceBucket();
-  const res = await client.send(new GetObjectCommand({ Bucket, Key: key }));
-  if (!res.Body) throw new Error('the evidence object has no body');
   const hash = createHash('sha256');
-  for await (const chunk of res.Body as AsyncIterable<Uint8Array>) hash.update(chunk);
+  for await (const chunk of (await streamEvidenceObject(key)).chunks) hash.update(chunk);
   return hash.digest('hex');
 }
 
 export function csamEvidenceStore(): EvidenceStore {
-  const { client, Bucket } = evidenceBucket();
+  const { client, Bucket } = getCsamBucket();
   return {
-    read: async (key: string) => (await readEvidenceObject(key)).bytes,
+    async read(key: string, limit: number) {
+      const parts: Uint8Array[] = [];
+      let size = 0;
+      for await (const chunk of (await streamEvidenceObject(key)).chunks) {
+        parts.push(chunk);
+        size += chunk.byteLength;
+        if (size > limit) break;
+      }
+      return Buffer.concat(parts).subarray(0, limit + 1);
+    },
     async upload(key: string, body: Readable, contentType: string) {
       await new Upload({
         client,

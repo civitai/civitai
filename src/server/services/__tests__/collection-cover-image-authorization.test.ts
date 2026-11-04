@@ -1,5 +1,15 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
+
+const { getCached } = vi.hoisted(() => ({
+  getCached: vi.fn(async (): Promise<{ id: number; username: string }[]> => []),
+}));
+
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof UserPreferences>();
+  return { ...actual, BlockedByUsers: { ...actual.BlockedByUsers, getCached } };
+});
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -18,25 +28,26 @@ function arrangeCollection({
 }: { contributorPermissions?: string[] | null } = {}) {
   mockDbRead.$queryRaw.mockReset();
   mockDbWrite.collection.update.mockReset();
-  mockDbRead.$queryRaw.mockResolvedValue([
-    {
-      id: COLLECTION_ID,
-      read: 'Public',
-      write: 'Private',
-      userId: OWNER_ID,
-      type: 'Image',
-      mode: null,
-      contributorPermissions,
-    },
-  ]);
+  const collectionRow = {
+    id: COLLECTION_ID,
+    read: 'Public',
+    write: 'Private',
+    userId: OWNER_ID,
+    type: 'Image',
+    mode: null,
+    contributorPermissions,
+  };
+  mockDbRead.$queryRaw.mockResolvedValue([collectionRow]);
   mockDbWrite.collection.update.mockResolvedValue({
     id: COLLECTION_ID,
     image: { id: IMAGE_ID, url: 'abc', ingestion: 'Scanned', type: 'image' },
   });
+  return collectionRow;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getCached.mockResolvedValue([]);
 });
 
 describe('updateCollectionCoverImage authorization', () => {
@@ -68,5 +79,27 @@ describe('updateCollectionCoverImage authorization', () => {
         data: { image: { connect: { id: IMAGE_ID } } },
       })
     );
+  });
+
+  it('refuses an image whose owner has blocked the manager, even before the cache knows', async () => {
+    const BLOCKER = 4_321;
+    const collectionRow = arrangeCollection();
+    // The permissions read keeps the collection row; the next read is the image's visibility.
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([collectionRow])
+      .mockResolvedValueOnce([{ id: IMAGE_ID, userId: BLOCKER, nsfwLevel: 1, postId: null }]);
+    mockDbRead.userEngagement.findFirst.mockResolvedValue(null);
+    mockDbWrite.userEngagement.findFirst.mockResolvedValue({
+      userId: BLOCKER,
+      targetUserId: OWNER_ID,
+      type: 'Block',
+    } as never);
+
+    await expect(
+      updateCollectionCoverImage({
+        input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
   });
 });

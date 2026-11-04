@@ -232,7 +232,8 @@ function HatTurfLayerContent({
           {drawn.map((sticker) => {
             const pose = readHatPose(sticker.data);
             if (!pose) return null;
-            const tone = hatTone(sticker.team, leader);
+            const own = sticker.userId === user?.id;
+            const tone = hatTone(sticker.team, leader, own);
             return (
               <div
                 key={String(sticker.id)}
@@ -254,7 +255,7 @@ function HatTurfLayerContent({
                 }}
               >
                 <TeamHat color={colorOf(sticker.team)} size={hatSize(pose.scale)} />
-                {sticker.userId === user?.id && <i className={classes.own} />}
+                {own && <i className={classes.own} />}
               </div>
             );
           })}

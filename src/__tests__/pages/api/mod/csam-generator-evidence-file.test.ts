@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
+import { Writable } from 'stream';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SessionModule from '~/server/auth/get-server-auth-session';
@@ -10,10 +11,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** The route that shows a moderator one preserved generator file. Ids and bytes are invented. */
 
-const { session, flags, readEvidenceObject, trackModActivity } = vi.hoisted(() => ({
+const { session, flags, streamEvidenceObject, trackModActivity } = vi.hoisted(() => ({
   session: { value: null as unknown },
   flags: { csamReports: true },
-  readEvidenceObject: vi.fn(),
+  streamEvidenceObject: vi.fn(),
   trackModActivity: vi.fn(),
 }));
 
@@ -27,7 +28,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/generator-evidence/evidence-store', async (importOriginal) => ({
   ...(await importOriginal<typeof EvidenceStore>()),
-  readEvidenceObject,
+  streamEvidenceObject,
 }));
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
@@ -71,7 +72,15 @@ async function get(blobId = BLOB) {
     query: { reportId: '3', blobId },
     headers: {},
   }) as unknown as NextApiRequest;
-  const res = Object.assign(new EventEmitter(), {
+  const chunks: Buffer[] = [];
+  const sink = new Writable({
+    write(chunk, _encoding, done) {
+      chunks.push(Buffer.from(chunk));
+      done();
+    },
+  });
+  sink.on('finish', () => (served.body = Buffer.concat(chunks)));
+  const res = Object.assign(sink, {
     statusCode: 200,
     headers: {} as Record<string, string>,
     setHeader: (name: string, value: string) => void (res.headers[name.toLowerCase()] = value),
@@ -86,11 +95,10 @@ async function get(blobId = BLOB) {
       return res;
     },
     json: () => res,
-    end: (body?: Buffer) => {
-      served.body = body;
-      return res;
-    },
   });
+  // As Next's API resolver does: next-axiom's wrapper calls the `end` it replaced unbound.
+  const end = sink.end;
+  Object.assign(sink, { end: (...args: Parameters<typeof end>) => end.apply(sink, args) });
   served = { headers: res.headers };
   await handler(req, res as unknown as NextApiResponse);
   return res.statusCode;
@@ -100,8 +108,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   flags.csamReports = true;
   session.value = { user: { id: 5, isModerator: true } };
-  readEvidenceObject.mockResolvedValue({ bytes: new Uint8Array(bytes) });
-  dbMock.dbRead.csamReport.findFirst.mockResolvedValue(report() as never);
+  streamEvidenceObject.mockResolvedValue({ chunks: [new Uint8Array(bytes)] });
+  // Only a GeneratedImage report is a generator evidence report, whatever its details hold.
+  dbMock.dbRead.csamReport.findFirst.mockImplementation((async (args: {
+    where: { id?: number; type?: string };
+  }) => (args.where.id === 3 && args.where.type === 'GeneratedImage' ? report() : null)) as never);
 });
 
 describe('generator evidence file route', () => {
@@ -111,13 +122,13 @@ describe('generator evidence file route', () => {
   ])('refuses %s before reading anything', async (_name, value) => {
     session.value = value;
     expect(await get()).toBe(401);
-    expect(readEvidenceObject).not.toHaveBeenCalled();
+    expect(streamEvidenceObject).not.toHaveBeenCalled();
   });
 
   it('refuses a moderator without CSAM reporting access with a 403', async () => {
     flags.csamReports = false;
     expect(await get()).toBe(403);
-    expect(readEvidenceObject).not.toHaveBeenCalled();
+    expect(streamEvidenceObject).not.toHaveBeenCalled();
   });
 
   it("serves the file to a moderator and records that moderator's view of it", async () => {
@@ -144,6 +155,26 @@ describe('generator evidence file route', () => {
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 
+  it('stops reading a file with no recorded size past the viewing limit, and serves nothing', async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let pulled = 0;
+    async function* long() {
+      for (let i = 0; i < 80; i++) {
+        pulled++;
+        yield chunk;
+      }
+    }
+    streamEvidenceObject.mockResolvedValue({ chunks: long() });
+    dbMock.dbRead.csamReport.findFirst.mockResolvedValue(
+      report(sha, { bytes: undefined }) as never
+    );
+
+    expect(await get()).toBe(413);
+    expect(pulled).toBe(65);
+    expect(served.body).toBeUndefined();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an excluded file', report(sha, { status: 'excluded' }), BLOB, 404],
     ['a file that was not preserved', report(sha, { status: 'blocked-unreadable' }), BLOB, 404],
@@ -153,7 +184,7 @@ describe('generator evidence file route', () => {
   ])('serves nothing and records no view for %s', async (_name, row, blobId, status) => {
     dbMock.dbRead.csamReport.findFirst.mockResolvedValue(row as never);
     expect(await get(blobId)).toBe(status);
-    expect(readEvidenceObject).not.toHaveBeenCalled();
+    expect(streamEvidenceObject).not.toHaveBeenCalled();
     expect(served.body).toBeUndefined();
     expect(trackModActivity).not.toHaveBeenCalled();
   });
