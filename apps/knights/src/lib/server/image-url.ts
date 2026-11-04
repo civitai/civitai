@@ -11,12 +11,13 @@ export function imagePageUrl(imageId: number): string {
 export const THUMBNAIL_WIDTH = 192;
 
 /**
- * `optimized=true` is what the main site asks of every derived size: the CDN answers with a compressed variant (WebP, about a
- * quarter of the JPEG's bytes at the same width). `anim=false` keeps a GIF to one frame, as there.
+ * `quality` makes the CDN re-encode a JPEG at the asked width for every original (measured 72–108 KB at 800px). Measured
+ * alternatives misbehave: `optimized=true` or `anim=false` return a PNG original as a ~1 MB PNG, and a bare `width` can
+ * return an older image's cached 2048px variant.
  */
 export function imageUrl(key: string, width = WIDTH): string {
   const base = env.IMAGE_LOCATION ?? '';
-  return [base, key, `anim=false,width=${width},optimized=true`, `${key}.jpeg`]
+  return [base, key, `width=${width},quality=80`, `${key}.jpeg`]
     .filter(Boolean)
     .join('/');
 }
