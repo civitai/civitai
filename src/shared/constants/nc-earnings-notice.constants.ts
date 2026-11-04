@@ -5,7 +5,9 @@
 
 export type NcEarningsNotice = 'nc-recent' | 'nc-older';
 
-export const NC_EARNINGS_NOTICE_URL = '/user/account';
+/** The notification links to the creator's own models list; the email carries the detail. */
+export const getNcEarningsNoticeUrl = (username: string | null) =>
+  username ? `/user/${encodeURIComponent(username)}/models` : '/user/account';
 
 export const NC_EARNINGS_NOTICE: Record<
   NcEarningsNotice,
@@ -22,7 +24,7 @@ export const NC_EARNINGS_NOTICE: Record<
     baseModels: ['Flux.3 Klein', 'Flux.3 Klein-base', 'Ideogram 4.0', 'Qwen 2.1'],
     subject: 'Generation earnings have stopped on your {baseModels} models',
     message:
-      '{baseModels} {is|are} licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your models on {it|them}. They stay published and free to use. Tap for details.',
+      '{baseModels} {is|are} licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your models on {it|them}. They stay published and free to use.',
     markdown: `Hi {username},
 
 {baseModels} {is|are} released under {a license|licenses} that allow{s|} non-commercial use only, which doesn't allow earning from models built on {it|them}. As of {date}:
@@ -42,9 +44,9 @@ The Civitai Team`,
     baseModels: ['Flux.1 Krea', 'Flux.1 Kontext', 'Flux.2 D', 'Stable Cascade'],
     subject: 'Generation earnings have stopped on your {baseModels} models',
     message:
-      '{baseModels} {is|are} licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your models on {it|them}. They stay published and free to use. Tap for details.',
+      '{baseModels} {is|are} licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your models on {it|them}. They stay published and free to use.',
     feeMessage:
-      '{baseModels} {is|are} licensed for non-commercial use only, so generation fees and earnings (creator compensation and tips) have stopped for your models on {it|them}. They stay published and free to use. Tap for details.',
+      '{baseModels} {is|are} licensed for non-commercial use only, so generation fees and earnings (creator compensation and tips) have stopped for your models on {it|them}. They stay published and free to use.',
     markdown: `Hi {username},
 
 {baseModels} {is|are} released under {a license|licenses} that allow{s|} non-commercial use only, which doesn't allow earning from models built on {it|them}. As of {date}:

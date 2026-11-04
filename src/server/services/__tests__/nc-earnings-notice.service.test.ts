@@ -173,7 +173,9 @@ describe('sendNcEarningsNotice', () => {
     dbMock.dbRead.$queryRaw.mockImplementation(
       async (strings: TemplateStringsArray, ids: number[], bases?: string[]) =>
         strings.join('').includes('"bannedAt"')
-          ? [user(1), user(2), user(3, { email: null })].filter((u) => ids.includes(u.id))
+          ? [user(1), user(2), user(3, { email: null, username: null })].filter((u) =>
+              ids.includes(u.id)
+            )
           : versions.filter((v) => ids.includes(v.userId) && bases?.includes(v.baseModel))
     );
     const sys = redisMock.sysRedis;
@@ -241,13 +243,14 @@ describe('sendNcEarningsNotice', () => {
       key: 'system-announcement:nc-older-notice:1',
       details: {
         message:
-          'Flux.1 Krea is licensed for non-commercial use only, so generation fees and earnings (creator compensation and tips) have stopped for your models on it. They stay published and free to use. Tap for details.',
-        url: '/user/account',
+          'Flux.1 Krea is licensed for non-commercial use only, so generation fees and earnings (creator compensation and tips) have stopped for your models on it. They stay published and free to use.',
+        url: '/user/u1/models',
       },
     });
     expect(notices[2].details.message).toBe(
-      'Flux.2 D is licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your models on it. They stay published and free to use. Tap for details.'
+      'Flux.2 D is licensed for non-commercial use only, so generation earnings (creator compensation and tips) have stopped for your models on it. They stay published and free to use.'
     );
+    expect(notices[3].details.url).toBe('/user/account');
     expect(sendMock.mock.calls.map(([d]) => d.to).sort()).toEqual([
       'u1@example.com',
       'u2@example.com',

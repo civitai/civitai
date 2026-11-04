@@ -10,8 +10,8 @@ import { getNoticeSentIds, sendLedgeredNotice } from '~/server/services/notice-l
 import type { NcEarningsNotice } from '~/shared/constants/nc-earnings-notice.constants';
 import {
   NC_EARNINGS_NOTICE,
-  NC_EARNINGS_NOTICE_URL,
   fillNcEarningsCopy,
+  getNcEarningsNoticeUrl,
 } from '~/shared/constants/nc-earnings-notice.constants';
 
 const LEDGER: Record<NcEarningsNotice, NoticeLedgerKey> = {
@@ -169,7 +169,7 @@ export async function sendNcEarningsNotice({
             user.baseModels,
             hadFee
           ),
-          url: NC_EARNINGS_NOTICE_URL,
+          url: getNcEarningsNoticeUrl(user.username),
         },
       });
       if (user.email) {
