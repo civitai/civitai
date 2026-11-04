@@ -5713,8 +5713,16 @@ export type StorylinePendingChapter = {
   createdAt: Generated<Timestamp>;
 };
 export type StorylineReport = {
-  storylineId: number;
   reportId: number;
+  storylineId: number | null;
+  /**
+   * The storyline's id once deleted, when a held copy of it was kept ("HeldStoryline").
+   */
+  heldStorylineId: number | null;
+  /**
+   * The storyline's title when it was deleted.
+   */
+  storylineTitle: string | null;
 };
 export type Tag = {
   id: Generated<number>;

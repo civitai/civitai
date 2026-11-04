@@ -101,6 +101,8 @@ beforeAll(async () => {
     '20261024160000_storyline_minor_by_scan',
     '20261106120000_storyline_rejoin',
     '20261122120000_storyline_pending_chapter',
+    '20261216130000_storyline_held_chapter',
+    '20261222120000_held_storyline',
   ])
     await db.pg.exec(migration(name));
   await db.pg.exec(`
@@ -109,6 +111,13 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
+    -- Its pictures, as the cover, hero and cover-upload migrations add them (spark: below).
+    ALTER TABLE "Storyline" ADD COLUMN "coverImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
+      ADD COLUMN "heroImageId" int REFERENCES "Image"(id) ON DELETE SET NULL;
+    CREATE TABLE "StorylineCoverUpload" (
+      "storylineId" int NOT NULL REFERENCES "Storyline"(id) ON DELETE CASCADE,
+      "imageId" int NOT NULL REFERENCES "Image"(id) ON DELETE CASCADE,
+      PRIMARY KEY ("storylineId", "imageId"));
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE VIEW "EvidenceHeldUser" AS
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
@@ -117,7 +126,7 @@ beforeAll(async () => {
     CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
       "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer,
       "parentThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE,
-      "rootThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE);
+      "rootThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE, "metadata" jsonb);
     CREATE TABLE "CommentV2" ("id" serial PRIMARY KEY,
       "threadId" integer NOT NULL REFERENCES "Thread"("id") ON DELETE CASCADE,
       "userId" integer NOT NULL);
@@ -146,6 +155,11 @@ beforeEach(async () => {
     DELETE FROM "CommentV2";
     DELETE FROM "Thread";
     DELETE FROM "StorylineReport";
+    DELETE FROM "HeldStoryline";
+    DELETE FROM "HeldStorylineChapter";
+    DELETE FROM "HeldStorylineChapterEdge";
+    DELETE FROM "HeldStorylineBranchChoice";
+    DELETE FROM "HeldStorylineCreateClick";
     DELETE FROM "Report";
     DELETE FROM "PlacementTransaction";
     DELETE FROM "Placement";
@@ -361,10 +375,11 @@ describe('deleteStoryline', () => {
     expect(await storylineIds()).toEqual([2]);
   });
 
-  it('refuses anyone but the owner or a moderator', async () => {
+  // Answered as a storyline that does not exist, so a delete cannot be probed from outside.
+  it('refuses anyone but the owner or a moderator as not found', async () => {
     await expect(deleteStoryline({ id: 1, userId: CONTRIBUTOR })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'Only the owner can delete this storyline',
+      code: 'NOT_FOUND',
+      message: 'Storyline not found',
     });
     expect(await storylineIds()).toEqual([1, 2]);
   });
@@ -394,12 +409,27 @@ describe('deleteStoryline', () => {
         INSERT INTO "StorylineReport" ("storylineId", "reportId") VALUES (1, 70);
       `);
 
-    it('is kept from its owner while the report is open', async () => {
+    it('is deleted by its owner while the report is open, the report kept open on a copy', async () => {
       await report('Pending');
-      await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
-        STORYLINE_DELETE_REFUSALS.owner
-      );
-      expect(await storylineIds()).toEqual([1, 2]);
+      await deleteStoryline({ id: 1, userId: OWNER });
+      expect(await storylineIds()).toEqual([2]);
+      expect(
+        await rows(`SELECT "reportId", "storylineId", "heldStorylineId", "storylineTitle"
+          FROM "StorylineReport"`)
+      ).toEqual([
+        {
+          reportId: 70,
+          storylineId: null,
+          heldStorylineId: 1,
+          storylineTitle: 'A story with no story',
+        },
+      ]);
+      expect(await rows(`SELECT id, status FROM "Report"`)).toEqual([
+        { id: 70, status: 'Pending' },
+      ]);
+      expect(await rows(`SELECT id, "reportIds", "holdReasons" FROM "HeldStoryline"`)).toEqual([
+        { id: 1, reportIds: [70], holdReasons: ['open-report'] },
+      ]);
     });
 
     it('can be deleted by a moderator while the report is open', async () => {
@@ -421,10 +451,18 @@ describe('deleteStoryline', () => {
       ]);
     });
 
-    it('can be deleted by its owner once the report is resolved', async () => {
+    it('can be deleted by its owner once the report is resolved, keeping no copy', async () => {
       await report('Unactioned');
       await deleteStoryline({ id: 1, userId: OWNER });
       expect(await storylineIds()).toEqual([2]);
+      expect(await rows(`SELECT id FROM "HeldStoryline"`)).toEqual([]);
+      expect(
+        await rows(
+          `SELECT "storylineId", "heldStorylineId", "storylineTitle" FROM "StorylineReport"`
+        )
+      ).toEqual([
+        { storylineId: null, heldStorylineId: null, storylineTitle: 'A story with no story' },
+      ]);
     });
   });
 

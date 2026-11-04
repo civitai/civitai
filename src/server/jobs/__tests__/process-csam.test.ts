@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   archiveCsamDataForReport: vi.fn(),
   processCsamReport: vi.fn(),
   logBlockedCsamReports: vi.fn(),
+  logOverdueEvidenceApprovals: vi.fn(async () => undefined),
   getCsamsToRemoveContent: vi.fn(async () => []),
 }));
 
