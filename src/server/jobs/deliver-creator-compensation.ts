@@ -279,8 +279,9 @@ export async function runPayout(lastUpdate: Date) {
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
 
-      // Drop creator-compensation rows where earnings stopped: the orchestrator's stored
-      // payoutEnabled can predate the base model's license change.
+      // Drop compensation and license-fee rows where earnings stopped: the orchestrator's stored
+      // payoutEnabled can predate the base model's license change, and a non-commercial license
+      // bars paying a fee on it. Tips still pay, by owner decision.
       const earningsStoppedIds = modelVersionIds.filter((_, i) =>
         stopsCreatorEarnings(baseModels[i])
       );
@@ -288,7 +289,7 @@ export async function runPayout(lastUpdate: Date) {
         ...batch.filter(
           (r) =>
             modelVersionIds.includes(r.modelVersionId) &&
-            !(r.source === 'compensation' && earningsStoppedIds.includes(r.modelVersionId))
+            !(r.source !== 'tip' && earningsStoppedIds.includes(r.modelVersionId))
         )
       );
     }
