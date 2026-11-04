@@ -29,17 +29,15 @@ Tables `KnightsQuestion`, `KnightsQueueItem` and `KnightsVote` (migration `20261
 Everything takes the Kysely client as an argument so `queue.pglite.test.ts` runs the real service and the real migration
 SQL on PGlite.
 
-- `enqueueItem`: an item's `minRank` and `votesNeeded` default to its question's `minRank` and `votesToResolve`; an
-  override on the item wins. `minRank` must be a stage rank (Knight, Templar, Paladin); anything else throws.
-- `getFeed`: open items the player's rank may judge, higher stages first, then priority and age, from the first
-  question in that order. Which ranks may judge a stage is `canVote` in `ranks.ts`, shared with `castVote`; Inquisitors
-  and Acolytes get no feed. It never selects the image's rating and never returns a hidden check (see Hidden checks and smites).
-  Only images the public feeds would show are served (`servableImage` in `@civitai/db/knights`, shared with `getFeed`, `castVote`, the apprenticeship, the harvest and the dev script): an image-type, published post, level not 0 or Blocked, no block marker, no review hold.
-- `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote
-  that would weigh 0 (`no-weight`), writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
-  and a 60% weighted share resolves; a split stays open to 10, then moves up Knight -> Templar -> Inquisitor (Paladin has
-  a vote weight but is not on `ESCALATION_PATH` yet). A rating far below the image's current one, or a
-  Blocked consensus, goes to Inquisitor. Votes stay `pending` across escalations and are graded by the final value.
+- `enqueueItem`: an item's `minRank` defaults to its question's, an override wins; `votesNeeded` can only lower the votes a stage needs (`STAGE_RULES`), never raise them. `minRank` must be a stage rank (Knight, Templar, Paladin); anything else throws.
+- `getFeed`: the highest stage the player may judge with an unjudged open item, from a per-stage index-ordered window (`feed.ts`: window, escalation priority hours, tiers): items escalated in the last day first, then priority,
+  then age. The pick avoids the level buckets (prediction, else image level) of the player's last judged items, in a per-player hash order; about one pick in ten takes the oldest. An image the player judged for the question is never
+  served again, at any stage or earlier item (served by the `("playerId","imageId")` index). `canVote` (`ranks.ts`, shared with `castVote`) says which ranks judge a stage; Inquisitors and Acolytes get no feed. It never selects the
+  rating or a hidden check, and serves only images the public feeds would show (`servableImage` in `@civitai/db/knights`).
+- `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote that would weigh 0 (`no-weight`), writes the ledger row, and decides the votes cast at the item's current stage
+  only, by `STAGE_RULES` (`stage-rules.ts`): Knight 5 votes at 60% (to 10), Templar 3 at 67% (to 6), Paladin 2 unanimous, then 75% (to 4). No agreement at the maximum moves `minRank` Knight -> Templar -> Paladin -> Inquisitor
+  (`ESCALATION_PATH`, stamps `escalatedAt`, migration `20261231120000_knights_v2_queue_stages`, by hand); `status = 'Inquisitor'` is what the moderator app reads. A rating far below the image's, or a Blocked consensus, also goes
+  there. Earlier-stage votes stay `pending`, graded by the final value.
 - A settled rating is written by `main-app.ts` via the main app's `/api/mod/image/kono-set-nsfw-level` (activity
   `setNsfwLevelKono`; authenticated with `WEBHOOK_TOKEN` in the `x-webhook-token` header, env in `.env.example`) after the vote commits, with no lock held. That endpoint is the gate: it writes only onto an image
   that exists, has no block marker and is unlocked or Knights-locked, and answers 200 `applied` or `skipped`

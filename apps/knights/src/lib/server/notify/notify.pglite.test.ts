@@ -300,6 +300,24 @@ describe('sendNotifications', () => {
     expect(received().get(1)).toEqual(['new-images']);
   });
 
+  it('does not announce a re-queued image the player already judged', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedImage(pg, 900);
+    await enqueueItem(db, { questionKey: Q, imageId: 900, source: 'test', expiresAt: null }, at(1));
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+       VALUES (7777,1,'2026-12-01 10:00:00',$1,900,'Knight','4',1)`,
+      [Q]
+    );
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect(received().get(1)).toBeUndefined();
+    expect(received().get(2)).toEqual(['new-images']);
+  });
+
   it('sends nothing to a player who turned every type off', async () => {
     await seedPlayer(pg, 1);
     await seedSettledVote(1);

@@ -1,8 +1,8 @@
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
 import { RANKS, rankIndex, type Rank } from '../ranks';
 
-/** Lowest first. Paladin weighs votes (`RANK_RULES`) but is deliberately not an escalation stage. */
-export const ESCALATION_PATH: readonly Rank[] = ['Knight', 'Templar', 'Inquisitor'];
+/** Lowest first. An item leaves the players' game after the last stage and waits for the moderators (Inquisitors). */
+export const ESCALATION_PATH: readonly Rank[] = ['Knight', 'Templar', 'Paladin', 'Inquisitor'];
 
 export const FEED_STRETCH_SIZE = 10;
 

@@ -5078,6 +5078,7 @@ export interface KnightsQueueItem {
   source: string;
   minRank: string;
   votesNeeded: number;
+  escalatedAt: Date | null;
   priority: number;
   status: string;
   expiresAt: Date | null;

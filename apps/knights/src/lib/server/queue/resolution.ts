@@ -3,6 +3,7 @@ import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { penaltyFactor } from '../progression/config';
 import { RANK_RULES, type Rank } from '../ranks';
+import type { DecisionRule } from './stage-rules';
 
 const WEIGHT_NEUTRAL_LEVEL = 20;
 const LEVELS_PER_WEIGHT_UNIT = 60;
@@ -30,6 +31,9 @@ export function voteWeight({
   return Math.max(0, Math.round(weight * penaltyFactor(belowBar) * 100) / 100);
 }
 
+/** Weights are rounded floats: 3 of 5 equal votes must still reach 60%. */
+const SHARE_EPSILON = 1e-9;
+
 export type WeightedAnswer = { answer: string; weight: number };
 
 export type Decision =
@@ -37,11 +41,10 @@ export type Decision =
   | { kind: 'resolved'; value: string }
   | { kind: 'split' };
 
-export function decideChoice(
-  votes: WeightedAnswer[],
-  rule: { votesNeeded: number; maxVotes: number; threshold: number }
-): Decision {
+export function decideChoice(votes: WeightedAnswer[], rule: DecisionRule): Decision {
   if (votes.length < rule.votesNeeded) return { kind: 'pending' };
+  const threshold =
+    rule.unanimousAtNeeded && votes.length === rule.votesNeeded ? 1 : rule.threshold;
 
   const byAnswer = new Map<string, number>();
   let total = 0;
@@ -52,7 +55,7 @@ export function decideChoice(
 
   if (total > 0) {
     for (const [answer, weight] of byAnswer) {
-      if (weight / total >= rule.threshold) return { kind: 'resolved', value: answer };
+      if (weight / total >= threshold - SHARE_EPSILON) return { kind: 'resolved', value: answer };
     }
   }
 
