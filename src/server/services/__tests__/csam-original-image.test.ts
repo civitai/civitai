@@ -7,6 +7,7 @@ import {
   MAX_ORIGINAL_IMAGE_BYTES,
   probeOriginalImage,
   readOriginalImage,
+  StoredOriginalReadError,
 } from '~/server/services/csam-original-image';
 
 const BUCKET = 'test-images';
@@ -411,6 +412,60 @@ describe('readOriginalImage on a dropped connection', () => {
     expect((error as Error).message).not.toContain(stored.url);
     expect(getCount(s3)).toBe(3);
     expect(sleep.mock.calls).toEqual([[2000], [8000]]);
+  });
+
+  it('marks a failure whose every attempt dropped its connection, and only that', async () => {
+    const dropped = flakyBodies([connectionReset, connectionReset, connectionReset]);
+    const allDropped = await readOriginalImage(stored, {
+      backend: dropped.backend,
+      sleep: async () => undefined,
+    }).catch((e: unknown) => e);
+
+    let gets = 0;
+    const { backend } = backendReturning(async () => {
+      gets += 1;
+      if (gets === 1) {
+        const object = storedObject(data);
+        object.Body.transformToByteArray.mockRejectedValue(connectionReset());
+        return object;
+      }
+      throw Object.assign(new Error('Access Denied'), {
+        name: 'AccessDenied',
+        $metadata: { httpStatusCode: 403 },
+      });
+    });
+    const thenRefused = await readOriginalImage(stored, {
+      backend,
+      sleep: async () => undefined,
+    }).catch((e: unknown) => e);
+
+    expect(allDropped).toBeInstanceOf(StoredOriginalReadError);
+    expect((allDropped as StoredOriginalReadError).allAttemptsDropped).toBe(true);
+    expect(thenRefused).toBeInstanceOf(StoredOriginalReadError);
+    expect((thenRefused as StoredOriginalReadError).message).toBe(
+      'stored original read failed for image 4242 (backend unknown, ContentLength unknown, attempt 2/3): Access Denied'
+    );
+    expect((thenRefused as StoredOriginalReadError).allAttemptsDropped).toBe(false);
+  });
+
+  it('does not retry a reset that our own read timeout caused', async () => {
+    // The request is cut off by our timeout, and the cut surfaces as a reset.
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => AbortSignal.abort());
+    try {
+      const { s3, backend } = flakyBodies([connectionReset]);
+      const sleep = vi.fn(async () => undefined);
+
+      const error = await readOriginalImage(stored, { backend, sleep }).catch((e: unknown) => e);
+
+      expect((error as Error).message).toBe(
+        'stored original read failed for image 4242 (backend backblaze, ContentLength 10, attempt 1/3): timed out: aborted'
+      );
+      expect((error as StoredOriginalReadError).allAttemptsDropped).toBe(false);
+      expect(getCount(s3)).toBe(1);
+      expect(sleep).not.toHaveBeenCalled();
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("gives each failed attempt's reservation back before taking the next", async () => {

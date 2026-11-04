@@ -4,7 +4,7 @@ import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { fileURLToPath } from 'url';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Archiver } from 'archiver';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ArchiverModule from 'archiver';
@@ -216,6 +216,7 @@ import {
   archiveCsamDataForReport,
   ARCHIVE_SCAN_PAGE_SIZE,
   CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS,
+  CSAM_ARCHIVE_GIVE_UP_LIMIT,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
@@ -244,6 +245,94 @@ const APPEND_ONLY_MIGRATION = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../../../packages/civitai-db-schema/prisma/migrations/20261112120000_csam_report_append_only/migration.sql'
 );
+
+/**
+ * A Postgres stand-in for report rows, with the append-only guard a sent report carries, so a
+ * details write is checked against what the database will actually accept.
+ */
+const standIn = { db: undefined as PGlite | undefined, nextId: 6100 };
+
+async function standInDb() {
+  if (!standIn.db) {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "CsamReportType" AS ENUM ('Image', 'TrainingData', 'GeneratedImage', 'ExternalLink');
+      CREATE TABLE "CsamReport" (
+        "id" SERIAL PRIMARY KEY,
+        "userId" INTEGER,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "reportedById" INTEGER NOT NULL,
+        "reportSentAt" TIMESTAMP(3),
+        "archivedAt" TIMESTAMP(3),
+        "contentRemovedAt" TIMESTAMP(3),
+        "reportId" INTEGER,
+        "details" JSONB NOT NULL DEFAULT '{}',
+        "images" JSONB NOT NULL DEFAULT '[]',
+        "type" "CsamReportType" NOT NULL DEFAULT 'Image'
+      );
+    `);
+    await db.exec(fs.readFileSync(APPEND_ONLY_MIGRATION, 'utf8'));
+    standIn.db = db;
+  }
+  return standIn.db;
+}
+
+/** Sends the service's raw writes to the stand-in. Undone by `mockReset` in the caller's afterEach. */
+async function routeRawWritesToStandIn() {
+  const db = await standInDb();
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const sql = Prisma.sql(strings, ...(values as never[]));
+    return (await db.query(sql.text, sql.values)).affectedRows ?? 0;
+  }) as never);
+}
+
+/** Stores a sent report in the stand-in and returns it as the archive job hands it over. */
+async function storeSentReport<T extends { userId: number; type: string }>(
+  report: T,
+  hoursAgo: number,
+  details: Record<string, unknown>
+) {
+  const db = await standInDb();
+  const id = standIn.nextId++;
+  const reportSentAt = new Date(Date.now() - hoursAgo * 3_600_000);
+  await db.query(
+    `INSERT INTO "CsamReport" (id, "userId", "reportedById", "reportSentAt", "reportId", type, details)
+     VALUES ($1, $2, 5, $3, 82, $4::"CsamReportType", $5::jsonb)`,
+    [id, report.userId, reportSentAt.toISOString(), report.type, JSON.stringify(details)]
+  );
+  return { ...report, id, details, reportSentAt };
+}
+
+const storedRow = async (id: number) =>
+  (
+    await (
+      await standInDb()
+    ).query<{ details: unknown; archivedAt: unknown }>(
+      `SELECT details, "archivedAt" FROM "CsamReport" WHERE id = $1`,
+      [id]
+    )
+  ).rows[0];
+
+const ISO_TIME = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+/** What Node raises when a response is cut off mid-body. */
+const connectionReset = () => Object.assign(new Error('aborted'), { code: 'ECONNRESET' });
+
+/**
+ * Runs the reader's 2s and 8s waits between attempts at once, so a dropped connection is retried
+ * without slowing the suite. (This file may not import the reader to inject its `sleep`: the
+ * import guard admits only its own tests.) Every other timer keeps its delay.
+ */
+function skipReaderBackoff() {
+  const realSetTimeout = globalThis.setTimeout;
+  return vi
+    .spyOn(globalThis, 'setTimeout')
+    .mockImplementation(((callback: () => void, ms?: number, ...args: unknown[]) =>
+      realSetTimeout(callback, ms === 2_000 || ms === 8_000 ? 0 : ms, ...args)) as never);
+}
 
 function fakeObject(bytes: number, contentType = 'image/jpeg') {
   return {
@@ -322,22 +411,33 @@ describe('archiveCsamDataForReport (TrainingData report, training data missing)'
     images: [],
   };
 
-  it('records the skip and leaves archivedAt unset, so the report still holds evidence', async () => {
+  afterEach(() => {
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockReset();
+  });
+
+  it('records the skip and the failed run on a sent report, leaving archivedAt unset', async () => {
     dbMock.dbRead.image.findMany.mockResolvedValue([]);
     dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId, username: 'u' });
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    await routeRawWritesToStandIn();
+    const sent = await storeSentReport(report, 25, { modelVersionIds: [31] });
 
-    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+    await expect(archiveCsamDataForReport(sent as never)).rejects.toThrow(
       'training data not found'
     );
 
-    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
-      where: { id: report.id },
-      data: { details: { modelVersionIds: [31], archiveSkipped: 'training data not found' } },
+    // Both writes merge into the stored details, so the append-only guard accepts both.
+    expect(await storedRow(sent.id)).toEqual({
+      details: {
+        modelVersionIds: [31],
+        archiveSkipped: 'training data not found',
+        archiveFailedRuns: [ISO_TIME],
+      },
+      archivedAt: null,
     });
+    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
   });
 });
 
@@ -1321,76 +1421,32 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
   });
 
   describe('a stored object that fails every read', () => {
-    // A Postgres stand-in for the report row, with the append-only guard a sent report carries, so
-    // the failed-run record is checked against what the database will actually accept.
-    const pg = { db: null as unknown as PGlite };
-    let nextId = 6100;
-
-    beforeAll(async () => {
-      pg.db = new PGlite();
-      await pg.db.exec(`
-        CREATE TYPE "CsamReportType" AS ENUM ('Image', 'TrainingData', 'GeneratedImage', 'ExternalLink');
-        CREATE TABLE "CsamReport" (
-          "id" SERIAL PRIMARY KEY,
-          "userId" INTEGER,
-          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          "reportedById" INTEGER NOT NULL,
-          "reportSentAt" TIMESTAMP(3),
-          "archivedAt" TIMESTAMP(3),
-          "contentRemovedAt" TIMESTAMP(3),
-          "reportId" INTEGER,
-          "details" JSONB NOT NULL DEFAULT '{}',
-          "images" JSONB NOT NULL DEFAULT '[]',
-          "type" "CsamReportType" NOT NULL DEFAULT 'Image'
-        );
-      `);
-      await pg.db.exec(fs.readFileSync(APPEND_ONLY_MIGRATION, 'utf8'));
-    }, 60_000);
-
-    // Not a dropped connection, so the reader does not wait between attempts here.
-    beforeEach(() => {
+    // Every read of it drops its connection: the one failure the archive may give up on.
+    beforeEach(async () => {
       const base = mockGetObject;
       mockGetObject = async (key) => {
-        if (key === 'key-seven')
-          throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+        if (key === 'key-seven') throw connectionReset();
         return base(key);
       };
-      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
-        strings: TemplateStringsArray,
-        ...values: unknown[]
-      ) => {
-        const sql = Prisma.sql(strings, ...(values as never[]));
-        return (await pg.db.query(sql.text, sql.values)).affectedRows ?? 0;
-      }) as never);
+      await routeRawWritesToStandIn();
+      backoff = skipReaderBackoff();
     });
+    let backoff: ReturnType<typeof skipReaderBackoff>;
 
     afterEach(() => {
+      backoff.mockRestore();
       vi.mocked(dbMock.dbWrite.$executeRaw).mockReset();
     });
 
     /** A sent report, stored and as the job hands it over, with other details keys to keep. */
-    async function sentReport(hoursAgo: number, priorFailedRuns: number) {
-      const id = nextId++;
-      const details = {
+    const sentReport = (hoursAgo: number, priorFailedRuns: number) =>
+      storeSentReport(report, hoursAgo, {
         contents: ['a'],
         readFailures: { '7': 2 },
         archiveFailedRuns: failedRuns(priorFailedRuns),
-      };
-      const reportSentAt = new Date(Date.now() - hoursAgo * 3_600_000);
-      await pg.db.query(
-        `INSERT INTO "CsamReport" (id, "userId", "reportedById", "reportSentAt", "reportId", details)
-         VALUES ($1, $2, 5, $3, 82, $4::jsonb)`,
-        [id, report.userId, reportSentAt.toISOString(), JSON.stringify(details)]
-      );
-      return { ...report, id, details, reportSentAt };
-    }
+      });
 
-    const storedDetails = async (id: number) =>
-      (
-        await pg.db.query<{ details: unknown }>(`SELECT details FROM "CsamReport" WHERE id = $1`, [
-          id,
-        ])
-      ).rows[0].details;
+    const storedDetails = async (id: number) => (await storedRow(id)).details;
 
     it('pins the thresholds these fixtures straddle (23h/25h; 2 and 3 failed runs)', () => {
       expect([CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS, CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS]).toEqual([
@@ -1400,8 +1456,56 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
 
     const failure =
       'stored original read failed for image 7 (backend backblaze, ContentLength unknown, ' +
-      'attempt 1/3): synthetic storage outage';
-    const ISO = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      'attempt 3/3): aborted';
+    const ISO = ISO_TIME;
+
+    it.each([
+      [
+        'access is denied',
+        () =>
+          Object.assign(new Error('Access Denied'), {
+            name: 'AccessDenied',
+            $metadata: { httpStatusCode: 403 },
+          }),
+        'attempt 1/3): Access Denied',
+      ],
+      [
+        'storage answers 503 after the SDK retried',
+        () =>
+          Object.assign(new Error('Slow Down'), {
+            name: 'SlowDown',
+            $metadata: { httpStatusCode: 503 },
+          }),
+        'attempt 1/3): Slow Down',
+      ],
+      [
+        'our own read timeout fires',
+        () =>
+          Object.assign(new Error('The operation was aborted due to timeout'), {
+            name: 'TimeoutError',
+          }),
+        'attempt 1/3): The operation was aborted due to timeout',
+      ],
+      [
+        'a local error is thrown',
+        () => new RangeError('Invalid array length'),
+        'attempt 1/3): Invalid array length',
+      ],
+    ])(
+      'still fails the archive after a day and 3 failed runs when %s',
+      async (_, error, ending) => {
+        mockGetObject = async (key) => {
+          if (key === 'key-seven') throw error();
+          return fakeObject(8);
+        };
+        const sent = await sentReport(25, 3);
+
+        await expect(archiveCsamDataForReport(sent as never)).rejects.toThrow(
+          `stored original read failed for image 7 (backend backblaze, ContentLength unknown, ${ending}`
+        );
+        expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      }
+    );
 
     it.each([
       ['a late first run', 25, 0],
@@ -1535,6 +1639,95 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     );
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('archiveCsamDataForReport (Image report, give-up limit per run)', () => {
+  const report = {
+    id: 4141,
+    userId: 414141,
+    reportedById: 5,
+    reportId: 85,
+    type: 'Image',
+    images: [],
+    // Eligible to give up: a day since sending, and 3 failed runs before this one.
+    details: { archiveFailedRuns: failedRuns(3) },
+    reportSentAt: new Date(Date.now() - 25 * 3_600_000),
+  };
+
+  /** `total` stored images, the first `dropping` of which drop every read. */
+  function account(total: number, dropping: number) {
+    const rows = Array.from({ length: total }, (_, i) => ({
+      id: i + 1,
+      url: `limit-key-${i + 1}`,
+      type: 'image',
+    }));
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    mockGetObject = async (key) => {
+      if (Number(key.slice('limit-key-'.length)) <= dropping) throw connectionReset();
+      return fakeObject(8);
+    };
+  }
+
+  beforeEach(() => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    backoff = skipReaderBackoff();
+  });
+  let backoff: ReturnType<typeof skipReaderBackoff>;
+
+  afterEach(() => {
+    backoff.mockRestore();
+  });
+
+  it('pins the limit these fixtures straddle', () => {
+    expect(CSAM_ARCHIVE_GIVE_UP_LIMIT).toEqual({ files: 5, share: 0.05 });
+  });
+
+  it('fails the run, unstamped, when it gives up on more files than the limit', async () => {
+    account(40, 7);
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'report 4141 gave up on 7 of 40 images, over the limit of 5'
+    );
+    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    const line = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-give-up-limit');
+    expect(line).toMatchObject({ reportId: 4141, givenUp: 7, images: 40, limit: 5 });
+  });
+
+  it.each([
+    ['under the 5-file floor', 40, 3],
+    ['under 5% of a larger account', 200, 7],
+  ])('completes when it gives up on files %s', async (_, total, dropping) => {
+    account(total, dropping);
+
+    await archiveCsamDataForReport(report as never);
+
+    const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    const missing = manifest.images.filter(
+      (entry: { source: string }) => entry.source === 'missing'
+    );
+    expect(missing).toEqual(
+      Array.from({ length: dropping }, (_, i) => ({
+        imageId: i + 1,
+        source: 'missing',
+        reason: 'stored original unreadable',
+      }))
+    );
+    expect(manifest.images).toHaveLength(total);
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
+      where: { id: 4141 },
+      data: { archivedAt: expect.any(Date) },
+    });
   });
 });
 

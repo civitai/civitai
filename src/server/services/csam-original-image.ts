@@ -256,12 +256,20 @@ async function readStoredObjectOnce(
   let release: () => void = noReservation;
   let reserved: number | undefined;
   let body: unknown;
+  // Kept, so a failure after our own timeout fired is told apart from a dropped connection: the
+  // aborted request can surface as `aborted`/ECONNRESET, and must not be retried as one.
+  const signals: AbortSignal[] = [];
+  const timeout = (ms: number) => {
+    const signal = AbortSignal.timeout(ms);
+    signals.push(signal);
+    return signal;
+  };
   try {
     if (reserve) {
       let headLength: number | undefined;
       try {
         const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: image.url }), {
-          abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+          abortSignal: timeout(PROBE_TIMEOUT_MS),
         });
         headLength = head.ContentLength;
       } catch (e) {
@@ -278,7 +286,7 @@ async function readStoredObjectOnce(
 
     const response = await s3
       .send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
-        abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
+        abortSignal: timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
       })
       .catch((e: unknown) => {
         if (isMissingObject(e)) return undefined;
@@ -317,6 +325,12 @@ async function readStoredObjectOnce(
     // An unread body holds its socket until the read timeout.
     if (body) destroyBody(body);
     release();
+    if (signals.some((signal) => signal.aborted) && !(e instanceof ReservationError)) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw Object.assign(new Error(`timed out: ${message}`, { cause: e }), {
+        name: 'TimeoutError',
+      });
+    }
     throw e;
   }
 }
@@ -325,7 +339,14 @@ async function readStoredObjectOnce(
  * A stored object that could not be read after every attempt. Distinct from a refused reservation
  * (a failed archive), which is passed through as is, so a caller can act on this one alone.
  */
-export class StoredOriginalReadError extends Error {}
+export class StoredOriginalReadError extends Error {
+  /**
+   * Every attempt failed on a dropped connection (see `isDroppedConnection`). Only such a failure
+   * says nothing about the object itself; a refusal (403, a wrong bucket), an error response the
+   * SDK already retried, our own timeout or a local error (RangeError, out of memory) does not.
+   */
+  allAttemptsDropped = false;
+}
 
 /**
  * Names the object that failed (by image id and backend label; the key and bucket stay out of logs),
@@ -347,6 +368,8 @@ function describeReadFailure(
       `attempt ${attempt}/${attempts}): ${message}`,
     { cause: e }
   );
+  // Earlier attempts were retried only on a dropped connection, so the last one decides.
+  wrapped.allAttemptsDropped = isDroppedConnection(e);
   return Object.assign(wrapped, {
     ...(typeof cause?.name === 'string' && { name: cause.name }),
     ...(cause?.code !== undefined && { code: cause.code }),
