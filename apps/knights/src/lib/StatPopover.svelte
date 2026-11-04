@@ -199,6 +199,7 @@
     }
     .panel {
       position: fixed;
+      top: auto;
       right: 0;
       bottom: 0;
       left: 0;
@@ -208,6 +209,8 @@
     .card {
       width: auto;
       max-width: none;
+      max-height: 85dvh;
+      overflow-y: auto;
       padding: 20px 20px max(20px, env(safe-area-inset-bottom));
       border-width: 1px 0 0;
       border-radius: 16px 16px 0 0;

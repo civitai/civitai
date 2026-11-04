@@ -49,6 +49,21 @@ describe('nextRankRequirements', () => {
     });
   });
 
+  it('shows the real days played and whether the bar is met when the status carries them', () => {
+    const withDays = (daysPlayed: number, daysMet: boolean) => ({
+      ...status,
+      nextRank: { ...status.nextRank, minDaysPlayed: 50, daysPlayed, daysMet },
+    });
+    expect(nextRankRequirements(withDays(32, false), []).at(-1)).toEqual({
+      key: 'days',
+      text: 'At least 50 days played · you have 32',
+      met: false,
+    });
+    expect(nextRankRequirements(withDays(50, true), []).at(-1)?.text).toBe(
+      'At least 50 days played · reached'
+    );
+  });
+
   it('is empty at the top of the ladder', () => {
     expect(nextRankRequirements({ ...status, nextRank: null }, [])).toEqual([]);
   });

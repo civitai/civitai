@@ -16,6 +16,10 @@ type Standing = {
     levelsToGo: number;
     levelMet: boolean;
     accuracyMet: boolean;
+    /** The rank's day requirement and the player's own count; absent on a status that does not carry them. */
+    minDaysPlayed?: number;
+    daysPlayed?: number;
+    daysMet?: boolean;
   } | null;
 };
 
@@ -24,8 +28,8 @@ export type Requirement = { key: 'level' | 'accuracy' | 'days'; text: string; me
 const pct = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
 
 /**
- * What the next rank asks, read from the config rows. Days played shows only for a rank whose ladder row carries
- * `minDaysPlayed`; the player's own count is not part of the status, so it has no met flag.
+ * What the next rank asks, read from the config rows. Days played shows only for a rank that asks for it; the
+ * player's own count and met flag come from the status when it carries them.
  */
 export function nextRankRequirements(
   status: Standing,
@@ -53,7 +57,17 @@ export function nextRankRequirements(
       met: next.accuracyMet,
     },
   ];
-  const days = ladder.find((row) => row.rank === next.rank)?.minDaysPlayed;
-  if (days) out.push({ key: 'days', text: `At least ${days} days played`, met: null });
+  const days =
+    next.minDaysPlayed ?? ladder.find((row) => row.rank === next.rank)?.minDaysPlayed;
+  if (days) {
+    const have = next.daysPlayed;
+    const stand =
+      have === undefined ? '' : next.daysMet ? ' · reached' : ` · you have ${have}`;
+    out.push({
+      key: 'days',
+      text: `At least ${days} days played${stand}`,
+      met: have === undefined ? null : (next.daysMet ?? have >= days),
+    });
+  }
   return out;
 }
