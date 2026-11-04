@@ -1,6 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
+import { createHash } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -12,6 +13,9 @@ import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getRequestCredential, type RequestCredential } from '~/server/auth/request-credential';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
@@ -863,6 +867,27 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   }
 }
 
+/** Records a call `OrchestratorEndpoint` would refuse once `enforceScope` is on. No user, key or IP. */
+function logScopeWouldRefuse(
+  req: AxiomAPIRequest,
+  requiredScope: number,
+  { tokenScope, apiKeyType, subject }: RequestCredential
+) {
+  logToAxiom({
+    name: 'orchestrator-endpoint-scope-would-refuse',
+    type: 'info',
+    route: req.url?.split('?')[0],
+    requiredScope,
+    tokenScope,
+    apiKeyType: apiKeyType ?? null,
+    client: subject?.type === 'oauth' ? 'oauth' : 'personal-key',
+    clientIdHash:
+      subject?.type === 'oauth'
+        ? createHash('sha256').update(String(subject.id)).digest('hex').slice(0, 16)
+        : undefined,
+  }).catch(() => undefined);
+}
+
 export function OrchestratorEndpoint(
   handler: (
     req: AxiomAPIRequest,
@@ -870,9 +895,23 @@ export function OrchestratorEndpoint(
     user: SessionUser,
     token: string
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[],
+  requiredScope: number,
+  { enforceScope = true }: { enforceScope?: boolean } = {}
 ) {
   return AuthedEndpoint(async (req, res, user) => {
+    // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
+    const credential = getRequestCredential(req);
+    if (
+      credential.tokenScope !== TokenScope.Full &&
+      !Flags.hasFlag(credential.tokenScope, requiredScope)
+    ) {
+      if (enforceScope)
+        return res
+          .status(403)
+          .json({ error: 'Your API key does not have the required scope for this action' });
+      logScopeWouldRefuse(req, requiredScope, credential);
+    }
     let token: string;
     try {
       token = await getOrchestratorToken(user.id, { req, res });
