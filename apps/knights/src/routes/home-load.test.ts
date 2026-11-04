@@ -50,6 +50,15 @@ describe('home load', () => {
     expect((await run()).fervorPosition).toBeNull();
   });
 
+  it('still renders the page when the recap or the rail read fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    findRecap.mockRejectedValue(new Error('down'));
+    railFor.mockRejectedValue(new Error('down'));
+    const page = await run();
+    expect(page).toMatchObject({ status: { rank: 'Knight' }, daily: { streak: 12 }, recap: null, fervorPosition: null });
+    vi.restoreAllMocks();
+  });
+
   it("reads nothing of a player's days for someone who has not joined", async () => {
     playerRow.value = undefined;
     const page = await run();

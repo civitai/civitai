@@ -7,6 +7,15 @@ import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
 import type { Actions, PageServerLoad } from './$types';
 
+// The recap card and the fervor position are extras: a failed read leaves them out instead of failing the home page.
+const optional = <T>(what: string, read: () => Promise<T>): Promise<T | null> =>
+  Promise.resolve()
+    .then(read)
+    .catch((error) => {
+      console.error(`knights: could not read the ${what} for the home page`, { error });
+      return null;
+    });
+
 export const load: PageServerLoad = async ({ locals }) => {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -23,8 +32,8 @@ export const load: PageServerLoad = async ({ locals }) => {
   const [daily, recap, rail] = status
     ? await Promise.all([
         getDailyStatus(db, { playerId, rank: status.rank, now }),
-        findRecap(db, { playerId, now }),
-        railFor(playerId, now, status.fervor),
+        optional('recap', () => findRecap(db, { playerId, now })),
+        optional('rail', () => railFor(playerId, now, status.fervor)),
       ])
     : [null, null, null];
 
