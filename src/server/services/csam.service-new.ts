@@ -16,7 +16,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob } from '~/utils/file-utils';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { env } from '~/env/server';
 import { getCsamBucket } from '~/server/services/csam-bucket';
@@ -115,6 +115,7 @@ import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  StoredOriginalReadError,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -183,6 +184,12 @@ type CsamReportDetails = CsamReportFormOutput & {
   generatedImageUploads?: CsamReportGeneratedImageData[];
   /** Why the archive stored less than the report's evidence. */
   archiveSkipped?: string;
+  /**
+   * When each failed archive run failed, one entry per run (see `recordCsamArchiveFailedRun`). A
+   * list, not a counter: a sent report's details may only gain keys and values, so a number could
+   * never be raised, while a list can only grow.
+   */
+  archiveFailedRuns?: string[];
   /** Failed reads of each file across send runs, by image id or generated-image URL. */
   readFailures?: Record<string, number>;
   /** CyberTips opened for this report and cancelled before it was sent. */
@@ -626,8 +633,64 @@ export const CSAM_SEND_DECISION_AFTER_HOURS = 48;
 
 export const SEND_SHORT_REASON = 'storage read failed after retries';
 
-/** Hours after sending for which the archive retries a full-URL file before recording it missing. */
+/**
+ * Hours after sending for which the archive retries a full-URL file, or a stored object that fails
+ * every read, before recording it missing.
+ */
 export const CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS = 24;
+
+/**
+ * Failed archive runs a report must already have had before the archive gives up on a file. With
+ * `CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS`, one rule for every file the archive cannot read (a full URL
+ * or a stored object): the give-up needs BOTH a day since sending AND this many failed runs, so it
+ * never fires on a report's first run however late that run is (a job outage, a first run under
+ * a new reader).
+ */
+export const CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS = 3;
+
+/**
+ * Most files one archive run may give up on: the larger of `files` and `share` of the account's
+ * images. Past it the run fails instead of completing, so a storage incident (every read dropping)
+ * cannot record a whole account's evidence missing; the report is retried next run.
+ */
+export const CSAM_ARCHIVE_GIVE_UP_LIMIT = { files: 5, share: 0.05 };
+
+export const csamArchiveGiveUpLimit = (images: number) =>
+  Math.max(CSAM_ARCHIVE_GIVE_UP_LIMIT.files, images * CSAM_ARCHIVE_GIVE_UP_LIMIT.share);
+
+/** Manifest reason for a stored object that failed every read until the archive gave up on it. */
+export const STORED_ORIGINAL_UNREADABLE = 'stored original unreadable';
+
+/** Failed archive runs recorded on a report before this one. */
+export function csamArchiveFailedRuns(details: { archiveFailedRuns?: unknown } | null | undefined) {
+  const runs = details?.archiveFailedRuns;
+  return Array.isArray(runs) ? runs.length : 0;
+}
+
+/**
+ * Merges `patch`, a jsonb object expression (which may read the row's current `details`), into a
+ * report's details in one statement: no other key is lost, no stale snapshot is written back, and
+ * nothing is removed, as the append-only guard on a sent report requires.
+ */
+async function mergeCsamReportDetails(reportId: number, patch: Prisma.Sql) {
+  await dbWrite.$executeRaw`
+    UPDATE "CsamReport"
+    SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || ${patch}
+    WHERE id = ${reportId}
+  `;
+}
+
+/** Appends this run's failure time to `details.archiveFailedRuns`, which only ever grows. */
+export async function recordCsamArchiveFailedRun(reportId: number, at = new Date()) {
+  await mergeCsamReportDetails(
+    reportId,
+    Prisma.sql`jsonb_build_object(
+      'archiveFailedRuns',
+      CASE WHEN jsonb_typeof(details -> 'archiveFailedRuns') = 'array'
+        THEN details -> 'archiveFailedRuns' ELSE '[]'::jsonb END || to_jsonb(${at.toISOString()}::text)
+    )`
+  );
+}
 
 const hoursSinceFiled = (report: { createdAt: Date }) =>
   Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
@@ -2631,12 +2694,24 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
+    // Counted toward CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS. Failing to count must not hide the error.
+    await recordCsamArchiveFailedRun(report.id).catch((recordError: unknown) =>
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-failed-run-unrecorded',
+        message: recordError instanceof Error ? recordError.message : String(recordError),
+        reportId: report.id,
+      })
+    );
     if (e instanceof Error) {
       if (e.message === 'training data not found') {
-        await dbWrite.csamReport.update({
-          where: { id: report.id },
-          data: { details: { ...report.details, archiveSkipped: e.message } },
-        });
+        // Merged, not spread from `report.details`: the failed run was just recorded, and a
+        // snapshot written back without it would remove a value the append-only guard keeps.
+        await mergeCsamReportDetails(
+          report.id,
+          Prisma.sql`jsonb_build_object('archiveSkipped', ${e.message}::text)`
+        );
       }
     }
     // 🔴 TWO THINGS THIS ROW DOES NOT MEAN, both easy to misread:
@@ -2808,6 +2883,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const hoursSinceSent = report.reportSentAt
           ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
           : 0;
+        const mayGiveUp =
+          hoursSinceSent >= CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS &&
+          csamArchiveFailedRuns(report.details) >= CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS;
+        let givenUp = 0;
         // A supplemental report's unreviewed images are kept as evidence it did not send.
         const notSent = new Set(report.details?.supplemental?.unreviewedImageIds);
         const manifest: ({ imageId: number; preservedNotSent?: true } & EvidenceFileRecord)[] = [];
@@ -2820,14 +2899,29 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           try {
             original = await readOriginalImage(image, { reserve: budget.reserve });
           } catch (e) {
-            // A full URL may be on a host we do not control: after a day of retries its failing
-            // no longer holds the archive back. A stored object's failure is always retried.
-            if (
-              !isEdgeUrlPassthrough(image.url) ||
-              hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS
-            )
-              throw e;
-            original = { source: 'missing', reason: 'full url unreadable' };
+            // After a day AND several failed runs, one unreadable file no longer holds the archive
+            // back: a full URL (on a host we may not control), or a stored object whose every
+            // read attempt dropped its connection, is recorded missing. Anything else (a refusal,
+            // an error response, our own timeout, a local error, a refused reservation) throws.
+            const passthrough = isEdgeUrlPassthrough(image.url);
+            const eligible = passthrough
+              ? true
+              : e instanceof StoredOriginalReadError && e.allAttemptsDropped;
+            if (!mayGiveUp || !eligible) throw e;
+            givenUp += 1;
+            if (passthrough) original = { source: 'missing', reason: 'full url unreadable' };
+            else {
+              // Not silent: the error names the image, so a dropped file is recoverable from logs.
+              logToAxiom({
+                name: 'csam-report',
+                type: 'error',
+                subType: 'archive-image-unreadable',
+                message: e instanceof Error ? e.message : String(e),
+                reportId: report.id,
+                imageId: image.id,
+              });
+              original = { source: 'missing', reason: STORED_ORIGINAL_UNREADABLE };
+            }
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });
@@ -2871,6 +2965,24 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         } catch (e) {
           budget.abort(e);
           throw e;
+        }
+
+        // A storage incident must not mass-record evidence missing: past the limit the run fails
+        // (and is retried) instead of completing.
+        const giveUpLimit = csamArchiveGiveUpLimit(manifest.length);
+        if (givenUp > giveUpLimit) {
+          const message = `report ${report.id} gave up on ${givenUp} of ${manifest.length} images, over the limit of ${giveUpLimit}`;
+          logToAxiom({
+            name: 'csam-report',
+            type: 'error',
+            subType: 'archive-give-up-limit',
+            message,
+            reportId: report.id,
+            givenUp,
+            images: manifest.length,
+            limit: giveUpLimit,
+          });
+          throw new Error(message);
         }
 
         const scanned = new Set(manifest.map((entry) => entry.imageId));

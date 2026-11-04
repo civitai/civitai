@@ -28,12 +28,56 @@ export type MissingImage = { source: 'missing'; reason: string };
 
 export type OriginalImageRead = OriginalImage | MissingImage;
 
-type ImageInput = { url: string; type: MediaType; mimeType?: string | null };
-type ImageBackend = { s3: S3Client; bucket: string };
+type ImageInput = { id?: number; url: string; type: MediaType; mimeType?: string | null };
+/** `backend` is a label for diagnostics only (never the bucket or the key). */
+type ImageBackend = { s3: S3Client; bucket: string; backend?: string };
 type ReadOptions = { backend?: ImageBackend; fetchImpl?: typeof fetch };
 
 /** Long enough for a maximum-size original. */
 export const ORIGINAL_IMAGE_READ_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Attempts at a stored object, each a fresh request: a body that dies mid-stream cannot be resumed.
+ * Only a dropped connection is retried here (see `isDroppedConnection`); the SDK already retries an
+ * error RESPONSE (5xx, throttling) inside each `send`, but not a body that fails after its headers.
+ */
+export const ORIGINAL_IMAGE_READ_ATTEMPTS = 3;
+
+/** Wait before attempt N+1, indexed by N-1. */
+export const ORIGINAL_IMAGE_RETRY_DELAYS_MS = [2_000, 8_000];
+
+const DROPPED_CONNECTION_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ECONNREFUSED',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET',
+]);
+// Node's IncomingMessage reports a response cut off mid-body as `Error: aborted`.
+const DROPPED_CONNECTION_MESSAGES = new Set(['aborted', 'socket hang up']);
+
+/**
+ * A connection that dropped, as opposed to an answer from storage. Our own timeout is not one: it
+ * already waited the full read timeout, and retrying it would hold the slot for multiples of that.
+ */
+function isDroppedConnection(e: unknown): boolean {
+  for (let error = e, depth = 0; error && typeof error === 'object' && depth < 3; depth++) {
+    const { name, code, message, cause } = error as {
+      name?: unknown;
+      code?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (name === 'AbortError' || name === 'TimeoutError') return false;
+    if (typeof code === 'string' && DROPPED_CONNECTION_CODES.has(code)) return true;
+    if (typeof message === 'string' && DROPPED_CONNECTION_MESSAGES.has(message)) return true;
+    error = cause;
+  }
+  return false;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const PROBE_TIMEOUT_MS = 60 * 1000;
 
@@ -177,12 +221,169 @@ async function fetchEdge(
   return { response, body: response.body, declared };
 }
 
+type Reserve = (bytes: number) => Promise<() => void>;
+const noReservation = () => undefined;
+
+/** A reservation failure is the caller's (a failed archive), never storage's: it is not retried or reworded. */
+class ReservationError extends Error {
+  constructor(readonly reason: unknown) {
+    super('reservation refused');
+  }
+}
+
+async function reserveOrFail(reserve: Reserve, bytes: number) {
+  try {
+    return await reserve(bytes);
+  } catch (e) {
+    throw new ReservationError(e);
+  }
+}
+
+/**
+ * One attempt at the stored object. `undefined` means the object does not exist.
+ *
+ * With `reserve`, the object's size is taken from a HEAD and reserved BEFORE the GET is issued, so
+ * no response sits on an open socket, headers received and body unread, while the reservation
+ * waits its turn behind larger objects; storage drops such an idle connection. A HEAD that finds
+ * nothing (or no length) leaves the reservation to after the GET's headers, as before.
+ */
+async function readStoredObjectOnce(
+  image: ImageInput,
+  { s3, bucket }: ImageBackend,
+  reserve: Reserve | undefined,
+  seen: { contentLength?: number }
+): Promise<OriginalImageRead | undefined> {
+  let release: () => void = noReservation;
+  let reserved: number | undefined;
+  let body: unknown;
+  // Kept, so a failure after our own timeout fired is told apart from a dropped connection: the
+  // aborted request can surface as `aborted`/ECONNRESET, and must not be retried as one.
+  const signals: AbortSignal[] = [];
+  const timeout = (ms: number) => {
+    const signal = AbortSignal.timeout(ms);
+    signals.push(signal);
+    return signal;
+  };
+  try {
+    if (reserve) {
+      let headLength: number | undefined;
+      try {
+        const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: image.url }), {
+          abortSignal: timeout(PROBE_TIMEOUT_MS),
+        });
+        headLength = head.ContentLength;
+      } catch (e) {
+        // `NotFound` is also a wrong bucket; the GET below tells the two apart.
+        if (!isMissingHead(e)) throw e;
+      }
+      if (headLength !== undefined) {
+        seen.contentLength = headLength;
+        if (headLength > MAX_ORIGINAL_IMAGE_BYTES) return missing(OVER_CAP);
+        release = await reserveOrFail(reserve, headLength);
+        reserved = headLength;
+      }
+    }
+
+    const response = await s3
+      .send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
+        abortSignal: timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
+      })
+      .catch((e: unknown) => {
+        if (isMissingObject(e)) return undefined;
+        throw e;
+      });
+    if (!response) {
+      release();
+      return undefined;
+    }
+
+    body = response.Body;
+    if (response.ContentLength !== undefined) seen.contentLength = response.ContentLength;
+    if (!response.Body) throw new Error('original image response has no body');
+    if ((response.ContentLength ?? 0) > MAX_ORIGINAL_IMAGE_BYTES) {
+      destroyBody(body);
+      release();
+      return missing(OVER_CAP);
+    }
+    const length = response.ContentLength ?? UNKNOWN_SIZE;
+    // No HEAD length, or the object grew since: reserve what the GET says it holds.
+    if (reserve && (reserved === undefined || length > reserved)) {
+      release();
+      release = await reserveOrFail(reserve, length);
+    }
+    const bytes = await response.Body.transformToByteArray();
+    // A view, not a copy: the object is held once.
+    const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return {
+      source: 'original',
+      data,
+      contentType: pickContentType(response.ContentType, image.mimeType),
+      sha256: createHash('sha256').update(data).digest('hex'),
+      release,
+    };
+  } catch (e) {
+    // An unread body holds its socket until the read timeout.
+    if (body) destroyBody(body);
+    release();
+    if (signals.some((signal) => signal.aborted) && !(e instanceof ReservationError)) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw Object.assign(new Error(`timed out: ${message}`, { cause: e }), {
+        name: 'TimeoutError',
+      });
+    }
+    throw e;
+  }
+}
+
+/**
+ * A stored object that could not be read after every attempt. Distinct from a refused reservation
+ * (a failed archive), which is passed through as is, so a caller can act on this one alone.
+ */
+export class StoredOriginalReadError extends Error {
+  /**
+   * Every attempt failed on a dropped connection (see `isDroppedConnection`). Only such a failure
+   * says nothing about the object itself; a refusal (403, a wrong bucket), an error response the
+   * SDK already retried, our own timeout or a local error (RangeError, out of memory) does not.
+   */
+  allAttemptsDropped = false;
+}
+
+/**
+ * Names the object that failed (by image id and backend label; the key and bucket stay out of logs),
+ * keeping the storage error's own message, name and code.
+ */
+function describeReadFailure(
+  e: unknown,
+  image: ImageInput,
+  backend: string | undefined,
+  contentLength: number | undefined,
+  attempt: number,
+  attempts: number
+) {
+  const cause = e as { message?: unknown; name?: unknown; code?: unknown; $metadata?: unknown };
+  const message = typeof cause?.message === 'string' ? cause.message : String(e);
+  const wrapped = new StoredOriginalReadError(
+    `stored original read failed for image ${image.id ?? 'unknown'} ` +
+      `(backend ${backend ?? 'unknown'}, ContentLength ${contentLength ?? 'unknown'}, ` +
+      `attempt ${attempt}/${attempts}): ${message}`,
+    { cause: e }
+  );
+  // Earlier attempts were retried only on a dropped connection, so the last one decides.
+  wrapped.allAttemptsDropped = isDroppedConnection(e);
+  return Object.assign(wrapped, {
+    ...(typeof cause?.name === 'string' && { name: cause.name }),
+    ...(cause?.code !== undefined && { code: cause.code }),
+    ...(cause?.$metadata !== undefined && { $metadata: cause.$metadata }),
+  });
+}
+
 /**
  * The stored object under `Image.url`. Only a missing object falls back to the edge copy, so a
- * transient storage error cannot quietly downgrade evidence to an edge copy; it throws and the
- * caller retries.
+ * transient storage error cannot quietly downgrade evidence to an edge copy: a dropped connection
+ * is retried with a fresh request, and any failure that remains throws so the caller retries.
  *
- * `reserve` takes the object's size before its body is read, so a caller can bound bytes held at once.
+ * `reserve` takes the object's size before its body is read, so a caller can bound bytes held at
+ * once. A failed attempt gives its reservation back before waiting to retry.
  */
 export async function readOriginalImage(
   image: ImageInput,
@@ -190,49 +391,38 @@ export async function readOriginalImage(
     reserve,
     backend,
     fetchImpl = fetch,
-  }: ReadOptions & { reserve?: (bytes: number) => Promise<() => void> } = {}
+    attempts = ORIGINAL_IMAGE_READ_ATTEMPTS,
+    sleep = defaultSleep,
+  }: ReadOptions & {
+    reserve?: Reserve;
+    attempts?: number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {}
 ): Promise<OriginalImageRead> {
-  const noReservation = () => undefined;
   const passthrough = isEdgeUrlPassthrough(image.url);
 
   if (!passthrough) {
-    const { s3, bucket } = backend ?? (await getImageUploadBackend());
-    let response;
-    try {
-      response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
-        abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
-      });
-    } catch (e) {
-      if (!isMissingObject(e)) throw e;
-    }
-
-    if (response) {
-      const body = response.Body;
-      if (!body) throw new Error('original image response has no body');
-      if ((response.ContentLength ?? 0) > MAX_ORIGINAL_IMAGE_BYTES) {
-        destroyBody(body);
-        return missing(OVER_CAP);
-      }
-      let release: () => void = noReservation;
+    const storage = backend ?? (await getImageUploadBackend());
+    let stored: OriginalImageRead | undefined;
+    for (let attempt = 1; ; attempt++) {
+      const seen: { contentLength?: number } = {};
       try {
-        if (reserve) release = await reserve(response.ContentLength ?? UNKNOWN_SIZE);
-        const bytes = await body.transformToByteArray();
-        // A view, not a copy: the object is held once.
-        const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        return {
-          source: 'original',
-          data,
-          contentType: pickContentType(response.ContentType, image.mimeType),
-          sha256: createHash('sha256').update(data).digest('hex'),
-          release,
-        };
+        stored = await readStoredObjectOnce(image, storage, reserve, seen);
+        break;
       } catch (e) {
-        // An unread body holds its socket until the read timeout.
-        destroyBody(body);
-        release();
-        throw e;
+        if (e instanceof ReservationError) throw e.reason;
+        if (attempt < attempts && isDroppedConnection(e)) {
+          await sleep(
+            ORIGINAL_IMAGE_RETRY_DELAYS_MS[
+              Math.min(attempt - 1, ORIGINAL_IMAGE_RETRY_DELAYS_MS.length - 1)
+            ]
+          );
+          continue;
+        }
+        throw describeReadFailure(e, image, storage.backend, seen.contentLength, attempt, attempts);
       }
     }
+    if (stored) return stored;
   }
 
   const refused = edgeRefusal(image.url, passthrough);
