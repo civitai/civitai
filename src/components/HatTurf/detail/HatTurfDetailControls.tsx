@@ -48,7 +48,6 @@ function useJoin() {
   return trpc.hatTurf.setOptIn.useMutation({
     onSuccess: () => {
       void utils.hatTurf.getStock.invalidate();
-      // Joining opens the player's own images to hats.
       void utils.hatTurf.getSummaries.invalidate();
     },
     onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
@@ -71,7 +70,7 @@ function HatButton({ imageId }: { imageId: number }) {
   // Same query as the layer's, so one request. The feed's sticker list is capped at 5 per image.
   const { data: image } = trpc.hatTurf.getImageStickers.useQuery(
     { event: feed?.event ?? '', imageId },
-    { enabled: !!feed && !!user, staleTime: 30_000 }
+    { enabled: !!feed?.joined && !!user, staleTime: 30_000 }
   );
 
   // Closed images still invite: an unjoined viewer has no other way to opt in.
@@ -179,10 +178,12 @@ function HatButton({ imageId }: { imageId: number }) {
 function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
-  const user = useCurrentUser();
   const [open, setOpen] = useState(false);
   const [tray, setTray] = useState(false);
-  if (!feed || (!summary && !user)) return null;
+  // A signed-out viewer keeps the badge: its card is their only invite (sign in, then join). A
+  // signed-in viewer who has not joined is invited by the hat button instead.
+  const user = useCurrentUser();
+  if (!feed || (user && !feed.joined)) return null;
 
   return (
     <>
@@ -261,7 +262,7 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
       <div className={classes.statsBody}>
         {user && stock?.optedIn && closed && (
           <Text size="xs" c="dimmed" data-testid="hat-turf-detail-closed">
-            This creator hasn&apos;t joined Hat Turf yet
+            Hats can&apos;t go on this picture
           </Text>
         )}
         {!teams.length && (
@@ -320,7 +321,7 @@ function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => voi
               Leave Hat Turf
             </button>
             <Text size="xs" c="dimmed">
-              Hats already on your images keep counting. No new ones can be placed.
+              You stop seeing hats and can&apos;t place any. Hats you placed keep counting.
             </Text>
           </>
         )}

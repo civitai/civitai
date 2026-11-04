@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
@@ -6,7 +6,7 @@ import {
   ImageIngestionStatus,
   MediaType,
 } from '~/shared/utils/prisma/enums';
-import { dbMock, redisMock } from '~/__tests__/mocks';
+import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
 import { DEL_IF_VALUE_SCRIPT } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { submitVoteSchema } from '~/server/schema/crucible.schema';
@@ -31,9 +31,13 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   },
 }));
 
-const { getJudgingPair, getJudgingProgress, submitVote } = await import(
+const { getJudgingPair, getJudgingProgress, RECORD_VOTED_PAIR_SCRIPT, submitVote } = await import(
   '~/server/services/crucible.service'
 );
+const { getAnchorVotesKey, getJudgesKey, getVoteOutcomesKey, getVotedPairsKey } = await import(
+  '~/server/services/crucible-redis-keys'
+);
+const { MAX_CLOSURE_VOTES } = await import('~/server/services/crucible-judge-closure');
 
 const JUDGE = 42;
 const JUDGE_ENTRY_VOTES_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:1:${JUDGE}`;
@@ -51,9 +55,22 @@ const useFakeRedis = () => {
     strings.set(key, value);
     return 'OK';
   });
-  // The served-pair claim: deletes the key only while it still holds this pair.
   sysRedis.eval.mockImplementation(
-    async (_script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
+    async (script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
+      // The voted record: SADD the pair, and only when added, HSET its anchor.
+      if (script === RECORD_VOTED_PAIR_SCRIPT) {
+        const set = sets.get(keys[0]) ?? new Set<string>();
+        sets.set(keys[0], set);
+        if (set.has(args[0])) return 0;
+        set.add(args[0]);
+        if (args[1]) {
+          const hash = hashes.get(keys[1]) ?? new Map<string, number>();
+          hashes.set(keys[1], hash);
+          hash.set(args[0], Number(args[1]));
+        }
+        return 1;
+      }
+      // The served-pair claim: deletes the key only while it still holds this pair.
       if (strings.get(keys[0]) !== args[0]) return 0;
       strings.delete(keys[0]);
       return 1;
@@ -70,6 +87,7 @@ const useFakeRedis = () => {
     sets.get(key)?.delete(value) ? 1 : 0
   );
   sysRedis.sMembers.mockImplementation(async (key: string) => [...(sets.get(key) ?? [])]);
+  sysRedis.sCard.mockImplementation(async (key: string) => sets.get(key)?.size ?? 0);
   sysRedis.hIncrBy.mockImplementation(async (key: string, field: string, by: number) => {
     const hash = hashes.get(key) ?? new Map<string, number>();
     hashes.set(key, hash);
@@ -441,8 +459,8 @@ describe('submitVote — per-judge cap on each entry', () => {
 
   it('gives the counts back when the pair was already voted', async () => {
     const { judgeVotes } = useFakeRedis();
-    redisMock.sysRedis.eval.mockResolvedValue(1);
-    redisMock.sysRedis.sAdd.mockResolvedValueOnce(0);
+    // The served-pair claim succeeds; the voted record finds the pair already there.
+    redisMock.sysRedis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
 
     await expect(vote()).rejects.toThrow('already voted');
 
@@ -624,5 +642,83 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     }
     // No assertion on votes: the per-entry cap alone stops a judge near 21, which overlaps the
     // skip's spread, so a count would be flaky.
+  });
+
+  it('records as the anchor exactly the side Elo froze, vote for vote', async () => {
+    const ids = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+    withEntries(...ids);
+    // Pairing draws from Math.random; a seeded sequence makes this run the same every time.
+    let seed = 7; // a seed whose run judges anchor votes; the first expect below checks it does
+    const random = vi
+      .spyOn(Math, 'random')
+      .mockImplementation(() => (seed = (seed * 16807) % 2147483647) / 2147483647);
+    onTestFinished(() => random.mockRestore());
+    const cast: [number, number][] = [];
+    // An intransitive judge, so cycles keep pairs servable until entries reach the cap; a
+    // consistent one is sorted by the skip before any entry does.
+    for (let pair = await serve(); pair; pair = await serve()) {
+      const [winner, loser] = ((pair[0] + pair[1]) / 10) % 2 ? pair : [pair[1], pair[0]];
+      await vote(winner, loser);
+      cast.push([winner, loser]);
+      if (cast.length > 66) throw new Error('served more pairs than 12 entries have');
+    }
+    const eloFrozen = processVote.mock.calls.map((call) => call[4]);
+    expect(eloFrozen.filter(Boolean).length, 'anchor votes judged').toBeGreaterThan(0);
+    const recorded = await redisMock.sysRedis.hGetAll(getAnchorVotesKey(1, JUDGE));
+    const recordedFrozen = cast.map(([winner, loser]) => {
+      const anchor = recorded[`${Math.min(winner, loser)}:${Math.max(winner, loser)}`];
+      return anchor === String(winner) ? 'winner' : anchor === String(loser) ? 'loser' : undefined;
+    });
+    expect(recordedFrozen).toEqual(eloFrozen);
+  });
+
+  it('logs once when a judge passes the closure cap, then stops loading their outcomes', async () => {
+    withEntries(10, 20, 30);
+    const outcomesKey = getVoteOutcomesKey(1, JUDGE);
+    for (let i = 0; i < MAX_CLOSURE_VOTES; i++)
+      await redisMock.sysRedis.sAdd(outcomesKey, `${1000 + i}>${2000 + i}`);
+    await judge(10, 20); // the 201st outcome
+    await judge(10, 30);
+    expect(processVote).toHaveBeenCalledTimes(2);
+
+    const capLogs = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'crucible-closure-cap'
+    );
+    expect(capLogs, 'closure-cap logs').toHaveLength(1);
+    redisMock.sysRedis.sMembers.mockClear();
+    await serve();
+    const outcomeReads = redisMock.sysRedis.sMembers.mock.calls.filter(
+      ([key]) => key === outcomesKey
+    );
+    expect(outcomeReads, 'outcome set reads past the cap').toHaveLength(0);
+  });
+
+  it('writes the voted-pairs and judges keys the Bradley-Terry guard counts', async () => {
+    withEntries(10, 20, 30);
+    await judge(10, 20);
+    await judge(30, 20);
+
+    // The guard reads these same helpers (pinned on its side in crucible-bradley-terry.test).
+    expect(await redisMock.sysRedis.sCard(getVotedPairsKey(1, JUDGE))).toBe(2);
+    expect(await redisMock.sysRedis.sMembers(getJudgesKey(1))).toEqual([String(JUDGE)]);
+  });
+
+  it('records the anchor under the key the fit reads, in the same script as the voted pair', async () => {
+    withEntries(10, 20);
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '20',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+    );
+    await redisMock.sysRedis.set(
+      `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`,
+      '10:20|anchor:20'
+    );
+    await vote(10, 20);
+
+    expect(processVote.mock.calls[0][4], 'Elo froze').toBe('loser');
+    expect(await redisMock.sysRedis.hGetAll(getAnchorVotesKey(1, JUDGE))).toEqual({
+      '10:20': '20',
+    });
   });
 });

@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   whatIfFromGraph: vi.fn(async () => ({ cost: { total: 30 }, ready: true })),
   assertInputs: vi.fn(async () => undefined),
   cache: new Map<string, unknown>(),
+  /** Users the Flipt testers segment holds. */
+  testers: new Set<number>(),
   findWaiver: vi.fn<
     (args: { placerId: number; ownerId: number; hostImageId: number; db: unknown }) => Promise<{
       event: string;
@@ -33,6 +35,10 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/events/team-remix-waiver', () => ({ findTeamRemixWaiver: h.findWaiver }));
 vi.mock('~/server/services/remix-gallery.service', () => ({
   getTeamWaiverStanding: h.standing,
+}));
+vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveTestingAccess: async ({ id }: { id?: number }) => id != null && h.testers.has(id),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: async () => 'token',
@@ -156,6 +162,7 @@ beforeEach(() => {
   );
   h.images.clear();
   h.cache.clear();
+  h.testers.clear();
 });
 
 describe('remixApp.run → graph input', () => {
@@ -175,6 +182,30 @@ describe('remixApp.run → graph input', () => {
     expect(args.remixOfId).toBe(1);
     expect(args.tags).toContain('remix-app:anime-it');
     expect(args.allowMatureContent).toBeUndefined();
+  });
+
+  it('charges the domain currency and returns what the submit cost, at the tier it ran', async () => {
+    addImage(3);
+    addImage(4, { nsfwLevel: MATURE });
+    h.generateFromGraph
+      .mockResolvedValueOnce({ id: 'wf-3', cost: { total: 47 } })
+      .mockResolvedValueOnce({ id: 'wf-4', cost: { total: 52 } });
+    const onGreen = caller({ isGreenDomain: true, features: { isGreen: true } as never });
+
+    await expect(
+      runRemixApp({ slug: 'anime-it', imageId: 3, nonce: 'nonce-0003', caller: onGreen })
+    ).resolves.toEqual({ workflowId: 'wf-3', tier: 'safe', cost: 47 });
+    await expect(
+      runRemixApp({ slug: 'anime-it', imageId: 4, nonce: 'nonce-0004', caller: caller() })
+    ).resolves.toEqual({ workflowId: 'wf-4', tier: 'mature', cost: 52 });
+
+    const currencies = (
+      h.generateFromGraph.mock.calls as unknown as [{ currencies: string[] }][]
+    ).map((c) => c[0].currencies);
+    expect(currencies).toEqual([
+      ['blue', 'green'],
+      ['blue', 'yellow'],
+    ]);
   });
 
   it('switches a mature source to the Edit mature engine', async () => {
@@ -362,6 +393,8 @@ describe('remixApp.quote', () => {
 
   it('reuses a cached price only when nothing the price depends on differs', async () => {
     const perOpen = SYSTEM_REMIX_APPS.length;
+    const TESTER = USER_ID + 100;
+    h.testers.add(TESTER);
     addImage(9, { width: 1200, height: 800 });
     addImage(10, { width: 1210, height: 800 });
     await quoteRemixApps({ imageId: 9, caller: caller() });
@@ -376,6 +409,10 @@ describe('remixApp.quote', () => {
       [9, caller({}, { tier: 'gold' } as never)],
       [9, caller({}, { isModerator: true })],
       [9, caller({ features: { isGreen: true } as RemixAppCaller['features'] })],
+      // An engine flag the graph gates on, with the currencies unchanged.
+      [9, caller({ features: { isGreen: false, krea: true } as never })],
+      // A Flipt tester: gate rules open to them that are closed to everyone else.
+      [9, caller({}, { id: TESTER })],
     ];
     for (const [imageId, who] of variants) {
       const before = h.whatIfFromGraph.mock.calls.length;
@@ -435,7 +472,10 @@ describe('team remix', () => {
 
   it("refuses a viewer not on the owner's team, and charges nothing", async () => {
     addImage(31, { ownerId: OWNER });
-    await expect(runTeam(31)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(runTeam(31)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Team remix is not available on this image right now.',
+    });
     await expect(quoteTeam(31)).resolves.toBeNull();
     expect(h.generateFromGraph).not.toHaveBeenCalled();
     expect(h.whatIfFromGraph).not.toHaveBeenCalled();
@@ -445,7 +485,11 @@ describe('team remix', () => {
     addImage(37, { ownerId: OWNER });
     sameTeam('Blue', 0);
     await expect(quoteTeam(37)).resolves.toBeNull();
-    await expect(runTeam(37)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Told why: they are on the team, they have just used up today's free submits.
+    await expect(runTeam(37)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining("used today's free team submits"),
+    });
     expect(h.standing).toHaveBeenCalledWith({ hostImageId: 37, placerId: USER_ID });
     expect(h.generateFromGraph).not.toHaveBeenCalled();
     expect(h.whatIfFromGraph).not.toHaveBeenCalled();

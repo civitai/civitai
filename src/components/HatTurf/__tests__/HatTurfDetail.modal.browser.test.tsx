@@ -150,6 +150,7 @@ test('in the image modal, change ▸ opens Your hats on top of the modal', async
           },
           open: { 9: true },
           stickers: {},
+          joined: h.stock.optedIn,
           watch: () => () => undefined,
         }}
       >

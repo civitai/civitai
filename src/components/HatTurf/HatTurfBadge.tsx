@@ -24,8 +24,8 @@ const DOT_RADIUS = RING_RADIUS + 1.5;
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId }: { imageId: number }) {
-  // Cards render by the hundred: with Hat Turf off, none of the badge's hooks should run.
-  return useTurfFeed() ? <HatTurfBadgeContent imageId={imageId} /> : null;
+  // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
+  return useTurfFeed()?.joined ? <HatTurfBadgeContent imageId={imageId} /> : null;
 }
 
 function HatTurfBadgeContent({ imageId }: { imageId: number }) {

@@ -8,7 +8,7 @@ const DRAW_LIMIT = 12;
 
 /** Mounted in the on-screen slide only, so a swipe never shows a neighbour's draft. */
 export function HatTurfDetailLayer({ imageId }: { imageId: number }) {
-  return useTurfFeed() ? <Content imageId={imageId} /> : null;
+  return useTurfFeed()?.joined ? <Content imageId={imageId} /> : null;
 }
 
 function Content({ imageId }: { imageId: number }) {
