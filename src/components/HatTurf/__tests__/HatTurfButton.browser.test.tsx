@@ -216,11 +216,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('Hat Turf button on a feed ImageCard', () => {
-  test('shows how many hats are available before pressing, and the gear is already on screen', async () => {
+  test('the button is a square in the team colour with only the hat, and the gear is already on screen', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('3');
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    expect(button.textContent).toBe('');
+    const box = button.getBoundingClientRect();
+    expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(2);
+    // The viewer is on blue: the theme's blue at its primary shade (#228be6), not the grey fallback.
+    expect(getComputedStyle(button).backgroundColor).toBe('rgb(34, 139, 230)');
     const gear = q('hat-turf-gear')!;
+    expect(getComputedStyle(gear).backgroundColor).toBe('rgb(0, 0, 0)');
     expect(getComputedStyle(gear).display).not.toBe('none');
     const card = q('card-root')!.getBoundingClientRect();
     const g = gear.getBoundingClientRect();
@@ -243,10 +249,10 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button');
 
     expect(hit(g.left + g.width / 2, g.top + g.height / 2)).toBe(gear);
-    // Every corner of the button, 2px in: the gear's tap halo used to cover the top-right one.
+    // The gear sits on the top-right corner; the centre and the other three corners stay the button's.
     for (const [x, y] of [
+      [b.left + b.width / 2, b.top + b.height / 2],
       [b.left + 2, b.top + 2],
-      [b.right - 2, b.top + 2],
       [b.left + 2, b.bottom - 2],
       [b.right - 2, b.bottom - 2],
     ])
@@ -348,22 +354,24 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.stock = { available: 0, optedIn: true };
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('0');
     expect(document.body.querySelector('[aria-label="No hats left to place"]')).not.toBeNull();
     await press();
     expect(q('hat-turf-draft')).toBeNull();
   });
 
-  test('the gear lists the viewer’s hats by name and the pick is the one placed', async () => {
+  test('the gear opens the panel; a hat picked in its tray is the one placed', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Top Hat'));
-    expect(document.body.textContent).toContain('Party Cap');
-    const option = [...document.body.querySelectorAll('[aria-label="Hat to place"] button')].find(
-      (o) => o.textContent?.includes('Top Hat')
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Party Cap'));
+    expect(onCardClick).not.toHaveBeenCalled();
+    q('hat-turf-panel-change')!.click();
+    await vi.waitFor(() => expect(q('hat-turf-tray')).not.toBeNull());
+    const option = [...q('hat-turf-tray')!.querySelectorAll('button[aria-pressed]')].find((o) =>
+      o.textContent?.includes('Top Hat')
     ) as HTMLElement;
     option.click();
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Top Hat'));
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
     (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
@@ -393,17 +401,21 @@ describe('Hat Turf button on a feed ImageCard', () => {
   test('no button until the viewer’s stock is read', async () => {
     h.stock = undefined;
     renderCard();
-    // The card mounts its footer after a commit or two; the other tests find the button well inside
-    // this wait, which is what makes its absence here mean something.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await cardRendered();
     expect(q('hat-turf-button')).toBeNull();
+  });
+
+  // The control for the absences above: by the time the reactions are drawn, the button is too.
+  test('joined: the button is drawn by the time the reactions are', async () => {
+    renderCard();
+    await cardRendered();
+    expect(q('hat-turf-button')).not.toBeNull();
   });
 
   test('not joined: a closed image still offers Join', async () => {
     h.stock = { available: 3, optedIn: false };
     renderCard({ open: { 77: false } });
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('+');
     await press();
     const join = await vi.waitFor(() => {
       const button = [...document.body.querySelectorAll('button')].find(
@@ -427,7 +439,8 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.stock = { available: 3, optedIn: false };
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('+');
+    // Not joined has nothing to set yet: no gear.
+    expect(q('hat-turf-gear')).toBeNull();
     await press();
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Join Hat Turf to place hats')
@@ -496,14 +509,15 @@ describe('hats on a feed ImageCard', () => {
     expect(hats().map((el) => el.dataset.tone)).toEqual(['lead', 'dim']);
   });
 
-  test('a protected image shows its hats muted with a lock and who would take it', async () => {
+  test('a protected image shows its hats muted, with no "would take it" pill', async () => {
     renderCard({
       images: { 77: summary({ hatted: true }) },
       stickers: { 77: [sticker(1, 'blue')] },
     });
     await vi.waitFor(() => expect(hats().length).toBe(1));
     expect(hats()[0].dataset.tone).toBe('muted');
-    expect(q('hat-turf-lock')!.textContent).toContain('Pink would take it');
+    expect(q('hat-turf-badge-lock')).not.toBeNull();
+    expect(document.body.textContent).not.toMatch(/would take it/);
   });
 
   test('hats past what is drawn show as a +N chip', async () => {

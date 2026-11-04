@@ -7,6 +7,7 @@ import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
+  FALLBACK_COLOR,
   RING_LENGTH,
   RING_RADIUS,
   badgeLeader,
@@ -17,10 +18,6 @@ import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { abbreviateNumber } from '~/utils/number-helpers';
-
-const FALLBACK = 'var(--mantine-color-gray-6)';
-/** Just outside the ring's centre line, so the dot reads as coming out of the viewer's arc. */
-const DOT_RADIUS = RING_RADIUS + 1.5;
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId }: { imageId: number }) {
@@ -52,15 +49,17 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
   if (!summary || !feed) return null;
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
-  const colorOf = (team: string) => teamColor(team) ?? FALLBACK;
-  const viewerTeam = feed.team;
-  const mine = viewerTeam
-    ? arcs.find((arc) => arc.team === viewerTeam && arc.length > 0)
-    : undefined;
-  const angle = mine ? ((mine.offset + mine.length / 2) / RING_LENGTH) * 2 * Math.PI : 0;
+  const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
+  // A protected image is held by its hat's team, whoever leads the count.
+  const holder = summary.hatted && summary.hattedTeam ? summary.hattedTeam : leader;
+  const discColor = holder ? colorOf(holder) : undefined;
 
-  const label = `${standingsLabel(summary, viewerTeam)}${
-    summary.hatted ? ' A hat protects this image.' : ''
+  const label = `${standingsLabel(summary, feed.team)}${
+    summary.hatted
+      ? summary.hattedTeam
+        ? ` A ${summary.hattedTeam} hat protects this image.`
+        : ' A hat protects this image.'
+      : ''
   }`;
   const face = (
     <>
@@ -81,10 +80,16 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
         ))}
       </svg>
       <div
-        className={clsx(classes.disc, !leader && classes.neutral)}
-        style={leader ? { backgroundColor: colorOf(leader) } : undefined}
+        className={clsx(classes.disc, !discColor && classes.neutral)}
+        style={discColor ? { backgroundColor: discColor } : undefined}
+        data-testid="hat-turf-disc"
       >
-        <HatIcon size={leader ? 14 : 17} />
+        <span
+          className={classes.hat}
+          style={discColor ? { color: `color-mix(in srgb, ${discColor} 55%, black)` } : undefined}
+        >
+          <HatIcon size={discColor ? 26 : 20} />
+        </span>
         {leader && (
           <span
             key={count}
@@ -95,17 +100,6 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
           </span>
         )}
       </div>
-      {mine && viewerTeam && (
-        <span
-          className={classes.mine}
-          data-testid="hat-turf-mine"
-          style={{
-            left: `${((24 + DOT_RADIUS * Math.sin(angle)) / 48) * 100}%`,
-            top: `${((24 - DOT_RADIUS * Math.cos(angle)) / 48) * 100}%`,
-            backgroundColor: colorOf(viewerTeam),
-          }}
-        />
-      )}
       {summary.hatted && (
         <span className={classes.lock} data-testid="hat-turf-badge-lock">
           <IconLock size={10} stroke={2.75} />
@@ -159,7 +153,7 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
         </button>
       </Popover.Target>
       <Popover.Dropdown p="sm" w={224} onClick={(event) => event.stopPropagation()}>
-        <HatTurfStandings summary={summary} viewerTeam={viewerTeam} />
+        <HatTurfStandings summary={summary} viewerTeam={feed.team} />
       </Popover.Dropdown>
     </Popover>
   );

@@ -187,7 +187,7 @@ afterEach(() => {
 });
 
 describe('Hat Turf badge on a feed ImageCard', () => {
-  test('draws the ring, the leader colour, a white hat and the count under it', async () => {
+  test('draws the ring, the leader colour and the count', async () => {
     renderCard({ feed: feedWith({ 1: standing() }) });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const el = badge()!;
@@ -209,28 +209,61 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(box.right).toBeLessThanOrEqual(card.right);
   });
 
-  const mineDot = () =>
-    badge()!.querySelector('[data-testid="hat-turf-mine"]') as HTMLElement | null;
+  const parts = () => {
+    const el = badge()!;
+    const count = el.querySelector('[data-testid="hat-turf-count"]') as HTMLElement | null;
+    const disc = el.querySelector('[data-testid="hat-turf-disc"]') as HTMLElement;
+    const arc = (team: string) =>
+      getComputedStyle(el.querySelector(`circle[data-team="${team}"]`) as SVGElement).stroke;
+    return { el, count, disc, arc };
+  };
+  const centre = (r: DOMRect) => [r.left + r.width / 2, r.top + r.height / 2];
 
-  test('marks the viewer’s own arc with a dot in their colour, with no text', async () => {
+  test('the count sits centred over a hat drawn in a darker shade of the disc', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    expect(mineDot()).not.toBeNull();
-    const pinkArc = badge()!.querySelector('circle[data-team="pink"]') as SVGElement;
-    expect(getComputedStyle(mineDot()!).backgroundColor).toBe(getComputedStyle(pinkArc).stroke);
+    const { count, disc } = parts();
+    const [cx, cy] = centre(count!.getBoundingClientRect());
+    const [dx, dy] = centre(disc.getBoundingClientRect());
+    expect(Math.abs(cx - dx)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(cy - dy)).toBeLessThanOrEqual(2);
+    expect(getComputedStyle(count!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    const hat = disc.querySelector('svg')!;
+    const hatColor = getComputedStyle(hat).color;
+    expect(hatColor).not.toBe('rgb(255, 255, 255)');
+    expect(hatColor).not.toBe(getComputedStyle(disc).backgroundColor);
+  });
+
+  test('no dot on the ring, even where the viewer’s own team has an arc', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    expect(badge()!.querySelector('circle[data-team="pink"]')).not.toBeNull();
+    expect(badge()!.querySelector('[data-testid="hat-turf-mine"]')).toBeNull();
     expect(badge()!.textContent).toBe('6');
   });
 
-  test('no dot when the viewer’s team has no hats here', async () => {
-    renderCard({ feed: feedWith({ 1: standing({ counted: { blue: 6 } }) }, 'pink') });
+  test('a protected image fills the disc with the holding team; the ring still shows the leader', async () => {
+    renderCard({
+      feed: feedWith({ 1: standing({ hatted: true, hattedTeam: 'pink' }) }, 'blue'),
+    });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    expect(mineDot()).toBeNull();
+    const { el, disc, arc, count } = parts();
+    expect(el.dataset.leader).toBe('blue');
+    expect(count!.textContent).toBe('6');
+    expect(getComputedStyle(disc).backgroundColor).toBe(arc('pink'));
+    expect(el.getAttribute('aria-label')).toContain('A pink hat protects this image');
+    // The lock takes the bottom-right corner.
+    const lock = el.querySelector('[data-testid="hat-turf-badge-lock"]')!.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    expect(lock.right).toBeGreaterThan(box.right - 4);
+    expect(lock.bottom).toBeGreaterThan(box.bottom - 4);
   });
 
-  test('no dot when the viewer is on no team', async () => {
-    renderCard({ feed: feedWith({ 1: standing() }, null) });
+  test('an unprotected image fills the disc with the leader', async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    expect(mineDot()).toBeNull();
+    const { disc, arc } = parts();
+    expect(getComputedStyle(disc).backgroundColor).toBe(arc('blue'));
   });
 
   test('control arm: tapping the badge opens the card, not the standings', async () => {

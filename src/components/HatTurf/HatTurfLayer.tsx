@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconCheck, IconLock, IconX } from '@tabler/icons-react';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
@@ -12,6 +12,7 @@ import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import {
+  FALLBACK_COLOR,
   HAT_DEFAULT_SCALE,
   badgeLeader,
   clampSpot,
@@ -60,11 +61,17 @@ export type HatTurfLayerProps = {
   moreLoading?: boolean;
   /** After a hat is saved, for a surface that reads its hats itself. */
   onPlaced?: () => void;
+  /** Pinned to the picture's own top-left corner, not the frame's, on a letterboxed picture. */
+  corner?: React.ReactNode;
 };
 
 export function HatTurfLayer(props: HatTurfLayerProps) {
+  const feed = useTurfFeed();
   // Hooks stay in the inner component so cards without a joined viewer run none.
-  return useTurfFeed()?.joined ? <HatTurfLayerContent {...props} /> : null;
+  if (feed?.joined) return <HatTurfLayerContent {...props} />;
+  // A viewer who has not joined sees no hats, though a surface may still pin its corner.
+  if (feed && props.corner) return <HatTurfLayerContent {...props} stickers={[]} />;
+  return null;
 }
 
 function HatTurfLayerContent({
@@ -75,6 +82,7 @@ function HatTurfLayerContent({
   onMore,
   moreLoading,
   onPlaced,
+  corner,
 }: HatTurfLayerProps) {
   const card = useHatTurfCard();
   const feed = useTurfFeed();
@@ -89,7 +97,7 @@ function HatTurfLayerContent({
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
   const stickers = stickersProp ?? feed?.stickers[imageId];
-  const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length);
+  const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length || !!corner);
 
   const seen = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -152,8 +160,7 @@ function HatTurfLayerContent({
 
   if (!card || !feed) return null;
   const { draft, setDraft, placed, setPlaced } = card;
-  const colorOf = (team: string | null | undefined) =>
-    (team && teamColor(team)) || 'var(--mantine-color-gray-6)';
+  const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
   const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
@@ -223,12 +230,15 @@ function HatTurfLayerContent({
 
   return (
     <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
-      <HatTurfLive imageId={imageId} />
+      {feed?.joined && <HatTurfLive imageId={imageId} />}
+      {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
+      {!box && corner && <div className={classes.corner}>{corner}</div>}
       {box && (
         <div
           className={classes.box}
           style={{ width: box.width, height: box.height, left: box.left, top: box.top }}
         >
+          {corner && <div className={classes.corner}>{corner}</div>}
           {drawn.map((sticker) => {
             const pose = readHatPose(sticker.data);
             if (!pose) return null;
@@ -350,11 +360,6 @@ function HatTurfLayerContent({
                 <HatIcon size={14} />+{overflow}
               </div>
             ))}
-          {showHats && protectedImage && leader && (
-            <div className={classes.lock} data-testid="hat-turf-lock">
-              <IconLock size={11} /> {leader[0].toUpperCase() + leader.slice(1)} would take it
-            </div>
-          )}
         </div>
       )}
     </div>
