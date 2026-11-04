@@ -59,6 +59,18 @@ export function fitBradleyTerry(tallies: PairTally[]): Map<number, number> {
   );
 }
 
+/**
+ * When the fit, not Elo, ranks a crucible (display and prizes). Crucibles running at deploy finish
+ * on Elo: switching mid-run would reorder a leaderboard judges have already seen. To switch every
+ * crucible, return true; to switch none, set the date to null.
+ */
+export const BRADLEY_TERRY_RANKING_FROM: Date | null = null;
+
+export function usesBradleyTerryRanking(crucible: { startAt: Date | null; createdAt: Date }) {
+  if (!BRADLEY_TERRY_RANKING_FROM) return false;
+  return (crucible.startAt ?? crucible.createdAt) >= BRADLEY_TERRY_RANKING_FROM;
+}
+
 function getBradleyTerryKey(crucibleId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.BRADLEY_TERRY}:${crucibleId}` as RedisKeyTemplateSys;
 }
