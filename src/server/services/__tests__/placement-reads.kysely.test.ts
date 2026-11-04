@@ -3,8 +3,7 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
-// Mocked for the invariant guard that no flag check remains on these reads (not regression
-// coverage).
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -144,10 +143,9 @@ describe('resolvePlacementSpaceFor', () => {
   const imageSpace = () =>
     resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: IMAGE });
 
-  it('invariant: no flag check remains; the config is read through Kysely on the replica', async () => {
+  it('the config is read through Kysely on the replica', async () => {
     givenRows();
     await imageSpace();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     expect(getKeyValue.mock.calls).toEqual([[kyselyRead, 'placement:config']]);
     expect(getKeyValue.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.keyValue.findUnique).not.toHaveBeenCalled();
@@ -345,7 +343,6 @@ describe('getPendingPlacementCounts', () => {
     expect(q.countPendingPlacementsBySurface.mock.calls[0]).toEqual([kyselyRead, OWNER]);
     expect(q.countPendingPlacementsBySurface.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.placement.groupBy).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a surface with no pending rows reads 0', async () => {

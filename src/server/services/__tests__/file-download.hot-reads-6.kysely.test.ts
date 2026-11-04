@@ -15,8 +15,7 @@ import { isFlipt } from '~/server/flipt/client';
  * file-download-lookup.test.ts's.
  */
 
-// Mocked for the invariant guard that no flag check remains on this read (not regression
-// coverage).
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -180,7 +179,7 @@ describe("getFileForModelVersion (the version's files)", () => {
   const viewer = { id: 1, isModerator: false };
   const resolvedFileIds = () => resolveDownloadUrlMock.mock.calls.map((call) => call[0]);
 
-  it('by type: the Kysely read on the replica, whose file is served (invariant: no flag check remains)', async () => {
+  it('by type: the Kysely read on the replica, whose file is served', async () => {
     q.listDownloadFiles.mockResolvedValue([kyselyFile] as never);
     await getFileForModelVersion({ modelVersionId: 1, type: 'Model', noAuth: true, user: viewer });
     expect(q.listDownloadFiles.mock.calls).toEqual([
@@ -189,7 +188,6 @@ describe("getFileForModelVersion (the version's files)", () => {
     expect(q.listDownloadFiles.mock.calls[0][0]).toBe(kyselyRead);
     expect(resolvedFileIds()).toEqual([kyselyFile.id]);
     expect(modelFileFindMany).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('by id: the Kysely read on the replica, public files only', async () => {

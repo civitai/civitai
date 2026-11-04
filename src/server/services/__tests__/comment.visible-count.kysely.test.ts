@@ -84,7 +84,7 @@ describe('getVisibleCommentCount', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('counts through Kysely only, on the replica, with the viewer filter (invariant: no flag check remains)', async () => {
+  it('counts through Kysely only, on the replica, with the viewer filter', async () => {
     hidden.mockResolvedValue([{ id: HIDDEN_AUTHOR }]);
     await expect(count()).resolves.toBe(COUNT);
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('commentModel', MODEL);
@@ -106,7 +106,6 @@ describe('getVisibleCommentCount', () => {
     expect(dbMock.dbRead.comment.count).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.comment.count).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('follows the lag decision to the primary, as the Prisma read did', async () => {

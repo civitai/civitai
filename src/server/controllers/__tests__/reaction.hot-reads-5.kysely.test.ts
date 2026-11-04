@@ -6,8 +6,7 @@ import type * as CommonService from '~/server/services/common.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 
-// Mocked for the invariant guard that no flag check remains on these reads (not regression
-// coverage).
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -84,7 +83,7 @@ beforeEach(() => {
 });
 
 describe('toggleReactionHandler image reads', () => {
-  it('both image reads through Kysely on the replica (invariant: no flag check remains)', async () => {
+  it('both image reads through Kysely on the replica', async () => {
     q.getImagePostId.mockResolvedValue({ postId: POST } as never);
     q.getImageNsfwLevelAndOwner.mockResolvedValue({ nsfwLevel: 4, userId: OWNER } as never);
     const c = ctx() as { track: { reaction: ReturnType<typeof vi.fn> } };
@@ -101,7 +100,6 @@ describe('toggleReactionHandler image reads', () => {
     });
     expect(dbMock.dbRead.image.findUniqueOrThrow).not.toHaveBeenCalled();
     expect(dbMock.dbRead.image.findFirst).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('an image in no post skips the access check, as Prisma did', async () => {

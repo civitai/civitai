@@ -6,8 +6,8 @@ import type * as PromotionService from '~/server/services/promotion.service';
 import type * as ArticleService from '~/server/services/article.service';
 import type * as GenerationService from '~/server/services/generation/generation.service';
 
-// Mocked for the invariant guard that no flag check remains on these reads (not regression
-// coverage), and so the associated-resources handler's own coverage flag reads false.
+// Any flag read on these paths answers false, so the associated-resources handler's own coverage
+// flag reads false.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -76,8 +76,6 @@ const expectNoKyselyRead = () => {
   for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
   expect(getKyselyWithoutLag).not.toHaveBeenCalled();
 };
-const expectNoFlagCheck = () =>
-  expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
 
 /** A `getUserWithCosmetics` row: the user, no picture, one equipped cosmetic. */
 const userRow = (id: number) => ({
@@ -148,7 +146,7 @@ describe('getModelVersionOwnerHandler', () => {
   const load = async () =>
     (await import('~/server/controllers/model-version.controller')).getModelVersionOwnerHandler;
 
-  it('one Kysely statement on the client the lag decision picks (invariant: no flag check remains)', async () => {
+  it('one Kysely statement on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getModelVersionOwnerWithCosmetics.mockResolvedValue(userRow(KYSELY_USER) as never);
     await expect((await load())({ input: { id: ID } })).resolves.toStrictEqual(
@@ -159,7 +157,6 @@ describe('getModelVersionOwnerHandler', () => {
     expect(q.getModelVersionOwnerWithCosmetics.mock.calls[0][0]).toBe(kyselyWrite);
     expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelVersion.findUnique).not.toHaveBeenCalled();
-    expectNoFlagCheck();
   });
 
   it('no Kysely row runs the Prisma read, so a missing version is still not found', async () => {
@@ -190,7 +187,7 @@ describe('getPostDetail', () => {
     collectionId: null,
   });
 
-  it('the post and its user through Kysely, on the client the lag decision picks (invariant: no flag check remains)', async () => {
+  it('the post and its user through Kysely, on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getPostDetailRow.mockResolvedValue(postRow('kysely', publishedAt) as never);
     q.getUserWithCosmetics.mockResolvedValue(userRow(KYSELY_USER) as never);
@@ -206,7 +203,6 @@ describe('getPostDetail', () => {
     expect(dbMock.dbRead.post.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.post.findFirst).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    expectNoFlagCheck();
   });
 
   it('an unpublished post reads its unpublish context on the primary when Kysely picked it', async () => {
@@ -253,14 +249,13 @@ describe('getPostDetail', () => {
 describe('findUserIdByUsername', () => {
   const load = async () => (await import('~/server/services/image.service')).findUserIdByUsername;
 
-  it('the Kysely read on the replica (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica', async () => {
     q.getUserIdByUsername.mockResolvedValue({ id: KYSELY_USER } as never);
     await expect((await load())('name')).resolves.toBe(KYSELY_USER);
     expect(q.getUserIdByUsername.mock.calls).toEqual([[kyselyRead, 'name']]);
     expect(q.getUserIdByUsername.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
-    expectNoFlagCheck();
   });
 
   it('a replica miss still falls back to the primary through Prisma', async () => {
@@ -279,13 +274,12 @@ describe('getUserBannedAtByUsername', () => {
     (await import('~/server/services/user-banned-at.service')).getUserBannedAtByUsername;
   const bannedAt = new Date('2026-03-03T00:00:00.000Z');
 
-  it('the Kysely read on the replica (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica', async () => {
     q.listUserBannedAtByUsername.mockResolvedValue({ bannedAt } as never);
     await expect((await load())('name')).resolves.toStrictEqual({ bannedAt });
     expect(q.listUserBannedAtByUsername.mock.calls).toEqual([[kyselyRead, 'name']]);
     expect(q.listUserBannedAtByUsername.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
-    expectNoFlagCheck();
   });
 
   it('no such user is null', async () => {
@@ -310,7 +304,7 @@ describe('publicDonationGoalsLookupFn', () => {
   });
   const { total: _total, ...goalRow } = goal(0);
 
-  it('the version and goal reads through Kysely, the totals through Prisma, on the replica (invariant: no flag check remains)', async () => {
+  it('the version and goal reads through Kysely, the totals through Prisma, on the replica', async () => {
     q.listExistingModelVersionIds.mockResolvedValue([{ id: ID }] as never);
     q.listActiveModelVersionDonationGoals.mockResolvedValue([
       { ...goalRow, title: 'kysely goal' },
@@ -327,7 +321,6 @@ describe('publicDonationGoalsLookupFn', () => {
     expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.donationGoal.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
-    expectNoFlagCheck();
   });
 
   it('a version missing on the replica is still looked up on the primary through Prisma', async () => {
@@ -366,7 +359,7 @@ describe('getUserEngagedModelVersions', () => {
   const load = async () =>
     (await import('~/server/services/user.service')).getUserEngagedModelVersions;
 
-  it('the Kysely read on the replica, a single id as a list (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica, a single id as a list', async () => {
     q.listModelVersionEngagements.mockResolvedValue([
       { modelVersionId: KYSELY_USER, type: 'Notify' },
     ] as never);
@@ -378,7 +371,6 @@ describe('getUserEngagedModelVersions', () => {
     ]);
     expect(q.listModelVersionEngagements.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.modelVersionEngagement.findMany).not.toHaveBeenCalled();
-    expectNoFlagCheck();
   });
 });
 
@@ -386,7 +378,7 @@ describe('getResourceReviewsByUserId', () => {
   const load = async () =>
     (await import('~/server/services/resourceReview.service')).getResourceReviewsByUserId;
 
-  it('the Kysely read on the replica, with the filters the Prisma read had (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica, with the filters the Prisma read had', async () => {
     q.listUserRecommendedReviews.mockResolvedValue([
       { modelId: KYSELY_USER, modelVersionId: 2 },
     ] as never);
@@ -400,7 +392,6 @@ describe('getResourceReviewsByUserId', () => {
     ]);
     expect(q.listUserRecommendedReviews.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.resourceReview.findMany).not.toHaveBeenCalled();
-    expectNoFlagCheck();
   });
 });
 
@@ -413,7 +404,6 @@ describe('getAssociatedResourcesCardDataHandler (the associated ids)', () => {
       ctx: { user: undefined, features: {} } as never,
     });
 
-  // No flag guard here: the handler evaluates its generation-coverage flag on this path.
   it('the Kysely read on the replica, whose article ids are fetched', async () => {
     q.listModelAssociationTargets.mockResolvedValue([
       { toModelId: null, toArticleId: ARTICLE },

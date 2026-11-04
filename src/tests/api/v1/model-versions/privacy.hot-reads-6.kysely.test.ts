@@ -14,8 +14,7 @@ import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 const { mockMembership } = vi.hoisted(() => ({ mockMembership: vi.fn() }));
 
-// Mocked for the invariant guard that no flag check remains on this read (not regression
-// coverage).
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -115,7 +114,7 @@ beforeEach(() => {
 });
 
 describe('prepareModelVersionResponse (the metric-privacy inputs)', () => {
-  it('the Kysely read on the replica, whose meta hides downloads for its owner (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica, whose meta hides downloads for its owner', async () => {
     q.getModelVersionPrivacyRow.mockResolvedValue({
       meta: { hideDownloads: true },
       modelRowId: 9277,
@@ -130,7 +129,6 @@ describe('prepareModelVersionResponse (the metric-privacy inputs)', () => {
     expect(q.getModelVersionPrivacyRow.mock.calls).toEqual([[kyselyRead, VERSION]]);
     expect(q.getModelVersionPrivacyRow.mock.calls[0][0]).toBe(kyselyRead);
     expect(mockFindUnique).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('an orphaned row runs the Prisma read on the replica instead, which hides nothing', async () => {

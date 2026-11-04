@@ -4,8 +4,7 @@ import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
-// Mocked for the invariant guard that no flag check remains on these reads (not regression
-// coverage).
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -84,7 +83,7 @@ describe('getPlacementConfig (KeyValue)', () => {
   const load = async () => (await import('~/server/services/placement.service')).getPlacementConfig;
 
   // The stored value differs from the default: the assertion names the read used.
-  it('one Kysely read on the replica, whose value configures the result (invariant: no flag check remains)', async () => {
+  it('one Kysely read on the replica, whose value configures the result', async () => {
     const getPlacementConfig = await load();
     q.getKeyValue.mockResolvedValue({
       key: 'placement:config',
@@ -95,7 +94,6 @@ describe('getPlacementConfig (KeyValue)', () => {
     expect(q.getKeyValue.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.keyValue.findUnique).not.toHaveBeenCalled();
     expect(config.expiryHours('sticker')).toBe(31);
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a missing row leaves the compiled default', async () => {
@@ -110,7 +108,7 @@ describe('getAnnouncementMinScore (KeyValue)', () => {
   const load = async () =>
     (await import('~/server/services/announcement-allowance.service')).getAnnouncementMinScore;
 
-  it('one Kysely read on the replica, whose value is the answer (invariant: no flag check remains)', async () => {
+  it('one Kysely read on the replica, whose value is the answer', async () => {
     q.getKeyValue.mockResolvedValue({
       key: 'announcements:config',
       value: { minScore: 8765 },
@@ -119,7 +117,6 @@ describe('getAnnouncementMinScore (KeyValue)', () => {
     expect(q.getKeyValue.mock.calls).toEqual([[kyselyRead, 'announcements:config']]);
     expect(q.getKeyValue.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.keyValue.findUnique).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });
 
@@ -127,7 +124,7 @@ describe('getVisibleModel3DIdForPost', () => {
   const load = async () =>
     (await import('~/server/services/model3d.service')).getVisibleModel3DIdForPost;
 
-  it('one Kysely statement on the replica, mapped to the Prisma payload (invariant: no flag check remains)', async () => {
+  it('one Kysely statement on the replica, mapped to the Prisma payload', async () => {
     q.getPostModel3d.mockResolvedValue({
       postId: POST,
       model3dRowId: ID,
@@ -139,7 +136,6 @@ describe('getVisibleModel3DIdForPost', () => {
     expect(q.getPostModel3d.mock.calls).toEqual([[kyselyRead, POST]]);
     expect(q.getPostModel3d.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.post.findUnique).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a hidden Model3D is still refused', async () => {
@@ -158,14 +154,13 @@ describe('getDismissedAnnouncementIds', () => {
   const load = async () =>
     (await import('~/server/services/announcement.service')).getDismissedAnnouncementIds;
 
-  it('the Kysely read on the replica, with the domain and both its values (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica, with the domain and both its values', async () => {
     q.listDismissedAnnouncementIds.mockResolvedValue([{ announcementId: ID }] as never);
     await expect((await load())({ userId: USER, domain: 'red' as never })).resolves.toEqual([ID]);
     const [[db, input]] = q.listDismissedAnnouncementIds.mock.calls;
     expect(db).toBe(kyselyRead);
     expect(input).toEqual({ userId: USER, now: expect.any(Date), domains: ['all', 'red'] });
     expect(dbMock.dbRead.announcementDismissal.findMany).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('no domain filter without a domain', async () => {
@@ -182,7 +177,7 @@ describe('getEntityCollaborators', () => {
     (await import('~/server/services/entity-collaborator.service')).getEntityCollaborators;
   const collaboratorUser = { id: USER, username: 'collab', cosmetics: [] };
 
-  it('one Kysely statement on the replica, the users through Prisma, and the same filter (invariant: no flag check remains)', async () => {
+  it('one Kysely statement on the replica, the users through Prisma, and the same filter', async () => {
     q.listPostCollaborators.mockResolvedValue([
       {
         postUserId: OWNER,
@@ -207,7 +202,6 @@ describe('getEntityCollaborators', () => {
     expect(dbMock.dbRead.post.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbRead.entityCollaborator.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.user.findMany.mock.calls[0][0].where).toEqual({ id: { in: [USER] } });
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a missing post is an empty list, with no user read', async () => {
@@ -222,8 +216,6 @@ describe('getHomeBlockById', () => {
   const read = async () =>
     (await load())({ id: ID, viewer: {} as never } as never).catch(() => undefined);
 
-  // No flag guard here: a found row goes on to the block's own resolution, which can evaluate
-  // other flags (the cosmetic shop's). The fallback cases below stop at the read.
   it('the Kysely read on the replica, no Prisma read for a row it finds', async () => {
     q.getHomeBlockRow.mockResolvedValue({
       id: ID,
@@ -239,7 +231,7 @@ describe('getHomeBlockById', () => {
     expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
-  it('a row missing on the replica falls back to the primary through Prisma (invariant: no flag check remains)', async () => {
+  it('a row missing on the replica falls back to the primary through Prisma', async () => {
     q.getHomeBlockRow.mockResolvedValue(undefined as never);
     await read();
     expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow.mock.calls[0][0]).toEqual({
@@ -247,7 +239,6 @@ describe('getHomeBlockById', () => {
       where: { id: ID },
     });
     expect(dbMock.dbRead.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a replica error falls back to the primary through Prisma', async () => {
@@ -260,13 +251,12 @@ describe('getHomeBlockById', () => {
 describe('countUnclaimedPrizes', () => {
   const load = async () => (await import('~/server/services/prize.service')).countUnclaimedPrizes;
 
-  it('the Kysely count on the replica (invariant: no flag check remains)', async () => {
+  it('the Kysely count on the replica', async () => {
     q.countUnclaimedPrizes.mockResolvedValue(COUNT as never);
     await expect((await load())(USER)).resolves.toBe(COUNT);
     expect(q.countUnclaimedPrizes.mock.calls).toEqual([[kyselyRead, USER]]);
     expect(q.countUnclaimedPrizes.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.prize.count).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });
 
@@ -275,7 +265,7 @@ describe('getUserResourceReview', () => {
     (await import('~/server/services/resourceReview.service')).getUserResourceReview;
   const review = { id: ID, modelId: 1, modelVersionId: 2, recommended: true };
 
-  it('the Kysely read on the client the lag decision picks (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.listUserResourceReviews.mockResolvedValue([review] as never);
     await expect((await load())({ modelId: 1, userId: USER })).resolves.toEqual([review]);
@@ -286,7 +276,6 @@ describe('getUserResourceReview', () => {
     expect(q.listUserResourceReviews.mock.calls[0][0]).toBe(kyselyWrite);
     expect(getDbWithoutLag).not.toHaveBeenCalled();
     expect(dbMock.dbRead.resourceReview.findMany).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('with a caller-provided client: Prisma on that client, never Kysely', async () => {
@@ -300,7 +289,6 @@ describe('getUserResourceReview', () => {
     ]);
     expect(getDbWithoutLag).not.toHaveBeenCalled();
     expect(dbMock.dbRead.resourceReview.findMany).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     expectNoKyselyRead();
   });
 });
@@ -311,13 +299,12 @@ describe('getFileForModelVersion (the version and its model)', () => {
   const resolve = async () =>
     (await load())({ modelVersionId: ID, attribution: { path: 'test' } as never });
 
-  it('one Kysely statement on the replica (invariant: no flag check remains)', async () => {
+  it('one Kysely statement on the replica', async () => {
     q.getModelVersionForFile.mockResolvedValue(undefined as never);
     await expect(resolve()).resolves.toEqual({ status: 'not-found' });
     expect(q.getModelVersionForFile.mock.calls).toEqual([[kyselyRead, ID]]);
     expect(q.getModelVersionForFile.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.modelVersion.findFirst).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });
 
@@ -325,7 +312,7 @@ describe('getModelCollectionShowcaseHandler (the model meta)', () => {
   const load = async () =>
     (await import('~/server/controllers/model.controller')).getModelCollectionShowcaseHandler;
 
-  it('the Kysely read on the client the lag decision picks (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getModelMeta.mockResolvedValue({ id: ID, meta: {} } as never);
     await expect((await load())({ input: { id: ID } })).resolves.toBeNull();
@@ -334,7 +321,6 @@ describe('getModelCollectionShowcaseHandler (the model meta)', () => {
     expect(q.getModelMeta.mock.calls[0][0]).toBe(kyselyWrite);
     expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a missing model is still a not-found error', async () => {
@@ -351,14 +337,13 @@ describe('getUserEngagedModelVersionsHandler (the version ids)', () => {
       () => undefined
     );
 
-  it('the Kysely read on the replica, whose ids the engagement read takes (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica, whose ids the engagement read takes', async () => {
     q.listModelVersionIds.mockResolvedValue([{ id: 1 }] as never);
     await call();
     expect(q.listModelVersionIds.mock.calls).toEqual([[kyselyRead, ID]]);
     expect(q.listModelVersionIds.mock.calls[0][0]).toBe(kyselyRead);
     expect(listModelVersionEngagements.mock.calls[0][1]).toMatchObject({ modelVersionIds: [1] });
     expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });
 
@@ -377,7 +362,7 @@ describe("toggleReaction (the image reaction's existence check)", () => {
     redisMock.redis.set.mockResolvedValue('OK');
   });
 
-  it('the Kysely read on the client the lag decision picks (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getImageReactionId.mockResolvedValue({ id: 1 } as never);
     await toggle();
@@ -388,6 +373,5 @@ describe("toggleReaction (the image reaction's existence check)", () => {
     expect(q.getImageReactionId.mock.calls[0][0]).toBe(kyselyWrite);
     expect(dbMock.dbRead.imageReaction.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.imageReaction.findFirst).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });

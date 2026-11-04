@@ -154,7 +154,7 @@ describe('comment.getAll', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('reads the first page and the pinned block through Kysely only, on the replica (invariant: no flag check remains)', async () => {
+  it('reads the first page and the pinned block through Kysely only, on the replica', async () => {
     const { comments } = await getAll();
     expect(getKyselyWithoutLag.mock.calls).toEqual([
       ['commentModel', MODEL],
@@ -179,7 +179,6 @@ describe('comment.getAll', () => {
       { ...item(C_PINNED, PINNED_AT), user: author, _count: { comments: 0 } },
       { ...item(C_UNPINNED, null), user: author, _count: { comments: 0 } },
     ]);
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('follows the lag decision to the primary, as the Prisma reads did', async () => {

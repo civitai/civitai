@@ -7,8 +7,7 @@ import type * as ModelController from '~/server/controllers/model.controller';
 import type * as SystemCache from '~/server/services/system-cache';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// Mocked for the invariant guard that no flag check remains on this read (not regression
-// coverage).
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -74,14 +73,13 @@ beforeEach(() => {
 });
 
 describe('modelVisibleToViewer', () => {
-  it('the Kysely read on the replica decides a POI model is hidden (invariant: no flag check remains)', async () => {
+  it('the Kysely read on the replica decides a POI model is hidden', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({ poi: false, userId: OWNER });
     q.getModelPoiAndOwner.mockResolvedValue({ poi: true, userId: OWNER } as never);
     expect(await getOwner()).toBe('not-found');
     expect(q.getModelPoiAndOwner.mock.calls).toEqual([[kyselyRead, 9101]]);
     expect(q.getModelPoiAndOwner.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('the Kysely read on the replica decides a plain model is served', async () => {

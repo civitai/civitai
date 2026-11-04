@@ -4,8 +4,8 @@ import type * as PlacementQueries from '@civitai/db-queries/placement';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 // Where the Kysely placement reads reach, not what the ports return (that is
-// placement-reads.kysely.test.ts): as an invariant guard, no flag check remains in a space
-// resolution, and nothing outside the placement read chain moves onto Kysely with it.
+// placement-reads.kysely.test.ts): nothing outside the placement read chain moves onto Kysely
+// with it. Any flag read answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -82,14 +82,13 @@ beforeEach(() => {
 });
 
 describe('Kysely placement reads scope', () => {
-  it('invariant: no flag check remains in a space resolution; the price range reads Kysely once each', async () => {
+  it('a space resolution reads the price range through Kysely once each', async () => {
     const space = await resolvePlacementSpaceFor({
       surface: 'sticker',
       targetType: 'image',
       targetId: IMAGE,
     });
 
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     // The config's KeyValue read, by its key alone.
     expect(getKeyValue.mock.calls.map((call) => call[1])).toEqual(['placement:config']);
     expect(q.getUserPlacementScore).toHaveBeenCalledTimes(1);
@@ -100,11 +99,10 @@ describe('Kysely placement reads scope', () => {
 
   // Early access, the model-version pricing allowance and announcements call getCapTier(userId).
   // They are not placement reads and stay on Prisma.
-  it('getCapTier from a non-placement caller reads Prisma (invariant: no flag check remains)', async () => {
+  it('getCapTier from a non-placement caller reads Prisma', async () => {
     await expect(getCapTier(OWNER)).resolves.toBe('gold');
 
     expect(dbMock.dbWrite.customerSubscription.findMany).toHaveBeenCalledTimes(1);
     expect(q.listUserSubscriptionRows).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });

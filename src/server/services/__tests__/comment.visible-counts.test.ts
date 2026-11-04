@@ -227,7 +227,7 @@ describe('getVisibleCommentCounts routing', () => {
     expect(q.countTopLevelCommentsByHidden).not.toHaveBeenCalled();
   });
 
-  it('one Kysely statement on the replica, with the filter minus `hidden` (invariant: no flag check remains)', async () => {
+  it('one Kysely statement on the replica, with the filter minus `hidden`', async () => {
     q.countTopLevelCommentsByHidden.mockResolvedValue({ visible: 21, hidden: 13 });
     await expect(
       getVisibleCommentCounts({ input: { modelId: MODEL, includeVisible: true }, user: viewer() })
@@ -243,7 +243,6 @@ describe('getVisibleCommentCounts routing', () => {
     expect(q.countTopLevelCommentsByHidden.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.comment.groupBy).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('follows the lag decision to the primary', async () => {

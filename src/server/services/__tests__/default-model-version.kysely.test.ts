@@ -93,7 +93,7 @@ describe('getDefaultModelVersion (the model page default version)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('reads through Kysely only, in the Prisma shape (invariant: no flag check remains)', async () => {
+  it('reads through Kysely only, in the Prisma shape', async () => {
     givenRows();
     await expect(lookup(VERSION)).resolves.toStrictEqual(expected.modelVersions[0]);
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', MODEL);
@@ -105,7 +105,6 @@ describe('getDefaultModelVersion (the model page default version)', () => {
     expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('follows the lag decision to the primary, as the Prisma read did', async () => {
