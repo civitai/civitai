@@ -298,7 +298,7 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   // WE wrote, behind the runner's secret + a run grant; a caught error's own text never reaches
   // the body — asserted in `src/server/__tests__/assistant-runner-cover-endpoints.test.ts` (503).
   'internal/app-assistant/cover/listing.ts',
-  // `{ error: BANNED_ACCOUNT_MESSAGE }`: the constant AuthedEndpoint serves too, text WE wrote.
+  // `{ error: BANNED_ACCOUNT_MESSAGE }` and the hub client's error strings; no caught error object.
   'auth/impersonate.ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',

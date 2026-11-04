@@ -5,8 +5,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLANNER_ACTIONS } from '@civitai/post-planner/contract';
 import { BANNED_ACCOUNT_MESSAGE } from '~/server/utils/errorHandling';
 
-const { getServerAuthSession } = vi.hoisted(() => ({ getServerAuthSession: vi.fn() }));
+const { getServerAuthSession, impersonation } = vi.hoisted(() => ({
+  getServerAuthSession: vi.fn(),
+  impersonation: {
+    impersonate: vi.fn(async () => ({ ok: false, status: 400, error: 'stub' })),
+    exit: vi.fn(async () => ({ ok: false, status: 400, error: 'stub' })),
+  },
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession }));
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createImpersonationClient: () => impersonation,
+}));
 
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -44,7 +54,8 @@ const gatedRoutes = authedRoutes.filter(({ route }) => !ALLOW_BANNED.includes(ro
 function call(
   handler: (req: NextApiRequest, res: NextApiResponse) => unknown,
   method: string,
-  query: Record<string, string> = {}
+  query: Record<string, string> = {},
+  { body = {}, headers = {} }: { body?: unknown; headers?: Record<string, string> } = {}
 ) {
   const result = { status: 0, body: undefined as unknown, handled: false };
   const res = {
@@ -73,7 +84,7 @@ function call(
     writeHead: () => res,
     write: () => true,
   };
-  const req = { method, query, body: {}, headers: {}, cookies: {}, url: '/api/test' };
+  const req = { method, query, body, headers, cookies: {}, url: '/api/test' };
   return Promise.resolve(
     handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse)
   ).then(() => result);
@@ -137,10 +148,18 @@ describe('the approved routes still serve a banned session', () => {
     const { default: handler } = await import(
       /* @vite-ignore */ join(API_DIR, 'auth/impersonate.ts')
     );
-    const start = await call(handler, 'POST');
+    // A well-formed start request, so only the ban check can stop it.
+    const start = await call(
+      handler,
+      'POST',
+      {},
+      { body: { userId: 8 }, headers: { 'content-type': 'application/json' } }
+    );
     const exit = await call(handler, 'DELETE');
     expect(start).toMatchObject({ status: 403, body: { error: BANNED_ACCOUNT_MESSAGE } });
+    expect(impersonation.impersonate).not.toHaveBeenCalled();
     expect(exit.body).not.toEqual({ error: BANNED_ACCOUNT_MESSAGE });
+    expect(impersonation.exit).toHaveBeenCalled();
   });
 });
 

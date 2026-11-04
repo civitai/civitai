@@ -22,6 +22,11 @@ import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
 
 const SYSTEM_ACTOR_ID = -1;
 
+// Lookalikes the shared fold misses: NFKC turns lunate sigma into Σ, and the strip below would
+// delete the bar-like ones outright.
+const LUNATE_SIGMA = /[\u03F2\u03F9]/gu;
+const EXTRA_I_LOOKALIKES = /[\u00A1\u01C0\u01C3\u2223\u2502\u2758\uFFE8]/gu;
+
 const schema = z
   .object({
     userId: z.coerce.number().int().positive(),
@@ -34,7 +39,12 @@ const schema = z
       .refine(
         (value) =>
           !resemblesReservedModerationUsername(
-            value.normalize('NFKC').replace(/[^\p{L}\p{N}|!]/gu, '')
+            value
+              .replace(LUNATE_SIGMA, 'c')
+              .normalize('NFKC')
+              .replace(/0/g, 'o')
+              .replace(EXTRA_I_LOOKALIKES, 'i')
+              .replace(/[^\p{L}\p{N}|!]/gu, '')
           ),
         'name is reserved'
       )

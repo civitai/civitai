@@ -166,6 +166,11 @@ describe('POST /api/admin/system-account-profile', () => {
     ['mixed-script', '\u0421ivit\u0430i M\u043Ederation'],
     ['digit-for-letter', 'C1vitai Moderation'],
     ['symbol-for-letter', 'C|vitai Moderation'],
+    ['zero-for-o', 'Civitai M0derati0n'],
+    ['capital lunate sigma', '\u03F9ivitai Moderation'],
+    ['divides-sign-for-i', 'C\u2223vitai Moderation'],
+    ['inverted-exclamation-for-i', 'C\u00A1vitai Moderation'],
+    ['letter-click-for-i', 'C\u01C3vitai Moderation'],
   ])('refuses a %s spelling of the reserved name', async (_, name) => {
     const { status, body } = await call({ userId: SYSTEM_ID, name });
     expect({ status, body: JSON.stringify(body) }).toEqual({
