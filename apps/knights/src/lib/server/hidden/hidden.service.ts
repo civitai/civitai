@@ -60,16 +60,13 @@ function eligibleReferences(
     .where((eb) =>
       eb.not(
         eb.exists(
+          // A check is a vote on its reference's image, so (player, image) is the whole test and rides the
+          // ("playerId","imageId") index.
           eb
             .selectFrom('KnightsVote as v')
             .select(sql<number>`1`.as('one'))
             .where('v.playerId', '=', userId)
-            .where((vb) =>
-              vb.or([
-                vb('v.itemId', '=', sql<number>`-"r"."id"`),
-                vb('v.imageId', '=', vb.ref('r.imageId')),
-              ])
-            )
+            .whereRef('v.imageId', '=', 'r.imageId')
         )
       )
     );
@@ -78,6 +75,9 @@ function eligibleReferences(
 /**
  * The hidden check for this feed slot, or null for a queue item. The pool is read on every call a Knight makes, so a page
  * costs the same whichever it turns out to be.
+ *
+ * The player's fixed digest picks a start point in the pool's id range (its lowest to highest id), and the pick is the first eligible reference at or
+ * after it (wrapping to the first one), so the cost is a short index walk and not a count of every eligible row.
  */
 export async function pickHiddenCheck(
   db: Executor,
@@ -96,24 +96,41 @@ export async function pickHiddenCheck(
     .update(`${input.secret}:hidden:${input.userId}:${await slotOf(db, input.userId)}`)
     .digest();
 
-  const { n } = await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .executeTakeFirstOrThrow();
-  const row = await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
-    .select([
-      'r.id',
-      'q.key',
-      'q.kind',
-      'q.prompt',
-      'q.options',
-      'img.url',
-      'img.width',
-      'img.height',
+  const { low, top } = await db
+    .selectFrom('KnightsReferenceImage')
+    .select((eb) => [
+      eb.fn.min<number | null>('id').as('low'),
+      eb.fn.max<number | null>('id').as('top'),
     ])
-    .orderBy('r.id', 'asc')
-    .limit(1)
-    .offset(Math.floor(unit(digest, 4) * Number(n)))
-    .executeTakeFirst();
+    .where('pool', '=', REFERENCE_POOL.hiddenCheck)
+    .where('questionKey', '=', input.questionKey)
+    .executeTakeFirstOrThrow();
+  const first = low ?? 0;
+  const start = first + Math.floor(unit(digest, 4) * ((top ?? 0) - first + 1));
+
+  const columns = [
+    'r.id',
+    'q.key',
+    'q.kind',
+    'q.prompt',
+    'q.options',
+    'img.url',
+    'img.width',
+    'img.height',
+  ] as const;
+  const row =
+    (await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
+      .select(columns)
+      .where('r.id', '>=', start)
+      .orderBy('r.id', 'asc')
+      .limit(1)
+      .executeTakeFirst()) ??
+    (await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
+      .select(columns)
+      .where('r.id', '<', start)
+      .orderBy('r.id', 'asc')
+      .limit(1)
+      .executeTakeFirst());
 
   if (!row || unit(digest, 0) >= input.rate) return null;
   return {

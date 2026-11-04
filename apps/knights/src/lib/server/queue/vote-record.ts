@@ -12,6 +12,14 @@ import { activeSmiteCount } from '../smites/smites.service';
 import { canVote } from './ranks';
 import { levelForExp, voteWeight } from './resolution';
 
+/** First key of the per-player advisory lock that serialises a player's votes. */
+const VOTE_PACING_LOCK_NAMESPACE = 7_301;
+
+/** Held to the end of the transaction; taking it again in the same transaction is free. */
+export async function lockPlayerVoting(trx: Transaction<DB>, userId: number): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${userId})`.execute(trx);
+}
+
 /** The ledger rows of queue votes and of hidden checks are written here and nowhere else, so they cannot drift apart. */
 export type VoteRejection =
   | 'no-player'
@@ -32,6 +40,11 @@ export type VoteSubject = {
   options: { value: string }[];
   /** Checks are never labelled: labels come from consensus only. */
   labelled?: boolean;
+  /**
+   * Set when the caller already enforces its own one-judgment rule. A yes/no axis holds several questions per image, told
+   * apart by their prompt, so (image, question key) is not the unit there.
+   */
+  ownJudgmentRule?: boolean;
 };
 
 export type InsertedVote = {
@@ -40,7 +53,13 @@ export type InsertedVote = {
   gold: number;
 };
 
-/** Validates a player's answer and writes the pending ledger row. Credit follows with `creditVote`. */
+/**
+ * Validates a player's answer and writes the pending ledger row. Credit follows with `creditVote`.
+ *
+ * A player judges an image once per question key, across items, stages and re-queues: a second row is refused as
+ * `already-voted`. The check runs under the player's advisory lock, because the partitioned ledger cannot carry a unique key
+ * on (player, image, question) (a unique index must include the partition column `createdAt`).
+ */
 export async function insertVote(
   trx: Transaction<DB>,
   input: {
@@ -55,6 +74,7 @@ export async function insertVote(
 ): Promise<{ status: 'rejected'; reason: VoteRejection } | InsertedVote> {
   const rejected = (reason: VoteRejection) => ({ status: 'rejected' as const, reason });
 
+  await lockPlayerVoting(trx, input.userId);
   let query = trx
     .selectFrom('NewOrderPlayer')
     .select(['rankType', 'exp', 'startAt'])
@@ -66,12 +86,11 @@ export async function insertVote(
     return rejected('not-eligible');
   }
   if (!subject.options.some((o) => o.value === input.answer)) return rejected('bad-answer');
-  const reasonProblem =
-    asksBlockReason(subject.questionKey)
-      ? blockReasonProblem(input.answer, input.blockReason)
-      : input.blockReason
-      ? 'unexpected'
-      : null;
+  const reasonProblem = asksBlockReason(subject.questionKey)
+    ? blockReasonProblem(input.answer, input.blockReason)
+    : input.blockReason
+    ? 'unexpected'
+    : null;
   if (reasonProblem) return rejected('bad-block-reason');
 
   const already = await trx
@@ -81,6 +100,18 @@ export async function insertVote(
     .where('playerId', '=', input.userId)
     .executeTakeFirst();
   if (already) return rejected('already-voted');
+
+  if (!subject.ownJudgmentRule) {
+    const judged = await trx
+      .selectFrom('KnightsVote')
+      .select('playerId')
+      .where('playerId', '=', input.userId)
+      .where('imageId', '=', subject.imageId)
+      .where('questionKey', '=', subject.questionKey)
+      .limit(1)
+      .executeTakeFirst();
+    if (judged) return rejected('already-voted');
+  }
 
   const smites = await activeSmiteCount(trx, input.userId);
   // A career reset is pending; the player does not play on until it is done.

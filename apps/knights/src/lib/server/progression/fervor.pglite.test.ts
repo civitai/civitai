@@ -73,6 +73,8 @@ describe('the per-player read', () => {
   it('uses the (playerId, createdAt) index and skips months before the window', async () => {
     await seedPlayer(pg, 1);
     await seedGradedVotes(pg, 1, { correct: 2, at: RECENT });
+    // On a two-row table the (playerId, imageId) index ties with this one on the player; take it out so the plan shows this index.
+    await pg.exec('DROP INDEX "KnightsVote_playerId_imageId_idx"');
     await pg.exec('SET enable_seqscan = off');
     const plan = (
       await pg.query<{ 'QUERY PLAN': string }>(

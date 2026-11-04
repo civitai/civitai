@@ -80,7 +80,6 @@ async function silencedAmong(
   return silenced;
 }
 
-
 /**
  * Players with this many uncleansed smites have a career reset pending and cannot vote (`insertVote`).
  * Read once per run in one grouped query: a subquery per player scans the smite table, which has no
@@ -121,11 +120,7 @@ const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
     );
 
 /** A vote cast after a settlement counts as having seen it. */
-async function withNewVerdicts(
-  db: Kysely<DB>,
-  day: Day,
-  now: Date,
-): Promise<number[]> {
+async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<number[]> {
   const day_ms = 86_400_000;
   const searchFrom = new Date(now.getTime() - NOTIFY.voteSearchDays * day_ms);
   const settledFrom = new Date(now.getTime() - NOTIFY.verdictLookbackDays * day_ms);
@@ -150,10 +145,7 @@ async function withNewVerdicts(
   return rows.map((r) => r.userId);
 }
 
-async function withStreakAtRisk(
-  db: Kysely<DB>,
-  day: Day,
-): Promise<number[]> {
+async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
   const rows = await recipients(db, 'streak', day)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
     .leftJoin('KnightsPlayerDay as d', (join) =>
@@ -189,10 +181,7 @@ async function withStreakAtRisk(
     .map((row) => row.userId);
 }
 
-async function withImagesWaiting(
-  db: Kysely<DB>,
-  day: Day,
-): Promise<number[]> {
+async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
   // A vote cannot predate its item, so no open item has votes before the oldest one; the constant
   // bound on the partition key lets Postgres skip older monthly partitions (a bound that references
   // the item's own createdAt does not prune).
@@ -209,7 +198,7 @@ async function withImagesWaiting(
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
     const rows = await recipients(db, 'new-images', day)
-        .select('pl.userId')
+      .select('pl.userId')
       .where('pl.rankType', '=', rank)
       .where((eb) =>
         eb.exists(
@@ -220,6 +209,10 @@ async function withImagesWaiting(
               sql<boolean>`not exists (select 1 from "KnightsVote" v where v."itemId" = i."id" and v."playerId" = pl."userId" and v."createdAt" >= ${utc(
                 oldestOpen
               )})`
+            )
+            .where(
+              // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
+              sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`
             )
         )
       )
