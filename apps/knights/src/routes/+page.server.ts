@@ -1,9 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { getDailyStatus } from '$lib/server/daily/daily.service';
+import { findRecap, getDailyStatus } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
+import { railFor } from '$lib/server/rail-runtime';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -15,19 +16,25 @@ export const load: PageServerLoad = async ({ locals }) => {
 
   // The status and the Watch streak also feed the header's stat pills through page data.
   const status = player ? await getPlayerStatus(db, locals.user.id) : null;
-  const daily = status
-    ? await getDailyStatus(db, {
-        playerId: locals.user.id,
-        rank: status.rank,
-        now: queueDeps.now(),
-      })
-    : null;
+  const now = queueDeps.now();
+  const playerId = locals.user.id;
+  // The recap card replaces the daily popup: yesterday's verdicts, read whether or not they were already seen. The page marks
+  // today's recap seen once it shows (a load that only prefetched must not).
+  const [daily, recap, rail] = status
+    ? await Promise.all([
+        getDailyStatus(db, { playerId, rank: status.rank, now }),
+        findRecap(db, { playerId, now }),
+        railFor(playerId, now),
+      ])
+    : [null, null, null];
 
   return {
     username: locals.user.username ?? null,
     player: player ? { ...player, startAt: player.startAt.toISOString() } : null,
     status,
     daily,
+    recap,
+    fervorPosition: rail?.standing?.position ?? null,
   };
 };
 

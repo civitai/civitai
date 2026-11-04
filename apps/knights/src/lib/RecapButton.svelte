@@ -8,11 +8,7 @@
 
   let { unseen }: { unseen: boolean } = $props();
 
-  type Loaded = {
-    recap: Recap | null;
-    optOut: boolean;
-    watch: { streak: number; size: number; done: boolean } | null;
-  };
+  type Loaded = { recap: Recap | null };
   let loaded = $state<Loaded | null>(null);
   let loading = $state(false);
   let submitting = $state(false);
@@ -30,7 +26,7 @@
       if (!response.ok) throw new Error(String(response.status));
       loaded = (await response.json()) as Loaded;
     } catch {
-      loaded = { recap: null, optOut: false, watch: null };
+      loaded = { recap: null };
       message = 'Try again in a moment.';
       failed = true;
     } finally {
@@ -42,7 +38,7 @@
   const submit: SubmitFunction = ({ cancel, formData, submitter }) => {
     cancel();
     const begin = submitter?.getAttribute('name') === 'begin';
-    // Nothing was loaded, so nothing was seen: closing must not dismiss the day or overwrite the stored opt-out.
+    // Nothing was loaded, so nothing was seen: closing must not dismiss the day.
     if (failed) {
       loaded = null;
       if (begin && page.url.pathname !== '/play') void goto('/play');
@@ -76,13 +72,10 @@
 {#if loaded}
   <RecapDialog
     recap={loaded.recap}
-    optOut={loaded.optOut}
-    watch={loaded.watch}
     action="/recap"
     {message}
     {submitting}
     {submit}
-    manual
   />
 {/if}
 

@@ -88,6 +88,11 @@ const state = (over: Record<string, boolean> = {}) => ({
 });
 
 describe('layout load: the recap dot', () => {
+  it('ignores the old popup opt-out: the dot says "not yet seen today", whatever that column holds', async () => {
+    getRecapState.mockResolvedValue(state({ optedOut: true }));
+    expect((await run()).recapUnseen).toBe(true);
+  });
+
   it('shows while there is a recap to see and it was not dismissed today', async () => {
     expect((await run()).recapUnseen).toBe(true);
     expect(getRecapState).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
@@ -95,7 +100,6 @@ describe('layout load: the recap dot', () => {
 
   it.each([
     ['dismissed today', { dismissedToday: true }],
-    ['opted out of the popup', { optedOut: true }],
     ['no earlier play day', { hasHistory: false }],
   ])('is off when %s', async (_name, over) => {
     getRecapState.mockResolvedValue(state(over));

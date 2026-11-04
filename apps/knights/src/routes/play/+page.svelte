@@ -13,7 +13,6 @@
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
   import Countdown from '$lib/Countdown.svelte';
-  import RecapDialog from '$lib/RecapDialog.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchHairline from '$lib/WatchHairline.svelte';
@@ -66,11 +65,7 @@
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
-  // The guide and the rank-up come first; the daily recap waits behind them and opens once they are dismissed.
-  let recapOpen = $derived(
-    data.mode === 'queue' && !!data.recap && !guideOpen && data.progress?.kind !== 'rank'
-  );
-  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank' || recapOpen);
+  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
@@ -414,7 +409,7 @@
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
   let hearts = $derived(heartsLeft(data.status));
   let formMessage = $derived(
-    form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
+    form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
       : null
   );
@@ -673,16 +668,6 @@
     previous={data.progress.previous}
     badge={data.badges.large[data.progress.rank]}
     message={form?.progressFailed ? form.message : null}
-    {submitting}
-    {submit}
-  />
-{:else if recapOpen && data.mode === 'queue'}
-  <RecapDialog
-    recap={data.recap}
-    optOut={false}
-    watch={{ streak: data.daily.streak, size: data.daily.watchSize, done: data.daily.watchDone }}
-    action="?/dismissRecap"
-    message={form?.recapFailed ? form.message : null}
     {submitting}
     {submit}
   />

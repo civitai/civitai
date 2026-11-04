@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
-import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
+import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { openItem } from '$lib/server/feed-token';
 import {
   answerHiddenCheck,
@@ -149,10 +149,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       : null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
-  const [picked, daily, recap, rail] = await Promise.all([
+  const [picked, daily, rail] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
-    getRecap(db, { playerId: locals.user.id, now }),
     railFor(locals.user.id, now),
   ]);
   const conversionOpen = conversionEnabled();
@@ -164,7 +163,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     banner: picked?.banner ?? null,
     ...common,
     daily,
-    recap,
     rail,
     resetPending,
     conversionOpen,
@@ -270,17 +268,6 @@ export const actions: Actions = {
     if (!ref) return fail(400, { message: 'That one cannot be skipped.' });
     await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
     return { success: true };
-  },
-
-  // Closing the popup dismisses today's recap; the checkbox state at that moment is the player's opt-out.
-  dismissRecap: async ({ request, locals }) => {
-    const optOut = (await request.formData()).get('optOut') === 'on';
-    try {
-      await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now(), optOut });
-    } catch (error) {
-      console.error('knights: could not store the recap dismissal', { error });
-      return fail(500, { message: 'Could not dismiss the recap. Try again.', recapFailed: true });
-    }
   },
 
   dismissNotices: async ({ locals }) => {

@@ -4,9 +4,7 @@ const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getApprentice = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
-const getRecap = vi.hoisted(() => vi.fn());
 const railFor = vi.hoisted(() => vi.fn());
-const dismissRecap = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
@@ -25,7 +23,7 @@ vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
 vi.mock('$lib/server/rail-runtime', () => ({ railFor }));
-vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus, getRecap, dismissRecap }));
+vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/smites/smites.service', () => ({
   hasUnseenReset,
@@ -80,11 +78,8 @@ beforeEach(() => {
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
-  getRecap.mockReset();
-  getRecap.mockResolvedValue(null);
   railFor.mockReset();
   railFor.mockResolvedValue({ standing: null, activity: null });
-  dismissRecap.mockReset();
   pickHiddenCheck.mockReset();
   pickHiddenCheck.mockResolvedValue(null);
   hasUnseenReset.mockReset();
@@ -253,20 +248,18 @@ describe('play load', () => {
     expect(getApprentice).not.toHaveBeenCalled();
   });
 
-  it('gives a Knight the day, evaluated at the injected clock, and the recap', async () => {
+  it('gives a Knight the day, evaluated at the injected clock, and no daily popup', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
-    getRecap.mockResolvedValue({ cast: 30 });
 
     const page = await run();
 
     expect(page.daily).toEqual({ votes: 3 });
-    expect(page.recap).toEqual({ cast: 30 });
+    expect(page).not.toHaveProperty('recap');
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,
       rank: 'Knight',
       now: NOW,
     });
-    expect(getRecap).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
   });
 
   it("gives a Knight the rail: board position, gap and the Order's activity, read at the injected clock", async () => {
@@ -525,43 +518,6 @@ describe('play load yes/no questions', () => {
     getFeed.mockResolvedValue(null);
     expect((await run()).item).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
-  });
-});
-
-describe('dismissRecap action', () => {
-  const run = (fields: Record<string, string> = {}) =>
-    actions.dismissRecap({
-      locals: { user: { id: 7 } },
-      request: { formData: async () => new URLSearchParams(fields) },
-    } as never);
-
-  it('stores the dismissal for the caller at the injected clock, and clears the opt-out when the box is unticked', async () => {
-    await run();
-    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), {
-      playerId: 7,
-      now: NOW,
-      optOut: false,
-    });
-  });
-
-  it('opts the player out of the popup when the box was ticked at close', async () => {
-    await run({ optOut: 'on' });
-    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), {
-      playerId: 7,
-      now: NOW,
-      optOut: true,
-    });
-  });
-
-  it('tells the player when it could not be stored', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    dismissRecap.mockRejectedValue(new Error('down'));
-
-    expect(await run()).toMatchObject({
-      status: 500,
-      data: { message: 'Could not dismiss the recap. Try again.', recapFailed: true },
-    });
-    expect(log).toHaveBeenCalled();
   });
 });
 

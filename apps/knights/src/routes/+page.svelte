@@ -1,10 +1,15 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { onMount } from 'svelte';
+  import { invalidate } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
-  import RankEmblem from '$lib/RankEmblem.svelte';
+  import RankBadge from '$lib/RankBadge.svelte';
   import SmiteNotice from '$lib/SmiteNotice.svelte';
-  import { accuracyLine, heartsLeft, nextRankLine } from '$lib/chrome';
-  import { count, formatDate } from '$lib/format';
+  import VerdictsCard from '$lib/VerdictsCard.svelte';
+  import { nextRankLine } from '$lib/chrome';
+  import { count } from '$lib/format';
+  import { gaugeFraction } from '$lib/gauge';
+  import { tween } from '$lib/motion';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -13,67 +18,95 @@
   let attempted = $state(false);
 
   const status = $derived(data.status);
-  const hearts = $derived(status ? heartsLeft(status) : 0);
-  const accuracy = $derived(status ? accuracyLine(status) : null);
   const next = $derived(status ? nextRankLine(status) : null);
+  const fraction = $derived(status ? gaugeFraction(status.xpIntoLevel, status.xpForNextLevel) : 0);
 
-  const LINKS = [
-    { href: '/judgments', icon: 'scroll-text', title: 'Judgments', note: 'Every verdict you have earned' },
-    { href: '/gold', icon: 'coins', title: 'Gold', note: 'Convert earned gold to Buzz' },
-    { href: '/codex', icon: 'book-open', title: 'Codex', note: 'Ranks, rules and how the Order judges' },
-  ] as const;
+  const links = $derived([
+    { href: '/judgments', icon: 'scroll-text' as const, title: 'Judgments' },
+    { href: '/leaderboard', icon: 'trophy' as const, title: 'Leaderboard' },
+    { href: '/codex', icon: 'book-open' as const, title: 'Codex' },
+    ...(data.conversionOpen ? [{ href: '/gold', icon: 'coins' as const, title: 'Gold' }] : []),
+  ]);
+
+  // The stat counters tick up from zero once on load (a reduced-motion player gets the final numbers at once), and yesterday's
+  // verdicts count as seen once the card is on screen, which also clears the header's recap dot.
+  let shownGold = $state(0);
+  let shownStreak = $state(0);
+  let shownFervor = $state(0);
+  onMount(() => {
+    const cancels = [
+      tween(0, status?.goldEarned ?? 0, 900, (v) => (shownGold = Math.round(v))),
+      tween(0, data.daily?.streak ?? 0, 700, (v) => (shownStreak = Math.round(v))),
+      tween(0, status?.fervor ?? 0, 900, (v) => (shownFervor = Math.round(v))),
+    ];
+    if (data.recap) {
+      void fetch('/recap', { method: 'POST' })
+        .then((response) => (response.ok ? invalidate('app:recap') : undefined))
+        .catch(() => undefined);
+    }
+    return () => cancels.forEach((cancel) => cancel());
+  });
 </script>
 
 {#if data.player && status}
   <div class="page-wide home">
-    <div class="standing-col">
+    <section class="hero" aria-label="Your standing in the Order">
       <p class="eyebrow">Welcome back{data.username ? `, ${data.username}` : ''}</p>
-      <h1 class="page-title">Your standing in the Order</h1>
 
-      <div class="standing">
-        <div class="emblem-col">
-          <RankEmblem rank={status.rank} size="lg" />
-          <p class="rank-name">{status.rank}</p>
-        </div>
-        <div class="level">
-          <p class="level-title label-caps">Level {status.level}</p>
-          <p class="xp">{count(status.xpIntoLevel)} / {count(status.xpForNextLevel)} XP to level {status.level + 1}</p>
-          <div class="bar" aria-hidden="true"><div class="fill" style:width="{status.progressPercent}%"></div></div>
-          {#if accuracy}<p class="line">{accuracy}</p>{/if}
-          {#if next}<p class="line">{next}</p>{/if}
-        </div>
+      <div class="crest-wrap">
+        <span class="glow" aria-hidden="true"></span>
+        <svg class="ring" viewBox="0 0 224 224" aria-hidden="true" focusable="false">
+          <circle class="track" cx="112" cy="112" r="106" />
+          <circle
+            class="fill"
+            cx="112"
+            cy="112"
+            r="106"
+            pathLength="100"
+            stroke-dasharray="100"
+            stroke-dashoffset={100 - fraction * 100}
+          />
+        </svg>
+        <span class="crest"><RankBadge rank={status.rank} src={data.badges.large[status.rank]} size={176} /><span class="shimmer" aria-hidden="true"></span></span>
+        <span class="level-pill">Lv {status.level}</span>
       </div>
 
-      <ul class="pills" aria-label="Your numbers">
-        <li class="pill-stat"><Icon name="coins" /><b>{count(status.goldEarned)}</b><span>gold earned</span></li>
-        <li class="pill-stat"><Icon name="hourglass" /><b>{count(status.goldPending)}</b><span>gold pending</span></li>
+      <h1 class="rank-name">{status.rank}</h1>
+      <p class="xp">{count(status.xpIntoLevel)} / {count(status.xpForNextLevel)} XP to level {status.level + 1}</p>
+      {#if next}<p class="line">{next}</p>{/if}
+
+      <a class="btn primary begin" href="/play" data-sveltekit-preload-data="off">Begin judging</a>
+
+      <ul class="stats" aria-label="Your numbers">
+        <li>
+          <b><Icon name="coins" size={18} />{count(shownGold)}</b>
+          <span>Gold · {count(status.goldPending)} pending</span>
+        </li>
         {#if data.daily}
-          <li class="pill-stat"><Icon name="flame" /><b>{data.daily.streak}</b><span>day streak</span></li>
+          <li>
+            <b><Icon name="flame" size={18} />{shownStreak} {data.daily.streak === 1 ? 'day' : 'days'}</b>
+            <span>Streak</span>
+          </li>
         {/if}
-        <li class="pill-stat"><Icon name="zap" /><b>{count(status.fervor)}</b><span>fervor</span></li>
-        <li class="pill-stat"><Icon name="heart" /><b>{hearts} of {status.maxSmites}</b><span>hearts</span></li>
-        <li class="sworn">Sworn in on {formatDate(data.player.startAt)}</li>
+        <li>
+          <b><Icon name="trophy" size={18} />{count(shownFervor)}</b>
+          <span>Fervor{data.fervorPosition ? ` · #${count(data.fervorPosition)}` : ''}</span>
+        </li>
       </ul>
 
       {#if status.smites > 0}
         <SmiteNotice smites={status.smites} maxSmites={status.maxSmites} />
       {/if}
-    </div>
+    </section>
 
-    <nav class="order" aria-label="The Order">
-      <p class="eyebrow">The Order</p>
-      <a class="btn primary block" href="/play" data-sveltekit-preload-data="off">Begin judging</a>
-      <ul class="rows links">
-        {#each LINKS as link (link.href)}
+    <div class="verdicts"><VerdictsCard recap={data.recap} /></div>
+
+    <nav class="links" aria-label="The Order">
+      <div class="divider" aria-hidden="true"><span></span></div>
+      <ul>
+        {#each links as link (link.href)}
           <li>
-            <a href={link.href}>
-              <Icon name={link.icon} size={22} />
-              <span class="text">
-                <span class="link-title label-caps">{link.title}</span>
-                <span class="link-note">{link.note}</span>
-              </span>
-              <Icon name="chevron-right" size={20} />
-            </a>
+            <a href={link.href}><Icon name={link.icon} size={16} />{link.title}</a>
           </li>
         {/each}
       </ul>
@@ -150,106 +183,172 @@
   }
   .home {
     display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
-    grid-template-areas: 'main order';
+    grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    grid-template-areas: 'hero verdicts' 'links verdicts';
+    grid-template-rows: auto 1fr;
     column-gap: 3rem;
     align-items: start;
   }
-  .standing-col {
-    grid-area: main;
-  }
-  .order {
-    grid-area: order;
-  }
-  .standing {
-    display: flex;
-    gap: 2rem;
-    align-items: flex-start;
-    margin-bottom: 1.5rem;
-  }
-  .emblem-col {
+  .hero {
+    grid-area: hero;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
-    min-width: 6rem;
+    text-align: center;
+  }
+  .verdicts {
+    grid-area: verdicts;
+    padding-top: 1.75rem;
+  }
+  .links {
+    grid-area: links;
+    width: 100%;
+  }
+
+  /* The crest sits in an XP ring: the ring fills on load, a shimmer crosses the badge once, and a glow breathes behind it. */
+  .crest-wrap {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 224px;
+    height: 224px;
+    margin: 0.5rem 0 1.25rem;
+  }
+  .glow {
+    position: absolute;
+    width: 264px;
+    height: 264px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgb(201 162 74 / 0.22), transparent 68%);
+    pointer-events: none;
+  }
+  .ring {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+  .ring circle {
+    fill: none;
+    stroke-width: 5;
+  }
+  .ring .track {
+    stroke: var(--io-gold-muted);
+    opacity: 0.5;
+  }
+  .ring .fill {
+    stroke: var(--io-gold);
+    animation: mo-gauge-fill 1100ms var(--ease-out-quart) 150ms both;
+  }
+  .crest {
+    position: relative;
+    display: inline-flex;
+    overflow: hidden;
+    border-radius: 50%;
+  }
+  .shimmer {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 30%, rgb(232 220 192 / 0.35) 50%, transparent 70%);
+    pointer-events: none;
+    animation: mo-crest-shimmer 1100ms var(--ease-in-out) 500ms both;
+  }
+  .level-pill {
+    position: absolute;
+    bottom: 2px;
+    padding: 3px 14px;
+    border: 1px solid var(--io-gold);
+    border-radius: 999px;
+    background: var(--io-bg);
+    color: var(--io-gold);
+    font: 700 12px/1.4 var(--io-font-ui);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
   .rank-name {
+    margin: 0;
     color: var(--io-parchment);
-    font: 700 1rem/1.2 var(--io-font-display);
+    font: 700 clamp(1.8rem, 5vw, 2.5rem) / 1.1 var(--io-font-display);
     letter-spacing: 0.14em;
     text-transform: uppercase;
   }
-  .level {
-    flex: 1;
-    min-width: 0;
-  }
-  .level-title {
-    color: var(--io-parchment);
-    font-size: 1.6rem;
-    line-height: 1.2;
-  }
   .xp {
-    margin: 0.5rem 0;
+    margin: 0.5rem 0 0;
     font: 400 1rem/1.3 var(--io-font-ui);
   }
-  .bar {
-    height: 6px;
-    margin-bottom: 0.9rem;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 3px;
-    background: var(--io-matte);
-  }
-  .fill {
-    height: 100%;
-    background: var(--io-gold);
-    border-radius: 3px;
-  }
   .line {
-    margin-top: 0.4rem;
+    margin-top: 0.3rem;
     color: var(--io-parchment-muted);
-    font: 400 0.95rem/1.4 var(--io-font-ui);
+    font: 400 0.9rem/1.4 var(--io-font-ui);
   }
-  .pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: center;
-    margin: 0 0 1.5rem;
+  .begin {
+    width: min(100%, 21rem);
+    margin: 1.5rem 0 1.75rem;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    margin: 0;
     padding: 0;
     list-style: none;
   }
-  .sworn {
-    color: var(--io-parchment-muted);
-    font: 400 0.9rem/1.3 var(--io-font-ui);
+  .stats li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
   }
-  .order .btn {
-    margin-bottom: 1rem;
+  .stats li + li {
+    border-left: 1px solid var(--io-gold-muted);
+  }
+  .stats b {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--io-parchment);
+    font: 700 1.5rem/1.2 var(--io-font-display);
+  }
+  .stats b :global(svg) {
+    color: var(--io-gold);
+  }
+  .stats span {
+    color: var(--io-parchment-muted);
+    font: 600 11px/1.3 var(--io-font-ui);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .links ul {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem 1.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
   .links a {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 1rem;
-    padding: 0.9rem 0.25rem;
+    gap: 8px;
+    min-height: 44px;
     color: var(--io-gold);
+    font: 600 14px/1.2 var(--io-font-ui);
     text-decoration: none;
   }
   .links a:hover {
-    background: color-mix(in srgb, var(--io-gold) 8%, transparent);
-  }
-  .text {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .link-title {
     color: var(--io-parchment);
-    font-size: 1rem;
   }
-  .link-note {
-    color: var(--io-parchment-muted);
-    font: 400 0.95rem/1.3 var(--io-font-ui);
+  @media (prefers-reduced-motion: reduce) {
+    .ring .fill,
+    .shimmer {
+      animation: none;
+    }
+    .shimmer {
+      opacity: 0;
+    }
   }
 
   .actions {
@@ -321,10 +420,17 @@
     }
     .home {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: 'main' 'order';
+      grid-template-areas: 'hero' 'verdicts' 'links';
+      grid-template-rows: auto;
     }
-    .standing {
-      gap: 1rem;
+    .verdicts {
+      padding-top: 1.25rem;
+    }
+    .stats b {
+      font-size: 1.15rem;
+    }
+    .stats span {
+      letter-spacing: 0.08em;
     }
     .vow {
       font-size: 1.3rem;
