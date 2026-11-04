@@ -185,6 +185,7 @@ export async function getOrchestratorToken(
 let enforceSystemReadRefusal = false;
 
 export const __testing = {
+  isEnforcing: () => enforceSystemReadRefusal,
   setEnforceSystemReadRefusal(value: boolean) {
     enforceSystemReadRefusal = value;
   },

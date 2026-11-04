@@ -26,6 +26,11 @@ vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(async () => undefin
 const { getOrchestratorToken, __testing: enforcement } = await import(
   '~/server/orchestrator/get-orchestrator-token'
 );
+const shippedEnforcing = enforcement.isEnforcing();
+
+it('ships logging system-account read keys, refusing none', () => {
+  expect(shippedEnforcing).toBe(false);
+});
 const { __testing: perPodCache } = await import('~/server/orchestrator/orchestrator-token-cache');
 const { encodeOwnedToken } = await import('~/server/orchestrator/orchestrator-token-identity');
 

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as GetOrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
 import type * as ServerAuthSession from '~/server/auth/get-server-auth-session';
-import { TokenScope, TokenScopePresets } from '~/shared/constants/token-scope.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 // Every route behind OrchestratorEndpoint, through the real wrapper: a bearer key must carry the
@@ -48,8 +48,6 @@ const routes: {
   name: string;
   method: string;
   scope: number;
-  /** Logs a call without the scope instead of refusing it. */
-  logsOnly?: boolean;
   load: () => Promise<{ default: unknown }>;
 }[] = [
   {
@@ -73,7 +71,6 @@ const routes: {
   {
     name: 'orchestrator/getConsumerBlobUploadUrl',
     scope: TokenScope.AIServicesWrite,
-    logsOnly: true,
     method: 'GET',
     load: () => import('~/pages/api/orchestrator/getConsumerBlobUploadUrl'),
   },
@@ -127,65 +124,46 @@ async function call(
 
 const serviceCalls = () => Object.values(services).reduce((n, fn) => n + fn.mock.calls.length, 0);
 
+const { orchestratorEndpointScopeTesting: enforcement } = await import(
+  '~/server/utils/endpoint-helpers'
+);
+const shippedEnforcing = enforcement.isEnforcing();
+
+it('ships logging calls without the route scope, refusing none', () => {
+  expect(shippedEnforcing).toBe(false);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   getOrchestratorToken.mockResolvedValue('orchestrator-token');
 });
 
+const wouldRefuseLogs = () =>
+  loggingMock.logToAxiom.mock.calls.filter(
+    ([event]) => (event as { name?: string })?.name === 'orchestrator-endpoint-scope-would-refuse'
+  );
+
+// A key holding AI Services scopes, but not this route's one.
+const otherAIServicesScope = (route: (typeof routes)[number]) =>
+  route.scope === TokenScope.AIServicesRead
+    ? TokenScope.AIServicesWrite
+    : TokenScope.AIServicesRead;
+
 describe.each(routes)('/api/$name', (route) => {
-  it('serves a cookie session', async () => {
-    expect((await call(route)).status).toBe(200);
-    expect(serviceCalls()).toBe(1);
-  });
+  describe.each([true, false])('enforcing: %s', (enforce) => {
+    beforeEach(() => enforcement.setEnforce(enforce));
 
-  it('serves a full-scope key', async () => {
-    expect((await call(route, TokenScope.Full)).status).toBe(200);
-  });
-
-  it('serves a key holding only the route scope', async () => {
-    expect((await call(route, route.scope)).status).toBe(200);
-  });
-
-  const wouldRefuseLogs = () =>
-    loggingMock.logToAxiom.mock.calls.filter(
-      ([event]) => (event as { name?: string })?.name === 'orchestrator-endpoint-scope-would-refuse'
-    );
-
-  if (!route.logsOnly) {
-    it('refuses a key without the route scope, before fetching a token', async () => {
-      const { status } = await call(route, TokenScope.Full & ~route.scope);
-      expect(status).toBe(403);
-      expect(getOrchestratorToken).not.toHaveBeenCalled();
-      expect(serviceCalls()).toBe(0);
+    it('serves a cookie session', async () => {
+      expect((await call(route)).status).toBe(200);
+      expect(serviceCalls()).toBe(1);
     });
 
-    it('serves a read-only key', async () => {
-      expect((await call(route, TokenScopePresets.ReadOnly)).status).toBe(200);
-    });
-  } else {
-    it('serves a read-only key and logs it, without user, key or address', async () => {
-      expect((await call(route, TokenScopePresets.ReadOnly)).status).toBe(200);
-      const logs = wouldRefuseLogs();
-      expect(logs).toHaveLength(1);
-      expect(logs[0][0]).toEqual({
-        name: 'orchestrator-endpoint-scope-would-refuse',
-        type: 'info',
-        route: `/api/${route.name}`,
-        requiredScope: route.scope,
-        tokenScope: TokenScopePresets.ReadOnly,
-        apiKeyType: ApiKeyType.User,
-        client: 'personal-key',
-        clientIdHash: undefined,
-      });
+    it('serves a full-scope key', async () => {
+      expect((await call(route, TokenScope.Full)).status).toBe(200);
     });
 
-    it('logs an OAuth client by a hash of its id, not the id', async () => {
-      const clientId = 'oauth-client-123';
-      await call(route, TokenScopePresets.ReadOnly, { type: 'oauth', id: clientId });
-      const [[event]] = wouldRefuseLogs() as [[{ client: string; clientIdHash: string }]];
-      expect(event.client).toBe('oauth');
-      expect(event.clientIdHash).toMatch(/^[0-9a-f]{16}$/);
-      expect(JSON.stringify(event)).not.toContain(clientId);
+    it('serves a key holding only the route scope', async () => {
+      expect((await call(route, route.scope)).status).toBe(200);
     });
 
     it('logs nothing for a cookie session or a key with the scope', async () => {
@@ -194,5 +172,51 @@ describe.each(routes)('/api/$name', (route) => {
       await call(route, TokenScope.Full);
       expect(wouldRefuseLogs()).toHaveLength(0);
     });
-  }
+  });
+
+  describe('when enforcing', () => {
+    beforeEach(() => enforcement.setEnforce(true));
+
+    it('refuses a key without the route scope, before fetching a token', async () => {
+      const { status } = await call(route, TokenScope.Full & ~route.scope);
+      expect(status).toBe(403);
+      expect(getOrchestratorToken).not.toHaveBeenCalled();
+      expect(serviceCalls()).toBe(0);
+    });
+
+    it('refuses a key holding only the other AI Services scope', async () => {
+      expect((await call(route, otherAIServicesScope(route))).status).toBe(403);
+    });
+  });
+
+  describe('before enforcing', () => {
+    beforeEach(() => enforcement.setEnforce(false));
+
+    it('serves a key without the route scope and logs it, without user, key or address', async () => {
+      const tokenScope = otherAIServicesScope(route);
+      expect((await call(route, tokenScope)).status).toBe(200);
+      expect(serviceCalls()).toBe(1);
+      const logs = wouldRefuseLogs();
+      expect(logs).toHaveLength(1);
+      expect(logs[0][0]).toEqual({
+        name: 'orchestrator-endpoint-scope-would-refuse',
+        type: 'info',
+        route: `/api/${route.name}`,
+        requiredScope: route.scope,
+        tokenScope,
+        apiKeyType: ApiKeyType.User,
+        client: 'personal-key',
+        clientIdHash: undefined,
+      });
+    });
+
+    it('logs an OAuth client by a hash of its id, not the id', async () => {
+      const clientId = 'oauth-client-123';
+      await call(route, otherAIServicesScope(route), { type: 'oauth', id: clientId });
+      const [[event]] = wouldRefuseLogs() as [[{ client: string; clientIdHash: string }]];
+      expect(event.client).toBe('oauth');
+      expect(event.clientIdHash).toMatch(/^[0-9a-f]{16}$/);
+      expect(JSON.stringify(event)).not.toContain(clientId);
+    });
+  });
 });

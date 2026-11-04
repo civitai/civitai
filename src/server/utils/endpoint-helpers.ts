@@ -870,7 +870,18 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   }
 }
 
-/** Records a call `OrchestratorEndpoint` would refuse once `enforceScope` is on. No user, key or IP. */
+// Off while `orchestrator-endpoint-scope-would-refuse` counts show which keys call these routes
+// without the route's scope; true refuses them on every `OrchestratorEndpoint` route.
+let enforceOrchestratorEndpointScope = false;
+
+export const orchestratorEndpointScopeTesting = {
+  isEnforcing: () => enforceOrchestratorEndpointScope,
+  setEnforce(value: boolean) {
+    enforceOrchestratorEndpointScope = value;
+  },
+};
+
+/** Records a call `OrchestratorEndpoint` would refuse once enforcing. No user, key or IP. */
 function logScopeWouldRefuse(
   req: AxiomAPIRequest,
   requiredScope: number,
@@ -893,8 +904,7 @@ export function OrchestratorEndpoint(
     token: string
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[],
-  requiredScope: number,
-  { enforceScope = true }: { enforceScope?: boolean } = {}
+  requiredScope: number
 ) {
   return AuthedEndpoint(async (req, res, user) => {
     // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
@@ -903,7 +913,7 @@ export function OrchestratorEndpoint(
       credential.tokenScope !== TokenScope.Full &&
       !Flags.hasFlag(credential.tokenScope, requiredScope)
     ) {
-      if (enforceScope)
+      if (enforceOrchestratorEndpointScope)
         return res
           .status(403)
           .json({ error: 'Your API key does not have the required scope for this action' });

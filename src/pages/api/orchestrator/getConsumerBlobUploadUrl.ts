@@ -75,9 +75,6 @@ function logPresignFailure(e: unknown, userId: number) {
   ).catch(() => undefined);
 }
 
-// Logging calls that lack the scope before refusing them; true refuses them.
-const ENFORCE_SCOPE = false;
-
 export default OrchestratorEndpoint(
   async function handler(req, res, user, token) {
     try {
@@ -94,6 +91,5 @@ export default OrchestratorEndpoint(
     }
   },
   ['GET'],
-  TokenScope.AIServicesWrite,
-  { enforceScope: ENFORCE_SCOPE }
+  TokenScope.AIServicesWrite
 );
