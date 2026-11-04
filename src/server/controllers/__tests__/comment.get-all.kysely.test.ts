@@ -7,8 +7,6 @@ import type * as UserPreferences from '~/server/services/user-preferences.servic
 import type * as UserService from '~/server/services/user.service';
 import { ReviewSort } from '~/server/common/enums';
 
-// Mocked for the invariant guard that no flag check remains on these reads (not regression
-// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),

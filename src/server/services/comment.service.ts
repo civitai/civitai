@@ -191,7 +191,6 @@ export const getVisibleCommentCount = async ({
   input: GetCommentCountByModelInput;
   user?: SessionUser;
 }) => {
-  // Through Kysely, on the client the `getKyselyWithoutLag('commentModel', …)` lag decision picks.
   const db = await getKyselyWithoutLag('commentModel', input.modelId);
   const count = (filter: TopLevelCommentsFilter, pinned: PinnedScope) =>
     countTopLevelCommentsViaKysely(db, filter, pinned);
@@ -234,7 +233,6 @@ export const getVisibleCommentCounts = async ({
       hidden: await getVisibleCommentCount({ input: { modelId, hidden: true }, user }),
     };
 
-  // Through Kysely, on the client the `getKyselyWithoutLag('commentModel', …)` lag decision picks.
   const db = await getKyselyWithoutLag('commentModel', modelId);
   const count = (
     filter: TopLevelCommentsBaseFilter,

@@ -286,8 +286,6 @@ export const getModelHandler = async ({
       })
     );
     const modelVersionIds = filteredVersions.map((version) => version.id);
-    // The posts, the suggested-resource count and the owner's settings below read through Kysely
-    // on the replica.
     const { kyselyRead } = await loadKyselyDb();
     const postsInput = { modelVersionIds, userId: model.user.id };
     // `model-getbyid-skip-owner-posts` on: a viewer who is neither the owner nor a moderator gets

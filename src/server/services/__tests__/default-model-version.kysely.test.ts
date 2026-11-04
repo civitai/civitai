@@ -3,8 +3,6 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
-// Mocked for the invariant guard that no flag check remains on this read (not regression
-// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
