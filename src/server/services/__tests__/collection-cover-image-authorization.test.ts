@@ -28,21 +28,21 @@ function arrangeCollection({
 }: { contributorPermissions?: string[] | null } = {}) {
   mockDbRead.$queryRaw.mockReset();
   mockDbWrite.collection.update.mockReset();
-  mockDbRead.$queryRaw.mockResolvedValue([
-    {
-      id: COLLECTION_ID,
-      read: 'Public',
-      write: 'Private',
-      userId: OWNER_ID,
-      type: 'Image',
-      mode: null,
-      contributorPermissions,
-    },
-  ]);
+  const collectionRow = {
+    id: COLLECTION_ID,
+    read: 'Public',
+    write: 'Private',
+    userId: OWNER_ID,
+    type: 'Image',
+    mode: null,
+    contributorPermissions,
+  };
+  mockDbRead.$queryRaw.mockResolvedValue([collectionRow]);
   mockDbWrite.collection.update.mockResolvedValue({
     id: COLLECTION_ID,
     image: { id: IMAGE_ID, url: 'abc', ingestion: 'Scanned', type: 'image' },
   });
+  return collectionRow;
 }
 
 beforeEach(() => {
@@ -83,13 +83,11 @@ describe('updateCollectionCoverImage authorization', () => {
 
   it('refuses an image whose owner has blocked the manager, even before the cache knows', async () => {
     const BLOCKER = 4_321;
-    arrangeCollection();
+    const collectionRow = arrangeCollection();
     // The permissions read keeps the collection row; the next read is the image's visibility.
-    const collectionRow = vi.mocked(mockDbRead.$queryRaw).getMockImplementation();
     mockDbRead.$queryRaw
-      .mockImplementationOnce(collectionRow!)
+      .mockResolvedValueOnce([collectionRow])
       .mockResolvedValueOnce([{ id: IMAGE_ID, userId: BLOCKER, nsfwLevel: 1, postId: null }]);
-    // The block is on the primary only; the cache and the replica have not caught up.
     mockDbRead.userEngagement.findFirst.mockResolvedValue(null);
     mockDbWrite.userEngagement.findFirst.mockResolvedValue({
       userId: BLOCKER,
