@@ -6,10 +6,7 @@ import {
   removalsQuery,
   withoutReversed,
 } from '~/server/services/creator-removals.service';
-import {
-  getAppealExcludedIds,
-  getHoldMarkerBlockedImageIds,
-} from '~/server/services/report.service';
+import { getAppealRefusedImageIds } from '~/server/services/report.service';
 import { ZERO_WEIGHT_REASONS } from '~/shared/utils/creator-removal-weights';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
@@ -103,9 +100,9 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   if (!events.length) return none;
 
   const imageIds = events.map((e) => Number(e.imageId));
-  const [states, excludedIds] = await Promise.all([
+  const [states, refused] = await Promise.all([
     getImageStates(userId, imageIds),
-    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+    getAppealRefusedImageIds({ imageIds, userId }),
   ]);
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
@@ -118,10 +115,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   });
 
   const existing = listed.filter((e) => e.state.owned).map((e) => e.id);
-  const [appeals, holdBlocked] = await Promise.all([
-    getLatestAppeals(userId, existing),
-    getHoldMarkerBlockedImageIds({ imageIds: existing, userId }),
-  ]);
+  const appeals = await getLatestAppeals(userId, existing);
 
   const items: RemovedImage[] = listed.map(({ id, removedAt, state }) => ({
     removedAt: new Date(Number(removedAt) * 1000),
@@ -130,9 +124,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
     canAppeal:
       state.owned &&
       isAppealableImage(state) &&
-      !excludedIds.images.has(id) &&
-      !excludedIds.users.has(userId) &&
-      !holdBlocked.has(id) &&
+      !refused.has(id) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
   return { total: items.length, truncated: fetched.length >= REMOVED_IMAGES_LIMIT, items };
