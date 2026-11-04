@@ -92,7 +92,7 @@ const env = Object.fromEntries(
 if (!env.NEXTAUTH_SECRET || !env.WEBHOOK_TOKEN)
   fail2('env file has no NEXTAUTH_SECRET/WEBHOOK_TOKEN');
 
-// --- a legacy session cookie, minted the way tests/preview-auth.setup.ts mints it --------------
+// A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it.
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64url');
@@ -137,8 +137,6 @@ const sessionToken = mintLegacySessionCookie(env.NEXTAUTH_SECRET, {
 });
 const sessionCookie = `civitai-token=${sessionToken}; __Secure-civitai-token=${sessionToken}`;
 
-// --- redis reset ----------------------------------------------------------------------------------
-
 async function flushRedis() {
   const [host, port] = args.redis.split(':');
   await new Promise((resolve, reject) => {
@@ -157,8 +155,6 @@ async function flushRedis() {
     sock.on('error', reject);
   });
 }
-
-// --- sending ----------------------------------------------------------------------------------------
 
 function send(base, c) {
   const url = new URL(base);
@@ -201,8 +197,6 @@ function send(base, c) {
     req.end();
   });
 }
-
-// --- comparing -------------------------------------------------------------------------------------
 
 function headerMultiset(rawHeaders) {
   const out = [];
@@ -325,8 +319,6 @@ function compareToPin(pin, rb) {
   return parts;
 }
 
-// --- the route's own counter (--route-counter) ----------------------------------------------------
-
 const ROUTE_COUNTER = 'civitai_app_image_delivery_request_total';
 
 /** { status: value } for ROUTE_COUNTER on `base` (an absent label set reads as 0). */
@@ -347,8 +339,6 @@ async function readRouteCounter(base) {
   }
   return counts;
 }
-
-// --- the tracker stub (--tracker) ------------------------------------------------------------------
 
 const TRACKER_WAIT_MS = 10_000;
 
@@ -395,8 +385,6 @@ function compareTracked(c, ea, eb) {
   if (!c.divergence) diffs.push(...multisetDiff(ea.map(row), eb.map(row)));
   return diffs;
 }
-
-// --- run ----------------------------------------------------------------------------------------------
 
 const suites = {
   trpc: () => buildCases({ sessionCookie }),

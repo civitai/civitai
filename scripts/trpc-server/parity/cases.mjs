@@ -74,7 +74,6 @@ const BAD_REQUEST = {
 export function buildCases(ctx) {
   const signedIn = { ...edge, cookie: ctx.sessionCookie };
   return [
-    // --- 1. anonymous public queries ------------------------------------------------------------
     {
       id: 'anon-public-query',
       path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
@@ -91,7 +90,7 @@ export function buildCases(ctx) {
       headers: { ...edge, 'x-client': 'web', 'x-client-version': '99.0.0' },
     },
 
-    // --- 2. signed in (a minted legacy session cookie for a preview smoke-test user) -------------
+    // Signed in: a minted legacy session cookie for a preview smoke-test user.
     {
       id: 'signed-in-protected-query',
       path: '/api/trpc/user.getSelfStatus',
@@ -103,7 +102,6 @@ export function buildCases(ctx) {
       headers: signedIn,
     },
 
-    // --- 4. bots and internal headers -----------------------------------------------------------
     {
       id: 'spoofed-verified-bot-header',
       path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
@@ -136,7 +134,6 @@ export function buildCases(ctx) {
       headers: edge,
     },
 
-    // --- 5. batches -------------------------------------------------------------------------------
     {
       id: 'batch-of-3-one-error',
       path: batchUrl([
@@ -171,7 +168,6 @@ export function buildCases(ctx) {
       headers: edge,
     },
 
-    // --- 6. POST bodies ---------------------------------------------------------------------------
     {
       id: 'method-override-post-query',
       method: 'POST',
@@ -201,7 +197,6 @@ export function buildCases(ctx) {
       body: () => Buffer.alloc(18 * 1024 * 1024, 0x20),
     },
 
-    // --- 7. errors --------------------------------------------------------------------------------
     {
       id: 'unauthenticated-protected-query',
       path: '/api/trpc/user.getSelfStatus',
@@ -244,14 +239,12 @@ export function buildCases(ctx) {
       divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
     },
 
-    // --- 8. region --------------------------------------------------------------------------------
     {
       id: 'blocked-region',
       path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
       headers: { ...edge, 'cf-ipcountry': 'GB' },
     },
 
-    // --- 9. client headers ------------------------------------------------------------------------
     {
       id: 'outdated-web-client',
       path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
@@ -269,7 +262,6 @@ export function buildCases(ctx) {
       headers: { 'user-agent': DESKTOP_UA, 'cf-connecting-ip': NORMAL_IP },
     },
 
-    // --- probes -----------------------------------------------------------------------------------
     {
       id: 'probe-live',
       path: '/api/live?token={WEBHOOK_TOKEN}',
@@ -284,7 +276,7 @@ export function buildCases(ctx) {
   ];
 }
 
-// --- image delivery (`--cases image-delivery`) ---------------------------------------------------
+// Image delivery (`--cases image-delivery`).
 //
 // Compares Next (`server.js`, the reference) with the standalone server serving
 // `/api/internal/image-delivery/[id]`. Every answer must be Next's, byte for byte, except the
@@ -332,7 +324,6 @@ export function buildImageDeliveryCases(ctx) {
   const at = (id) => `/api/internal/image-delivery/${id}`;
   const { image, video, gone, shared, goneHidden, unknown } = IMAGE_DELIVERY_IDS;
   return [
-    // --- found: from the database, then from the cache the first request filled ----------------
     { id: 'image-db', path: at(image), headers: auth, counted: 'found' },
     { id: 'image-cached', path: at(image), headers: auth, warm: true, counted: 'found' },
     { id: 'video-blank-mime', path: at(video), headers: auth, counted: 'found' },
@@ -340,13 +331,12 @@ export function buildImageDeliveryCases(ctx) {
     { id: 'shared-url-most-restrictive', path: at(shared), headers: auth, counted: 'found' },
     { id: 'gone-but-hidden', path: at(goneHidden), headers: auth, counted: 'found' },
 
-    // --- not found ---------------------------------------------------------------------------------
     { id: 'unknown-id', path: at(unknown), headers: auth, counted: 'not_found' },
     // Negative results are not cached: the second request reads the database again.
     { id: 'unknown-id-again', path: at(unknown), headers: auth, warm: true, counted: 'not_found' },
     { id: 'gone-source', path: at(gone), headers: auth, counted: 'not_found' },
 
-    // --- odd ids: decoded the same way by both, still one segment ---------------------------------
+    // Odd ids: decoded the same way by both servers, still one path segment.
     {
       id: 'id-encoded-slash-and-space',
       path: at('a%20b%2Fc'),
@@ -363,7 +353,6 @@ export function buildImageDeliveryCases(ctx) {
       counted: 'found',
     },
 
-    // --- auth -------------------------------------------------------------------------------------
     { id: 'auth-missing', path: at(image), headers: {}, counted: null },
     {
       id: 'auth-wrong-bearer',
@@ -406,7 +395,6 @@ export function buildImageDeliveryCases(ctx) {
       counted: 'found',
     },
 
-    // --- what the router does before a route runs -------------------------------------------------
     {
       // Next strips these; not stripping `x-nextjs-data` makes the route module add
       // `x-nextjs-matched-path` to the response.
@@ -454,7 +442,7 @@ export function buildImageDeliveryCases(ctx) {
     },
     { id: 'head', method: 'HEAD', path: at(image), headers: auth, counted: 'found' },
 
-    // --- not an exact match: this server's plain answers; the caller never sends these ---------
+    // Not an exact match: this server's plain answers. The caller never sends these.
     {
       id: 'trailing-slash',
       path: `${at(image)}/`,
@@ -484,7 +472,6 @@ export function buildImageDeliveryCases(ctx) {
       divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
     },
 
-    // --- the server's other routes, next to this one ---------------------------------------------
     {
       id: 'other-internal-route',
       path: '/api/live?token={WEBHOOK_TOKEN}',
@@ -500,32 +487,13 @@ export function buildImageDeliveryCases(ctx) {
   ];
 }
 
-// --- browser beacons (`--cases beacons`) ----------------------------------------------------------
+// Tracking beacons (`--cases beacons`): `/api/internal/ping`, `/api/internal/pulse` and
+// `/api/track/batch`.
 //
-// Compares Next (`server.js`, the reference) with the standalone server serving the three tracking
-// beacons: `/api/internal/ping` (page views, `TrackPageView.tsx`), `/api/internal/pulse` (entity
-// views, `TrackView.tsx`) and `/api/track/batch` (the coalesced search/action/impression flush,
-// `trackEventBuffer.ts`).
-//
-// Both servers run the SAME route module on the same request, so these cases cover only what sits
-// between the server and the handler, not the handler's own validation:
-//   - the body as each caller sends it: ping's `fetch` with a string body and no Content-Type (the
-//     browser sends `text/plain`), pulse's and batch's `application/json` (a `sendBeacon` Blob or a
-//     `fetch`), and JSON with a charset;
-//   - the body limit (Next's default `bodyParser`, 1mb: none of the three sets `config.api`), which
-//     each route module applies from its own config, so every route is sent a body over it;
-//   - the session (signed in) and the forwarded headers each server fills in;
-//   - what Next's router does before a route runs: internal headers and `nxtP…` query keys;
-//   - the endpoint wrapper's preflight and a non-POST method, one cross-origin refusal;
-//   - paths that are not an exact match, a neighbouring beacon that stays on Next, and the
-//     server's other routes.
-//
-// A beacon's response is an empty 200 or a short 400, which a server that never ran the route
-// could imitate. So every case also names the tracker rows the route must send (`tracked`, table
-// names): with `--tracker`, the harness reads what each server sent to the job's tracker stub for
-// that request and requires both to have sent exactly those tables, with the same rows. The
-// reference sending them is the positive control that the stub sees anything. Rows carry the
-// session's user id, so the signed-in case also checks that the session is read the same way.
+// A beacon answers with an empty 200 or a short 400, which a server that never ran the route could
+// imitate. So each case names the tracker tables its route must send rows to (`tracked`): with
+// `--tracker`, the harness requires each server to have sent exactly those tables to the job's
+// tracker stub for that request, with the same rows on both.
 
 const BEACON_UA = DESKTOP_UA;
 /** What a same-origin browser request carries through the CDN. */
@@ -586,7 +554,6 @@ export function buildBeaconCases(ctx) {
     ...extra,
   });
   return [
-    // --- each caller's body -------------------------------------------------------------------------
     // ping: what the browser sends for a string body, and the caller's exact shape (no header).
     post('ping-text-plain', PING, { ...beaconFrom, ...TEXT }, JSON.stringify(PAGE_VIEW), [
       'pageViews',
@@ -605,7 +572,7 @@ export function buildBeaconCases(ctx) {
       'actions',
     ]),
 
-    // --- the body limit, per route module ----------------------------------------------------------
+    // Each route module applies the body limit itself, so each route is sent a body over it.
     post(
       'ping-just-under-1mb',
       PING,
@@ -635,7 +602,6 @@ export function buildBeaconCases(ctx) {
       []
     ),
 
-    // --- session and forwarded headers --------------------------------------------------------------
     post('pulse-signed-in', PULSE, { ...signedIn, ...JSON_CT }, JSON.stringify(VIEW), ['views']),
     post(
       // No CDN headers at all: each server fills x-forwarded-* from the socket, which the row's
@@ -647,7 +613,6 @@ export function buildBeaconCases(ctx) {
       ['views']
     ),
 
-    // --- what the router does before a route runs ---------------------------------------------------
     post(
       // Next strips these; not stripping `x-nextjs-data` makes the route module add
       // `x-nextjs-matched-path` to the response (the negative control's diff).
@@ -675,7 +640,6 @@ export function buildBeaconCases(ctx) {
       { path: `${BATCH}?nxtPfoo=1&nextInternalLocale=en&x=1` }
     ),
 
-    // --- the endpoint wrapper -----------------------------------------------------------------------
     {
       // A CORS preflight, answered by the endpoint wrapper before the handler.
       id: 'pulse-options-preflight',
@@ -699,7 +663,7 @@ export function buildBeaconCases(ctx) {
       []
     ),
 
-    // --- not an exact match: this server's plain answers; the callers never send these ------------
+    // Not an exact match: this server's plain answers. The callers never send these.
     post(
       'ping-trailing-slash',
       `${PING}/`,
@@ -736,7 +700,6 @@ export function buildBeaconCases(ctx) {
       }
     ),
 
-    // --- the server's other routes, next to these ---------------------------------------------------
     {
       id: 'other-internal-route',
       path: '/api/live?token={WEBHOOK_TOKEN}',
