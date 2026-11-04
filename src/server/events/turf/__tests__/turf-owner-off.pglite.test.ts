@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type { Prisma } from '@prisma/client';
 
 /**
  * An owner's "keep Hat Turf off my images", against real rows: their images take no new stickers,
@@ -153,8 +154,8 @@ const place = (imageId: number) =>
   });
 
 describe("an owner's switch: keep Hat Turf off my images", () => {
-  // Deliberate (event owner's call, 2026-11-04): turned off, an owner's images show and count no
-  // turf, and nothing is deleted, so turning it back on restores what was there.
+  // Turned off, an owner's images show and count no turf, and nothing is deleted, so turning it back
+  // on restores what was there.
   it('image detail draws nothing on an image whose owner turned it off', async () => {
     expect(await drawnOn(IMAGES[0])).toBe(1);
     expect(await drawnOn(IMAGES[1])).toBe(0);
@@ -190,7 +191,7 @@ describe("an owner's switch: keep Hat Turf off my images", () => {
     await expect(place(IMAGES[1])).rejects.toThrow('keeps Hat Turf off their images');
   });
 
-  it('turning it back on restores what was there; turning it off again hides it', async () => {
+  it('turning it back on restores what was there', async () => {
     await setTurfOwnerOff('e', OFF, false);
     expect(await drawnOn(IMAGES[1])).toBe(1);
     expect(await countedImages()).toEqual([`Image:${IMAGES[0]}`, `Image:${IMAGES[1]}`]);
@@ -234,6 +235,31 @@ describe('who may use the switch', () => {
   it('someone in Hat Turf may not turn it off', async () => {
     await expect(setTurfOwnerOff('e', ALLOWS, true)).rejects.toThrow('Leave Hat Turf first');
     expect((await getTurfStock('e', ALLOWS)).ownerOff).toBe(false);
+  });
+
+  // A join landing between the up-front check and the write: the write's own guard refuses it.
+  it('a join racing the check is still refused by the write', async () => {
+    const raw = pgliteRaw(db);
+    // The up-front check says "not joined"; the user is joined (ALLOWS) when the write runs.
+    const isCheck = (sql: TemplateStringsArray | Prisma.Sql) =>
+      (Array.isArray(sql) ? sql.join('') : (sql as Prisma.Sql).sql).includes('AS "optedIn" FROM');
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      sql: TemplateStringsArray | Prisma.Sql,
+      ...values: unknown[]
+    ) =>
+      isCheck(sql)
+        ? Promise.resolve([{ optedIn: false }])
+        : raw.queryRaw(sql, ...values)) as never);
+    expect((await setTurfOwnerOff('e', ALLOWS, true)).changed).toBe(false);
+    expect((await getTurfStock('e', ALLOWS)).ownerOff).toBe(false);
+  });
+
+  // By the time the sync runs the switch is saved: a failed sync must not report a failed save,
+  // which would leave the client stale and a retry with nothing to change.
+  it('a failed sync after the switch is saved still reports the change', async () => {
+    redisMock.sysRedis.eval.mockRejectedValue(new Error('redis down') as never);
+    expect((await setTurfOwnerOff('e', OUTSIDER, true)).changed).toBe(true);
+    expect((await getTurfStock('e', OUTSIDER)).ownerOff).toBe(true);
   });
 
   // The switch and joining each refuse the other, so both set at once only comes from a race or a

@@ -33,8 +33,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 
-// The opt-in lives in User.settings, per event name: placing needs it (see inTurf). The owner's
-// choice is not read: any visible, non-contest image is turf unless its owner is banned or deleted.
+// The opt-in lives in User.settings, per event name: placing needs it (see inTurf).
 export const TURF_SETTING = 'eventTurfOptIn';
 // Per event name, an owner's "keep Hat Turf off my images". Only a user not in Hat Turf may set it.
 export const TURF_OWNER_OFF_SETTING = 'eventTurfOwnerOff';
@@ -332,8 +331,9 @@ export async function setTurfOwnerOff(eventName: string, userId: number, off: bo
   )}
       ${notJoined}
   `;
-  // Counts, the scoring map and pushes follow at once, not at the next reconcile.
-  if (changed > 0) await syncOwnerImages(event, userId);
+  // Counts, the scoring map and pushes follow at once, not at the next reconcile. The switch is saved
+  // by now, so a failed sync is logged and left to the reconcile, not reported as a failed save.
+  if (changed > 0) await syncOwnerImages(event, userId).catch(logSyncError);
   return { changed: changed > 0, event: event.name };
 }
 

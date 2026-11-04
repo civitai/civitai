@@ -67,7 +67,7 @@ describe("owner's Hat Turf switch in account settings", () => {
     expect(h.mutate).toHaveBeenCalledWith({ event: 'birthday2026', off: false });
   });
 
-  // Deliberate (event owner's call, 2026-11-04): a player cannot wall off their own images.
+  // A player cannot wall off their own images.
   test('in Hat Turf: disabled, and says to leave first', async () => {
     h.stock = { available: 3, optedIn: true, ownerOff: false, mode: 'live' };
     await render();
