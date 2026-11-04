@@ -145,6 +145,7 @@ test('in the image modal, change ▸ opens Your hats on top of the modal', async
               leader: 'blue',
               leaderCosmeticId: 11,
               hatted: false,
+              hattedTeam: null,
             },
           },
           open: { 9: true },

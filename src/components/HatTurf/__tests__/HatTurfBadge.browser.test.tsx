@@ -134,6 +134,7 @@ const standing = (over: Partial<TurfSummaries['images'][number]> = {}) => ({
   leader: 'blue',
   leaderCosmeticId: 11,
   hatted: false,
+  hattedTeam: null,
   ...over,
 });
 
