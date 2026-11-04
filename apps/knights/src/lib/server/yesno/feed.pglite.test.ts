@@ -84,6 +84,7 @@ describe('what a player is offered', () => {
       prompt: 'Question q-secret-id?',
       imageKey: 'key-10',
       banner: { heading: expect.any(String) },
+      category: { heading: expect.any(String) },
     });
     const text = JSON.stringify(offer);
     for (const secret of [
@@ -188,11 +189,15 @@ describe('stretches', () => {
     ]);
     await seedPlayer(pg, 1);
 
-    const seen: { prompt: string; banner: boolean }[] = [];
+    const seen: { prompt: string; banner: boolean; category: string }[] = [];
     for (let i = 0; i < 5; i++) {
       const offer = await pick(1, { stretch: 2 });
       expect(offer).not.toBeNull();
-      seen.push({ prompt: offer!.prompt, banner: offer!.banner !== null });
+      seen.push({
+        prompt: offer!.prompt,
+        banner: offer!.banner !== null,
+        category: offer!.category.heading,
+      });
       await answer(1, offer!.itemId);
     }
 
@@ -205,6 +210,14 @@ describe('stretches', () => {
       'Question v3?',
     ]);
     expect(seen.map((s) => s.banner)).toEqual([true, false, true, false, false]);
+    // The category heading rides on every question of the stretch, not only the first.
+    expect(seen.map((s) => s.category)).toEqual([
+      'Language',
+      'Language',
+      'Violence',
+      'Violence',
+      'Violence',
+    ]);
     expect(await pick(1, { stretch: 2 })).toBeNull();
   });
 

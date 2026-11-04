@@ -38,6 +38,7 @@ export async function pickItem(
     if (hidden) {
       return {
         banner: null,
+        category: null,
         question: hidden.question,
         item: {
           id: sealItem(secret, userId, { kind: 'hidden', id: hidden.referenceId }),
@@ -67,6 +68,7 @@ export async function pickItem(
   if (offer) {
     return {
       banner: offer.banner,
+      category: offer.category,
       question: {
         key: 'yesno',
         kind: 'bool',
@@ -87,6 +89,7 @@ export async function pickItem(
   const [item] = feed.items;
   return {
     banner: null,
+    category: null,
     question: feed.question,
     item: {
       id: sealItem(secret, userId, { kind: 'queue', id: item.id }),

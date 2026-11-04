@@ -435,6 +435,7 @@ describe('play load yes/no questions', () => {
     width: 2,
     height: 3,
     banner: { heading: 'Violence' },
+    category: { heading: 'Violence' },
   };
   beforeEach(() => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
@@ -465,6 +466,7 @@ describe('play load yes/no questions', () => {
       ],
     });
     expect(page.banner).toEqual({ heading: 'Violence' });
+    expect(page.category).toEqual({ heading: 'Violence' });
     expect(JSON.stringify(page)).not.toContain('90417');
   });
 
@@ -482,6 +484,7 @@ describe('play load yes/no questions', () => {
 
     expect(page.item.src).toBe('key-9');
     expect(page.banner).toBeNull();
+    expect(page.category).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
   });
 
@@ -489,6 +492,7 @@ describe('play load yes/no questions', () => {
     const page = await run();
     expect(page.question.key).toBe('q');
     expect(page.banner).toBeNull();
+    expect(page.category).toBeNull();
     expect(pickYesNo).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ userId: 7, rank: 'Knight', share: 0.7, stretch: 8, force: false })

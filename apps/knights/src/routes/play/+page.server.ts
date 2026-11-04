@@ -161,6 +161,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   return {
     mode: 'queue' as const,
     banner: picked?.banner ?? null,
+    category: picked?.category ?? null,
     ...common,
     daily,
     rail,
