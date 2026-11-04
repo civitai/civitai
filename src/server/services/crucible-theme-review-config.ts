@@ -1,9 +1,8 @@
 import * as z from 'zod';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
-// shadow: verdicts are only recorded. flag: an off-theme entry is reported to moderators. enforce: an
-// off-theme entry is removed.
+// How a crucible's AI theme review treats an off-theme entry.
 export const THEME_REVIEW_MODES = ['shadow', 'flag', 'enforce'] as const;
 export type ThemeReviewMode = (typeof THEME_REVIEW_MODES)[number];
 
@@ -23,7 +22,7 @@ export type CrucibleThemeReview = z.infer<typeof reviewSchema> & { crucibleId: n
  * reviews nothing, and nothing may treat a crucible as unreviewed because of it.
  */
 export async function getCrucibleThemeReviews(): Promise<CrucibleThemeReview[] | null> {
-  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CRUCIBLE_THEME_REVIEW);
+  const raw = await withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CRUCIBLE_THEME_REVIEW));
   if (!raw) return [];
   let json: unknown;
   try {

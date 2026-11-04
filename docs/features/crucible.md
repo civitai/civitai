@@ -91,7 +91,7 @@ The entry count on the crucible page is the number of entries its grid lists to 
 
 ## Accepted entries
 
-Other features can act on an entry once it is accepted, for example an event that gives a team points for each entrant. An entry is accepted when judges can see it, checked every two minutes. On a crucible with an AI theme review (internal for now, set up by staff), the review accepts it instead, after the entry passes. Only crucibles carrying an event tag a subscriber listens for are swept. When an entry leaves the crucible (a moderator or the owner removes it, or the entrant withdraws it), every subscriber is told to take it back. Only a removal or a withdrawal does that: an entry that is later hidden another way (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels) stays accepted, and a subscriber that must not count it checks for that itself. Code: `src/server/services/crucible-entry-accepted.ts`.
+Other features can act on an entry once it is accepted, for example an event that gives a team points for each entrant. An entry is accepted when judges can see it, checked every two minutes. Crucibles listed for an AI theme review (internal staff config) are not accepted by this check. Only crucibles carrying an event tag a subscriber listens for are swept. When an entry leaves the crucible, every subscriber is told to take it back: at once when a moderator or the owner removes it or the entrant withdraws it, and at the next check when its image or the entrant's account is deleted. An entry that stays in the crucible but is hidden another way (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels) stays accepted; a subscriber that must not count it checks for that itself. Code: `src/server/services/crucible-entry-accepted.ts`.
 
 ## Notifications
 
@@ -114,4 +114,4 @@ The creator is notified of new comments from others ("New comments on your cruci
 
 ## Availability
 
-Crucible is behind a feature flag, currently on for everyone. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.
+Crucible is behind a feature flag. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.

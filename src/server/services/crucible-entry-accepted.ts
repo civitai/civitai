@@ -80,7 +80,7 @@ export async function acceptCrucibleEntry(
   const targets = interested(subscribers, await crucibleTags(entry.crucibleId));
   for (const subscriber of targets) await subscriber.accept({ ...entry, acceptedAt });
 
-  await sysRedis.hSet(key, field, acceptedAt.toISOString());
+  await sysRedis.hSet(key, field, JSON.stringify({ at: acceptedAt, userId: entry.userId }));
   await sysRedis.expire(key, ACCEPTED_TTL_SECONDS);
   if (!(await isStillAcceptable(entry.entryId))) {
     await revokeCrucibleEntry(entry, subscribers);
@@ -106,8 +106,9 @@ export async function revokeCrucibleEntry(
 ) {
   try {
     await sysRedis.hDel(acceptedKey(entry.crucibleId), String(entry.entryId));
-    const targets = interested(subscribers, await crucibleTags(entry.crucibleId));
-    for (const subscriber of targets) {
+    // Every subscriber, not the crucible's current tags: a tag removed since the accept would
+    // otherwise skip the subscriber that granted it. Revoking what was never granted is a no-op.
+    for (const subscriber of subscribers) {
       try {
         await subscriber.revoke(entry);
       } catch (error) {
@@ -153,15 +154,53 @@ export const getJudgeableTaggedEntries = (eventTags: string[], excludeCrucibleId
   `;
 
 /**
- * Accepts the entries no AI theme review holds back: in a crucible without one, an entry is accepted
- * once judges can see it. Crucibles with a review are accepted by the review alone.
+ * Revokes the accepted entries of running tagged crucibles that have left without a removal or a
+ * withdrawal calling revoke: a deleted image leaves the row with no image, and a deleted account
+ * takes the row with it.
+ */
+async function revokeDepartedEntries(
+  eventTags: string[],
+  subscribers: readonly CrucibleEntrySubscriber[]
+) {
+  const crucibles = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "Crucible" c
+    WHERE c."eventTags" && ${eventTags}::text[]
+      AND c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
+      AND c."endAt" > now()
+  `;
+  let revoked = 0;
+  for (const { id: crucibleId } of crucibles) {
+    const accepted = await sysRedis.hGetAll(acceptedKey(crucibleId));
+    const entryIds = Object.keys(accepted).map(Number);
+    if (!entryIds.length) continue;
+    const present = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "CrucibleEntry"
+      WHERE id = ANY(${entryIds}::int[]) AND "imageId" IS NOT NULL
+    `;
+    const kept = new Set(present.map((e) => e.id));
+    for (const entryId of entryIds) {
+      if (kept.has(entryId)) continue;
+      // The row may be gone with its entrant, so who entered comes from the record.
+      const { userId } = JSON.parse(accepted[String(entryId)]) as { userId: number };
+      await revokeCrucibleEntry({ entryId, crucibleId, userId }, subscribers);
+      revoked++;
+    }
+  }
+  return revoked;
+}
+
+/**
+ * Takes back accepted entries that have left the crucible, then accepts the new ones. In a crucible
+ * without an AI theme review an entry is accepted once judges can see it; crucibles named in the
+ * theme-review config are not accepted here.
  */
 export async function sweepAcceptedCrucibleEntries(
   subscribers: readonly CrucibleEntrySubscriber[] = CRUCIBLE_ENTRY_SUBSCRIBERS
 ) {
-  const result = { accepted: 0, failed: 0, skipped: false };
+  const result = { accepted: 0, failed: 0, revoked: 0, skipped: false };
   const tags = subscribedTags(subscribers);
   if (!tags.length) return result;
+  result.revoked = await revokeDepartedEntries(tags, subscribers);
 
   const reviews = await getCrucibleThemeReviews();
   if (!reviews) return { ...result, skipped: true };

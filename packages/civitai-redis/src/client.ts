@@ -2575,7 +2575,7 @@ export const REDIS_SYS_KEYS = {
     // JSON { crucibles: { [crucibleId]: { theme, themeElements, judgeId, mode, reviewPrompt? } } }:
     // the crucibles whose entries the AI theme review checks. Missing or invalid = none.
     CRUCIBLE_THEME_REVIEW: 'system:crucible-theme-review',
-    // Prefix for `:<crucibleId>`, a hash of entryId -> ISO time the entry was accepted.
+    // Prefix for `:<crucibleId>`, a hash of entryId -> JSON { at, userId } of its acceptance.
     CRUCIBLE_ENTRY_ACCEPTED: 'system:crucible-entry-accepted',
     // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
     // process per TTL for all of them; `:<version>:lock` elects that process. See
