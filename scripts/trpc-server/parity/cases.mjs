@@ -528,6 +528,17 @@ const SEARCH = {
   data: { query: 'a cat', index: 'models_v9', filters: { tags: ['x'] } },
 };
 const ACTION = { kind: 'action', data: { type: 'AddToBounty_Click' } };
+const IMPRESSION = {
+  kind: 'impression',
+  data: {
+    sessionKey: 'k3x9q2',
+    surface: 'models',
+    entities: [
+      { entityType: 'Model', entityId: 123 },
+      { entityType: 'Image', entityId: 4321 },
+    ],
+  },
+};
 
 /** A JSON body padded to exactly `bytes` bytes with a field the schemas strip. */
 function paddedJson(value, bytes) {
@@ -571,6 +582,16 @@ export function buildBeaconCases(ctx) {
       'search',
       'actions',
     ]),
+    post(
+      // Impression rows are inserted into ClickHouse directly, not sent to the tracker, and the job
+      // configures no ClickHouse, so they never reach the stub. The search row stands in: one bad
+      // event rejects the whole batch, so it is only sent if the impression event was accepted.
+      'batch-with-impression',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([IMPRESSION, SEARCH]),
+      ['search']
+    ),
 
     // Each route module applies the body limit itself, so each route is sent a body over it.
     post(
@@ -603,6 +624,9 @@ export function buildBeaconCases(ctx) {
     ),
 
     post('pulse-signed-in', PULSE, { ...signedIn, ...JSON_CT }, JSON.stringify(VIEW), ['views']),
+    post('ping-signed-in', PING, { ...signedIn, ...TEXT }, JSON.stringify(PAGE_VIEW), [
+      'pageViews',
+    ]),
     post(
       // No CDN headers at all: each server fills x-forwarded-* from the socket, which the row's
       // `ip` column is derived from.
