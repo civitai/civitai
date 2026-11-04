@@ -33,7 +33,7 @@ function parseCyberTips(value: string) {
   return numbers.every((n) => Number.isInteger(n) && n > 0) ? numbers : null;
 }
 
-function ConfirmButton({
+function ArmedConfirmButton({
   label,
   confirmLabel,
   disabled,
@@ -301,7 +301,7 @@ function PendingReport({ userId }: { userId: number }) {
             />
             {report.sendProblem && <Alert color="red">{report.sendProblem}</Alert>}
             {approve.error && <Alert color="red">{approve.error.message}</Alert>}
-            <ConfirmButton
+            <ArmedConfirmButton
               label="Approve for sending"
               confirmLabel="Confirm: send this report to NCMEC"
               disabled={parsedTips === null || !!report.sendProblem}
@@ -481,7 +481,7 @@ function AddEvidence({
               `. Refused: ${preserve.data.refused.map((r) => `${r.ref} (${r.reason})`).join('; ')}`}
           </Alert>
         )}
-        <ConfirmButton
+        <ArmedConfirmButton
           label={`Preserve and add ${count} item(s)${
             manifest ? ' and the manifest' : ''
           } to the report`}

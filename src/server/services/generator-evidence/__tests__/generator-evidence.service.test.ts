@@ -617,6 +617,7 @@ describe('preserveGeneratorEvidence', () => {
 
     it('records who approved it, and when', async () => {
       dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ details: preservedDetails }] as never);
+      const before = Date.now();
       await approveGeneratorEvidenceReport({
         reportId: 3,
         userId: USER,
@@ -629,7 +630,9 @@ describe('preserveGeneratorEvidence', () => {
       };
       expect(where).toEqual({ id: 3 });
       expect(data.details.generatorEvidence.approvedById).toBe(1);
-      expect(Date.parse(data.details.generatorEvidence.approvedAt)).not.toBeNaN();
+      const approvedAt = Date.parse(data.details.generatorEvidence.approvedAt);
+      expect(approvedAt).toBeGreaterThanOrEqual(before);
+      expect(approvedAt).toBeLessThanOrEqual(Date.now());
     });
   });
 

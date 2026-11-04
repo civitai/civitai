@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as EvidenceStore from '~/server/services/generator-evidence/evidence-store';
+import type * as EvidencePayload from '~/server/services/generator-evidence/evidence-payload';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -37,6 +38,7 @@ const {
   submitFileDetails,
   streamEvidenceObject,
   hashEvidenceObject,
+  evidenceFileDetails,
 } = vi.hoisted(() => ({
   uploadFile: vi.fn(),
   finishReport: vi.fn(),
@@ -46,6 +48,7 @@ const {
   submitFileDetails: vi.fn(),
   streamEvidenceObject: vi.fn(),
   hashEvidenceObject: vi.fn(),
+  evidenceFileDetails: vi.fn(),
 }));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
@@ -78,6 +81,13 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
     s3: { send: () => getObject() },
   }),
 }));
+
+// The real details, unless a test stands in for a field the payload might one day leave unescaped.
+vi.mock('~/server/services/generator-evidence/evidence-payload', async (importOriginal) => {
+  const actual = await importOriginal<typeof EvidencePayload>();
+  evidenceFileDetails.mockImplementation(actual.evidenceFileDetails);
+  return { ...actual, evidenceFileDetails };
+});
 
 vi.mock('~/server/services/generator-evidence/evidence-store', async (importOriginal) => ({
   ...(await importOriginal<typeof EvidenceStore>()),
@@ -537,7 +547,6 @@ describe('sending a report of preserved generator evidence', () => {
     const [promptLine, ...rest] = detailsFor(OUTPUT).additionalInfo[1].split('\n');
     expect(promptLine).toMatch(/^Prompt: p+… \[truncated; full text preserved\]$/);
     expect([...promptLine]).toHaveLength(MAX_GENERATION_LINE_CHARS);
-    expect(TRUNCATION_MARKER).toContain('truncated; full text preserved');
     expect(rest).toEqual([
       'Negative prompt: the negative text',
       'Resources: urn:air:sdxl:checkpoint:civitai:1@2',
@@ -909,6 +918,20 @@ describe('markup characters in what NCMEC is sent', () => {
     const [report] = submitReport.mock.calls[0];
     expect(report.reporter.reportingPerson.firstName).toBe('Mod &amp; &lt;Co&gt;');
     expect(report.personOrUserReported.screenName).toBe('&lt;user&gt;');
+  });
+
+  it("opens no CyberTip when one file's details would not be well-formed XML", async () => {
+    const actual = evidenceFileDetails.getMockImplementation()!;
+    evidenceFileDetails.mockImplementationOnce((...args: Parameters<typeof actual>) => ({
+      ...actual(...args),
+      originalFileName: 'unescaped & name',
+    }));
+
+    const id = await sendEvidenceReport(evidenceDetails());
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect((await readRow(id)).reportSentAt).toBeNull();
   });
 
   it('opens no CyberTip when any part of it would not be well-formed XML', async () => {

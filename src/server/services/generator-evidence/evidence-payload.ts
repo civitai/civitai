@@ -148,7 +148,7 @@ export function evidenceReportInfo(details: GeneratorEvidenceDetails) {
 
 export type VerifiedEvidence =
   | { ok: true; body: Blob; contentType: string }
-  | { ok: false; reason: string; shaMismatch?: boolean };
+  | { ok: false; reason: string; shaMismatch?: boolean; overLimit?: true };
 
 export type EvidenceObjectStream = {
   chunks: AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
@@ -182,13 +182,13 @@ export async function verifyStoredEvidence(
 }
 
 /**
- * The preserved copy, only if it still hashes to what was recorded at preserve time. Each chunk is
- * copied into its own Blob as it is hashed, and Node composes Blobs without copying them again, so a
- * file is held once rather than once per buffer it passes through.
+ * The preserved copy, only if it still hashes to what was recorded, read no further than `maxBytes`
+ * or its recorded size. Each chunk is kept as its own Blob, so the file is held once.
  */
 export async function readVerifiedEvidence(
   blob: StoredEvidenceBlob,
-  open: (key: string) => Promise<EvidenceObjectStream>
+  open: (key: string) => Promise<EvidenceObjectStream>,
+  maxBytes: number
 ): Promise<VerifiedEvidence> {
   if (!blob.evidenceKey || !blob.sha256) return { ok: false, reason: 'no preserved copy recorded' };
   const hash = createHash('sha256');
@@ -206,6 +206,13 @@ export async function readVerifiedEvidence(
           ok: false,
           reason: `the preserved copy is larger than the ${blob.bytes} bytes recorded`,
           shaMismatch: true,
+        };
+      // A copy with no recorded size is still read only as far as the caller can hold.
+      if (size > maxBytes)
+        return {
+          ok: false,
+          reason: `the preserved copy is larger than ${maxBytes} bytes`,
+          overLimit: true,
         };
       hash.update(chunk);
       parts.push(new Blob([chunk as Uint8Array<ArrayBuffer>]));

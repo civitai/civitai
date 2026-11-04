@@ -155,6 +155,26 @@ describe('generator evidence file route', () => {
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 
+  it('stops reading a file with no recorded size past the viewing limit, and serves nothing', async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let pulled = 0;
+    async function* long() {
+      for (let i = 0; i < 80; i++) {
+        pulled++;
+        yield chunk;
+      }
+    }
+    streamEvidenceObject.mockResolvedValue({ chunks: long() });
+    dbMock.dbRead.csamReport.findFirst.mockResolvedValue(
+      report(sha, { bytes: undefined }) as never
+    );
+
+    expect(await get()).toBe(413);
+    expect(pulled).toBe(65);
+    expect(served.body).toBeUndefined();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an excluded file', report(sha, { status: 'excluded' }), BLOB, 404],
     ['a file that was not preserved', report(sha, { status: 'blocked-unreadable' }), BLOB, 404],
