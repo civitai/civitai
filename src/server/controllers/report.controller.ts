@@ -127,8 +127,8 @@ export async function createEntityAppealHandler({
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
         if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
-        // An image the appeal flow excludes (its own record, its owner's, or a hold) reads as a
-        // moderator block. Refused in the same words, so the refusal says no more than that.
+        // A refused image still reads as a moderator block, so it gets the same words as an image
+        // that is not one.
         if (await isImageAppealRefused({ imageId: image.id, userId }))
           throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;

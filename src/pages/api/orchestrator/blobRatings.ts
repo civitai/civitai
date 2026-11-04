@@ -4,6 +4,7 @@ import {
   MAX_BLOB_RATING_BATCH,
 } from '~/server/services/orchestrator/blobRatings';
 import { OrchestratorEndpoint } from '~/server/utils/endpoint-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   // Same charset the blob-url matcher accepts, so a path param can't be anything else.
@@ -21,5 +22,6 @@ export default OrchestratorEndpoint(
     const ratings = await getBlobRatingsService({ token, blobIds: parsed.data.blobIds });
     return res.status(200).json({ ratings });
   },
-  ['POST']
+  ['POST'],
+  TokenScope.AIServicesRead
 );

@@ -32,6 +32,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { HIDDEN_APP_SLUG_MAX, HIDDEN_APPS_MAX } from '~/shared/utils/my-apps-hidden';
 
 export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
@@ -349,6 +350,13 @@ export const userMenuSettingsSchema = z.object({
     .optional(),
 });
 
+/** `hiddenApps` — see the key in `userSettingsSchema`. */
+export const hiddenAppsSettingSchema = z
+  .record(z.string().min(1).max(HIDDEN_APP_SLUG_MAX), z.iso.datetime())
+  .refine((m) => Object.keys(m).length <= HIDDEN_APPS_MAX, {
+    message: `At most ${HIDDEN_APPS_MAX} hidden apps`,
+  });
+
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
@@ -403,6 +411,11 @@ export const userSettingsSchema = z.object({
   eventShowcaseHat: z
     .record(z.string(), z.union([z.number().int(), z.literal('off')]).nullable())
     .optional(),
+  // "Remove from My apps" on the `/apps` home: listing slug -> ISO time of the removal. An app
+  // stays off the home until it is used after that time (`isHiddenFromHome`,
+  // shared/utils/my-apps-hidden.ts). Written only by appListings.hideMyApp / unhideMyApp, as an
+  // atomic per-slug merge/remove; capped at HIDDEN_APPS_MAX entries, oldest dropped.
+  hiddenApps: hiddenAppsSettingSchema.optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.

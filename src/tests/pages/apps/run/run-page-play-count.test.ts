@@ -44,6 +44,11 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
   recordAppListingOpen: mockRecordOpen,
 }));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: vi.fn(async () => false),
+}));
 
 // Real-ish host gate: mature (r/x) requires civitai.red. Same stub as the maturity test,
 // because the maturity 404 is one of the exits this file asserts records nothing.
