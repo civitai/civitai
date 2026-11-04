@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
   import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -19,7 +19,13 @@
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { answerForKey, answerForKeyPress } from './keys';
-  import { createVoteTracker, describeOutcome, type PickedItem } from './optimistic';
+  import {
+    MAX_EXCLUDED,
+    createItemBuffer,
+    createVoteTracker,
+    describeOutcome,
+    type PickedItem,
+  } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
 
@@ -170,8 +176,17 @@
     };
   };
 
-  // The next item, fetched while this one is judged, so a vote can move on at once.
-  let ahead = $state<PickedItem | null>(null);
+  // The next few items, fetched and decoded while this one is judged, so a vote can move on at once. Only items whose
+  // image has decoded get in, so a swap never shows a blank stage.
+  const buffer = createItemBuffer();
+  let buffered = $state(0);
+  let refilling = $state(false);
+  // Bumped whenever the buffer is thrown away, so a request still in flight cannot refill it afterwards.
+  let epoch = 0;
+  // The current item a refill came back empty for: ask again only once the item on screen changes.
+  let emptyFor: string | undefined;
+  // Holds each decoded image so the browser keeps it ready until the item is shown.
+  const preloaded = new Map<string, HTMLImageElement>();
   let note = $state<string | null>(null);
   let cooling = $state(false);
   let noteTimer: ReturnType<typeof setTimeout> | undefined;
@@ -181,31 +196,77 @@
   const SETTLE_MS = 250;
   const NOTE_MS = 5000;
 
-  // Primitives, so reloading the page data after a vote (same item, same flags) does not re-run the prefetch and drop a
-  // next item that is already loaded.
+  const syncBuffer = () => (buffered = buffer.size);
+  function dropBuffered(token: string) {
+    buffer.drop(token);
+    preloaded.delete(token);
+    syncBuffer();
+  }
+  function clearBuffer() {
+    epoch += 1;
+    buffer.clear();
+    preloaded.clear();
+    syncBuffer();
+  }
+
+  // Primitives, so reloading the page data after a vote (same item, same flags) does not re-run the refill and drop
+  // items that are already loaded.
   let currentId = $derived(view?.item.id);
   let paused = $derived(Boolean(data.lockoutSeconds || data.muted || data.resetPending));
 
+  // The server's feed can land on a buffered item (after a plain form post): it is on screen now, not ahead.
+  $effect(() => {
+    if (currentId) untrack(() => dropBuffered(currentId));
+  });
+
   $effect(() => {
     const current = currentId;
-    ahead = null;
-    if (!current || paused) return;
-    const controller = new AbortController();
-    const after = tracker.excluded(current).map((token) => `after=${encodeURIComponent(token)}`);
-    fetch(`/play/next?${after.join('&')}`, { signal: controller.signal, headers: { accept: 'application/json' } })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body: { next?: PickedItem | null } | null) => {
-        if (controller.signal.aborted || !body?.next) return;
-        ahead = body.next;
-        new Image().src = body.next.item.src;
-      })
-      .catch(() => {});
-    return () => controller.abort();
+    void buffered;
+    if (!current || paused || refilling || emptyFor === current) return;
+    if (untrack(() => buffer.needsRefill())) void refill(current);
   });
+
+  async function refill(current: string) {
+    const mine = epoch;
+    refilling = true;
+    let added = 0;
+    try {
+      const after = [...tracker.excluded(current), ...buffer.tokens()]
+        .slice(-MAX_EXCLUDED)
+        .map((token) => `after=${encodeURIComponent(token)}`);
+      const response = await fetch(`/play/next?count=${buffer.missing()}&${after.join('&')}`, {
+        headers: { accept: 'application/json' },
+      });
+      const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
+      // Decoded one after the other, in order, so the buffer keeps the order the server picked.
+      for (const entry of body?.items ?? []) {
+        const image = new Image();
+        image.src = entry.item.src;
+        await image.decode();
+        if (mine !== epoch) return;
+        if (buffer.enqueue(entry, (token) => tracker.has(token) || token === currentId)) {
+          preloaded.set(entry.item.id, image);
+          added += 1;
+          syncBuffer();
+        }
+      }
+    } catch {
+      // Nothing buffered for this round; the vote falls back to the form post.
+    } finally {
+      if (mine === epoch) {
+        if (!added) emptyFor = current;
+        refilling = false;
+      }
+    }
+  }
 
   // The server's own view wins whenever it has something to say instead of an item.
   $effect(() => {
-    if (paused) local = null;
+    if (paused) {
+      local = null;
+      clearBuffer();
+      refilling = false;
+    }
   });
 
   function tell(message: string) {
@@ -234,7 +295,12 @@
     if (!reached) tracker.release(token);
     if (!outcome.ok) {
       tell(outcome.message);
-      if (outcome.resync) local = null;
+      dropBuffered(token);
+      if (outcome.resync) {
+        local = null;
+        clearBuffer();
+        refilling = false;
+      }
     }
     // The page's own data (status, rewards, level notices) is read again once the vote has landed.
     await invalidate('app:play').catch(() => {});
@@ -249,10 +315,10 @@
     };
   };
 
-  // A vote or a skip moves on at once to the item fetched ahead and posts in the background. Without that item (or without
+  // A vote or a skip moves on at once to the item buffered ahead and posts in the background. Without that item (or without
   // JS) the form posts and the page reloads as before.
   const submitJudgment: SubmitFunction = (input) => {
-    const next = ahead;
+    const next = buffer.peek();
     const token = String(input.formData.get('item') ?? '');
     if (!next || !token) return submitAndResync(input);
     input.cancel();
@@ -261,8 +327,9 @@
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
     if (answer) sound.play('press');
-    local = next;
-    ahead = null;
+    local = buffer.next();
+    preloaded.delete(next.item.id);
+    syncBuffer();
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
     void post(input.action, input.formData, token);
