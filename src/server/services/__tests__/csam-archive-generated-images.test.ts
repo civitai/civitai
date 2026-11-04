@@ -139,6 +139,18 @@ const PRESERVED_BYTES = Buffer.from('preserved-png-bytes-0123456789');
 const PRESERVED_SHA = createHash('sha256').update(PRESERVED_BYTES).digest('hex');
 
 /** A report filed with preserved generator evidence: one file with a copy, one without. */
+/** One file of the fixture; every recorded field optional, as on a stored report. */
+type FixtureBlob = {
+  blobId: string;
+  role: string;
+  status: string;
+  evidenceKey?: string;
+  sha256?: string;
+  bytes?: number;
+  contentType?: string;
+  preservedAt?: string;
+};
+
 const evidenceReport = (sha256 = PRESERVED_SHA) => ({
   id: 501,
   userId: USER_ID,
@@ -165,7 +177,7 @@ const evidenceReport = (sha256 = PRESERVED_SHA) => ({
             preservedAt: '2026-11-01T00:00:00.000Z',
           },
           { blobId: 'blob-expired', role: 'output', status: 'gone' },
-        ],
+        ] as FixtureBlob[],
       },
     ],
   },
@@ -218,7 +230,7 @@ beforeEach(() => {
   });
   mockFetchBlob = async (url: unknown) => {
     const bytes = URL_BYTES[String(url)];
-    return bytes ? new Blob([bytes], { type: 'image/jpeg' }) : null;
+    return bytes ? new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }) : null;
   };
   mockStreamEvidenceObject = async (key) => {
     if (key !== 'generator-evidence/key-kept') throw new Error(`no evidence object at ${key}`);
