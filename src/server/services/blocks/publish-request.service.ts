@@ -69,7 +69,7 @@ import {
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
 import {
-  APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE,
+  appOwnerTermsRefusalMessage,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
@@ -1143,7 +1143,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
-      throw new AppDeveloperTermsNotAcceptedError(APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE);
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
   }
 
   // Block double-submit on the same slug — only one pending request per
@@ -2946,10 +2948,20 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appId: true,
       repoUrl: true,
       trustTier: true,
-      app: { select: { allowedScopes: true, allowedOrigins: true } },
+      app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
   const isFirstVersion = !existingAppBlock;
+
+  // A request filed before the owner accepted (or before this gate existed) must not go live.
+  const termsOwnerUserId = existingAppBlock?.app?.userId ?? request.submittedByUserId;
+  {
+    const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    if (!(await hasAcceptedAppDeveloperTerms(termsOwnerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
+  }
 
   // SECURITY: trust tier is moderator-controlled, NOT publisher-declared.
   // A manifest must never be able to self-escalate to `internal`/`verified`

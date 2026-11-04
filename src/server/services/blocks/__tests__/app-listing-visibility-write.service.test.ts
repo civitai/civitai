@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -63,6 +64,17 @@ import {
 } from '~/server/services/blocks/app-listing-visibility-write.service';
 import { VISIBILITY_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-visibility.service';
 import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 const listing = dbMock.dbWrite.appListing;
 
@@ -174,6 +186,23 @@ describe('the OWNER path — authorization', () => {
       userId: 9,
     }).catch((e: Error) => e.message);
     expect(unowned).toBe(missing);
+  });
+
+  it('going PUBLIC needs the App Developer Terms accepted; nothing is written until then', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    await expect(
+      setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: lowering visibility never asks for the terms', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    await setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 });
+    expect(terms.assertAcceptedAppDeveloperTermsTrpc).not.toHaveBeenCalled();
   });
 
   it('[NEW] an accepted EDITOR may set the level, not only the owner', async () => {

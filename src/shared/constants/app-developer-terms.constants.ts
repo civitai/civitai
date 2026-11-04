@@ -8,8 +8,12 @@ export const APP_DEVELOPER_TERMS_PATH = '/content/app-developer-terms';
 /** Where a developer who publishes from the CLI or by git push can accept on the web. */
 export const APP_DEVELOPER_TERMS_ACCEPT_PATH = '/apps/submit';
 
-export const APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE =
-  "The app's owner has not accepted the current App Developer Terms yet.";
+export function appOwnerTermsRefusalMessage(baseUrl: string) {
+  return (
+    "The app's owner has not accepted the current App Developer Terms yet. They accept them " +
+    `(${baseUrl}${APP_DEVELOPER_TERMS_PATH}) on the web at ${baseUrl}${APP_DEVELOPER_TERMS_ACCEPT_PATH}.`
+  );
+}
 
 export function appDeveloperTermsRefusalMessage(baseUrl: string) {
   return (
@@ -24,3 +28,16 @@ export class AppDeveloperTermsNotAcceptedError extends Error {
     this.name = 'AppDeveloperTermsNotAcceptedError';
   }
 }
+
+export type DeveloperRateCardRow =
+  | 'goods'
+  | 'publisher_all_my_models'
+  | 'viewer_personal'
+  | 'viewer_global'
+  | 'platform_default';
+
+/**
+ * Rows the developer rate card shows. Goods only at launch: the Buzz-purchase shares are still
+ * placeholder percentages that nothing pays out yet. Add a row here once its rate is signed off.
+ */
+export const DEVELOPER_RATE_CARD_SHOWN_ROWS: readonly DeveloperRateCardRow[] = ['goods'];

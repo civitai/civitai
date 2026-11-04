@@ -5,10 +5,12 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { BLOCK_GOOD_APP_OWNER_SHARE } from '~/shared/constants/block-goods.constants';
 import {
   APP_DEVELOPER_TERMS_VERSION,
-  APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE,
+  appOwnerTermsRefusalMessage,
+  DEVELOPER_RATE_CARD_SHOWN_ROWS,
   AppDeveloperTermsNotAcceptedError,
   appDeveloperTermsRefusalMessage,
 } from '~/shared/constants/app-developer-terms.constants';
+import type { DeveloperRateCardRow } from '~/shared/constants/app-developer-terms.constants';
 
 export { AppDeveloperTermsNotAcceptedError };
 
@@ -64,26 +66,41 @@ export async function assertAcceptedAppDeveloperTermsTrpc(userId: number): Promi
 
 /**
  * The developer-facing rate card, read from the same constants the payouts use so what is shown
- * is what is paid. Memberships are left off while their share is a placeholder.
+ * is what is paid. Which rows are shown is a launch decision, kept apart from the rate math.
  */
 export function getDeveloperRateCard() {
   const share = ACTIVE_RATE_CARD.publisherSharePctByScope;
+  const sharePct: Record<DeveloperRateCardRow, number> = {
+    goods: Math.round(BLOCK_GOOD_APP_OWNER_SHARE * 100),
+    publisher_all_my_models: share.publisher_all_my_models,
+    viewer_personal: share.viewer_personal,
+    viewer_global: share.viewer_global,
+    platform_default: share.platform_default,
+  };
   return {
     version: ACTIVE_RATE_CARD.version,
     effectiveFrom: ACTIVE_RATE_CARD.effectiveFrom,
-    goodsOwnerSharePct: Math.round(BLOCK_GOOD_APP_OWNER_SHARE * 100),
-    buzzPurchaseSharePct: {
-      publisher_all_my_models: share.publisher_all_my_models,
-      viewer_personal: share.viewer_personal,
-      platform_default: share.platform_default,
-      viewer_global: share.viewer_global,
-    },
+    rows: DEVELOPER_RATE_CARD_SHOWN_ROWS.map((row) => ({ row, sharePct: sharePct[row] })),
   };
 }
 
 /** For an editor acting on someone else's app: the owner, in whose name it publishes, must have accepted. */
 export async function assertOwnerAcceptedAppDeveloperTerms(ownerUserId: number): Promise<void> {
   if (!(await hasAcceptedAppDeveloperTerms(ownerUserId))) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: APP_OWNER_TERMS_NOT_ACCEPTED_MESSAGE });
+    throw new TRPCError({ code: 'FORBIDDEN', message: appOwnerTermsRefusalMessage(getBaseUrl()) });
   }
+}
+
+/**
+ * The listing's canonical owner (never a shadow's frozen `userId`) must have accepted. Skipped when
+ * the owner is the acting user, whose own acceptance the caller checks.
+ */
+export async function assertListingOwnerAcceptedAppDeveloperTerms(
+  appListingId: string,
+  actingUserId?: number
+): Promise<void> {
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const ownerUserId = (await resolveListingAccess(appListingId, null))?.ownerUserId;
+  if (ownerUserId != null && ownerUserId !== actingUserId)
+    await assertOwnerAcceptedAppDeveloperTerms(ownerUserId);
 }

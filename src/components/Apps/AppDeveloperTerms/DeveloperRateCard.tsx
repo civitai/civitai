@@ -3,13 +3,17 @@ import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import { APP_DEVELOPER_TERMS_PATH } from '~/shared/constants/app-developer-terms.constants';
+import type { DeveloperRateCardRow } from '~/shared/constants/app-developer-terms.constants';
 
-const BUZZ_PURCHASE_ROWS = [
-  ['publisher_all_my_models', 'a creator added your app to their models'],
-  ['viewer_personal', 'a user added your app for themselves'],
-  ['viewer_global', 'on your app’s full page'],
-  ['platform_default', 'Civitai added your app by default'],
-] as const;
+const BUZZ = 'Buzz bought inside your app:';
+const NET = '(of the net after payment fees)';
+const ROW_LABELS: Record<DeveloperRateCardRow, string> = {
+  goods: 'Goods sold in your app (of the Buzz price)',
+  publisher_all_my_models: `${BUZZ} a creator added your app to their models ${NET}`,
+  viewer_personal: `${BUZZ} a user added your app for themselves ${NET}`,
+  viewer_global: `${BUZZ} on your app’s full page ${NET}`,
+  platform_default: `${BUZZ} Civitai added your app by default ${NET}`,
+};
 
 type RateCardData = RouterOutput['appListings']['getDeveloperRateCard'];
 
@@ -37,16 +41,10 @@ export function DeveloperRateCardView({ data }: { data?: RateCardData }) {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                <Table.Tr>
-                  <Table.Td>Goods sold in your app (of the Buzz price)</Table.Td>
-                  <Table.Td ta="right">{data.goodsOwnerSharePct}%</Table.Td>
-                </Table.Tr>
-                {BUZZ_PURCHASE_ROWS.map(([scope, label]) => (
-                  <Table.Tr key={scope}>
-                    <Table.Td>
-                      Buzz bought inside your app: {label} (of the net after payment fees)
-                    </Table.Td>
-                    <Table.Td ta="right">{data.buzzPurchaseSharePct[scope]}%</Table.Td>
+                {data.rows.map(({ row, sharePct }) => (
+                  <Table.Tr key={row}>
+                    <Table.Td>{ROW_LABELS[row]}</Table.Td>
+                    <Table.Td ta="right">{sharePct}%</Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>

@@ -34,6 +34,7 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
   assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 // Only the service under test is imported, so at origin/main this file still loads and the

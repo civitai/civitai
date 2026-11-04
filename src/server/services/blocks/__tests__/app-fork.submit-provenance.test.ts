@@ -46,6 +46,7 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
   assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 const { submitVersion } = await import('~/server/services/blocks/publish-request.service');

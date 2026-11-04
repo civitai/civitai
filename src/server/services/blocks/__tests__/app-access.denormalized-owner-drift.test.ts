@@ -9,6 +9,7 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
   assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 /**
@@ -411,23 +412,16 @@ describe('offsite-listing::submitListingRevision', () => {
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
-  it("🔴 an editor's revision needs the CANONICAL owner to have accepted the App Developer Terms, not the stale column", async () => {
+  it("an editor's revision is refused while the listing's owner has not accepted the App Developer Terms", async () => {
     const terms = await import('~/server/services/blocks/app-developer-terms.service');
-    const ownerGate = vi.mocked(terms.assertOwnerAcceptedAppDeveloperTerms);
-    const refuse = (notAccepted: number) => async (id: number) => {
-      if (id === notAccepted) throw new TRPCError({ code: 'FORBIDDEN', message: 'owner' });
-    };
+    const ownerGate = vi.mocked(terms.assertListingOwnerAcceptedAppDeveloperTerms);
+    ownerGate.mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN', message: 'owner' }));
     seatFor(EDITOR);
-    ownerGate.mockImplementation(refuse(REAL_OWNER));
     await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
       { code: 'FORBIDDEN' }
     );
+    expect(ownerGate).toHaveBeenCalledWith(SHADOW, EDITOR);
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
-    ownerGate.mockImplementation(refuse(STALE_NAME));
-    await expect(
-      submitListingRevision({ shadowId: SHADOW, userId: EDITOR })
-    ).resolves.toMatchObject({ shadowId: SHADOW });
-    ownerGate.mockImplementation(async () => undefined);
   });
 
   it('still admits an ACCEPTED editor on the parent, and still refuses a stranger', async () => {

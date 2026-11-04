@@ -23,6 +23,7 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
   assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
   assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
   assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
 }));
 
 // submitVersion dynamically imports these; mock them so the sensitive-scope

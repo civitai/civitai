@@ -9,6 +9,7 @@ const accepted = vi.hoisted(() => new Set<string>());
 const db = vi.hoisted(() => ({
   pubReqFindFirst: vi.fn(),
   pubReqUpdateMany: vi.fn(),
+  pubReqUpdate: vi.fn(),
   pubReqCreate: vi.fn(),
   appBlockFindUnique: vi.fn(),
 }));
@@ -30,12 +31,18 @@ vi.mock('~/server/db/client', () => {
       appBlockPublishRequest: {
         findFirst: db.pubReqFindFirst,
         updateMany: db.pubReqUpdateMany,
+        update: db.pubReqUpdate,
         create: db.pubReqCreate,
       },
     },
   };
 });
 vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://civitai.com' } }));
+const listingOwner = vi.hoisted(() => ({ id: 0 }));
+// Hand-listed: the real module needs a database at load, and this is its only export reached here.
+vi.mock('~/server/services/blocks/app-access.service', () => ({
+  resolveListingAccess: vi.fn(async () => ({ ownerUserId: listingOwner.id })),
+}));
 
 const DEV = 42;
 const OWNER = 7;
@@ -96,6 +103,20 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
     expect(db.pubReqCreate).toHaveBeenCalledTimes(0);
   });
 
+  it('a redelivered push of an already-pending sha is refused too, leaving that pending row untouched', async () => {
+    db.pubReqFindFirst.mockResolvedValue({ id: 'pubreq_existing' });
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    const run = recordPendingFromPush({
+      slug: 'my-app',
+      sha: 'abc1234',
+      appBlockId: 'ab_1',
+      manifest: {},
+      version: '1.0.1',
+    });
+    await expect(run).rejects.toThrow('Accept the App Developer Terms');
+    expect(db.pubReqUpdate).toHaveBeenCalledTimes(0);
+  });
+
   it('CONTROL: the same push from an owner who accepted is recorded', async () => {
     accepted.add(`${OWNER}:${APP_DEVELOPER_TERMS_VERSION}`);
     const { recordPendingFromPush } = await import('../publish-request.service');
@@ -126,6 +147,31 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
 const TERMS_BODY_SHA256_BY_VERSION: Record<string, string> = {
   '1': '9819c3f35b73c474d837fc0ed465d594bf78bfe9b9c30777e082a79f6210654a',
 };
+
+describe('App Developer Terms: the listing owner, for an editor or a moderator acting on it', () => {
+  it('refuses while the canonical owner has not accepted, with the terms URL', async () => {
+    listingOwner.id = OWNER;
+    const { assertListingOwnerAcceptedAppDeveloperTerms } = await import(
+      '../app-developer-terms.service'
+    );
+    const err = await assertListingOwnerAcceptedAppDeveloperTerms('apl_1', DEV).catch(
+      (e: unknown) => e
+    );
+    expect((err as TRPCError).code).toBe('FORBIDDEN');
+    expect((err as TRPCError).message).toContain('/content/app-developer-terms');
+  });
+
+  it('CONTROL: passes once that owner accepts', async () => {
+    listingOwner.id = OWNER;
+    accepted.add(`${OWNER}:${APP_DEVELOPER_TERMS_VERSION}`);
+    const { assertListingOwnerAcceptedAppDeveloperTerms } = await import(
+      '../app-developer-terms.service'
+    );
+    await expect(
+      assertListingOwnerAcceptedAppDeveloperTerms('apl_1', DEV)
+    ).resolves.toBeUndefined();
+  });
+});
 
 describe('App Developer Terms text is pinned to its version', () => {
   it('the published terms body is the text of the current version', () => {

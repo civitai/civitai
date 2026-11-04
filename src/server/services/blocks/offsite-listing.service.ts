@@ -7,7 +7,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   assertAcceptedAppDeveloperTermsTrpc,
-  assertOwnerAcceptedAppDeveloperTerms,
+  assertListingOwnerAcceptedAppDeveloperTerms,
 } from '~/server/services/blocks/app-developer-terms.service';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -2006,11 +2006,7 @@ export async function submitListingRevision(opts: {
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
     throw new OffsiteRequestError('INVALID_REVISION', 'this listing is not a revision draft');
   }
-  // The canonical owner, not the shadow's or parent's denormalized `userId` (see resolveListingRole).
-  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
-  const ownerUserId = (await resolveListingAccess(shadowId, userId))?.ownerUserId;
-  if (ownerUserId != null && ownerUserId !== userId)
-    await assertOwnerAcceptedAppDeveloperTerms(ownerUserId);
+  await assertListingOwnerAcceptedAppDeveloperTerms(shadowId, userId);
   if (shadow.status !== 'draft') {
     throw new OffsiteRequestError(
       'INVALID_REVISION',
@@ -3410,6 +3406,9 @@ export async function approveExternalRequest(opts: {
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
   }
+
+  // A request filed before the owner accepted (or before this gate existed) must not go live.
+  await assertListingOwnerAcceptedAppDeveloperTerms(appListingId);
 
   // REVISION branch: the request points at a SHADOW (an edit of an approved
   // parent), not a first-time draft. Apply the shadow onto its live parent instead
