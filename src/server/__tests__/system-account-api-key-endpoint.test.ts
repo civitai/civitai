@@ -264,17 +264,42 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(body).toMatchObject({ userId: SYSTEM_ID, keyId: apiKeys[0].id, rotated: 0 });
   });
 
-  it('grants exactly the named read scopes', async () => {
-    const { status } = await call({ userId: SYSTEM_ID, scopes: ['UserRead', 'BuzzRead'] });
+  it('grants exactly the named scopes, and records the mask in the mint log line', async () => {
+    const { status, body } = await call({
+      userId: SYSTEM_ID,
+      scopes: ['UserRead', 'AIServicesRead', 'AIServicesWrite'],
+    });
+    const mask = TokenScope.UserRead | TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
     expect(status).toBe(201);
-    expect(apiKeys[0].tokenScope).toBe(TokenScope.UserRead | TokenScope.BuzzRead);
+    expect(apiKeys[0].tokenScope).toBe(mask);
+    expect(body.tokenScope).toBe(mask);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        name: 'system-account-api-key-minted',
+        details: expect.objectContaining({ keyId: apiKeys[0].id, tokenScope: mask }),
+      })
+    );
   });
 
   it.each([
-    ['a write scope', ['UserRead', 'ModelsWrite']],
-    ['Full', ['Full']],
+    ['a write scope', ['UserRead', 'ModelsWrite'], TokenScope.UserRead | TokenScope.ModelsWrite],
+    ['a delete scope', ['MediaDelete'], TokenScope.MediaDelete],
+    ['a tipping scope', ['SocialTip'], TokenScope.SocialTip],
+    ['Full', ['Full'], TokenScope.Full],
+    ['a repeated scope', ['VaultWrite', 'VaultWrite'], TokenScope.VaultWrite],
+  ])('grants %s', async (_label, scopes, mask) => {
+    const { status } = await call({ userId: SYSTEM_ID, scopes });
+    expect(status).toBe(201);
+    expect(apiKeys[0].tokenScope).toBe(mask);
+  });
+
+  it.each([
     ['an opt-in scope', ['AppBlocksSubmit']],
-    ['a tipping scope', ['SocialTip']],
+    ['an opt-in scope beside a granted one', ['UserRead', 'LinkConnect']],
+    ['the worker-only scope', ['WorkerRegister']],
+    ['the client-credentials-only scope', ['AppStoreCatalogWrite']],
+    ['None', ['None']],
     ['an unknown scope', ['Nope']],
     ['an inherited property name', ['toString']],
     ['an empty list', []],
