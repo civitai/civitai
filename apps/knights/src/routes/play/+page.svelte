@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
   import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -90,6 +91,16 @@
     reasonItem = null;
     const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
     if (blocked) answers?.requestSubmit(blocked);
+  }
+
+  // The header owns the sound engine's setup, so the saved choice is read once it has run.
+  let soundMuted = $state(false);
+  onMount(() => {
+    void tick().then(() => (soundMuted = sound.muted));
+  });
+  function toggleSound() {
+    soundMuted = !soundMuted;
+    sound.setMuted(soundMuted);
   }
 
   function onApprenticeAnswer(correct: boolean) {
@@ -287,6 +298,12 @@
   </button>
 {/snippet}
 
+{#snippet soundToggle()}
+  <button type="button" class="quiet sound" aria-label="Sound" aria-pressed={!soundMuted} onclick={toggleSound}>
+    <Icon name={soundMuted ? 'volume-x' : 'volume-2'} size={14} />{soundMuted ? 'Sound off' : 'Sound on'}
+  </button>
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
   {#if levelNotice}
     <LevelToast
@@ -381,6 +398,7 @@
           {#if !yesNo}
             <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
           {/if}
+          {@render soundToggle()}
         </div>
         {#if formMessage}
           <p class="notice flat" role="alert">{formMessage}</p>
@@ -463,6 +481,7 @@
         {#if !yesNo}
           <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
         {/if}
+        {@render soundToggle()}
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
@@ -777,6 +796,14 @@
   .quiet.guide:hover:not(:disabled) {
     color: var(--io-parchment);
   }
+  .quiet.sound {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .quiet.sound :global(svg) {
+    color: var(--io-gold);
+  }
 
   kbd {
     font-family: inherit;
@@ -842,7 +869,8 @@
       min-width: 56px;
       min-height: 44px;
     }
-    .quiet.guide {
+    .quiet.guide,
+    .controls.yesno .quiet.sound {
       margin-left: auto;
     }
     .space {
