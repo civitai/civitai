@@ -3758,6 +3758,7 @@ export type KnightsQueueItem = {
   source: string;
   minRank: string;
   votesNeeded: number;
+  escalatedAt: Timestamp | null;
   priority: Generated<number>;
   status: Generated<string>;
   expiresAt: Timestamp | null;

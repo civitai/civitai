@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STAGE_RULES, stageDecisionRule } from './stage-rules';
 import {
   decideChoice,
   isBlockedLevel,
@@ -43,6 +44,60 @@ describe('decideChoice', () => {
 
   it('never resolves on zero total weight', () => {
     expect(decideChoice(votes(['4', '4', '4', '4', '4'], 0), rule)).toEqual({ kind: 'pending' });
+  });
+});
+
+describe('stage rules', () => {
+  const at = (stage: keyof typeof STAGE_RULES, answers: string[]) =>
+    decideChoice(votes(answers), stageDecisionRule(stage));
+
+  it('Knights settle five votes at 60%', () => {
+    expect(at('Knight', ['4', '4', '4', '2', '8'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Knight', ['4', '4', '2', '2', '8'])).toEqual({ kind: 'pending' });
+  });
+
+  it('Templars settle three votes at 67%, so two of three is not enough', () => {
+    expect(at('Templar', ['4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Templar', ['4', '4', '2'])).toEqual({ kind: 'pending' });
+    expect(at('Templar', ['4', '4', '2', '4'])).toEqual({ kind: 'resolved', value: '4' });
+  });
+
+  it('gives up on a Templar split at six votes', () => {
+    expect(at('Templar', ['1', '2', '4', '1', '2', '4'])).toEqual({ kind: 'split' });
+  });
+
+  it('Paladins need two unanimous votes, then three of four', () => {
+    expect(at('Paladin', ['4', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Paladin', ['4', '2'])).toEqual({ kind: 'pending' });
+    expect(at('Paladin', ['4', '2', '4'])).toEqual({ kind: 'pending' });
+    expect(at('Paladin', ['4', '2', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
+    expect(at('Paladin', ['4', '2', '4', '2'])).toEqual({ kind: 'split' });
+  });
+
+  it('keeps the unanimity bar to the first decision only', () => {
+    expect(at('Paladin', ['4', '4', '2'])).toEqual({ kind: 'pending' });
+    expect(at('Paladin', ['4', '4', '4'])).toEqual({ kind: 'resolved', value: '4' });
+  });
+
+  it('lets an item ask for fewer votes than its stage, never more', () => {
+    expect(decideChoice(votes(['4', '4']), stageDecisionRule('Templar', 2))).toEqual({
+      kind: 'resolved',
+      value: '4',
+    });
+    expect(decideChoice(votes(['4', '4', '4']), stageDecisionRule('Knight', 9))).toEqual({
+      kind: 'pending',
+    });
+  });
+
+  it('is not thrown off by float rounding at the threshold', () => {
+    const exact = [0.68, 0.68, 0.68, 0.68, 0.68].map((weight, i) => ({
+      answer: i < 3 ? '4' : '2',
+      weight,
+    }));
+    expect(decideChoice(exact, stageDecisionRule('Knight'))).toEqual({
+      kind: 'resolved',
+      value: '4',
+    });
   });
 });
 

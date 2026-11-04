@@ -8045,8 +8045,9 @@ model KnightsQueueItem {
   question          KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
   imageId           Int
   source            String
-  minRank           String // the stage the item is at; starts at the question's minRank
-  votesNeeded       Int // starts at the question's votesToResolve
+  minRank           String // the stage the item is at (Knight, Templar, Paladin); starts at the question's minRank
+  votesNeeded       Int // votes the current stage needs; starts at the question's votesToResolve, reset to the stage's rule on escalation
+  escalatedAt       DateTime? // when the item last moved up a stage; the feed serves it first for a limited time
   priority          Int             @default(2)
   status            String          @default("Open")
   expiresAt         DateTime?

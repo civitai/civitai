@@ -17,6 +17,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
   '20261210120000_knights_v2_queue',
+  '20261211120000_knights_v2_sources',
   '20261212120000_knights_v2_trials',
   '20261213120000_knights_v2_progression',
   '20261215120000_knights_v2_daily',
@@ -32,6 +33,7 @@ const MIGRATIONS = [
   '20261228120000_knights_v2_fervor_window',
   '20261229120000_knights_v2_answer_snapshot',
   '20261230120000_knights_v2_vote_player_image_idx',
+  '20261231120000_knights_v2_queue_stages',
 ].map((name) =>
   fileURLToPath(
     new URL(
