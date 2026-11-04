@@ -75,7 +75,10 @@ jobs:
           set -euo pipefail
           gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
-          gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"
+          # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
+          # dispatch answers 422. That must not fail the job after lint and apps were dispatched.
+          gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF" \
+            || echo "moderator-boot.yml not on this branch; rebase to get it"
           # Link the runs from this job's summary: it is the only place on the PR that reaches
           # them (see the header). A dispatch's run appears a few seconds after the call returns.
           sleep 10
