@@ -43,7 +43,7 @@ function setup() {
   function Page({ previewing, scoped }: { previewing: boolean; scoped: boolean }) {
     seen.hero = useComCardBrowsingLevel(previewing);
     const body = createElement(Body);
-    return scoped ? createElement(ComCardPreviewScope, { previewing }, body) : body;
+    return scoped ? createElement(ComCardPreviewScope, { previewing, children: body }) : body;
   }
   function Body() {
     seen.page = useBrowsingLevelDebounced();
