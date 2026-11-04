@@ -1209,7 +1209,8 @@ export async function getAppealExcludedIds({
           )
         `
       : [],
-    dbWrite.$queryRaw<{ id: number }[]>`
+    userIds.length
+      ? dbWrite.$queryRaw<{ id: number }[]>`
       SELECT c.id FROM unnest(${userIds}::int[]) AS c(id)
       WHERE EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = c.id)
         OR EXISTS (
@@ -1219,7 +1220,8 @@ export async function getAppealExcludedIds({
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
         -- A hold marker's kept image reads as a moderator block, so an appeal would tip them off.
         OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c.id)
-    `,
+    `
+      : [],
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
 }

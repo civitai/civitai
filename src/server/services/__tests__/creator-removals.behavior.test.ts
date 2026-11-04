@@ -141,17 +141,20 @@ describe('the removed-images list', () => {
     expect(result.total).toBe(3);
   });
 
-  // A hold marker's kept image reads as a moderator block; listing it with an appeal link would
-  // tell its owner something unusual is going on. The case above is the control.
-  it('lists nothing, and so offers no appeal, to an owner under a hold marker', async () => {
+  // A hold marker's kept image reads as a moderator block; an appeal link on it would tell its
+  // owner something unusual is going on. The case above is the control.
+  it('lists the same removals to an owner under a hold marker, with no appeal', async () => {
+    const before = await getMyRemovedImages(OWNER, NOW);
     await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
 
-    const result = await getMyRemovedImages(OWNER, NOW);
+    const held = await getMyRemovedImages(OWNER, NOW);
 
-    expect(result).toEqual({ total: 0, truncated: false, items: [] });
+    expect(before.items.some((i) => i.canAppeal)).toBe(true);
+    expect(held.items.map((i) => i.imageId)).toEqual(before.items.map((i) => i.imageId));
+    expect(held.items.map((i) => i.canAppeal)).toEqual(held.items.map(() => false));
   });
 
-  // Once the hold ends the owner is no longer left out above, but the image it kept stays refused
+  // Once the hold ends the owner's other removals can be appealed again, but the image it kept stays refused
   // by the appeal endpoint until it is purged or released. Another removed image in the same list,
   // which no hold kept, keeps its appeal.
   it('lists an image a hold kept, after the hold ended, with no appeal', async () => {

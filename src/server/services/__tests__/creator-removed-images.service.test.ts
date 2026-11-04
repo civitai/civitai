@@ -168,18 +168,21 @@ describe('getMyRemovedImages', () => {
     expect(result.total).toBe(1);
   });
 
-  it('lists nothing for an owner the appeal flow excludes', async () => {
-    given({
-      events: [{ imageId: 1, removedAt: 1 }],
-      states: [{ imageId: 1 }],
-      excludedOwners: [USER],
-    });
+  it('lists an owner the appeal flow excludes exactly as it lists anyone else', async () => {
+    const setup = {
+      events: [
+        { imageId: 2, removedAt: 2 },
+        { imageId: 1, removedAt: 1 },
+      ],
+      states: [{ imageId: 1 }, { imageId: 2 }],
+    };
+    given(setup);
+    const normal = await getMyRemovedImages(USER, EARLY);
+    given({ ...setup, excludedOwners: [USER] });
+    const excluded = await getMyRemovedImages(USER, EARLY);
 
-    expect(await getMyRemovedImages(USER, EARLY)).toEqual({
-      total: 0,
-      truncated: false,
-      items: [],
-    });
+    expect(normal.items.map((i) => i.imageId)).toEqual([2, 1]);
+    expect(excluded).toEqual(normal);
   });
 
   it('leaves out a removal it could not check', async () => {

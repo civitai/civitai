@@ -113,9 +113,8 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   const imageIds = events.map((e) => Number(e.imageId));
   const [states, excludedIds] = await Promise.all([
     getImageStates(userId, imageIds),
-    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+    getAppealExcludedIds({ imageIds, userIds: [] }),
   ]);
-  if (excludedIds.users.has(userId)) return none;
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
   // An image with no state row is left out rather than shown unchecked.
@@ -127,7 +126,6 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   });
 
   const existing = listed.filter((e) => e.state.owned).map((e) => e.id);
-  // A hold that has ended no longer excludes the owner above, but the images it kept stay refused.
   const [appeals, holdBlocked] = await Promise.all([
     getLatestAppeals(userId, existing),
     getHoldMarkerBlockedImageIds({ imageIds: existing, userId }),
