@@ -66,8 +66,12 @@ export type HatTurfLayerProps = {
 };
 
 export function HatTurfLayer(props: HatTurfLayerProps) {
+  const feed = useTurfFeed();
   // Hooks stay in the inner component so cards without a joined viewer run none.
-  return useTurfFeed()?.joined ? <HatTurfLayerContent {...props} /> : null;
+  if (feed?.joined) return <HatTurfLayerContent {...props} />;
+  // A viewer who has not joined sees no hats, though a surface may still pin its corner.
+  if (feed && props.corner) return <HatTurfLayerContent {...props} stickers={[]} />;
+  return null;
 }
 
 function HatTurfLayerContent({

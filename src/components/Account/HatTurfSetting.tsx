@@ -1,10 +1,6 @@
 import { Switch } from '@mantine/core';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
-import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
-import { useJoin } from '~/components/HatTurf/useHatTurf';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { trpc } from '~/utils/trpc';
+import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
 
 export const HAT_TURF_SETTING_LABEL = 'Take part in Hat Turf';
 const HAT_TURF_SETTING_DESCRIPTION =
@@ -12,19 +8,9 @@ const HAT_TURF_SETTING_DESCRIPTION =
 
 /** In account settings, while Hat Turf runs on any surface this viewer can see. */
 export function HatTurfSetting() {
-  const user = useCurrentUser();
-  const features = useFeatureFlags();
-  const definition = usePlayableEventDecoration(
-    'Image',
-    !!user && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard)
-  );
-  const event = definition?.event;
-  const { data: stock } = trpc.hatTurf.getStock.useQuery(
-    { event: event ?? '' },
-    { enabled: !!event, staleTime: 30_000 }
-  );
+  const { event, stock } = useTurfGate();
   const setOptIn = useJoin();
-  if (!event || !stock || stock.mode === 'off') return null;
+  if (!event || !stock) return null;
 
   return (
     <SettingsSection title="Hat Turf" id="hat-turf">

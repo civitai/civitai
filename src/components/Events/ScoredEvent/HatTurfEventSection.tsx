@@ -1,10 +1,6 @@
 import { Button, Paper, Text } from '@mantine/core';
 import { useEffect, useRef } from 'react';
-import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
 
 /** The page anchor articles link to: /events/<event>#hat-turf. */
 export const HAT_TURF_ANCHOR = 'hat-turf';
@@ -14,26 +10,10 @@ export const HAT_TURF_ANCHOR = 'hat-turf';
  * for this event on a surface they can see (the same gate as the account setting).
  */
 export function HatTurfEventSection({ event, team }: { event: string; team?: string }) {
-  const user = useCurrentUser();
-  const features = useFeatureFlags();
-  const definition = usePlayableEventDecoration(
-    'Image',
-    !!user && !!team && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard)
-  );
-  const playable = definition?.event === event;
-  const utils = trpc.useUtils();
-  const { data: stock } = trpc.hatTurf.getStock.useQuery(
-    { event },
-    { enabled: playable, staleTime: 30_000 }
-  );
-  const setOptIn = trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => {
-      void utils.hatTurf.getStock.invalidate();
-      void utils.hatTurf.getSummaries.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
-  });
-  const shown = playable && !!stock && stock.mode !== 'off';
+  const gate = useTurfGate(!!team);
+  const stock = gate.event === event ? gate.stock : undefined;
+  const setOptIn = useJoin();
+  const shown = !!stock;
   // The section mounts after its queries, too late for the browser's own jump to the anchor.
   const ref = useRef<HTMLDivElement>(null);
   const jumped = useRef(false);

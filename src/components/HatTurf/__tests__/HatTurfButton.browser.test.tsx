@@ -401,10 +401,15 @@ describe('Hat Turf button on a feed ImageCard', () => {
   test('no button until the viewer’s stock is read', async () => {
     h.stock = undefined;
     renderCard();
-    // The card mounts its footer after a commit or two; the other tests find the button well inside
-    // this wait, which is what makes its absence here mean something.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await cardRendered();
     expect(q('hat-turf-button')).toBeNull();
+  });
+
+  // The control for the absences above: by the time the reactions are drawn, the button is too.
+  test('joined: the button is drawn by the time the reactions are', async () => {
+    renderCard();
+    await cardRendered();
+    expect(q('hat-turf-button')).not.toBeNull();
   });
 
   test('not joined: a closed image still offers Join', async () => {

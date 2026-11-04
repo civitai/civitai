@@ -1,6 +1,8 @@
+import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -65,9 +67,27 @@ export function useJoin(onDone?: () => void) {
     onSuccess: () => {
       onDone?.();
       void utils.hatTurf.getStock.invalidate();
-      // Joining opens the player's own images to hats.
       void utils.hatTurf.getSummaries.invalidate();
     },
     onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
   });
+}
+
+/**
+ * The event Hat Turf runs for on a surface this signed-in viewer can see, and their stock in it.
+ * Both undefined otherwise, and the stock also while turf is off.
+ */
+export function useTurfGate(enabled = true) {
+  const user = useCurrentUser();
+  const features = useFeatureFlags();
+  const definition = usePlayableEventDecoration(
+    'Image',
+    enabled && !!user && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard)
+  );
+  const event = definition?.event;
+  const { data: stock } = trpc.hatTurf.getStock.useQuery(
+    { event: event ?? '' },
+    { enabled: !!event, staleTime: 30_000 }
+  );
+  return { event, stock: event && stock?.mode !== 'off' ? stock : undefined };
 }
