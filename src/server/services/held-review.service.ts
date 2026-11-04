@@ -58,12 +58,13 @@ const storylineCopyReleasedSql = (markerView: boolean) =>
     AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
 
 /**
- * A deleted storyline's copy (`deleteStoryline`) is released once its owner, every chapter author,
- * commenter and draft author is unheld, read now, and no report on it is open.
+ * A deleted storyline's copy (`deleteStoryline`) is released once it is a year old, its owner, every
+ * chapter author, commenter and draft author is unheld, read now, and no report on it is open.
  */
 const heldStorylineReleasedSql = (markerView: boolean) => {
   const held = (id: string) => accountHoldSql(Prisma.raw(id), markerView);
-  return Prisma.sql`NOT ${held('hs."userId"')}
+  return Prisma.sql`hs."deletedAt" < now() - interval '1 year'
+    AND NOT ${held('hs."userId"')}
     AND NOT EXISTS (
       SELECT 1 FROM "HeldStorylineChapter" hc WHERE hc."storylineId" = hs.id AND ${held(
         'hc."userId"'

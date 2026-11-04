@@ -9,8 +9,9 @@ import {
 import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
 
 /**
- * The daily purge of a deleted storyline's copy (`deleteStoryline`): kept while its owner, any
- * chapter author or any commenter is held, or a report on it is open, read at run time.
+ * The daily purge of a deleted storyline's copy (`deleteStoryline`): kept for a year after the
+ * delete, and after that while its owner, any chapter author or any commenter is held, or a report on
+ * it is open, read at run time.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -56,7 +57,8 @@ beforeEach(async () => {
       "StorylineReport", "Report";
     INSERT INTO "HeldStoryline" (id, "userId", title, "createdAt", "deletedAt", "deletedById",
       "commenterIds", "pendingAuthorIds")
-      VALUES (1, ${OWNER}, 'Kept', now(), now(), ${OWNER}, ARRAY[${COMMENTER}], ARRAY[${DRAFTER}]);
+      VALUES (1, ${OWNER}, 'Kept', now(), now() - interval '400 days', ${OWNER}, ARRAY[${COMMENTER}],
+        ARRAY[${DRAFTER}]);
     INSERT INTO "HeldStorylineChapter" (id, "storylineId", "userId", depth, "createdAt", "ownerId",
       "authorId") VALUES (10, 1, ${OWNER}, 0, now(), ${OWNER}, ${OWNER}),
       (11, 1, ${AUTHOR}, 1, now(), ${OWNER}, ${AUTHOR});
@@ -136,6 +138,23 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
     expect(await left()).toEqual(none);
   });
 
+  it('keeps a copy deleted under a year ago even when nothing else keeps it', async () => {
+    await db.exec(`UPDATE "HeldStoryline" SET "deletedAt" = now() - interval '300 days'`);
+    await purgeReleasedHeldCopies();
+    expect(await left()).toEqual(all);
+  });
+
+  it('keeps a copy deleted under a year ago after its open report is resolved', async () => {
+    await db.exec(`
+      INSERT INTO "Report" (id, status) VALUES (72, 'Pending');
+      UPDATE "HeldStoryline" SET "reportIds" = ARRAY[72], "deletedAt" = now() - interval '1 day';
+    `);
+    await purgeReleasedHeldCopies();
+    await db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 72`);
+    await purgeReleasedHeldCopies();
+    expect(await left()).toEqual(all);
+  });
+
   it('releases a hold that lapsed after a year, as every other copy does', async () => {
     await db.exec(`
       INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
@@ -163,7 +182,7 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
     await hold(OWNER);
     await db.exec(`
       INSERT INTO "HeldStoryline" (id, "userId", title, "createdAt", "deletedAt", "deletedById")
-        VALUES (2, 50, 'Free', now(), now(), 50);
+        VALUES (2, 50, 'Free', now(), now() - interval '400 days', 50);
       INSERT INTO "HeldStorylineChapter" (id, "storylineId", "userId", depth, "createdAt", "ownerId",
         "authorId") VALUES (20, 2, 50, 0, now(), 50, 50);
     `);
