@@ -1317,6 +1317,15 @@ describe('finalizeCrucible — Bradley-Terry ranking', () => {
     // The guard's ingest wait counts from endedAt: a missing one would defer a short count forever.
     expect(fitCrucibleScoresForPrizes).toHaveBeenCalledTimes(1);
     expect(fitCrucibleScoresForPrizes).toHaveBeenCalledWith(1, { endedAt: endAt });
+    // The switch dates a crucible by startAt, else createdAt: both must be read for it.
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, createdAt: true, endAt: true }),
+      })
+    );
+    expect(usesBradleyTerryRanking).toHaveBeenCalledWith(
+      expect.objectContaining({ startAt: null, endAt })
+    );
     expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
   });
 
