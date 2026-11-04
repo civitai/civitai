@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import {
+  constants,
+  isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
+} from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
@@ -236,7 +240,9 @@ export default PublicEndpoint(
           return res.status(403).json({
             error: 'Early Access',
             deadline: fileResult.details.deadline,
-            message: 'This asset is in Early Access. You can use Buzz access it now!',
+            message: isNonCommercialBaseModel(fileResult.details.baseModel)
+              ? notCommerciallyAvailableMessage(fileResult.details.baseModel)
+              : 'This asset is in Early Access. You can use Buzz access it now!',
           });
         else return res.redirect(`/model-versions/${modelVersionId}`);
       }
