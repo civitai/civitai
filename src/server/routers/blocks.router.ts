@@ -9077,6 +9077,22 @@ export const blocksRouter = router({
           message: 'Account is not eligible to edit apps',
         });
       }
+      // The owner too: the commit below files its review request in the owner's name, which
+      // refuses after the commit has landed if the owner has not accepted.
+      const { hasAcceptedAppDeveloperTerms, AppDeveloperTermsNotAcceptedError } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      for (const userId of new Set([ctx.user!.id, block.app.userId])) {
+        if (!(await hasAcceptedAppDeveloperTerms(userId))) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message:
+              userId === ctx.user!.id
+                ? new AppDeveloperTermsNotAcceptedError().message
+                : "The app's owner has not accepted the current App Developer Terms yet.",
+          });
+        }
+      }
       // The canonical Forgejo repo only exists once the first version is
       // ZIP-approved (approveRequest pre-creates civitai-apps/<slug>); until
       // then there's nothing to commit to.

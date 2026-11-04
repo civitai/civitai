@@ -1043,6 +1043,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
     params;
 
+  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+  await assertAcceptedAppDeveloperTerms(submittedByUserId);
+
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
   }
@@ -2163,14 +2166,6 @@ export async function recordPendingFromPush(args: {
     return { publishRequestId: existingForSha.id };
   }
 
-  // Supersede any OTHER still-pending request for this slug (older sha or a
-  // dev submitVersion) so the partial unique index (one pending per slug)
-  // doesn't reject the insert and the queue shows the newest unreviewed sha.
-  await dbWrite.appBlockPublishRequest.updateMany({
-    where: { slug: args.slug, status: 'pending' },
-    data: { status: 'withdrawn' },
-  });
-
   // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
   // is required + FK-constrained, and the owner is the most meaningful actor for
   // a commit to their repo.
@@ -2182,6 +2177,19 @@ export async function recordPendingFromPush(args: {
   if (typeof ownerUserId !== 'number') {
     throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
   }
+  // A push has no checkbox, so the app owner, in whose name the request is filed, must have accepted.
+  // Before the supersede below: a refused push must not withdraw the owner's other pending request.
+  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+  await assertAcceptedAppDeveloperTerms(ownerUserId);
+
+  // Supersede any OTHER still-pending request for this slug (older sha or a
+  // dev submitVersion) so the partial unique index (one pending per slug)
+  // doesn't reject the insert and the queue shows the newest unreviewed sha.
+  await dbWrite.appBlockPublishRequest.updateMany({
+    where: { slug: args.slug, status: 'pending' },
+    data: { status: 'withdrawn' },
+  });
+
   const publishRequestId = `pubreq_${newUlid()}`;
 
   // Park the review IMMEDIATELY with an empty summary, then enrich the real

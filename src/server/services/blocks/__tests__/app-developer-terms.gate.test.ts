@@ -1,0 +1,116 @@
+import { TRPCError } from '@trpc/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
+
+const accepted = vi.hoisted(() => new Set<string>());
+const db = vi.hoisted(() => ({
+  pubReqFindFirst: vi.fn(),
+  pubReqUpdateMany: vi.fn(),
+  pubReqCreate: vi.fn(),
+  appBlockFindUnique: vi.fn(),
+}));
+
+vi.mock('~/server/db/client', () => {
+  const termsFindUnique = async ({
+    where,
+  }: {
+    where: { userId_version: { userId: number; version: string } };
+  }) => {
+    const { userId, version } = where.userId_version;
+    return accepted.has(`${userId}:${version}`) ? { userId, acceptedAt: new Date() } : null;
+  };
+  const appDeveloperTermsAcceptance = { findUnique: termsFindUnique };
+  return {
+    dbRead: { appDeveloperTermsAcceptance, appBlock: { findUnique: db.appBlockFindUnique } },
+    dbWrite: {
+      appDeveloperTermsAcceptance,
+      appBlockPublishRequest: {
+        findFirst: db.pubReqFindFirst,
+        updateMany: db.pubReqUpdateMany,
+        create: db.pubReqCreate,
+      },
+    },
+  };
+});
+vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://civitai.com' } }));
+
+const DEV = 42;
+const OWNER = 7;
+
+beforeEach(() => {
+  accepted.clear();
+  vi.clearAllMocks();
+  db.pubReqFindFirst.mockResolvedValue(null);
+  db.appBlockFindUnique.mockResolvedValue({ app: { userId: OWNER } });
+});
+
+describe('App Developer Terms: publishing is refused server-side until accepted', () => {
+  it('submitVersion (web and CLI upload) refuses a developer who has not accepted, naming the terms and where to accept', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const run = submitVersion({
+      bundleBuffer: Buffer.alloc(0),
+      submittedByUserId: DEV,
+      submitterIsModerator: false,
+    });
+    await expect(run).rejects.toThrow(
+      'Accept the App Developer Terms (https://civitai.com/content/app-developer-terms) on the web at https://civitai.com/apps/submit'
+    );
+  });
+
+  it('CONTROL: once the current version is accepted, submitVersion gets past the gate (to the bundle check)', async () => {
+    accepted.add(`${DEV}:${APP_DEVELOPER_TERMS_VERSION}`);
+    const { submitVersion } = await import('../publish-request.service');
+    const run = submitVersion({
+      bundleBuffer: Buffer.alloc(0),
+      submittedByUserId: DEV,
+      submitterIsModerator: false,
+    });
+    await expect(run).rejects.toThrow('bundle is empty');
+  });
+
+  it('a version bump asks again: acceptance of an older version does not count', async () => {
+    accepted.add(`${DEV}:0`);
+    const { submitVersion } = await import('../publish-request.service');
+    const run = submitVersion({
+      bundleBuffer: Buffer.alloc(0),
+      submittedByUserId: DEV,
+      submitterIsModerator: false,
+    });
+    await expect(run).rejects.toThrow('Accept the App Developer Terms');
+  });
+
+  it('a git push by an owner who has not accepted records nothing and withdraws none of their pending requests', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    const run = recordPendingFromPush({
+      slug: 'my-app',
+      sha: 'abc1234',
+      appBlockId: 'ab_1',
+      manifest: {},
+      version: '1.0.1',
+    });
+    await expect(run).rejects.toThrow('Accept the App Developer Terms');
+    expect(db.pubReqUpdateMany).toHaveBeenCalledTimes(0);
+    expect(db.pubReqCreate).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: the same push from an owner who accepted is recorded', async () => {
+    accepted.add(`${OWNER}:${APP_DEVELOPER_TERMS_VERSION}`);
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    await recordPendingFromPush({
+      slug: 'my-app',
+      sha: 'abc1234',
+      appBlockId: 'ab_1',
+      manifest: {},
+      version: '1.0.1',
+    }).catch(() => undefined);
+    expect(db.pubReqUpdateMany).toHaveBeenCalledTimes(1);
+    expect(db.pubReqCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('tRPC publish paths get a FORBIDDEN the client can show, not a masked 500', async () => {
+    const { assertAcceptedAppDeveloperTermsTrpc } = await import('../app-developer-terms.service');
+    const err = await assertAcceptedAppDeveloperTermsTrpc(DEV).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TRPCError);
+    expect((err as TRPCError).code).toBe('FORBIDDEN');
+  });
+});

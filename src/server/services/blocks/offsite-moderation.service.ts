@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertAcceptedAppDeveloperTermsTrpc } from '~/server/services/blocks/app-developer-terms.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
   APP_LISTING_REPORT_REASONS,
@@ -1924,6 +1925,7 @@ export async function republishOwnListing(opts: {
   userId: number;
 }): Promise<RepublishOwnListingResult> {
   const { input, userId } = opts;
+  await assertAcceptedAppDeveloperTermsTrpc(userId);
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
   let onsiteBlockRestoreDrift = false;

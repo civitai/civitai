@@ -53,6 +53,15 @@ const { seq } = vi.hoisted(() => ({ seq: { n: 0 } }));
 // source-repo read goes through `dbRead` on the author paths and through the interactive
 // `tx` (the write client) inside `applyApprovedRevision`.
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// These suites exercise publish paths for a developer who has already accepted the App Developer
+// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+}));
 
 const mockRead = dbMock.dbRead;
 const mockWrite = dbMock.dbWrite;

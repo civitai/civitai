@@ -24,6 +24,15 @@ import { BETA_MESSAGE_MAX } from '~/server/schema/blocks/offsite-listing.schema'
 import { BETA_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-beta.service';
 import { OWNER_REVISION_IN_PROGRESS_MESSAGE } from '~/server/services/blocks/app-listing-moderator-edit';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// These suites exercise publish paths for a developer who has already accepted the App Developer
+// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13) — EDIT-without-withdraw (shadow-draft revision) tests.

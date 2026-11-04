@@ -12,6 +12,12 @@ import {
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import { AppDeveloperTermsNotAcceptedError } from '~/server/services/blocks/app-developer-terms.service';
+import {
+  APP_DEVELOPER_TERMS_ACCEPT_PATH,
+  appDeveloperTermsRefusalMessage,
+} from '~/shared/constants/app-developer-terms.constants';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -405,6 +411,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       version: reviewVersion,
     });
   } catch (e) {
+    if (e instanceof AppDeveloperTermsNotAcceptedError) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/review',
+        description: appDeveloperTermsRefusalMessage(getBaseUrl()),
+        targetUrl: `${getBaseUrl()}${APP_DEVELOPER_TERMS_ACCEPT_PATH}`,
+      });
+      res.status(403).json({ error: 'App Developer Terms not accepted' });
+      return;
+    }
     notifyModsOfWebhookFailure({
       slug,
       sha,

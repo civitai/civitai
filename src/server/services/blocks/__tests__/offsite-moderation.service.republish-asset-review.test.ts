@@ -21,6 +21,16 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // The onsite drift warn is a dynamic import of the logging client; the canonical
 // mock keeps that graph out of this suite.
 import '~/__tests__/mocks/logging.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// These suites exercise publish paths for a developer who has already accepted the App Developer
+// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+}));
+
 const mockRead = dbMock.dbRead;
 const mockWrite = dbMock.dbWrite;
 

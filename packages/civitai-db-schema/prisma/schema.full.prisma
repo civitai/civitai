@@ -4963,6 +4963,18 @@ model AppStorageImportGrant {
   @@map("app_storage_import_grants")
 }
 
+// App Developer Terms acceptance: one row per (developer, terms version). A developer accepts with
+// the checkbox at app publish; bumping APP_DEVELOPER_TERMS_VERSION asks everyone again. The FK to
+// "User" lives only in migration `20261223120000_app_developer_terms_acceptance`, applied by hand.
+model AppDeveloperTermsAcceptance {
+  userId     Int      @map("user_id")
+  version    String
+  acceptedAt DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  @@id([userId, version])
+  @@map("app_developer_terms_acceptances")
+}
+
 // App Blocks App Storage schema migrations: one run per (approved publish request, collection)
 // over that collection's stored documents. RAW SQL ONLY (`storage-migration-run.service.ts`), so
 // the model is stripped from the generated client; the migration

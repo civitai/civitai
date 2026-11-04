@@ -148,6 +148,15 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 
 import { isFlipt } from '~/server/flipt/client';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// These suites exercise publish paths for a developer who has already accepted the App Developer
+// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+}));
 
 const mockedIsFlipt = vi.mocked(isFlipt);
 

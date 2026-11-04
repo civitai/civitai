@@ -5,6 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertAcceptedAppDeveloperTermsTrpc } from '~/server/services/blocks/app-developer-terms.service';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -262,6 +263,7 @@ export async function submitExternalListing(opts: {
 }): Promise<SubmitExternalListingResult> {
   const { input, userId, isModerator = false } = opts;
 
+  await assertAcceptedAppDeveloperTermsTrpc(userId);
   await throwOnBlockedUserContent([input.slug, input.changelog, ...listingAuthorText(input)], {
     isModerator,
     surface: 'offsite-listing',
@@ -1951,6 +1953,7 @@ export async function submitListingRevision(opts: {
 }): Promise<SubmitListingRevisionResult> {
   const { shadowId, userId, isModerator = false } = opts;
   const changelog = opts.changelog ?? null;
+  await assertAcceptedAppDeveloperTermsTrpc(userId);
   await throwOnBlockedUserContent(changelog, { surface: 'offsite-listing' });
 
   const shadow = (await dbRead.appListing.findUnique({

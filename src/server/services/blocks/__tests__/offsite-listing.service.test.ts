@@ -23,6 +23,15 @@ import type {
   SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import type * as S3Utils from '~/utils/s3-utils';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// These suites exercise publish paths for a developer who has already accepted the App Developer
+// Terms; the refusal itself is covered in app-developer-terms.gate.test.ts.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13 P3a) — off-site submission SERVICE tests (design B1).
