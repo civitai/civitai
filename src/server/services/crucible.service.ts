@@ -3455,7 +3455,7 @@ export const submitVote = async ({
     (async () => {
       await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
       await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
-      // The set grows by one vote at a time, so this fires once per judge and crucible.
+      // At most once per judge and crucible: concurrent votes can both read past 201 and skip it.
       if ((await sysRedis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
         logToAxiom({
           type: 'info',
