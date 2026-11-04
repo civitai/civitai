@@ -124,12 +124,17 @@ const normalize = (text: string) =>
 // keeps whole prompts out, so what is left to catch is a fragment, which exact matching misses.
 function echoesSecret(output: string, secrets: (string | null | undefined)[]) {
   const haystack = normalize(output);
+  // The line is short and a sent text may not be, so the line's windows are the ones indexed.
+  const windows = new Set<string>();
+  for (let i = 0; i + SECRET_WINDOW <= haystack.length; i++)
+    windows.add(haystack.slice(i, i + SECRET_WINDOW));
   return secrets.some((secret) => {
-    const needle = normalize(typeof secret === 'string' ? secret : '').trim();
+    const text = typeof secret === 'string' ? secret.slice(0, SCAN_LIMIT) : '';
+    const needle = normalize(text).trim();
     if (needle.length < SECRET_MIN) return false;
     if (needle.length <= SECRET_WINDOW) return haystack.includes(needle);
     for (let i = 0; i + SECRET_WINDOW <= needle.length; i++)
-      if (haystack.includes(needle.slice(i, i + SECRET_WINDOW))) return true;
+      if (windows.has(needle.slice(i, i + SECRET_WINDOW))) return true;
     return false;
   });
 }

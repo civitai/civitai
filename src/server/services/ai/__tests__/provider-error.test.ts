@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ChatError, ConnectionError, RequestTimeoutError } from '@openrouter/sdk/models/errors';
 import {
   APP_ERROR_MESSAGES,
@@ -310,5 +310,18 @@ describe('describeProviderError', () => {
     const text = describeProviderError(chatErrorFrom(body));
     expect(text).toContain('provider=Google AI Studio');
     expect(text).toContain('model=openai/gpt-4.1:free');
+  });
+
+  it('bounds the echo check by the scan limit, however long the sent text', () => {
+    const body = JSON.stringify({ error: { code: 400, metadata: { provider_name: 'Example' } } });
+    const has = vi.spyOn(Set.prototype, 'has');
+    const includes = vi.spyOn(String.prototype, 'includes');
+    try {
+      describeProviderError(chatErrorFrom(body), { sent: ['abcdefghijklmnopq'.repeat(120_000)] });
+      expect(has.mock.calls.length + includes.mock.calls.length).toBeLessThanOrEqual(1024 * 1024);
+    } finally {
+      has.mockRestore();
+      includes.mockRestore();
+    }
   });
 });

@@ -604,6 +604,9 @@ describe('reviewCollection: a rating label the rules do not recognise', () => {
   it.each([
     ['real person likeness', { depictsRealPerson: true }],
     ['photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
+    ['minor depicted inappropriately', { depictsMinor: true, minorInappropriate: true }],
+    ['suggestive styling', { suggestiveStyling: true }],
+    ['an unrecognized category', { otherViolations: ['something new'] }],
   ])('still rejects %s escalated alongside a missing label', async (_label, observations) => {
     queuePending([pendingItem()]);
     modelSees({ nsfwEstimate: undefined, ...observations });
