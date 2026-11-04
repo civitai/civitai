@@ -31,7 +31,9 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   },
 }));
 
-const { getJudgingPair, submitVote } = await import('~/server/services/crucible.service');
+const { getJudgingPair, getJudgingProgress, submitVote } = await import(
+  '~/server/services/crucible.service'
+);
 
 const JUDGE = 42;
 const JUDGE_ENTRY_VOTES_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:1:${JUDGE}`;
@@ -475,5 +477,152 @@ describe('submitVote — the ClickHouse vote row', () => {
       winnerEntryId: 10,
       loserEntryId: 20,
     });
+  });
+});
+
+describe('judge-side skip — pairs this judge’s own votes already decide', () => {
+  const rawEntry = (id: number) => ({
+    id,
+    crucibleId: 1,
+    imageId: id * 10,
+    userId: id + 1000,
+    score: 1500,
+    image_id: id * 10,
+    image_url: `image-${id}`,
+    image_width: 512,
+    image_height: 512,
+    image_nsfwLevel: 1,
+    user_id: id + 1000,
+    user_username: `user${id}`,
+    user_deletedAt: null,
+    user_image: null,
+  });
+  const withEntries = (...entryIds: number[]) =>
+    dbMock.dbRead.$queryRaw.mockResolvedValue(entryIds.map(rawEntry));
+  const serve = async () => {
+    const pair = await getJudgingPair({ crucibleId: 1, userId: JUDGE });
+    return pair ? [pair.left.id, pair.right.id].sort((a, b) => a - b) : null;
+  };
+  /** Serves the judge `winner`-`loser`, then votes `winner` the better. */
+  const judge = async (winner: number, loser: number) => {
+    await redisMock.sysRedis.set(
+      `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`,
+      `${Math.min(winner, loser)}:${Math.max(winner, loser)}`
+    );
+    await vote(winner, loser);
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: 500,
+      status: CrucibleStatus.Active,
+      endAt: new Date(Date.now() + 60_000),
+      nsfwLevel: 31,
+      textNsfw: false,
+      ingestion: CrucibleIngestionStatus.Scanned,
+      image: { ingestion: ImageIngestionStatus.Scanned },
+      minViewSeconds: null,
+    });
+    useFakeRedis();
+  });
+
+  it('never serves A-C to a judge who voted A>B and B>C', async () => {
+    withEntries(10, 20, 30);
+    await judge(10, 20);
+    await judge(20, 30);
+
+    // 10-30 is the only pair left unvoted, and the two votes already answer it.
+    expect(await serve(), 'pair served after A>B, B>C').toBeNull();
+    const progress = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
+    expect(progress, 'progress agrees nothing is left').toMatchObject({
+      remainingPairs: 0,
+      judgedPairs: 3,
+    });
+  });
+
+  it('skips every pair a longer chain decides: A>B>C>D skips A-C, B-D and A-D', async () => {
+    withEntries(10, 20, 30, 40);
+    await judge(10, 20);
+    await judge(20, 30);
+    await judge(30, 40);
+
+    expect(await serve(), 'pair served after A>B>C>D').toBeNull();
+  });
+
+  it('still serves a pair the judge’s votes point both ways on', async () => {
+    // A>B>C>D>A: every unvoted pair (A-C, B-D) is reached in both directions.
+    withEntries(10, 20, 30, 40);
+    await judge(10, 20);
+    await judge(20, 30);
+    await judge(30, 40);
+    await judge(40, 10);
+
+    expect([['10', '30'].join(), ['20', '40'].join()]).toContain(String(await serve()));
+  });
+
+  const outcomes = () =>
+    redisMock.sysRedis.sMembers(`${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE}`);
+
+  it('records no outcome for a vote that was refused or failed', async () => {
+    withEntries(10, 20, 30);
+    // Refused: 10-30 was never served.
+    await redisMock.sysRedis.set(`${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`, '10:20');
+    await expect(vote(10, 30)).rejects.toThrow('no longer available');
+    // Failed: the rating update throws.
+    processVote.mockRejectedValueOnce(new Error('redis down'));
+    await expect(judge(10, 20)).rejects.toThrow('redis down');
+
+    expect(await outcomes(), 'outcomes after a refused and a failed vote').toEqual([]);
+    await judge(20, 30);
+    expect(await outcomes(), 'outcomes after a counted vote').toEqual(['20>30']);
+  });
+
+  it('still accepts a vote whose outcome could not be stored', async () => {
+    withEntries(10, 20, 30);
+    const sAdd = redisMock.sysRedis.sAdd.getMockImplementation()!;
+    redisMock.sysRedis.sAdd.mockImplementation(async (key: string, value: string) => {
+      if (key.startsWith(REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES)) throw new Error('redis down');
+      return sAdd(key, value);
+    });
+
+    await expect(judge(10, 20)).resolves.toBeUndefined();
+    expect(processVote).toHaveBeenCalledTimes(1);
+  });
+
+  it('decides only from this judge’s votes, never another judge’s', async () => {
+    withEntries(10, 20, 30);
+    await redisMock.sysRedis.sAdd(
+      `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE + 1}`,
+      '10>20'
+    );
+    await redisMock.sysRedis.sAdd(
+      `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE + 1}`,
+      '20>30'
+    );
+    await judge(10, 20);
+
+    expect(await serve(), 'next pair for this judge').not.toBeNull();
+  });
+
+  it('progress reaches zero exactly when the next serve is empty, judging 8 entries', async () => {
+    const ids = [10, 20, 30, 40, 50, 60, 70, 80];
+    withEntries(...ids);
+    let votes = 0;
+    for (;;) {
+      const { remainingPairs } = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
+      const pair = await serve();
+      expect(remainingPairs === 0, `remaining ${remainingPairs}, served ${pair}`).toBe(
+        pair === null
+      );
+      if (!pair) break;
+      // A consistent judge: the lower id is always the better entry. The pair just served is the
+      // one voted, anchor and all.
+      await vote(pair[0], pair[1]);
+      votes++;
+      if (votes > 28) throw new Error('served more pairs than 8 entries have');
+    }
+    // No assertion on votes: the per-entry cap alone stops a judge near 21, which overlaps the
+    // skip's spread, so a count would be flaky.
   });
 });

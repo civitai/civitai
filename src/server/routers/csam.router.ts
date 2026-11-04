@@ -48,10 +48,10 @@ export const csamRouter = router({
   createExternalReport: moderatorProcedure
     .input(createExternalCsamReportSchema)
     .mutation(createExternalCsamReportHandler),
-  getCsamReports: moderatorProcedure
+  getCsamReports: csamProcedure
     .input(paginationSchema)
     .query(({ input }) => getCsamReportsPaged(input)),
-  getCsamReportsStats: moderatorProcedure.query(() => getCsamReportStats()),
+  getCsamReportsStats: csamProcedure.query(() => getCsamReportStats()),
   getGeneratorEvidenceTriggers: csamProcedure
     .input(generatorEvidenceUserSchema)
     .query(({ input }) => getEvidenceTriggers(input.userId)),

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   logBlockedCsamReports: vi.fn(),
   logOverdueEvidenceApprovals: vi.fn(async () => undefined),
   getCsamsToRemoveContent: vi.fn(async () => []),
+  sweepStaleSendDirs: vi.fn(async (): Promise<string[]> => []),
 }));
 
 vi.mock('~/server/services/csam.service-new', () => mocks);
@@ -284,6 +285,27 @@ describe('send-csam-reports batch isolation', () => {
         ncmecReportId: 4401,
       }),
     ]);
+  });
+});
+
+describe('send-csam-reports scratch sweep', () => {
+  it('sweeps before the first report is claimed', async () => {
+    await sendJob!.run({}).result;
+    expect(mocks.sweepStaleSendDirs.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.processCsamReport.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still sends every report when the sweep fails, and logs the failure', async () => {
+    mocks.sweepStaleSendDirs.mockRejectedValueOnce(new Error('EACCES'));
+
+    await sendJob!.run({}).result;
+
+    expect(mocks.processCsamReport).toHaveBeenCalledTimes(reports.length);
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as { subType?: string; message?: unknown })
+      .filter((arg) => arg?.subType === 'send-scratch-sweep');
+    expect(logged).toEqual([expect.objectContaining({ message: 'EACCES' })]);
   });
 });
 
