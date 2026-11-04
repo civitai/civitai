@@ -1,7 +1,7 @@
 import { chunk, isEmpty } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { stopsCreatorEarnings } from '~/server/common/constants';
+import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
 import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -256,6 +256,13 @@ export async function runPayout(lastUpdate: Date) {
   }
 
   const creatorsToPay: Record<number, ResourceRow[]> = {};
+  // Pre-conversion amounts (cash-settled license fees in tenths of a penny), for the audit log only.
+  const withheld: Record<PayoutSource, Partial<Record<BuzzAccountType, number>>> = {
+    compensation: {},
+    tip: {},
+    licenseFee: {},
+  };
+  const withheldVersionIds = new Set<number>();
   const batches = chunk(rows, BATCH_SIZE);
   log(`Processing ${batches.length} batches (batch size: ${BATCH_SIZE})`);
 
@@ -279,19 +286,33 @@ export async function runPayout(lastUpdate: Date) {
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
 
-      // Drop creator-compensation rows where earnings stopped: the orchestrator's stored
-      // payoutEnabled can predate the base model's license change.
-      const earningsStoppedIds = modelVersionIds.filter((_, i) =>
-        stopsCreatorEarnings(baseModels[i])
-      );
+      // The orchestrator's stored payoutEnabled, tipsEnabled and fee can predate the base model's
+      // license change, so the payout applies the same rules as the mini lookup itself.
+      const keep = (r: ResourceRow) => {
+        const baseModel = baseModels[modelVersionIds.indexOf(r.modelVersionId)];
+        const stopped =
+          r.source === 'licenseFee'
+            ? isNonCommercialBaseModel(baseModel)
+            : stopsCreatorEarnings(baseModel);
+        if (!stopped) return true;
+        withheldVersionIds.add(r.modelVersionId);
+        withheld[r.source][r.accountType] = (withheld[r.source][r.accountType] ?? 0) + r.amount;
+        return false;
+      };
       creatorsToPay[userId].push(
-        ...batch.filter(
-          (r) =>
-            modelVersionIds.includes(r.modelVersionId) &&
-            !(r.source === 'compensation' && earningsStoppedIds.includes(r.modelVersionId))
-        )
+        ...batch.filter((r) => modelVersionIds.includes(r.modelVersionId) && keep(r))
       );
     }
+  }
+
+  if (withheldVersionIds.size) {
+    log(`Withheld earnings on ${withheldVersionIds.size} non-commercial versions`, withheld);
+    logToAxiom({
+      type: 'info',
+      name: 'creator-compensation-earnings-stopped',
+      message: `Withheld creator earnings on ${withheldVersionIds.size} non-commercial versions`,
+      details: { date: dateStr, versions: withheldVersionIds.size, withheld },
+    }).catch(() => undefined);
   }
 
   const creatorCount = Object.keys(creatorsToPay).length;

@@ -213,6 +213,7 @@ describe('runPayout', () => {
     dbMock.dbRead.$queryRaw.mockReset();
     vi.mocked(generationTipAmountPaidCounter.inc).mockClear();
     vi.mocked(creatorCompAmountPaidCounter.inc).mockClear();
+    loggingMock.logToAxiom.mockClear();
   });
 
   const sentTransactions = () =>
@@ -280,20 +281,33 @@ describe('runPayout', () => {
     ]);
   });
 
-  it('pays no compensation for a version on a non-commercial base model', async () => {
+  const sentKeys = () =>
+    sentTransactions()
+      .map(({ externalTransactionId, amount }) => ({ externalTransactionId, amount }))
+      .sort((a, b) => a.externalTransactionId.localeCompare(b.externalTransactionId));
+
+  // 11 is under the FLUX non-commercial license, 12 is a commercial control, 13 another non-commercial license.
+  const NON_COMMERCIAL_AND_CONTROL = [
+    {
+      userId: CREATOR,
+      modelVersionIds: [11, 12, 13],
+      baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B', 'Flux.3 Klein'],
+    },
+  ];
+
+  it('pays no compensation, tip or license fee for a version on a non-commercial base model', async () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
-      row('compensation', 'Yellow', 7, 12),
-      row('compensation', 'Yellow', 4, 13),
       row('tip', 'Yellow', 6, 11),
+      row('licenseFee', 'Yellow', 9, 11),
+      row('compensation', 'Yellow', 7, 12),
+      row('tip', 'Yellow', 3, 12),
+      row('licenseFee', 'Yellow', 5, 12),
+      row('compensation', 'Yellow', 4, 13),
+      row('tip', 'Yellow', 2, 13),
+      row('licenseFee', 'Yellow', 1, 13),
     ]);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([
-      {
-        userId: CREATOR,
-        modelVersionIds: [11, 12, 13],
-        baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B', 'Flux.3 Klein'],
-      },
-    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(NON_COMMERCIAL_AND_CONTROL);
 
     await runPayout(START);
 
@@ -302,18 +316,67 @@ describe('runPayout', () => {
     expect(sql).toContain('array_agg(mv.id::int ORDER BY mv.id) as "modelVersionIds"');
     expect(sql).toContain('array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels"');
 
-    expect(
-      sentTransactions().map(({ externalTransactionId, amount }) => ({
-        externalTransactionId,
-        amount,
-      }))
-    ).toEqual(
-      expect.arrayContaining([
-        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
-        { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
-      ])
+    // Only version 12's rows: the dropped tips must not shift the compensation transaction either.
+    expect(sentKeys()).toEqual([
+      { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
+      { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 3 },
+      { externalTransactionId: 'license-fee-2026-10-13-7-Yellow', amount: 5 },
+    ]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'creator-compensation-earnings-stopped',
+        details: expect.objectContaining({
+          date: '2026-10-13',
+          versions: 2,
+          withheld: {
+            compensation: { Yellow: 54 },
+            tip: { Yellow: 8 },
+            licenseFee: { Yellow: 10 },
+          },
+        }),
+      })
     );
-    expect(sentTransactions()).toHaveLength(2);
+  });
+
+  it('pays a creator whose only rows are on non-commercial versions nothing', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('tip', 'Yellow', 3, 11),
+      row('licenseFee', 'CashSettled', 40, 11),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(NON_COMMERCIAL_AND_CONTROL);
+
+    await runPayout(START);
+
+    expect(sentTransactions()).toEqual([]);
+  });
+
+  // A date paid before this filter existed can be retried; the buzz service dedups on key alone, so
+  // dropping rows must only lower or remove transactions, never mint a key that day did not have.
+  it('retrying a day paid before the filter sends only keys that day already has', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 0.6, 12),
+      row('tip', 'Yellow', 1.6, 11),
+      row('compensation', 'Blue', 50.6, 12),
+      row('tip', 'Blue', 1.6, 11),
+      row('tip', 'Blue', 2, 12),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(NON_COMMERCIAL_AND_CONTROL);
+    // What the job paid that day while it still paid tips on version 11, written out.
+    const paidThen = [
+      'creator-tip-comp-2026-10-13-7-Yellow', // floor(2.2) - floor(1.6) = 1
+      'generation-tip-2026-10-13-7-Yellow', // 1
+      'creator-tip-comp-2026-10-13-7-Blue', // floor(54.2) - floor(3.6) = 51
+      'generation-tip-2026-10-13-7-Blue', // 3
+    ];
+
+    await runPayout(START);
+
+    expect(sentKeys()).toEqual([
+      { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Blue', amount: 50 },
+      { externalTransactionId: 'generation-tip-2026-10-13-7-Blue', amount: 2 },
+    ]);
+    for (const { externalTransactionId } of sentKeys())
+      expect(paidThen).toContain(externalTransactionId);
   });
 });
 
