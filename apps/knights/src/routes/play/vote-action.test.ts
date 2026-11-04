@@ -55,41 +55,6 @@ beforeEach(() => {
   castYesNoVote.mockReset();
 });
 
-describe('vote action time on item', () => {
-  const NOW_MS = new Date('2026-12-15T12:00:00Z').getTime();
-  const sentWith = (kind: 'queue' | 'hidden' | 'yesno', ageMs: number | null) =>
-    ageMs === null
-      ? sealItem('secret', 7, { kind, id: 3 })
-      : sealItem('secret', 7, { kind, id: 3 }, NOW_MS - ageMs);
-  const msSent = () =>
-    [castVote, answerHiddenCheck, castYesNoVote].flatMap((m) =>
-      m.mock.calls.map((c) => c[1].msOnItem)
-    );
-
-  it.each([
-    ['queue', castVote],
-    ['hidden', answerHiddenCheck],
-    ['yesno', castYesNoVote],
-  ] as const)('measures it from the token for a %s answer', async (kind, cast) => {
-    cast.mockResolvedValue({ status: 'recorded' });
-    await submit({ item: sentWith(kind, 4200), answer: '4' });
-    expect(msSent()).toEqual([4200]);
-  });
-
-  it('clamps a page left open and a clock that ran backwards', async () => {
-    castVote.mockResolvedValue({ status: 'recorded' });
-    await submit({ item: sentWith('queue', 3_600_000), answer: '4' });
-    await submit({ item: sentWith('queue', -9_000), answer: '4' });
-    expect(msSent()).toEqual([600_000, 0]);
-  });
-
-  it('never takes a duration from the client', async () => {
-    castVote.mockResolvedValue({ status: 'recorded' });
-    await submit({ item: sentWith('queue', 1500), answer: '4', msOnItem: '99', timeOnItem: '99' });
-    expect(msSent()).toEqual([1500]);
-  });
-});
-
 describe('vote action on a yes/no question', () => {
   const yesNoItem = (id: number) => sealItem('secret', 7, { kind: 'yesno', id });
 
@@ -100,13 +65,7 @@ describe('vote action on a yes/no question', () => {
 
     expect(castYesNoVote).toHaveBeenCalledWith(
       expect.anything(),
-      {
-        userId: 7,
-        itemId: 41,
-        answer: 'yes',
-        msOnItem: expect.any(Number),
-        isModerator: undefined,
-      },
+      { userId: 7, itemId: 41, answer: 'yes', isModerator: undefined },
       expect.anything()
     );
     expect(castVote).not.toHaveBeenCalled();

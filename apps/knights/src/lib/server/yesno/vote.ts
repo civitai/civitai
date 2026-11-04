@@ -29,13 +29,7 @@ export type YesNoVoteResult =
  */
 export async function castYesNoVote(
   db: Kysely<DB>,
-  input: {
-    userId: number;
-    itemId: number;
-    answer: string;
-    msOnItem?: number | null;
-    isModerator?: boolean;
-  },
+  input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
   deps: Pick<QueueDeps, 'now' | 'voteLimits' | 'mirrorXp'>
 ): Promise<YesNoVoteResult> {
   const now = deps.now();

@@ -106,17 +106,6 @@ describe('an answer', () => {
     expect(mirror).toHaveBeenCalledWith([{ playerId: 1, xp: PROGRESSION.voteXp }]);
   });
 
-  it('stores the time on the item beside the answer', async () => {
-    const ids = await seed([row('a')]);
-    await knights(1);
-
-    expect(await vote(1, ids.a, 'yes', { msOnItem: 2400 })).toEqual({ status: 'recorded' });
-
-    expect(
-      (await pg.query(`SELECT "msOnItem" FROM "KnightsVote" WHERE "itemId"=$1`, [ids.a])).rows
-    ).toEqual([{ msOnItem: 2400 }]);
-  });
-
   it('is refused for what the other votes refuse: repeats, unknown answers, ranks, reset, pace', async () => {
     const ids = await seed([row('a')]);
     await knights(1);

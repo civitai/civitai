@@ -5120,7 +5120,6 @@ export interface KnightsVote {
   consequence: string | null;
   noticedAt: Date | null;
   blockReason: string | null;
-  msOnItem: number | null;
 }
 
 export interface KnightsPlayer {

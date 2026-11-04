@@ -163,7 +163,7 @@ async function runBatch(
     WITH batch AS (
       SELECT v."itemId", v."playerId", v."createdAt", ${
         shape.when
-      } AS "settledAt", v."questionKey", v."imageId", v."answer", v."msOnItem",
+      } AS "settledAt", v."questionKey", v."imageId", v."answer",
         ${shape.externalId} AS "externalId"
       FROM "KnightsVote" v
       ${shape.join}
@@ -201,8 +201,7 @@ async function runBatch(
             p_labeller_user_id => b."playerId",
             p_question_version => b."version",
             p_snapshot => jsonb_build_object('url', b."url"),
-            p_phash => b."pHash",
-            p_ms_on_item => b."msOnItem"
+            p_phash => b."pHash"
           )
         END AS "labelId"
       FROM base b
