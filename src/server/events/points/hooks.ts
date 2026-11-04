@@ -440,8 +440,8 @@ async function remixEarnersLeft(actorId: number, imageId: number) {
   return placements + stories.length;
 }
 
-// The fewest scoring sparks per person per UTC day of any running event that scores them; none
-// scores stories without it.
+// The fewest scoring sparks per person per UTC day of any registered event that sets one, whether
+// or not it is running; with none set, stories do not score.
 async function storySparksPerDay() {
   const caps = (await loadEvents())
     .map((e) => e.scoring?.storySparksPerActorPerDay)

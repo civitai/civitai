@@ -356,6 +356,23 @@ describe('onStorySparked', () => {
     await onStorySparked(await story({ spark: 202 }));
     expect(earning(202)).toBe(true);
   });
+
+  it('starts a fresh limit at 00:00 UTC', async () => {
+    events.list = [{ scoring: { storySparksPerActorPerDay: 1 } }];
+    for (const id of [201, 202]) await image(id);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-01T23:59:00.000Z'));
+      await onStorySparked(await story({ spark: 201 })); // the day's one slot
+      await onStorySparked(await story({ spark: 202 })); // over the limit
+      expect(earning(202)).toBe(false);
+      vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
+      await onStorySparked(await story({ spark: 202 }));
+      expect(earning(202)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('removal', () => {
