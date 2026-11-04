@@ -423,3 +423,20 @@
     padding-left: 6px;
   }
 }
+
+/* For a footer below the image in a card whose height the masonry fixed: a second row would come
+   out of the picture, so it is the one wrapping line at any width. */
+.actions.oneLine {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+
+  & .actionRow,
+  & .tipRow {
+    display: contents;
+  }
+
+  & .tipEnd {
+    padding-left: 6px;
+  }
+}
