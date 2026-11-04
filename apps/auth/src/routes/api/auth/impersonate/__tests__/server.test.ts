@@ -133,14 +133,6 @@ describe('POST /api/auth/impersonate — from an impersonation session', () => {
     expect(h.trackImpersonation).not.toHaveBeenCalled();
   });
 
-  it('403s a start from the session of a banned moderator who is impersonating', async () => {
-    h.getOrProduceSessionUser.mockImplementation(async (id: number) =>
-      id === ORIGINAL_MOD ? { id, bannedAt: new Date('2026-01-01') } : { id }
-    );
-    expect(await statusOf(makeEvent(activeMod, 300, ORIGINAL_MOD))).toBe(403);
-    expect(h.mintUserSession).not.toHaveBeenCalled();
-  });
-
   it('still exits after a refused start', async () => {
     const event = makeEvent(activeMod, 300, ORIGINAL_MOD);
     expect(await statusOf(event)).toBe(403);

@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { mintUserSession } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { trackImpersonation } from '$lib/server/auth/mod-activity';
+import { sessions } from '$lib/server/auth/registry';
 
 // POST /api/auth/impersonate/exit — stop impersonating. No body, no extra auth: the authority is the
 // `impersonatedBy` claim on the CURRENT session token (set only by a mod-authed impersonate call, so it's
@@ -16,7 +17,10 @@ export const POST: RequestHandler = async ({ locals }) => {
 
   const moderator = await getOrProduceSessionUser(modId);
   if (!moderator) error(404, 'moderator not found');
-  if (moderator.bannedAt || moderator.deletedAt) error(403, 'moderator account is not active');
+  if (moderator.bannedAt || moderator.deletedAt) {
+    if (locals.tokenId && targetId) await sessions.invalidateToken(locals.tokenId, targetId);
+    error(403, 'moderator account is not active');
+  }
 
   const token = await mintUserSession(moderator, {
     parent: locals.session,
