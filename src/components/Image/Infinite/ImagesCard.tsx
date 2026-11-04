@@ -16,7 +16,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
-import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -347,25 +347,13 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
-              {!contextProps.hideReactions &&
-                // The row only becomes a flex container when there is something
-                // to put beside the reactions. `StickerPlacementCardBadge`
-                // returns null with the flag off, so wrapping unconditionally
-                // would still change this card's layout for everyone while
-                // adding nothing — a visual regression with no feature behind
-                // it, on the surface the flag exists to keep clear of.
-                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
-                  <div className="flex items-center">
-                    <div className="min-w-0 flex-1">
-                      <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                    </div>
-                    <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
-                  </div>
-                ) : (
-                  <div>
-                    <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                  </div>
-                ))}
+              {!contextProps.hideReactions && (
+                <ImageReactions
+                  image={image}
+                  readonly={!safe || (isScanned && isBlocked)}
+                  showStickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
+                />
+              )}
             </>
           )}
         </ImageGuard2>
@@ -376,7 +364,16 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
 export const ImagesCardMemoized = memo(ImagesCard);
 
-function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; readonly: boolean }) {
+// Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
+function ImageReactions({
+  image,
+  readonly,
+  showStickerBadge,
+}: {
+  image: ImagesInfiniteModel;
+  readonly: boolean;
+  showStickerBadge: boolean;
+}) {
   const inView = useElementInView();
   return (
     <Metrics
@@ -392,21 +389,64 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
       }}
       useLive={inView !== false}
     >
-      {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          metricsUnknown={image.stats?.statsUnknown}
-          targetUserId={image.user.id}
-          readonly={readonly}
-          className="justify-between p-2"
-          invisibleEmpty
-          disableBuzzTip={image.poi}
-          abbreviate
-        />
-      )}
+      {(metrics) => {
+        // A read-only card with nothing to show renders no row at all, tip included.
+        const hasReactions =
+          !!image.stats?.statsUnknown ||
+          image.reactions.length > 0 ||
+          [
+            metrics.likeCount,
+            metrics.dislikeCount,
+            metrics.heartCount,
+            metrics.laughCount,
+            metrics.cryCount,
+          ].some((n) => (n ?? 0) > 0);
+        return (
+          <div
+            className={clsx(cardClasses.footer, classes.actionsFooter)}
+            onClick={(e) => {
+              // The padding around the buttons must not open the card's image link.
+              if (!readonly) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+          >
+            <div className={cardClasses.actions}>
+              <div className={cardClasses.actionRow}>
+                <Reactions
+                  className={clsx(cardClasses.reactions, classes.bar)}
+                  entityId={image.id}
+                  entityType="image"
+                  reactions={image.reactions}
+                  metrics={metrics}
+                  metricsUnknown={image.stats?.statsUnknown}
+                  targetUserId={image.user.id}
+                  readonly={readonly}
+                  invisibleEmpty
+                  disableBuzzTip
+                  abbreviate
+                />
+              </div>
+              <div className={cardClasses.tipRow}>
+                {!image.poi && !(readonly && !hasReactions) && (
+                  <ImageBuzzTip
+                    entityId={image.id}
+                    targetUserId={image.user.id}
+                    tippedAmountCount={metrics.tippedAmountCount}
+                    metricsUnknown={image.stats?.statsUnknown}
+                    readonly={readonly}
+                    className={clsx(cardClasses.reactions, classes.bar, 'flex items-center pl-0.5')}
+                  />
+                )}
+                <div className={cardClasses.tipEnd}>
+                  {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }}
     </Metrics>
   );
 }
