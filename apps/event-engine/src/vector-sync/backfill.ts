@@ -448,25 +448,34 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
       // Sized to what the account's quota has left, or embed() would split it into workflows
       // sent one by one, past a pause.
       const full = Math.min(embedder?.batchSize ?? MAX_INPUTS_PER_WORKFLOW, capacity);
-      const size = embedder?.submitAllowance?.(full) ?? full;
       let inFlight = 0;
       for (const b of running) inFlight += b.steps;
 
       // Submit only what the budget and the embedder's own step-rate schedule take now, so
       // nothing waits inside the embedder: a pause or a lowered limit applies to the next batch.
       // Its schedule, not a copy, so its retries and re-submits hold new batches back too.
-      const submitWait = embedder?.submitWaitMs ?? 0;
-      if (
-        !held &&
-        queue.length &&
-        (stamped || !running.size) &&
-        size > 0 &&
-        inFlight + Math.min(size, queue.length) <= capacity &&
-        submitWait === 0
-      ) {
-        submit(takeBatch(queue, size));
-        continue;
+      let sent = false;
+      for (;;) {
+        const size = embedder?.submitAllowance?.(full) ?? full;
+        if (
+          held ||
+          !queue.length ||
+          !(stamped || !running.size) ||
+          size <= 0 ||
+          inFlight + Math.min(size, queue.length) > capacity ||
+          (embedder?.submitWaitMs ?? 0) > 0
+        ) {
+          break;
+        }
+        const batch = takeBatch(queue, size);
+        inFlight += batch.length;
+        submit(batch);
+        sent = true;
+        // embed() reserves quota only after its first await, so a quota-sized batch goes alone.
+        if (size < full) break;
       }
+      if (sent) continue;
+      const submitWait = embedder?.submitWaitMs ?? 0;
       const readDone =
         next <= opts.floor || (opts.limit !== undefined && total.eligible >= opts.limit);
       const wantsRead =

@@ -51,7 +51,7 @@ describe('what a browser may post', () => {
     trackActionSchema.safeParse({ type: 'Experiment_Exposure', details }).success;
   const base = {
     exp: 'hatTurfFeedCard',
-    variant: 'count-button',
+    variant: 'badge-popover',
     assignment: 'rule',
     surface: 'feed-card',
   };

@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as Notifications from '~/utils/notifications';
+import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
 
 import '~/styles/globals.css';
 
@@ -24,6 +25,11 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(async () => undefined),
   user: { id: 1 } as { id: number } | null,
   mine: null as unknown,
+  trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackUtilsModule>()),
+  useTrackEvent: () => ({ trackAction: h.trackAction }),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -104,6 +110,7 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
     <TurfSummaryContext.Provider
       value={{
         event: 'birthday2026',
+        arm: null,
         team: 'blue',
         images: {
           9: {
@@ -142,6 +149,7 @@ const text = (re: RegExp) =>
   );
 
 beforeEach(() => {
+  h.trackAction.mockClear();
   h.stock = { available: 3, optedIn: true, mode: 'live' };
   h.stickers = [
     sticker(1, 'blue', 0.3, 0.3),
@@ -171,6 +179,37 @@ describe('Hat Turf on image detail', () => {
       { event: 'birthday2026', optedIn: true },
       expect.anything()
     );
+  });
+
+  test('not joined: an image whose owner has not joined still invites', async () => {
+    h.stock = { available: 3, optedIn: false, mode: 'live' };
+    render({ open: { 9: false } });
+    await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
+    click(text(/^Join$/));
+    expect(h.optIn).toHaveBeenCalledWith(
+      { event: 'birthday2026', optedIn: true },
+      expect.anything()
+    );
+  });
+
+  test('joined: an image whose owner has not joined has no hat to place, and the card says why', async () => {
+    render({ open: { 9: false } });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(q('hat-turf-detail-hat')).toBeNull();
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() =>
+      expect(q('hat-turf-detail-closed')?.textContent).toBe(
+        "This creator hasn't joined Hat Turf yet"
+      )
+    );
+  });
+
+  test('joined: an open image says nothing about the creator', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-stats')).not.toBeNull());
+    expect(q('hat-turf-detail-closed')).toBeNull();
   });
 
   test('Not now closes the invite and records the dismissal', async () => {
@@ -223,6 +262,8 @@ describe('Hat Turf on image detail', () => {
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();
     expect(hats().length).toBe(3);
+    // A detail save is not a feed-card placement in the feed experiment's readout.
+    expect(h.trackAction).not.toHaveBeenCalled();
   });
 
   test('own hat beyond the feed cap still reads as placed; the button refuses instead of drafting', async () => {

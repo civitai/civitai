@@ -37,6 +37,8 @@ type ImagesContextProps = {
    * viewer's own setting alone everywhere else.
    */
   revealStickers?: boolean;
+  /** No Hat Turf on these cards, and none of its fetches. */
+  hideHatTurf?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -67,6 +69,7 @@ export function ImagesProvider({
   hideReactions,
   hideStickerBadge,
   revealStickers,
+  hideHatTurf,
   collectionId,
   judgeInfo,
   judgingCategories,
@@ -106,7 +109,7 @@ export function ImagesProvider({
   return (
     <ImagesContext.Provider value={state}>
       <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
-        <TurfSummaryProvider imageIds={imageIds}>
+        <TurfSummaryProvider imageIds={imageIds} gate={hideHatTurf ? null : undefined}>
           <RemixGalleryBatchProvider imageIds={imageIds}>
             <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
           </RemixGalleryBatchProvider>

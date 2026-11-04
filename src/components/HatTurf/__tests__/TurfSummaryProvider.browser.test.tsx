@@ -2,12 +2,19 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 
 const h = vi.hoisted(() => ({
-  gate: { event: 'birthday2026' } as { event: string } | null,
+  gate: { event: 'birthday2026', arm: 'control' } as {
+    event: string;
+    arm: 'control' | 'badge-popover';
+  } | null,
   asked: [] as { proc: string; input: any }[],
   mark: vi.fn(),
   fetch: vi.fn(async () => ({} as Record<number, unknown[]>)),
   push: undefined as undefined | ((raw: unknown) => void),
+  // Every mounted provider's push handler: one per simulated viewer.
+  viewers: new Set<(raw: unknown) => void>(),
+  utils: undefined as unknown,
 }));
+h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
 
 const summary = (leader: string, hatted = false) => ({
   shown: { blue: 2, pink: 1 },
@@ -22,6 +29,7 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: (_message: string, cb: (raw: unknown) => void) => {
     h.push = cb;
+    h.viewers.add(cb);
   },
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -76,7 +84,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                   ),
           }));
         },
-        useUtils: () => ({ hatTurf: { getStickersForImages: { fetch: h.fetch } } }),
+        useUtils: () => h.utils,
       }
     ),
   };
@@ -107,10 +115,11 @@ const mount = (imageIds: number[]) =>
   );
 
 beforeEach(() => {
-  h.gate = { event: 'birthday2026' };
+  h.gate = { event: 'birthday2026', arm: 'control' };
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
+  h.viewers.clear();
   latest = null;
 });
 afterEach(() => cleanup());
@@ -132,6 +141,12 @@ describe('TurfSummaryProvider', () => {
     expect(latest!.open[4]).toBe(false);
     expect(latest!.open[5]).toBe(true);
     expect(latest!.stickers[120]).toHaveLength(1);
+  });
+
+  test('hands the viewer’s arm to the cards', async () => {
+    h.gate = { event: 'birthday2026', arm: 'badge-popover' };
+    await mount(ids(3));
+    await vi.waitFor(() => expect(latest?.arm).toBe('badge-popover'));
   });
 
   test('asks nothing, and offers no context, with Hat Turf off', async () => {
@@ -199,5 +214,123 @@ describe('TurfSummaryProvider', () => {
     const last = h.mark.mock.calls.slice(-3).map(([arg]) => arg.imageIds.length);
     expect(last).toEqual([50, 50, 20]);
     stops.forEach((stop) => stop());
+  });
+
+  test('cards mounting over a scroll burst are marked in one request', async () => {
+    vi.useFakeTimers();
+    try {
+      await mount([1]);
+      const stops: (() => void)[] = [];
+      for (const id of [11, 12, 13, 14, 15]) {
+        stops.push(latest!.watch(id));
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(h.mark).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
+      stops.forEach((stop) => stop());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('one hot image: K viewers × P pushes', () => {
+  const K = 20;
+  const P = 10;
+  const HOT = 7;
+  const counts = { shown: { pink: 5 }, counted: { pink: 5 }, leader: 'pink', leaderCosmeticId: 12 };
+  const pushed = [{ id: '70', userId: 3, team: 'pink', cosmeticId: 12, data: { x: 0.2, y: 0.3 } }];
+
+  let probes: ReturnType<typeof useTurfFeed>[] = [];
+  function Viewer({ n }: { n: number }) {
+    probes[n] = useTurfFeed();
+    return null;
+  }
+  const mountViewers = () =>
+    renderWithProviders(
+      <>
+        {ids(K, 0).map((n) => (
+          <TurfSummaryProvider key={n} imageIds={[HOT]}>
+            <Viewer n={n} />
+          </TurfSummaryProvider>
+        ))}
+      </>
+    );
+  // Each push 1s after the last: past main's 800ms debounce, so main reads once per push per viewer.
+  const firePushes = async (extra: (p: number) => Record<string, unknown>) => {
+    for (let p = 0; p < P; p++) {
+      act(() =>
+        h.viewers.forEach((cb) => cb({ event: 'birthday2026', imageId: HOT, counts, ...extra(p) }))
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    await vi.advanceTimersByTimeAsync(30_000);
+  };
+
+  beforeEach(() => {
+    probes = [];
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  // Before this fix every viewer read on every push: 200 reads here, K × P.
+  test('pushes that carry the stickers cost no reads, and every viewer draws them', async () => {
+    await mountViewers();
+    expect(h.viewers.size).toBe(K);
+    await firePushes(() => ({ stickers: pushed }));
+    expect(h.fetch).toHaveBeenCalledTimes(0);
+    await vi.waitFor(() =>
+      expect(probes.map((v) => v!.stickers[HOT])).toEqual(Array(K).fill(pushed))
+    );
+  });
+
+  test('pushes without stickers (an older server) read at most once per 10s per viewer', async () => {
+    await mountViewers();
+    expect(h.viewers.size).toBe(K);
+    await firePushes(() => ({}));
+    // P pushes over ~10s: the first read, then one trailing read after the 10s floor (not dropped:
+    // the last pushes' hats must still be read).
+    expect(h.fetch).toHaveBeenCalledTimes(2 * K);
+  });
+});
+
+describe('stickers a push carries', () => {
+  const counts = { shown: { pink: 5 }, counted: { pink: 5 }, leader: 'pink', leaderCosmeticId: 12 };
+  const hat = [{ id: '1', userId: 3, team: 'pink', cosmeticId: 12, data: {} }];
+  const send = (extra: Record<string, unknown>) =>
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts, ...extra }));
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test('a push whose stickers are null keeps what is drawn, and reads nothing', async () => {
+    await mount([1]);
+    send({ stickers: hat });
+    send({ stickers: null });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(latest!.stickers[1]).toEqual(hat);
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('a read already in flight does not undo a push that landed during it', async () => {
+    let answer!: (v: Record<number, unknown[]>) => void;
+    h.fetch.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    await mount([1]);
+    send({}); // an older server's push: schedules a read
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    send({ stickers: hat });
+    await act(async () => answer({ 1: [] }));
+    expect(latest!.stickers[1]).toEqual(hat);
+  });
+
+  test('a push with stickers cancels a read an older push scheduled', async () => {
+    await mount([1]);
+    send({}); // an older server's push: schedules a read
+    send({ stickers: hat });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(latest!.stickers[1]).toEqual(hat);
   });
 });

@@ -16,6 +16,15 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const {
   enforceBlockedBrowsingTags,
@@ -203,6 +212,7 @@ beforeEach(() => {
   // The shared db mock is otherwise reset only between files; these tests must not share call
   // counts or implementations.
   resetSharedMocks();
+  for (const hook of Object.values(sparkHooks)) hook.mockClear();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
   hiddenUsersCached.mockReset();
@@ -1670,6 +1680,34 @@ describe('reading', () => {
       });
       expect(hasEarlier).toBe(true);
     });
+
+    // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
+    // else is told which chapters were paid for, not even that none were.
+    it('tells only the owner which chapters someone paid to add', async () => {
+      const route = [
+        { id: 1, postId: 101, depth: 0, parentIds: [] },
+        { id: 4, postId: 104, depth: 1, parentIds: [] },
+      ];
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+        Promise.resolve(
+          Prisma.sql(strings, ...(values as Prisma.Sql[])).sql.includes('"Placement"')
+            ? [{ id: 4 }]
+            : route
+        )) as never);
+      const path = (viewer: { id: number; isModerator?: boolean }) =>
+        getStorylinePath({ chapterId: 4, viewer, browsingLevel: NsfwLevel.PG | NsfwLevel.R });
+
+      const { chapters: asOwner } = await path({ id: OWNER });
+      expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+        [1, false],
+        [4, true],
+      ]);
+      for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+        const { chapters } = await path(viewer);
+        expect(chapters.map((c) => c.chapterId)).toEqual([1, 4]);
+        for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+      }
+    });
   });
 
   describe('a storyline hidden from the reader', () => {
@@ -2089,6 +2127,29 @@ describe('getStoryline: page fields', () => {
     r.storylineChapterEdge.groupBy.mockResolvedValue([
       { parentChapterId: 1, _count: { _all: 3 } },
     ] as never);
+  });
+
+  // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
+  // else is told which chapters were paid for, not even that none were.
+  it("tells only the owner which of the main route's chapters someone paid to add", async () => {
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      sqlOfRaw(strings, values).includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const page = (viewer: { id: number; isModerator?: boolean }) =>
+      getStoryline({ id: 10, viewer, browsingLevel: NsfwLevel.PG });
+
+    const asOwner = await page({ id: OWNER });
+    expect(asOwner.mainPath.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+      const { mainPath } = await page(viewer);
+      expect(mainPath.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of mainPath) expect(chapter).not.toHaveProperty('paid');
+    }
   });
 
   it('gives counts, roles, the main route with tombstones, and the viewer’s role', async () => {
@@ -3868,6 +3929,36 @@ describe('covers and cast', () => {
     });
   });
 
+  // As on the page's main route: the owner alone is told which chapters someone paid to add.
+  it("tells only the owner which of the map's chapters someone paid to add", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      composed([strings, ...values]).text.includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const graph = (viewer: { id: number; isModerator?: boolean }) =>
+      getStorylineGraph({ id: 10, viewer, browsingLevel: PG });
+
+    const { chapters: asOwner } = await graph({ id: OWNER });
+    expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: STRANGER }, { id: MODERATOR, isModerator: true }]) {
+      const { chapters } = await graph(viewer);
+      expect(chapters.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+    }
+  });
+
   it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
     r.storylineChapter.findMany.mockResolvedValue([
       { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
@@ -4858,6 +4949,7 @@ describe('the title scan’s minor finding, beyond the scan', () => {
           details: { storylineId: 10, takenDown: true, title: 'T' },
         })
       );
+      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
@@ -4972,6 +5064,20 @@ describe('a storyline started from an image', () => {
         targetId: 77,
       });
       expect(w.storylineChapter.create).not.toHaveBeenCalled();
+      expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+    });
+
+    it('tells event points once chapter 1 is written with the spark', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      await createStoryline({
+        sparkImageId: 77,
+        postId: 500,
+        title: 't',
+        maxNsfwLevel: NsfwLevel.R,
+        userId: OWNER,
+      });
+      expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('refuses a ceiling below the image rating, and accepts one above it', async () => {
@@ -5008,6 +5114,25 @@ describe('a storyline started from an image', () => {
         spark({ post: { publishedAt: new Date(0), availability: 'Private', tosViolation: false } }),
       ],
       ['by a banned account', spark({ user: { bannedAt: new Date(), deletedAt: null } })],
+      ['by a deleted account', spark({ user: { bannedAt: null, deletedAt: new Date() } })],
+      [
+        'scheduled',
+        spark({
+          post: {
+            publishedAt: new Date(Date.now() + 86_400_000),
+            availability: 'Public',
+            tosViolation: false,
+          },
+        }),
+      ],
+      [
+        'on a taken-down post',
+        spark({ post: { publishedAt: new Date(0), availability: 'Public', tosViolation: true } }),
+      ],
+      ['an acceptable minor', spark({ acceptableMinor: true })],
+      ['blocked at ingestion', spark({ ingestion: 'Blocked' })],
+      ['failed at ingestion', spark({ ingestion: 'Error' })],
+      ['missing at ingestion', spark({ ingestion: 'NotFound' })],
     ])('refuses an image that is %s', async (_name, image) => {
       w.image.findUnique.mockResolvedValue(image as never);
       await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.cannotUse });

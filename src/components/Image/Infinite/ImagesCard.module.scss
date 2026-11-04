@@ -15,3 +15,19 @@
   gap: 6px;
   padding: var(--mantine-spacing-xs);
 }
+
+// Padding is on this wrapper, not the rows, so the :has() rule below can hide it when nothing rendered.
+.actionsFooter {
+  padding: 8px;
+
+  &:not(:has(:is(button, [class*='mantine-Badge-root']))) {
+    display: none;
+  }
+
+  // The shared bar is a dark pill because ImageCard paints it over the image. Here the row sits
+  // on the card's own background, where that pill would grey out the counts.
+  & .bar {
+    background: none;
+    box-shadow: none;
+  }
+}

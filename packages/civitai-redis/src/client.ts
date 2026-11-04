@@ -2590,6 +2590,8 @@ export const REDIS_SYS_KEYS = {
     // Hash of userId → sent-at ISO time; a field is claimed before its email goes out.
     BANKING_CHANGE_SENT: 'notices:banking-change-sent',
     KLEIN9B_SENT: 'notices:klein9b-sent',
+    NC_RECENT_SENT: 'notices:nc-recent-sent',
+    NC_OLDER_SENT: 'notices:nc-older-sent',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',

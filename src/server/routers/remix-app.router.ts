@@ -3,6 +3,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import {
   listRemixApps,
   quoteRemixApps,
+  quoteTeamRemix,
   runRemixApp,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
@@ -15,15 +16,18 @@ const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 
 const imageId = z.number().int().positive();
 
-async function getCaller(ctx: Context & { user: SessionUser }): Promise<RemixAppCaller> {
+function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
   return {
     user: ctx.user,
-    token: await getOrchestratorToken(ctx.user.id, ctx),
     features: ctx.features,
     isGreenDomain: ctx.domain === 'green',
     isApiCaller: ctx.apiKeyId != null,
     track: ctx.track,
   };
+}
+
+async function getCaller(ctx: Context & { user: SessionUser }): Promise<RemixAppCaller> {
+  return { ...callerOf(ctx), token: await getOrchestratorToken(ctx.user.id, ctx) };
 }
 
 export const remixAppRouter = router({
@@ -34,6 +38,17 @@ export const remixAppRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ imageId }))
     .query(async ({ ctx, input }) => quoteRemixApps({ ...input, caller: await getCaller(ctx) })),
+  teamQuote: remixAppProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId }))
+    .query(({ ctx, input }) =>
+      quoteTeamRemix({
+        ...input,
+        caller: callerOf(ctx),
+        // Only for an eligible image: most image views never need a token.
+        getToken: () => getOrchestratorToken(ctx.user.id, ctx),
+      })
+    ),
   run: guardedProcedure
     .use(isFlagProtected('remixApps'))
     .meta({ requiredScope: TokenScope.AIServicesWrite })

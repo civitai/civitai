@@ -591,11 +591,12 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     }
   }
 
-  async function awardEventPoints(actions: EventPointAction[]) {
-    if (!actions.length) return;
+  /** Returns how many firsts it recorded: 0 when every action was a repeat or did not score. */
+  async function awardEventPoints(actions: EventPointAction[]): Promise<number> {
+    if (!actions.length) return 0;
     try {
       await ensureFresh();
-      if (!loaded.length) return;
+      if (!loaded.length) return 0;
       // Settled one by one: a Redis error on one action must not drop the others' ledger rows.
       const results = await Promise.allSettled(
         loaded.flatMap((event) =>
@@ -608,9 +609,10 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           deps.logError('redis', 'eventPoints.award', result.reason);
         else if (result.value) firsts.push(result.value);
       }
-      if (!firsts.length) return;
+      if (!firsts.length) return 0;
       try {
         await deps.insertLedger(firsts.map((f) => f.row));
+        return firsts.length;
       } catch (error) {
         // The referee scores from the ledger alone. A first it never received would stay marked
         // seen, so the same action could never earn again: take the marks back so the next one
@@ -622,6 +624,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     } catch (error) {
       deps.logError('redis', 'eventPoints.award', error, { count: actions.length });
     }
+    return 0;
   }
 
   async function removeEventPoints(removals: EventPointRemoval[]) {
@@ -835,7 +838,7 @@ onEventPointsSwitchOn(async () => {
 // correctness; await it only to keep a test deterministic. With the kill switch off, all four are
 // no-ops that touch neither Redis nor ClickHouse.
 export const awardEventPoints = async (actions: EventPointAction[]) => {
-  if (!(await isEventPointsEnabled().catch(() => false))) return;
+  if (!(await isEventPointsEnabled().catch(() => false))) return 0;
   return getEngine().awardEventPoints(actions);
 };
 export const removeEventPoints = async (removals: EventPointRemoval[]) => {

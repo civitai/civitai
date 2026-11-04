@@ -904,6 +904,10 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
     'Flux.3 Klein-base',
     'Ideogram 4.0',
     'Qwen 2.1',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
   ];
   type Fee = { role: string; amount: number; recipientModelVersionId: number };
   const charged = async (overrides: Partial<typeof versionRow>) => {
@@ -951,6 +955,20 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
         }),
       ],
       payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a Flux.1 D version still charges its own fee and keeps tips (control)', async () => {
+    const { fees, tipsEnabled } = await charged({ baseModel: 'Flux.1 D', ...OWN_FEE });
+    expect(fees).toEqual([expect.objectContaining({ amount: 5 })]);
+    expect(tipsEnabled).toBe(true);
+  });
+
+  it('a Flux.1 D version without a fee keeps creator comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.1 D' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
       tipsEnabled: true,
     });
   });

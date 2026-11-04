@@ -1,11 +1,4 @@
-import { Stack, Group, Text, Loader, Center, Divider, Title, Button } from '@mantine/core';
-import { Comment } from '~/components/CommentsV2/Comment/Comment';
-import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
-import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
-import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
-import classes from '~/components/CommentsV2/Comment/Comment.module.css';
-import { SortFilter } from '~/components/Filters';
-import type { ThreadSort } from '~/server/common/enums';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 
 type PostCommentsProps = {
   postId: number;
@@ -14,75 +7,6 @@ type PostCommentsProps = {
 
 export function PostComments({ postId, userId }: PostCommentsProps) {
   return (
-    <RootThreadProvider
-      entityType="post"
-      entityId={postId}
-      limit={3}
-      badges={[{ userId, label: 'op', color: 'violet' }]}
-    >
-      {({
-        data,
-        created,
-        isLoading,
-        isFetching,
-        showMore,
-        toggleShowMore,
-        activeComment,
-        sort,
-        setSort,
-      }) => (
-        <div className="flex w-full flex-col gap-4">
-          <Group justify="space-between">
-            <Group gap="md">
-              <Title order={2} id="comments">
-                Comments
-              </Title>
-            </Group>
-            <SortFilter type="threads" value={sort} onChange={(v) => setSort(v as ThreadSort)} />
-          </Group>
-          {isLoading ? (
-            <Center>
-              <Loader type="bars" />
-            </Center>
-          ) : (
-            <Stack className="relative">
-              <ReturnToRootThread />
-              {activeComment && (
-                <Stack gap="xl">
-                  <Divider />
-                  <Text size="sm" c="dimmed">
-                    Viewing thread for
-                  </Text>
-                  <Comment comment={activeComment} viewOnly />
-                </Stack>
-              )}
-              <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-                <CreateComment />
-                <Stack className="relative">
-                  {data?.map((comment) => (
-                    <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
-                  ))}
-                </Stack>
-                {showMore && (
-                  <Center>
-                    <Button
-                      onClick={toggleShowMore}
-                      loading={isFetching}
-                      variant="subtle"
-                      size="md"
-                    >
-                      Load More Comments
-                    </Button>
-                  </Center>
-                )}
-                {created.map((comment) => (
-                  <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
-                ))}
-              </Stack>
-            </Stack>
-          )}
-        </div>
-      )}
-    </RootThreadProvider>
+    <CommentSection entityType="post" entityId={postId} ownerId={userId} anchorId="comments" />
   );
 }

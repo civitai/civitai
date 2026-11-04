@@ -31,6 +31,7 @@ export function StorylineChapterRemoveItem({ imageId }: { imageId: number }) {
       takenDown={storyline.path.storyline.tosViolation}
       hasChildren={chapter.childCount > 0}
       byAuthor={byAuthor}
+      paid={chapter.paid}
       onRemoved={storyline.leave}
     />
   );

@@ -29,7 +29,7 @@ export const birthday2026 = createEvent(name, {
     heroVideo: { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 },
     dates: 'Nov 1 to Nov 30',
     summary:
-      'Four color teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and model likes from signed-in members all score for your team.',
+      'Four color teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and stories, and model likes from signed-in members all score for your team.',
     steps: [
       {
         title: 'Join',
@@ -41,7 +41,7 @@ export const birthday2026 = createEvent(name, {
       },
       {
         title: 'Score for your team',
-        body: "While your content wears a hat, its views, reactions, comments, stickers, accepted remixes and model likes from signed-in members count for your team. Hats keep earning while you're away, so there's nothing to do daily.",
+        body: "While your content wears a hat, its views, reactions, comments, stickers, accepted remixes and stories, and model likes from signed-in members count for your team. Hats keep earning while you're away, so there's nothing to do daily.",
       },
     ],
     prize: {
@@ -130,6 +130,8 @@ export const birthday2026 = createEvent(name, {
   badgePrefix: 'Birthday 2026',
   scoring: {
     capPerActorPerOwnerPerDay: 50,
+    storySparksPerActorPerDay: 3,
+    teamRemixWaiver: { perPlacerPerDay: 10 },
     types: {
       view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
       reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },

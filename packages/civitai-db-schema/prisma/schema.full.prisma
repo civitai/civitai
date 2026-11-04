@@ -5787,6 +5787,7 @@ model EventCosmeticPlacement {
   updatedAt     DateTime       @default(now()) @db.Timestamptz(3)
 
   @@index([event, updatedAt])
+  @@index([userId, event])
 }
 
 model EventCosmeticScoreDaily {

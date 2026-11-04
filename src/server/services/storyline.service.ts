@@ -1,4 +1,9 @@
 import { uniqBy } from 'lodash-es';
+import {
+  onStorySparked,
+  onStorySparkLost,
+  onStorySparkRemoved,
+} from '~/server/events/points/hooks';
 import type { ImageInput } from '~/server/schema/image.schema';
 import { TRPCError } from '@trpc/server';
 import {
@@ -939,6 +944,7 @@ export async function createStoryline({
     throw error;
   }
   scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
+  if (created.rootChapterId && sparkImageId) void onStorySparked(created.id);
   return created;
 }
 
@@ -1185,12 +1191,14 @@ export async function deleteStoryline({
 }) {
   // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
   const markerView = await holdMarkerViewExists();
+  let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
-    const [owned] = await tx.$queryRaw<{ userId: number }[]>`
-      SELECT "userId" FROM "Storyline" WHERE id = ${id}
+    const [owned] = await tx.$queryRaw<{ userId: number; sparkImageId: number | null }[]>`
+      SELECT "userId", "sparkImageId" FROM "Storyline" WHERE id = ${id}
     `;
     if (!owned) throw throwNotFoundError('Storyline not found');
+    spark = { actorId: owned.userId, imageId: owned.sparkImageId };
     const asModerator = owned.userId !== userId;
     if (asModerator && !isModerator)
       throw throwAuthorizationError('Only the owner can delete this storyline');
@@ -1282,6 +1290,7 @@ export async function deleteStoryline({
         tx
       );
   });
+  if (spark) void onStorySparkRemoved(spark);
   return { id };
 }
 
@@ -1519,7 +1528,7 @@ export async function setFirstChapter({
   userId: number;
 }) {
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    const result = await dbWrite.$transaction(async (tx) => {
       const [owned] = await tx.$queryRaw<{ userId: number }[]>`
         SELECT "userId" FROM "Storyline" WHERE id = ${storylineId}
       `;
@@ -1580,6 +1589,8 @@ export async function setFirstChapter({
       const { id: chapterId } = await createRootChapter(tx, { storylineId, postId, userId });
       return { storylineId, chapterId, ceilingRaisedTo: raised ? maxNsfwLevel : undefined };
     });
+    void onStorySparked(storylineId);
+    return result;
   } catch (error) {
     // Chapter 1 is held by the locks above, so this is the post joining another storyline
     // between its check and the insert.
@@ -1659,6 +1670,7 @@ export async function moderateStorylineTitle({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (takenDown) void onStorySparkLost(id);
     if (takenDown)
       await notifyStorylineTitleModerated(
         storyline,
@@ -1716,6 +1728,7 @@ export async function setStorylineTakedown({ id, takenDown }: { id: number; take
     select: { id: true, ...storylineTakedownSelect },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
+  if (changed > 0) void (takenDown ? onStorySparkLost(id) : onStorySparked(id));
   return { ...storyline, changed: changed > 0 };
 }
 
@@ -1883,11 +1896,11 @@ async function assertStorylinePicks(
 }
 
 /**
- * A lowered ceiling may not drop below chapter 1's rating: that would tombstone the story's
- * opening for every reader. Later chapters may fall above it and are hidden. When chapter 1 is
- * gone, taken down, blocked or not yet rated there is nothing to keep, so any valid ceiling is
- * accepted. Only lowering is checked, so an owner whose chapter 1 was re-rated upwards can still
- * raise the ceiling towards it.
+ * A lowered ceiling may not drop below chapter 1's rating, nor below the spark image's: the first
+ * would tombstone the story's opening for every reader, the second would drop its credited source.
+ * Later chapters may fall above it and are hidden. When chapter 1 or the spark is gone, taken
+ * down, blocked or not yet rated it holds no floor. Only lowering is checked, so an owner whose
+ * chapter 1 or spark was re-rated upwards can still raise the ceiling towards it.
  */
 async function assertCeilingKeepsFloor(storylineId: number, maxNsfwLevel: number) {
   // The primary: the write that follows must not be judged on a replica's older rating.
@@ -2877,7 +2890,7 @@ export async function getStoryline({
           browsingLevel,
           blockedUserIds,
           gate,
-        })
+        }).then((route) => withOwnerPaid(route, storyline.userId, viewer))
       : [],
     getChosenStorylineImages(gate, [
       { storylineId: id, imageId: storyline.heroImageId },
@@ -3227,10 +3240,14 @@ export async function getStorylineGraph({
     rootChapterId: chapters[0]?.depth === 0 ? chapters[0].id : null,
     chapters: await withFirstImages(
       getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      chapters.map((c) => ({
-        ...toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)),
-        viaPlacement: c.placementId != null,
-      }))
+      await withOwnerPaid(
+        chapters.map((c) => ({
+          ...toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)),
+          viaPlacement: c.placementId != null,
+        })),
+        storyline.userId,
+        viewer
+      )
     ),
     edges: edges.filter((e) => ids.has(e.parentChapterId)),
     truncated: rows.length > STORYLINE_GRAPH_LIMIT,
@@ -3398,6 +3415,24 @@ function toPathChapter(
   };
 }
 
+/**
+ * Marks which of `chapters` someone paid to add, for the storyline's owner alone, who may not
+ * remove one (`removeStorylineChapter`). Anyone else gets the chapters back without a `paid` key.
+ */
+async function withOwnerPaid<T extends { chapterId: number }>(
+  chapters: T[],
+  ownerId: number,
+  viewer: Viewer
+): Promise<(T & { paid?: boolean })[]> {
+  if (!viewer || viewer.id !== ownerId || !chapters.length) return chapters;
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "StorylineChapter" c JOIN "Placement" p ON p.id = c."placementId"
+    WHERE c.id = ANY(${chapters.map((c) => c.chapterId)}::int[]) AND NOT p.free AND p.amount > 0
+  `;
+  const paid = new Set(rows.map((r) => r.id));
+  return chapters.map((c) => ({ ...c, paid: paid.has(c.chapterId) }));
+}
+
 async function getStorylineForRead(storylineId: number, viewer: Viewer, browsingLevel: number) {
   const storyline = await dbRead.storyline.findUnique({
     where: { id: storylineId },
@@ -3544,7 +3579,9 @@ export async function getStorylinePath({
   const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
   const captionPostIds = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
   const [routeChapters, captions] = await Promise.all([
-    withFirstImages(gate, onRoute(rows, chapters)),
+    withOwnerPaid(onRoute(rows, chapters), storyline.userId, viewer).then((route) =>
+      withFirstImages(gate, route)
+    ),
     (async () => {
       if (!captionPostIds.length) return new Map<number, string>();
       const { hiddenImageIds, hiddenTagIds } = await gate();
