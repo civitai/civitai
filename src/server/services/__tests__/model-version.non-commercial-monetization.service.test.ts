@@ -85,6 +85,8 @@ import {
 const KLEIN_9B = 'Flux.2 Klein 9B';
 const KLEIN_9B_BASE = 'Flux.2 Klein 9B-base';
 const KLEIN_4B = 'Flux.2 Klein 4B';
+const OLDER_NON_COMMERCIAL = ['Flux.1 Krea', 'Flux.1 Kontext', 'Flux.2 D', 'Stable Cascade'];
+const COMMERCIAL_CONTROLS = ['Flux.1 D', 'SDXL 1.0'];
 const MODEL_ID = 42;
 const OWNER_ID = 7;
 const VERSION_ID = 100;
@@ -134,10 +136,32 @@ describe('upsertModelVersion — non-commercial base model', () => {
     } as never);
   };
 
-  it.each([KLEIN_9B, KLEIN_9B_BASE])('refuses a licensing fee on %s', async (baseModel) => {
-    await expect(create(baseModel, { licensingFee: 5 })).rejects.toThrowError(NON_COMMERCIAL);
+  it.each([KLEIN_9B, KLEIN_9B_BASE, ...OLDER_NON_COMMERCIAL])(
+    'refuses a licensing fee on %s',
+    async (baseModel) => {
+      await expect(create(baseModel, { licensingFee: 5 })).rejects.toThrowError(NON_COMMERCIAL);
+      expect(mockTx.modelVersion.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(
+    OLDER_NON_COMMERCIAL.flatMap((baseModel) => [
+      [baseModel, 'paid access', permanentGate] as const,
+      [baseModel, 'early access', earlyAccess] as const,
+    ])
+  )('refuses %s with %s', async (baseModel, _, gate) => {
+    await expect(create(baseModel, { paidAccess: gate })).rejects.toThrowError(NON_COMMERCIAL);
     expect(mockTx.modelVersion.create).not.toHaveBeenCalled();
   });
+
+  it.each(COMMERCIAL_CONTROLS)(
+    'lets a %s version with a fee and early access through to the write (control)',
+    async (baseModel) => {
+      await expect(
+        create(baseModel, { licensingFee: 5, paidAccess: earlyAccess })
+      ).rejects.toThrowError(REACHED_WRITE);
+    }
+  );
 
   it('refuses paid access on a 9B version', async () => {
     await expect(create(KLEIN_9B, { paidAccess: permanentGate })).rejects.toThrowError(
@@ -244,6 +268,23 @@ describe('updateModelVersionPaidAccess — non-commercial base model', () => {
   it('lets early access on a 4B version through to the write (control)', async () => {
     await expect(update(KLEIN_4B, earlyAccess)).rejects.toThrowError(REACHED_WRITE);
   });
+
+  it.each(
+    OLDER_NON_COMMERCIAL.flatMap((baseModel) => [
+      [baseModel, 'paid access', permanentGate] as const,
+      [baseModel, 'early access', earlyAccess] as const,
+    ])
+  )('refuses %s %s', async (baseModel, _, gate) => {
+    await expect(update(baseModel, gate)).rejects.toThrowError(NON_COMMERCIAL);
+    expect(writePaidAccessForModelVersion).not.toHaveBeenCalled();
+  });
+
+  it.each(COMMERCIAL_CONTROLS)(
+    'lets early access on a %s version through to the write (control)',
+    async (baseModel) => {
+      await expect(update(baseModel, earlyAccess)).rejects.toThrowError(REACHED_WRITE);
+    }
+  );
 });
 
 // A fee or gate stored before the licence was flagged must not go live with the version: a pending
