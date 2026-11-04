@@ -153,7 +153,12 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           image={{
             id: imageId,
             url: image.url,
+            type: image.type,
             nsfwLevel: image.nsfwLevel,
+            hash: image.hash,
+            width: image.width,
+            height: image.height,
+            userId: _userId,
             username: user?.username ?? null,
           }}
         />
