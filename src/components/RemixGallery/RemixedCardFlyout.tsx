@@ -1,5 +1,5 @@
 import { Text } from '@mantine/core';
-import { IconEyeOff, IconHierarchy, IconX } from '@tabler/icons-react';
+import { IconBook2, IconEyeOff, IconHierarchy, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -457,19 +457,37 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const entries = available.slice(0, shown - stories.length);
   const listed = stories.length + entries.length;
   const side = layout === 'side';
+  const remixLabel = remixCount === 1 ? '1 remix' : `${remixCount} remixes`;
   const label = [
-    remixCount && (remixCount === 1 ? '1 remix' : `${remixCount} remixes`),
+    remixCount && remixLabel,
     storylines.count && (storylines.count === 1 ? '1 story' : `${storylines.count} stories`),
   ]
     .filter(Boolean)
     .join(' · ');
+  // A side strip has no room for both phrases: at two-digit counts even "13 remixes" plus a book
+  // and a count overflows its 78px. Each becomes its icon and a count; the words are the tooltip.
+  const compact = side && remixCount > 0 && storylines.count > 0;
   const body = (tile: number | undefined) => (
     <>
       <div className={clsx('flex items-center px-2 pb-1 pt-1.5', side ? 'gap-1' : 'gap-1.5')}>
         <IconHierarchy size={13} className="shrink-0 text-yellow-5" />
-        <Text size="xs" fw={600} className="truncate" title={label}>
-          {label}
-        </Text>
+        {compact ? (
+          <Text
+            size="xs"
+            fw={600}
+            className="flex min-w-0 items-center gap-1 whitespace-nowrap"
+            title={label}
+            aria-label={label}
+          >
+            <span>{remixCount}</span>
+            <IconBook2 size={12} className="ml-1 shrink-0" aria-hidden />
+            <span>{storylines.count}</span>
+          </Text>
+        ) : (
+          <Text size="xs" fw={600} className="truncate" title={label}>
+            {label}
+          </Text>
+        )}
         {/* No close button on a side strip: it costs the width the word needs,
             and pointer-leave and Escape both still close. */}
         {!side && (

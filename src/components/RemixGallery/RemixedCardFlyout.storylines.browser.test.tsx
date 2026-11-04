@@ -6,6 +6,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as BatchProvider from '~/components/RemixGallery/RemixGalleryBatchProvider';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as UserHoverCard from '~/components/UserAvatar/UserHoverCard';
+import type * as FlyoutLayout from '~/components/RemixGallery/remix-flyout-layout';
 import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-state';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
 
@@ -25,7 +26,10 @@ const remix = (imageId: number) => ({
   username: `remixer${imageId}`,
 });
 
-const mocks = vi.hoisted(() => ({ summary: null as RemixGalleryCardSummary | null }));
+const mocks = vi.hoisted(() => ({
+  summary: null as RemixGalleryCardSummary | null,
+  layout: 'stack' as 'stack' | 'side',
+}));
 
 vi.mock('~/components/RemixGallery/RemixGalleryBatchProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BatchProvider>()),
@@ -35,6 +39,10 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
   ...(await importOriginal<typeof BrowsingLevelProvider>()),
   useBrowsingLevelContext: () => ({ blurLevels: 4 }),
 }));
+vi.mock('~/components/RemixGallery/remix-flyout-layout', async (importOriginal) => ({
+  ...(await importOriginal<typeof FlyoutLayout>()),
+  useRemixFlyoutLayout: () => mocks.layout,
+}));
 vi.mock('~/components/UserAvatar/UserHoverCard', async (importOriginal) => ({
   ...(await importOriginal<typeof UserHoverCard>()),
   useHoverCapable: () => true,
@@ -43,6 +51,7 @@ vi.mock('~/components/UserAvatar/UserHoverCard', async (importOriginal) => ({
 afterEach(() => {
   useRemixPeelStore.getState().close();
   mocks.summary = null;
+  mocks.layout = 'stack';
   vi.mocked(useRouter().push).mockClear();
 });
 
@@ -130,5 +139,25 @@ describe('storylines in the remix flyout', () => {
 
     await expect.element(storyTile(1)).toBeVisible();
     expect(storyTile(1).element().querySelector('img, video')).toBeNull();
+  });
+
+  // A home shelf's side strip is 78px of content: both phrases would be cut to "3 remixes · 2…".
+  // Whether it fits is not measurable here: this harness loads no Tailwind, so widths are not real.
+  test('on a side strip, shows remixes and stories as counts, the words as its label', async () => {
+    mocks.layout = 'side';
+    mocks.summary = {
+      count: 3,
+      entries: [remix(21), remix(22), remix(23)],
+      storylines: { count: 2, entries: [story(1), story(2)] },
+    };
+    await renderOpen();
+
+    const header = page.getByLabelText('3 remixes · 2 stories');
+    await expect.element(header).toHaveTextContent(/^32$/);
+    await expect.element(header).toHaveAttribute('title', '3 remixes · 2 stories');
+    const row = header.element().parentElement as HTMLElement;
+    expect(row.closest('[data-remix-flyout]')?.getAttribute('data-remix-flyout')).toMatch(
+      /left|right/
+    );
   });
 });
