@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { act, useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   loaded: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
   remoteResult: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
   searchForItems: vi.fn(),
+  // Lets a test change `items` the way another refinement does.
+  swapItems: null as null | ((items: Array<Item>) => void),
 }));
 
 // Mirrors instantsearch: a non-empty searchForItems replaces items with the facet result.
@@ -17,6 +19,7 @@ vi.mock('react-instantsearch', async (importOriginal) => ({
   ...(await importOriginal<typeof InstantSearch>()),
   useRefinementList: () => {
     const [items, setItems] = useState(mocks.loaded);
+    mocks.swapItems = setItems;
     return {
       items,
       refine: vi.fn(),
@@ -69,5 +72,45 @@ describe('SearchableMultiSelectRefinementList', () => {
     await page.getByPlaceholder('Search Filter by User').fill('ali');
     await vi.waitFor(() => expect(mocks.searchForItems).toHaveBeenCalledWith('ali'));
     await expect.element(page.getByRole('option', { name: 'alice_art' })).toBeInTheDocument();
+  });
+
+  describe('remote search on', () => {
+    const renderUsers = () =>
+      renderWithProviders(
+        <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
+      );
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 1000));
+
+    test('a substring match survives a remote miss', async () => {
+      mocks.loaded = toItems(['alexds9', 'RisingV']);
+      renderUsers();
+      await page.getByPlaceholder('Search Users').fill('ingV');
+      await vi.waitFor(() => expect(mocks.searchForItems).toHaveBeenCalledWith('ingV'));
+      await settle();
+      await expect.element(page.getByRole('option', { name: 'RisingV' })).toBeInTheDocument();
+    });
+
+    test('a remote-only hit is added to the loaded matches', async () => {
+      mocks.loaded = toItems(['RisingV']);
+      mocks.remoteResult = toItems(['risingneko205']);
+      renderUsers();
+      await page.getByPlaceholder('Search Users').fill('risin');
+      await expect.element(page.getByRole('option', { name: 'risingneko205' })).toBeInTheDocument();
+      await expect.element(page.getByRole('option', { name: 'RisingV' })).toBeInTheDocument();
+    });
+
+    test('options that left the facet list while idle are not offered', async () => {
+      mocks.loaded = toItems(['alpha', 'beta']);
+      renderUsers();
+      await page.getByPlaceholder('Search Users').click();
+      await expect.element(page.getByRole('option', { name: 'alpha' })).toBeInTheDocument();
+      // Another refinement narrows the facet list while the box is empty.
+      await act(async () => mocks.swapItems!(toItems(['gamma'])));
+      await expect.element(page.getByRole('option', { name: 'gamma' })).toBeInTheDocument();
+      await page.getByPlaceholder('Search Users').fill('alpha');
+      await vi.waitFor(() => expect(mocks.searchForItems).toHaveBeenCalledWith('alpha'));
+      await settle();
+      await expect.element(page.getByRole('option', { name: 'alpha' })).not.toBeInTheDocument();
+    });
   });
 });
