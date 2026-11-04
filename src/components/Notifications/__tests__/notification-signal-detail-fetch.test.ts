@@ -53,18 +53,6 @@ const firstItems = (queryClient: QueryClient, category?: string) =>
   (queryClient.getQueryData(panelKey(category)) as { pages: { items: unknown[] }[] }).pages[0]
     .items;
 
-describe('notificationListFilters', () => {
-  it('targets the All list and the notification’s own category list', () => {
-    expect(filters).toEqual([
-      { queryKey: [['notification', 'getAllByUser'], { input: { category: null } }], exact: false },
-      {
-        queryKey: [['notification', 'getAllByUser'], { input: { category: 'Comment' } }],
-        exact: false,
-      },
-    ]);
-  });
-});
-
 describe('hasLoadedNotificationList', () => {
   it('is false when the tab has never loaded a notification list', () => {
     expect(hasLoadedNotificationList(new QueryClient(), filters)).toBe(false);
@@ -82,6 +70,13 @@ describe('hasLoadedNotificationList', () => {
     loaded(queryClient, 'Buzz');
 
     expect(hasLoadedNotificationList(queryClient, filters)).toBe(false);
+  });
+
+  it('is true once the All list is loaded', () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, undefined);
+
+    expect(hasLoadedNotificationList(queryClient, filters)).toBe(true);
   });
 
   it('is true once the notification’s category list is loaded', () => {
@@ -138,17 +133,47 @@ describe('insertSignalledNotification', () => {
     expect(firstItems(queryClient, 'Buzz')).toEqual([{ id: 4 }]);
   });
 
-  it('the panel’s All list (no category in its key) receives no write, so it costs no fetch', async () => {
-    // Pre-existing and unchanged: the All filter asks for `category: null`, the panel's All query has
-    // no category at all, and the cache's partial key match does not treat the two as equal. This pins
-    // that the fetch follows the write — not that the All list is right to be skipped.
+  it('fetches once and writes the row into the loaded All list', async () => {
     const queryClient = new QueryClient();
     loaded(queryClient, undefined);
     const fetchImpl = okFetch();
 
     await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, fetchImpl);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(0);
-    expect(firstItems(queryClient, undefined)).toEqual([{ id: 4 }]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(firstItems(queryClient, undefined)[0]).toEqual({
+      ...SIGNALLED,
+      details: { commentId: 731, content: 'hi' },
+    });
+  });
+
+  it('writes into the All list when unread-only is on', async () => {
+    const queryClient = new QueryClient();
+    const unreadKey = getQueryKey(
+      trpc.notification.getAllByUser,
+      { limit: 30, category: undefined, unread: true } as never,
+      'infinite'
+    );
+    queryClient.setQueryData(unreadKey, { pages: [page([4])], pageParams: [undefined] });
+
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, okFetch());
+
+    const items = (queryClient.getQueryData(unreadKey) as { pages: { items: unknown[] }[] })
+      .pages[0].items;
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ id: SIGNALLED.id });
+  });
+
+  it('writes into All and the category list but not into another category’s list', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, undefined);
+    loaded(queryClient, 'Comment');
+    loaded(queryClient, 'Buzz');
+
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, okFetch());
+
+    expect(firstItems(queryClient, undefined)).toHaveLength(2);
+    expect(firstItems(queryClient, 'Comment')).toHaveLength(2);
+    expect(firstItems(queryClient, 'Buzz')).toEqual([{ id: 4 }]);
   });
 });
