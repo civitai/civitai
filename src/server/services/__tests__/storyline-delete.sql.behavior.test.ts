@@ -4,6 +4,15 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
@@ -102,10 +111,9 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
-    -- Its pictures, as the cover, hero, spark and cover-upload migrations add them.
+    -- Its pictures, as the cover, hero and cover-upload migrations add them (spark: below).
     ALTER TABLE "Storyline" ADD COLUMN "coverImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
-      ADD COLUMN "heroImageId" int REFERENCES "Image"(id) ON DELETE SET NULL,
-      ADD COLUMN "sparkImageId" int REFERENCES "Image"(id) ON DELETE SET NULL;
+      ADD COLUMN "heroImageId" int REFERENCES "Image"(id) ON DELETE SET NULL;
     CREATE TABLE "StorylineCoverUpload" (
       "storylineId" int NOT NULL REFERENCES "Storyline"(id) ON DELETE CASCADE,
       "imageId" int NOT NULL REFERENCES "Image"(id) ON DELETE CASCADE,
@@ -131,6 +139,8 @@ beforeAll(async () => {
       FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType")
         ON DELETE CASCADE);
   `);
+  // After "Image", which its foreign key needs.
+  await db.pg.exec(migration('20261220120000_storyline_spark_image'));
 });
 
 afterAll(async () => {
@@ -191,6 +201,8 @@ describe('deleteStoryline', () => {
     expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
 
     expect(await storylineIds()).toEqual([2]);
+    // Read before the delete, which leaves nothing to read.
+    expect(sparkHooks.onStorySparkRemoved).toHaveBeenCalledWith({ actorId: OWNER, imageId: null });
     expect(await rows(`SELECT * FROM "StorylineCollaborator"`)).toEqual([]);
     // The storyline's own price goes with it; another storyline's and the owner's default stay.
     expect(
@@ -199,6 +211,17 @@ describe('deleteStoryline', () => {
       { entityType: 'storyline', entityId: 2 },
       { entityType: 'user', entityId: 1 },
     ]);
+  });
+
+  it('hands the spark it read before the delete to the points hook', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (900, ${CONTRIBUTOR}) ON CONFLICT DO NOTHING;
+      UPDATE "Storyline" SET "sparkImageId" = 900 WHERE id = 1;
+    `);
+
+    await deleteStoryline({ id: 1, userId: OWNER });
+
+    expect(sparkHooks.onStorySparkRemoved).toHaveBeenCalledWith({ actorId: OWNER, imageId: 900 });
   });
 
   it('unlinks a chapter-1 draft, which stays an ordinary draft', async () => {

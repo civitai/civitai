@@ -67,6 +67,28 @@ import type { CsamSupplementalDetails } from '~/server/services/csam-supplementa
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
+import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
+import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
+import {
+  isAwaitingEvidenceApproval,
+  isGeneratorEvidenceDetails,
+  unsentGeneratorEvidenceWhere,
+} from '~/server/services/generator-evidence/evidence-meta';
+import {
+  evidenceFileDetails,
+  evidenceFilesToSend,
+  evidenceReportInfo,
+  evidenceSizeProblem,
+  readVerifiedEvidence,
+  verifyStoredEvidence,
+} from '~/server/services/generator-evidence/evidence-payload';
+import {
+  hashEvidenceObject,
+  readEvidenceObject,
+  sha256Hex,
+} from '~/server/services/generator-evidence/evidence-store';
+import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
+import { fileDetailsXmlProblem, reportXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import {
@@ -265,7 +287,9 @@ export async function getCsamReportStats() {
 
 export async function getCsamsToReport() {
   const data = await dbRead.csamReport.findMany({ where: { reportSentAt: null } });
-  return data as unknown as CsamReportProps[];
+  return data.filter(
+    (report) => !isAwaitingEvidenceApproval(report.details)
+  ) as unknown as CsamReportProps[];
 }
 
 export async function getCsamsToArchive() {
@@ -624,6 +648,7 @@ async function getInitialReportData(claim: SendClaim) {
 
   const userActivity = await snapshotUserActivity(claim);
   if (!userActivity) return;
+  const reportedUserInfo = getReportedUserAdditionalInfo(reportedUser.email, userActivity);
 
   return {
     incidentSummary: {
@@ -632,8 +657,8 @@ async function getInitialReportData(claim: SendClaim) {
     },
     reporter: {
       reportingPerson: {
-        email: reportingUser.email ? [{ email: reportingUser.email }] : [],
-        firstName: reportingUser.name ?? undefined,
+        email: reportingUser.email ? [{ email: xmlText(reportingUser.email) }] : [],
+        firstName: reportingUser.name ? xmlText(reportingUser.name) : undefined,
       },
       contactPerson: {
         email: [{ email: CYBERTIP_CONTACT_EMAIL }],
@@ -641,7 +666,7 @@ async function getInitialReportData(claim: SendClaim) {
     },
     personOrUserReported: {
       espIdentifier: reportedUser.id.toString(),
-      screenName: reportedUser.username ?? undefined,
+      screenName: reportedUser.username ? xmlText(reportedUser.username) : undefined,
       ipCaptureEvent: userActivity?.map((activity) => {
         const [year, month, day, hour, minute, second] = activity.time.split(/[-: ]/).map(Number);
         return {
@@ -650,7 +675,7 @@ async function getInitialReportData(claim: SendClaim) {
           dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         };
       }),
-      additionalInfo: getReportedUserAdditionalInfo(reportedUser.email, userActivity),
+      additionalInfo: reportedUserInfo && xmlText(reportedUserInfo),
     },
   } satisfies Report;
 }
@@ -705,6 +730,32 @@ export async function logBlockedCsamReports(reportIds: number[]) {
       message: `report ${report.id} unsent after ${hoursPending} hours`,
       reportId: report.id,
       hoursPending,
+    });
+  }
+}
+
+export const CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS = 24;
+
+/** A preserved-evidence report the send job skips until a moderator approves it, left waiting too long. */
+export async function logOverdueEvidenceApprovals() {
+  const waiting = await dbWrite.csamReport.findMany({
+    where: {
+      ...unsentGeneratorEvidenceWhere,
+      createdAt: { lt: new Date(Date.now() - CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS * 3_600_000) },
+    },
+    select: { id: true, createdAt: true, details: true },
+  });
+  for (const report of waiting) {
+    if (!isAwaitingEvidenceApproval(report.details)) continue;
+    const hoursPending = hoursSinceFiled(report);
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'send-blocked',
+      message: `report ${report.id} has waited ${hoursPending} hours for a moderator to approve its evidence`,
+      reportId: report.id,
+      hoursPending,
+      awaiting: 'evidence-approval',
     });
   }
 }
@@ -970,8 +1021,8 @@ function logNoFiles(claim: SendClaim, message: string) {
 }
 
 /** Sends files two at a time; once one fails, none still queued goes to the CyberTip being cancelled. */
-function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>) {
-  const limit = plimit(2);
+function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>, concurrency = 2) {
+  const limit = plimit(concurrency);
   const started: Promise<unknown>[] = [];
   const sent = Promise.all(
     items.map((item) =>
@@ -1401,6 +1452,7 @@ export async function getViewedImageIds(
 
 async function reportGenerationData(claim: SendClaim) {
   const { report } = claim;
+  if (isGeneratorEvidenceDetails(report.details)) return reportPreservedEvidence(claim);
   const initialReport = await getInitialReportData(claim);
   if (!initialReport) return;
 
@@ -1500,6 +1552,115 @@ async function reportGenerationData(claim: SendClaim) {
       },
       'error'
     );
+}
+
+/**
+ * A report of preserved generator evidence: every file is the copy made at preserve time, read back and
+ * checked against its sha256 before the CyberTip is opened. Nothing is fetched from a URL.
+ */
+async function reportPreservedEvidence(claim: SendClaim) {
+  const { report } = claim;
+  const details = report.details as unknown as GeneratorEvidenceDetails;
+  if (!details.generatorEvidence.approvedAt)
+    return logSendLine(claim, 'send-awaiting-approval', {
+      message: `report ${report.id} waits for a moderator to approve its evidence`,
+    });
+  const initialReport = await getInitialReportData(claim);
+  if (!initialReport) return;
+
+  const files = evidenceFilesToSend(details);
+  if (!files.length)
+    return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+  if (evidenceSizeProblem(details))
+    return logSendFailure(
+      report,
+      new Error(`report ${report.id} holds ${files.length} files to send`),
+      'evidence-too-large'
+    );
+
+  // A report can hold thousands of files: verified by streaming, then uploaded one at a time, so a
+  // send holds at most one file.
+  const reads: {
+    file: (typeof files)[number];
+    read: Awaited<ReturnType<typeof verifyStoredEvidence>>;
+  }[] = [];
+  for (const file of files)
+    reads.push({ file, read: await verifyStoredEvidence(file.blob, hashEvidenceObject) });
+  const mismatched = reads.filter(({ read }) => !read.ok && read.shaMismatch);
+  if (mismatched.length)
+    return logSendFailure(
+      report,
+      new Error(`${mismatched.length} preserved file(s) no longer match their sha256`),
+      'evidence-sha-mismatch'
+    );
+  const unread = reads.filter(({ read }) => !read.ok);
+  if (unread.length)
+    return logSendFailure(
+      report,
+      new Error(`${unread.length} preserved file(s) could not be read`),
+      'archive-data'
+    );
+
+  // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
+  let viewed: Map<string, number[]>;
+  try {
+    viewed = await getViewedEvidence(
+      report.id,
+      files.map(({ blob }) => blob.blobId)
+    );
+  } catch (e) {
+    return logSendFailure(report, e, 'send-view-check');
+  }
+
+  const priorCTReports = details.generatorEvidence.priorCTReports;
+  const notCarried = evidenceReportInfo(details);
+  const toSend = reads.flatMap(({ file, read }) => {
+    if (!read.ok) return [];
+    const viewedByEsp = viewed.has(file.blob.blobId);
+    return [{ file, viewedByEsp, fileDetails: evidenceFileDetails(file, viewedByEsp) }];
+  });
+  const cyberTip = {
+    ...initialReport,
+    ...(priorCTReports?.length && {
+      personOrUserReported: { ...initialReport.personOrUserReported, priorCTReports },
+    }),
+    ...(notCarried.length && { additionalInfo: xmlText(notCarried.join('\n')) }),
+  };
+  // Checked before the CyberTip is opened: XML NCMEC refuses would cancel it on every run.
+  const xmlProblem =
+    reportXmlProblem(cyberTip) ??
+    toSend.map(({ fileDetails }) => fileDetailsXmlProblem(fileDetails)).find(Boolean);
+  if (xmlProblem)
+    return logSendFailure(
+      report,
+      new Error(`the CyberTip would not be well-formed XML: ${xmlProblem}`),
+      'evidence-xml'
+    );
+  let sending: ReturnType<typeof sendEach> | undefined;
+  await sendCyberTip(claim, cyberTip, {
+    sendFiles: async (reportId) => {
+      sending = sendEach(
+        toSend,
+        async ({ file, viewedByEsp, fileDetails }) => {
+          const {
+            data: { fileId, hash },
+          } = await uploadToCyberTip(claim, await readEvidenceFile(file.blob));
+          await cybertipClient.submitFileDetails({ reportId, fileId, ...fileDetails });
+          return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
+        },
+        1
+      );
+      return { generatedImageUploads: await sending.sent };
+    },
+    beforeCancel: async () => sending?.settled(),
+  });
+}
+
+/** The verified copy as the File NCMEC's upload takes; the read bytes are not kept past the File's own copy. */
+async function readEvidenceFile(blob: StoredEvidenceBlob) {
+  const read = await readVerifiedEvidence(blob, readEvidenceObject, sha256Hex);
+  if (!read.ok) throw new Error(`preserved file ${blob.blobId} failed its re-read: ${read.reason}`);
+  return new File([read.bytes as Uint8Array<ArrayBuffer>], blob.blobId, { type: read.contentType });
 }
 
 async function reportTrainingData(claim: SendClaim) {
@@ -2650,7 +2811,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
     const namedUrls = new Set(
-      (report.details?.generatedImages ?? []).flatMap(({ blobs }) => blobs.map(({ url }) => url))
+      (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
+        blobs.flatMap(({ url }) => (url ? [url] : []))
+      )
     );
     const imageUrls = [
       ...new Set([

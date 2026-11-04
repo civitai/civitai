@@ -16,6 +16,15 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const {
   enforceBlockedBrowsingTags,
@@ -203,6 +212,7 @@ beforeEach(() => {
   // The shared db mock is otherwise reset only between files; these tests must not share call
   // counts or implementations.
   resetSharedMocks();
+  for (const hook of Object.values(sparkHooks)) hook.mockClear();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
   hiddenUsersCached.mockReset();
@@ -4937,6 +4947,7 @@ describe('the title scan’s minor finding, beyond the scan', () => {
           details: { storylineId: 10, takenDown: true, title: 'T' },
         })
       );
+      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
@@ -5051,6 +5062,20 @@ describe('a storyline started from an image', () => {
         targetId: 77,
       });
       expect(w.storylineChapter.create).not.toHaveBeenCalled();
+      expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+    });
+
+    it('tells event points once chapter 1 is written with the spark', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      await createStoryline({
+        sparkImageId: 77,
+        postId: 500,
+        title: 't',
+        maxNsfwLevel: NsfwLevel.R,
+        userId: OWNER,
+      });
+      expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('refuses a ceiling below the image rating, and accepts one above it', async () => {

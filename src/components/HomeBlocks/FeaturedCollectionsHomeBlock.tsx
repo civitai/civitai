@@ -23,6 +23,7 @@ import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { PickedFeaturedCollection } from '~/server/services/home-block.service';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -134,6 +135,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
           <RemixFlyoutLayoutProvider layout="side">
             <ImagesProvider
               hideReactionCount={collection?.mode === CollectionMode.Contest}
+              hideHatTurf={collectionHidesHatTurf(collection)}
               images={type === 'image' ? (items as any) : undefined}
             >
               <ReactionSettingsProvider

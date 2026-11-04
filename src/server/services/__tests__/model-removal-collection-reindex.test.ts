@@ -49,6 +49,11 @@ const {
   mockDeleteBidsForModel: vi.fn(async () => ({ refundFailed: [] as string[] })),
 }));
 
+const { onStorySparkPostsHidden } = vi.hoisted(() => ({ onStorySparkPostsHidden: vi.fn() }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsHidden,
+}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -209,6 +214,13 @@ describe('deleteModelById — soft delete', () => {
     await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  it("forfeits the story sparks of its versions' posts", async () => {
+    await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
+    expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({
+      modelVersionIds: [VERSION_ID],
+    });
   });
 
   /** Runs deleteModelById on a transaction of its own; `recorded` is what the status record reports. */
