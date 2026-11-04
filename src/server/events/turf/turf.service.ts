@@ -59,6 +59,8 @@ export type TurfEvent = EventDef & { turf: EventTurfConfig };
 const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> 'Private'
   AND i.ingestion = 'Scanned' AND NOT i."tosViolation" AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL`;
+// The image's owner `o` is neither banned nor deleted: turf takes any owner's image but theirs.
+const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
 // Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
 const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
@@ -171,12 +173,13 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!team) throw throwBadRequestError("You aren't on a team yet");
 
   const [image] = await dbWrite.$queryRaw<
-    { ownerId: number; visible: boolean; contest?: boolean }[]
+    { ownerId: number; visible: boolean; contest?: boolean; ownerActive: boolean }[]
   >`
     SELECT i."userId" AS "ownerId",
       COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
-      ${contestEntry(Prisma.sql`i.id`)} AS contest
-    FROM "Image" i
+      ${contestEntry(Prisma.sql`i.id`)} AS contest,
+      ${ownerActive} AS "ownerActive"
+    FROM "Image" i JOIN "User" o ON o.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
   `;
@@ -184,6 +187,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!image.visible)
     throw throwBadRequestError('Hat stickers only go on images in a published post');
   if (image.contest) throw throwBadRequestError("Hat stickers don't go on contest entries");
+  if (!image.ownerActive) throw throwBadRequestError("You can't put hat stickers on this image");
   // The same refusals as a regular sticker: a block either way, or a suspended placer. Neither
   // applies to an owner's own image.
   if (image.ownerId !== userId)
@@ -605,7 +609,8 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
     dbRead.$queryRaw<{ id: number }[]>`
       SELECT i.id FROM "Image" i
       JOIN "Post" p ON p.id = i."postId"
-      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible}
+      JOIN "User" o ON o.id = i."userId"
+      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerActive}
     `,
     // Removed ones too: the unique key refuses a second sticker either way.
     viewerId

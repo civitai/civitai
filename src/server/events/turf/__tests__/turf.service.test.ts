@@ -43,7 +43,7 @@ const input = {
 // The placer row, then the image row, as placeTurfSticker reads them before its transaction.
 function given(
   placer: { optedIn: boolean; team: string | null },
-  image: { ownerId: number; visible: boolean } | null,
+  image: { ownerId: number; visible: boolean; ownerActive: boolean } | null,
   stock?: number
 ) {
   dbMock.dbWrite.$queryRaw
@@ -52,7 +52,7 @@ function given(
     .mockResolvedValueOnce(stock === undefined ? [] : [{ stock, refilledAt: NOW }]);
 }
 const OK_PLACER = { optedIn: true, team: 'Blue' };
-const OK_IMAGE = { ownerId: 77, visible: true };
+const OK_IMAGE = { ownerId: 77, visible: true, ownerActive: true };
 
 // The UPDATE that spends a sticker, with the stock it writes.
 const spent = () =>

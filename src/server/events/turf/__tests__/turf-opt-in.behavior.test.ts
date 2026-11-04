@@ -51,10 +51,14 @@ const NEVER_SET = 1;
 const OPTED_OUT = 2;
 const OPTED_IN = 3;
 const NO_HAT = 4;
+const BANNED = 5;
+const DELETED = 6;
 
 beforeAll(async () => {
   await pg.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, settings jsonb);
+    CREATE TABLE "User" (
+      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz
+    );
     CREATE TABLE "EventCosmeticPlacement" (
       id serial PRIMARY KEY, event text NOT NULL, "userId" int NOT NULL, "endedAt" timestamp
     );
@@ -82,6 +86,8 @@ beforeEach(async () => {
       (2, '{"eventTurfOptIn":{"e":false}}'),
       (3, '{"eventTurfOptIn":{"e":true}}'),
       (4, '{"eventTurfOptIn":{"other":true}}');
+    INSERT INTO "User" (id, "bannedAt") VALUES (5, now());
+    INSERT INTO "User" (id, "deletedAt") VALUES (6, now());
     -- Hats placed: an ended one still counts; a hat of another event does not.
     INSERT INTO "EventCosmeticPlacement" (event, "userId", "endedAt") VALUES
       ('e', 1, now()), ('e', 2, NULL), ('other', 4, NULL);
@@ -132,6 +138,11 @@ describe('who is in Hat Turf', () => {
     expect(open).toEqual({ 101: true, 102: true, 103: true, 104: true });
   });
 
+  it("a banned or deleted owner's images are closed", async () => {
+    const { open } = await getTurfSummaries('e', [101, 105, 106]);
+    expect(open).toEqual({ 101: true, 105: false, 106: false });
+  });
+
   it('turning it on writes an explicit true, and turning it off takes the user out again', async () => {
     expect((await setTurfOptIn('e', NEVER_SET, true)).changed).toBe(true);
     expect(await inTurf(NEVER_SET)).toBe(true);
@@ -176,5 +187,10 @@ describe('placing a hat sticker', () => {
 
   it('an owner who opted out still takes stickers from someone in', async () => {
     await expect(place(OPTED_IN, 102)).rejects.toThrow('passed the checks');
+  });
+
+  it("a banned or deleted owner's image takes none", async () => {
+    await expect(place(OPTED_IN, 100 + BANNED)).rejects.toThrow("can't put hat stickers");
+    await expect(place(OPTED_IN, 100 + DELETED)).rejects.toThrow("can't put hat stickers");
   });
 });
