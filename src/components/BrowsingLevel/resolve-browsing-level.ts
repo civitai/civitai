@@ -27,11 +27,7 @@ type BrowsingLevelInputs = {
   user?: number;
 };
 
-/**
- * The cap the domain puts on a viewer, mirroring the server middleware (`applyDomainFeature`):
- * anonymous is PG anywhere, logged-in where mature content is not allowed (civitai.com) is
- * PG+PG-13, and nothing is capped where it is allowed.
- */
+/** Client mirror of the server cap in applyDomainFeature (src/server/trpc.ts); change them together. */
 export function domainForcedBrowsingLevel({
   canViewNsfw,
   loggedIn,

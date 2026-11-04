@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BrowsingLevelProvider,
   useBrowsingLevelDebounced,
@@ -63,8 +63,13 @@ function setup() {
 }
 
 describe('ComCardPreviewScope', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    site.canViewNsfw = true;
+    settings.browsingLevel = allBrowsingLevelsFlag;
+  });
+
   it('reads the page at the level civitai.com would serve this viewer while previewing', () => {
-    // What .com serves: the same signed-in viewer on the site that does not allow mature content.
     site.canViewNsfw = false;
     const com = setup();
     com.render(false, false);
@@ -102,7 +107,6 @@ describe('ComCardPreviewScope', () => {
     expect(red.seen.page).toBe(allBrowsingLevelsFlag);
     expect(red.seen.mounts).toBe(1);
     red.unmount();
-    vi.useRealTimers();
   });
 
   it('serves a viewer with a stricter saved level what civitai.com serves them', () => {
@@ -112,6 +116,8 @@ describe('ComCardPreviewScope', () => {
     com.render(false, false);
     const comLevel = com.seen.page;
     com.unmount();
+    // The cap replaces a stricter saved level, as it does on civitai.com.
+    expect(comLevel).toBe(sfwBrowsingLevelsFlag);
 
     site.canViewNsfw = true;
     const red = setup();
@@ -119,6 +125,5 @@ describe('ComCardPreviewScope', () => {
     expect(red.seen.page).toBe(comLevel);
     expect(red.seen.hero).toBe(comLevel);
     red.unmount();
-    settings.browsingLevel = allBrowsingLevelsFlag;
   });
 });
