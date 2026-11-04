@@ -45,7 +45,7 @@ export async function getViewedEvidence(
   const earlierSha = new Map<string, string>();
   if (earlierIds.length) {
     const viewedBlobIds = [...new Set(rows.map(({ activity }) => activity.slice(prefix.length)))];
-    // Only the viewed files' hashes: an earlier report's details also hold its whole activity log.
+    // Only the viewed files' hashes, not the whole details: `details.userActivity` can be large.
     const earlier = await dbWrite.$queryRaw<{ id: number; blobId: string; sha256: string }[]>`
       SELECT r.id, b->>'blobId' AS "blobId", b->>'sha256' AS sha256
       FROM "CsamReport" r

@@ -1753,7 +1753,6 @@ async function reportTrainingData(claim: SendClaim) {
       );
       createDir(`${dir}/entries`);
       files = await spoolZip(outPath, `${dir}/entries`, inflated);
-      // Removed once its entries are spooled, so it is not held on disk through the send.
       fs.rmSync(outPath, { force: true });
     } catch (e) {
       if (e instanceof SpoolLimitError)
@@ -1886,7 +1885,6 @@ async function sendExternalLink(
     const zipFile = `${dir}/${name}.zip`;
     await downloadCsamBucketObject(key, zipFile);
     createDir(`${dir}/${name}`);
-    // Removed once its entries are spooled, so the next archive is not on disk beside it.
     try {
       return await spoolZip(zipFile, `${dir}/${name}`, inflated);
     } finally {
