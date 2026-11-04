@@ -423,6 +423,17 @@ describe('team remix', () => {
     expect(h.generateFromGraph).not.toHaveBeenCalled();
   });
 
+  it('quotes a mature source as a refusal the button can show, not an error', async () => {
+    addImage(36, { ownerId: OWNER, nsfwLevel: MATURE });
+    sameTeam('Pink');
+    const quote = await quoteTeam(36);
+    expect(quote).toMatchObject({
+      team: 'Pink',
+      price: { refusal: expect.stringMatching(/mature/) },
+    });
+    expect(h.whatIfFromGraph).not.toHaveBeenCalled();
+  });
+
   it('says nothing about the hats on an image the viewer cannot see', async () => {
     addImage(35, { ownerId: OWNER, hidden: true });
     sameTeam('Pink');

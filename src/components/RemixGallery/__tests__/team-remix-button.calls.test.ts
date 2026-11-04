@@ -28,6 +28,8 @@ const HOST = 74;
 let quote: unknown = null;
 const requests: { path: string; body: string }[] = [];
 let runFails = false;
+/** While set, a run answers only once it is resolved: a submit still in flight. */
+let holdRun: Promise<void> | null = null;
 
 function stubFetch() {
   requests.length = 0;
@@ -37,6 +39,7 @@ function stubFetch() {
       const url = new URL(typeof input === 'string' ? input : input.toString(), 'http://test');
       const path = url.pathname.replace('/api/trpc/', '');
       requests.push({ path, body: String(init?.body ?? '') });
+      if (path === 'remixApp.run' && holdRun) await holdRun;
       if (path === 'remixApp.run' && runFails)
         return new Response(
           JSON.stringify({ error: { json: { message: 'nope', code: -32603, data: {} } } }),
@@ -102,6 +105,7 @@ beforeEach(() => {
   flags.remixApps = true;
   quote = null;
   runFails = false;
+  holdRun = null;
   localStorage.clear();
 });
 afterEach(() => {
@@ -165,6 +169,29 @@ describe('the Remix for your team button', () => {
     const [first, second] = runInputs();
     expect(second).toBeDefined();
     expect(second.nonce).not.toBe(first.nonce);
+  });
+
+  it('holds the button and its nonce from Run until the submit settles', async () => {
+    quote = eligible;
+    await render();
+    let release = () => undefined as void;
+    holdRun = new Promise((resolve) => (release = resolve));
+    await tap();
+    const run = [...document.body.querySelectorAll('button')].find((b) => b.textContent === 'Run');
+    expect(run).toBeDefined();
+    await act(async () => {
+      run?.click();
+    });
+    await settle();
+    // The confirm has closed, the submit has not answered: still one tap.
+    expect(runInputs()).toHaveLength(1);
+    expect(isLoading()).toBe(true);
+
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(isLoading()).toBe(false);
   });
 
   it('frees the button when the confirm is cancelled, and runs nothing', async () => {
