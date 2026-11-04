@@ -1,8 +1,10 @@
+import { logToAxiom } from '~/server/logging/client';
 import { getUserSettings, patchUserSettings } from '~/server/services/user.service';
 import {
   HIDDEN_APPS_MAX,
   HIDDEN_APPS_SETTINGS_KEY,
   hiddenAppsOverflow,
+  openingClearsHide,
   sanitizeHiddenApps,
   type HiddenApps,
 } from '~/shared/utils/my-apps-hidden';
@@ -67,4 +69,25 @@ export async function unhideMyApp(args: { userId: number; slug: string }): Promi
 export async function getMyHiddenApps(userId: number): Promise<HiddenApps> {
   const settings = await getUserSettings(userId);
   return sanitizeHiddenApps((settings as Record<string, unknown>)[HIDDEN_APPS_SETTINGS_KEY]);
+}
+
+/**
+ * The run page's READ for "opening clears the hide" (`openingClearsHide`): is `slug` in the
+ * viewer's hides? Read from the same cached settings as `getMyHiddenApps`, and FAILS OPEN to
+ * `false` on any error — it sits on the app-launch path, where a throw would take the app
+ * away, and the worst a false negative does is leave a hide in place (the pre-existing
+ * behaviour). The WRITE is the client's `unhideMyApp` call after mount, only when this is true.
+ */
+export async function isMyAppHidden(args: { userId: number; slug: string }): Promise<boolean> {
+  try {
+    return openingClearsHide(await getMyHiddenApps(args.userId), args.slug);
+  } catch (err) {
+    // Logged, not swallowed; the `.catch` keeps a failed log off `unhandledRejection`.
+    logToAxiom({
+      name: 'my-apps-hidden-read-degraded',
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    }).catch(() => null);
+    return false;
+  }
 }

@@ -37,6 +37,11 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
   recordAppListingOpen: m.recordOpen,
 }));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: vi.fn(async () => false),
+}));
 vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
 vi.mock('@mantine/core', () => ({
   Box: ({ children }: { children?: unknown }) => children ?? null,

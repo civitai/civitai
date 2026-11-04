@@ -66,6 +66,7 @@ const PROPS = {
   audience: null,
   privateRunStatus: null,
   launchOrigin: 'store' as const,
+  isHiddenForViewer: false,
 };
 
 beforeEach(() => {

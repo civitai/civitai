@@ -19,10 +19,17 @@
  * already the merge's join key. A renamed slug orphans its entry, which fails OPEN (the app
  * shows again); the cap below bounds orphans.
  *
+ * CROSS-DEVICE: opening a page app's run route (`/apps/run/<slug>`) while it is hidden CLEARS
+ * the hide server-side (`openingClearsHide` below), so every device shows it again — not
+ * only the browser whose recently-opened `openedAt` moved. An app that never invokes a scope
+ * moves nothing else server-side, so without this a hide made on one device outlived a
+ * reopen on another.
+ *
  * KNOWN LIMITATIONS (by design, not solved here):
- *  - an off-site OAuth app's server `lastUsedAt` is its CONSENT time, so a hidden off-site
- *    app returns only on re-consent, or when it is opened from a tracked in-site path (the
- *    store's "Visit" or a home tile, which record a recently-opened entry);
+ *  - an off-site OAuth app's server `lastUsedAt` is its CONSENT time and it has no run route,
+ *    so a hidden off-site app returns on other devices only on re-consent; on THIS browser it
+ *    also returns when opened from a tracked in-site path (the store's "Visit" or a home tile,
+ *    which record a recently-opened entry);
  *  - `hiddenAt` is server time and `openedAt` is this browser's clock, so a client clock
  *    running behind the server can keep a just-reopened app hidden until its next use.
  */
@@ -56,6 +63,19 @@ export function isHiddenFromHome(hiddenAt: unknown, lastUsedMs: number | null): 
   if (hidden == null) return false;
   if (lastUsedMs == null || !Number.isFinite(lastUsedMs)) return true;
   return !(lastUsedMs > hidden);
+}
+
+/**
+ * "Opening clears the hide" — the cross-device COMPLEMENT of `isHiddenFromHome`, not a second
+ * copy of it. `isHiddenFromHome` decides what the home SHOWS from the uses it can see; this
+ * decides when the run page must ERASE the hide, because opening a page app is a use the
+ * server would otherwise never record. Opening is a use at "now", which is after every stored
+ * hide, so ANY entry for the slug in the (sanitised) map is cleared, whatever its time. True
+ * only when there is an entry to clear, so the common open writes nothing. (An unparseable
+ * stored entry is dropped by `sanitizeHiddenApps` before this sees it — it is inert anyway.)
+ */
+export function openingClearsHide(hidden: HiddenApps, slug: string): boolean {
+  return Object.prototype.hasOwnProperty.call(hidden, slug);
 }
 
 /**

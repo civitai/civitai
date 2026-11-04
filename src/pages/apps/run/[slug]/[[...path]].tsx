@@ -1,4 +1,5 @@
 import { Alert, Box, useComputedColorScheme } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
 import { blockPreconnectHint } from '~/components/AppBlocks/blockPreconnect';
@@ -16,6 +17,7 @@ import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
 import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.service';
+import { isMyAppHidden } from '~/server/services/blocks/my-apps-hidden.service';
 import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag';
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -117,7 +119,25 @@ interface PageProps {
    * `iframeSrc` above, which never carries the page's query. See `apps-run-origin.ts`.
    */
   launchOrigin: AppsRunOrigin;
+  /**
+   * The signed-in viewer had removed this app from their My apps home ("Remove from My apps").
+   * Opening it is a use, so the page clears that hide server-side after mount
+   * (`ReopenClearsHide` → `appListings.unhideMyApp`), which brings it back on EVERY device —
+   * not just this browser's recently-opened list. Computed only on the public path for a
+   * signed-in viewer, so the common open (nothing hidden) makes no write. See
+   * `openingClearsHide` in `my-apps-hidden.ts`.
+   */
+  isHiddenForViewer: boolean;
 }
+
+/**
+ * Loaded only when the viewer actually has a hide to clear, so the common launch ships no
+ * mutation code; client-only because the write must not happen during SSR.
+ */
+const ReopenClearsHide = dynamic(
+  () => import('~/components/Apps/ReopenClearsHide').then((mod) => mod.ReopenClearsHide),
+  { ssr: false }
+);
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
@@ -161,9 +181,13 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // No listing ICON is read here. The run page used to read one for its recents entry, but the
     // recents store no longer persists an icon (`recentlyOpenedAppsStore.ts`), so nothing on this
     // page rendered it.
-    const [page, beta] = await Promise.all([
+    // The third read is "opening clears the hide" (`openingClearsHide`): keyed on the slug like
+    // the beta read, so it adds no round trip, cached, and fail-open to `false` (never a 500 on
+    // the launch). Signed-out viewers have no hides and skip it.
+    const [page, beta, hiddenForViewer] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
+      session?.user ? isMyAppHidden({ userId: session.user.id, slug }) : false,
     ]);
 
     // ── PRIVATE RUN — THE DELISTED/SUSPENDED FALLBACK ──────────────────────────
@@ -250,6 +274,9 @@ export const getServerSideProps = createServerSideProps<PageProps>({
           audience: access.audience,
           privateRunStatus: block.status,
           launchOrigin,
+          // A delisted app is not on anyone's home; a moderator's or owner's private run is
+          // not a use to record (the same reason it writes no recents entry or play).
+          isHiddenForViewer: false,
         },
       };
     }
@@ -315,6 +342,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         audience: null,
         privateRunStatus: null,
         launchOrigin,
+        isHiddenForViewer: hiddenForViewer,
       },
     };
   },
@@ -470,6 +498,7 @@ function AppPage(props: PageProps) {
     audience,
     launchOrigin,
     privateRunStatus,
+    isHiddenForViewer,
   } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -595,6 +624,7 @@ function AppPage(props: PageProps) {
 
   return (
     <>
+      {isHiddenForViewer ? <ReopenClearsHide slug={slug} /> : null}
       {/* 🔴 SSR RESOURCE HINT — and its VALUE comes entirely from being HERE.
           The block iframe mounts on the first client render AFTER hydration,
           hundreds of ms after this head is parsed; that gap is the head start
