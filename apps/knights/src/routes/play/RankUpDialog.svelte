@@ -84,10 +84,10 @@
       {#if message}
         <p class="notice" role="alert">{message}</p>
       {/if}
+      <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
+        <button type="submit" class="ov-primary" disabled={submitting} data-autofocus>Onward</button>
+      </form>
     </section>
-    <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
-      <button type="submit" class="ov-primary" disabled={submitting} data-autofocus>Onward</button>
-    </form>
   </div>
 </div>
 
@@ -107,7 +107,8 @@
      Onward fades in last. */
   .card {
     position: relative;
-    animation: mo-unroll var(--motion-milestone-min) var(--ease-out-quart) both;
+    /* `backwards`, not `both`: a clip-path left on after the unroll would clip the phone's fixed Onward. */
+    animation: mo-unroll var(--motion-milestone-min) var(--ease-out-quart) backwards;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -217,6 +218,9 @@
     color: var(--io-parchment-muted);
     font: 400 22px/1.4 var(--io-font-body);
   }
+  form {
+    margin-top: 14px;
+  }
   form :global(button) {
     animation: mo-fade-in var(--motion-base) var(--ease-out-quart) 1000ms backwards;
   }
@@ -248,6 +252,7 @@
       padding: 10px 14px;
     }
     form {
+      margin-top: 0;
       position: fixed;
       right: 16px;
       bottom: max(16px, env(safe-area-inset-bottom));
