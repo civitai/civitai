@@ -449,6 +449,17 @@ const imageIdOf = (k: string) => Number(k.slice('Image:'.length));
 // after every commit that asked. N concurrent placements on a hot image cost two reads, not N.
 const syncing = new Map<string, { dirty: boolean; done: Promise<void> }>();
 
+// A run that never settles would hold its image's entry forever, and every later request would
+// wait on it. A timed-out run counts as failed; if it writes later, its older ticket is refused.
+export const TURF_SYNC_TIMEOUT_MS = 30_000;
+function withSyncTimeout(run: Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('turf sync timed out')), TURF_SYNC_TIMEOUT_MS);
+  });
+  return Promise.race([run, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** Syncs one image after a placement or removal, coalesced with any sync of it already running. */
 export function requestTurfSync(event: TurfEvent, imageId: number): Promise<void> {
   const key = `${event.name}:${imageId}`;
@@ -464,7 +475,7 @@ export function requestTurfSync(event: TurfEvent, imageId: number): Promise<void
       do {
         state.dirty = false;
         try {
-          await syncTurfImages(event, [imageId]);
+          await withSyncTimeout(syncTurfImages(event, [imageId]));
         } catch (error) {
           // A request that arrived during the failed run still needs its re-run.
           if (!state.dirty) throw error;

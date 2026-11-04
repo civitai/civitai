@@ -34,6 +34,7 @@ const {
   getTurfEvent,
   syncTurfImages,
   requestTurfSync,
+  TURF_SYNC_TIMEOUT_MS,
   reconcileTurf,
   pickFeedStickers,
   getTurfStickersForImages,
@@ -137,6 +138,40 @@ describe('requestTurfSync', () => {
 
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
     expect(lua.hash(KEYS.counts)?.['Image:960']).toBe(countsOf(rows));
+  });
+
+  it('rejects to its caller when a run fails with no request waiting, and frees the image', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    realWrite();
+    dbMock.dbWrite.$queryRaw
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValue([sticker(965, 5, 'Blue')]);
+
+    await expect(requestTurfSync(event, 965)).rejects.toThrow('connection reset');
+    await requestTurfSync(event, 965); // a fresh sync, not the failed one again
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up on a hung run, so the next request for the image starts a fresh sync', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    const lua = realWrite();
+    const rows = [sticker(970, 5, 'Blue')];
+    dbMock.dbWrite.$queryRaw
+      .mockImplementationOnce((() => new Promise(() => undefined)) as never) // never settles
+      .mockResolvedValue(rows);
+    vi.useFakeTimers();
+    try {
+      let outcome: string | undefined;
+      requestTurfSync(event, 970).catch((e: Error) => (outcome = e.message));
+      await vi.advanceTimersByTimeAsync(TURF_SYNC_TIMEOUT_MS);
+      expect(outcome).toBe('turf sync timed out');
+
+      await requestTurfSync(event, 970);
+      expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(lua.hash(KEYS.counts)?.['Image:970']).toBe(countsOf(rows));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('coalesces concurrent syncs of one image into one read plus one re-run', async () => {
@@ -325,5 +360,12 @@ describe('reconcileTurf', () => {
 
     expect(lua.hash(KEYS.counts)?.['Image:910']).toBeUndefined();
     expect(lua.hash(KEYS.map)?.['Image:910']).toBeUndefined();
+    // The stamp outlives the clear, so a sync that read before it cannot bring the image back.
+    const stamp = Number(lua.hash(KEYS.stamp)?.['Image:910']);
+    expect(stamp).toBeGreaterThan(0);
+    redisMock.sysRedis.incr.mockResolvedValueOnce(stamp - 1);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([sticker(910, 5, 'Blue')]);
+    await syncTurfImages((await getTurfEvent('e', NOW))!, [910], NOW);
+    expect(lua.hash(KEYS.counts)?.['Image:910']).toBeUndefined();
   });
 });
