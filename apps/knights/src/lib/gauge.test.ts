@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gaugeFraction, nextRankRequirements } from './gauge';
+import { gaugeFraction, nextRankRequirements, pendingSegment, xpLine } from './gauge';
 
 describe('gaugeFraction', () => {
   it('is the share of the level earned', () => {
@@ -66,5 +66,35 @@ describe('nextRankRequirements', () => {
 
   it('is empty at the top of the ladder', () => {
     expect(nextRankRequirements({ ...status, nextRank: null }, [])).toEqual([]);
+  });
+});
+
+describe('pendingSegment', () => {
+  it('puts pending XP right after the confirmed fill', () => {
+    const seg = pendingSegment(876, 5163, 360);
+    expect(seg.confirmed).toBeCloseTo(876 / 5163);
+    expect(seg.pending).toBeCloseTo(360 / 5163);
+    expect(seg.overflow).toBe(0);
+  });
+
+  it('is empty with nothing pending, and survives a level with no XP to give', () => {
+    expect(pendingSegment(100, 1000, 0)).toMatchObject({ pending: 0, overflow: 0 });
+    expect(pendingSegment(100, 0, 90)).toEqual({ confirmed: 0, pending: 0, overflow: 0 });
+    expect(pendingSegment(100, 1000, -5).pending).toBe(0);
+  });
+
+  it('fills to the end of the level and reports what spills past it, without a level-up', () => {
+    const seg = pendingSegment(900, 1000, 360);
+    expect(seg.confirmed).toBeCloseTo(0.9);
+    expect(seg.pending).toBeCloseTo(0.1);
+    expect(seg.confirmed + seg.pending).toBeCloseTo(1);
+    expect(seg.overflow).toBe(260);
+  });
+});
+
+describe('xpLine', () => {
+  it('reads confirmed XP, then what is pending', () => {
+    expect(xpLine(876, 5163, 360)).toBe('876 / 5,163 XP · +360 pending');
+    expect(xpLine(876, 5163, 0)).toBe('876 / 5,163 XP');
   });
 });

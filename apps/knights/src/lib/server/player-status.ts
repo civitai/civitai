@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from './progression/levels';
 import { calculateFervor, fervorLedgerOf } from './progression/fervor';
-import { daysPlayedOf, ledgerOf } from './progression/progression';
+import { daysPlayedOf, ledgerOf, pendingXpOf } from './progression/progression';
 import {
   accuracyOf,
   nextLadderEntry,
@@ -20,6 +20,8 @@ export type PlayerStatus = {
   level: number;
   xpIntoLevel: number;
   xpForNextLevel: number;
+  /** Bulk XP the player's unsettled votes will pay if they are graded correct; not yet in `xpIntoLevel`. */
+  xpPending: number;
   progressPercent: number;
   fervor: number;
   goldPending: number;
@@ -49,6 +51,7 @@ type Extras = {
   fervorLedger?: Ledger;
   goldPending?: number;
   goldEarned?: number;
+  xpPending?: number;
   smites?: number;
   daysPlayed?: number;
 };
@@ -63,6 +66,7 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
     level: progress.level,
     xpIntoLevel: progress.xpIntoLevel,
     xpForNextLevel: progress.xpForNextLevel,
+    xpPending: standing.xpPending ?? 0,
     progressPercent: progress.progressPercent,
     fervor: calculateFervor(standing.fervorLedger ?? { correct: 0, graded: 0 }),
     goldPending: standing.goldPending ?? 0,
@@ -101,6 +105,7 @@ export async function getPlayerStatus(
         ...player,
         daysPlayed: next && next.minDaysPlayed > 0 ? await daysPlayedOf(db, userId) : 0,
         ledger: await ledgerOf(db, userId),
+        xpPending: await pendingXpOf(db, userId),
         fervorLedger: await fervorLedgerOf(db, userId, now),
         smites: await activeSmiteCount(db, userId),
       })

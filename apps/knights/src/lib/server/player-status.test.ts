@@ -21,4 +21,9 @@ describe('statusFrom', () => {
     ).toMatchObject({ fervor: 256, goldPending: 100, goldEarned: 25 });
     expect(statusFrom('Acolyte', 0)).toMatchObject({ fervor: 0, goldPending: 0, goldEarned: 0 });
   });
+
+  it('carries the pending XP, and defaults it to zero', () => {
+    expect(statusFrom('Knight', 0, { xpPending: 360 }).xpPending).toBe(360);
+    expect(statusFrom('Acolyte', 0).xpPending).toBe(0);
+  });
 });

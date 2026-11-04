@@ -37,6 +37,26 @@ export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> 
 }
 
 /**
+ * The bulk XP the player's votes are still to be paid: `correctXp` on each vote since the `startAt` reset that has no
+ * payout yet and is not graded wrong, so a vote awaiting its verdict counts, and so does one graded correct but not yet
+ * settled. The vote XP is already in `exp`. Hidden checks settle through the same payout, so they count alike.
+ * Reads the player's own votes on (playerId, createdAt), which also prunes the monthly partitions to those since the reset.
+ */
+export async function pendingXpOf(db: Executor, playerId: number): Promise<number> {
+  const { n } = await db
+    .selectFrom('KnightsVote as v')
+    .select(sql<string>`count(*)`.as('n'))
+    .where('v.playerId', '=', playerId)
+    .where(
+      sql<SqlBool>`v."createdAt" >= (SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = ${playerId})`
+    )
+    .where('v.settledAt', 'is', null)
+    .where('v.verdict', 'in', ['pending', 'correct'])
+    .executeTakeFirstOrThrow();
+  return Number(n) * PROGRESSION.correctXp;
+}
+
+/**
  * Distinct UTC days since the career began on which the player cast a vote. `KnightsPlayerDay` has one row per
  * player per day, so this is a count over at most a few hundred rows on its primary key, not over the vote ledger.
  * The day of a reset counts, even for votes cast before it.

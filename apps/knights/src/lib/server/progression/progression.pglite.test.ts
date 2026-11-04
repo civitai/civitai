@@ -15,7 +15,7 @@ import {
 import { PROGRESSION } from './config';
 import { getPlayerStatus } from '../player-status';
 import { calculateFervor, fervorLedgerOf } from './fervor';
-import { settleFinalItems, settleItemVotes } from './progression';
+import { pendingXpOf, settleFinalItems, settleItemVotes } from './progression';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -425,5 +425,54 @@ describe('settleFinalItems', () => {
     expect(await settleFinalItems(db, { now: NOW })).toEqual({ items: 2, votes: 2, failed: 1 });
     expect((await who(1)).goldEarned).toBe(PROGRESSION.baseGold);
     expect((await ballot(poison, 99)).settledAt).toBeNull();
+  });
+});
+
+describe('pendingXpOf', () => {
+  it('is 0 for a player with no votes', async () => {
+    await player(1);
+    expect(await pendingXpOf(db, 1)).toBe(0);
+  });
+
+  it('is the bulk XP still to come on each vote awaiting a verdict', async () => {
+    await player(1);
+    for (const id of [10, 11, 12]) await image(id);
+    for (const id of [10, 11, 12]) await vote(1, await item(id), '4');
+    expect(await pendingXpOf(db, 1)).toBe(3 * PROGRESSION.correctXp);
+  });
+
+  it('leaves out votes already settled, and counts a graded vote until it is paid', async () => {
+    for (const id of [1, 2, 3, 4]) await player(id);
+    for (const id of [10, 11]) await image(id);
+    const settled = await item(10);
+    await resolve(settled, 1, '4');
+    const open = await item(11);
+    await vote(1, open, '4');
+    expect(await pendingXpOf(db, 1)).toBe(PROGRESSION.correctXp);
+
+    await pg.exec(`UPDATE "KnightsVote" SET verdict='correct' WHERE "itemId"=${open}`);
+    expect(await pendingXpOf(db, 1)).toBe(PROGRESSION.correctXp);
+
+    await pg.exec(`UPDATE "KnightsVote" SET verdict='failed' WHERE "itemId"=${open}`);
+    expect(await pendingXpOf(db, 1)).toBe(0);
+  });
+
+  it('leaves out votes cast before the career reset, and other players', async () => {
+    await player(1);
+    await player(2);
+    for (const id of [10, 11, 12]) await image(id);
+    for (const id of [10, 11]) await vote(1, await item(id), '4');
+    await vote(2, await item(12), '4');
+    await pg.exec(`UPDATE "NewOrderPlayer" SET "startAt"='2026-12-16' WHERE "userId"=1`);
+    expect(await pendingXpOf(db, 1)).toBe(0);
+    await pg.exec(`UPDATE "NewOrderPlayer" SET "startAt"='2026-12-01' WHERE "userId"=1`);
+    expect(await pendingXpOf(db, 1)).toBe(2 * PROGRESSION.correctXp);
+  });
+
+  it('is part of the player status', async () => {
+    await player(1);
+    await image(10);
+    await vote(1, await item(10), '4');
+    expect(await getPlayerStatus(db, 1)).toMatchObject({ xpPending: PROGRESSION.correctXp });
   });
 });
