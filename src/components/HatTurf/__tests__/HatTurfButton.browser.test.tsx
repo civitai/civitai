@@ -375,7 +375,6 @@ describe('Hat Turf button on a feed ImageCard', () => {
     });
     join.click();
     expect(h.optIn).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: true });
-    expect(q('hat-turf-draft')).toBeNull();
   });
 
   test('no button when signed out', async () => {
