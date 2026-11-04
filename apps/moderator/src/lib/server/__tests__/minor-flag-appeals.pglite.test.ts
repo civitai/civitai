@@ -24,6 +24,10 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
+// Distinct bases, so the .com face link is seen to take the .com one.
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://com.test', CIVITAI_LINK_URL: 'https://red.test' },
+}));
 
 const { getMinorFlagAppealsForReview, getMinorFlagAppealGroups } = await import(
   '../minor-hash.service'
@@ -36,7 +40,7 @@ CREATE TABLE "Model" (
   "status" TEXT NOT NULL DEFAULT 'Published', "type" TEXT NOT NULL DEFAULT 'LORA',
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01', "meta" JSONB,
-  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
+  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "sfwName" TEXT, "sfwCoverImageId" INTEGER
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
@@ -193,6 +197,30 @@ const ids = async (
   });
   return items.map((i) => i.modelId);
 };
+
+describe('civitai.com face', () => {
+  it("gives each row its model's .com face, or null when the model has none", async () => {
+    await db.query(`INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (900, 'com-cover', 4)`);
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com one', "sfwCoverImageId" = 900 WHERE id = 1`
+    );
+    await db.query(`UPDATE "Model" SET "sfwName" = 'com two' WHERE id = 2`);
+    // A cover id with the face off shows no face.
+    await db.query(`UPDATE "Model" SET "sfwCoverImageId" = 900 WHERE id = 3`);
+
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    const face = (id: number) => items.find((i) => i.modelId === id)?.comFace;
+
+    expect(face(1)).toEqual({
+      name: 'com one',
+      url: 'https://com.test/models/1',
+      cover: { id: 900, url: 'com-cover', type: 'image', nsfwLevel: 4 },
+    });
+    expect(face(2)).toEqual({ name: 'com two', url: 'https://com.test/models/2', cover: null });
+    expect(face(3)).toBeNull();
+    expect(items.find((i) => i.modelId === 1)).not.toHaveProperty('sfwName');
+  });
+});
 
 describe('source filter', () => {
   it.each([
