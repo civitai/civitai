@@ -439,6 +439,42 @@ describe('upsertModel — system nsfw lock marker', () => {
   });
 });
 
+describe('upsertModel — restricted nsfw verdict lead', () => {
+  const lead = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'minor' };
+
+  // Only the lead's ruling clears it, so a moderator's model form is held to it as well.
+  it.each([false, true])(
+    'keeps the stored lead when the client sends meta without it (moderator %s)',
+    async (isModerator) => {
+      mockStored({ minor: true, sfwOnly: true, meta: { restrictedNsfwVerdict: lead } });
+
+      await upsert({
+        id: MODEL_ID,
+        userId: isModerator ? MODERATOR_ID : OWNER_ID,
+        isModerator,
+        name: 'Cleaned',
+        meta: {},
+      } as never);
+
+      expect(updateData().meta).toEqual(expect.objectContaining({ restrictedNsfwVerdict: lead }));
+    }
+  );
+
+  it.each([false, true])('ignores a lead the client sends (moderator %s)', async (isModerator) => {
+    mockStored({ minor: true, sfwOnly: true, meta: null });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: isModerator ? MODERATOR_ID : OWNER_ID,
+      isModerator,
+      name: 'Cleaned',
+      meta: { restrictedNsfwVerdict: lead },
+    } as never);
+
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+});
+
 describe('upsertModel — profanity lock against a lock that landed after the read', () => {
   it("neither rewrites the lock nor marks it the system's", async () => {
     mockDbWrite.model.findUnique

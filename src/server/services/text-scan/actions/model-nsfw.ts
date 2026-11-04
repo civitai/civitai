@@ -24,6 +24,9 @@ export async function applySystemModelNsfwFlag({
     nsfwLevel: number;
     lockedProperties: string[] | null;
     userId: number;
+    minor: boolean;
+    poi: boolean;
+    sfwOnly: boolean;
   };
   source: string;
 }): Promise<ModelTextModerationOutcome> {
@@ -42,6 +45,10 @@ export async function applySystemModelNsfwFlag({
     return 'skipped_locked';
   }
 
+  // A minor, POI or SFW-only model stays SFW, as the model form and the profanity check keep it: the
+  // verdict waits in Needs review for a moderator instead.
+  if (model.minor || model.poi || model.sfwOnly) return holdRestrictedVerdict(model.id, source);
+
   // Guarded in the WHERE, not by the caller's read: a moderator ruling that lands between
   // the read and this write would otherwise be overwritten. `array_append` in the database
   // for the same reason — writing back the array we read would drop a concurrent lock.
@@ -56,8 +63,9 @@ export async function applySystemModelNsfwFlag({
         )
     WHERE m.id = ${model.id}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+      AND NOT (m.minor OR m.poi OR m."sfwOnly")
   `;
-  if (!flipped) return 'declined_race';
+  if (!flipped) return holdRestrictedVerdict(model.id, source, 'declined_race');
 
   await updateModelNsfwLevels([model.id]);
   // The origin-side public response cache keys off browsing level and is otherwise only
@@ -81,6 +89,37 @@ export async function applySystemModelNsfwFlag({
   return 'applied';
 }
 
+/**
+ * Records the verdict as a moderator's lead on a restricted model, without touching nsfw. Guarded on
+ * the restriction and on there being no nsfw lock: a moderator's lock is already a ruling. A lead
+ * already waiting keeps its time and restriction, so a redelivery does not move it in the queue and
+ * an owner who later unticks the flag does not relabel it. `otherwise` is the outcome when the guard
+ * matches nothing.
+ */
+async function holdRestrictedVerdict(
+  modelId: number,
+  source: string,
+  otherwise: ModelTextModerationOutcome = 'declined_race'
+): Promise<ModelTextModerationOutcome> {
+  const held = await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+          'restrictedNsfwVerdict', COALESCE(
+            m.meta->'restrictedNsfwVerdict',
+            jsonb_build_object(
+              'source', ${source}::text,
+              'at', now(),
+              'restriction', CASE WHEN m.minor THEN 'minor' WHEN m.poi THEN 'poi' ELSE 'sfwOnly' END
+            )
+          )
+        )
+    WHERE m.id = ${modelId}
+      AND (m.minor OR m.poi OR m."sfwOnly")
+      AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+  `;
+  return held ? 'held_restricted' : otherwise;
+}
+
 export async function applyModelNsfwTextScan({
   entityId,
   workflowId,
@@ -97,6 +136,9 @@ export async function applyModelNsfwTextScan({
       nsfwLevel: true,
       lockedProperties: true,
       userId: true,
+      minor: true,
+      poi: true,
+      sfwOnly: true,
     },
   });
   if (!model) return nothing;

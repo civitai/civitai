@@ -256,7 +256,16 @@ export const modelModerationAdapter: ModerationAdapter = {
     const db = await getDbWithoutLag('model', entityId);
     const model = await db.model.findUnique({
       where: { id: entityId },
-      select: { id: true, nsfw: true, nsfwLevel: true, lockedProperties: true, userId: true },
+      select: {
+        id: true,
+        nsfw: true,
+        nsfwLevel: true,
+        lockedProperties: true,
+        userId: true,
+        minor: true,
+        poi: true,
+        sfwOnly: true,
+      },
     });
     // Deleted between submit and callback — a bare update would throw P2025 and fail the
     // moderation callback, which the orchestrator would then retry forever.

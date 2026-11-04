@@ -99,6 +99,18 @@ describe('stripMinorHashMeta', () => {
     ).toEqual({});
   });
 
+  it('hides a restricted-verdict lead from every client', () => {
+    expect(
+      stripMinorHashMeta({
+        restrictedNsfwVerdict: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00Z',
+          restriction: 'minor',
+        },
+      })
+    ).toEqual({});
+  });
+
   it('passes null through', () => {
     expect(stripMinorHashMeta(null)).toBeNull();
   });

@@ -394,6 +394,28 @@ export type PoiFlagSnapshot = {
   prevLockedProperties?: string[];
 };
 
+export type RestrictedNsfwVerdict = {
+  source: string;
+  at: string;
+  restriction: 'minor' | 'poi' | 'sfwOnly';
+};
+
+/** One moderator ruling on a restricted-verdict lead, with the values it replaced. */
+export type RestrictedNsfwVerdictRulingRecord = {
+  at: string;
+  by: number;
+  ruling: 'keep' | 'dismiss' | 'rateNsfw';
+  restriction: RestrictedNsfwVerdict['restriction'];
+  reason: string | null;
+  verdict: RestrictedNsfwVerdict;
+  prior: {
+    nsfw: boolean;
+    sfwOnly: boolean;
+    lockedProperties: string[];
+    systemNsfwLock: { source: string; at: string } | null;
+  };
+};
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -464,6 +486,11 @@ export type ModelMeta = Partial<{
   poiHashCleared: { at: string };
   /** A system check (not a moderator) added the nsfw lock. Server-owned. */
   systemNsfwLock: { source: string; at: string };
+  /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
+   *  in Needs review. Server-owned, moderator-only. */
+  restrictedNsfwVerdict: RestrictedNsfwVerdict;
+  /** Moderator rulings on past restricted-verdict leads, with the values each replaced. Moderator-only. */
+  restrictedNsfwVerdictRulings: RestrictedNsfwVerdictRulingRecord[];
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

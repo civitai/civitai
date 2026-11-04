@@ -154,3 +154,48 @@ describe('applyModelNsfwTextScan', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 });
+
+describe('applyModelNsfwTextScan on a model its owner restricted', () => {
+  const heldCall = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
+      (c[0] as readonly string[]).join('?').includes("'restrictedNsfwVerdict'")
+    );
+
+  it('reads the restriction flags it guards on', async () => {
+    await applyModelNsfwTextScan(args(true));
+    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ minor: true, poi: true, sfwOnly: true }),
+      })
+    );
+  });
+
+  it.each(['minor', 'poi', 'sfwOnly'] as const)(
+    'never marks a %s model nsfw: holds the verdict for a moderator instead',
+    async (flag) => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ [flag]: true }));
+      const result = await applyModelNsfwTextScan(args(true));
+      expect(flipSql()).toBeUndefined();
+      expect(heldCall()).toBeDefined();
+      expect(heldCall()).toContain('text-scan');
+      expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(result).toEqual({ deferredRatingNotice: null });
+    }
+  );
+
+  it('guards the flip on the restriction too, so a flag set after the read still holds', async () => {
+    await applyModelNsfwTextScan(args(true));
+    expect(flipSql()).toMatch(/NOT \(m\.minor OR m\.poi OR m\."sfwOnly"\)/);
+  });
+
+  it('holds the verdict when a restriction landed between read and write', async () => {
+    dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
+      strings.join('?').includes('SET nsfw = TRUE') ? 0 : 1
+    );
+    await applyModelNsfwTextScan(args(true));
+    expect(heldCall()).toBeDefined();
+    expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+});
