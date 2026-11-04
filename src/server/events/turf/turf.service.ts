@@ -10,7 +10,7 @@ import {
   TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
 } from '~/server/events/turf/config';
-import { refillStock, stepAt } from '~/server/events/turf/schedule';
+import { nextStickerAt, refillStock, stepAt } from '~/server/events/turf/schedule';
 import {
   capTurfMap,
   computeImageTurf,
@@ -116,6 +116,7 @@ export function turfSupplyAt(
   return {
     stock,
     available: Math.floor(stock),
+    nextAt: nextStickerAt(stock, now, step),
     perHour: step?.perHour ?? 0,
     cap: step?.cap ?? 0,
     creditedPlayers: stepAt(event.turf.creditedPlayers, now)?.players ?? 0,
