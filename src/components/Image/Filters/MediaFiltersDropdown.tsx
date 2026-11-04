@@ -1,15 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import {
-  Chip,
-  Divider,
-  Drawer,
-  Indicator,
-  Popover,
-  ScrollArea,
-  Stack,
-  Tooltip,
-  Group,
-} from '@mantine/core';
+import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';

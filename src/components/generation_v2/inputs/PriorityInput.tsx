@@ -5,7 +5,8 @@
  * Receives its options from the field meta.
  */
 
-import { Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconDiamond, IconRocket } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';

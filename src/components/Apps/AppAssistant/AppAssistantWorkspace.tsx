@@ -6,13 +6,13 @@ import {
   Group,
   Loader,
   Paper,
-  Popover,
   SegmentedControl,
   Stack,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';

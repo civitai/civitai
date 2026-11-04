@@ -7,9 +7,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 
 import { Alert } from '@mantine/core';
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';

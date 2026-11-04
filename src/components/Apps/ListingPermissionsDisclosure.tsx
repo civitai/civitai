@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
-import { Card, Divider, Group, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import { Card, Divider, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconCheck, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {

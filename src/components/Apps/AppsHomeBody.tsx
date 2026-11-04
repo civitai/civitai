@@ -5,13 +5,13 @@ import {
   Button,
   Card,
   Group,
-  Menu,
   Paper,
   Skeleton,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconBuildingStore,
   IconDotsVertical,

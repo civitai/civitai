@@ -295,7 +295,7 @@ export const getFileForModelVersion = async ({
     !!versionAccess?.hasAccess &&
     (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0;
   if (inEarlyAccess && !boughtDownload && !isMod && !isOwner) {
-    return { status: 'early-access', details: { deadline } };
+    return { status: 'early-access', details: { deadline, baseModel: modelVersion.baseModel } };
   }
 
   // `unauthorized` means "no session" and callers answer it with a login redirect. A signed-in user
@@ -460,6 +460,8 @@ type ModelVersionFileResult =
       status: 'early-access';
       details: {
         deadline?: Date;
+        /** Lets the caller say a non-commercial version can't be bought, instead of offering a purchase. */
+        baseModel: string;
       };
     }
   | {

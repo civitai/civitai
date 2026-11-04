@@ -515,18 +515,25 @@
                   }
                 },
                 "schema": {
-                  "description": "Optional. A JSON Schema SUBSET that every document's `data` in this collection must match. The server checks it on every create and update and refuses a document that does not match with 400 `schema_violation`, whose message names the first failing JSON pointer into `data` (for example \"/title\"); counters and marks are not checked. Without a schema, documents are not checked. Supported keywords only: type (object, array, string, number, integer, boolean, null, or an array of them), properties, required, additionalProperties (true, false or a schema), items (one schema for every element), enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems and description; any other keyword is refused at submit with a message naming it. Keywords that do not apply to a value's type are ignored; string lengths count code points; `pattern` is a JavaScript regular expression (the \"u\" flag), unanchored, of at most 256 characters, and a schema with a `pattern` must also declare a `maxLength` of at most 1000; a pattern that can backtrack catastrophically (analysed with the \"u\" flag, as the store runs it) is refused at submit. At most 16 patterns per schema and 32 across all of the manifest's collection schemas together, schemas nested at most 16 deep, and at most 16384 bytes of JSON. Not allowed on a `write` \"none\" collection. Changing a schema does not re-check documents already stored; they are checked when next written.",
+                  "description": "Optional. A JSON Schema SUBSET that every document's `data` in this collection must match. The server checks it on every create and update and refuses a document that does not match with 400 `schema_violation`, whose message names the first failing JSON pointer into `data` (for example \"/title\"); counters and marks are not checked. Without a schema, documents are not checked. Supported keywords only: type (object, array, string, number, integer, boolean, null, or an array of them), properties, required, additionalProperties (true, false or a schema), items (one schema for every element), enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems and description; any other keyword is refused at submit with a message naming it. Keywords that do not apply to a value's type are ignored; string lengths count code points; `pattern` is a JavaScript regular expression (the \"u\" flag), unanchored, of at most 256 characters, and a schema with a `pattern` must also declare a `maxLength` of at most 1000; a pattern that can backtrack catastrophically (analysed with the \"u\" flag, as the store runs it) is refused at submit. At most 16 patterns per schema and 32 across all of the manifest's collection schemas together, schemas nested at most 16 deep, and at most 16384 bytes of JSON. Not allowed on a `write` \"none\" collection. Changing a schema does not re-check documents already stored; they are checked when next written. A change that narrows the schema against the previous approved version (a newly required property; a type, enum, const, bound or pattern narrowed; `additionalProperties` closed or newly a schema; a declared property removed under `additionalProperties: false`; or a schema added where there was none) is refused at submit unless `migrations` covers it.",
                   "$ref": "#/$defs/storageCollectionSchema"
+                },
+                "migrations": {
+                  "type": "array",
+                  "description": "Optional. Declarative ops applied to this collection's documents ALREADY STORED in production when this version is approved, for a schema change that would otherwise leave them unwritable. Submit compares this collection's `schema` with the previous approved version's (statically; stored documents are never read) and refuses every BREAKING change no op here covers: \"default\" covers a newly required property at its `path` (`value` must match the new schema there) — the only op that can; \"rename\" covers a declared property removed under `additionalProperties: false`, at `from`; \"remove\" covers any breaking change at or under a field the new schema does not require; \"acknowledge\" covers exactly the one breaking change whose pointer is its `path` (\"\" for the document root, \"*\" for an `items` or `additionalProperties` schema, matched literally, never as a prefix) with its `keyword` and changes nothing — documents that violate it are refused on their next write until reshaped. A first schema on a collection that had none is compared with accept-anything, so each of its constraints is its own breaking change. The paths of default, rename and remove are JSON Pointers to one field of a document's data (\"/meta/title\"). Every op is idempotent, and default, rename and remove ops must touch disjoint fields, so a re-run changes nothing. Only the ops that cover a breaking change of THIS version run, once, in bounded batches; an op that covers nothing is reported at submit and never runs, so a list left in a later version is inert. Not allowed on a `write` \"none\" collection. 1 to 32 ops.",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "items": { "$ref": "#/$defs/storageMigrationOp" }
                 }
               },
               "allOf": [
                 {
-                  "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing.",
+                  "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing and a migration would migrate nothing.",
                   "if": {
                     "required": ["write"],
                     "properties": { "write": { "const": "none" } }
                   },
-                  "then": { "properties": { "schema": false } }
+                  "then": { "properties": { "schema": false, "migrations": false } }
                 },
                 {
                   "$comment": "A shared collection must state its write policy; a private one carries none of the shared-only fields.",
@@ -644,6 +651,80 @@
       },
       "if": { "required": ["pattern"] },
       "then": { "required": ["maxLength"], "properties": { "maxLength": { "maximum": 1000 } } }
+    },
+    "storageMigrationPath": {
+      "type": "string",
+      "description": "A JSON Pointer to one field of a document's data: 1 to 15 non-empty segments, each \"/\" then the field name with ~ written ~0 and / written ~1. No \"*\" segment.",
+      "maxLength": 512,
+      "pattern": "^(/([^/~]|~[01])+){1,15}$",
+      "not": { "pattern": "/\\*(/|$)" }
+    },
+    "storageMigrationOp": {
+      "description": "One migration op. See `storage.collections.<name>.migrations`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "path", "value"],
+          "properties": {
+            "op": { "const": "default" },
+            "path": { "$ref": "#/$defs/storageMigrationPath" },
+            "value": {
+              "description": "Set where the field is missing (its parent object exists). Must match the new schema at `path`; at most 4096 bytes of JSON."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "from", "to"],
+          "properties": {
+            "op": { "const": "rename" },
+            "from": { "$ref": "#/$defs/storageMigrationPath" },
+            "to": { "$ref": "#/$defs/storageMigrationPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "path"],
+          "properties": {
+            "op": { "const": "remove" },
+            "path": { "$ref": "#/$defs/storageMigrationPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "path", "keyword"],
+          "properties": {
+            "op": { "const": "acknowledge" },
+            "path": {
+              "type": "string",
+              "description": "The JSON Pointer of the one breaking change accepted, matched EXACTLY (never as a prefix): \"\" for a change at the document root, or up to 15 non-empty segments, where the segment \"*\" is the pointer of a change inside `items` or an `additionalProperties` schema (\"/tags/*\").",
+              "maxLength": 512,
+              "pattern": "^(/([^/~]|~[01])+){0,15}$"
+            },
+            "keyword": {
+              "description": "The schema keyword of the one breaking change accepted at `path`. A newly required field (\"required\") cannot be acknowledged: cover it with a \"default\".",
+              "enum": [
+                "type",
+                "const",
+                "enum",
+                "minimum",
+                "maximum",
+                "minLength",
+                "maxLength",
+                "minItems",
+                "maxItems",
+                "pattern",
+                "additionalProperties",
+                "properties"
+              ]
+            }
+          }
+        }
+      ]
     },
     "storageCollectionSchemaType": {
       "enum": ["object", "array", "string", "number", "integer", "boolean", "null"]

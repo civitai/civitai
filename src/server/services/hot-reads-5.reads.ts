@@ -301,6 +301,7 @@ export function readModelVersionForFileViaPrisma(db: PrismaClient, modelVersionI
       createdAt: true,
       requireAuth: true,
       usageControl: true,
+      baseModel: true,
     },
   });
 }
@@ -336,6 +337,7 @@ export async function readModelVersionForFileViaKysely(
     createdAt: row.createdAt,
     requireAuth: row.requireAuth,
     usageControl: row.usageControl as ModelVersionForFile['usageControl'],
+    baseModel: row.baseModel,
   };
 }
 

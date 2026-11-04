@@ -113,6 +113,7 @@ function publishedModelVersion(overrides: Record<string, unknown> = {}) {
     createdAt: new Date(),
     requireAuth: false,
     usageControl: 'Download',
+    baseModel: 'SD 1.5',
     ...overrides,
   };
 }
@@ -305,7 +306,8 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     });
 
     expect(result.status).toBe('early-access');
-    if (result.status === 'early-access') expect(result.details.deadline).toEqual(endsAt);
+    if (result.status === 'early-access')
+      expect(result.details).toEqual({ deadline: endsAt, baseModel: 'SD 1.5' });
   });
 
   // The common case, and the one the bit-test read backwards: a user who has bought nothing carries

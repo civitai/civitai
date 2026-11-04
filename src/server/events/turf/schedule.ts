@@ -44,3 +44,13 @@ export function refillStock(
   }
   return value;
 }
+
+/**
+ * When the next whole sticker arrives, at the rate in force at `now`; null when the bucket is at its
+ * cap or does not grow. A later step changing the rate makes this early or late: callers re-read.
+ */
+export function nextStickerAt(stock: number, now: Date, step: SupplyStep | undefined): Date | null {
+  if (!step || step.perHour <= 0 || stock >= step.cap) return null;
+  const wait = Math.floor(stock) + 1 - stock;
+  return new Date(now.getTime() + (wait / step.perHour) * HOUR_MS);
+}

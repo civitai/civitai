@@ -1,4 +1,5 @@
-import { Tooltip, CloseButton, SegmentedControl } from '@mantine/core';
+import { CloseButton, SegmentedControl } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconArrowsDiagonal,

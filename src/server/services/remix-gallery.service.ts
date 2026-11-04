@@ -1362,9 +1362,9 @@ const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
         )`;
 
 /**
- * The host's gallery is not switched off, resolved image, post, account as
- * `resolvePlacementSpace` does. Off is the creator's remix opt-out, so storylines
- * started from the host are not listed on it.
+ * True unless the host's gallery resolves to off: image setting, then post, then account, then
+ * the surface default, as `resolvePlacementSpace` does. Off is the creator's remix opt-out, so
+ * storylines started from the host are not listed on it.
  */
 const hostGalleryOpen = (host: Prisma.Sql) => Prisma.sql`
         COALESCE(
@@ -2262,7 +2262,7 @@ export async function getRemixGalleryFreeEligibility({
  * A listing like the rest of the eligibility: the mutation re-decides under its lock. A failure
  * reads as no waiver, so the event layer cannot take the free option down with it.
  */
-const getTeamWaiverStanding = (input: { hostImageId: number; placerId: number }) =>
+export const getTeamWaiverStanding = (input: { hostImageId: number; placerId: number }) =>
   readTeamWaiverStanding(input).catch((error) => {
     logToAxiom({
       name: 'remix-gallery',

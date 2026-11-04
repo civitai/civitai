@@ -10,10 +10,10 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBolt,

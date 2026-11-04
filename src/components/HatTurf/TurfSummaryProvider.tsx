@@ -8,9 +8,11 @@ import {
   useState,
 } from 'react';
 import { useHatTurfFeed } from '~/components/HatTurf/useHatTurfFeed';
+import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
@@ -21,6 +23,8 @@ const SUMMARY_CHUNK = 100;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
+// Cards mount a few at a time while scrolling; their marks go out together.
+const WATCH_COALESCE_MS = 250;
 // Only for a push that carries no stickers (an older server): every viewer of a hot image reads, so
 // each reads at most this often per image, spread so they do not arrive together.
 const STICKER_REREAD_MIN_MS = 10_000;
@@ -28,11 +32,20 @@ const STICKER_REREAD_JITTER_MS = 750;
 
 export type TurfSummaries = {
   event: string;
+  /** The viewer's `hatTurfFeedCard` arm; null on a surface outside that experiment (image detail). */
+  arm: HatTurfFeedArm | null;
   /** The viewer's team, or null (signed out, or not in the event). */
   team: string | null;
+  /**
+   * The viewer opted in to Hat Turf. Only a joined viewer sees turf: hats, counts and pushes. Anyone
+   * else gets the join invite and nothing drawn.
+   */
+  joined: boolean;
   images: Record<number, TurfSummary>;
-  /** Per requested image: published, visible and its owner opted in, so it can take a hat now. */
+  /** Per requested image: published and visible, so it can take a hat now. */
   open: Record<number, boolean>;
+  /** Contest entries: no Hat Turf on them at all. */
+  hidden?: Record<number, boolean>;
   stickers: Record<number, HatSticker[]>;
   /** A card on screen says so: its count changes are pushed. Returns the way to stop. */
   watch: (imageId: number) => () => void;
@@ -60,7 +73,15 @@ export function TurfSummaryProvider({
   const feedGate = useHatTurfFeed();
   const gate = gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
+  const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
+  const user = useCurrentUser();
+  // The same query as useHatStock, so the two share one cache entry.
+  const { data: stock } = trpc.hatTurf.getStock.useQuery(
+    { event: event ?? '' },
+    { enabled: !!event && !!user, staleTime: 30_000 }
+  );
+  const joined = !!user && stock?.optedIn === true;
 
   const chunks = useMemo(
     () => (event ? chunkIds(imageIds, SUMMARY_CHUNK) : []),
@@ -74,7 +95,7 @@ export function TurfSummaryProvider({
     )
   );
   const stickerQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    (joined ? chunks : []).map((chunk) =>
       t.hatTurf.getStickersForImages(
         { event: event ?? '', imageIds: chunk, perImage: TURF_FEED_STICKERS },
         { staleTime: 30_000 }
@@ -99,13 +120,15 @@ export function TurfSummaryProvider({
     let team: string | null = null;
     const images: Record<number, TurfSummary> = {};
     const open: Record<number, boolean> = {};
+    const hidden: Record<number, boolean> = {};
     for (const query of summaryQueries) {
       if (!query.data) continue;
       team = query.data.team ?? team;
       Object.assign(images, query.data.images);
       Object.assign(open, query.data.open);
+      Object.assign(hidden, query.data.hidden);
     }
-    return { team, images, open };
+    return { team, images, open, hidden };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summaryStamp]);
 
@@ -186,18 +209,41 @@ export function TurfSummaryProvider({
       queries[chunkOf.get(imageId) ?? -1]?.dataUpdatedAt ?? 0;
     let images = base.images;
     for (const push of Object.values(pushed))
-      if (push.at > stampOf(summaryQueries, push.imageId))
+      if (!base.hidden[push.imageId] && push.at > stampOf(summaryQueries, push.imageId))
         images = applyTurfPush(images, push.imageId, push.counts);
     const stickers = { ...baseStickers };
     for (const [id, read] of Object.entries(reread))
       if (read.at > stampOf(stickerQueries, Number(id))) stickers[Number(id)] = read.stickers;
-    return { event, team: base.team, images, open: base.open, stickers, watch };
+    for (const id of Object.keys(base.hidden)) delete stickers[Number(id)];
+    return {
+      event,
+      arm,
+      team: base.team,
+      joined,
+      images: joined ? images : {},
+      open: base.open,
+      hidden: base.hidden,
+      stickers: joined ? stickers : {},
+      watch,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);
+  }, [
+    event,
+    arm,
+    joined,
+    base,
+    pushed,
+    baseStickers,
+    reread,
+    watch,
+    summaryStamp,
+    stickerStamp,
+    chunkOf,
+  ]);
 
   return (
     <TurfSummaryContext.Provider value={value}>
-      {event && (
+      {event && joined && (
         <>
           <TurfPushes onPush={onPush} />
           <TurfWatcher event={event} watching={watching} version={watchVersion} />
@@ -210,7 +256,7 @@ export function TurfSummaryProvider({
 
 type Pushed = NonNullable<ReturnType<typeof readTurfPush>> & { at: number };
 
-/** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
+/** Mounted only for a joined viewer, so the signals hub isn't required otherwise. */
 function TurfPushes({ onPush }: { onPush: (raw: unknown) => void }) {
   useSignalConnection(SignalMessages.EventPointsTurf, onPush);
   return null;
@@ -236,12 +282,18 @@ function TurfWatcher({
     [event, mark]
   );
 
+  const flush = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
-    const current = [...watching.current.keys()];
-    const added = current.filter((id) => !marked.current.has(id));
-    marked.current = new Set(current);
-    if (added.length) send(added);
+    if (flush.current) return;
+    flush.current = setTimeout(() => {
+      flush.current = undefined;
+      const current = [...watching.current.keys()];
+      const added = current.filter((id) => !marked.current.has(id));
+      marked.current = new Set(current);
+      if (added.length) send(added);
+    }, WATCH_COALESCE_MS);
   }, [version, watching, send]);
+  useEffect(() => () => clearTimeout(flush.current), []);
 
   useEffect(() => {
     const timer = setInterval(() => {

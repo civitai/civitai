@@ -1,22 +1,21 @@
 import { useState } from 'react';
-import { Button, Popover, Switch, Text } from '@mantine/core';
-import { IconCheck, IconSettings } from '@tabler/icons-react';
+import { Button, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
+import { IconCheck, IconSettingsFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfButton.module.css';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
-import { TeamHat } from '~/components/HatTurf/TeamHat';
-import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
-import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { DEFAULT_SPOT, HatTurfPanelPopover } from '~/components/HatTurf/HatTurfPanel';
+import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { showInfoNotification } from '~/utils/notifications';
+import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
 
-/**
- * Hidden when signed out or the image can't take a hat.
- */
+/** Hidden when signed out or the image can't take a hat. */
 export function HatTurfButton({ imageId }: { imageId: number }) {
   return useTurfFeed() ? <HatTurfButtonContent imageId={imageId} /> : null;
 }
@@ -27,25 +26,19 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
   const card = useHatTurfCard();
   const stock = useHatStock();
   const { cosmeticId } = useChosenHat();
-  const showHats = useHatTurfStore((state) => state.showHats);
-  const setShowHats = useHatTurfStore((state) => state.setShowHats);
-  const [menu, setMenu] = useState(false);
   const [join, setJoin] = useState(false);
-  const utils = trpc.useUtils();
-  const setOptIn = trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => {
-      setJoin(false);
-      void utils.hatTurf.getStock.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: "Couldn't join Hat Turf", error }),
-  });
+  const track = useHatTurfAction('feed-card');
+  const setOptIn = useJoin(() => setJoin(false));
 
-  if (!feed || !card || !user || feed.open[imageId] === false) return null;
+  // Until the viewer's stock is read, neither the hat nor the invite is known to be right.
+  if (!feed || !card || !user || !stock || feed.hidden?.[imageId]) return null;
+  const joined = stock.optedIn;
+  // Closed images must still offer Join: a viewer who has not joined has no other way to opt in.
+  if (joined && feed.open[imageId] === false) return null;
 
   const { draft, setDraft } = card;
   const placed =
     card.placed || feed.stickers[imageId]?.some((sticker) => sticker.userId === user.id);
-  const joined = stock?.optedIn !== false;
   const available = stock?.available;
   const empty = joined && available === 0 && !placed;
   const label = !joined
@@ -71,27 +64,22 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
         id: 'hat-turf-empty',
         message: 'Out of hats. You get more as the event goes on.',
       });
-    if (!cosmeticId) return;
-    setDraft(draft ?? { x: 0.5, y: 0.4 });
+    if (!cosmeticId || draft) return;
+    setDraft(DEFAULT_SPOT);
+    track('feed_place_start', feed.event);
   };
 
   return (
     <div className={classes.wrap} data-testid="hat-turf-button">
-      <button
-        type="button"
-        className={clsx(
-          classes.button,
-          empty && classes.empty,
-          !!placed && classes.done,
-          !!draft && classes.active
-        )}
+      <HatButtonFace
+        joined={joined}
+        empty={empty}
+        active={!!draft}
+        placed={!!placed}
         aria-label={label}
         aria-pressed={!!draft}
         onClick={press}
-      >
-        {placed ? <IconCheck size={14} stroke={3} /> : <HatIcon size={14} />}
-        <span data-testid="hat-turf-stock">{joined ? available ?? '' : '+'}</span>
-      </button>
+      />
       <Popover
         opened={join}
         onChange={setJoin}
@@ -119,84 +107,86 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
           </Button>
         </Popover.Dropdown>
       </Popover>
-      <Popover
-        opened={menu}
-        onChange={setMenu}
-        withinPortal
-        position="top-end"
-        withArrow
-        shadow="md"
-      >
-        <Popover.Target>
-          <button
-            type="button"
-            className={classes.gear}
-            aria-label="Choose which hat to place"
-            data-testid="hat-turf-gear"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              setMenu((open) => !open);
-            }}
-          >
-            <IconSettings size={10} stroke={2.5} />
-          </button>
-        </Popover.Target>
-        <Popover.Dropdown p={6} onClick={(event) => event.stopPropagation()}>
-          <HatChoices onPicked={() => setMenu(false)} />
-          <Switch
-            mt={6}
-            px={8}
-            size="xs"
-            label="Show hats"
-            checked={showHats}
-            onChange={(event) => setShowHats(event.currentTarget.checked)}
-          />
-        </Popover.Dropdown>
-      </Popover>
+      {joined && <HatTurfGear imageId={imageId} surface="feed-card" placed={!!placed} />}
     </div>
   );
 }
 
-function HatChoices({ onPicked }: { onPicked: () => void }) {
-  const feed = useTurfFeed();
-  const teamColor = useTeamColor();
-  const pick = useHatTurfStore((state) => state.pick);
-  const { cosmeticId, hats } = useChosenHat();
-  // Names live on the event's own hat list; loaded only once someone opens this menu.
-  const { data: named } = trpc.event.getMyHats.useQuery(
-    { event: feed?.event ?? '' },
-    { staleTime: 5 * 60_000 }
-  );
-  const color = (feed?.team && teamColor(feed.team)) || 'var(--mantine-color-gray-6)';
-
+/** The gear on a hat button's top-right corner: opens the Hat Turf panel for the image. */
+export function HatTurfGear({
+  imageId,
+  surface,
+  placed,
+}: {
+  imageId: number;
+  surface: ExperimentSurface;
+  placed: boolean;
+}) {
+  const [open, setOpen] = useState(false);
   return (
-    <div role="group" aria-label="Hat to place" style={{ minWidth: 170 }}>
-      <Text size="xs" fw={700} c="dimmed" tt="uppercase" px={8} pb={4}>
-        Hat to place
-      </Text>
-      {!hats?.length && (
-        <Text size="sm" px={8} py={4}>
-          You have no hats to place yet.
-        </Text>
-      )}
-      {hats?.map((hat, index) => (
+    <HatTurfPanelPopover
+      imageId={imageId}
+      surface={surface}
+      placed={placed}
+      opened={open}
+      onOpenChange={setOpen}
+      position="top-end"
+      target={
         <button
           type="button"
-          key={hat.cosmeticId}
-          aria-pressed={hat.cosmeticId === cosmeticId}
-          className={clsx(classes.option, hat.cosmeticId === cosmeticId && classes.selected)}
-          onClick={() => {
-            pick(hat.cosmeticId);
-            onPicked();
+          className={classes.gear}
+          aria-label="Hat Turf settings"
+          aria-expanded={open}
+          data-testid="hat-turf-gear"
+          onClick={(event) => {
+            // The card is a link and this sits inside it.
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(!open);
           }}
         >
-          <TeamHat color={color} size={22} />
-          <span>
-            {named?.find((h) => h.cosmeticId === hat.cosmeticId)?.name ?? `Hat ${index + 1}`}
-          </span>
+          <IconSettingsFilled size={11} />
         </button>
-      ))}
-    </div>
+      }
+    />
+  );
+}
+
+/** The square hat button: the viewer's team colour while they can place, an outline until they join. */
+export function HatButtonFace({
+  joined,
+  empty,
+  active,
+  placed,
+  className,
+  ...props
+}: {
+  joined: boolean;
+  empty: boolean;
+  active: boolean;
+  placed: boolean;
+} & React.ButtonHTMLAttributes<HTMLButtonElement> & { 'data-testid'?: string }) {
+  const feed = useTurfFeed();
+  const teamColor = useTeamColor();
+  return (
+    <button
+      type="button"
+      {...props}
+      className={clsx(
+        classes.button,
+        !joined && classes.invite,
+        empty && classes.empty,
+        active && classes.active,
+        className
+      )}
+      style={joined && !empty && feed?.team ? { backgroundColor: teamColor(feed.team) } : undefined}
+    >
+      <HatIcon size={17} />
+      {placed && (
+        <span className={classes.tick} data-testid="hat-turf-placed">
+          <IconCheck size={8} stroke={4} />
+        </span>
+      )}
+    </button>
   );
 }

@@ -1,4 +1,5 @@
-import { Box, Button, Group, Popover, Text, Title } from '@mantine/core';
+import { Box, Button, Group, Text, Title } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { AdUnitTop } from '~/components/Ads/AdUnit';

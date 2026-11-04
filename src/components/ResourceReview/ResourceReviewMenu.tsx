@@ -1,5 +1,6 @@
 import type { MenuProps } from '@mantine/core';
-import { ActionIcon, Loader, Menu, Text } from '@mantine/core';
+import { ActionIcon, Loader, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,

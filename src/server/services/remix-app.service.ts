@@ -7,7 +7,9 @@ import {
   assertGenerationInputsUsable,
   type GenerationInputEntryPoint,
 } from '~/server/services/generation-input-urls';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
+import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -15,12 +17,15 @@ import {
   whatIfPresetImageGen,
   type PresetEngine,
 } from '~/server/services/orchestrator/preset-image-gen.service';
+import { resolveTestingAccess } from '~/server/services/generation/generation.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GenerationAspectRatio } from '~/shared/constants/generation.constants';
 import {
   getSystemRemixApp,
   SYSTEM_REMIX_APPS,
+  TEAM_REMIX_SLUG,
+  teamRemixApp,
   type RemixAppDefinition,
 } from '~/shared/constants/remix-apps.constants';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
@@ -132,14 +137,23 @@ const viewerOf = (caller: RemixAppCaller) => ({
   showNsfw: !!caller.user.showNsfw,
 });
 
-/** `image.get`'s visibility and owner-block check, then only the fields a remix reads. */
-async function loadSource(imageId: number, caller: RemixAppCaller, confirmBlockOnPrimary: boolean) {
-  await assertImageVisibleToViewer({
+/** `image.get`'s visibility and owner-block check. Returns the owner. */
+function assertVisible(imageId: number, caller: RemixAppCaller, confirmBlockOnPrimary: boolean) {
+  return assertImageVisibleToViewer({
     id: imageId,
     userId: caller.user.id,
     isModerator: caller.user.isModerator,
     confirmBlockOnPrimary,
   });
+}
+
+/** The visibility check, then only the fields a remix reads. */
+async function loadSource(imageId: number, caller: RemixAppCaller, confirmBlockOnPrimary: boolean) {
+  await assertVisible(imageId, caller, confirmBlockOnPrimary);
+  return readSource(imageId);
+}
+
+async function readSource(imageId: number) {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
     select: {
@@ -183,42 +197,135 @@ export async function quoteRemixApps({
 }) {
   const image = await loadSource(imageId, caller, false);
   await assertSourceUsable(getRemixSourceUrl(image), caller, 'remixAppQuote');
-  const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  const pricing = await pricingFor(caller);
 
   const prices = await Promise.all(
-    SYSTEM_REMIX_APPS.map(async (app) => {
-      const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
-      if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
-      const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
-      // Everything the price can vary by; the quote is shared across users and images.
-      const key = [
-        app.slug,
-        run.tier,
-        run.aspectRatio,
-        caller.user.tier ?? 'free',
-        caller.user.isModerator ? 'mod' : 'user',
-        currencies.join('+'),
-      ].join(':');
-      try {
-        const quote = await fetchThroughCache(
-          `${REDIS_KEYS.CACHES.REMIX_APP_QUOTE}:${key}`,
-          () =>
-            whatIfPresetImageGen({
-              ...run.submit,
-              user: caller.user,
-              token: caller.token,
-              currencies,
-              flags: caller.features,
-            }),
-          { ttl: CacheTTL.sm, lockTTL: 4 }
-        );
-        return { slug: app.slug, ...quote };
-      } catch (error) {
-        return { slug: app.slug, refusal: (error as Error).message ?? 'Price unavailable' };
-      }
-    })
+    SYSTEM_REMIX_APPS.map((app) => quoteApp(app, image, caller, pricing))
   );
   return { prices };
+}
+
+/**
+ * The per-caller inputs a price depends on beyond the user row. Testing access is per user (Flipt
+ * testers), and it opens gate rules the graph prices against.
+ */
+async function pricingFor(caller: Pick<RemixAppCaller, 'user' | 'features'>) {
+  return {
+    currencies: getAllowedAccountTypes(caller.features, ['blue']),
+    hasTestingAccess: await resolveTestingAccess(caller.user),
+  };
+}
+
+/**
+ * The graph prices with the caller's flags (engine and model gates among them), so every enabled
+ * flag is part of the quote's key: a flag added later cannot be missed.
+ */
+function featureDigest(features: Partial<FeatureAccess>) {
+  const enabled = Object.keys(features)
+    .filter((flag) => features[flag as keyof FeatureAccess])
+    .sort();
+  return createHash('sha256').update(enabled.join(',')).digest('hex').slice(0, 12);
+}
+
+async function quoteApp(
+  app: RemixAppDefinition,
+  image: RemixSourceImage,
+  caller: RemixAppCaller,
+  { currencies, hasTestingAccess }: Awaited<ReturnType<typeof pricingFor>>
+) {
+  const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
+  if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
+  const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
+  // Everything the price can vary by; the quote is shared across users and images.
+  const key = [
+    app.slug,
+    run.tier,
+    run.aspectRatio,
+    caller.user.tier ?? 'free',
+    caller.user.isModerator ? 'mod' : 'user',
+    currencies.join('+'),
+    hasTestingAccess ? 'tester' : 'public',
+    featureDigest(caller.features),
+  ].join(':');
+  try {
+    const quote = await fetchThroughCache(
+      `${REDIS_KEYS.CACHES.REMIX_APP_QUOTE}:${key}`,
+      () =>
+        whatIfPresetImageGen({
+          ...run.submit,
+          user: caller.user,
+          token: caller.token,
+          currencies,
+          flags: caller.features,
+        }),
+      { ttl: CacheTTL.sm, lockTTL: 4 }
+    );
+    return { slug: app.slug, ...quote };
+  } catch (error) {
+    return { slug: app.slug, refusal: (error as Error).message ?? 'Price unavailable' };
+  }
+}
+
+/**
+ * The team remix this viewer is offered on this visible image, or why not. Offered exactly when the
+ * gallery would take the result free under its team waiver today. `getTeamWaiverStanding` is the
+ * submit modal's own read: the gallery open, the owner's hat on their own image, viewer and owner
+ * joined the same team, and free team submits left today. The team is read from the joins, never
+ * from the client.
+ */
+async function resolveTeamRemix(
+  imageId: number,
+  caller: Pick<RemixAppCaller, 'user'>,
+  { onPrimary }: { onPrimary: boolean }
+) {
+  const { userId: ownerId } = await assertImageVisibleToViewer({
+    id: imageId,
+    userId: caller.user.id,
+    isModerator: caller.user.isModerator,
+    confirmBlockOnPrimary: onPrimary,
+  });
+  // Before a charge, the team rule again on the primary: a hat taken off or a join made seconds
+  // ago is seen. The standing (and its count) is the replica's; the submit re-decides under lock.
+  if (onPrimary) {
+    const waiver = await findTeamRemixWaiver({
+      placerId: caller.user.id,
+      ownerId,
+      hostImageId: imageId,
+      db: dbWrite,
+    });
+    if (!waiver) return { refusal: TEAM_REMIX_UNAVAILABLE };
+  }
+  const standing = await getTeamWaiverStanding({ hostImageId: imageId, placerId: caller.user.id });
+  if (!standing) return { refusal: TEAM_REMIX_UNAVAILABLE };
+  if (standing.remaining <= 0) return { refusal: TEAM_SUBMITS_SPENT };
+  return { team: standing.team, app: teamRemixApp(standing.team) };
+}
+
+/** Not on the creator's team, the hat taken off, or the gallery closed. */
+const TEAM_REMIX_UNAVAILABLE = 'Team remix is not available on this image right now.';
+const TEAM_SUBMITS_SPENT =
+  "You have used today's free team submits, so you can't remix this image for your team until they reset.";
+
+/**
+ * `null` = no button. Eligibility first, so the orchestrator token and the price are only fetched
+ * for an image the viewer can remix for their team; an image they cannot see throws as usual.
+ */
+export async function quoteTeamRemix({
+  imageId,
+  caller,
+  getToken,
+}: {
+  imageId: number;
+  caller: Omit<RemixAppCaller, 'token'>;
+  getToken: () => Promise<string>;
+}) {
+  const offer = await resolveTeamRemix(imageId, caller, { onPrimary: false });
+  if ('refusal' in offer) return null;
+  const full: RemixAppCaller = { ...caller, token: await getToken() };
+  const image = await readSource(imageId);
+  await assertSourceUsable(getRemixSourceUrl(image), full, 'remixAppQuote');
+  const price = await quoteApp(offer.app, image, full, await pricingFor(caller));
+  return { team: offer.team, price };
 }
 
 export async function runRemixApp({
@@ -232,9 +339,18 @@ export async function runRemixApp({
   nonce: string;
   caller: RemixAppCaller;
 }) {
-  const app = getSystemRemixApp(slug);
-  if (!app) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
-  const image = await loadSource(imageId, caller, true);
+  let app: RemixAppDefinition | undefined;
+  let image: RemixSourceImage;
+  if (slug === TEAM_REMIX_SLUG) {
+    const offer = await resolveTeamRemix(imageId, caller, { onPrimary: true });
+    if ('refusal' in offer) throw new TRPCError({ code: 'FORBIDDEN', message: offer.refusal });
+    app = offer.app;
+    image = await readSource(imageId);
+  } else {
+    app = getSystemRemixApp(slug);
+    if (!app) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+    image = await loadSource(imageId, caller, true);
+  }
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertSourceUsable(run.sourceUrl, caller, 'remixAppRun');
 

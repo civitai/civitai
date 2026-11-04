@@ -1,4 +1,5 @@
-import { Button, Loader, Menu, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
+import { Button, Loader, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {

@@ -1,4 +1,5 @@
-import { Button, Checkbox, Menu, Tooltip } from '@mantine/core';
+import { Button, Checkbox } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash, IconWand } from '@tabler/icons-react';
 import { useRouter } from 'next/router';

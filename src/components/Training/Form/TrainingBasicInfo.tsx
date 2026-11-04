@@ -9,8 +9,8 @@ import {
   Radio,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import * as z from 'zod';

@@ -1,4 +1,5 @@
 import { SignalTopic } from '~/server/common/enums';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   STICKER_PLACEMENT_MAX_SCALE,
@@ -7,12 +8,17 @@ import {
 
 export type TurfCounted = Record<string, number>;
 
+/** A team colour the theme does not know. */
+export const FALLBACK_COLOR = 'var(--mantine-color-gray-6)';
+
 export type TurfSummary = {
   shown: TurfCounted;
   counted: TurfCounted;
   leader: string | null;
   leaderCosmeticId: number | null;
   hatted: boolean;
+  /** The team whose hat protects the image; null when none does. */
+  hattedTeam: string | null;
 };
 
 /** Radius of the ring's circle in the badge's 44-unit box; the arcs are drawn on it. */
@@ -53,16 +59,6 @@ export function badgeLeader(summary: Pick<TurfSummary, 'counted' | 'leader'>): s
   return null;
 }
 
-/** The viewer's standing when their team is not the leader; null when they lead or are not on a team. */
-export function viewerBehind(
-  summary: Pick<TurfSummary, 'counted' | 'leader'>,
-  viewerTeam: string | null | undefined
-): { team: string; count: number } | null {
-  const lead = badgeLeader(summary);
-  if (!lead || !viewerTeam || viewerTeam === lead) return null;
-  return { team: viewerTeam, count: summary.counted[viewerTeam] ?? 0 };
-}
-
 /** The spoken form of the badge: who leads, every team's count, and where the viewer stands. */
 export function standingsLabel(
   summary: Pick<TurfSummary, 'counted' | 'leader'>,
@@ -74,6 +70,25 @@ export function standingsLabel(
   return `Hat Turf: ${lead} leads with ${summary.counted[lead]}. ${rows.join(', ')}.${
     viewerTeam ? ` You are on ${viewerTeam}.` : ''
   }`;
+}
+
+/**
+ * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
+ * viewer's team needs to lead outright: a tie stays with the current leader.
+ */
+export function teamStandings(
+  summary: Pick<TurfSummary, 'counted' | 'leader'>,
+  viewerTeam: string | null | undefined
+) {
+  const counted = { ...summary.counted };
+  if (viewerTeam && !(viewerTeam in counted)) counted[viewerTeam] = 0;
+  const rows = orderedTeams(counted)
+    .map((team) => ({ team, count: counted[team] }))
+    .sort((a, b) => b.count - a.count);
+  const lead = badgeLeader(summary);
+  const toTake =
+    lead && viewerTeam && viewerTeam !== lead ? counted[lead] - counted[viewerTeam] + 1 : null;
+  return { rows, total: rows.reduce((sum, row) => sum + row.count, 0), lead, toTake };
 }
 
 /** A placed hat's width as a fraction of the drawn image (the sticker system's own default). */
@@ -118,26 +133,36 @@ export function readHatPose(data: unknown): HatPose | null {
   };
 }
 
-export function hatTone(team: string, leader: string | null): 'lead' | 'dim' | 'plain' {
+/** A viewer's own hat never dims: on a pale picture a dimmed hat reads as missing. */
+export function hatTone(
+  team: string,
+  leader: string | null,
+  own = false
+): 'lead' | 'dim' | 'plain' {
   if (!leader) return 'plain';
-  return team === leader ? 'lead' : 'dim';
+  if (team === leader) return 'lead';
+  return own ? 'plain' : 'dim';
 }
 
 /**
- * A push replaces the image's counts; the push does not carry `hatted`, so that stays what the
- * last read said. `null` counts (the last sticker is gone) removes the image's turf.
+ * A push replaces the image's counts; the push does not carry `hatted` or `hattedTeam`, so those stay
+ * what the last read said. `null` counts (the last sticker is gone) removes the image's turf.
  */
 export function applyTurfPush(
   images: Record<number, TurfSummary>,
   imageId: number,
-  counts: Omit<TurfSummary, 'hatted'> | null
+  counts: Omit<TurfSummary, 'hatted' | 'hattedTeam'> | null
 ): Record<number, TurfSummary> {
   if (!counts) {
     if (!(imageId in images)) return images;
     const { [imageId]: _gone, ...rest } = images;
     return rest;
   }
-  return { ...images, [imageId]: { ...counts, hatted: images[imageId]?.hatted ?? false } };
+  const prev = images[imageId];
+  return {
+    ...images,
+    [imageId]: { ...counts, hatted: prev?.hatted ?? false, hattedTeam: prev?.hattedTeam ?? null },
+  };
 }
 
 /** Reads a turf push off the wire; null for anything not for this event or not shaped like one. */
@@ -200,3 +225,7 @@ function readPushedStickers(raw: unknown): HatSticker[] | undefined {
 /** The signal topic a card listens on for one image's counts; must match the server's `eventTurfTopic`. */
 export const turfTopic = (event: string, imageId: number) =>
   `${SignalTopic.EventPoints}:${event}:turf:${imageId}` as const;
+
+/** Hat counts beside contest entries could sway judging, so no contest collection shows Hat Turf. */
+export const collectionHidesHatTurf = (collection?: { mode?: CollectionMode | null } | null) =>
+  collection?.mode === CollectionMode.Contest;

@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
-import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  ImageConnectionType,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
@@ -320,7 +325,7 @@ export type PostNsfwLevelChange = { id: number; before: number; after: number };
 /** Returns the posts whose level changed. */
 export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwLevelChange[]> {
   if (!postIds.length) return [];
-  return dbWrite.$queryRaw<PostNsfwLevelChange[]>(Prisma.sql`
+  const changes = await dbWrite.$queryRaw<PostNsfwLevelChange[]>(Prisma.sql`
     WITH next AS (
       SELECT
         p.id,
@@ -336,6 +341,13 @@ export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwL
     WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"
     RETURNING p.id, next."before", p."nsfwLevel" "after";
   `);
+  // A story's chapter 1 is not shown while its post is Blocked or unrated.
+  const unshown = (level: number) => level === 0 || level === NsfwLevel.Blocked;
+  const hidden = changes.filter((c) => unshown(c.after));
+  const shown = changes.filter((c) => unshown(c.before) && !unshown(c.after));
+  if (hidden.length) void onStorySparkPostsHidden({ postIds: hidden.map((c) => c.id) });
+  if (shown.length) void onStorySparkPostsRestored({ postIds: shown.map((c) => c.id) });
+  return changes;
 }
 
 export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.TransactionClient) {

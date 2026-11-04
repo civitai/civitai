@@ -35,6 +35,9 @@ vi.mock('~/components/Moderation/ModeratorLookupMenuItem', () => ({
 vi.mock('~/components/RemixGallery/RemixGalleryMenuItems', () => ({
   RemixGalleryMenuItems: nothing,
 }));
+vi.mock('~/components/Storyline/StartStorylineFromImageMenuItem', () => ({
+  StartStorylineFromImageMenuItem: nothing,
+}));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({ LoginRedirect: nothing }));
 vi.mock('~/components/NextLink/NextLink', () => ({ NextLink: React.forwardRef(nothing) }));
 vi.mock('~/components/Dialog/triggers/add-to-collection', () => ({

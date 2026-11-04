@@ -18,12 +18,11 @@ import {
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
-  APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_ALL_FEATURES_ON,
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
   isCollectionExportable,
   parseManifestStorage,
-  type AppStorageFeature,
   type AppStorageImportAccess,
 } from '~/shared/constants/block-storage.constants';
 
@@ -235,10 +234,6 @@ export async function revokeStorageImportGrant(opts: {
   }
 }
 
-const ALL_FEATURES = Object.fromEntries(
-  Object.keys(APP_STORAGE_ENABLED_FEATURES).map((f) => [f, true])
-) as Record<AppStorageFeature, boolean>;
-
 export type ResolvedStorageImport = {
   /** The source app's blockId, as the manifest names it. */
   from: string;
@@ -264,7 +259,7 @@ export async function resolveDeclaredImports(
   manifest: unknown,
   opts: { host: string }
 ): Promise<ResolvedStorageImport[]> {
-  const parsed = parseManifestStorage(manifest, ALL_FEATURES);
+  const parsed = parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON);
   if (parsed.errors.length > 0 || parsed.imports.size === 0) return [];
   const froms = [...parsed.imports.keys()];
   const rows = (await dbRead.appBlock.findMany({
@@ -371,7 +366,10 @@ export async function grantImportSourcePublish(opts: {
   }
   // Publish consent is read only for a write to an exportable SHARED source collection
   // (`resolveImportAccess`), so a source where the import names none has nothing it would gate.
-  const sourceCollections = parseManifestStorage(source.manifest, ALL_FEATURES).collections;
+  const sourceCollections = parseManifestStorage(
+    source.manifest,
+    APP_STORAGE_ALL_FEATURES_ON
+  ).collections;
   const gated = declared.collections.some((name) => {
     const c = sourceCollections.get(name);
     return c !== undefined && isCollectionExportable(c) && c.visibility === 'shared';
@@ -410,7 +408,8 @@ export async function isImportScopeCovered(opts: {
 }): Promise<boolean> {
   // A manifest whose storage does not parse covers nothing, and prunes nothing: it says nothing
   // about which sources the app still imports from.
-  if (parseManifestStorage(opts.manifest, ALL_FEATURES).errors.length > 0) return false;
+  if (parseManifestStorage(opts.manifest, APP_STORAGE_ALL_FEATURES_ON).errors.length > 0)
+    return false;
   const imports = await resolveDeclaredImports(opts.manifest, { host: opts.host });
   const granted = await listStorageImportGrants({
     userId: opts.userId,

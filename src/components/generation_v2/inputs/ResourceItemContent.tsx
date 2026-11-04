@@ -11,7 +11,8 @@
  * - Strength slider for LoRA/LoCon/DoRA resources
  */
 
-import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Badge, Group, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { defaultStrength } from '~/shared/utils/resource.utils';

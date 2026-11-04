@@ -44,6 +44,13 @@ describe('computeImageTurf', () => {
     );
     expect(entry).toMatchObject({ team: 'Pink', cosmeticId: 12, players: [1, 3] });
   });
+
+  // One image past ~125k stickers threw here, and the throw also stopped the whole-event reconcile.
+  it('handles an image with 200k stickers', () => {
+    const rows = Array.from({ length: 200_000 }, (_, i) => row(i + 1, 'Blue'));
+    const { entry } = computeImageTurf(rows, 25, cosmetic);
+    expect(entry?.lastAt).toBe(rows[rows.length - 1].createdAt.getTime());
+  });
 });
 
 describe('capTurfMap', () => {

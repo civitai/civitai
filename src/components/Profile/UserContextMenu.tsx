@@ -1,4 +1,5 @@
-import { Menu, useComputedColorScheme } from '@mantine/core';
+import { useComputedColorScheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

@@ -14,9 +14,9 @@ import {
   Stack,
   Tabs,
   Text,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {

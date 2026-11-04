@@ -151,10 +151,12 @@ function renderPicture(fit: 'contain' | 'cover', natural: [number, number]) {
     <TurfSummaryContext.Provider
       value={{
         event: 'birthday2026',
+        arm: 'control',
         team: 'blue',
         images: {},
         open: {},
         stickers: {},
+        joined: h.stock.optedIn,
         watch: () => () => undefined,
       }}
     >

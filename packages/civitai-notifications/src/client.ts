@@ -220,7 +220,7 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
       }
     },
 
-    // `createdAt` arrives as an ISO string but callers need a Date (the tRPC cursor is `z.date()`).
+    // `createdAt` arrives as an ISO string; revive it to a Date.
     queryNotifications: async (input: QueryNotificationsInput): Promise<NotificationRow[]> => {
       const res = (await post('/notifications/query', input, config)) as Array<
         Omit<NotificationRow, 'createdAt'> & { createdAt: string }

@@ -1,14 +1,5 @@
-import {
-  CloseButton,
-  List,
-  Modal,
-  Text,
-  Title,
-  Switch,
-  ActionIcon,
-  Button,
-  Popover,
-} from '@mantine/core';
+import { CloseButton, List, Modal, Text, Title, Switch, ActionIcon, Button } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';

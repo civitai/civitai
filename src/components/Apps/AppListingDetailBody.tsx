@@ -16,9 +16,9 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
@@ -1043,74 +1043,80 @@ export function AppListingDetailBody({
           one-line meta row sit beneath it. */}
       <Stack gap={4}>
         <Stack gap="xs" style={{ minWidth: 0 }}>
-          <Avatar
-            src={detail.iconUrl ?? undefined}
-            alt=""
-            radius="md"
-            size={88}
-            style={{
-              marginTop: -44,
-              marginLeft: 16,
-              border: '4px solid var(--mantine-color-body)',
-            }}
-            data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
-            styles={{
-              placeholder: {
-                background: listingPlaceholderGradient({
-                  slug: detail.slug,
-                  category: detail.category,
-                  surface: 'icon',
-                }),
-                color: 'var(--mantine-color-white)',
-                fontWeight: 700,
-              },
-            }}
-          >
-            {appInitial(detail.name, detail.slug)}
-          </Avatar>
-          <Stack gap={6} style={{ minWidth: 0 }}>
-            {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
-                  badge — which is where it would naturally go, and which would be wrong
-                  here. That whole Group is `!preview`-gated (its `Updated:` date is the
-                  publish request's submission time in preview, not a listing's
-                  `updated_at`), so a beta badge placed there would inherit an omission
-                  decided for a completely unrelated reason and vanish from the moderator
-                  preview. See the `preview` prop's omission ledger: the beta notice is
-                  explicitly KEPT. Here it is part of the identity block, which preview
-                  renders. */}
-            <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
-              <Title order={2} className="line-clamp-2">
-                {detail.name}
-              </Title>
-              {detail.isBeta && (
-                <Badge
-                  color="violet"
-                  variant="light"
-                  size="sm"
-                  style={{ flexShrink: 0 }}
-                  data-testid="apps-listing-beta-badge"
-                >
-                  Beta
-                </Badge>
-              )}
-              {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
-                    reason Beta is here: preview renders this block. `restrictedAudience` is
-                    already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
-              {visibilityBadge && (
-                <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+          {/* Icon and title share one row: the icon overlaps the cover's bottom edge, so
+              its visible half sits level with the title instead of stacking above it. */}
+          <Group gap="md" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+            <Avatar
+              src={detail.iconUrl ?? undefined}
+              alt=""
+              radius="md"
+              size={88}
+              style={{
+                marginTop: -44,
+                marginLeft: 16,
+                border: '4px solid var(--mantine-color-body)',
+              }}
+              data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
+              styles={{
+                placeholder: {
+                  background: listingPlaceholderGradient({
+                    slug: detail.slug,
+                    category: detail.category,
+                    surface: 'icon',
+                  }),
+                  color: 'var(--mantine-color-white)',
+                  fontWeight: 700,
+                },
+              }}
+            >
+              {appInitial(detail.name, detail.slug)}
+            </Avatar>
+            <Box style={{ minWidth: 0, flex: 1 }}>
+              {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
+                    badge — which is where it would naturally go, and which would be wrong
+                    here. That whole Group is `!preview`-gated (its `Updated:` date is the
+                    publish request's submission time in preview, not a listing's
+                    `updated_at`), so a beta badge placed there would inherit an omission
+                    decided for a completely unrelated reason and vanish from the moderator
+                    preview. See the `preview` prop's omission ledger: the beta notice is
+                    explicitly KEPT. Here it is part of the identity block, which preview
+                    renders. */}
+              <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+                <Title order={2} className="line-clamp-2">
+                  {detail.name}
+                </Title>
+                {detail.isBeta && (
                   <Badge
-                    color="gray"
+                    color="violet"
                     variant="light"
                     size="sm"
-                    leftSection={<IconEyeOff size={12} aria-hidden />}
-                    style={{ flexShrink: 0, cursor: 'help' }}
-                    data-testid="apps-listing-detail-visibility"
+                    style={{ flexShrink: 0 }}
+                    data-testid="apps-listing-beta-badge"
                   >
-                    {visibilityBadge.label}
+                    Beta
                   </Badge>
-                </Tooltip>
-              )}
-            </Group>
+                )}
+                {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
+                      reason Beta is here: preview renders this block. `restrictedAudience` is
+                      already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
+                {visibilityBadge && (
+                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+                    <Badge
+                      color="gray"
+                      variant="light"
+                      size="sm"
+                      leftSection={<IconEyeOff size={12} aria-hidden />}
+                      style={{ flexShrink: 0, cursor: 'help' }}
+                      data-testid="apps-listing-detail-visibility"
+                    >
+                      {visibilityBadge.label}
+                    </Badge>
+                  </Tooltip>
+                )}
+              </Group>
+            </Box>
+          </Group>
+          <Stack gap={6} style={{ minWidth: 0 }}>
             {detail.tagline && (
               <Text c="dimmed" size="sm" className="line-clamp-2">
                 {detail.tagline}

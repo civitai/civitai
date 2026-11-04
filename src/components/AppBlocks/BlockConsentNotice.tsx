@@ -1,4 +1,5 @@
-import { Box, Button, Group, Text, Tooltip } from '@mantine/core';
+import { Box, Button, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconShieldCheck, IconX } from '@tabler/icons-react';
 
 type BlockConsentNoticeProps = {
