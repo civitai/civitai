@@ -180,6 +180,17 @@ export function createEventPointsPusher(deps: PushDeps) {
     return true;
   }
 
+  // A team total moved with no hat behind it (a team award): only the teams topic is pushed.
+  function markTeamsDirty(event: PushEvent, time: Date) {
+    if (time < (event.previewFrom ?? event.startDate) || isOpen() || !deps.isEnabled())
+      return false;
+    const entry = entryFor(event);
+    entry.teams = true;
+    entry.teamsLostAt = undefined;
+    schedule();
+    return true;
+  }
+
   // Takes up to `budget` sends' worth of dirty topics, reads their totals and builds the sends.
   async function collect(budget: number) {
     const now = new Date();
@@ -384,7 +395,15 @@ export function createEventPointsPusher(deps: PushDeps) {
     return { left };
   }
 
-  return { markDirty, flush, drain, isOpen, pending, dirtyCount: () => dirty.size };
+  return {
+    markDirty,
+    markTeamsDirty,
+    flush,
+    drain,
+    isOpen,
+    pending,
+    dirtyCount: () => dirty.size,
+  };
 }
 
 function logPush(type: 'warning' | 'error', event: string | undefined, extra: object) {
@@ -407,4 +426,6 @@ function getPusher() {
 
 export const markEventPointsDirty = (event: PushEvent, hat: Hat, time: Date) =>
   getPusher().markDirty(event, hat, time);
+export const markEventTeamsDirty = (event: PushEvent, time: Date) =>
+  getPusher().markTeamsDirty(event, time);
 export const drainEventPointsPush = (maxMs = REFEREE_DRAIN_MS) => getPusher().drain(maxMs);

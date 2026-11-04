@@ -7,7 +7,7 @@ import {
   TEAM_HOURS_CUT_FIELD,
   utcDay,
 } from '~/server/events/points/keys';
-import { teamAwardsBy } from '~/server/events/scoring/team-awards';
+import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { dbRead, dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -143,7 +143,7 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
   `;
   // Cut where the referee last settled, so the snapshot and the live base count the same awards.
   const liveCut = Number((await sysRedis.get(eventSeasonKeys(event.name, 'live').cut)) ?? 0);
-  const awarded = teamAwardsBy(event, new Date(liveCut * LIVE_BUCKET_MS)).map(
+  const awarded = (await loadTeamAwards(event, new Date(liveCut * LIVE_BUCKET_MS), db)).map(
     ({ team, points, at }) => ({
       team,
       day: new Date(`${utcDay(at)}T00:00:00.000Z`),

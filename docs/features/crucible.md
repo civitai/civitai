@@ -93,6 +93,17 @@ The entry count on the crucible page is the number of entries its grid lists to 
 
 Other features can act on an entry once it is accepted, for example an event that gives a team points for each entrant. An entry is accepted when judges can see it, checked every two minutes. Crucibles listed for an AI theme review (internal staff config) are not accepted by this check. Only crucibles carrying an event tag a subscriber listens for are swept. When an entry leaves the crucible, every subscriber is told to take it back: at once when a moderator or the owner removes it or the entrant withdraws it, and at the next check when its image or the entrant's account is deleted. An entry that stays in the crucible but is hidden another way (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels) stays accepted; a subscriber that must not count it checks for that itself. Code: `src/server/services/crucible-entry-accepted.ts`.
 
+## Team points for entrants
+
+During an event, a crucible carrying the event's rally tag gives the entrant's team points for each accepted entrant, once per person per crucible. The entrant must hold the event's joined team cosmetic and be able to earn event points. The team total moves as soon as the entry is accepted. An accept writes an add to the event points ledger, and a revoke writes a remove. Each hourly settle recounts the points from the ledger. An award counts while its entry's latest row is an add, the entry is still in the crucible and judgeable, and its entrant is not banned, deleted or excluded. A person counts once per crucible, so a second entry keeps the award when the first leaves. The points come off at the next settle when:
+
+- a moderator or the owner removes the entry, or the entrant withdraws it;
+- the entry's image is deleted, or the entrant's account is deleted (which removes the entry);
+- the image is later hidden (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels);
+- the entrant is banned.
+
+An entry hidden this way counts again once it is shown. The points never count toward a hat's or a person's points: the ledger type is one no scoring config lists. Code: `src/server/events/crucible-team-award.ts`.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).
