@@ -809,6 +809,17 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(logged).not.toContain('synthetic timeout');
   });
 
+  it('counts a body that is not media as unreadable after the window', async () => {
+    mockFetchBlob = async (url: unknown) =>
+      url === 'https://example.invalid/blob-3.jpeg'
+        ? { ...fakeBlob(8), type: 'text/html' }
+        : fakeBlob(8);
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+  });
+
   it('stamps a pass that read nothing once the give-up window has passed', async () => {
     mockFetchBlob = async () => null;
 
@@ -867,7 +878,9 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
       return null;
     };
 
-    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow();
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'a generated image gave no media'
+    );
     // At most the first round of the concurrency limit was started.
     expect(calls).toBeLessThanOrEqual(10);
   });

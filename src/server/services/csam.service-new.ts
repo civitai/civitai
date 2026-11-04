@@ -370,7 +370,7 @@ export async function getCsamsToArchive() {
 const namedGeneratedImageUrls = (report: Pick<CsamReportProps, 'details'>) =>
   new Set(
     (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
-      blobs.flatMap(({ url }) => (url ? [url] : []))
+      (blobs ?? []).flatMap(({ url }) => (url ? [url] : []))
     )
   );
 
@@ -3000,7 +3000,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     // that gives no media (an error status, a cut-off body, an error page) fails the pass for a day
     // of hourly retries, then is recorded unreadable, as `archiveImages` does a full URL.
     const readBlob = async (url: string) => {
-      // Not logged: a fetch error can quote the URL, and these are presigned.
+      // Kept out of this function's log line: a fetch error can quote the presigned URL.
       const blob = await fetchBlob(url, undefined, { requireOk: true }).catch((e: unknown) => {
         if (!givenUp) throw e;
         return null;
@@ -3034,6 +3034,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
                 await boundedArchive.append(read.buffer, { name: zipEntryNameForUrl(url, index) });
                 entries += 1;
                 if (read.isMedia) appendedUrls.add(url);
+                else unreadable += 1;
               } catch (e) {
                 // Before this slot frees: queued downloads would otherwise still run.
                 limit.clearQueue();
