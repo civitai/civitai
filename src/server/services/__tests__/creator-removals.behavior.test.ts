@@ -154,6 +154,22 @@ describe('the removed-images list', () => {
     expect(held.items.map((i) => i.canAppeal)).toEqual(held.items.map(() => false));
   });
 
+  it('gives a held owner’s item exactly what an ordinary non-appealable item gets', async () => {
+    // Blocked by a scan rather than a moderator: a state any owner can reach, and never appealable.
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'tos' WHERE id = ${REJECTED}`);
+    const ordinary = (await getMyRemovedImages(OWNER, NOW)).items.find(
+      (i) => i.imageId === REJECTED
+    );
+    await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
+    const held = (await getMyRemovedImages(OWNER, NOW)).items.find(
+      (i) => i.imageId === STILL_REMOVED
+    );
+
+    expect(ordinary?.canAppeal).toBe(false);
+    const comparable = (item: typeof held) => ({ ...item, imageId: 0, removedAt: null });
+    expect(comparable(held)).toStrictEqual(comparable(ordinary));
+  });
+
   // Once the hold ends the owner's other removals can be appealed again, but the image it kept stays refused
   // by the appeal endpoint until it is purged or released. Another removed image in the same list,
   // which no hold kept, keeps its appeal.
