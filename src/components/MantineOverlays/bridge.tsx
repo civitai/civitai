@@ -161,20 +161,48 @@ export function useArmState() {
  * be armed by its events, so the caller arms it after mount instead (Mantine's own behaviour).
  */
 export function useArmRef(arm: Arm, armedRef: { current: boolean }) {
-  const cleanup = useRef<(() => void) | null>(null);
+  // Listeners are keyed by NODE, not by ref identity. A parent overlay arming in the same event
+  // (`Tooltip > Menu.Target > button`) re-renders this trigger with a new merged ref, so React calls
+  // this ref with null and then with the same node mid-dispatch; a listener removed and re-added
+  // there would not run for that event (DOM dispatch skips listeners added after it started), and
+  // this overlay would miss its first click. So a null only schedules the detach, and the same
+  // node coming back cancels it.
+  const attached = useRef<{ node: EventTarget | null; off: (() => void) | null; pending: boolean }>(
+    { node: null, off: null, pending: false }
+  );
   const seen = useRef(false);
   const ref = useCallback(
     (node: unknown) => {
-      cleanup.current?.();
-      cleanup.current = null;
-      if (!node || typeof (node as EventTarget).addEventListener !== 'function') return;
+      const state = attached.current;
+      if (!node || typeof (node as EventTarget).addEventListener !== 'function') {
+        if (state.off && !state.pending) {
+          state.pending = true;
+          queueMicrotask(() => {
+            if (!state.pending) return;
+            state.off?.();
+            state.off = null;
+            state.node = null;
+            state.pending = false;
+          });
+        }
+        return;
+      }
       seen.current = true;
+      if (state.node === node && state.off) {
+        state.pending = false;
+        return;
+      }
+      state.off?.();
+      state.off = null;
+      state.node = null;
+      state.pending = false;
       if (armedRef.current) return;
       const el = node as EventTarget;
       const onEvent = () => arm(true);
       for (const type of ARM_EVENTS)
         el.addEventListener(type, onEvent, { capture: true, passive: true });
-      cleanup.current = () => {
+      state.node = el;
+      state.off = () => {
         for (const type of ARM_EVENTS) el.removeEventListener(type, onEvent, { capture: true });
       };
     },

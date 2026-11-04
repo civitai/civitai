@@ -401,6 +401,30 @@ describe.each([
     await expect.poll(() => document.body.textContent?.includes('Card body')).toBe(false);
   });
 
+  test('Tooltip > Menu.Target > button: a programmatic click as the very first event opens the menu', async () => {
+    // The nesting `no-menu-target-tooltip-nesting.test.ts` requires. Both overlays arm on this one
+    // click; arming the Tooltip re-renders the Menu target with a new ref, and the Menu's own arming
+    // listener must survive that for the same click to reach Mantine's toggle.
+    await mount(
+      fast,
+      <Menu withinPortal>
+        <Tooltip label="Menu tip" withinPortal>
+          <Menu.Target>
+            <button type="button">Tipped menu</button>
+          </Menu.Target>
+        </Tooltip>
+        <Menu.Dropdown>
+          <Menu.Item>Tipped item</Menu.Item>
+        </Menu.Dropdown>
+      </Menu>,
+      2
+    );
+    const trigger = page.getByRole('button', { name: 'Tipped menu' }).element() as HTMLElement;
+    trigger.click();
+    await expect.element(page.getByRole('menu')).toBeVisible();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  });
+
   test('Tooltip inside a Popover target: both work on the first interaction', async () => {
     await mount(
       fast,
@@ -420,6 +444,12 @@ describe.each([
     await userEvent.click(trigger);
     await expect.element(page.getByRole('dialog')).toHaveTextContent('Nested body');
   });
+});
+
+test("Tooltip mirrors Mantine's statics, withProps included", async () => {
+  const Mantine = await import('@mantine/core');
+  expect(Tooltip.withProps).toBe(Mantine.Tooltip.withProps);
+  expect(Tooltip.Group).toBe(Mantine.Tooltip.Group);
 });
 
 // ── 1: hydration through the real FeatureFlagsProvider ───────────────────────────────────────

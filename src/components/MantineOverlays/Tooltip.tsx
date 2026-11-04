@@ -149,6 +149,12 @@ const TooltipImpl = forwardRef<unknown, AnyProps>(function OverlayTooltip(props,
   });
 });
 TooltipImpl.displayName = 'MantineOverlays/Tooltip';
-defineLazyStatics(TooltipImpl, () => MantineTooltip, ['Group', 'Floating', 'classes', 'extend']);
+defineLazyStatics(TooltipImpl, () => MantineTooltip, [
+  'Group',
+  'Floating',
+  'classes',
+  'extend',
+  'withProps',
+]);
 
 export const Tooltip = TooltipImpl as unknown as typeof MantineTooltip;
