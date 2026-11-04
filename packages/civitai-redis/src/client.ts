@@ -2572,6 +2572,11 @@ export const REDIS_SYS_KEYS = {
     // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
     // voted on this judging session, and how long idle ends that session. Missing = defaults.
     CRUCIBLE_JUDGING: 'system:crucible-judging',
+    // JSON { crucibles: { [crucibleId]: { theme, themeElements, judgeId, mode, reviewPrompt? } } }:
+    // the crucibles whose entries the AI theme review checks. Missing or invalid = none.
+    CRUCIBLE_THEME_REVIEW: 'system:crucible-theme-review',
+    // Prefix for `:<crucibleId>`, a hash of entryId -> ISO time the entry was accepted.
+    CRUCIBLE_ENTRY_ACCEPTED: 'system:crucible-entry-accepted',
     // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
