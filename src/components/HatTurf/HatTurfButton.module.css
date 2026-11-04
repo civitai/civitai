@@ -2,6 +2,8 @@
   position: relative;
   display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 2px;
   pointer-events: auto;
 }
 
@@ -40,13 +42,11 @@
 
 /* Always on screen: a phone has no hover to reveal it. */
 .gear {
-  position: absolute;
-  top: -9px;
-  right: -8px;
+  position: relative;
   display: grid;
   place-items: center;
   width: 16px;
-  height: 16px;
+  height: 22px;
   padding: 0;
   border: 0;
   background: none;
@@ -55,11 +55,11 @@
   cursor: pointer;
 }
 
-/* The visible gear is 16px; its tap area is not. */
+/* The visible gear is 16px; its tap area is not. It never reaches left, over the button. */
 .gear::before {
   content: '';
   position: absolute;
-  inset: -5px;
+  inset: -5px -5px -5px 0;
 }
 
 /* On the card background the white-on-photo styling vanishes in light mode. */
