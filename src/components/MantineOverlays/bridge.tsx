@@ -9,6 +9,7 @@ import React, {
   memo,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
 } from 'react';
@@ -234,13 +235,16 @@ export function omit(source: AnyProps, keys: ReadonlySet<string>): AnyProps {
 }
 
 /**
- * Called by the real Mantine component's wrapper once it has committed. Until then a controlled
- * `opened` is held at `false`, so an overlay armed by `opened` turning true still mounts closed and
- * then opens — with Mantine's enter transition, as it would have from an already-mounted overlay.
+ * Called by the real Mantine component's wrapper once it has mounted and the browser has had a
+ * frame. Until then a controlled `opened` is held at `false`, so an overlay armed by `opened`
+ * turning true still mounts closed and then opens — with Mantine's enter transition, as it would
+ * have from an already-mounted overlay. Mantine's transition only animates a CHANGE of `mounted`
+ * seen after its own mount effects, hence the frame rather than a layout effect.
  */
 export const OnMounted = memo(function OnMounted({ onMounted }: { onMounted: () => void }) {
-  useIsomorphicEffect(() => {
-    onMounted();
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => onMounted());
+    return () => cancelAnimationFrame(frame);
   }, [onMounted]);
   return null;
 });

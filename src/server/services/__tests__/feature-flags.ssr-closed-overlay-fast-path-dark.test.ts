@@ -49,7 +49,7 @@ describe('ssrClosedOverlayFastPath is dark until Flipt turns it on', () => {
   it('is on when its own Flipt key says so', async () => {
     // Key-aware, so a typo in `fliptKey` (the key the rollout is created under) turns this red.
     mocks.isFliptSync.mockImplementation(
-      (key: string) => key === 'ssr-closed-overlay-fast-path' || null
+      (key?: string) => key === 'ssr-closed-overlay-fast-path' || null
     );
     // A different user: the registry caches per user.
     const tester = { id: 9613, isModerator: false, tier: 'free' } as SessionUser;

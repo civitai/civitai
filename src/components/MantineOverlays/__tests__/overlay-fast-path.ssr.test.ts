@@ -74,7 +74,13 @@ const OUR_LIB: Lib = {
   HoverCard: Ours.HoverCard,
 };
 
-const h = React.createElement;
+// Loosely typed: the fixtures pass children as arguments, which the components' prop types declare
+// as required props.
+const h = React.createElement as unknown as (
+  type: unknown,
+  props?: Record<string, unknown> | null,
+  ...children: unknown[]
+) => ReactElement;
 
 /** React's own id, rendered: pins that every id React generates is unchanged. */
 function IdProbe({ name }: { name: string }) {
@@ -377,7 +383,8 @@ describe('the comparison can see a difference', () => {
       undefined,
       true
     );
-    expect(html).toBe(
+    // MantineProvider writes its <style> first; the trigger is the rest.
+    expect(html.replace(/^<style[^>]*>[\s\S]*?<\/style>/, '')).toBe(
       '<button aria-haspopup="dialog" aria-expanded="false" aria-controls="pin-dropdown" id="pin-target" class="">x</button>'
     );
     expect(counts.Popover).toBe(0);
