@@ -207,7 +207,6 @@ export function CreatableMultiSelect({
 
   const handleValueRemove = (val: string) => onChange?.(value.filter((item) => item !== val));
 
-  // Splits on commas and new lines, then keeps what still fits under maxValues.
   const addEntries = (text: string) => {
     const entries = text
       .split(/[\n,]/)
@@ -278,9 +277,11 @@ export function CreatableMultiSelect({
                     }
 
                     // Enter confirms an IME composition too; that must not add the half-typed word.
-                    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                      // A highlighted option is submitted by the combobox itself.
-                      if (combobox.getSelectedOptionIndex() !== -1) return;
+                    // Safari reports that Enter with isComposing false and keyCode 229.
+                    const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+                    if (event.key === 'Enter' && !composing) {
+                      const hasHighlightedOption = combobox.getSelectedOptionIndex() !== -1;
+                      if (hasHighlightedOption) return;
                       // Stay in the field: without this Enter submits the surrounding form.
                       event.preventDefault();
                       if (search.trim()) {

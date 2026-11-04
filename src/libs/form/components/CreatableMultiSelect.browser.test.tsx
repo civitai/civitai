@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { CreatableMultiSelect } from './MultiSelectWrapper';
@@ -33,8 +33,9 @@ const field = () => page.getByPlaceholder('Trigger words');
 const value = () => JSON.parse(document.querySelector('[data-testid="value"]')!.textContent!);
 
 describe('CreatableMultiSelect Enter', () => {
+  beforeEach(() => onSubmit.mockClear());
+
   test('adds typed entries split on commas, and does not submit the form', async () => {
-    onSubmit.mockClear();
     renderWithProviders(<Harness />);
     await field().fill('monochrome, greyscale');
     await userEvent.keyboard('{Enter}');
@@ -42,11 +43,12 @@ describe('CreatableMultiSelect Enter', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  test('drops empty entries from the split', async () => {
+  test('drops empty and duplicate entries, and clears the input', async () => {
     renderWithProviders(<Harness />);
-    await field().fill('a,, b,');
+    await field().fill('a,, b, a,');
     await userEvent.keyboard('{Enter}');
     await expect.poll(value).toEqual(['a', 'b']);
+    await expect.element(field()).toHaveValue('');
   });
 
   test('keeps to maxValues', async () => {
@@ -58,7 +60,6 @@ describe('CreatableMultiSelect Enter', () => {
   });
 
   test('empty search does nothing and does not submit', async () => {
-    onSubmit.mockClear();
     renderWithProviders(<Harness />);
     await field().click();
     await userEvent.keyboard('{Enter}');
@@ -70,12 +71,11 @@ describe('CreatableMultiSelect Enter', () => {
     renderWithProviders(<Harness data={['Master Chief', 'Cortana']} />);
     await field().fill('c');
     await userEvent.keyboard('{ArrowDown}{Enter}');
-    await expect.poll(value).toHaveLength(1);
-    expect(value()[0]).not.toBe('c');
+    await expect.poll(value).toEqual(['Master Chief']);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   test('Enter that confirms an IME composition adds nothing', async () => {
-    onSubmit.mockClear();
     renderWithProviders(<Harness />);
     await field().fill('かんじ');
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Trigger words"]')!;
@@ -87,19 +87,22 @@ describe('CreatableMultiSelect Enter', () => {
         cancelable: true,
       })
     );
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
     expect(value()).toEqual([]);
   });
 
-  test('pasting still splits and respects maxValues', async () => {
+  test('pasting counts existing values toward maxValues', async () => {
     renderWithProviders(<Harness maxValues={2} />);
+    await field().fill('x');
+    await userEvent.keyboard('{Enter}');
+    await expect.poll(value).toEqual(['x']);
     await field().click();
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Trigger words"]')!;
     const data = new DataTransfer();
-    data.setData('text', 'a,b,c');
+    data.setData('text', 'a,b');
     input.dispatchEvent(
       new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
     );
-    await expect.poll(value).toEqual(['a', 'b']);
+    await expect.poll(value).toEqual(['x', 'a']);
   });
 });
