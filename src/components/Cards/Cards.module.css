@@ -376,6 +376,13 @@
     height: 22px !important;
     padding: 0 6px !important;
   }
+
+  /* The sticker count (Text xs, 14px) and the Buzz count (Badge label, 11px) match the 12px
+     reaction counts. !important: Mantine's own rules sit in a higher layer than this module. */
+  & .tipEnd > button:not(.infoChip) :global(.mantine-Text-root),
+  & > .reactions :global(.mantine-Badge-label) {
+    font-size: 12px !important;
+  }
 }
 
 .tipEnd {
