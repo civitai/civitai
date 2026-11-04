@@ -1,7 +1,10 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { fileURLToPath } from 'url';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Archiver } from 'archiver';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ArchiverModule from 'archiver';
@@ -212,6 +215,7 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 import {
   archiveCsamDataForReport,
   ARCHIVE_SCAN_PAGE_SIZE,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
@@ -231,6 +235,15 @@ import {
 const IMAGE_COUNT = 53;
 const MANIFEST_ENTRIES = 1;
 const IMAGE_BYTES = 97 * 1024;
+
+/** `n` earlier failed archive runs, as `details.archiveFailedRuns` records them. */
+const failedRuns = (n: number) =>
+  Array.from({ length: n }, (_, i) => `2026-01-0${i + 1}T00:00:00.000Z`);
+
+const APPEND_ONLY_MIGRATION = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261112120000_csam_report_append_only/migration.sql'
+);
 
 function fakeObject(bytes: number, contentType = 'image/jpeg') {
   return {
@@ -1279,19 +1292,22 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
           : new Response('not found', { status: 404 })
       );
     });
-    const sentHoursAgo = (hours: number) => ({
+    const sentHoursAgo = (hours: number, priorFailedRuns = 0) => ({
       ...report,
+      details: { archiveFailedRuns: failedRuns(priorFailedRuns) },
       reportSentAt: new Date(Date.now() - hours * 3_600_000),
     });
 
     it('fails the archive, to be retried, within a day of sending', async () => {
-      await expect(
-        archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
-      ).rejects.toThrow('503');
+      await expect(archiveCsamDataForReport(sentHoursAgo(23, 5) as never)).rejects.toThrow('503');
     });
 
-    it('is recorded as missing after that, and the rest is archived', async () => {
-      await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+    it('fails the archive, to be retried, on a late first run', async () => {
+      await expect(archiveCsamDataForReport(sentHoursAgo(25, 0) as never)).rejects.toThrow('503');
+    });
+
+    it('is recorded as missing after a day and 3 failed runs, and the rest is archived', async () => {
+      await archiveCsamDataForReport(sentHoursAgo(25, 3) as never);
       const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
 
       expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
@@ -1305,6 +1321,32 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
   });
 
   describe('a stored object that fails every read', () => {
+    // A Postgres stand-in for the report row, with the append-only guard a sent report carries, so
+    // the failed-run record is checked against what the database will actually accept.
+    const pg = { db: null as unknown as PGlite };
+    let nextId = 6100;
+
+    beforeAll(async () => {
+      pg.db = new PGlite();
+      await pg.db.exec(`
+        CREATE TYPE "CsamReportType" AS ENUM ('Image', 'TrainingData', 'GeneratedImage', 'ExternalLink');
+        CREATE TABLE "CsamReport" (
+          "id" SERIAL PRIMARY KEY,
+          "userId" INTEGER,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "reportedById" INTEGER NOT NULL,
+          "reportSentAt" TIMESTAMP(3),
+          "archivedAt" TIMESTAMP(3),
+          "contentRemovedAt" TIMESTAMP(3),
+          "reportId" INTEGER,
+          "details" JSONB NOT NULL DEFAULT '{}',
+          "images" JSONB NOT NULL DEFAULT '[]',
+          "type" "CsamReportType" NOT NULL DEFAULT 'Image'
+        );
+      `);
+      await pg.db.exec(fs.readFileSync(APPEND_ONLY_MIGRATION, 'utf8'));
+    }, 60_000);
+
     // Not a dropped connection, so the reader does not wait between attempts here.
     beforeEach(() => {
       const base = mockGetObject;
@@ -1313,22 +1355,92 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
           throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
         return base(key);
       };
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const sql = Prisma.sql(strings, ...(values as never[]));
+        return (await pg.db.query(sql.text, sql.values)).affectedRows ?? 0;
+      }) as never);
     });
-    const sentHoursAgo = (hours: number) => ({
-      ...report,
-      reportSentAt: new Date(Date.now() - hours * 3_600_000),
+
+    afterEach(() => {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockReset();
     });
+
+    /** A sent report, stored and as the job hands it over, with other details keys to keep. */
+    async function sentReport(hoursAgo: number, priorFailedRuns: number) {
+      const id = nextId++;
+      const details = {
+        contents: ['a'],
+        readFailures: { '7': 2 },
+        archiveFailedRuns: failedRuns(priorFailedRuns),
+      };
+      const reportSentAt = new Date(Date.now() - hoursAgo * 3_600_000);
+      await pg.db.query(
+        `INSERT INTO "CsamReport" (id, "userId", "reportedById", "reportSentAt", "reportId", details)
+         VALUES ($1, $2, 5, $3, 82, $4::jsonb)`,
+        [id, report.userId, reportSentAt.toISOString(), JSON.stringify(details)]
+      );
+      return { ...report, id, details, reportSentAt };
+    }
+
+    const storedDetails = async (id: number) =>
+      (
+        await pg.db.query<{ details: unknown }>(`SELECT details FROM "CsamReport" WHERE id = $1`, [
+          id,
+        ])
+      ).rows[0].details;
+
+    it('pins the thresholds these fixtures straddle (23h/25h; 2 and 3 failed runs)', () => {
+      expect([CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS, CSAM_ARCHIVE_GIVE_UP_AFTER_ATTEMPTS]).toEqual([
+        24, 3,
+      ]);
+    });
+
     const failure =
       'stored original read failed for image 7 (backend backblaze, ContentLength unknown, ' +
       'attempt 1/3): synthetic storage outage';
+    const ISO = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
-    it('fails the archive, to be retried, within a day of sending', async () => {
-      await expect(archiveCsamDataForReport(sentHoursAgo(23) as never)).rejects.toThrow(failure);
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    it.each([
+      ['a late first run', 25, 0],
+      ['a late run with 2 failed before it', 25, 2],
+      ['a run within a day, however many failed before it', 23, 5],
+    ])(
+      'fails the archive on %s, recording the failure and keeping every other details key',
+      async (_, hoursAgo, priorFailedRuns) => {
+        const sent = await sentReport(hoursAgo, priorFailedRuns);
+
+        await expect(archiveCsamDataForReport(sent as never)).rejects.toThrow(failure);
+
+        expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+        expect(await storedDetails(sent.id)).toEqual({
+          contents: ['a'],
+          readFailures: { '7': 2 },
+          archiveFailedRuns: [...failedRuns(priorFailedRuns), ISO],
+        });
+      }
+    );
+
+    it('counts failed runs up to the give-up: 0 -> 1 and 2 -> 3', async () => {
+      const first = await sentReport(25, 0);
+      await archiveCsamDataForReport(first as never).catch(() => undefined);
+      const third = await sentReport(25, 2);
+      await archiveCsamDataForReport(third as never).catch(() => undefined);
+
+      expect(
+        ((await storedDetails(first.id)) as { archiveFailedRuns: unknown[] }).archiveFailedRuns
+      ).toHaveLength(1);
+      expect(
+        ((await storedDetails(third.id)) as { archiveFailedRuns: unknown[] }).archiveFailedRuns
+      ).toHaveLength(3);
     });
 
-    it('is recorded missing after that, logged by image id, and the rest is archived', async () => {
-      await archiveCsamDataForReport(sentHoursAgo(25) as never);
+    it('after a day and 3 failed runs, records it missing, logs it by image id, and archives the rest', async () => {
+      const sent = await sentReport(25, 3);
+
+      await archiveCsamDataForReport(sent as never);
       const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
 
       expect(Object.keys(zip.files).sort()).toEqual(['8.jpeg', 'manifest.json']);
@@ -1355,14 +1467,21 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
           type: 'error',
           subType: 'archive-image-unreadable',
           message: failure,
-          reportId: report.id,
+          reportId: sent.id,
           imageId: 7,
         },
       ]);
       expect(JSON.stringify(lines)).not.toContain('key-seven');
-      expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
-      );
+      expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
+        where: { id: sent.id },
+        data: { archivedAt: expect.any(Date) },
+      });
+      // A run that succeeds records no failure.
+      expect(await storedDetails(sent.id)).toEqual({
+        contents: ['a'],
+        readFailures: { '7': 2 },
+        archiveFailedRuns: failedRuns(3),
+      });
     });
   });
 

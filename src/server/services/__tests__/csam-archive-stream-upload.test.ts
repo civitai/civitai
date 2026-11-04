@@ -801,7 +801,12 @@ describe('csam archive streaming upload', () => {
       rejection,
       'the archive did not fail — the fault injection is wired to nothing'
     ).toBeDefined();
-    expect((rejection as Error).message).toBe(failure.message);
+    // The read failure, as the reader words it: naming the image (id 12 has url image-uuid-11).
+    expect((rejection as Error).message).toBe(
+      'stored original read failed for image 12 (backend backblaze, ContentLength unknown, ' +
+        'attempt 1/3): blob fetch exploded'
+    );
+    expect((rejection as Error).cause).toBe(failure);
     expect((rejection as Error).message).not.toMatch(/failed to upload/);
   }, 20_000);
 });
