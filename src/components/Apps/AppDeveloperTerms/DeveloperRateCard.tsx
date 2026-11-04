@@ -26,20 +26,12 @@ export function DeveloperRateCardView({ data }: { data?: RateCardData }) {
   return (
     <Card withBorder mb="md" data-testid="app-developer-rate-card">
       <Stack gap="sm">
-        <Title order={4}>Rate card</Title>
+        <Title order={4}>Rate card: your share of App revenue</Title>
         {!data ? (
           <Loader size="sm" />
         ) : (
           <>
             <Table withTableBorder={false} verticalSpacing={4}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Revenue</Table.Th>
-                  <Table.Th ta="right" style={{ whiteSpace: 'nowrap' }}>
-                    Your share
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
               <Table.Tbody>
                 {data.rows.map(({ row, sharePct }) => (
                   <Table.Tr key={row}>
