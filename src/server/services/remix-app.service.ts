@@ -17,6 +17,7 @@ import {
   whatIfPresetImageGen,
   type PresetEngine,
 } from '~/server/services/orchestrator/preset-image-gen.service';
+import { resolveTestingAccess } from '~/server/services/generation/generation.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GenerationAspectRatio } from '~/shared/constants/generation.constants';
@@ -196,12 +197,23 @@ export async function quoteRemixApps({
 }) {
   const image = await loadSource(imageId, caller, false);
   await assertSourceUsable(getRemixSourceUrl(image), caller, 'remixAppQuote');
-  const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  const pricing = await pricingFor(caller);
 
   const prices = await Promise.all(
-    SYSTEM_REMIX_APPS.map((app) => quoteApp(app, image, caller, currencies))
+    SYSTEM_REMIX_APPS.map((app) => quoteApp(app, image, caller, pricing))
   );
   return { prices };
+}
+
+/**
+ * The per-caller inputs a price depends on beyond the user row. Testing access is per user (Flipt
+ * testers), and it opens gate rules the graph prices against.
+ */
+async function pricingFor(caller: Pick<RemixAppCaller, 'user' | 'features'>) {
+  return {
+    currencies: getAllowedAccountTypes(caller.features, ['blue']),
+    hasTestingAccess: await resolveTestingAccess(caller.user),
+  };
 }
 
 /**
@@ -219,7 +231,7 @@ async function quoteApp(
   app: RemixAppDefinition,
   image: RemixSourceImage,
   caller: RemixAppCaller,
-  currencies: ReturnType<typeof getAllowedAccountTypes>
+  { currencies, hasTestingAccess }: Awaited<ReturnType<typeof pricingFor>>
 ) {
   const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
@@ -232,6 +244,7 @@ async function quoteApp(
     caller.user.tier ?? 'free',
     caller.user.isModerator ? 'mod' : 'user',
     currencies.join('+'),
+    hasTestingAccess ? 'tester' : 'public',
     featureDigest(caller.features),
   ].join(':');
   try {
@@ -311,12 +324,7 @@ export async function quoteTeamRemix({
   const full: RemixAppCaller = { ...caller, token: await getToken() };
   const image = await readSource(imageId);
   await assertSourceUsable(getRemixSourceUrl(image), full, 'remixAppQuote');
-  const price = await quoteApp(
-    offer.app,
-    image,
-    full,
-    getAllowedAccountTypes(caller.features, ['blue'])
-  );
+  const price = await quoteApp(offer.app, image, full, await pricingFor(caller));
   return { team: offer.team, price };
 }
 

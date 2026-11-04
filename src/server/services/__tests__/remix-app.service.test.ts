@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   whatIfFromGraph: vi.fn(async () => ({ cost: { total: 30 }, ready: true })),
   assertInputs: vi.fn(async () => undefined),
   cache: new Map<string, unknown>(),
+  /** Users the Flipt testers segment holds. */
+  testers: new Set<number>(),
   findWaiver: vi.fn<
     (args: { placerId: number; ownerId: number; hostImageId: number; db: unknown }) => Promise<{
       event: string;
@@ -33,6 +35,10 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/events/team-remix-waiver', () => ({ findTeamRemixWaiver: h.findWaiver }));
 vi.mock('~/server/services/remix-gallery.service', () => ({
   getTeamWaiverStanding: h.standing,
+}));
+vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveTestingAccess: async ({ id }: { id?: number }) => id != null && h.testers.has(id),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: async () => 'token',
@@ -156,6 +162,7 @@ beforeEach(() => {
   );
   h.images.clear();
   h.cache.clear();
+  h.testers.clear();
 });
 
 describe('remixApp.run → graph input', () => {
@@ -386,6 +393,8 @@ describe('remixApp.quote', () => {
 
   it('reuses a cached price only when nothing the price depends on differs', async () => {
     const perOpen = SYSTEM_REMIX_APPS.length;
+    const TESTER = USER_ID + 100;
+    h.testers.add(TESTER);
     addImage(9, { width: 1200, height: 800 });
     addImage(10, { width: 1210, height: 800 });
     await quoteRemixApps({ imageId: 9, caller: caller() });
@@ -402,6 +411,8 @@ describe('remixApp.quote', () => {
       [9, caller({ features: { isGreen: true } as RemixAppCaller['features'] })],
       // An engine flag the graph gates on, with the currencies unchanged.
       [9, caller({ features: { isGreen: false, krea: true } as never })],
+      // A Flipt tester: gate rules open to them that are closed to everyone else.
+      [9, caller({}, { id: TESTER })],
     ];
     for (const [imageId, who] of variants) {
       const before = h.whatIfFromGraph.mock.calls.length;
