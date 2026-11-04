@@ -8,9 +8,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
  * Who is in Hat Turf, run on a real Postgres through the service's own SQL: only an explicit opt-in
- * counts. Hat Turf was announced as opt-in only; a short-lived opt-out default (placing a hat put you
- * in) was reverted, so the fixture keeps hat placers who never chose, to prove they stay out.
- * Joining is for players only: any owner's image is turf, opted in or not.
+ * counts, so the fixture includes hat placers who never chose, to prove they stay out. Joining is
+ * for players only: any owner's image is turf, opted in or not.
  */
 
 const START = new Date('2026-11-01T00:00:00Z');
@@ -113,8 +112,8 @@ beforeEach(async () => {
 const inTurf = async (userId: number) => (await getTurfStock('e', userId)).optedIn;
 
 describe('who is in Hat Turf', () => {
-  // Deliberate: Hat Turf is opt-in only, as announced. Making placing a hat count as joining is a
-  // product decision for the event owner, not a code cleanup.
+  // Deliberate: Hat Turf is opt-in only. Making placing a hat count as joining is a product
+  // decision for the event owner, not a code cleanup.
   it('placing a hat never opts anyone in: never chosen, with a hat placed, is out', async () => {
     expect(await inTurf(NEVER_SET)).toBe(false);
   });
@@ -131,8 +130,8 @@ describe('who is in Hat Turf', () => {
     expect(await inTurf(OPTED_IN)).toBe(true);
   });
 
-  // Deliberate (event owner's call, 2026-11-04): turf is played on anyone's image. An owner need not
-  // join for their images to take stickers. Gating on the owner again is a product decision.
+  // Deliberate: turf is played on anyone's image; an owner need not join. Gating on the owner again
+  // is a product decision for the event owner, not a code cleanup.
   it('every visible image is open, whatever its owner chose', async () => {
     const { open } = await getTurfSummaries('e', [101, 102, 103, 104]);
     expect(open).toEqual({ 101: true, 102: true, 103: true, 104: true });

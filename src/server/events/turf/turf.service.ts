@@ -33,8 +33,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 
-// The opt-in lives in User.settings, per event name: placing needs it (see inTurf). Any visible,
-// non-contest image is turf, whether or not its owner opted in.
+// The opt-in lives in User.settings, per event name: placing needs it (see inTurf). The owner's
+// choice is not read: any visible, non-contest image is turf unless its owner is banned or deleted.
 export const TURF_SETTING = 'eventTurfOptIn';
 
 /**
