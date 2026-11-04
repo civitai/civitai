@@ -8,7 +8,7 @@ import {
   type GenerationInputEntryPoint,
 } from '~/server/services/generation-input-urls';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { findTeamRemixTeam } from '~/server/events/team-remix-waiver';
+import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -135,14 +135,23 @@ const viewerOf = (caller: RemixAppCaller) => ({
   showNsfw: !!caller.user.showNsfw,
 });
 
-/** `image.get`'s visibility and owner-block check, then only the fields a remix reads. */
-async function loadSource(imageId: number, caller: RemixAppCaller, confirmBlockOnPrimary: boolean) {
-  await assertImageVisibleToViewer({
+/** `image.get`'s visibility and owner-block check. Returns the owner. */
+function assertVisible(imageId: number, caller: RemixAppCaller, confirmBlockOnPrimary: boolean) {
+  return assertImageVisibleToViewer({
     id: imageId,
     userId: caller.user.id,
     isModerator: caller.user.isModerator,
     confirmBlockOnPrimary,
   });
+}
+
+/** The visibility check, then only the fields a remix reads. */
+async function loadSource(imageId: number, caller: RemixAppCaller, confirmBlockOnPrimary: boolean) {
+  await assertVisible(imageId, caller, confirmBlockOnPrimary);
+  return readSource(imageId);
+}
+
+async function readSource(imageId: number) {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
     select: {
@@ -232,35 +241,53 @@ async function quoteApp(
 }
 
 /**
- * The team remix this viewer is offered on this image, or null when there is none: the image must
- * wear a team-event hat its owner placed, and the viewer must have joined a team. The team is
- * read from the viewer's own join, never from the client.
+ * The team remix this viewer is offered on this visible image, or null: exactly when the gallery's
+ * team waiver would take the result free (`findTeamRemixWaiver`: the owner's hat on their own
+ * image, and viewer and owner joined the same team). The team is read from the joins, never from
+ * the client.
  */
-async function resolveTeamRemixApp(
+async function resolveTeamRemix(
   imageId: number,
-  caller: RemixAppCaller,
-  db: typeof dbRead | typeof dbWrite
+  caller: Pick<RemixAppCaller, 'user'>,
+  { onPrimary }: { onPrimary: boolean }
 ) {
-  const joined = await findTeamRemixTeam({ userId: caller.user.id, hostImageId: imageId, db });
-  return joined && { team: joined.team, app: teamRemixApp(joined.team) };
+  const { userId: ownerId } = await assertImageVisibleToViewer({
+    id: imageId,
+    userId: caller.user.id,
+    isModerator: caller.user.isModerator,
+    confirmBlockOnPrimary: onPrimary,
+  });
+  const waiver = await findTeamRemixWaiver({
+    placerId: caller.user.id,
+    ownerId,
+    hostImageId: imageId,
+    db: onPrimary ? dbWrite : dbRead,
+  });
+  return waiver && { team: waiver.team, app: teamRemixApp(waiver.team) };
 }
 
-/** `null` = no button. The eligibility reads run first, so most images never load or price. */
+/**
+ * `null` = no button. Eligibility first, so the orchestrator token and the price are only fetched
+ * for an image the viewer can remix for their team; an image they cannot see throws as usual.
+ */
 export async function quoteTeamRemix({
   imageId,
   caller,
+  getToken,
 }: {
   imageId: number;
-  caller: RemixAppCaller;
+  caller: Omit<RemixAppCaller, 'token'>;
+  getToken: () => Promise<string>;
 }) {
-  const offer = await resolveTeamRemixApp(imageId, caller, dbRead);
+  const offer = await resolveTeamRemix(imageId, caller, { onPrimary: false });
   if (!offer) return null;
-  const image = await loadSource(imageId, caller, false);
-  await assertSourceUsable(getRemixSourceUrl(image), caller, 'remixAppQuote');
+  const full: RemixAppCaller = { ...caller, token: await getToken() };
+  const image = await readSource(imageId);
+  await assertSourceUsable(getRemixSourceUrl(image), full, 'remixAppQuote');
   const price = await quoteApp(
     offer.app,
     image,
-    caller,
+    full,
     getAllowedAccountTypes(caller.features, ['blue'])
   );
   return { team: offer.team, price };
@@ -277,18 +304,22 @@ export async function runRemixApp({
   nonce: string;
   caller: RemixAppCaller;
 }) {
-  // The primary, so a hat taken off or a join made seconds ago is seen before the charge.
-  const app =
-    slug === TEAM_REMIX_SLUG
-      ? (await resolveTeamRemixApp(imageId, caller, dbWrite))?.app
-      : getSystemRemixApp(slug);
-  if (!app)
-    throw new TRPCError(
-      slug === TEAM_REMIX_SLUG
-        ? { code: 'FORBIDDEN', message: 'Join a team to remix this image for it.' }
-        : { code: 'NOT_FOUND', message: 'Remix app not found' }
-    );
-  const image = await loadSource(imageId, caller, true);
+  let app: RemixAppDefinition | undefined;
+  let image: RemixSourceImage;
+  if (slug === TEAM_REMIX_SLUG) {
+    // On the primary, so a hat taken off or a join made seconds ago is seen before the charge.
+    app = (await resolveTeamRemix(imageId, caller, { onPrimary: true }))?.app;
+    if (!app)
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: "Only a member of the creator's team can remix this image for it.",
+      });
+    image = await readSource(imageId);
+  } else {
+    app = getSystemRemixApp(slug);
+    if (!app) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+    image = await loadSource(imageId, caller, true);
+  }
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertSourceUsable(run.sourceUrl, caller, 'remixAppRun');
 

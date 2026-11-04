@@ -9,8 +9,8 @@ import { TEAM_REMIX_APP } from '~/shared/constants/remix-apps.constants';
 import { trpc } from '~/utils/trpc';
 
 /**
- * Runs the team remix app on a hatted image. Shown only when the server names a team for this
- * viewer here (joined, hat on, not the owner); the prompt and team never leave the server.
+ * Runs the team remix app on a hatted image. Shown only where the server says the result could be
+ * submitted here free for the viewer's team; the prompt and team never leave the server.
  */
 export function TeamRemixButton({ imageId }: { imageId: number }) {
   const features = useFeatureFlags();
@@ -51,7 +51,7 @@ export function TeamRemixButton({ imageId }: { imageId: number }) {
             cost,
             nonce,
             startedMessage:
-              'Added to your queue. When it is done, post it and submit it to this remix gallery.',
+              'Added to your queue. When it is done, post it, then come back here and submit it free for your team.',
             onSettled: () => {
               setPending(false);
               setNonce(crypto.randomUUID());

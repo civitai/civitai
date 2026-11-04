@@ -24,7 +24,7 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc, trpcVanilla } from '~/utils/trpc';
 
-const CONFIRMED_KEY = 'remix-apps:confirmed';
+export const CONFIRMED_KEY = 'remix-apps:confirmed';
 
 const icons: Record<string, typeof IconSparkles> = {
   sparkles: IconSparkles,

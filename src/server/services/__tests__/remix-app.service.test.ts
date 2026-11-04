@@ -14,15 +14,16 @@ const h = vi.hoisted(() => ({
   whatIfFromGraph: vi.fn(async () => ({ cost: { total: 30 }, ready: true })),
   assertInputs: vi.fn(async () => undefined),
   cache: new Map<string, unknown>(),
-  findTeam: vi.fn<
-    (args: { userId: number; hostImageId: number; db: unknown }) => Promise<{
+  findWaiver: vi.fn<
+    (args: { placerId: number; ownerId: number; hostImageId: number; db: unknown }) => Promise<{
       event: string;
       team: string;
+      perDay: number;
     } | null>
   >(async () => null),
 }));
 
-vi.mock('~/server/events/team-remix-waiver', () => ({ findTeamRemixTeam: h.findTeam }));
+vi.mock('~/server/events/team-remix-waiver', () => ({ findTeamRemixWaiver: h.findWaiver }));
 
 vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageVisibility>()),
@@ -70,12 +71,13 @@ import {
 import {
   getSystemRemixApp,
   SYSTEM_REMIX_APPS,
+  TEAM_REMIX_APP,
   TEAM_REMIX_SLUG,
   type RemixAppDefinition,
 } from '~/shared/constants/remix-apps.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 
 const USER_ID = 42;
 const SAFE = 1;
@@ -363,62 +365,84 @@ describe('remixApp.quote', () => {
 });
 
 describe('team remix', () => {
-  const joined = (team: string) => h.findTeam.mockResolvedValue({ event: 'party', team });
+  const OWNER = USER_ID + 1;
+  // The waiver's own team rule (same team, owner's hat) is tested against Postgres in
+  // team-remix-waiver.test.ts; here it stands in, and these pin what the service asks it and does.
+  const sameTeam = (team: string) =>
+    h.findWaiver.mockResolvedValue({ event: 'party', team, perDay: 10 });
   const runTeam = (imageId: number, who = caller()) =>
     runRemixApp({ slug: TEAM_REMIX_SLUG, imageId, nonce: `nonce-team-${imageId}`, caller: who });
+  const quoteTeam = (imageId: number, getToken = vi.fn(async () => 'token')) => {
+    const { token: _token, ...rest } = caller();
+    return quoteTeamRemix({ imageId, caller: rest, getToken });
+  };
 
   beforeEach(() => {
-    h.findTeam.mockResolvedValue(null);
+    h.findWaiver.mockResolvedValue(null);
   });
 
-  it("submits the prompt with the viewer's server-resolved team, on the Edit safe engine", async () => {
-    addImage(30, { ownerId: USER_ID + 1 });
-    joined('Green');
+  it('is not in the remix menu, so nobody is offered it without a team', () => {
+    expect(SYSTEM_REMIX_APPS).not.toContainEqual(
+      expect.objectContaining({ slug: TEAM_REMIX_SLUG })
+    );
+    expect(getSystemRemixApp(TEAM_REMIX_SLUG)).toBeUndefined();
+  });
+
+  it('submits the prompt with the team the server resolved, on the Edit safe engine', async () => {
+    addImage(30, { ownerId: OWNER });
+    sameTeam('Green');
     await runTeam(30);
 
     const [args] = submitted();
     const prompt = args.input.prompt as string;
-    expect(prompt).toContain('Team Green.');
-    expect(prompt).toContain('festive Green-colored party hat');
+    expect(prompt).toBe(TEAM_REMIX_APP.prompt.replaceAll('{{team}}', 'Green'));
     expect(prompt).not.toContain('{{');
     expect(args.input).toMatchObject({
       ecosystem: REMIX_ENGINES.edit.safe.ecosystemKey,
       model: { id: REMIX_ENGINES.edit.safe.modelVersionId },
     });
     expect(args.remixOfId).toBe(30);
-    expect(args.tags).toContain(`remix-app:${TEAM_REMIX_SLUG}`);
-    // Read on the primary before the charge, for this viewer and this image.
-    expect(h.findTeam).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: USER_ID, hostImageId: 30, db: dbWrite })
+    // Asked about this viewer against the image's real owner, on the primary before the charge.
+    expect(h.findWaiver).toHaveBeenCalledWith(
+      expect.objectContaining({ placerId: USER_ID, ownerId: OWNER, hostImageId: 30, db: dbWrite })
     );
   });
 
-  it('refuses a viewer with no team on this image, and charges nothing', async () => {
-    addImage(31, { ownerId: USER_ID + 1 });
+  it("refuses a viewer not on the owner's team, and charges nothing", async () => {
+    addImage(31, { ownerId: OWNER });
     await expect(runTeam(31)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(quoteTeam(31)).resolves.toBeNull();
     expect(h.generateFromGraph).not.toHaveBeenCalled();
+    expect(h.whatIfFromGraph).not.toHaveBeenCalled();
   });
 
   it('refuses a mature source even off the green domain', async () => {
-    addImage(32, { ownerId: USER_ID + 1, nsfwLevel: MATURE });
-    joined('Pink');
+    addImage(32, { ownerId: OWNER, nsfwLevel: MATURE });
+    sameTeam('Pink');
     await expect(runTeam(32)).rejects.toThrow(/does not run on mature/);
     expect(h.generateFromGraph).not.toHaveBeenCalled();
   });
 
-  it('offers nothing, and loads and prices nothing, without a team', async () => {
-    addImage(33, { ownerId: USER_ID + 1 });
-    await expect(quoteTeamRemix({ imageId: 33, caller: caller() })).resolves.toBeNull();
-    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  it('says nothing about the hats on an image the viewer cannot see', async () => {
+    addImage(35, { ownerId: OWNER, hidden: true });
+    sameTeam('Pink');
+    await expect(quoteTeam(35)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(runTeam(35)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.findWaiver).not.toHaveBeenCalled();
+  });
+
+  it('fetches no token and prices nothing where there is no button', async () => {
+    addImage(33, { ownerId: OWNER });
+    const getToken = vi.fn(async () => 'token');
+    await expect(quoteTeam(33, getToken)).resolves.toBeNull();
+    expect(getToken).not.toHaveBeenCalled();
     expect(h.whatIfFromGraph).not.toHaveBeenCalled();
   });
 
   it('quotes the input the run submits, with the team', async () => {
-    addImage(34, { ownerId: USER_ID + 1 });
-    joined('Yellow');
-    const quote = await quoteTeamRemix({ imageId: 34, caller: caller() });
-    expect(quote).toMatchObject({ team: 'Yellow', price: { cost: 30 } });
-    expect(h.findTeam).toHaveBeenCalledWith(expect.objectContaining({ db: dbRead }));
+    addImage(34, { ownerId: OWNER });
+    sameTeam('Yellow');
+    await expect(quoteTeam(34)).resolves.toMatchObject({ team: 'Yellow', price: { cost: 30 } });
 
     await runTeam(34);
     const whatIf = (h.whatIfFromGraph.mock.calls as unknown as [SubmitArgs][])[0][0].input;

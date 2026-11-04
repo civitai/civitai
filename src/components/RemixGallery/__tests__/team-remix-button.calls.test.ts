@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { MantineProvider } from '@mantine/core';
+import { ModalsProvider } from '@mantine/modals';
 import { act, createElement } from 'react';
 import type { ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CONFIRMED_KEY } from '~/components/Image/Remix/RemixApps';
 import { TeamRemixButton } from '~/components/RemixGallery/TeamRemixButton';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
@@ -25,6 +27,7 @@ vi.mock('@mantine/notifications', () => ({ showNotification: vi.fn() }));
 const HOST = 74;
 let quote: unknown = null;
 const requests: { path: string; body: string }[] = [];
+let runFails = false;
 
 function stubFetch() {
   requests.length = 0;
@@ -33,7 +36,12 @@ function stubFetch() {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(typeof input === 'string' ? input : input.toString(), 'http://test');
       const path = url.pathname.replace('/api/trpc/', '');
-      requests.push({ path, body: `${url.search} ${String(init?.body ?? '')}` });
+      requests.push({ path, body: String(init?.body ?? '') });
+      if (path === 'remixApp.run' && runFails)
+        return new Response(
+          JSON.stringify({ error: { json: { message: 'nope', code: -32603, data: {} } } }),
+          { status: 500, headers: { 'content-type': 'application/json' } }
+        );
       const data =
         path === 'remixApp.teamQuote'
           ? quote
@@ -60,7 +68,11 @@ async function settle() {
 async function render() {
   queryClient.clear();
   const Inner = () =>
-    createElement(MantineProvider, null, createElement(TeamRemixButton, { imageId: HOST }));
+    createElement(
+      MantineProvider,
+      null,
+      createElement(ModalsProvider, null, createElement(TeamRemixButton, { imageId: HOST }))
+    );
   const Wrapped = trpc.withTRPC(Inner as never) as unknown as ComponentType<{ pageProps: object }>;
   container = document.createElement('div');
   root = createRoot(container);
@@ -69,6 +81,15 @@ async function render() {
   });
   await settle();
 }
+
+/** The run inputs as sent, read out of the (possibly batched) tRPC body. */
+const runInputs = () =>
+  requests
+    .filter((r) => r.path === 'remixApp.run')
+    .map((r) => {
+      const body = JSON.parse(r.body) as Record<string, { json?: unknown }> & { json?: unknown };
+      return (body.json ?? body[0]?.json ?? body['0']?.json) as Record<string, unknown>;
+    });
 
 const count = (path: string) => requests.filter((r) => r.path === path).length;
 const button = () =>
@@ -80,6 +101,7 @@ beforeEach(() => {
   stubFetch();
   flags.remixApps = true;
   quote = null;
+  runFails = false;
   localStorage.clear();
 });
 afterEach(() => {
@@ -109,19 +131,68 @@ describe('the Remix for your team button', () => {
     expect(button()).toBeDefined();
   });
 
-  it('runs the team app and never sends a team', async () => {
-    localStorage.setItem('remix-apps:confirmed', '1');
-    quote = { team: 'Pink', price: { cost: 44, ready: true } };
-    await render();
+  const eligible = { team: 'Pink', price: { cost: 44, ready: true } };
+  const tap = async () => {
     await act(async () => {
       button()?.click();
     });
     await settle();
+  };
+  const isLoading = () => button()?.hasAttribute('data-loading') ?? false;
 
-    const runs = requests.filter((r) => r.path === 'remixApp.run');
+  it('runs the team app on this image and never sends a team', async () => {
+    localStorage.setItem(CONFIRMED_KEY, '1');
+    quote = eligible;
+    await render();
+    await tap();
+
+    const runs = runInputs();
     expect(runs).toHaveLength(1);
-    expect(runs[0].body).toContain(TEAM_REMIX_SLUG);
-    expect(runs[0].body).toContain(String(HOST));
-    expect(runs[0].body).not.toMatch(/Pink|team"/);
+    expect(runs[0]).toMatchObject({ slug: TEAM_REMIX_SLUG, imageId: HOST });
+    expect(Object.keys(runs[0]).sort()).toEqual(['imageId', 'nonce', 'slug']);
+  });
+
+  it('gives each tap its own nonce once the last one settled, failed or not', async () => {
+    localStorage.setItem(CONFIRMED_KEY, '1');
+    quote = eligible;
+    await render();
+    runFails = true;
+    await tap();
+    expect(isLoading()).toBe(false);
+    runFails = false;
+    await tap();
+
+    const [first, second] = runInputs();
+    expect(second).toBeDefined();
+    expect(second.nonce).not.toBe(first.nonce);
+  });
+
+  it('frees the button when the confirm is cancelled, and runs nothing', async () => {
+    quote = eligible;
+    await render();
+    await tap();
+    // POSITIVE CONTROL: the confirm opened and the button is held while it is open.
+    const cancel = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Cancel'
+    );
+    expect(cancel).toBeDefined();
+    expect(isLoading()).toBe(true);
+
+    await act(async () => {
+      cancel?.click();
+    });
+    await settle();
+    expect(isLoading()).toBe(false);
+    expect(runInputs()).toHaveLength(0);
+  });
+
+  it('shows the refusal instead of a price, and cannot be tapped', async () => {
+    quote = {
+      team: 'Pink',
+      price: { refusal: 'Remix for your team does not run on mature images.' },
+    };
+    await render();
+    expect(button()?.disabled).toBe(true);
+    expect(container.textContent).toContain('does not run on mature images');
   });
 });
