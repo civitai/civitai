@@ -2526,6 +2526,7 @@ export const licenses: LicenseRecord[] = [
       'Stable Cascade is licensed under the Stable Cascade Non-Commercial Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
     disableMature: true,
+    nonCommercial: true,
   },
   {
     id: 9,
@@ -2647,12 +2648,15 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 29,
-    name: 'FLUX.2 [dev] Non-Commercial License',
-    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
     notice:
-      'The FLUX.2 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.2 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   {
     id: 30,
@@ -2799,6 +2803,17 @@ export const licenses: LicenseRecord[] = [
       'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
+  {
+    id: 50,
+    // Id 14, flagged non-commercial for Krea and Kontext; Flux.1 D keeps id 14.
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
     nonCommercial: true,
   },
 ];
@@ -3039,7 +3054,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Krea-trained variant of Flux optimized for creative generation',
     type: 'image',
     ecosystemId: ECO.FluxKrea,
-    licenseId: 14,
+    licenseId: 50,
   },
   {
     id: BM.Flux1Kontext,
@@ -3047,7 +3062,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux variant specialized for context-aware image editing and generation',
     type: 'image',
     ecosystemId: ECO.Flux1Kontext,
-    licenseId: 14,
+    licenseId: 50,
   },
   {
     id: BM.Flux2D,

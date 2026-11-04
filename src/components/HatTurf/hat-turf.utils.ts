@@ -53,16 +53,6 @@ export function badgeLeader(summary: Pick<TurfSummary, 'counted' | 'leader'>): s
   return null;
 }
 
-/** The viewer's standing when their team is not the leader; null when they lead or are not on a team. */
-export function viewerBehind(
-  summary: Pick<TurfSummary, 'counted' | 'leader'>,
-  viewerTeam: string | null | undefined
-): { team: string; count: number } | null {
-  const lead = badgeLeader(summary);
-  if (!lead || !viewerTeam || viewerTeam === lead) return null;
-  return { team: viewerTeam, count: summary.counted[viewerTeam] ?? 0 };
-}
-
 /** The spoken form of the badge: who leads, every team's count, and where the viewer stands. */
 export function standingsLabel(
   summary: Pick<TurfSummary, 'counted' | 'leader'>,
@@ -74,6 +64,25 @@ export function standingsLabel(
   return `Hat Turf: ${lead} leads with ${summary.counted[lead]}. ${rows.join(', ')}.${
     viewerTeam ? ` You are on ${viewerTeam}.` : ''
   }`;
+}
+
+/**
+ * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
+ * viewer's team needs to lead outright: a tie stays with the current leader.
+ */
+export function teamStandings(
+  summary: Pick<TurfSummary, 'counted' | 'leader'>,
+  viewerTeam: string | null | undefined
+) {
+  const counted = { ...summary.counted };
+  if (viewerTeam && !(viewerTeam in counted)) counted[viewerTeam] = 0;
+  const rows = orderedTeams(counted)
+    .map((team) => ({ team, count: counted[team] }))
+    .sort((a, b) => b.count - a.count);
+  const lead = badgeLeader(summary);
+  const toTake =
+    lead && viewerTeam && viewerTeam !== lead ? counted[lead] - counted[viewerTeam] + 1 : null;
+  return { rows, total: rows.reduce((sum, row) => sum + row.count, 0), lead, toTake };
 }
 
 /** A placed hat's width as a fraction of the drawn image (the sticker system's own default). */

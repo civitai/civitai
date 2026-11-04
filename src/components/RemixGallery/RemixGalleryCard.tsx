@@ -38,7 +38,12 @@ import {
   trimToWholeRows,
   type RemixGalleryItem,
 } from '~/components/RemixGallery/remix-gallery.utils';
-import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  useBrowsingLevelContext,
+  useViewerBrowsingLevelDebounced,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { SparkStorylineTile } from '~/components/RemixGallery/SparkStorylineTile';
+import type { SparkStorylineCardEntry } from '~/server/services/remix-gallery.service';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -193,6 +198,13 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
     }
   );
 
+  // The feed card's summary, so the stories listed here are the ones its hover strip lists.
+  const { data: summaries } = trpc.placement.getRemixGalleryCardSummaries.useQuery(
+    { imageIds: [imageId], browsingLevel },
+    { enabled: enabled && !!features.storylines }
+  );
+  const storylines = features.storylines ? summaries?.[imageId]?.storylines : undefined;
+
   if (!enabled || !visibility?.render) return null;
 
   // 🔴 Drawn through `hasEntries`, never straight off `data`. Once it is false the
@@ -279,6 +291,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
       </Group>
 
       <RemixGalleryExplainer />
+
+      {!!storylines?.count && <SparkStorylinesRow storylines={storylines} />}
 
       {isLoading ? (
         // A skeleton row rather than a spinner: it occupies the shape the
@@ -469,5 +483,44 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
         </Text>
       )}
     </Card>
+  );
+}
+
+/** The storylines started from this image, above its remixes. */
+function SparkStorylinesRow({
+  storylines,
+}: {
+  storylines: { count: number; entries: SparkStorylineCardEntry[] };
+}) {
+  const { blurLevels } = useBrowsingLevelContext();
+  const [hovered, setHovered] = useState<number | null>(null);
+  const label =
+    storylines.count === 1 ? '1 story started here' : `${storylines.count} stories started here`;
+
+  return (
+    <Stack gap={6}>
+      <Text size="sm" fw={600}>
+        {label}
+      </Text>
+      <div className="grid grid-cols-4 gap-3">
+        {storylines.entries.map((entry) => (
+          <div
+            key={entry.storylineId}
+            onPointerEnter={() => setHovered(entry.storylineId)}
+            onPointerLeave={() => setHovered((id) => (id === entry.storylineId ? null : id))}
+          >
+            <SparkStorylineTile
+              entry={entry}
+              blurLevels={blurLevels ?? 0}
+              paging={hovered === entry.storylineId}
+              className="w-full"
+            />
+            <Text size="xs" lineClamp={1} mt={4} title={entry.title}>
+              {entry.title}
+            </Text>
+          </div>
+        ))}
+      </div>
+    </Stack>
   );
 }

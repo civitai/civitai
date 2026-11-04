@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 
 const h = vi.hoisted(() => ({
-  gate: { event: 'birthday2026' } as { event: string } | null,
+  gate: { event: 'birthday2026', arm: 'control' } as {
+    event: string;
+    arm: 'control' | 'badge-popover';
+  } | null,
   asked: [] as { proc: string; input: any }[],
   mark: vi.fn(),
   fetch: vi.fn(async () => ({} as Record<number, unknown[]>)),
@@ -112,7 +115,7 @@ const mount = (imageIds: number[]) =>
   );
 
 beforeEach(() => {
-  h.gate = { event: 'birthday2026' };
+  h.gate = { event: 'birthday2026', arm: 'control' };
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
@@ -138,6 +141,12 @@ describe('TurfSummaryProvider', () => {
     expect(latest!.open[4]).toBe(false);
     expect(latest!.open[5]).toBe(true);
     expect(latest!.stickers[120]).toHaveLength(1);
+  });
+
+  test('hands the viewer’s arm to the cards', async () => {
+    h.gate = { event: 'birthday2026', arm: 'badge-popover' };
+    await mount(ids(3));
+    await vi.waitFor(() => expect(latest?.arm).toBe('badge-popover'));
   });
 
   test('asks nothing, and offers no context, with Hat Turf off', async () => {

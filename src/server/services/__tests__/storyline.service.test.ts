@@ -1680,6 +1680,34 @@ describe('reading', () => {
       });
       expect(hasEarlier).toBe(true);
     });
+
+    // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
+    // else is told which chapters were paid for, not even that none were.
+    it('tells only the owner which chapters someone paid to add', async () => {
+      const route = [
+        { id: 1, postId: 101, depth: 0, parentIds: [] },
+        { id: 4, postId: 104, depth: 1, parentIds: [] },
+      ];
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+        Promise.resolve(
+          Prisma.sql(strings, ...(values as Prisma.Sql[])).sql.includes('"Placement"')
+            ? [{ id: 4 }]
+            : route
+        )) as never);
+      const path = (viewer: { id: number; isModerator?: boolean }) =>
+        getStorylinePath({ chapterId: 4, viewer, browsingLevel: NsfwLevel.PG | NsfwLevel.R });
+
+      const { chapters: asOwner } = await path({ id: OWNER });
+      expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+        [1, false],
+        [4, true],
+      ]);
+      for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+        const { chapters } = await path(viewer);
+        expect(chapters.map((c) => c.chapterId)).toEqual([1, 4]);
+        for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+      }
+    });
   });
 
   describe('a storyline hidden from the reader', () => {
@@ -5033,6 +5061,25 @@ describe('a storyline started from an image', () => {
         spark({ post: { publishedAt: new Date(0), availability: 'Private', tosViolation: false } }),
       ],
       ['by a banned account', spark({ user: { bannedAt: new Date(), deletedAt: null } })],
+      ['by a deleted account', spark({ user: { bannedAt: null, deletedAt: new Date() } })],
+      [
+        'scheduled',
+        spark({
+          post: {
+            publishedAt: new Date(Date.now() + 86_400_000),
+            availability: 'Public',
+            tosViolation: false,
+          },
+        }),
+      ],
+      [
+        'on a taken-down post',
+        spark({ post: { publishedAt: new Date(0), availability: 'Public', tosViolation: true } }),
+      ],
+      ['an acceptable minor', spark({ acceptableMinor: true })],
+      ['blocked at ingestion', spark({ ingestion: 'Blocked' })],
+      ['failed at ingestion', spark({ ingestion: 'Error' })],
+      ['missing at ingestion', spark({ ingestion: 'NotFound' })],
     ])('refuses an image that is %s', async (_name, image) => {
       w.image.findUnique.mockResolvedValue(image as never);
       await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.cannotUse });

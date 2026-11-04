@@ -95,6 +95,10 @@ describe('createBid on a model auction', () => {
     'Flux.3 Klein-base',
     'Ideogram 4.0',
     'Qwen 2.1',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
   ])('refuses a bid on a %s version before reading the bidder balance', async (baseModel) => {
     dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
     await expect(bid()).rejects.toThrow(
@@ -110,7 +114,7 @@ describe('createBid on a model auction', () => {
     );
   });
 
-  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0', 'Flux.1 D'])(
     'a %s version passes the gate and reaches the balance check',
     async (baseModel) => {
       dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
@@ -145,6 +149,10 @@ describe('the daily recurring-bid charge', () => {
     'Flux.3 Klein-base',
     'Ideogram 4.0',
     'Qwen 2.1',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
   ])('does not charge a recurring bid on a %s version', async (baseModel) => {
     dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
     await _createRecurringBids(dayjs());
@@ -157,7 +165,7 @@ describe('the daily recurring-bid charge', () => {
     );
   });
 
-  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0', 'Flux.1 D'])(
     'still charges a recurring bid on a %s version',
     async (baseModel) => {
       dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(version(baseModel) as never);
