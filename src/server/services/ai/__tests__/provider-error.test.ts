@@ -1,6 +1,7 @@
-import { ChatError } from '@openrouter/sdk/models/errors';
 import { describe, expect, it } from 'vitest';
+import { ChatError, ConnectionError, RequestTimeoutError } from '@openrouter/sdk/models/errors';
 import {
+  APP_ERROR_MESSAGES,
   PROVIDER_ERROR_LOG_LIMIT,
   describeProviderError,
 } from '~/server/services/ai/provider-error';
@@ -250,5 +251,64 @@ describe('describeProviderError', () => {
       },
     };
     expect(describeProviderError(error)).toBe('unreadable provider error');
+  });
+
+  it("tags the app's own error messages, and nothing that merely starts like one", () => {
+    expect(describeProviderError(new Error(APP_ERROR_MESSAGES.json_parse))).toContain(
+      'reason=json_parse'
+    );
+    const echoed = describeProviderError(
+      new Error(`${APP_ERROR_MESSAGES.no_content}: PROMPT_TAIL`)
+    );
+    expect(echoed).not.toContain('reason=');
+    expect(echoed).not.toContain('PROMPT_TAIL');
+  });
+
+  it('logs the socket code a connection failure wraps', () => {
+    const socket = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const error = new ConnectionError('Unable to make request', {
+      cause: new TypeError('fetch failed', { cause: socket }),
+    });
+    expect(describeProviderError(error)).toContain('cause=ECONNRESET');
+  });
+
+  it('logs what kind of timeout ended the request', () => {
+    const error = new RequestTimeoutError('Request timed out', {
+      cause: new DOMException('The operation timed out.', 'TimeoutError'),
+    });
+    const text = describeProviderError(error);
+    expect(text).toContain('error=RequestTimeoutError');
+    expect(text).toContain('cause=TimeoutError');
+  });
+
+  it('keeps the numeric fields of a line it redacts for echoing the request', () => {
+    const prompt = 'lighthouse at dusk in impasto';
+    const body = JSON.stringify({ error: { code: 400, metadata: { provider_name: prompt } } });
+    const text = describeProviderError(chatErrorFrom(body), { sent: [prompt] });
+    expect(text).toContain('redacted');
+    expect(text).toContain('http=502');
+    expect(text).toContain('code=400');
+    expect(text).not.toMatch(/impasto/i);
+  });
+
+  it.each([
+    ['provider_name', 'Basic dXNlcjpwYXNz'],
+    ['provider_name', 'bearer abcdef123456'],
+    ['provider_name', 'https://cdn.example/a/b.jpg'],
+    ['model_slug', 'https://cdn.example/a/b.jpg'],
+  ])('drops a credential or URL in %s', (field, value) => {
+    const body = JSON.stringify({ error: { code: 400, metadata: { [field]: value } } });
+    const text = describeProviderError(chatErrorFrom(body));
+    expect(text).toContain('code=400');
+    expect(text).not.toContain(value);
+  });
+
+  it('keeps provider names and model slugs that look like neither', () => {
+    const body = JSON.stringify({
+      error: { metadata: { provider_name: 'Google AI Studio', model_slug: 'openai/gpt-4.1:free' } },
+    });
+    const text = describeProviderError(chatErrorFrom(body));
+    expect(text).toContain('provider=Google AI Studio');
+    expect(text).toContain('model=openai/gpt-4.1:free');
   });
 });

@@ -10,6 +10,7 @@ import type {
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { agentLog } from '~/server/freshdesk-agent/freshdesk-debug';
+import { APP_ERROR_MESSAGES } from '~/server/services/ai/provider-error';
 
 // Model aliases for easier usage
 export const AI_MODELS = {
@@ -278,7 +279,7 @@ function createOpenRouterClient() {
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
-      throw new Error('No content in response');
+      throw new Error(APP_ERROR_MESSAGES.no_content);
     }
 
     try {
@@ -312,7 +313,7 @@ function createOpenRouterClient() {
         length: content.length,
         fenced: jsonBlockMatch !== undefined,
       });
-      throw new Error('Failed to parse JSON from completion');
+      throw new Error(APP_ERROR_MESSAGES.json_parse);
     }
   };
 
@@ -380,7 +381,7 @@ function createOpenRouterClient() {
       });
 
       const choice = response.choices?.[0];
-      if (!choice) throw new Error('No choice in agent loop response');
+      if (!choice) throw new Error(APP_ERROR_MESSAGES.no_choice);
 
       const assistantMessage = choice.message;
       // Push the assistant message to conversation history
