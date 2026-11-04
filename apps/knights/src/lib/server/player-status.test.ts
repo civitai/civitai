@@ -14,11 +14,11 @@ describe('statusFrom', () => {
   it('carries fervor and gold, and defaults them to zero', () => {
     expect(
       statusFrom('Knight', 0, {
-        fervorLedger: { correct: 1, graded: 2 },
+        fervorLedger: { correct: 4, graded: 5 },
         goldPending: 100,
         goldEarned: 25,
       })
-    ).toMatchObject({ fervor: 50, goldPending: 100, goldEarned: 25 });
+    ).toMatchObject({ fervor: 256, goldPending: 100, goldEarned: 25 });
     expect(statusFrom('Acolyte', 0)).toMatchObject({ fervor: 0, goldPending: 0, goldEarned: 0 });
   });
 });

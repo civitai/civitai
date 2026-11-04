@@ -176,7 +176,8 @@ describe('grading', () => {
 
     expect(await fervorLedgerOf(db, 1, NOW)).toEqual({ correct: 2, graded: 2 });
     expect(await fervorLedgerOf(db, 5, NOW)).toEqual({ correct: 1, graded: 2 });
-    expect((await getPlayerStatus(db, 5, NOW))?.fervor).toBe(50);
+    expect((await getPlayerStatus(db, 1, NOW))?.fervor).toBe(200);
+    expect((await getPlayerStatus(db, 5, NOW))?.fervor).toBe(25);
   });
 
   it('never writes the stored fervor column, which belongs to the original game', async () => {
@@ -263,9 +264,17 @@ describe('calculateFervor', () => {
   it('is 0 with nothing graded and floors accuracy', () => {
     expect(calculateFervor({ correct: 0, graded: 0 })).toBe(0);
     expect(calculateFervor({ correct: 10, graded: 500 })).toBe(
-      Math.floor(10 * PROGRESSION.fervorPerCorrect * PROGRESSION.fervorAccuracyFloor)
+      Math.floor(10 * PROGRESSION.fervorScale * PROGRESSION.fervorAccuracyFloor ** 2)
     );
-    expect(calculateFervor({ correct: 400, graded: 500 })).toBe(32000);
+  });
+
+  it('counts accuracy twice, with no cap on volume', () => {
+    expect(calculateFervor({ correct: 400, graded: 500 })).toBe(25600);
+    expect(calculateFervor({ correct: 2000, graded: 2000 })).toBe(200000);
+    // Careful judging beats guessing fast at the same correct count.
+    expect(calculateFervor({ correct: 190, graded: 200 })).toBeGreaterThan(
+      calculateFervor({ correct: 190, graded: 300 })
+    );
   });
 });
 

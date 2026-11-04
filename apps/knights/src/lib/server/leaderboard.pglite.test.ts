@@ -64,13 +64,13 @@ describe('queryBoard', () => {
   it('orders by fervor from the votes cast in the window, with rank, level and fervor', async () => {
     await member(1, 'Knight', 1, { level: 3 });
     await member(2, 'Paladin', 9, { level: 45 });
-    await member(3, 'Templar', 4, { level: 25, failed: 4 });
+    await member(3, 'Templar', 4, { level: 25, failed: 1 });
 
     const { rows } = await queryBoard(db, NOW);
 
     expect(rows.map((r) => [r.userId, r.rankType, r.level, r.fervor])).toEqual([
       [2, 'Paladin', 45, calculateFervor({ correct: 9, graded: 9 })],
-      [3, 'Templar', 25, calculateFervor({ correct: 4, graded: 8 })],
+      [3, 'Templar', 25, calculateFervor({ correct: 4, graded: 5 })],
       [1, 'Knight', 3, 100],
     ]);
     expect(rows[0]).toMatchObject({ username: 'user2', image: 'img-2' });

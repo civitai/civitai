@@ -6,11 +6,14 @@ import type { Ledger } from './rating';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
-/** Accuracy is floored so a poor streak does not zero fervor. */
+/**
+ * Correct votes × accuracy² × the display scale. Volume is uncapped, so grinding keeps paying; squaring accuracy makes
+ * careful judging beat guessing fast. Accuracy is floored so a poor streak does not zero fervor.
+ */
 export function calculateFervor({ correct, graded }: Ledger): number {
   if (graded <= 0) return 0;
   const accuracy = Math.max(PROGRESSION.fervorAccuracyFloor, correct / graded);
-  return Math.floor(correct * PROGRESSION.fervorPerCorrect * accuracy);
+  return Math.floor(correct * PROGRESSION.fervorScale * accuracy * accuracy);
 }
 
 const DAY_MS = 86_400_000;
