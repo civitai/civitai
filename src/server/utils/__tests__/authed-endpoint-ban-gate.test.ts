@@ -120,13 +120,27 @@ describe('allowBanned is used only by the approved routes', () => {
 });
 
 describe('the approved routes still serve a banned session', () => {
-  it.each(ALLOW_BANNED)('%s does not answer the banned 403', async (route) => {
+  it.each(ALLOW_BANNED.filter((r) => r !== 'auth/impersonate.ts'))(
+    '%s does not answer the banned 403',
+    async (route) => {
+      getServerAuthSession.mockResolvedValue(banned);
+      const { default: handler } = await import(/* @vite-ignore */ join(API_DIR, route));
+      const results = await Promise.all(['GET', 'POST', 'DELETE'].map((m) => call(handler, m)));
+      const served = results.filter((r) => r.status !== 405);
+      expect(served.length).toBeGreaterThan(0);
+      for (const r of served) expect(r.body).not.toEqual({ error: BANNED_ACCOUNT_MESSAGE });
+    }
+  );
+
+  it('auth/impersonate lets a banned session exit but not start', async () => {
     getServerAuthSession.mockResolvedValue(banned);
-    const { default: handler } = await import(/* @vite-ignore */ join(API_DIR, route));
-    const results = await Promise.all(['GET', 'POST', 'DELETE'].map((m) => call(handler, m)));
-    const served = results.filter((r) => r.status !== 405);
-    expect(served.length).toBeGreaterThan(0);
-    for (const r of served) expect(r.body).not.toEqual({ error: BANNED_ACCOUNT_MESSAGE });
+    const { default: handler } = await import(
+      /* @vite-ignore */ join(API_DIR, 'auth/impersonate.ts')
+    );
+    const start = await call(handler, 'POST');
+    const exit = await call(handler, 'DELETE');
+    expect(start).toMatchObject({ status: 403, body: { error: BANNED_ACCOUNT_MESSAGE } });
+    expect(exit.body).not.toEqual({ error: BANNED_ACCOUNT_MESSAGE });
   });
 });
 
