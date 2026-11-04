@@ -18,15 +18,15 @@ describe('imagePageUrl', () => {
 });
 
 describe('imageUrl', () => {
-  it('serves the stored key from the image CDN at a fixed width', () => {
+  it('serves the stored key from the image CDN at a fixed width, compressed and without animation', () => {
     process.env.IMAGE_LOCATION = 'https://cdn.example/acct';
-    expect(imageUrl('abc-123')).toBe('https://cdn.example/acct/abc-123/width=800/abc-123.jpeg');
+    expect(imageUrl('abc-123')).toBe('https://cdn.example/acct/abc-123/anim=false,width=800,optimized=true/abc-123.jpeg');
   });
 
   it('serves a narrower variant on request', () => {
     process.env.IMAGE_LOCATION = 'https://cdn.example/acct';
     expect(imageUrl('abc-123', 192)).toBe(
-      'https://cdn.example/acct/abc-123/width=192/abc-123.jpeg'
+      'https://cdn.example/acct/abc-123/anim=false,width=192,optimized=true/abc-123.jpeg'
     );
   });
 });

@@ -16,11 +16,20 @@ export type PickedItem = {
  */
 export const itemKey = (questionKey: string, src: string) => `${questionKey}:${src}`;
 
-/** Items the next-stretch query leaves out: the ones already sent and the one on screen. */
-export const MAX_EXCLUDED = 8;
+/**
+ * Items the next-stretch query leaves out: a full buffer, the one on screen and the votes still in flight. A sealed token
+ * is 91 characters, so even this many keep the URL near 2.5 KB.
+ */
+export const MAX_EXCLUDED = 24;
 
-/** Items kept downloaded ahead of the one on screen; more are asked for whenever fewer are ready. */
-export const BUFFER_TARGET = 3;
+/** Items kept downloaded ahead of the one on screen (the first READY_TARGET of them decoded). */
+export const BUFFER_TARGET = 10;
+
+/** How many of the buffered items, from the front, are decoded and ready to be shown at once. */
+export const READY_TARGET = 3;
+
+/** More are asked for whenever this many or fewer are buffered. */
+export const REFILL_AT = 5;
 
 export const NETWORK_NOTICE =
   'Your last judgment may not have been recorded: check your connection.';
@@ -68,30 +77,52 @@ export function createVoteTracker() {
   };
 }
 
+type Buffered = { item: PickedItem; decoded: boolean; claimed: boolean };
+
 /**
- * Items fetched and decoded ahead of the one on screen, in the order they were picked. Only an item whose key is neither
- * buffered nor already known (sent, on screen) gets in, so a repeat, a re-sealed token or a stale reply cannot show an
- * item twice.
+ * Items fetched ahead of the one on screen, in the order they were picked, in two layers: all of them are downloaded (their
+ * image requested into the browser cache), and the first `ready` are also decoded and can be shown at once. Consuming one
+ * promotes the next downloaded item into the decoded window. Only an item whose key is neither buffered nor already known
+ * (sent, on screen) gets in, so a repeat, a re-sealed token or a stale reply cannot show an item twice.
  */
-export function createItemBuffer(target = BUFFER_TARGET) {
-  let items: PickedItem[] = [];
+export function createItemBuffer({
+  total = BUFFER_TARGET,
+  ready = READY_TARGET,
+  refillAt = REFILL_AT,
+} = {}) {
+  let items: Buffered[] = [];
   return {
     /** False when the item is a repeat, already known to the caller, or the buffer is full. */
     enqueue(item: PickedItem, known: (key: string) => boolean): boolean {
       const key = item.item.key;
-      if (items.length >= target || known(key) || items.some((it) => it.item.key === key))
+      if (items.length >= total || known(key) || items.some((it) => it.item.item.key === key))
         return false;
-      items.push(item);
+      items.push({ item, decoded: false, claimed: false });
       return true;
     },
+    /** The head, once its image is decoded: the only item a vote may swap to without waiting. */
     peek(): PickedItem | null {
-      return items[0] ?? null;
+      const head = items[0];
+      return head?.decoded ? head.item : null;
     },
     next(): PickedItem | null {
-      return items.shift() ?? null;
+      return items.shift()?.item ?? null;
+    },
+    /** Items in the decoded window that no one is decoding yet; each is handed out once. */
+    toDecode(): PickedItem[] {
+      const due = items.slice(0, ready).filter((it) => !it.decoded && !it.claimed);
+      for (const it of due) it.claimed = true;
+      return due.map((it) => it.item);
+    },
+    /** False when the item has left the buffer since its decode began. */
+    markDecoded(key: string): boolean {
+      const found = items.find((it) => it.item.item.key === key);
+      if (!found) return false;
+      found.decoded = true;
+      return true;
     },
     drop(key: string) {
-      items = items.filter((it) => it.item.key !== key);
+      items = items.filter((it) => it.item.item.key !== key);
     },
     clear() {
       items = [];
@@ -99,15 +130,18 @@ export function createItemBuffer(target = BUFFER_TARGET) {
     get size() {
       return items.length;
     },
+    get readyCount() {
+      return items.filter((it) => it.decoded).length;
+    },
     tokens(): string[] {
-      return items.map((it) => it.item.id);
+      return items.map((it) => it.item.item.id);
     },
     needsRefill(): boolean {
-      return items.length < target;
+      return items.length <= refillAt;
     },
     /** How many to ask for to fill the buffer. */
     missing(): number {
-      return Math.max(0, target - items.length);
+      return Math.max(0, total - items.length);
     },
   };
 }

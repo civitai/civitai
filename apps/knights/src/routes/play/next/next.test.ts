@@ -30,6 +30,7 @@ vi.mock('$lib/server/standing', async (original) => ({
 
 const { sealItem, openItem } = await import('$lib/server/feed-token');
 const { GET } = await import('./+server');
+const { MAX_EXCLUDED } = await import('../optimistic');
 
 const token = (kind: 'queue' | 'hidden' | 'yesno', id: number) =>
   sealItem('secret', 7, { kind, id });
@@ -163,9 +164,11 @@ describe('GET /play/next', () => {
 
   describe('with a count', () => {
     // A queue that hands out the first id not excluded, so each pick depends on the ones before it.
-    const queueOfFive = () =>
+    const queueOfFive = (size = 5) =>
       getFeed.mockImplementation(async (_db, _user, options: { exclude?: number[] }) => {
-        const id = [1, 2, 3, 4, 5].find((candidate) => !options.exclude?.includes(candidate));
+        const id = Array.from({ length: size }, (_, i) => i + 1).find(
+          (candidate) => !options.exclude?.includes(candidate)
+        );
         return id === undefined
           ? null
           : { ...feed, items: [{ id, imageKey: `k${id}`, width: 1, height: 1 }] };
@@ -183,8 +186,23 @@ describe('GET /play/next', () => {
     it('serves one item by default and never more than the buffer holds', async () => {
       queueOfFive();
       expect(ids((await ask([], {})).body)).toEqual([1]);
-      expect(ids((await ask([], {}, 50)).body)).toEqual([1, 2, 3]);
       expect(ids((await ask([], {}, -2)).body)).toEqual([1]);
+    });
+
+    it('serves up to 10 items in one request and no more', async () => {
+      queueOfFive(30);
+      expect(ids((await ask([], {}, 10)).body)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(ids((await ask([], {}, 50)).body)).toHaveLength(10);
+    });
+
+    it('reads as many named items as a full buffer, the item on screen and the votes in flight', async () => {
+      queueOfFive(60);
+      const named = Array.from({ length: MAX_EXCLUDED }, (_, i) => token('queue', i + 1));
+      const { body } = await ask([token('queue', 99), ...named], {}, 3);
+      expect(ids(body)).toEqual([MAX_EXCLUDED + 1, MAX_EXCLUDED + 2, MAX_EXCLUDED + 3]);
+      expect(getFeed.mock.calls[0][2].exclude).toEqual(
+        Array.from({ length: MAX_EXCLUDED }, (_, i) => i + 1)
+      );
     });
 
     it('serves fewer when the queue runs out, and nothing when it is empty', async () => {

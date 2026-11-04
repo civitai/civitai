@@ -176,8 +176,9 @@
     };
   };
 
-  // The next few items, fetched and decoded while this one is judged, so a vote can move on at once. Only items whose
-  // image has decoded get in, so a swap never shows a blank stage.
+  // The next items, fetched while this one is judged, so a vote can move on at once. All of them have their image requested
+  // into the browser cache; the first few are also decoded and held, and only a decoded head is swapped to, so a swap never
+  // shows a blank stage. Consuming one promotes the next downloaded item into the decoded window.
   const buffer = createItemBuffer();
   let buffered = $state(0);
   let refilling = $state(false);
@@ -187,6 +188,9 @@
   let emptyFor: string | undefined;
   // Holds each decoded image, by item key, so the browser keeps it ready until the item is shown.
   const preloaded = new Map<string, HTMLImageElement>();
+  // The downloads under way, held only until they finish: the bytes then sit in the HTTP cache for the `<img>` that shows
+  // the same address, and no decoded bitmap is kept for the items still waiting.
+  const downloading = new Map<string, HTMLImageElement>();
   let note = $state<string | null>(null);
   let cooling = $state(false);
   let noteTimer: ReturnType<typeof setTimeout> | undefined;
@@ -197,17 +201,60 @@
   const NOTE_MS = 5000;
 
   const JUDGED_NOTICE = 'You have already judged this one.';
-  const syncBuffer = () => (buffered = buffer.size);
+  const syncBuffer = () => {
+    buffered = buffer.size;
+    decodeAhead();
+  };
   function dropBuffered(key: string) {
     buffer.drop(key);
     preloaded.delete(key);
+    downloading.delete(key);
     syncBuffer();
   }
   function clearBuffer() {
     epoch += 1;
     buffer.clear();
     preloaded.clear();
+    downloading.clear();
     syncBuffer();
+  }
+
+  // Requests the image at its display address, at low priority, so the browser caches exactly what the stage will ask for.
+  function download(entry: PickedItem, mine: number) {
+    const key = entry.item.key;
+    const image = new Image();
+    image.fetchPriority = 'low';
+    image.onload = () => downloading.delete(key);
+    image.onerror = () => {
+      downloading.delete(key);
+      if (mine !== epoch) return;
+      tracker.avoid(entry.item.id);
+      dropBuffered(key);
+    };
+    downloading.set(key, image);
+    image.src = entry.item.src;
+  }
+
+  // Decodes the items at the front of the buffer that are not yet ready, so the image is a bitmap by the time it is shown.
+  // One that will not decode is left out of the next requests instead of being offered again.
+  function decodeAhead() {
+    const mine = epoch;
+    for (const entry of buffer.toDecode()) {
+      const key = entry.item.key;
+      const image = new Image();
+      image.src = entry.item.src;
+      void image
+        .decode()
+        .then(() => {
+          if (mine !== epoch || !buffer.markDecoded(key)) return;
+          preloaded.set(key, image);
+        })
+        .catch(() => {
+          if (mine !== epoch) return;
+          tracker.avoid(entry.item.id);
+          dropBuffered(key);
+        });
+    }
   }
 
   // Primitives, so reloading the page data after a vote (same item, same flags) does not re-run the refill and drop
@@ -252,24 +299,14 @@
         headers: { accept: 'application/json' },
       });
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
-      // Decoded one after the other, in order, so the buffer keeps the order the server picked. An image that will not
-      // decode is left out of the next requests instead of being offered again.
       for (const entry of body?.items ?? []) {
-        const image = new Image();
-        image.src = entry.item.src;
-        try {
-          await image.decode();
-        } catch {
-          if (mine === epoch) tracker.avoid(entry.item.id);
-          continue;
-        }
         if (mine !== epoch) return;
         if (buffer.enqueue(entry, (key) => tracker.has(key) || key === currentKey)) {
-          preloaded.set(entry.item.key, image);
+          download(entry, mine);
           added += 1;
-          syncBuffer();
         }
       }
+      if (added) syncBuffer();
     } catch {
       // Nothing buffered for this round; the vote falls back to the form post.
     } finally {
