@@ -34,9 +34,21 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 
-// The opt-in lives in User.settings, per event name: placing needs it, and only images of owners
-// who have it are turf.
+// The in-or-out choice lives in User.settings, per event name: placing needs in, and only images of owners
+// who are in are turf (see inTurf).
 export const TURF_SETTING = 'eventTurfOptIn';
+
+/**
+ * Whether the user aliased `alias` is in Hat Turf for `event`: their explicit choice wins; never
+ * chosen, they are in once they have placed any of the event's hats (opt-out, not opt-in).
+ */
+const inTurf = (alias: string, event: string) => {
+  const u = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`CASE (${u}.settings -> ${TURF_SETTING} ->> ${event})
+    WHEN 'true' THEN true WHEN 'false' THEN false
+    ELSE EXISTS (SELECT 1 FROM "EventCosmeticPlacement" ecp
+      WHERE ecp."userId" = ${u}.id AND ecp.event = ${event}) END`;
+};
 
 const CONFIG_TTL_MS = 30_000;
 const MAP_LOG_MAX = 50_000;
@@ -104,8 +116,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
       select: { stock: true, refilledAt: true },
     }),
     dbRead.$queryRaw<{ optedIn: boolean | null }[]>`
-      SELECT (settings -> ${TURF_SETTING} ->> ${event.name}) = 'true' AS "optedIn"
-      FROM "User" WHERE id = ${userId}
+      SELECT ${inTurf('u', event.name)} AS "optedIn"
+      FROM "User" u WHERE u.id = ${userId}
     `,
   ]);
   const { stock: _, ...supply } = turfSupplyAt(event, row, now);
@@ -133,7 +145,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   }
 
   const [placer] = await dbWrite.$queryRaw<{ optedIn: boolean | null; team: string | null }[]>`
-    SELECT (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true' AS "optedIn",
+    SELECT ${inTurf('u', event.name)} AS "optedIn",
       (SELECT c.data ->> 'team' FROM "UserCosmetic" uc JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
         WHERE uc."userId" = u.id AND uc."cosmeticId" = ${input.cosmeticId}
           AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${event.name}
@@ -151,7 +163,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   >`
     SELECT i."userId" AS "ownerId",
       COALESCE(p.id IS NOT NULL AND ${imageVisible}, false) AS visible,
-      (o.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true' AS "ownerOptedIn"
+      ${inTurf('o', event.name)} AS "ownerOptedIn"
     FROM "Image" i JOIN "User" o ON o.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -455,7 +467,7 @@ export async function reconcileAllTurf(now = new Date()) {
 /**
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
  * protects the image, so its stickers earn nothing until the hat comes off. `open`: for every image
- * asked about, whether it can take a new sticker now (visible, owner opted in); owners may sticker
+ * asked about, whether it can take a new sticker now (visible, owner in Hat Turf); owners may sticker
  * their own. `mine`: whether the viewer has already stickered it, so cannot again.
  */
 export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
@@ -471,7 +483,7 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
       JOIN "Post" p ON p.id = i."postId"
       JOIN "User" o ON o.id = i."userId"
       WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible}
-        AND (o.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true'
+        AND ${inTurf('o', event.name)}
     `,
     // Removed ones too: the unique key refuses a second sticker either way.
     viewerId

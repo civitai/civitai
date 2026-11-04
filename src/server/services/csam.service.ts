@@ -8,6 +8,8 @@ import type {
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
+import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
+import { isGeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getImageUploadIpEvents } from '~/server/services/image-upload-action.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -103,6 +105,27 @@ function foldImages(stored: unknown, added: { id: number }[]) {
 
 type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>[number];
 
+type FoldBlob = { url?: string; blobId?: string; status?: string };
+
+/** A preserved file is one blob however many filings name it; a legacy file is its URL. A copy that
+ *  was preserved replaces one that could not be, but never a moderator's exclusion. */
+function foldBlobs(stored: unknown, added: unknown) {
+  const byKey = new Map<unknown, FoldBlob>();
+  for (const blob of [
+    ...(Array.isArray(stored) ? stored : []),
+    ...(Array.isArray(added) ? added : []),
+  ] as FoldBlob[]) {
+    const key = blob?.blobId ?? blob?.url;
+    const kept = byKey.get(key);
+    if (
+      !kept ||
+      (kept.status !== 'preserved' && kept.status !== 'excluded' && blob?.status === 'preserved')
+    )
+      byKey.set(key, blob);
+  }
+  return [...byKey.values()];
+}
+
 /** One entry per job; a job named by both reports keeps the blobs of both. */
 function foldGeneratedImages(stored: unknown, added: GeneratedImagesEntry[] | undefined) {
   if (!Array.isArray(stored) && !added) return undefined;
@@ -116,12 +139,7 @@ function foldGeneratedImages(stored: unknown, added: GeneratedImagesEntry[] | un
     const kept = byJob.get(entry.jobId);
     const blobs = (value: unknown) => (Array.isArray(value) ? value : undefined);
     if (!kept) byJob.set(entry.jobId, entry);
-    else
-      kept.blobs = unionLists<{ url: string }>(
-        blobs(kept.blobs),
-        blobs(entry.blobs),
-        (b) => b?.url
-      );
+    else kept.blobs = foldBlobs(blobs(kept.blobs), blobs(entry.blobs));
   }
   return [...byJob.values(), ...loose];
 }
@@ -140,11 +158,36 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
   }
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
+  const nextEvidence = (next as Record<string, unknown>).generatorEvidence;
+  if (isRecord(prior.generatorEvidence) || isRecord(nextEvidence)) {
+    const before = isRecord(prior.generatorEvidence) ? prior.generatorEvidence : {};
+    const after = isRecord(nextEvidence) ? nextEvidence : {};
+    const priorCTReports = unionLists<unknown>(
+      before.priorCTReports,
+      after.priorCTReports as unknown[] | undefined,
+      (n) => n
+    );
+    // Evidence added after an approval has not been reviewed, so the report waits again.
+    folded.generatorEvidence = {
+      ...before,
+      ...after,
+      ...(priorCTReports && { priorCTReports }),
+      approvedAt: null,
+      approvedById: null,
+    };
+  }
   return folded as Prisma.InputJsonObject;
 }
 
 // A training-data report sends and archives one version's data, so a filing folds only into a
 // report on exactly its versions.
+// A supplemental report's text and file set are fixed when it is filed. A filing with preserved
+// generator evidence folds only into another such report, and a legacy URL-only filing only into a
+// legacy one: the send reads evidence files from the evidence copy and legacy ones by URL.
+const canFoldInto = (stored: unknown, filing: unknown) =>
+  !(isRecord(stored) && 'supplemental' in stored) &&
+  isGeneratorEvidenceDetails(stored) === isGeneratorEvidenceDetails(filing);
+
 const trainingVersionFilter = (type: CsamReportType, details?: CsamReportFormOutput) =>
   type === CsamReportType.TrainingData
     ? { details: { path: ['modelVersionIds'], equals: details?.modelVersionIds ?? [] } }
@@ -156,7 +199,10 @@ export async function createCsamReport({
   imageIds = [],
   details,
   type,
-}: CreateCsamReportSchema & { reportedById: number }) {
+}: Omit<CreateCsamReportSchema, 'details'> & {
+  reportedById: number;
+  details?: CreateCsamReportSchema['details'] | GeneratorEvidenceDetails;
+}) {
   const isInternalReport = userId === -1;
   const data = {
     userId: isInternalReport ? null : userId,
@@ -180,14 +226,21 @@ export async function createCsamReport({
           userId,
           type,
           reportSentAt: null,
-          ...trainingVersionFilter(type, details),
+          ...trainingVersionFilter(type, details as CsamReportFormOutput),
         };
-        const unsent = await tx.csamReport.findFirst({
-          where: {
-            ...unsentWhere,
-            OR: [{ sendClaimId: null }, { sendClaimedAt: { lt: cutoff } }],
-          },
-          select: { id: true },
+        // Filtered here, not in the query: an earlier report this filing cannot fold into must not
+        // hide a later one it can.
+        const firstFoldable = async (where: Prisma.CsamReportWhereInput) =>
+          (
+            await tx.csamReport.findMany({
+              where,
+              select: { id: true, details: true },
+              orderBy: { id: 'asc' },
+            })
+          ).find((row) => canFoldInto(row.details, details));
+        const unsent = await firstFoldable({
+          ...unsentWhere,
+          OR: [{ sendClaimId: null }, { sendClaimedAt: { lt: cutoff } }],
         });
         const fileSeparately = async (claimedId?: number) => {
           const created = await tx.csamReport.create({ data });
@@ -203,10 +256,7 @@ export async function createCsamReport({
           return created;
         };
         if (!unsent) {
-          const claimed = await tx.csamReport.findFirst({
-            where: unsentWhere,
-            select: { id: true },
-          });
+          const claimed = await firstFoldable(unsentWhere);
           return fileSeparately(claimed?.id);
         }
 
@@ -219,8 +269,7 @@ export async function createCsamReport({
           WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
           FOR UPDATE`;
         if (!locked) return fileSeparately();
-        // A supplemental report's text and file set are fixed when it is filed.
-        if (isRecord(locked.details) && 'supplemental' in locked.details) return fileSeparately();
+        if (!canFoldInto(locked.details, details)) return fileSeparately();
         if (locked.sendClaimId && !(locked.sendClaimedAt && locked.sendClaimedAt < cutoff))
           return fileSeparately(unsent.id);
 
@@ -229,7 +278,7 @@ export async function createCsamReport({
           data: {
             ...data,
             images: foldImages(locked.images, data.images),
-            details: foldDetails(locked.details, details),
+            details: foldDetails(locked.details, details as CsamReportFormOutput),
             sendClaimId: null,
             sendClaimedAt: null,
           },

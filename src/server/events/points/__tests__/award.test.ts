@@ -513,6 +513,34 @@ describe('the 50-point cap', () => {
   });
 });
 
+// onStorySparked frees a story's daily slot when this returns 0, so the count must be exact.
+describe('what awardEventPoints returns', () => {
+  it('is 0 for a repeat', async () => {
+    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBe(1);
+    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBe(0);
+  });
+
+  it('is the number of firsts in a mixed batch, not the batch size', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    await expect(
+      engine.awardEventPoints([reaction(1), reaction(2), reaction(2), reaction(3)])
+    ).resolves.toBe(2);
+  });
+
+  it('is 0 when the ledger write fails, and the marks are taken back', async () => {
+    let fail = true;
+    build({
+      insertLedger: async (rows) => {
+        if (fail) throw new Error('clickhouse down');
+        ledger.push(...rows);
+      },
+    });
+    await expect(engine.awardEventPoints([reaction(1), reaction(2)])).resolves.toBe(0);
+    fail = false;
+    await expect(engine.awardEventPoints([reaction(1), reaction(2)])).resolves.toBe(2);
+  });
+});
+
 describe('when the ledger write fails', () => {
   it('takes the dedupe marks back, so the same action earns when it comes again', async () => {
     let fail = true;
@@ -567,7 +595,7 @@ describe('when the dedupe mark cannot be written', () => {
 
   it('still writes the ledger row, with no live points, and never throws', async () => {
     build({ redis: sAddFailsFor(['1']) });
-    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBeUndefined();
+    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBe(1);
     expect(ledger.map((r) => [r.op, r.actorId, r.sourceId])).toEqual([
       ['add', 1, 'ImageReaction:100:1'],
     ]);

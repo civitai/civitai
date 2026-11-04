@@ -38,6 +38,10 @@ const { mockBustImageDeliveryMetadataCache, mockInvalidateHiddenImageMetadata } 
 // which supplies redis/sysRedis plus the REAL key tables. The local stub this replaces returned a
 // self-vivifying proxy for every REDIS_*_KEYS lookup, so any key the code composed came back as the
 // same placeholder — nothing here asserts a key, so the swap changes no assertion.
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),

@@ -22,6 +22,8 @@ const SUMMARY_CHUNK = 100;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
+// Cards mount a few at a time while scrolling; their marks go out together.
+const WATCH_COALESCE_MS = 250;
 // Only for a push that carries no stickers (an older server): every viewer of a hot image reads, so
 // each reads at most this often per image, spread so they do not arrive together.
 const STICKER_REREAD_MIN_MS = 10_000;
@@ -240,12 +242,18 @@ function TurfWatcher({
     [event, mark]
   );
 
+  const flush = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
-    const current = [...watching.current.keys()];
-    const added = current.filter((id) => !marked.current.has(id));
-    marked.current = new Set(current);
-    if (added.length) send(added);
+    if (flush.current) return;
+    flush.current = setTimeout(() => {
+      flush.current = undefined;
+      const current = [...watching.current.keys()];
+      const added = current.filter((id) => !marked.current.has(id));
+      marked.current = new Set(current);
+      if (added.length) send(added);
+    }, WATCH_COALESCE_MS);
   }, [version, watching, send]);
+  useEffect(() => () => clearTimeout(flush.current), []);
 
   useEffect(() => {
     const timer = setInterval(() => {

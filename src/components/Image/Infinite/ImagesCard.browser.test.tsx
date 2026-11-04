@@ -1,3 +1,4 @@
+import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type { ReactNode } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
@@ -75,7 +76,10 @@ vi.mock('~/components/Sticker/StickerPlacementBatchProvider', () => ({
 vi.mock('~/components/Metrics/useMetricSubscription', () => ({
   useMetricSubscription: () => undefined,
 }));
-vi.mock('~/components/Sticker/CardStickerOverlay', () => ({ CardStickerOverlay: () => null }));
+vi.mock('~/components/Sticker/CardStickerOverlay', async (importOriginal) => ({
+  ...(await importOriginal<typeof CardStickerOverlayModule>()),
+  CardStickerOverlay: () => null,
+}));
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
   InteractiveTipBuzzButton: ({ children }: { children: ReactNode }) => <>{children}</>,
   useBuzzTippingStore: () => 0,

@@ -10,7 +10,8 @@ export type ThreadParentColumn =
   | 'articleId'
   | 'bountyId'
   | 'bountyEntryId'
-  | 'reviewId';
+  | 'reviewId'
+  | 'storylineId';
 
 /** For each column, a query selecting the ids of the parent rows about to be deleted. */
 export type ThreadParents = Partial<Record<ThreadParentColumn, Prisma.Sql>>;

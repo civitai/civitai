@@ -1,4 +1,9 @@
 import { uniqBy } from 'lodash-es';
+import {
+  onStorySparked,
+  onStorySparkLost,
+  onStorySparkRemoved,
+} from '~/server/events/points/hooks';
 import type { ImageInput } from '~/server/schema/image.schema';
 import { TRPCError } from '@trpc/server';
 import {
@@ -30,9 +35,9 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import {
   accountHoldSql,
-  contentKeptError,
   holdMarkerViewExists,
   ownerHeldSql,
 } from '~/server/services/legal-hold.service';
@@ -939,6 +944,7 @@ export async function createStoryline({
     throw error;
   }
   scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
+  if (created.rootChapterId && sparkImageId) void onStorySparked(created.id);
   return created;
 }
 
@@ -1119,21 +1125,12 @@ export async function updateStoryline({
 }
 
 /**
- * Whether deleting storyline `id` would delete anything of a held account: its owner's, or a
- * comment its cascade takes. The `commentId` arm reaches threads the cascade does not delete, so it
- * can only refuse more than needed.
+ * Every author of a comment the delete of storyline `id` reaches: its thread and every thread below
+ * it, and its CommentV3 topic. The `commentId` arm reaches threads the cascade does not delete, so
+ * it can only keep more than needed.
  */
-function storylineHeldSql({
-  id,
-  ownerId,
-  markerView,
-}: {
-  id: number;
-  ownerId: number;
-  markerView: boolean;
-}) {
-  return Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR EXISTS (
-    WITH RECURSIVE below AS (
+function storylineCommentersSql(id: number) {
+  return Prisma.sql`WITH RECURSIVE below AS (
       SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
       UNION
       -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
@@ -1145,15 +1142,142 @@ function storylineHeldSql({
         SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
         WHERE k."threadId" = b.id
       ) x
-    ),
-    authors AS MATERIALIZED (
-      SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-      UNION
-      SELECT c."userId" FROM "CommentV3" c
-      WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}
     )
-    SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
-  ))`;
+    SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+    UNION
+    SELECT c."userId" FROM "CommentV3" c
+    WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}`;
+}
+
+const openReportStatusesSql = Prisma.sql`(${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
+
+/**
+ * The delete of storyline `id`, as ONE statement, so a hold placed while it runs cannot leave a
+ * partial copy. When anything must be kept for records (an open report, a held owner, chapter
+ * author, commenter or draft author, or a moderator's tombstone), the same statement first copies
+ * the storyline, with its pictures and drafts, into "HeldStoryline" and every chapter, edge, branch
+ * choice and create click into the "HeldStorylineChapter*" tables. Either way it detaches the threads holding a held commenter's
+ * words, so they outlive it, and stamps its reports with the title (and the copy) before their link
+ * is set NULL. A moderator's delete also answers the open reports. Returns how many it deleted.
+ */
+function deleteStorylineStatement(
+  tx: Pick<Prisma.TransactionClient, '$executeRaw'>,
+  {
+    id,
+    ownerId,
+    deletedById,
+    asModerator,
+    markerView,
+  }: { id: number; ownerId: number; deletedById: number; asModerator: boolean; markerView: boolean }
+) {
+  const owner = Prisma.sql`${ownerId}::int`;
+  return tx.$executeRaw`
+    WITH commenters AS MATERIALIZED (${storylineCommentersSql(id)}),
+    pending AS MATERIALIZED (
+      SELECT "postId", "userId" FROM "StorylinePendingChapter" WHERE "storylineId" = ${id}
+    ),
+    open_reports AS MATERIALIZED (
+      SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+      WHERE sr."storylineId" = ${id} AND r.status IN ${openReportStatusesSql}
+    ),
+    facts AS MATERIALIZED (
+      SELECT
+        EXISTS (SELECT 1 FROM open_reports) AS reported,
+        ${ownerHeldSql(owner)} AS owner_held,
+        EXISTS (
+          SELECT 1 FROM "StorylineChapter" c
+          WHERE c."storylineId" = ${id} AND ${ownerHeldSql(Prisma.raw('c."userId"'))}
+        ) AS author_held,
+        EXISTS (
+          SELECT 1 FROM commenters a WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
+        ) AS commenter_held,
+        EXISTS (
+          SELECT 1 FROM pending p WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
+        ) AS pending_author_held,
+        EXISTS (
+          SELECT 1 FROM "StorylineChapter" c
+          WHERE c."storylineId" = ${id} AND c."removedAt" IS NOT NULL
+        ) AS tombstoned
+    ),
+    keep AS MATERIALIZED (
+      SELECT (
+          reported OR owner_held OR author_held OR commenter_held OR pending_author_held OR tombstoned
+        ) IS NOT FALSE AS keep,
+        array_remove(ARRAY[
+          CASE WHEN reported THEN 'open-report' END,
+          CASE WHEN owner_held THEN 'owner' END,
+          CASE WHEN author_held THEN 'chapter-author' END,
+          CASE WHEN commenter_held THEN 'commenter' END,
+          CASE WHEN pending_author_held THEN 'pending-author' END,
+          CASE WHEN tombstoned THEN 'tombstone' END
+        ], NULL) AS reasons
+      FROM facts
+    ),
+    held_storyline AS (
+      INSERT INTO "HeldStoryline" (id, "userId", title, "createdAt", "deletedAt", "deletedById",
+        "reportIds", "commenterIds", "pendingPostIds", "pendingAuthorIds", "coverImageId",
+        "heroImageId", "sparkImageId", "coverUploadImageIds", "holdReasons")
+      SELECT s.id, s."userId", s.title, s."createdAt", now(), ${deletedById},
+        ARRAY(SELECT id FROM open_reports ORDER BY id),
+        ARRAY(SELECT DISTINCT "userId" FROM commenters ORDER BY "userId"),
+        ARRAY(SELECT "postId" FROM pending ORDER BY "postId"),
+        ARRAY(SELECT DISTINCT "userId" FROM pending ORDER BY "userId"),
+        s."coverImageId", s."heroImageId", s."sparkImageId",
+        ARRAY(
+          SELECT u."imageId" FROM "StorylineCoverUpload" u WHERE u."storylineId" = s.id
+          ORDER BY u."imageId"
+        ),
+        (SELECT reasons FROM keep)
+      FROM "Storyline" s WHERE s.id = ${id} AND (SELECT keep FROM keep)
+    ),
+    chapters AS (
+      INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
+        "placementId", "createdAt", "removedAt", "ownerId", "authorId")
+      SELECT c.id, c."storylineId", c."postId", c."userId", c.depth, c."placementId", c."createdAt",
+        c."removedAt", ${owner}, c."userId"
+      FROM "StorylineChapter" c WHERE c."storylineId" = ${id} AND (SELECT keep FROM keep)
+      ON CONFLICT DO NOTHING
+    ),
+    edges AS (
+      INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
+        canon, "createdAt", "ownerId", "authorId")
+      SELECT e."storylineId", e."chapterId", e."parentChapterId", e.canon, e."createdAt", ${owner},
+        c."userId"
+      FROM "StorylineChapterEdge" e JOIN "StorylineChapter" c ON c.id = e."chapterId"
+      WHERE e."storylineId" = ${id} AND (SELECT keep FROM keep)
+      ON CONFLICT DO NOTHING
+    ),
+    choices AS (
+      INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
+        "createdAt", "updatedAt", "ownerId", "authorId")
+      SELECT b."userId", b."parentChapterId", b."chapterId", b."createdAt", b."updatedAt", ${owner},
+        c."userId"
+      FROM "StorylineBranchChoice" b JOIN "StorylineChapter" c ON c.id = b."chapterId"
+      WHERE c."storylineId" = ${id} AND (SELECT keep FROM keep)
+      ON CONFLICT DO NOTHING
+    ),
+    clicks AS (
+      INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
+        "ownerId", "authorId")
+      SELECT x."userId", x."parentChapterId", x."createdAt", ${owner}, c."userId"
+      FROM "StorylineCreateClick" x JOIN "StorylineChapter" c ON c.id = x."parentChapterId"
+      WHERE c."storylineId" = ${id} AND (SELECT keep FROM keep)
+      ON CONFLICT DO NOTHING
+    ),
+    report_snapshots AS (
+      UPDATE "StorylineReport" sr
+      SET "storylineTitle" = s.title,
+        "heldStorylineId" = CASE WHEN (SELECT keep FROM keep) THEN s.id END
+      FROM "Storyline" s
+      WHERE s.id = ${id} AND sr."storylineId" = s.id
+    ),
+    answered_reports AS (
+      UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
+      WHERE ${asModerator} AND r.id IN (SELECT id FROM open_reports)
+    ),
+    ${detachHeldThreadsCte({ storylineId: Prisma.sql`SELECT ${id}::int` }, markerView)}
+    DELETE FROM "Storyline" WHERE id = ${id}
+  `;
 }
 
 export const STORYLINE_DELETE_REFUSALS = {
@@ -1163,16 +1287,22 @@ export const STORYLINE_DELETE_REFUSALS = {
   appealOpen: 'This storyline has an open appeal. Rule on it before deleting',
   paidContinuations:
     "This storyline has paid continuations that haven't settled yet. Try again once they have",
+  /** Any failure of the delete itself, whatever it was copying. */
+  failed: "This storyline couldn't be deleted. Try again in a moment.",
 } as const;
 
 /**
- * Deletes a storyline for its owner or a moderator. Its posts stay as they are: the chapter rows
- * that tie them to the storyline go with it (by cascade, as do its edges, branch choices, create
- * clicks, collaborators and comment thread), and a chapter-1 draft is unlinked and stays a draft.
+ * Deletes a storyline for its owner or a moderator: always a hard delete, whatever is held or
+ * reported, so its owner cannot tell those apart. Its posts and images stay as they are: only the
+ * storyline's own rows go (by cascade: chapters, edges, branch choices, create clicks,
+ * collaborators, cover upload links and its comment thread), and a chapter-1 draft is unlinked and
+ * stays a draft. What must be kept for records is copied by the delete statement itself
+ * (`deleteStorylineStatement`); its reports stay, linked to the copy.
  *
  * Refused while any paid continuation on it is pending or its Buzz has not finished moving, so no
- * escrow is left pointing at a chapter that no longer exists. A taken-down storyline is kept for
- * moderation: its owner cannot delete it, and a moderator cannot while the owner's appeal is open.
+ * escrow is left pointing at a chapter that no longer exists, and to an owner paid for approved
+ * continuations. A taken-down storyline is kept for moderation: its owner cannot delete it, and a
+ * moderator cannot while the owner's appeal is open.
  */
 export async function deleteStoryline({
   id,
@@ -1185,15 +1315,16 @@ export async function deleteStoryline({
 }) {
   // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
   const markerView = await holdMarkerViewExists();
+  let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
-    const [owned] = await tx.$queryRaw<{ userId: number }[]>`
-      SELECT "userId" FROM "Storyline" WHERE id = ${id}
+    const [owned] = await tx.$queryRaw<{ userId: number; sparkImageId: number | null }[]>`
+      SELECT "userId", "sparkImageId" FROM "Storyline" WHERE id = ${id}
     `;
-    if (!owned) throw throwNotFoundError('Storyline not found');
-    const asModerator = owned.userId !== userId;
-    if (asModerator && !isModerator)
-      throw throwAuthorizationError('Only the owner can delete this storyline');
+    const asModerator = owned?.userId !== userId;
+    // Anyone else is answered as if it did not exist, as after a delete.
+    if (!owned || (asModerator && !isModerator)) throw throwNotFoundError('Storyline not found');
+    spark = { actorId: owned.userId, imageId: owned.sparkImageId };
     // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
     // below would otherwise deadlock against a chapter-1 draft going live.
     await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
@@ -1239,41 +1370,38 @@ export async function deleteStoryline({
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
-    const held = storylineHeldSql({ id, ownerId: owned.userId, markerView });
-    const holdRefusal = () =>
-      asModerator ? contentKeptError(true) : throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
-    const [{ isHeld }] = await tx.$queryRaw<{ isHeld: boolean }[]>`SELECT ${held} AS "isHeld"`;
-    if (isHeld) throw holdRefusal();
     // An owner paid for approved continuations cannot then delete the chapters they were paid for
-    // (a refunded one does not count), nor delete what is under report. A moderator can.
-    if (!asModerator) {
-      if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
-      const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
-        SELECT EXISTS (
-          SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
-          WHERE sr."storylineId" = ${id}
-            AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
-        ) AS reported
-      `;
-      if (reported) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
-    }
+    // (a refunded one does not count). A moderator can.
+    if (!asModerator && approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
     // No foreign key: the owner's continuation price for this storyline would outlive it.
     await tx.$executeRaw`
       DELETE FROM "PlacementSpace"
       WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
     `;
-    // A moderator's delete answers the open reports on it, which would otherwise sit in the queue
-    // with nothing to point at once the cascade takes their links.
-    if (asModerator)
-      await tx.$executeRaw`
-        UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
-        FROM "StorylineReport" sr
-        WHERE sr."reportId" = r.id AND sr."storylineId" = ${id}
-          AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
-      `;
-    // The hold is in the DELETE itself too, so one placed after the check above still stops it.
-    const deleted = await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id} AND NOT ${held}`;
-    if (!deleted) throw holdRefusal();
+    let deleted: number;
+    try {
+      deleted = await deleteStorylineStatement(tx, {
+        id,
+        ownerId: owned.userId,
+        deletedById: userId,
+        asModerator,
+        markerView,
+      });
+    } catch (error) {
+      // One answer for any failure, so a failed copy cannot be told from any other.
+      logToAxiom({
+        type: 'error',
+        name: 'storyline-delete',
+        message: (error as Error)?.message,
+        storylineId: id,
+      }).catch(() => undefined);
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: STORYLINE_DELETE_REFUSALS.failed,
+        cause: error,
+      });
+    }
+    if (!deleted) throw throwNotFoundError('Storyline not found');
     // In the transaction, unlike `trackStorylineModEdit`: nothing else records what was deleted.
     if (asModerator)
       await trackModActivity(
@@ -1282,6 +1410,7 @@ export async function deleteStoryline({
         tx
       );
   });
+  if (spark) void onStorySparkRemoved(spark);
   return { id };
 }
 
@@ -1519,7 +1648,7 @@ export async function setFirstChapter({
   userId: number;
 }) {
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    const result = await dbWrite.$transaction(async (tx) => {
       const [owned] = await tx.$queryRaw<{ userId: number }[]>`
         SELECT "userId" FROM "Storyline" WHERE id = ${storylineId}
       `;
@@ -1580,6 +1709,8 @@ export async function setFirstChapter({
       const { id: chapterId } = await createRootChapter(tx, { storylineId, postId, userId });
       return { storylineId, chapterId, ceilingRaisedTo: raised ? maxNsfwLevel : undefined };
     });
+    void onStorySparked(storylineId);
+    return result;
   } catch (error) {
     // Chapter 1 is held by the locks above, so this is the post joining another storyline
     // between its check and the insert.
@@ -1659,6 +1790,7 @@ export async function moderateStorylineTitle({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (takenDown) void onStorySparkLost(id);
     if (takenDown)
       await notifyStorylineTitleModerated(
         storyline,
@@ -1716,6 +1848,7 @@ export async function setStorylineTakedown({ id, takenDown }: { id: number; take
     select: { id: true, ...storylineTakedownSelect },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
+  if (changed > 0) void (takenDown ? onStorySparkLost(id) : onStorySparked(id));
   return { ...storyline, changed: changed > 0 };
 }
 

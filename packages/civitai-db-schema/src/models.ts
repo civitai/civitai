@@ -6841,10 +6841,12 @@ export interface StorylineCoverUpload {
 }
 
 export interface StorylineReport {
-  storylineId: number;
-  storyline?: Storyline;
   reportId: number;
   report?: Report;
+  storylineId: number | null;
+  storyline?: Storyline | null;
+  heldStorylineId: number | null;
+  storylineTitle: string | null;
 }
 
 export interface ServiceOffering {

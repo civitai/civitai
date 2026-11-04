@@ -91,11 +91,13 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import type { ImageSort } from '~/server/common/enums';
+import { ArticleSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
@@ -375,7 +377,12 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
+            <ImagesInfinite
+              filters={filters}
+              disableStoreFilters
+              collectionId={collection.id}
+              hideHatTurf={collectionHidesHatTurf(collection)}
+            />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>

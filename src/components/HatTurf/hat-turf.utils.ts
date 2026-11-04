@@ -1,4 +1,5 @@
 import { SignalTopic } from '~/server/common/enums';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   STICKER_PLACEMENT_MAX_SCALE,
@@ -209,3 +210,7 @@ function readPushedStickers(raw: unknown): HatSticker[] | undefined {
 /** The signal topic a card listens on for one image's counts; must match the server's `eventTurfTopic`. */
 export const turfTopic = (event: string, imageId: number) =>
   `${SignalTopic.EventPoints}:${event}:turf:${imageId}` as const;
+
+/** Hat counts beside contest entries could sway judging, so no contest collection shows Hat Turf. */
+export const collectionHidesHatTurf = (collection?: { mode?: CollectionMode | null } | null) =>
+  collection?.mode === CollectionMode.Contest;

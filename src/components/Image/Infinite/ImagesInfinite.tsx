@@ -51,6 +51,7 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
   emptyMessage?: string;
   disableStoreFilters?: boolean;
+  hideHatTurf?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {

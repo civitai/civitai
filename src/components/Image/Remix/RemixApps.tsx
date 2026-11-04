@@ -25,7 +25,7 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc, trpcVanilla } from '~/utils/trpc';
 
-const CONFIRMED_KEY = 'remix-apps:confirmed';
+export const CONFIRMED_KEY = 'remix-apps:confirmed';
 
 const icons: Record<string, typeof IconSparkles> = {
   sparkles: IconSparkles,
@@ -71,14 +71,19 @@ function openQueue() {
 }
 
 /** Outside React: the menu, and the item that called this, unmount as soon as it is clicked. */
-async function submitRemixApp(app: RemixAppDefinition, imageId: number, nonce: string) {
+async function submitRemixApp(
+  app: RemixAppDefinition,
+  imageId: number,
+  nonce: string,
+  startedMessage = 'Added to your queue. Click to open it.'
+) {
   try {
     await trpcVanilla.remixApp.run.mutate({ slug: app.slug, imageId, nonce });
     showNotification({
       icon: <IconCheck size={18} />,
       color: 'teal',
       title: `${app.name} started`,
-      message: 'Added to your queue. Click to open it.',
+      message: startedMessage,
       className: 'cursor-pointer',
       onClick: openQueue,
       autoClose: 6000,
@@ -97,15 +102,22 @@ export function runRemixApp({
   imageId,
   cost,
   nonce,
+  startedMessage,
+  onSettled,
 }: {
   app: RemixAppDefinition;
   imageId: number;
   cost?: number;
   nonce: string;
+  startedMessage?: string;
+  /** After the submit returns or fails, or the confirm is dismissed. */
+  onSettled?: () => void;
 }) {
-  if (hasConfirmed()) return submitRemixApp(app, imageId, nonce);
+  const submit = () => submitRemixApp(app, imageId, nonce, startedMessage).finally(onSettled);
+  if (hasConfirmed()) return submit();
 
   let dontAskAgain = false;
+  let confirmed = false;
   openConfirmModal({
     title: app.name,
     children: (
@@ -126,9 +138,14 @@ export function runRemixApp({
       </Stack>
     ),
     labels: { confirm: 'Run', cancel: 'Cancel' },
+    // Any dismissal (cancel, escape, outside click); a confirm settles when its submit does.
+    onClose: () => {
+      if (!confirmed) onSettled?.();
+    },
     onConfirm: () => {
+      confirmed = true;
       if (dontAskAgain) rememberConfirmed();
-      submitRemixApp(app, imageId, nonce);
+      submit();
     },
   });
 }

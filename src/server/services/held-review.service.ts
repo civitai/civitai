@@ -48,13 +48,42 @@ export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>
   Prisma.sql`SELECT rr.id FROM "ResourceReview" rr WHERE rr."modelVersionId" IN (${versions})`;
 
 /**
- * A storyline copy is kept while either user it records is held. The reader on a branch choice or
- * create click never releases one, even once their account is gone. Unlike a kept model, no
- * storyline or chapter passes to the placeholder owner, so every copy is released with its holds.
+ * A storyline chapter copy is kept while either user it records is held. The reader on a branch
+ * choice or create click never releases one, even once their account is gone. The placeholder owner
+ * is not held here (accountHoldSql excludes it), so copies owned by it release with their other
+ * holds. A copy of a deleted storyline's chapter goes only with that storyline's copy (below).
  */
 const storylineCopyReleasedSql = (markerView: boolean) =>
   Prisma.sql`NOT ${accountHoldSql(Prisma.raw('h."ownerId"'), markerView)}
     AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
+
+/**
+ * A deleted storyline's copy (`deleteStoryline`) is released once it is a year old, its owner, every
+ * chapter author, commenter and draft author is unheld, read now, and no report on it is open.
+ */
+const heldStorylineReleasedSql = (markerView: boolean) => {
+  const held = (id: string) => accountHoldSql(Prisma.raw(id), markerView);
+  return Prisma.sql`hs."deletedAt" < now() - interval '1 year'
+    AND NOT ${held('hs."userId"')}
+    AND NOT EXISTS (
+      SELECT 1 FROM "HeldStorylineChapter" hc WHERE hc."storylineId" = hs.id AND ${held(
+        'hc."userId"'
+      )}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM unnest(hs."commenterIds" || hs."pendingAuthorIds") AS cm(id) WHERE ${held(
+        'cm.id'
+      )}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "Report" r
+      WHERE r.status IN ('Pending'::"ReportStatus", 'Processing'::"ReportStatus")
+        AND (
+          r.id = ANY(hs."reportIds")
+          OR r.id IN (SELECT sr."reportId" FROM "StorylineReport" sr WHERE sr."heldStorylineId" = hs.id)
+        )
+    )`;
+};
 
 /** Drops the copies whose users are no longer held. Returns how many went. */
 export async function purgeReleasedHeldCopies() {
@@ -62,27 +91,50 @@ export async function purgeReleasedHeldCopies() {
   const released = accountHoldSql(Prisma.raw('h."userId"'), markerView);
   const reviews = await dbWrite.$executeRaw`
     DELETE FROM "HeldResourceReview" h WHERE NOT ${released}`;
-  // One statement, so a hold placed meanwhile cannot leave a chapter's copy without its edges.
-  const storylineReleased = storylineCopyReleasedSql(markerView);
-  const [storyline] = await dbWrite.$queryRaw<
-    { chapters: number; edges: number; choices: number; clicks: number }[]
+  // One statement, so a hold placed meanwhile cannot leave a chapter's copy without its edges, or a
+  // storyline's copy without its chapters.
+  const copyReleased = storylineCopyReleasedSql(markerView);
+  // The chapter copy `chapterId` selects goes with its storyline's copy: released now, or kept.
+  const ofStoryline = (chapterId: Prisma.Sql, storylines: Prisma.Sql) => Prisma.sql`EXISTS (
+    SELECT 1 FROM "HeldStorylineChapter" c WHERE c.id = ${chapterId} AND c."storylineId" IN (${storylines})
+  )`;
+  const releasedIds = Prisma.sql`SELECT id FROM released`;
+  const keptIds = Prisma.sql`SELECT id FROM "HeldStoryline"`;
+  const [{ storylines, ...storyline }] = await dbWrite.$queryRaw<
+    { storylines: number; chapters: number; edges: number; choices: number; clicks: number }[]
   >`
-    WITH chapters AS (
-      DELETE FROM "HeldStorylineChapter" h WHERE ${storylineReleased} RETURNING 1
+    WITH released AS (
+      DELETE FROM "HeldStoryline" hs WHERE ${heldStorylineReleasedSql(markerView)} RETURNING hs.id
+    ),
+    chapters AS (
+      DELETE FROM "HeldStorylineChapter" h
+      WHERE h."storylineId" IN (${releasedIds})
+        OR (h."storylineId" NOT IN (${keptIds}) AND ${copyReleased})
+      RETURNING 1
     ),
     edges AS (
-      DELETE FROM "HeldStorylineChapterEdge" h WHERE ${storylineReleased} RETURNING 1
+      DELETE FROM "HeldStorylineChapterEdge" h
+      WHERE h."storylineId" IN (${releasedIds})
+        OR (h."storylineId" NOT IN (${keptIds}) AND ${copyReleased})
+      RETURNING 1
     ),
     choices AS (
-      DELETE FROM "HeldStorylineBranchChoice" h WHERE ${storylineReleased} RETURNING 1
+      DELETE FROM "HeldStorylineBranchChoice" h
+      WHERE ${ofStoryline(Prisma.raw('h."chapterId"'), releasedIds)}
+        OR (NOT ${ofStoryline(Prisma.raw('h."chapterId"'), keptIds)} AND ${copyReleased})
+      RETURNING 1
     ),
     clicks AS (
-      DELETE FROM "HeldStorylineCreateClick" h WHERE ${storylineReleased} RETURNING 1
+      DELETE FROM "HeldStorylineCreateClick" h
+      WHERE ${ofStoryline(Prisma.raw('h."parentChapterId"'), releasedIds)}
+        OR (NOT ${ofStoryline(Prisma.raw('h."parentChapterId"'), keptIds)} AND ${copyReleased})
+      RETURNING 1
     )
-    SELECT (SELECT count(*) FROM chapters)::int AS chapters,
+    SELECT (SELECT count(*) FROM released)::int AS storylines,
+      (SELECT count(*) FROM chapters)::int AS chapters,
       (SELECT count(*) FROM edges)::int AS edges,
       (SELECT count(*) FROM choices)::int AS choices,
       (SELECT count(*) FROM clicks)::int AS clicks
   `;
-  return { reviews, storyline };
+  return { reviews, storyline, storylines };
 }
