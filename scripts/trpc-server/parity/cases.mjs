@@ -421,7 +421,7 @@ export function buildImageDeliveryCases(ctx) {
     {
       // Pins that edge-sent x-forwarded-* headers do not change the answer. It does NOT cover the
       // server's own x-forwarded-* fill: this handler reads no forwarded header, so removing the
-      // fill changes nothing here (a mutation check confirmed it survives).
+      // fill changes nothing here.
       id: 'edge-forwarded-headers-do-not-change-the-answer',
       path: at(image),
       headers: {
