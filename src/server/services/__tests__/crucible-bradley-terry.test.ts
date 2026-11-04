@@ -98,8 +98,6 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
   const endedAgo = (ms: number) => new Date(now.getTime() - ms);
   const fit = (endedAt = endedAgo(BRADLEY_TERRY_INGEST_WAIT_MS + 1)) =>
     fitCrucibleScoresForPrizes(1, { endedAt, now });
-  const warned = () =>
-    logToAxiom.mock.calls.map(([entry]) => (entry as { message: string }).message);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -123,7 +121,10 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
   it('falls back to Elo and names both counts once the wait is over', async () => {
     withRedisPairs(2, 2);
     expect(await fit(), 'scores on a mismatch').toBeNull();
-    expect(warned()).toEqual(['Crucible 1 ranks by Elo: ClickHouse has 3 votes, Redis 4']);
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', clickhouseVotes: 3, redisVotes: 4 })
+    );
   });
 
   it('does not wait when ClickHouse holds more votes than Redis: lag cannot explain that', async () => {
@@ -135,7 +136,8 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     withRedisPairs(2, 1);
     chQuery.mockRejectedValue(new Error('connect ECONNREFUSED'));
     expect(await fit(endedAgo(60_000))).toBeNull();
-    expect(warned()).toEqual(['Crucible 1 ranks by Elo: could not read its votes']);
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   });
 
   it('falls back to Elo when Redis is unreachable', async () => {

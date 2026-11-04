@@ -3841,7 +3841,6 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${allEntries[0].id}`);
   }
 
-  // Elo stays the fallback: the fit is used only when every vote is accounted for.
   const fittedScores = usesBradleyTerryRanking(crucible)
     ? await fitCrucibleScoresForPrizes(crucibleId, { endedAt: crucible.endAt })
     : null;

@@ -72,8 +72,7 @@ export const syncCrucibleScoresJob = createJob(
           crucibleEloRedis.getAllElos(crucible.id),
           crucibleEloRedis.getAllVoteCounts(crucible.id),
         ]);
-        // The displayed score is the fit where it ranks; Elo still picks nearest-rated pairs. An
-        // entry ClickHouse has not caught up on keeps its Elo until the next run.
+        // An entry ClickHouse has not caught up on keeps its Elo until the next run.
         if (usesBradleyTerryRanking(crucible)) {
           const fitted = await fitCrucibleScores(crucible.id).catch((error: unknown) => {
             logJob({

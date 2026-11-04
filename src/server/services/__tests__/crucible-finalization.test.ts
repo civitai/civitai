@@ -1310,8 +1310,13 @@ describe('finalizeCrucible — Bradley-Terry ranking', () => {
   });
 
   it('pays by the fit for a crucible the switch covers', async () => {
+    const endAt = new Date(Date.now() - 1000);
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000, endAt });
     usesBradleyTerryRanking.mockReturnValue(true);
     await finalizeCrucible(1);
+    // The guard's ingest wait counts from endedAt: a missing one would defer a short count forever.
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledTimes(1);
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledWith(1, { endedAt: endAt });
     expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
   });
 

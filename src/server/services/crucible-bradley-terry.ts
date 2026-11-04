@@ -1,11 +1,11 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
+import { CRUCIBLE_DEFAULT_ELO } from '~/server/redis/crucible-elo.redis';
 import { getJudgesKey, getVotedPairsKey } from '~/server/services/crucible-redis-keys';
 
 export type PairTally = { winnerEntryId: number; loserEntryId: number; votes: number };
 
-const ELO_BASE = 1500;
 const MAX_ITERATIONS = 200;
 const TOLERANCE = 1e-6;
 
@@ -56,7 +56,10 @@ export function fitBradleyTerry(tallies: PairTally[]): Map<number, number> {
   const meanLog =
     ids.reduce((sum, id) => sum + Math.log10(strength.get(id)!), 0) / (ids.length || 1);
   return new Map(
-    ids.map((id) => [id, Math.round(ELO_BASE + 400 * (Math.log10(strength.get(id)!) - meanLog))])
+    ids.map((id) => [
+      id,
+      Math.round(CRUCIBLE_DEFAULT_ELO + 400 * (Math.log10(strength.get(id)!) - meanLog)),
+    ])
   );
 }
 
@@ -76,8 +79,8 @@ export function usesBradleyTerryRanking(
 }
 
 /**
- * Every judge's votes in a crucible, one per judge and pair. ClickHouse holds about 1% repeated
- * rows, and a repeat never flips the winner, so any one row of the group stands for the vote.
+ * Every judge's votes in a crucible, one per judge and pair. ClickHouse can hold repeated rows,
+ * and a repeat never flips the winner, so any one row of the group stands for the vote.
  */
 async function fetchDedupedTallies(crucibleId: number): Promise<PairTally[]> {
   if (!clickhouse) throw new Error('ClickHouse is not configured');

@@ -55,7 +55,7 @@ export function impliedPairKeys(outcomes: string[]): Set<string> {
 /**
  * Recomputed on every serve and status read, so it is capped: past this many votes in one crucible
  * the judge is served as before the skip (directly voted pairs only). The skip is for small
- * crucibles, where a judge reaches the end; 200 votes keeps the closure to a few ms.
+ * crucibles, where a judge reaches the end.
  * shortcut: a judge past the cap loses the skip; cache the closure per judge if big crucibles need it.
  */
 export const MAX_CLOSURE_VOTES = 200;

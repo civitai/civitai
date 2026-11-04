@@ -622,8 +622,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
       votes++;
       if (votes > 28) throw new Error('served more pairs than 8 entries have');
     }
-    // No assertion on `votes`: the per-entry cap alone stops a judge near 21 here, which overlaps
-    // the skip's spread. Measured over 30 runs (equal ratings): 12-22 votes, median 17, with the
-    // skip; 20-22 without.
+    // No assertion on votes: the per-entry cap alone stops a judge near 21, which overlaps the
+    // skip's spread, so a count would be flaky.
   });
 });
