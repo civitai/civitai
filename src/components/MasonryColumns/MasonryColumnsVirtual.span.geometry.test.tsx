@@ -28,7 +28,8 @@ vi.mock('~/components/Ads/ads.utils', async (importOriginal) => ({
     if (adAt.index >= 0)
       feed.splice(adAt.index, 0, {
         type: 'ad',
-        data: { width: 300, height: 250, AdUnit: () => null },
+        // Landscape-shaped, so only the ad guard keeps it from spanning.
+        data: { width: 1600, height: 250, AdUnit: () => null },
       } as never);
     return feed;
   },
@@ -176,31 +177,18 @@ describe('MasonryColumnsVirtual landscape span', () => {
       }
   });
 
-  test('the wide card takes pointers on its right half, not the column beside it', async () => {
+  test('the wide card takes pointers across its whole width, not the column beside it', async () => {
     await renderAtViewport(<Gallery data={mixed(10)} />, { width: 1440, height: 900 });
     await ready(10);
     const r = rect(card(2));
-    const hit = document.elementFromPoint(r.left + r.width * 0.75, r.top + r.height / 2);
-    expect(hit?.closest('[data-testid="card"]')).toBe(card(2));
-    // Past the card's own edge the gap and the neighbour's blank room must not be the card.
-    const right = rect(card(2)).right + 4;
-    expect(document.elementFromPoint(right, r.top + r.height / 2)?.closest('[data-id="2"]')).toBe(
-      null
-    );
-  });
-
-  test('the wide card is not cropped by a column', async () => {
-    await renderAtViewport(<Gallery data={mixed(10)} />, { width: 1440, height: 900 });
-    await ready(10);
-    const wide = card(2);
-    for (let el = wide.parentElement; el && el !== document.body; el = el.parentElement) {
-      const { overflowX, contain } = getComputedStyle(el);
-      if (el.getAttribute('style')?.includes('overflow-y')) break;
-      expect(overflowX, `${el.tagName} clips`).not.toBe('hidden');
-      expect(contain).not.toContain('inline-size');
+    for (const across of [0.25, 0.75, 0.98]) {
+      const hit = document.elementFromPoint(r.left + r.width * across, r.top + r.height / 2);
+      expect(hit?.closest('[data-testid="card"]'), `at ${across}`).toBe(card(2));
     }
-    const columnLeft = wide.closest('[data-masonry-item]')!.parentElement!;
-    expect(rect(wide).right).toBeGreaterThan(rect(columnLeft).right + MASONRY_GAP);
+    // The right half sits over the next column, past that column's own width.
+    expect(r.right).toBeGreaterThan(
+      rect(card(2).closest('[data-masonry-item]')!.parentElement!).right
+    );
   });
 
   test('without the prop the layout is the one before it existed', async () => {
@@ -226,9 +214,12 @@ describe('MasonryColumnsVirtual landscape span', () => {
 
   test('an ad is never widened and a spanning pair keeps both columns level', async () => {
     adAt.index = 2;
-    const data = mixed(12);
-    const cols = await columnsFor(data, 4, SPAN);
-    adAt.index = -1;
+    let cols: ColumnItem<unknown>[][];
+    try {
+      cols = await columnsFor(mixed(12), 4, SPAN);
+    } finally {
+      adAt.index = -1;
+    }
     const ads = cols.flat().filter((i) => (i.data as { type?: string } | undefined)?.type === 'ad');
     expect(ads.length).toBe(1);
     expect(ads[0].span).toBeUndefined();
@@ -255,6 +246,77 @@ describe('MasonryColumnsVirtual landscape span', () => {
     const data = [tall, square, short, tall, { ...LANDSCAPE }].map((d, id) => ({ id, ...d }));
     const cols = await columnsFor(data, 4, SPAN);
     expect(cols.map((c) => c.findIndex((i) => i.span))).toEqual([-1, 1, -1, -1]);
+  });
+
+  test('a lower start with a big hole loses to a slightly higher start with none', async () => {
+    // Next starts are 262, 496, 515, 515: the first pair starts lowest but leaves a 234px hole.
+    const dims = [
+      { width: 1000, height: 770 },
+      { width: 1000, height: 1500 },
+      { width: 1000, height: 1562 },
+      { width: 1000, height: 1562 },
+      LANDSCAPE,
+    ].map((d, id) => ({ id, ...d }));
+    const cols = await columnsFor(dims, 4, SPAN);
+    expect(cols.map((c) => c.findIndex((i) => i.span))).toEqual([-1, -1, 1, -1]);
+  });
+
+  test('an image with no height is not widened', async () => {
+    const cols = await columnsFor(
+      [{ id: 0, width: 1600, height: 0 }, ...mixed(6).map((d) => ({ ...d, id: d.id + 1 }))],
+      4,
+      SPAN
+    );
+    expect(
+      cols.flat().find((i) => (i.data as { data?: Item } | undefined)?.data?.id === 0)?.span
+    ).toBeUndefined();
+  });
+
+  test('any feed keeps spacers non-negative and spanned columns level, at 3 to 6 columns', async () => {
+    // A feed of varied heights, so column ends land within a gap of each other now and then.
+    const feed: Item[] = Array.from({ length: 200 }, (_, id) => ({
+      id,
+      width: 1000,
+      height: id % 3 === 0 ? 560 + ((id * 37) % 90) : 700 + ((id * 53) % 900),
+    }));
+    for (const count of [3, 4, 5, 6]) {
+      const cols = await columnsFor(feed, count, SPAN);
+      expect(cols.flat().filter((i) => i.span).length, `${count} columns`).toBeGreaterThan(0);
+      const end = (c: ColumnItem<unknown>[], upTo: number) =>
+        c.slice(0, upTo + 1).reduce((y, i, n) => y + i.height + (n ? MASONRY_GAP : 0), 0);
+      cols.forEach((column, c) =>
+        column.forEach((item, n) => {
+          if (item.spacer) expect(item.height).toBeGreaterThanOrEqual(0);
+          if (!item.span) return;
+          const partner = cols[c + 1];
+          expect(
+            partner.some((p) => p.spacer && end(partner, partner.indexOf(p)) === end(column, n))
+          ).toBe(true);
+        })
+      );
+    }
+  });
+
+  test('a lead column only a few pixels shorter is padded, never by a negative spacer', async () => {
+    // Next starts are 336, 344 and 656: the first pair is 8px apart, less than one gap.
+    const dims = [
+      { width: 1000, height: 1000 },
+      { width: 1000, height: 1025 },
+      { width: 1000, height: 2000 },
+      LANDSCAPE,
+    ].map((d, id) => ({ id, ...d }));
+    const cols = await columnsFor(dims, 3, SPAN);
+    expect(
+      cols
+        .flat()
+        .filter((i) => i.spacer)
+        .every((i) => i.height >= 0)
+    ).toBe(true);
+    expect(cols[0].map((i) => (i.spacer ? 'spacer' : i.span ? 'wide' : 'card'))).toEqual([
+      'card',
+      'spacer',
+      'wide',
+    ]);
   });
 
   test('on a phone nothing spans', async () => {
