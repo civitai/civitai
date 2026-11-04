@@ -22,6 +22,7 @@ import { dbWrite } from '~/server/db/client';
 import { sysRedis } from '~/server/redis/client';
 import { loadEvents } from '~/server/events/load-events';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   awardEventPoints,
   hasTurfMark,
@@ -463,17 +464,31 @@ export async function onStorySparked(storylineId: number): Promise<void> {
     if (!perDay) return;
     const [story] = await liveSparkedStories(Prisma.sql`st.id = ${storylineId}`);
     if (!story || !isHattedEntity('Image', story.imageId)) return;
-    const key = storySparksScoredKey(story.actorId, utcDay(time));
-    const scoredIds = (await sysRedis.sMembers(key))
-      .map(Number)
-      .filter((id) => id && id !== storylineId);
-    const scored = scoredIds.length
-      ? await liveSparkedStories(Prisma.sql`st.id = ANY(${scoredIds}::int[])`)
-      : [];
-    if (scored.length >= perDay) return;
-    if (!(await awardEventPoints([remixAction(story.actorId, story.imageId, time)]))) return;
-    await sysRedis.sAdd(key, String(storylineId));
-    await sysRedis.expire(key, STORY_SPARKS_SCORED_TTL);
+    const day = utcDay(time);
+    const key = storySparksScoredKey(story.actorId, day);
+    // One writer's stories at a time, so parallel creates cannot all pass the cap. Not acquired
+    // within the retries: the story does not score.
+    await withDistributedLock(
+      { key: `story-spark-cap:${story.actorId}:${day}`, maxRetries: 50, autoRenew: true },
+      async () => {
+        const scoredIds = (await sysRedis.sMembers(key))
+          .map(Number)
+          .filter((id) => id && id !== storylineId);
+        const scored = scoredIds.length
+          ? await liveSparkedStories(Prisma.sql`st.id = ANY(${scoredIds}::int[])`)
+          : [];
+        if (scored.length >= perDay) return;
+        // Reserve the slot before awarding; give it back if the award records nothing.
+        const reserved = (await sysRedis.sAdd(key, String(storylineId))) === 1;
+        await sysRedis.expire(key, STORY_SPARKS_SCORED_TTL);
+        let firsts = 0;
+        try {
+          firsts = await awardEventPoints([remixAction(story.actorId, story.imageId, time)]);
+        } finally {
+          if (reserved && !firsts) await sysRedis.sRem(key, String(storylineId));
+        }
+      }
+    );
   } catch (error) {
     swallow('event-points:story-spark')(error);
   }
@@ -533,14 +548,13 @@ const storySparkPostsWhere = (by: StorySparkPosts) =>
 /**
  * Chapter 1 of these sparked stories may no longer be shown: a moderation or account write hid it
  * (unpublished, rated Blocked, its model taken down, its author banned or deleted). Call after the
- * write commits; moderation writes do not await it, so they never wait on or fail because of
- * points. Each story's remix goes only if nothing else still earns it, so a story that is still
- * live keeps it.
+ * write commits; it never throws. Each story's remix goes only if nothing else still earns it, so
+ * a story that is still live keeps it.
  */
 export async function onStorySparkPostsHidden(by: StorySparkPosts): Promise<void> {
   try {
     const where = storySparkPostsWhere(by);
-    if (!where) return;
+    if (!where || !(await storySparksPerDay())) return;
     const sparks = await dbWrite.$queryRaw<{ actorId: number; imageId: number }[]>`
       SELECT DISTINCT st."userId" AS "actorId", st."sparkImageId" AS "imageId"
       FROM "StorylineChapter" rc
@@ -562,7 +576,7 @@ export async function onStorySparkPostsHidden(by: StorySparkPosts): Promise<void
 export async function onStorySparkPostsRestored(by: StorySparkPosts): Promise<void> {
   try {
     const where = storySparkPostsWhere(by);
-    if (!where) return;
+    if (!where || !(await storySparksPerDay())) return;
     const stories = await dbWrite.$queryRaw<{ storylineId: number }[]>`
       SELECT DISTINCT rc."storylineId"
       FROM "StorylineChapter" rc

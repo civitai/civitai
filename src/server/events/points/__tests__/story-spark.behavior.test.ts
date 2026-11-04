@@ -152,6 +152,7 @@ afterAll(async () => {
 });
 
 const sets = new Map<string, Set<string>>();
+const locks = new Map<string, string>();
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -167,6 +168,23 @@ beforeEach(async () => {
     set.add(member);
     return had ? 0 : 1;
   }) as never);
+  redisMock.sysRedis.sRem.mockImplementation((async (key: string, member: string) =>
+    sets.get(key)?.delete(member) ? 1 : 0) as never);
+  // The cap lock's two commands: SET NX takes it, the compare-and-delete script gives it back.
+  locks.clear();
+  redisMock.redis.set.mockImplementation((async (
+    key: string,
+    value: string,
+    opts?: { NX?: boolean }
+  ) => {
+    if (opts?.NX && locks.has(key)) return null;
+    locks.set(key, value);
+    return 'OK';
+  }) as never);
+  redisMock.redis.eval.mockImplementation((async (
+    _script: string,
+    { keys: [key], arguments: [value] }: { keys: string[]; arguments: string[] }
+  ) => (locks.get(key) === value && locks.delete(key) ? 1 : 0)) as never);
   events.list = [{ scoring: { storySparksPerActorPerDay: 3 } }];
   await pg.exec(`
     TRUNCATE "User", "Image", "Post", "Storyline", "StorylineChapter", "Placement";
@@ -295,6 +313,26 @@ describe('onStorySparked', () => {
     // 201, 202 and 205: the limit is reached.
     await onStorySparked(await story({ spark: 206 }));
     expect(earning(206)).toBe(false);
+  });
+
+  it("parallel stories from one writer score no more than the day's limit", async () => {
+    const sparks = [201, 202, 203, 204, 205, 206];
+    for (const id of sparks) await image(id);
+    const ids = [];
+    for (const spark of sparks) ids.push(await story({ spark }));
+    await Promise.all(ids.map((id) => onStorySparked(id)));
+    expect(engine.adds).toHaveLength(3);
+  });
+
+  it('gives the slot back when the award records nothing or fails', async () => {
+    for (const id of [201, 202, 203, 204]) await image(id);
+    engine.awardEventPoints.mockResolvedValueOnce(0);
+    await onStorySparked(await story({ spark: 201 }));
+    engine.awardEventPoints.mockRejectedValueOnce(new Error('engine down'));
+    await onStorySparked(await story({ spark: 202 }));
+    for (const spark of [203, 204]) await onStorySparked(await story({ spark }));
+    expect(engine.adds).toEqual([203, 204].map((id) => remixSource(id)));
+    expect([...(sets.values().next().value ?? [])]).toHaveLength(2);
   });
 
   it("a story whose remix the writer already holds uses none of the day's slots", async () => {
@@ -475,7 +513,14 @@ describe('chapter 1 shown again', () => {
     await republish(id);
     await onStorySparkPostsRestored({ postIds: [id] });
     await onStorySparkPostsRestored({ postIds: [id] });
-    expect(engine.adds).toEqual([remixSource(), remixSource()]); // the first spark, one restore
+    // The repeat asks for the same first, which the engine records once (one first per person,
+    // type and entity: types.ts).
+    const awards = engine.awardEventPoints.mock.calls.map(([actions]) =>
+      actions.map(({ time: _time, ...rest }) => rest)
+    );
+    expect(awards).toHaveLength(3); // the first spark, then each restore
+    expect(awards[2]).toEqual(awards[1]);
+    expect(await engine.awardEventPoints.mock.results[2].value).toBe(0);
   });
 
   it('gives nothing back while chapter 1 is still hidden', async () => {

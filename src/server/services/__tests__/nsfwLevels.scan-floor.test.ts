@@ -8,12 +8,14 @@ import {
 } from '@civitai/shared/rated-entity-sql';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as Hooks from '~/server/events/points/hooks';
 
 const { onStorySparkPostsHidden, onStorySparkPostsRestored } = vi.hoisted(() => ({
   onStorySparkPostsHidden: vi.fn(),
   onStorySparkPostsRestored: vi.fn(),
 }));
-vi.mock('~/server/events/points/hooks', () => ({
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
   onStorySparkPostsHidden,
   onStorySparkPostsRestored,
 }));
