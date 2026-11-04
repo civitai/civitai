@@ -428,6 +428,15 @@ describe('deleteStoryline under a real account hold', () => {
     );
     const touchingCopies = statements.filter((sql) => /"Held/.test(sql));
     expect(touchingCopies).toHaveLength(1);
+    for (const part of [
+      'INSERT INTO "HeldStoryline"',
+      'INSERT INTO "HeldStorylineChapter"',
+      'INSERT INTO "HeldStorylineChapterEdge"',
+      'INSERT INTO "HeldStorylineBranchChoice"',
+      'INSERT INTO "HeldStorylineCreateClick"',
+      'UPDATE "StorylineReport"',
+    ])
+      expect(touchingCopies[0]).toContain(part);
     expect(touchingCopies[0]).toContain('DELETE FROM "Storyline" WHERE id =');
   });
 
