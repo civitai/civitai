@@ -476,15 +476,17 @@ const SEND_SCRATCH_NAME = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 /**
  * Removes the send scratch directories no live claim owns: a run that died never reached its own
- * cleanup. Run at the start of the send job, before any claim is taken. Archive directories in the
- * same roots, named by report id alone, are not send directories and are left.
+ * cleanup. Archive directories in the same roots, named by report id alone, are left.
  */
 export async function sweepStaleSendDirs(root = baseDir) {
   const found: { path: string; reportId: number; claimId: string }[] = [];
   for (const scratch of SEND_SCRATCH_ROOTS) {
     const rootDir = `${root}/${scratch}`;
-    if (!fs.existsSync(rootDir)) continue;
-    for (const name of fs.readdirSync(rootDir)) {
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names) {
       const match = SEND_SCRATCH_NAME.exec(name);
       if (match)
         found.push({ path: `${rootDir}/${name}`, reportId: Number(match[1]), claimId: match[2] });
@@ -502,7 +504,7 @@ export async function sweepStaleSendDirs(root = baseDir) {
   });
   const liveDirs = new Set(live.map(({ id, sendClaimId }) => `${id}-${sendClaimId}`));
   const stale = found.filter(({ reportId, claimId }) => !liveDirs.has(`${reportId}-${claimId}`));
-  for (const { path } of stale) fs.rmSync(path, { recursive: true, force: true });
+  for (const { path } of stale) await fsAsync.rm(path, { recursive: true, force: true });
   return stale.map(({ path }) => path);
 }
 
@@ -1513,8 +1515,8 @@ async function sendGenerationData(
   // that cannot be fetched is held for and sent without as an image's is.
   const budget = spoolBudget();
   let n = 0;
-  // A report past the cap fails whole. No fetch rejects, so every one has settled before the caller
-  // removes `dir`, and none starts once the cap is passed.
+  // No fetch rejects, so every one has settled before the caller removes `dir`; a report past the cap
+  // fails whole after they settle.
   const cap: { passed?: SpoolLimitError } = {};
   const blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
     Promise.all(
