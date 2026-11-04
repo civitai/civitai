@@ -35,6 +35,13 @@ Optional AI-powered image labeling. Users can label media themselves or through 
 - "Caption" is the term for sentence-like descriptions
 - "Tag" is for token-based descriptions
 
+The legacy auto-label path zips the images and uploads the zip under `training-images-temp/`. The
+orchestrator only ever gets a 24-hour presigned URL for it (`autoTagHandler`, `autoCaptionHandler`),
+so a B2 lifecycle rule on that prefix hides each file 7 days after upload (hidden files can't be
+downloaded) and deletes it 7 days later. Training data lives under `training-images/`, which the rule
+doesn't touch; the trailing slash keeps it that way. Don't use `UploadType.TrainingImagesTemp` for
+anything that must outlive a week.
+
 ### 3. Training Parameters
 
 Users select the model they want to train on (defined list or custom models), the training engine (specific models), and can tune the training parameters (advanced).

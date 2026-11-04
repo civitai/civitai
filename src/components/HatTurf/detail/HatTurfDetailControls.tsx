@@ -61,13 +61,17 @@ function HatButton({ imageId }: { imageId: number }) {
   });
   const [inviteOpen, setInviteOpen] = useState<boolean | undefined>(undefined);
   const join = useJoin();
+  // Same query as the layer's, so one request. The feed's sticker list is capped at 5 per image.
+  const { data: image } = trpc.hatTurf.getImageStickers.useQuery(
+    { event: feed?.event ?? '', imageId },
+    { enabled: !!feed && !!user, staleTime: 30_000 }
+  );
 
   if (!feed || !card || !user || feed.open[imageId] === false) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
   const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
-  const placed =
-    card.placed || feed.stickers[imageId]?.some((sticker) => sticker.userId === user.id);
+  const placed = card.placed || image?.mine;
   const empty = joined && stock?.available === 0 && !placed;
 
   const press = () => {

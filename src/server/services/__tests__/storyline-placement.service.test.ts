@@ -69,6 +69,11 @@ const matches = (row: Row, where: Where) =>
     if (condition === undefined) return true;
     if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
       const ops = condition as Record<string, unknown>;
+      // A JSON path match on one key, as the team-waived share of a free-tier count asks.
+      if ('path' in ops && 'equals' in ops && Object.keys(ops).length === 2) {
+        const json = row[key] as Record<string, unknown> | null | undefined;
+        return json?.[(ops.path as string[])[0]] === ops.equals;
+      }
       for (const op of Object.keys(ops))
         if (op !== 'gte' && op !== 'in') throw new Error(`fake: unsupported operator ${op}`);
       if ('gte' in ops && !((row[key] as Date) >= (ops.gte as Date))) return false;

@@ -363,8 +363,7 @@ describe('krea3.handler', () => {
 });
 
 describe('ideogram.handler', () => {
-  // The fork is on the version id, so these two cases are the contract: 4.5 is a fal API
-  // model, 4.0 runs on our own comfy. Getting it backwards bills the wrong provider.
+  // The fork is on the version id: 4.5 is a fal API model.
   it('4.5 routes to fal with its own resolution and quality', async () => {
     const v45 = await dispatch({
       workflow: 'txt2img',
@@ -386,14 +385,17 @@ describe('ideogram.handler', () => {
     });
   });
 
-  it('4.0 stays on comfy', async () => {
+  // 4.0 generation is off and out of the locked version list, so a 4.0 request (a remix) is moved
+  // to 4.5 rather than sent to comfy.
+  it('moves a 4.0 request to 4.5 on fal', async () => {
     const v40 = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'Ideogram',
       prompt: 'a cat',
       seed: 42,
+      model: 3246186,
     });
-    expect(firstInput(v40)).toMatchObject({ engine: 'comfy', ecosystem: 'ideogram4' });
+    expect(firstInput(v40)).toMatchObject({ engine: 'fal', model: 'ideogram45' });
   });
 
   it('edit sends imageSize auto and keeps image order', async () => {

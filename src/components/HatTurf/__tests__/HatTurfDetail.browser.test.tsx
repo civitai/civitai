@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
+import type * as Notifications from '~/utils/notifications';
 
 import '~/styles/globals.css';
 
@@ -18,9 +19,11 @@ const h = vi.hoisted(() => ({
   nextCursor: null as { createdAt: string; id: string } | null,
   fetchPage: vi.fn(),
   place: vi.fn(),
+  info: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
   user: { id: 1 } as { id: number } | null,
+  mine: null as unknown,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -31,7 +34,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'hatTurf.getStock': { useQuery: () => ({ data: h.stock }) },
         'hatTurf.getImageStickers': {
           useQuery: () => ({
-            data: { stickers: h.stickers, mine: null, nextCursor: h.nextCursor },
+            data: { stickers: h.stickers, mine: h.mine, nextCursor: h.nextCursor },
             refetch: async () => undefined,
           }),
         },
@@ -67,6 +70,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ),
   };
 });
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
+  showInfoNotification: h.info,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => (h.user ? { ...h.user, isModerator: false } : null),
 }));
@@ -142,7 +149,9 @@ beforeEach(() => {
     sticker(3, 'blue', 0.5, 0.7),
   ];
   h.user = { id: 1 };
+  h.mine = null;
   h.place.mockReset();
+  h.info.mockReset();
   h.nextCursor = null;
   h.fetchPage.mockReset();
   h.optIn.mockReset();
@@ -214,6 +223,20 @@ describe('Hat Turf on image detail', () => {
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();
     expect(hats().length).toBe(3);
+  });
+
+  test('own hat beyond the feed cap still reads as placed; the button refuses instead of drafting', async () => {
+    // The feed's capped list (stickers: {}) does not hold the viewer's hat; getImageStickers `mine` does.
+    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    click(q('hat-turf-detail-hat'));
+    await vi.waitFor(() =>
+      expect(h.info).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringMatching(/already on this image/) })
+      )
+    );
+    expect(q('hat-turf-draft')).toBeNull();
   });
 
   test('the switcher lists hats most used first and picking one drops it', async () => {

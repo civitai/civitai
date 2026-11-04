@@ -55,6 +55,7 @@ import {
   isAiToolkitEnabled,
   isAudioTrainingBaseType,
   isKohyaEnabled,
+  isRetiredTrainingTarget,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -411,6 +412,13 @@ export const createTrainingWorkflow = async ({
     throw throwBadRequestError('This base model is not available for training.');
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
+  if (
+    isRetiredTrainingTarget({
+      baseModelType,
+      ecosystem: 'ecosystem' in trainingParams ? trainingParams.ecosystem : undefined,
+    })
+  )
+    throw throwBadRequestError('This base model is not available for training.');
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
   const samplesOverrides = modelVersion.trainingDetails.samplesOverrides;
   const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
