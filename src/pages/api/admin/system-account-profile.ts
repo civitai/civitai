@@ -26,9 +26,9 @@ const SYSTEM_ACTOR_ID = -1;
 
 const RESERVED_NAME = MODERATION_ACCOUNT_USERNAME.toLowerCase();
 
-// After folding, any character that isn't a plain letter may stand for any letter of the reserved
-// name: listing lookalikes one by one never ends. Capped at a third so a name of only digits or
-// symbols isn't refused for its length alone.
+// After folding, any character that isn't a plain letter may stand for the reserved letter in its
+// place, up to half of them, so a name of only digits or symbols isn't refused for its length.
+// shortcut: same-length spellings only; an inserted or doubled letter (rn for m) still passes.
 function masksReservedName(value: string) {
   const form = Array.from(
     foldConfusables(value)
@@ -42,7 +42,7 @@ function masksReservedName(value: string) {
     if (/[a-z]/.test(char)) return false;
     wildcards++;
   }
-  return wildcards <= Math.floor(RESERVED_NAME.length / 3);
+  return wildcards <= Math.floor(RESERVED_NAME.length / 2);
 }
 
 const schema = z

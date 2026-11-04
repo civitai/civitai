@@ -186,8 +186,13 @@ describe('POST /api/admin/system-account-profile', () => {
   });
 
   it('admits a name of only digits as long as the reserved one', async () => {
-    const { status } = await call({ userId: SYSTEM_ID, name: '12345678901234567' });
+    const { status } = await call({ userId: SYSTEM_ID, name: '23456789023456789' });
     expect(status).toBe(200);
+  });
+
+  it('refuses the reserved name with half its letters replaced', async () => {
+    const { status } = await call({ userId: SYSTEM_ID, name: 'C!v!74! M0d3r4tion' });
+    expect(status).toBe(400);
   });
 
   it('admits a name that only shares words with the reserved one', async () => {
