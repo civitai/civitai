@@ -370,6 +370,23 @@ describe('runPayout', () => {
       { externalTransactionId: 'generation-tip-2026-10-13-7-Blue', amount: 2 },
     ]);
   });
+
+  // Float sums depend on order: summing withheld and paid tips apart can floor 4 as 3.99… and pay comp 1.
+  it('floors withheld and paid tips as one running total, in row order', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('tip', 'Green', 0.01, 11),
+      row('tip', 'Green', 0.95, 12),
+      row('tip', 'Green', 0.85, 11),
+      row('tip', 'Green', 2.19, 12),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(NON_COMMERCIAL_AND_CONTROL);
+
+    await runPayout(START);
+
+    expect(sentKeys()).toEqual([
+      { externalTransactionId: 'generation-tip-2026-10-13-7-Green', amount: 3 },
+    ]);
+  });
 });
 
 describe('the daily job after a failed run', () => {

@@ -159,18 +159,17 @@ export function buildPayoutTransactions(
       // the tips are paid, so splitting never changes what a creator receives.
       const compTotals: Partial<Record<BuzzAccountType, number>> = {};
       const tipTotals: Partial<Record<BuzzAccountType, number>> = {};
-      // Withheld tips stay in the compensation floor so the comp transaction is exactly what it was
-      // before they were withheld: a retried date must not turn a comp amount of 0 into 1 under a key
-      // that run never sent.
-      const withheldTipTotals: Partial<Record<BuzzAccountType, number>> = {};
+      // Every tip, withheld or not, summed in row order like compTotals: withheld tips stay in the comp
+      // floor so a retried date mints the comp amount it minted before they were withheld, never 1
+      // under a key that run did not send.
+      const tipFloorTotals: Partial<Record<BuzzAccountType, number>> = {};
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
         if (row.withheld) {
           if (splitTips) {
             compTotals[row.accountType] = (compTotals[row.accountType] || 0) + row.amount;
-            withheldTipTotals[row.accountType] =
-              (withheldTipTotals[row.accountType] || 0) + row.amount;
+            tipFloorTotals[row.accountType] = (tipFloorTotals[row.accountType] || 0) + row.amount;
           }
           continue;
         }
@@ -182,8 +181,10 @@ export function buildPayoutTransactions(
           continue;
         }
         compTotals[row.accountType] = (compTotals[row.accountType] || 0) + amount;
-        if (splitTips && row.source === 'tip')
+        if (splitTips && row.source === 'tip') {
           tipTotals[row.accountType] = (tipTotals[row.accountType] || 0) + amount;
+          tipFloorTotals[row.accountType] = (tipFloorTotals[row.accountType] || 0) + amount;
+        }
       }
 
       const compTx = Object.entries(compTotals).map(([accountType, amount]) => ({
@@ -194,11 +195,7 @@ export function buildPayoutTransactions(
         // Sum-then-floor once at the daily boundary (amounts arrive fractional from the query now that we no
         // longer floor per row — required so sub-buzz license fees accumulate instead of flooring to 0).
         amount:
-          Math.floor(amount) -
-          Math.floor(
-            (tipTotals[accountType as BuzzAccountType] ?? 0) +
-              (withheldTipTotals[accountType as BuzzAccountType] ?? 0)
-          ),
+          Math.floor(amount) - Math.floor(tipFloorTotals[accountType as BuzzAccountType] ?? 0),
         // Matches the "Generation compensation" channel label in Creator Studio. The externalTransactionId
         // keeps its prefix — it's a dedup key.
         description: `Generation compensation (${dateLabel})`,
