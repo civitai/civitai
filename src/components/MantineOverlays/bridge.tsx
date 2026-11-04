@@ -186,13 +186,24 @@ export function useArmRef(arm: Arm, armedRef: { current: boolean }) {
       state.pending = false;
       if (armedRef.current) return;
       const el = node as EventTarget;
-      const onEvent = () => arm(true);
+      const off = () => {
+        for (const type of ARM_EVENTS) el.removeEventListener(type, onEvent, { capture: true });
+        if (state.off === off) {
+          state.off = null;
+          state.node = null;
+          state.pending = false;
+        }
+      };
+      // Arming is one-way, so the first event detaches all nine listeners before it arms: an armed
+      // trigger keeps none of them (pointermove/pointerover would otherwise fire on every move).
+      const onEvent = () => {
+        off();
+        arm(true);
+      };
       for (const type of ARM_EVENTS)
         el.addEventListener(type, onEvent, { capture: true, passive: true });
       state.node = el;
-      state.off = () => {
-        for (const type of ARM_EVENTS) el.removeEventListener(type, onEvent, { capture: true });
-      };
+      state.off = off;
     },
     [arm, armedRef]
   );
