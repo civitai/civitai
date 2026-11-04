@@ -65,7 +65,7 @@ import {
  * then to `null`. A hidden screenshot is dropped from the gallery and order is preserved. Nothing
  * is ever replaced by an asset the viewer may not see.
  *
- * NOT FOR AUTHORS OR MODERATORS. An owner's own "My apps" row and the moderator review surfaces
+ * NOT FOR AUTHORS OR MODERATORS. An owner's own "My builds" row and the moderator review surfaces
  * must show what is actually attached, so they keep using the raw builders in
  * `listing-media-url.ts`. The moderator preview reaches this module only through
  * {@link MODERATOR_REVIEW_MEDIA}, which says so at the call site.
