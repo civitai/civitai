@@ -23,7 +23,7 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
-  isAppealBlockedByHoldMarker,
+  isImageAppealRefused,
   getLatestAppeal,
   reopenAppeal,
 } from '~/server/services/report.service';
@@ -127,9 +127,9 @@ export async function createEntityAppealHandler({
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
         if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
-        // A hold marker's kept image reads as a moderator block. Refused in the same words, so the
-        // refusal says no more than that.
-        if (await isAppealBlockedByHoldMarker({ imageId: image.id, userId }))
+        // An image the appeal flow excludes (its own record, its owner's, or a hold) reads as a
+        // moderator block. Refused in the same words, so the refusal says no more than that.
+        if (await isImageAppealRefused({ imageId: image.id, userId }))
           throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }
