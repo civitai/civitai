@@ -76,7 +76,7 @@ function eligibleReferences(
  * The hidden check for this feed slot, or null for a queue item. The pool is read on every call a Knight makes, so a page
  * costs the same whichever it turns out to be.
  *
- * The player's fixed digest picks a start point in the pool's id range, and the pick is the first eligible reference at or
+ * The player's fixed digest picks a start point in the pool's id range (its lowest to highest id), and the pick is the first eligible reference at or
  * after it (wrapping to the first one), so the cost is a short index walk and not a count of every eligible row.
  */
 export async function pickHiddenCheck(
@@ -96,13 +96,17 @@ export async function pickHiddenCheck(
     .update(`${input.secret}:hidden:${input.userId}:${await slotOf(db, input.userId)}`)
     .digest();
 
-  const { top } = await db
+  const { low, top } = await db
     .selectFrom('KnightsReferenceImage')
-    .select((eb) => eb.fn.max<number | null>('id').as('top'))
+    .select((eb) => [
+      eb.fn.min<number | null>('id').as('low'),
+      eb.fn.max<number | null>('id').as('top'),
+    ])
     .where('pool', '=', REFERENCE_POOL.hiddenCheck)
     .where('questionKey', '=', input.questionKey)
     .executeTakeFirstOrThrow();
-  const start = Math.floor(unit(digest, 4) * ((top ?? 0) + 1));
+  const first = low ?? 0;
+  const start = first + Math.floor(unit(digest, 4) * ((top ?? 0) - first + 1));
 
   const columns = [
     'r.id',

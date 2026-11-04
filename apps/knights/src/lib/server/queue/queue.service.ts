@@ -136,6 +136,19 @@ export async function getFeed(
           )
         )
       )
+      .where((eb) =>
+        // One judgment per image and question (see `insertVote`): a re-queue of an image the player judged is not theirs to serve.
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('KnightsVote as j')
+              .select(sql<number>`1`.as('one'))
+              .where('j.playerId', '=', userId)
+              .whereRef('j.imageId', '=', 'i.imageId')
+              .whereRef('j.questionKey', '=', 'i.questionKey')
+          )
+        )
+      )
       .orderBy(rankOrder, 'desc')
       .orderBy('i.priority', 'asc')
       .orderBy('i.createdAt', 'asc')

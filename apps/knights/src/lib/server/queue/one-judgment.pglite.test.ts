@@ -5,7 +5,13 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { answerHiddenCheck } from '../hidden/hidden.service';
-import { castVote, enqueueItem, ensureVotePartitions, type QueueDeps } from './queue.service';
+import {
+  castVote,
+  enqueueItem,
+  ensureVotePartitions,
+  getFeed,
+  type QueueDeps,
+} from './queue.service';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -98,5 +104,20 @@ describe('one judgment per player per image and question', () => {
     expect(await vote(1, await enqueue(10))).toMatchObject({ status: 'recorded' });
     expect(await vote(2, 1)).toMatchObject({ status: 'recorded' });
     expect(await vote(1, await enqueue(11))).toMatchObject({ status: 'recorded' });
+  });
+
+  it('does not serve a re-queued image the player already judged, and serves the next one', async () => {
+    await seedPlayer(pg, 1);
+    await seedImage(pg, 10);
+    await seedImage(pg, 11);
+    const first = await enqueue(10);
+    expect(await vote(1, first)).toMatchObject({ status: 'recorded' });
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed' WHERE id=$1`, [first]);
+    const requeued = await enqueue(10);
+    const other = await enqueue(11);
+
+    const feed = await getFeed(db, 1);
+    expect(feed?.items.map((i) => i.id)).toEqual([other]);
+    expect(feed?.items.map((i) => i.id)).not.toContain(requeued);
   });
 });

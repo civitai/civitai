@@ -130,6 +130,18 @@ describe('serving a hidden check', () => {
     }
   });
 
+  it('spreads picks across the pool even when its ids start high', async () => {
+    await pg.exec(`SELECT setval(pg_get_serial_sequence('"KnightsReferenceImage"','id'), 4999)`);
+    for (let i = 10; i < 21; i++) await reference(i);
+    const picks = new Set<number>();
+    for (let user = 1; user <= 12; user++) {
+      await seedPlayer(pg, user);
+      picks.add((await pick(user))?.referenceId as number);
+    }
+    expect(Math.min(...picks)).toBeGreaterThanOrEqual(5000);
+    expect(picks.size).toBeGreaterThan(2);
+  });
+
   it('is never queued, and a player who voted the image is not offered it', async () => {
     await seedPlayer(pg, 1);
     await seedPlayer(pg, 2);

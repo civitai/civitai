@@ -255,6 +255,22 @@ describe('sendNotifications', () => {
     expect(received().size).toBe(0);
   });
 
+  it('is silent when the only open item is a re-queue of an image the player already judged', async () => {
+    await seedPlayer(pg, 1);
+    await seedImage(pg, 7);
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+       VALUES (999,1,'2026-12-16 08:00:00',$1,7,'Knight','4',1)`,
+      [Q]
+    );
+    await enqueueItem(db, { questionKey: Q, imageId: 7, source: 'test', expiresAt: null }, at(1));
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect(received().size).toBe(0);
+  });
+
   it('picks the best type: verdicts over the streak warning over new images', async () => {
     for (const id of [1, 2, 3]) {
       await seedPlayer(pg, id);
