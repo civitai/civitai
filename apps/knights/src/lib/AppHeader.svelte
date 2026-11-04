@@ -5,6 +5,7 @@
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import RecapButton from './RecapButton.svelte';
+  import RestartCareerDialog from './RestartCareerDialog.svelte';
   import { count } from './format';
   import { rankPill } from './chrome';
   import { tween } from './motion';
@@ -19,6 +20,7 @@
     userId = null,
     civitaiUrl,
     conversionOpen,
+    isPlayer = false,
     status,
     streak,
     recapUnseen = false,
@@ -28,6 +30,8 @@
     userId?: number | null;
     civitaiUrl: string;
     conversionOpen: boolean;
+    /** Whether the viewer has a career, and so can restart it. */
+    isPlayer?: boolean;
     status?: PlayerStatus;
     streak?: Streak;
     /** Today's recap has not been seen: the recap button wears a dot. */
@@ -35,6 +39,7 @@
   } = $props();
 
   let open = $state(false);
+  let restarting = $state(false);
   let wrapper = $state<HTMLElement>();
   let trigger = $state<HTMLButtonElement>();
   let panel = $state<HTMLElement>();
@@ -190,6 +195,18 @@
           {/each}
           <hr />
           <a href={civitaiUrl}><Icon name="arrow-left" size={18} />Back to Civitai</a>
+          {#if isPlayer}
+            <button
+              type="button"
+              class="restart"
+              onclick={() => {
+                close();
+                restarting = true;
+              }}
+            >
+              <Icon name="rotate-ccw" size={18} />Restart career…
+            </button>
+          {/if}
           <a class="out" href="/logout" data-sveltekit-reload>
             <Icon name="log-out" size={18} />Sign out
           </a>
@@ -198,6 +215,10 @@
     </div>
   {/if}
 </header>
+
+{#if restarting}
+  <RestartCareerDialog onclose={() => (restarting = false)} />
+{/if}
 
 <style>
   header {
@@ -359,6 +380,24 @@
     font-size: 12px;
     font-weight: 400;
   }
+  nav .restart {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: flex-start;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    font: 600 15px/1.2 var(--io-font-ui);
+    text-align: left;
+  }
+  nav .restart:hover:not(:disabled) {
+    background: var(--io-bg);
+  }
+  nav .restart,
+  nav .restart :global(svg),
   nav .out,
   nav .out :global(svg) {
     color: var(--io-crimson-text);

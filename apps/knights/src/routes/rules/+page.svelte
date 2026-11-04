@@ -1,21 +1,12 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
-  import { restartLosses } from '$lib/chrome';
   import { count } from '$lib/format';
-  import Icon from '$lib/Icon.svelte';
   import PageNav from '$lib/PageNav.svelte';
   import RankCards from '$lib/RankCards.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
-  import type { ActionData, PageData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
   let facts = $derived(data.facts);
-  let restarting = $state(false);
-  let restartSubmitting = $state(false);
-  let restartAttempted = $state(false);
-  const losses = $derived(
-    data.career ? restartLosses({ ...data.career.status, exp: data.career.exp }) : []
-  );
 </script>
 
 <div class="page-wide rules">
@@ -161,69 +152,6 @@
 </section>
     </div>
   </div>
-
-  {#if data.career}
-    <div class="divider" aria-hidden="true"><span></span></div>
-
-    <section class="career" aria-labelledby="career-title">
-      <h2 id="career-title">Your career</h2>
-      {#if restarting}
-        <p class="strong">Begin again as an Acolyte? Restarting your career cannot be undone. You will lose:</p>
-        <ul class="losses">
-          {#each losses as loss (loss.title)}
-            <li>
-              <span class="x"><Icon name="x" size={18} /></span>
-              <div>
-                <p class="loss-title">{loss.title}</p>
-                <p class="muted">{loss.detail}</p>
-              </div>
-            </li>
-          {/each}
-        </ul>
-        <p class="kept"><Icon name="shield-check" size={18} />Gold you have already converted stays with you.</p>
-        <form
-          method="POST"
-          action="?/restart"
-          class="actions"
-          use:enhance={() => {
-            restartSubmitting = true;
-            restartAttempted = true;
-            return async ({ update }) => {
-              try {
-                await update();
-              } finally {
-                restartSubmitting = false;
-              }
-            };
-          }}
-        >
-          <input type="hidden" name="confirmed" value="yes" />
-          <button type="submit" class="btn danger solid" disabled={restartSubmitting}>
-            Yes, restart my career
-          </button>
-          <button
-            type="button"
-            class="btn"
-            onclick={() => {
-              restarting = false;
-              restartAttempted = false;
-            }}
-            disabled={restartSubmitting}>Cancel</button
-          >
-        </form>
-        {#if restartAttempted && form?.restartFailed}
-          <p class="notice" role="alert">{form.message}</p>
-        {/if}
-      {:else}
-        <div class="restart">
-          <p class="muted">Start over as an Acolyte.</p>
-          <button type="button" class="btn danger" onclick={() => (restarting = true)}>
-            Restart career
-          </button>
-        </div>
-      {/if}
-    </section>
-  {/if}
 </div>
 
 <style>
@@ -277,54 +205,7 @@
   .rules section :global(strong) {
     color: var(--io-parchment);
   }
-  .career {
-    max-width: 36rem;
-    margin-top: 0.5rem;
-  }
-  .restart {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-  .strong {
-    color: var(--io-parchment);
-  }
-  .rules .career .losses {
-    margin: 0.75rem 0;
-  }
-  .losses li {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
-  }
-  .x {
-    padding-top: 0.1rem;
-    color: var(--io-crimson-text);
-  }
-  .loss-title {
-    color: var(--io-parchment);
-  }
-  .kept {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin: 0.75rem 0 1rem;
-  }
-  .kept :global(svg) {
-    flex: none;
-    color: var(--io-verdigris);
-  }
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
   @media (max-width: 47.99rem) {
-    .actions .btn {
-      flex: 1;
-    }
     .head,
     .columns {
       grid-template-columns: minmax(0, 1fr);

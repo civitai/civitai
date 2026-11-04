@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const playerRow = vi.hoisted(() => ({ value: undefined as { userId: number } | undefined }));
+
 const getRecapState = vi.hoisted(() => vi.fn());
 const NOW = new Date('2026-12-15T12:00:00Z');
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({
+  db: {
+    selectFrom: () => ({
+      select: () => ({ where: () => ({ executeTakeFirst: async () => playerRow.value }) }),
+    }),
+  },
+}));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState }));
 
@@ -19,6 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  playerRow.value = undefined;
   delete process.env.CIVITAI_APP_URL;
   delete process.env.KNIGHTS_CONVERSION_ENABLED;
 });
@@ -46,6 +55,12 @@ describe('layout load', () => {
     expect(await load(event())).toMatchObject({ conversionOpen: false });
     process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
     expect(await load(event())).toMatchObject({ conversionOpen: true });
+  });
+  it('tells the menu whether the viewer has a career to restart', async () => {
+    expect(await load(event({ username: 'Sir', id: 4 }))).toMatchObject({ isPlayer: false });
+    playerRow.value = { userId: 4 };
+    expect(await load(event({ username: 'Sir', id: 4 }))).toMatchObject({ isPlayer: true });
+    expect(await load(event())).toMatchObject({ isPlayer: false });
   });
 });
 

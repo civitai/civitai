@@ -27,6 +27,7 @@
       userId={data.userId}
       civitaiUrl={data.civitaiUrl}
       conversionOpen={data.conversionOpen}
+      isPlayer={data.isPlayer}
       {status}
       {streak}
       recapUnseen={data.recapUnseen}
