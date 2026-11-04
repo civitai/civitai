@@ -46,3 +46,22 @@ export function skippable(node: HTMLElement, ms = 1300) {
   for (const event of events) window.addEventListener(event, skip, true);
   return { destroy: stop };
 }
+
+/**
+ * Marks a node with `data-bump` for one animation each time `value` goes up (never on the first read, never for a drop), so
+ * a stylesheet can pulse it. The attribute is dropped and set again after a reflow, which restarts a pulse still running.
+ */
+export function bump(node: HTMLElement | SVGElement, value: number) {
+  let last = value;
+  return {
+    update(next: number) {
+      if (next > last && !reducedMotion()) {
+        node.removeAttribute('data-bump');
+        void node.getBoundingClientRect();
+        node.setAttribute('data-bump', '');
+      }
+      last = next;
+    },
+    destroy() {},
+  };
+}

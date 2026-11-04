@@ -1,4 +1,4 @@
-/** What the page shows for one thing to judge: the question, the sealed item, and a banner when the question changed. */
+/** What the page shows for one thing to judge: the question, the sealed item, and a banner when the question changed, and the category of a yes/no question. */
 export type PickedItem = {
   question: {
     key: string;
@@ -8,6 +8,7 @@ export type PickedItem = {
   };
   item: { id: string; key: string; src: string; width: number | null; height: number | null };
   banner: { heading: string } | null;
+  category: { heading: string } | null;
 };
 
 /**

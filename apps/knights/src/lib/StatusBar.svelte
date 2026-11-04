@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import Icon from '$lib/Icon.svelte';
   import { nextRankLine } from '$lib/chrome';
   import { percent } from '$lib/format';
   import type { PlayerStatus } from '$lib/server/player-status';
@@ -18,7 +19,7 @@
   {@render position?.()}
 </p>
 <p class="status">
-  Fervor {status.fervor} · Gold {status.goldEarned} earned, {status.goldPending} pending
+  <span class="fz"><Icon name="sparkles" size={13} />Fervor {status.fervor}</span> · Gold {status.goldEarned} earned, {status.goldPending} pending
   ·
   <span
     class="hearts"
@@ -31,7 +32,7 @@
     {/each}
   </span>
   {@render links?.()}
-  · <a href="/rules">Rules</a>
+  · <a href="/codex#judging">Codex</a>
 </p>
 {#if status.rating.bar !== null}
   <p class="status">
@@ -43,7 +44,7 @@
         · <strong class="below">below it: reduced weight and gold</strong>
       {/if}
     {/if}
-    · <a href="/ranks">Ranks</a>
+    · <a href="/codex#ranks">Ranks</a>
   </p>
 {/if}
 {#if nextLine}
@@ -54,6 +55,11 @@
 </div>
 
 <style>
+  .fz {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
   .status {
     margin: 0 0 0.25rem;
     color: var(--muted);

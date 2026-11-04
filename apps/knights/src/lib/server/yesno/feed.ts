@@ -10,13 +10,16 @@ import { YESNO_KEY_PREFIX } from './keys';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
-/** The only thing a player is given about a yes/no question: its words, its image, and a banner when a new stretch begins. */
+/** The only thing a player is given about a yes/no question: its words, its image, its category heading, and a banner when a new stretch begins. */
 export type YesNoOffer = {
   itemId: number;
   prompt: string;
   imageKey: string;
   width: number | null;
   height: number | null;
+  /** Display text for the axis, on every question of the stretch. */
+  category: { heading: string };
+  /** Set only on the first question of a stretch. */
   banner: { heading: string } | null;
 };
 
@@ -139,13 +142,15 @@ export async function pickYesNo(
   for (const axis of order) {
     const found = await unanswered(db, input.userId, axis, stages, input.exclude ?? []).executeTakeFirst();
     if (!found) continue;
+    const heading = headingOf(axis, YESNO_KEY_PREFIX);
     return {
       itemId: found.id,
       prompt: found.prompt ?? '',
       imageKey: found.imageKey,
       width: found.width,
       height: found.height,
-      banner: axis === current ? null : { heading: headingOf(axis, YESNO_KEY_PREFIX) },
+      category: { heading },
+      banner: axis === current ? null : { heading },
     };
   }
   return null;

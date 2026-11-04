@@ -1,9 +1,10 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { applyPendingResolutions, castVote, type QueueDeps } from '../queue/queue.service';
 import { settleFinalItems } from '../progression/progression';
 import { isFinalItem } from '../queue/item-state';
 import { canVote } from '../queue/ranks';
+import { castYesNoVote } from '../yesno/vote';
 
 /** Safety stop: an item cannot need more votes than this across all its stages. */
 const MAX_SIMULATED_VOTES = 40;
@@ -22,7 +23,7 @@ export type SimulatableItem = {
 export async function listSimulatableItems(
   db: Kysely<DB>,
   callerId: number,
-  limit = 20
+  limit = 50
 ): Promise<SimulatableItem[]> {
   const rows = await db
     .selectFrom('KnightsQueueItem as i')
@@ -36,17 +37,15 @@ export async function listSimulatableItems(
         .whereRef('v.itemId', '=', 'i.id')
         .as('votes'),
       eb
-        .exists(
-          eb
-            .selectFrom('KnightsVote as mine')
-            .select('mine.itemId')
-            .whereRef('mine.itemId', '=', 'i.id')
-            .where('mine.playerId', '=', callerId)
-        )
-        .as('votedByMe'),
+        .selectFrom('KnightsVote as mine')
+        .select((v) => v.fn.max('mine.createdAt').as('at'))
+        .whereRef('mine.itemId', '=', 'i.id')
+        .where('mine.playerId', '=', callerId)
+        .as('myLastVote'),
     ])
     .where('i.status', '=', 'Open')
-    .orderBy('votedByMe', 'desc')
+    // The items just voted on come first; older open votes would otherwise fill the list.
+    .orderBy(sql`"myLastVote" desc nulls last`)
     .orderBy('i.id', 'asc')
     .limit(limit)
     .execute();
@@ -58,7 +57,7 @@ export async function listSimulatableItems(
     options: r.options as SimulatableItem['options'],
     stage: r.minRank,
     votes: Number(r.votes),
-    votedByMe: Boolean(r.votedByMe),
+    votedByMe: r.myLastVote !== null,
   }));
 }
 
@@ -80,7 +79,7 @@ export async function simulateOtherVoters(
   while (cast < MAX_SIMULATED_VOTES) {
     const item = await db
       .selectFrom('KnightsQueueItem')
-      .select(['status', 'minRank'])
+      .select(['status', 'minRank', 'audience'])
       .where('id', '=', input.itemId)
       .executeTakeFirst();
     if (!item || item.status !== 'Open') break;
@@ -109,12 +108,12 @@ export async function simulateOtherVoters(
     );
     if (!voter) break;
 
-    const result = await castVote(
-      db,
-      { userId: voter.userId, itemId: input.itemId, answer: input.answer },
-      deps
-    );
-    if (result.status === 'rejected') {
+    const vote = { userId: voter.userId, itemId: input.itemId, answer: input.answer };
+    // castVote refuses yes/no items (those with an audience); they have their own vote path.
+    const result = item.audience
+      ? await castYesNoVote(db, vote, deps)
+      : await castVote(db, vote, deps);
+    if (result.status === 'rejected' || result.status === 'limited') {
       skipped.add(voter.userId);
       continue;
     }

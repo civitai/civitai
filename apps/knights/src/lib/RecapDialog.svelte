@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import Icon from '$lib/Icon.svelte';
@@ -8,35 +7,23 @@
   import type { Recap } from '$lib/server/daily/daily.service';
   import '$lib/overlay.css';
 
-  type Watch = { streak: number; size: number; done: boolean };
-
   let {
     recap,
-    optOut,
-    watch,
     action,
     message,
     submitting,
     submit,
-    manual = false,
   }: {
     /** Null when the player has no play day to recap yet. */
     recap: Recap | null;
-    /** The player's current opt-out; the checkbox starts from it and is saved when the dialog closes. */
-    optOut: boolean;
-    watch: Watch | null;
     action: string;
     /** A failure to show instead of, or under, the recap. */
     message: string | null;
     submitting: boolean;
     submit: SubmitFunction;
-    /** Opened from the header rather than shown on arrival: no opt-out checkbox and no call to begin the Watch. */
-    manual?: boolean;
   } = $props();
 
   let form = $state<HTMLFormElement>();
-  let checked = $state(untrack(() => optOut));
-  let showDaily = $state(false);
   let view = $derived(recap ? recapView(recap) : null);
   let headline = $derived(
     view?.headline ?? (message ? 'Your verdicts could not be loaded' : 'No verdicts yet')
@@ -89,28 +76,8 @@
       {/if}
 
       <button type="submit" name="begin" value="1" class="ov-primary begin" disabled={submitting} data-autofocus>
-        {manual ? 'Back to judging' : watch?.done ? 'Keep judging' : "Begin today's Watch"}
+        Back to judging
       </button>
-      {#if !manual && watch && !watch.done}
-        <p class="hint">
-          {watch.streak > 0
-            ? `Finish it to keep your ${watch.streak}-day streak`
-            : `${watch.size} judgments to complete it`}
-        </p>
-      {/if}
-      {#if !manual}
-        <label class="optout">
-          <input type="checkbox" name="optOut" bind:checked />
-          Don't show this again
-        </label>
-      {:else if optOut}
-        <!-- An opted-out player turns the daily popup back on here; otherwise the stored opt-out is resent unchanged. -->
-        {#if !showDaily}<input type="hidden" name="optOut" value="on" />{/if}
-        <label class="optout">
-          <input type="checkbox" bind:checked={showDaily} />
-          Show this every day
-        </label>
-      {/if}
     </form>
   </div>
 </div>
@@ -244,27 +211,8 @@
     color: var(--io-crimson-text);
     font: 400 14px/1.4 var(--io-font-ui);
   }
-  .hint {
-    margin: -8px 0 0;
-    color: var(--io-parchment-muted);
-    font: 400 13px/1.3 var(--io-font-ui);
-  }
-  .optout {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    color: var(--io-parchment-muted);
-    font: 400 14px/1.3 var(--io-font-ui);
-    cursor: pointer;
-  }
-  .optout input {
-    width: 18px;
-    height: 18px;
-    accent-color: var(--io-gold);
-  }
 
-  /* On a phone the stats sit two by two and the button is pinned to the bottom, under the checkbox. */
+  /* On a phone the stats sit two by two and the button is pinned to the bottom. */
   @media (max-width: 40rem) {
     :global(.ov-backdrop:has(.recap)) {
       padding: 16px 16px 88px;

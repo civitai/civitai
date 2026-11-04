@@ -2,8 +2,9 @@ import { createBuzzClient } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
 import { buzzPort, type BuzzPort } from './buzz';
 
-/** Converting gold to Buzz is off unless `KNIGHTS_CONVERSION_ENABLED` is exactly `true`. Gold still accrues. */
-export const conversionEnabled = () => env.KNIGHTS_CONVERSION_ENABLED === 'true';
+/** Converting gold to Buzz is on unless the `KNIGHTS_CONVERSION_DISABLED` kill switch is `true`, `1`, `yes` or `on` (any case). Gold still accrues. */
+export const conversionEnabled = () =>
+  !['true', '1', 'yes', 'on'].includes((env.KNIGHTS_CONVERSION_DISABLED ?? '').trim().toLowerCase());
 
 export const buzzConfigured = () => Boolean(env.BUZZ_ENDPOINT);
 

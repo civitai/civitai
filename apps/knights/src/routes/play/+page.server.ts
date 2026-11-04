@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
-import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
+import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { openItem } from '$lib/server/feed-token';
 import {
   answerHiddenCheck,
@@ -9,6 +9,7 @@ import {
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { requireMember } from '$lib/server/membership';
+import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
@@ -17,6 +18,7 @@ import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
+import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -57,21 +59,39 @@ const APPRENTICE_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-type RankPerks = { levels?: string; voteWeight?: number; goldMultiplier?: number };
+type Perks = { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
+type RankPerks = {
+  levels?: string;
+  voteWeight?: number;
+  goldMultiplier?: number;
+  dailyGoldCap?: number;
+  /** The perks of the rank the player held before, for the rank-up's "what changed". */
+  previous?: Perks;
+};
 type Notice = ProgressNotice & RankPerks & { milestone?: string; milestoneLevel?: number };
 
-// A rank-up notice says what the rank brings; a level-up carries nothing more.
+const perksOf = (rank: string): Perks | undefined =>
+  isRank(rank)
+    ? {
+        voteWeight: RANK_RULES[rank].voteWeight,
+        goldMultiplier: RANK_RULES[rank].goldMultiplier,
+        dailyGoldCap: RANK_RULES[rank].dailyGoldCap,
+      }
+    : undefined;
+
+// A rank-up notice says what the rank brings and what it replaces; a level-up carries nothing more.
 function withRankPerks(progress: ProgressNotice | null): Notice | null {
   if (progress?.kind !== 'rank') return progress;
   const perks = rankTable().find((entry) => entry.rank === progress.rank);
-  return perks
-    ? {
-        ...progress,
-        levels: perks.levels,
-        voteWeight: perks.voteWeight,
-        goldMultiplier: perks.goldMultiplier,
-      }
-    : progress;
+  if (!perks) return progress;
+  return {
+    ...progress,
+    levels: perks.levels,
+    voteWeight: perks.voteWeight,
+    goldMultiplier: perks.goldMultiplier,
+    dailyGoldCap: perks.dailyGoldCap,
+    previous: perksOf(progress.fromRank),
+  };
 }
 
 // An Acolyte levels up every few answers, so only the milestone levels are celebrated; every other level is recorded as seen.
@@ -129,10 +149,10 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       : null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
-  const [picked, daily, recap] = await Promise.all([
+  const [picked, daily, rail] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
-    getRecap(db, { playerId: locals.user.id, now }),
+    railFor(locals.user.id, now, status.fervor),
   ]);
   const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
@@ -141,9 +161,10 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   return {
     mode: 'queue' as const,
     banner: picked?.banner ?? null,
+    category: picked?.category ?? null,
     ...common,
     daily,
-    recap,
+    rail,
     resetPending,
     conversionOpen,
     lockoutSeconds,
@@ -248,17 +269,6 @@ export const actions: Actions = {
     if (!ref) return fail(400, { message: 'That one cannot be skipped.' });
     await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
     return { success: true };
-  },
-
-  // Closing the popup dismisses today's recap; the checkbox state at that moment is the player's opt-out.
-  dismissRecap: async ({ request, locals }) => {
-    const optOut = (await request.formData()).get('optOut') === 'on';
-    try {
-      await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now(), optOut });
-    } catch (error) {
-      console.error('knights: could not store the recap dismissal', { error });
-      return fail(500, { message: 'Could not dismiss the recap. Try again.', recapFailed: true });
-    }
   },
 
   dismissNotices: async ({ locals }) => {

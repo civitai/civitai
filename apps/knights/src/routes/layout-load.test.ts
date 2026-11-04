@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const playerRow = vi.hoisted(() => ({ value: undefined as { userId: number } | undefined }));
 
 const getRecapState = vi.hoisted(() => vi.fn());
+const BADGES = { small: { Knight: 'k48' }, large: { Knight: 'k450' } };
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({
   db: {
@@ -13,6 +14,7 @@ vi.mock('$lib/server/db', () => ({
 }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState }));
+vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES }));
 
 const { load } = await import('./+layout.server');
 
@@ -29,7 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   playerRow.value = undefined;
   delete process.env.CIVITAI_APP_URL;
-  delete process.env.KNIGHTS_CONVERSION_ENABLED;
+  delete process.env.KNIGHTS_CONVERSION_DISABLED;
 });
 
 describe('layout load', () => {
@@ -51,11 +53,25 @@ describe('layout load', () => {
     expect(await load(event())).toMatchObject({ userId: null });
   });
 
-  it('offers "Convert gold" only while conversion is on', async () => {
-    expect(await load(event())).toMatchObject({ conversionOpen: false });
-    process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
+  it('offers "Convert gold" unless the kill switch is on', async () => {
     expect(await load(event())).toMatchObject({ conversionOpen: true });
+    process.env.KNIGHTS_CONVERSION_DISABLED = 'true';
+    expect(await load(event())).toMatchObject({ conversionOpen: false });
   });
+  it('hands the header the Buzz rate, the rank badge images and the ladder rows from config', async () => {
+    const data = await run();
+    expect(data).toMatchObject({ goldPerBuzz: 1000, badges: BADGES });
+    expect(data.ladder.map((row: { rank: string }) => row.rank)).toEqual([
+      'Knight',
+      'Templar',
+      'Paladin',
+    ]);
+    expect(data.ladder[0]).toMatchObject({
+      fromLevel: expect.any(Number),
+      accuracyBar: expect.any(Number),
+    });
+  });
+
   it('tells the menu whether the viewer has a career to restart', async () => {
     expect(await load(event({ username: 'Sir', id: 4 }))).toMatchObject({ isPlayer: false });
     playerRow.value = { userId: 4 };
@@ -72,6 +88,11 @@ const state = (over: Record<string, boolean> = {}) => ({
 });
 
 describe('layout load: the recap dot', () => {
+  it('ignores the old popup opt-out: the dot says "not yet seen today", whatever that column holds', async () => {
+    getRecapState.mockResolvedValue(state({ optedOut: true }));
+    expect((await run()).recapUnseen).toBe(true);
+  });
+
   it('shows while there is a recap to see and it was not dismissed today', async () => {
     expect((await run()).recapUnseen).toBe(true);
     expect(getRecapState).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
@@ -79,7 +100,6 @@ describe('layout load: the recap dot', () => {
 
   it.each([
     ['dismissed today', { dismissedToday: true }],
-    ['opted out of the popup', { optedOut: true }],
     ['no earlier play day', { hasHistory: false }],
   ])('is off when %s', async (_name, over) => {
     getRecapState.mockResolvedValue(state(over));

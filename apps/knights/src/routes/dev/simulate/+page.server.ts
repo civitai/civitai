@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
 import { assertDevOnly } from '$lib/server/dev/guard';
 import { MAX_LEVEL } from '$lib/server/progression/levels';
@@ -54,10 +55,14 @@ export const actions: Actions = {
     }
 
     try {
+      // Without the main app's token a local write-back can only fail and retry forever, leaving every vote pending.
+      const deps = env.WEBHOOK_TOKEN
+        ? queueDeps
+        : { ...queueDeps, applyConsensus: async () => ({ outcome: 'applied' as const }) };
       const result = await simulateOtherVoters(
         db,
         { callerId: locals.user.id, itemId, answer },
-        queueDeps
+        deps
       );
       return { success: true, ...result };
     } catch (error) {

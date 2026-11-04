@@ -4,8 +4,7 @@ const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getApprentice = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
-const getRecap = vi.hoisted(() => vi.fn());
-const dismissRecap = vi.hoisted(() => vi.fn());
+const railFor = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
@@ -23,7 +22,8 @@ vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
-vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus, getRecap, dismissRecap }));
+vi.mock('$lib/server/rail-runtime', () => ({ railFor }));
+vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/smites/smites.service', () => ({
   hasUnseenReset,
@@ -78,9 +78,8 @@ beforeEach(() => {
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
-  getRecap.mockReset();
-  getRecap.mockResolvedValue(null);
-  dismissRecap.mockReset();
+  railFor.mockReset();
+  railFor.mockResolvedValue({ standing: null, activity: null });
   pickHiddenCheck.mockReset();
   pickHiddenCheck.mockResolvedValue(null);
   hasUnseenReset.mockReset();
@@ -95,19 +94,23 @@ beforeEach(() => {
 });
 
 describe('play load and the conversion switch', () => {
-  it('hides the Convert link unless conversion is switched on', async () => {
+  it('shows the Convert link unless the kill switch is set to a truthy value', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
-    const previous = process.env.KNIGHTS_CONVERSION_ENABLED;
+    const previous = process.env.KNIGHTS_CONVERSION_DISABLED;
     try {
-      delete process.env.KNIGHTS_CONVERSION_ENABLED;
-      expect((await run()).conversionOpen).toBe(false);
-      process.env.KNIGHTS_CONVERSION_ENABLED = 'yes';
-      expect((await run()).conversionOpen).toBe(false);
-      process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
+      delete process.env.KNIGHTS_CONVERSION_DISABLED;
       expect((await run()).conversionOpen).toBe(true);
+      for (const off of ['false', '0', '', 'no']) {
+        process.env.KNIGHTS_CONVERSION_DISABLED = off;
+        expect((await run()).conversionOpen).toBe(true);
+      }
+      for (const on of ['true', 'TRUE', ' True ', '1', 'yes', 'on']) {
+        process.env.KNIGHTS_CONVERSION_DISABLED = on;
+        expect((await run()).conversionOpen).toBe(false);
+      }
     } finally {
-      if (previous === undefined) delete process.env.KNIGHTS_CONVERSION_ENABLED;
-      else process.env.KNIGHTS_CONVERSION_ENABLED = previous;
+      if (previous === undefined) delete process.env.KNIGHTS_CONVERSION_DISABLED;
+      else process.env.KNIGHTS_CONVERSION_DISABLED = previous;
     }
   });
 });
@@ -228,6 +231,31 @@ describe('play load', () => {
     expect(page.progress).toMatchObject({ kind: 'rank', rank: 'Knight' });
   });
 
+  it("gives a rank-up what changed: the new perks and the rank below's, including the daily gold cap", async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 50 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    const page = await run();
+    expect(page.progress).toMatchObject({
+      kind: 'rank',
+      rank: 'Templar',
+      voteWeight: 1.5,
+      goldMultiplier: 1.25,
+      dailyGoldCap: 7500,
+      previous: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+    });
+  });
+
+  it("takes a skipped rank's 'what changed' from the rank the player was last told about", async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Paladin', level: 90 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true });
+    const page = await run();
+    expect(page.progress).toMatchObject({
+      kind: 'rank',
+      rank: 'Paladin',
+      previous: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+    });
+  });
+
   it('keeps Knights on the queue', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
     const page = await run();
@@ -235,20 +263,34 @@ describe('play load', () => {
     expect(getApprentice).not.toHaveBeenCalled();
   });
 
-  it('gives a Knight the day, evaluated at the injected clock, and the recap', async () => {
+  it('gives a Knight the day, evaluated at the injected clock, and no daily popup', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
-    getRecap.mockResolvedValue({ cast: 30 });
 
     const page = await run();
 
     expect(page.daily).toEqual({ votes: 3 });
-    expect(page.recap).toEqual({ cast: 30 });
+    expect(page).not.toHaveProperty('recap');
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,
       rank: 'Knight',
       now: NOW,
     });
-    expect(getRecap).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
+  });
+
+  it("gives a Knight the rail: board position, gap and the Order's activity, read at the injected clock", async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, fervor: 25 });
+    const rail = { standing: { position: 14, total: 312, gap: 38 }, activity: 1240 };
+    railFor.mockResolvedValue(rail);
+
+    expect((await run()).rail).toEqual(rail);
+    expect(railFor).toHaveBeenCalledWith(7, NOW, 25);
+  });
+
+  it('reads no rail for the apprenticeship, which has no board', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    expect((await run()).rail).toBeUndefined();
+    expect(railFor).not.toHaveBeenCalled();
   });
 
   it('keeps the daily loop off the apprenticeship page', async () => {
@@ -408,6 +450,7 @@ describe('play load yes/no questions', () => {
     width: 2,
     height: 3,
     banner: { heading: 'Violence' },
+    category: { heading: 'Violence' },
   };
   beforeEach(() => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
@@ -438,6 +481,7 @@ describe('play load yes/no questions', () => {
       ],
     });
     expect(page.banner).toEqual({ heading: 'Violence' });
+    expect(page.category).toEqual({ heading: 'Violence' });
     expect(JSON.stringify(page)).not.toContain('90417');
   });
 
@@ -455,6 +499,7 @@ describe('play load yes/no questions', () => {
 
     expect(page.item.src).toBe('key-9');
     expect(page.banner).toBeNull();
+    expect(page.category).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
   });
 
@@ -462,6 +507,7 @@ describe('play load yes/no questions', () => {
     const page = await run();
     expect(page.question.key).toBe('q');
     expect(page.banner).toBeNull();
+    expect(page.category).toBeNull();
     expect(pickYesNo).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ userId: 7, rank: 'Knight', share: 0.7, stretch: 8, force: false })
@@ -491,43 +537,6 @@ describe('play load yes/no questions', () => {
     getFeed.mockResolvedValue(null);
     expect((await run()).item).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
-  });
-});
-
-describe('dismissRecap action', () => {
-  const run = (fields: Record<string, string> = {}) =>
-    actions.dismissRecap({
-      locals: { user: { id: 7 } },
-      request: { formData: async () => new URLSearchParams(fields) },
-    } as never);
-
-  it('stores the dismissal for the caller at the injected clock, and clears the opt-out when the box is unticked', async () => {
-    await run();
-    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), {
-      playerId: 7,
-      now: NOW,
-      optOut: false,
-    });
-  });
-
-  it('opts the player out of the popup when the box was ticked at close', async () => {
-    await run({ optOut: 'on' });
-    expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), {
-      playerId: 7,
-      now: NOW,
-      optOut: true,
-    });
-  });
-
-  it('tells the player when it could not be stored', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    dismissRecap.mockRejectedValue(new Error('down'));
-
-    expect(await run()).toMatchObject({
-      status: 500,
-      data: { message: 'Could not dismiss the recap. Try again.', recapFailed: true },
-    });
-    expect(log).toHaveBeenCalled();
   });
 });
 

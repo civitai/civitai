@@ -13,11 +13,12 @@
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
   import Countdown from '$lib/Countdown.svelte';
-  import RecapDialog from '$lib/RecapDialog.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
-  import WatchProgress from '$lib/WatchProgress.svelte';
+  import WatchHairline from '$lib/WatchHairline.svelte';
+  import WatchMeta from '$lib/WatchMeta.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
+  import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress } from './keys';
   import {
     MAX_EXCLUDED,
@@ -41,7 +42,7 @@
     if (data.mode !== 'queue') return null;
     if (local) return local;
     return data.item && data.question
-      ? { item: data.item, question: data.question, banner: data.banner }
+      ? { item: data.item, question: data.question, banner: data.banner, category: data.category }
       : null;
   });
   let yesNo = $derived(
@@ -64,11 +65,7 @@
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
-  // The guide and the rank-up come first; the daily recap waits behind them and opens once they are dismissed.
-  let recapOpen = $derived(
-    data.mode === 'queue' && !!data.recap && !guideOpen && data.progress?.kind !== 'rank'
-  );
-  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank' || recapOpen);
+  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
@@ -412,7 +409,7 @@
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
   let hearts = $derived(heartsLeft(data.status));
   let formMessage = $derived(
-    form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
+    form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
       : null
   );
@@ -448,8 +445,15 @@
 {/snippet}
 
 {#snippet soundToggle()}
-  <button type="button" class="quiet sound" aria-label="Sound" aria-pressed={!soundMuted} onclick={toggleSound}>
-    <Icon name={soundMuted ? 'volume-x' : 'volume-2'} size={14} />{soundMuted ? 'Sound off' : 'Sound on'}
+  <button
+    type="button"
+    class="quiet sound"
+    aria-label={soundMuted ? 'Sound off' : 'Sound on'}
+    title={soundMuted ? 'Sound off, turn on' : 'Sound on, mute'}
+    aria-pressed={!soundMuted}
+    onclick={toggleSound}
+  >
+    <Icon name={soundMuted ? 'volume-x' : 'volume-2'} size={16} />
   </button>
 {/snippet}
 
@@ -476,13 +480,12 @@
       {submit}
     />
   {:else}
-  {#if strip}
-    <WatchProgress
-      label={strip.label}
+  {#if strip && data.mode === 'queue'}
+    <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
+    <WatchMeta
       value={strip.value}
       max={strip.max}
-      note={strip.note}
-      fervor={data.status.fervor}
+      streak={data.daily.streak}
       {hearts}
       maxHearts={data.status.maxSmites}
     />
@@ -497,6 +500,8 @@
     />
   {/if}
 
+  <div class="body">
+  <div class="main">
   {#if data.notices.length > 0}
     <section class="toast" role="status" aria-label="Sanity check">
       <Icon name="triangle-alert" size={18} />
@@ -590,13 +595,21 @@
     </div>
   {:else if view}
     <div class="column">
-      {#if view.banner}
-        <p class="banner" role="status">New questions: {view.banner.heading}</p>
-      {/if}
       <p class="question" title={view.question.prompt}>
         <span class="eyebrow">Question ·</span>
+        {#if view.category}
+          <!-- A new chip (and its one-time glow) only when the category changes; the text is part of the question for screen readers. -->
+          {#key view.category.heading}
+            <span class="chip" class:glow={view.banner !== null}>
+              <span class="vh">Category: </span>{view.category.heading}
+            </span>
+          {/key}
+        {/if}
         <span class="text">{view.question.prompt}</span>
       </p>
+      <span class="vh" role="status" aria-live="polite"
+        >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
+      >
       <div class="stagewrap">
         {#key view.item.key}
           {@const itemKey = view.item.key}
@@ -624,7 +637,7 @@
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={view.item.id} />
           <button type="submit" class="quiet" disabled={submitting}>
-            Skip<span class="space">&nbsp;·&nbsp;Space</span>
+            <Icon name="skip-forward" size={14} />Skip<span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
         {#if !yesNo}
@@ -643,6 +656,11 @@
     {@render levelToast(false)}
     <QueueClear daily={data.daily} />
   {/if}
+  </div>
+  {#if data.mode === 'queue'}
+    <PlayRail status={data.status} daily={data.daily} rail={data.rail} ladder={data.ladder} />
+  {/if}
+  </div>
   {/if}
 </div>
 
@@ -661,17 +679,10 @@
     levels={data.progress.levels}
     voteWeight={data.progress.voteWeight}
     goldMultiplier={data.progress.goldMultiplier}
+    dailyGoldCap={data.progress.dailyGoldCap}
+    previous={data.progress.previous}
+    badge={data.badges.large[data.progress.rank]}
     message={form?.progressFailed ? form.message : null}
-    {submitting}
-    {submit}
-  />
-{:else if recapOpen && data.mode === 'queue'}
-  <RecapDialog
-    recap={data.recap}
-    optOut={false}
-    watch={{ streak: data.daily.streak, size: data.daily.watchSize, done: data.daily.watchDone }}
-    action="?/dismissRecap"
-    message={form?.recapFailed ? form.message : null}
     {submitting}
     {submit}
   />
@@ -684,6 +695,20 @@
     flex: 1 1 auto;
     flex-direction: column;
     min-height: 0;
+  }
+  /* The image column, and from 1200px the single right rail beside it. */
+  .body {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  .main {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
@@ -800,13 +825,37 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .banner {
+  .chip {
     flex: none;
-    margin: 0;
-    padding: 0.25rem 0.75rem;
-    border-left: 3px solid var(--gold);
-    color: var(--gold);
-    font: 600 13px/1.3 var(--io-font-ui);
+    padding: 3px 8px;
+    border: 1px solid color-mix(in srgb, var(--io-gold) 45%, transparent);
+    border-radius: 999px;
+    color: var(--io-gold);
+    font: 600 11px/1 var(--io-font-ui);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .chip.glow {
+    animation: chip-glow 1.8s ease-out 1;
+  }
+  @keyframes chip-glow {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--io-gold) 70%, transparent);
+    }
+    40% {
+      box-shadow: 0 0 12px 3px color-mix(in srgb, var(--io-gold) 55%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+  .vh {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .controls {
@@ -864,6 +913,9 @@
       0 0 14px rgb(224 138 130 / 0.35);
   }
   @media (prefers-reduced-motion: reduce) {
+    .chip.glow {
+      animation: none;
+    }
     .pill,
     .pill:active:not(:disabled),
     .pill.picked,
@@ -938,6 +990,11 @@
   .quiet:hover:not(:disabled) {
     background: none;
     color: var(--io-parchment);
+  }
+  .skip .quiet {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
   .quiet.guide {
     color: var(--io-gold);

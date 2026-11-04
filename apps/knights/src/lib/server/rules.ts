@@ -51,6 +51,11 @@ export function rulesFacts(yesNoJudges: number) {
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
     },
+    fervor: {
+      scale: PROGRESSION.fervorScale,
+      windowDays: PROGRESSION.fervorWindowDays,
+      accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
+    },
     yesNo: { judgesNeeded: yesNoJudges },
     hearts: SMITES.max,
     ratingGuide: ratingGuide(),

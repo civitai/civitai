@@ -136,6 +136,7 @@ const picked = (id: string, key = id): PickedItem => ({
   question: { key: 'q', kind: 'rating', prompt: 'Rate it', options: [] },
   item: { id, key, src: `cdn/${id}`, width: 1, height: 1 },
   banner: null,
+  category: null,
 });
 const never = () => false;
 

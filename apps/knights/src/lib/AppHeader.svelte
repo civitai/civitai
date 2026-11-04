@@ -1,20 +1,20 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { page } from '$app/state';
   import { afterNavigate } from '$app/navigation';
   import Avatar from './Avatar.svelte';
+  import HeaderStats from './HeaderStats.svelte';
   import Icon from './Icon.svelte';
+  import RankBadge from './RankBadge.svelte';
   import RecapButton from './RecapButton.svelte';
   import RestartCareerDialog from './RestartCareerDialog.svelte';
-  import { count } from './format';
   import { rankPill } from './chrome';
-  import { tween } from './motion';
-  import { rewardDeltas } from './rewards';
   import { sound } from './sound';
   import type { PlayerBadge } from './player-badge';
   import type { PlayerStatus } from './server/player-status';
 
   type Streak = { streak: number; shields: number; maxShields: number };
+  type LadderRow = { rank: string; fromLevel: number; accuracyBar: number; minDaysPlayed?: number };
   let {
     player,
     userId = null,
@@ -24,6 +24,9 @@
     status,
     streak,
     recapUnseen = false,
+    goldPerBuzz,
+    ladder,
+    badges,
   }: {
     player: PlayerBadge | null;
     /** Keys this player's sound setting in the browser. */
@@ -36,6 +39,10 @@
     streak?: Streak;
     /** Today's recap has not been seen: the recap button wears a dot. */
     recapUnseen?: boolean;
+    goldPerBuzz: number;
+    ladder: LadderRow[];
+    /** Rank badge image addresses by rank; a rank without one (Paladin) shows the crest. */
+    badges: { small: Record<string, string> };
   } = $props();
 
   let open = $state(false);
@@ -49,8 +56,7 @@
     { href: '/judgments', label: 'Judgments', icon: 'scroll-text' as const },
     ...(conversionOpen ? [{ href: '/gold', label: 'Convert gold', icon: 'coins' as const }] : []),
     { href: '/leaderboard', label: 'Leaderboard', icon: 'crown' as const },
-    { href: '/ranks', label: 'Ranks', icon: 'shield' as const },
-    { href: '/rules', label: 'Rules', icon: 'book-open' as const },
+    { href: '/codex', label: 'Codex', icon: 'book-open' as const },
   ]);
 
   async function toggle() {
@@ -87,34 +93,6 @@
     sound.attach(window);
     sound.setPlayer(userId);
   });
-
-  // What a vote just earned floats up from its chip and the gold counter ticks to its new value. Ambient only: nothing
-  // here waits on, or blocks, the next answer.
-  let shownGold = $state(untrack(() => status?.goldEarned ?? 0));
-  let floater = $state<{ id: number; xp: number; gold: number } | null>(null);
-  let previous: PlayerStatus | null = null;
-  let cancelTick: (() => void) | undefined;
-  let floatTimer: ReturnType<typeof setTimeout> | undefined;
-  let floatId = 0;
-
-  $effect(() => {
-    const next = status;
-    if (!next) return;
-    const deltas = rewardDeltas(previous, next);
-    previous = next;
-    if (deltas.goldEarned > 0) sound.play('gold');
-    cancelTick?.();
-    cancelTick = tween(untrack(() => shownGold), next.goldEarned, 360, (value) => (shownGold = Math.round(value)));
-    if (deltas.xp > 0 || deltas.gold > 0) {
-      floater = { id: ++floatId, xp: deltas.xp, gold: deltas.gold };
-      clearTimeout(floatTimer);
-      floatTimer = setTimeout(() => (floater = null), 500);
-    }
-  });
-  $effect(() => () => {
-    cancelTick?.();
-    clearTimeout(floatTimer);
-  });
 </script>
 
 <svelte:window {onkeydown} />
@@ -127,35 +105,7 @@
   </a>
 
   {#if status}
-    <ul class="stats" aria-label="Your standing">
-      {#if streak}
-        <li
-          class="pill wide"
-          title="Shields: {streak.shields}/{streak.maxShields}. A shield covers one missed day."
-        >
-          <span class="flame"><Icon name="flame" /></span>
-          {streak.streak}
-          {streak.streak === 1 ? 'day' : 'days'} streak
-        </li>
-      {/if}
-      <li
-        class="pill wide"
-        title="Gold earned: {count(status.goldEarned)}, pending: {count(status.goldPending)}"
-      >
-        <Icon name="coins" />
-        {count(shownGold)}
-        {#if floater && floater.gold > 0}
-          {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.gold)} gold</span>{/key}
-        {/if}
-      </li>
-      <li class="pill" title="Level {status.level}: {status.xpIntoLevel}/{status.xpForNextLevel} XP">
-        <Icon name="swords" />
-        {rankPill(status)}
-        {#if floater && floater.xp > 0}
-          {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.xp)} XP</span>{/key}
-        {/if}
-      </li>
-    </ul>
+    <HeaderStats {status} {streak} {goldPerBuzz} {conversionOpen} {ladder} />
   {/if}
 
   {#if player}
@@ -170,7 +120,12 @@
         bind:this={trigger}
         onclick={toggle}
       >
-        <Avatar src={player.avatarUrl} name={player.username} size={28} />
+        <span class="portrait">
+          <Avatar src={player.avatarUrl} name={player.username} size={32} />
+          {#if status}
+            <span class="rank-badge"><RankBadge rank={status.rank} src={badges.small[status.rank]} size={16} /></span>
+          {/if}
+        </span>
         <span class="name">{player.username}</span>
       </button>
 
@@ -252,44 +207,6 @@
   .wordmark {
     display: none;
   }
-  .stats {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .pill {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 999px;
-    background: var(--io-bg);
-    color: var(--io-parchment);
-    font: 600 13px/1.2 var(--io-font-ui);
-    white-space: nowrap;
-  }
-  .pill :global(svg) {
-    color: var(--io-gold);
-  }
-  .floater {
-    --rise: -14px;
-    position: absolute;
-    bottom: 70%;
-    left: 50%;
-    translate: -50% 0;
-    color: var(--io-gold);
-    font: 700 12px/1 var(--io-font-ui);
-    pointer-events: none;
-    animation: mo-float 480ms var(--ease-out-quart) both;
-  }
-  .pill .flame :global(svg) {
-    color: var(--io-crimson-text);
-  }
   .account {
     position: relative;
   }
@@ -308,6 +225,21 @@
   .trigger:hover:not(:disabled) {
     background: none;
     color: var(--io-gold);
+  }
+  .portrait {
+    position: relative;
+    display: inline-flex;
+    width: 36px;
+    height: 34px;
+  }
+  .rank-badge {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: inline-flex;
+    border: 1.5px solid var(--io-gold);
+    border-radius: 50%;
+    background: var(--io-surface);
   }
   .name {
     max-width: 12rem;
@@ -420,8 +352,8 @@
   @media (max-width: 40rem) {
     header {
       height: 52px;
-      gap: 8px;
-      padding: 0 16px;
+      gap: 6px;
+      padding: 0 12px;
     }
     .brand {
       gap: 8px;
@@ -431,26 +363,13 @@
       height: 20px;
     }
     .title,
-    .wide,
     .name {
       display: none;
     }
     .wordmark {
       display: inline;
-      font-size: 14px;
-      letter-spacing: 1px;
-    }
-    .stats {
-      gap: 8px;
-    }
-    .pill {
-      gap: 5px;
-      padding: 5px 10px;
-      font-size: 12px;
-    }
-    .pill :global(svg) {
-      width: 14px;
-      height: 14px;
+      font-size: 13px;
+      letter-spacing: 0.5px;
     }
     .trigger {
       min-width: 44px;
