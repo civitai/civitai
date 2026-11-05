@@ -97,7 +97,11 @@ import {
   storylineShareMinChoices,
   toStorylineForkShares,
 } from '~/shared/utils/storyline';
-import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import type {
+  StorylineFollowScope,
+  StorylineStatus,
+  StorylineWhoCanContinue,
+} from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
 import {
   isAnswerableParentChapter,
@@ -920,6 +924,7 @@ export async function createStoryline({
         data: { userId, title, maxNsfwLevel, whoCanContinue, sparkImageId },
         select: { id: true },
       });
+      await tx.storylineFollow.create({ data: { storylineId: storyline.id, userId } });
       const root = postId
         ? await createRootChapter(tx, { storylineId: storyline.id, postId, userId })
         : null;
@@ -2868,11 +2873,71 @@ export async function acceptStorylineInvite({
     });
     throw throwNotFoundError(INVITE_CLOSED);
   }
-  const { count } = await dbWrite.storylineCollaborator.updateMany({
-    where: { storylineId, userId, acceptedAt: null },
-    data: { acceptedAt: new Date() },
+  const accepted = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.storylineCollaborator.updateMany({
+      where: { storylineId, userId, acceptedAt: null },
+      data: { acceptedAt: new Date() },
+    });
+    // Accepting is a fresh act, so it follows again someone who unfollowed before; a follow
+    // they already hold keeps its scope.
+    if (count)
+      await tx.storylineFollow.upsert({
+        where: { storylineId_userId: { storylineId, userId } },
+        create: { storylineId, userId },
+        update: {},
+      });
+    return count > 0;
   });
-  if (!count) throw throwNotFoundError(INVITE_CLOSED);
+  if (!accepted) throw throwNotFoundError(INVITE_CLOSED);
+}
+
+/**
+ * Follows a storyline the user may read, or changes the scope of a follow they hold. A takedown or
+ * a hidden chapter 1 refuses as reading does (`assertStorylineVisible`).
+ */
+export async function followStoryline({
+  storylineId,
+  scope,
+  viewer,
+  browsingLevel,
+}: {
+  storylineId: number;
+  scope: StorylineFollowScope;
+  viewer: NonNullable<Viewer>;
+  browsingLevel: number;
+}) {
+  await assertStorylineVisible(storylineId, viewer, browsingLevel);
+  await dbWrite.storylineFollow.upsert({
+    where: { storylineId_userId: { storylineId, userId: viewer.id } },
+    create: { storylineId, userId: viewer.id, scope },
+    update: { scope },
+  });
+  return { scope };
+}
+
+export async function unfollowStoryline({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  await dbWrite.storylineFollow.deleteMany({ where: { storylineId, userId } });
+}
+
+/** The viewer's follow scope for a storyline, null when they do not follow it. */
+export async function getStorylineFollow({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  const follow = await dbRead.storylineFollow.findUnique({
+    where: { storylineId_userId: { storylineId, userId } },
+    select: { scope: true },
+  });
+  return { scope: follow?.scope ?? null };
 }
 
 export async function removeStorylineCollaborator({
@@ -4260,7 +4325,14 @@ async function getChosenStorylineImages(
 /** Deepest offset the offset-paged orders (all but newest) page to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine' | 'participated';
+export type StorylineFeedFilter =
+  | 'all'
+  | 'ongoing'
+  | 'complete'
+  | 'open'
+  | 'mine'
+  | 'participated'
+  | 'following';
 export type StorylineFeedSort = 'newest' | 'mostChapters' | 'recentlyUpdated';
 
 /**
@@ -4286,7 +4358,8 @@ const storylineLastChapterAtSql = Prisma.sql`(
  * "open" means accepting continuations from this reader: not Complete, the placement layer's
  * mode (the storyline's, else its owner's, else 'review') not 'off', and the reader among those
  * it takes them from. "participated" is the storylines the reader takes part in
- * (`storylineParticipantSql`), an accepted collaborator with no chapter yet included.
+ * (`storylineParticipantSql`), an accepted collaborator with no chapter yet included;
+ * "following" those they follow.
  */
 export async function getStorylinesInfinite({
   filter,
@@ -4329,6 +4402,10 @@ export async function getStorylinesInfinite({
   if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
   if (filter === 'participated')
     where.push(storylineParticipantSql(Prisma.sql`${viewerId}`, Prisma.sql`st.id`));
+  if (filter === 'following')
+    where.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "StorylineFollow" sf WHERE sf."storylineId" = st.id AND sf."userId" = ${viewerId}
+    )`);
   if (userId) where.push(Prisma.sql`st."userId" = ${userId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.

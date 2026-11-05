@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import {
+  StorylineFollowScope,
+  StorylineStatus,
+  StorylineWhoCanContinue,
+} from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
 import { imageInputSchema } from '~/server/schema/image.schema';
 import {
@@ -152,8 +156,16 @@ export const joinStorylineEarlyAccessSchema = z
   .object({ storylineId: z.number().int().positive().optional() })
   .default({});
 
+export const followStorylineSchema = z.object({
+  storylineId: z.number().int().positive(),
+  scope: z.nativeEnum(StorylineFollowScope).default(StorylineFollowScope.Canon),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine', 'participated']).default('all'),
+  filter: z
+    .enum(['all', 'ongoing', 'complete', 'open', 'mine', 'participated', 'following'])
+    .default('all'),
   sort: z.enum(['newest', 'mostChapters', 'recentlyUpdated']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),

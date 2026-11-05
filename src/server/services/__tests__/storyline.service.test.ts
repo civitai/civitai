@@ -523,6 +523,14 @@ describe('createStoryline', () => {
     });
   });
 
+  it('has the owner follow their new storyline', async () => {
+    w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+    await createStoryline({ postId: 500, title: 't', maxNsfwLevel: NsfwLevel.R, userId: OWNER });
+    expect(w.storylineFollow.create).toHaveBeenCalledWith({
+      data: { storylineId: 10, userId: OWNER },
+    });
+  });
+
   it('turns a lost race on the same post into a 400, not a 500', async () => {
     w.storylineChapter.create.mockRejectedValue(
       Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }) as never
@@ -1044,6 +1052,18 @@ describe('authorization', () => {
         await expect(
           acceptStorylineInvite({ storylineId: 10, userId: STRANGER })
         ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(w.storylineFollow.upsert).not.toHaveBeenCalled();
+      });
+
+      // Even after an earlier unfollow; a follow they already hold keeps its scope.
+      it('follows the storyline on accepting', async () => {
+        w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
+        await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+        expect(w.storylineFollow.upsert).toHaveBeenCalledWith({
+          where: { storylineId_userId: { storylineId: 10, userId: COLLABORATOR } },
+          create: { storylineId: 10, userId: COLLABORATOR },
+          update: {},
+        });
       });
 
       // Otherwise a blocked user could join, listed to everyone but the owner who blocked them.
