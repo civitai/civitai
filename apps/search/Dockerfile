@@ -1,0 +1,50 @@
+# search (apps/search) — Fastify search service in front of Qdrant, built from the pnpm monorepo. Multi-stage
+# node:22-alpine, corepack pnpm, tsup build, `pnpm deploy --prod` runtime. No Prisma client, so the
+# install can --ignore-scripts (no db:generate needed).
+#
+# IMPORTANT: build with the REPO ROOT as the context, pointing at this file:
+#   docker build -f apps/search/Dockerfile -t civitai-search .
+#
+# Runtime needs REAL env vars (see apps/search/.env.example / the deploy secret) — the .env file is
+# dev-only; the prod node server reads process.env.
+
+##### deps — filtered install (no postinstall scripts; this app never imports Prisma) #############
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
+RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
+WORKDIR /app
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY patches ./patches
+COPY packages ./packages
+COPY apps/search/package.json ./apps/search/package.json
+
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --ignore-scripts
+
+##### build — tsup bundle → apps/search/dist/server.js ###########################################
+FROM deps AS build
+WORKDIR /app
+COPY packages ./packages
+COPY apps/search ./apps/search
+RUN pnpm --filter @civitai/search-app build
+
+##### prod-deps — pruned, flattened production node_modules for the runtime #######################
+FROM deps AS prod-deps
+WORKDIR /app
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm --filter @civitai/search-app deploy --prod --legacy --ignore-scripts /app/deploy
+
+##### runtime ####################################################################################
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001
+
+COPY --from=prod-deps --chown=nodeapp:nodejs /app/deploy/node_modules ./node_modules
+COPY --from=build --chown=nodeapp:nodejs /app/apps/search/dist ./dist
+COPY --from=build --chown=nodeapp:nodejs /app/apps/search/package.json ./package.json
+
+USER nodeapp
+EXPOSE 3000
+ENV PORT=3000
+CMD ["node", "dist/server.js"]
