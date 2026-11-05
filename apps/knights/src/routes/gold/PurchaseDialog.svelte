@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { ComponentProps } from 'svelte';
-  import { enhance } from '$app/forms';
+  import { untrack, type ComponentProps } from 'svelte';
+  import { applyAction, enhance } from '$app/forms';
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { modal } from '$lib/modal';
-  import { cosmeticTypeLabel, monthsLabel, tierName } from '$lib/shop-view';
+  import { cardBlurb, cardTitle, cosmeticIcon } from '$lib/shop-view';
   import '$lib/overlay.css';
   import type { PageData } from './$types';
 
@@ -21,32 +21,19 @@
     spendable: number;
     requestKey: string;
     onclose: () => void;
-    /** The server answered: the purchase is made (or reserved), and the page can run its sequence. */
+    /** Fires only once the server has confirmed. */
     onbought: (card: Card, pending: boolean) => void;
   } = $props();
 
+  // A refused purchase replays its answer for the same key, so a fresh try needs a fresh key.
+  let key = $state(untrack(() => requestKey));
   let submitting = $state(false);
   let problem = $state<string | null>(null);
   let closing = $state(false);
 
-  const icon = $derived<ComponentProps<typeof Icon>['name']>(
-    card.kind === 'buzz_pack' ? 'zap' : card.kind === 'membership' ? 'crown' : 'sparkles'
-  );
-  const title = $derived(
-    card.kind === 'buzz_pack'
-      ? `Buzz pack · ${count(card.buzz ?? 0)}`
-      : card.kind === 'membership'
-      ? `${tierName(card.tier)} membership · ${monthsLabel(card.months)}`
-      : card.name
-  );
-  const blurb = $derived(
-    card.description ||
-      (card.kind === 'buzz_pack'
-        ? `${count(card.buzz ?? 0)} Yellow Buzz, sent to your Civitai wallet.`
-        : card.kind === 'membership'
-        ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(card.months)}. Stacks after any membership you already have.`
-        : cosmeticTypeLabel(card.cosmeticType))
-  );
+  const icon = $derived<ComponentProps<typeof Icon>['name']>(cosmeticIcon(card.kind, card.cosmeticType));
+  const title = $derived(cardTitle(card));
+  const blurb = $derived(cardBlurb(card));
   const delivered = $derived(card.kind !== 'cosmetic');
   const cancel = () => {
     if (!submitting) onclose();
@@ -91,9 +78,15 @@
             }
             if (result.type === 'failure') {
               problem = String(result.data?.message ?? 'That purchase did not go through.');
+              key = crypto.randomUUID();
+              return;
+            }
+            if (result.type === 'redirect' || result.type === 'error') {
+              await applyAction(result);
               return;
             }
             problem = 'That purchase did not go through. Try again.';
+            key = crypto.randomUUID();
           } finally {
             submitting = false;
           }
@@ -102,7 +95,7 @@
     >
       <input type="hidden" name="itemId" value={card.id} />
       <input type="hidden" name="price" value={card.price} />
-      <input type="hidden" name="requestKey" value={requestKey} />
+      <input type="hidden" name="requestKey" value={key} />
       <button type="submit" class="ov-primary buy" disabled={submitting} data-autofocus class:working={submitting}>
         {submitting ? 'Buying…' : `Buy for ${count(card.price)} gold`}
       </button>

@@ -210,7 +210,6 @@ describe('buying', () => {
     expect(await post(FIELDS)).toMatchObject({
       ok: true,
       pending: true,
-      message: expect.stringContaining('never charge twice'),
     });
   });
 

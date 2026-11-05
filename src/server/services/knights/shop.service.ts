@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import type { CosmeticType } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
@@ -15,6 +16,12 @@ export async function refreshKnightsShopCosmetics(userId: number) {
 
 export class KnightsCosmeticRefused extends Error {}
 
+const EQUIP_REFUSALS = [
+  "You don't have that cosmetic",
+  'Stickers cannot be equipped',
+  'Event decorations are placed',
+];
+
 /** Equips through the main app's `equipCosmetic`: ownership, event-decoration and withheld-cosmetic rules, caches and the worn-cosmetic queue. */
 export async function equipKnightsShopCosmetic({
   userId,
@@ -26,7 +33,14 @@ export async function equipKnightsShopCosmetic({
   try {
     await equipCosmetic({ userId, cosmeticId });
   } catch (error) {
-    throw new KnightsCosmeticRefused((error as Error).message);
+    // Only the service's own refusals are final; a database or network failure stays a 5xx the caller can retry.
+    if (error instanceof TRPCError && error.code === 'BAD_REQUEST') {
+      throw new KnightsCosmeticRefused(error.message);
+    }
+    if (error instanceof Error && EQUIP_REFUSALS.some((text) => error.message.startsWith(text))) {
+      throw new KnightsCosmeticRefused(error.message);
+    }
+    throw error;
   }
 }
 

@@ -2,8 +2,6 @@ import { DEALS_PER_DAY, DEAL_PERCENT, ROTATION_SIZE } from './config';
 
 export { DEAL_PERCENT, ROTATION_SIZE };
 
-export type ShopKind = 'buzz_pack' | 'cosmetic' | 'membership';
-
 export type ShopItem = {
   id: string;
   kind: string;
@@ -43,7 +41,8 @@ function hash(text: string): number {
 const byHash = (salt: string) => (a: ShopItem, b: ShopItem) =>
   hash(`${salt}:${a.id}`) - hash(`${salt}:${b.id}`) || (a.id < b.id ? -1 : 1);
 
-export const dealPrice = (price: number) => Math.floor((price * (100 - DEAL_PERCENT)) / 100);
+export const dealPrice = (price: number) =>
+  Math.max(1, Math.floor((price * (100 - DEAL_PERCENT)) / 100));
 
 /**
  * What is on sale on one UTC day. Fixed items (not `rotating`) are always in stock; of the rotating ones a seeded

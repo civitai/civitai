@@ -1389,7 +1389,8 @@ describe('grantMembershipMonths', () => {
     expect(result).toEqual({ outcome: 'already' });
     expect(mockDbWrite.customerSubscription.create).not.toHaveBeenCalled();
     expect(mockDbWrite.customerSubscription.update).not.toHaveBeenCalled();
-    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
+    // a replay repeats the cache bust, in case the first try died after committing
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(42);
   });
 
   it('queues a second purchase behind the first, remembering both keys', async () => {

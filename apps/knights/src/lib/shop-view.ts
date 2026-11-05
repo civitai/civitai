@@ -67,3 +67,53 @@ export const cosmeticTypeLabel = (type: string | null) =>
   type && type in COSMETIC_TYPE
     ? COSMETIC_TYPE[type as keyof typeof COSMETIC_TYPE]
     : type ?? 'Cosmetic';
+
+type CardLike = {
+  kind: string;
+  name: string;
+  description: string;
+  buzz: number | null;
+  tier: string | null;
+  months: number | null;
+  cosmeticType: string | null;
+  uses: number | null;
+};
+
+export const cardTitle = (card: CardLike) =>
+  card.kind === 'buzz_pack'
+    ? `Buzz pack · ${count(card.buzz ?? 0)}`
+    : card.kind === 'membership'
+    ? `${tierName(card.tier)} membership · ${monthsLabel(card.months)}`
+    : card.name;
+
+export const cardBlurb = (card: CardLike) =>
+  card.description ||
+  (card.kind === 'buzz_pack'
+    ? `${count(card.buzz ?? 0)} Yellow Buzz, sent to your Civitai wallet.`
+    : card.kind === 'membership'
+    ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(
+        card.months
+      )}. Stacks after any membership you already have.`
+    : card.cosmeticType === 'Sticker'
+    ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
+    : cosmeticTypeLabel(card.cosmeticType));
+
+/** The icon name for a card or an owned cosmetic. */
+export const cosmeticIcon = (
+  kind: string | null,
+  type: string | null
+): 'zap' | 'crown' | 'sticker' | 'award' | 'id-card' | 'sparkles' =>
+  kind === 'buzz_pack'
+    ? 'zap'
+    : kind === 'membership'
+    ? 'crown'
+    : type === 'Sticker'
+    ? 'sticker'
+    : type === 'Badge'
+    ? 'award'
+    : type === 'NamePlate'
+    ? 'id-card'
+    : 'sparkles';
+
+export const PENDING_TEXT =
+  'Your gold is reserved. Civitai has not confirmed it yet; we retry automatically and never charge twice.';

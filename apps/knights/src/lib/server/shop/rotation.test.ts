@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEAL_PERCENT,
+  dealPrice,
   ROTATION_SIZE,
   msUntilNextDay,
   stockFor,
@@ -77,6 +78,11 @@ describe('the daily rotation', () => {
       expect(deal.price).toBe(Math.floor((deal.item.price * (100 - DEAL_PERCENT)) / 100));
     }
     expect(stock.filter((s) => s.deal).map((s) => s.item.id)).toEqual(deals.map((d) => d.item.id));
+  });
+
+  it('never prices a deal at zero gold', () => {
+    expect(dealPrice(1)).toBe(1);
+    expect(dealPrice(1000)).toBe(800);
   });
 
   it('copes with a catalog smaller than the rotation', () => {

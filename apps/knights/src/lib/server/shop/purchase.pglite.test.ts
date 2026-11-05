@@ -202,6 +202,20 @@ describe('a Buzz pack', () => {
     expect(await buy('badge-seal', { deps })).toMatchObject({ status: 'granted' });
   });
 
+  it('leaves a pending pack alone, asking Buzz for nothing, when a replay arrives with the kill switch on', async () => {
+    const down = fakeBuzz({ failFirst: true });
+    await buy('buzz-50', { key: 'closed-replay', deps: defaultDeps({ buzz: down.port }) });
+    const buzz = fakeBuzz();
+
+    const replay = await buy('buzz-50', {
+      key: 'closed-replay',
+      deps: defaultDeps({ buzz: buzz.port, buzzPacksOpen: false }),
+    });
+
+    expect(replay).toMatchObject({ status: 'pending', replayed: true });
+    expect(buzz.grantYellow).not.toHaveBeenCalled();
+  });
+
   it('loses a pending pack to a career reset the way a conversion does, and does not give it back', async () => {
     const buzz = fakeBuzz({ failFirst: true });
     await buy('buzz-50', { deps: defaultDeps({ buzz: buzz.port }) });

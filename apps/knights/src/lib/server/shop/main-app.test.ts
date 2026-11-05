@@ -31,14 +31,17 @@ describe('the main app port', () => {
     ]);
   });
 
-  it.each([408, 429, 500, 502])('treats a %s as unknown, to retry', async (status) => {
-    const error = await port(answer(status, {}) as never)
-      .grantMembership(grant)
-      .catch((e) => e);
+  it.each([400, 401, 404, 408, 429, 500, 502])(
+    'treats a %s as unknown, to retry',
+    async (status) => {
+      const error = await port(answer(status, {}) as never)
+        .grantMembership(grant)
+        .catch((e) => e);
 
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(MainAppRejectedError);
-  });
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(MainAppRejectedError);
+    }
+  );
 
   it('refuses an outcome it does not know instead of calling the grant done', async () => {
     await expect(

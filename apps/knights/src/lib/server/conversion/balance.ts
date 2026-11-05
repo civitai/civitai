@@ -8,7 +8,7 @@ export type GoldBalance = {
   convertible: number;
   /** Everything earned and not yet converted, while the player is held. */
   frozen: number;
-  /** Gold reserved by a conversion Buzz, or a membership purchase the main app, has not confirmed yet. */
+  /** Gold held by a pending Buzz conversion or an unconfirmed membership purchase. */
   onItsWay: number;
   /** Gold Buzz has paid for. */
   converted: number;
@@ -29,9 +29,18 @@ type Row = {
   goldSpent?: number;
 };
 
+/** What a player can spend or convert right now (before the hold check): earned gold not yet converted, reserved or spent. */
+export const spendableOf = ({
+  goldEarned,
+  goldConverted,
+}: {
+  goldEarned: number;
+  goldConverted: number;
+}) => Math.max(0, goldEarned - goldConverted);
+
 /** `goldConverted` counts reservations too, so convertible and frozen already exclude gold that is on its way. */
 export function balanceOf(row: Row, held: boolean): GoldBalance {
-  const unconverted = Math.max(0, row.goldEarned - row.goldConverted);
+  const unconverted = spendableOf(row);
   const convertible = held ? 0 : unconverted;
   const buzz = Math.floor(convertible / CONVERSION.goldPerBuzz);
   return {

@@ -5,11 +5,14 @@
   import Icon from '$lib/Icon.svelte';
   import PageNav from '$lib/PageNav.svelte';
   import { reducedMotion, tween } from '$lib/motion';
+  import { PENDING_TEXT } from '$lib/shop-view';
   import PurchaseDialog from './PurchaseDialog.svelte';
   import ShopCard from './ShopCard.svelte';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
+  /** The whole purchase sequence of the design (M9): skippable at any point. */
+  const SEQUENCE_MS = 720;
 
   let { data }: { data: PageData } = $props();
   const balance = $derived(data.balance);
@@ -25,11 +28,15 @@
   let nowMs = $state(untrack(() => Date.parse(data.now)));
   const msLeft = $derived(data.shop ? Date.parse(data.shop.refreshesAt) - nowMs : 0);
 
-  // The purse shows what the server last confirmed; a purchase counts it down, never before.
-  let shown = $state(untrack(() => data.balance.convertible));
+  // The purse shows what the server last confirmed. Only a purchase's count-down overlays it, and only after the server answered.
+  let counting = $state<number | null>(null);
+  const shown = $derived(counting ?? balance.convertible);
+  let openedWith = 0;
+  let stopSequence = () => {};
   let floater = $state<{ amount: number; key: number } | null>(null);
   let stamped = $state<string | null>(null);
   let skipped = $state(false);
+  let reloadedFor = '';
   let confirming = $state<Card | null>(null);
   let requestKey = $state('');
   let short = $state<{ id: string; key: number; by: number } | null>(null);
@@ -40,9 +47,16 @@
   onMount(() => {
     const timer = setInterval(() => {
       nowMs = Date.now() + skew;
-      if (data.shop && Date.parse(data.shop.refreshesAt) - nowMs <= 0) void invalidateAll();
+      // once per day's stock: a reload that does not move `refreshesAt` must not be repeated every second
+      if (data.shop && data.shop.refreshesAt !== reloadedFor && Date.parse(data.shop.refreshesAt) - nowMs <= 0) {
+        reloadedFor = data.shop.refreshesAt;
+        void invalidateAll();
+      }
     }, 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      stopSequence();
+    };
   });
 
   function openConfirm(card: Card) {
@@ -54,18 +68,20 @@
     }
     short = null;
     requestKey = crypto.randomUUID();
+    openedWith = balance.convertible;
     confirming = card;
   }
 
   function sequence(card: Card, pending: boolean) {
+    stopSequence();
     confirming = null;
-    const from = shown;
+    const from = openedWith;
     const to = balance.convertible;
     stamped = card.id;
     noticePending = pending;
     noticeInventory = card.kind === 'cosmetic' && !pending;
     notice = pending
-      ? 'Your gold is reserved. Civitai has not confirmed it yet; we retry automatically and never charge twice.'
+      ? PENDING_TEXT
       : card.kind === 'cosmetic'
       ? `${card.name} is yours. Equip it from your inventory.`
       : card.kind === 'membership'
@@ -73,29 +89,32 @@
       : `${count(card.buzz ?? 0)} Buzz sent to your Civitai wallet.`;
     if (!reducedMotion() && from !== to) floater = { amount: from - to, key: Date.now() };
     skipped = false;
-    const cancel = tween(from, to, 360, (value) => (shown = Math.round(value)));
+    counting = from;
+    const cancel = tween(from, to, 360, (value) => (counting = Math.round(value)));
     const events = ['pointerdown', 'keydown'] as const;
     const finish = () => {
+      cancel();
       for (const event of events) window.removeEventListener(event, skip, true);
       clearTimeout(timer);
+      counting = null;
       floater = null;
+      stopSequence = () => {};
     };
     // Any click or key press jumps to the end state: the count lands, the stamp and the floater go.
     function skip() {
-      cancel();
-      shown = to;
       skipped = true;
       finish();
     }
-    const timer = setTimeout(finish, 720);
+    const timer = setTimeout(finish, SEQUENCE_MS);
     for (const event of events) window.addEventListener(event, skip, true);
+    stopSequence = finish;
   }
 
   const dayFormat = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   const STATUS = {
     pending: { label: 'On its way', tone: 'open' },
     granted: { label: 'Delivered', tone: 'paid' },
-    failed: { label: 'Refunded', tone: 'failed' },
+    failed: { label: 'Not delivered', tone: 'failed' },
   } as const;
   const statusOf = (status: string) =>
     status in STATUS ? STATUS[status as keyof typeof STATUS] : { label: status, tone: '' };
@@ -115,7 +134,7 @@
     <div class="purse" aria-label="Your gold">
       <div class="figure">
         <p class="label">Spendable gold</p>
-        <p class="value" aria-live="polite">
+        <p class="value">
           <Icon name="coins" size={26} /><span>{count(shown)}</span>
           {#key floater?.key}
             {#if floater}<span class="floater" aria-hidden="true">−{count(floater.amount)}</span>{/if}

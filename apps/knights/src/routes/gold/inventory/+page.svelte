@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { count, formatDate } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import { tierName } from '$lib/shop-view';
+  import { cosmeticIcon, cosmeticTypeLabel, tierName } from '$lib/shop-view';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -32,14 +32,8 @@
       ? isDecoration(item.type)
       : item.type === filter;
   const shown = $derived(data.items.filter(matches));
-  const iconOf = (item: Item): IconName =>
-    item.type === 'Sticker' ? 'sticker' : item.type === 'Badge' ? 'award' : item.type === 'NamePlate' ? 'id-card' : 'sparkles';
-  const typeLabel = (item: Item) =>
-    item.type === 'ProfileDecoration' || item.type === 'CardDecoration'
-      ? 'Avatar decoration'
-      : item.type === 'NamePlate'
-      ? 'Nameplate'
-      : item.type;
+  const iconOf = (item: Item): IconName => cosmeticIcon(null, item.type);
+  const typeLabel = (item: Item) => cosmeticTypeLabel(item.type);
   const metaOf = (item: Item) =>
     [
       typeLabel(item),
@@ -99,7 +93,9 @@
   {/if}
 
   {#if filter !== 'membership'}
-    {#if shown.length === 0}
+    {#if data.shopOpen && shown.length === 0 && data.items.length > 0}
+      <p class="empty">Nothing in this filter. Pick All to see everything you own.</p>
+    {:else if data.shopOpen && shown.length === 0}
       <p class="empty">Nothing here yet. <a href="/gold">Visit the shop</a>.</p>
     {:else}
       <ul class="grid">

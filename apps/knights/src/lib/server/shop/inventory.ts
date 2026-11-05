@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { RANK_BADGE_COSMETICS } from '../rank-badges';
+import { cosmeticImageKey } from './cosmetics';
 
 export type InventoryItem = {
   cosmeticId: number;
@@ -58,7 +59,6 @@ export async function listInventory(db: Kysely<DB>, playerId: number): Promise<I
   for (const row of rows) {
     const existing = byCosmetic.get(row.id);
     const sticker = row.type === 'Sticker';
-    const url = (row.data as { url?: unknown } | null)?.url;
     const item: InventoryItem = existing ?? {
       cosmeticId: row.id,
       name: row.name,
@@ -66,7 +66,7 @@ export async function listInventory(db: Kysely<DB>, playerId: number): Promise<I
       equipped: false,
       uses: sticker ? 0 : null,
       origin: row.fromShop ? 'shop' : 'rank',
-      imageKey: typeof url === 'string' && url ? url : null,
+      imageKey: cosmeticImageKey(row.data),
     };
     item.equipped ||= row.equippedAt !== null;
     if (sticker) {

@@ -8,7 +8,7 @@ export const conversionEnabled = () =>
     (env.KNIGHTS_CONVERSION_DISABLED ?? '').trim().toLowerCase()
   );
 
-/** The gold shop is open unless `KNIGHTS_SHOP_DISABLED` is `true`, `1`, `yes` or `on` (any case). Gold still accrues. Buzz packs have their own switch, `conversionEnabled()`. */
+/** Closes the shop only; gold still accrues. Buzz packs have their own switch, `conversionEnabled()`. */
 export const shopEnabled = () =>
   !['true', '1', 'yes', 'on'].includes((env.KNIGHTS_SHOP_DISABLED ?? '').trim().toLowerCase());
 

@@ -1,7 +1,4 @@
-/**
- * The placeholder catalog for dev. Prices are placeholders until the price sheet is signed off; they live in
- * `KnightsShopItem`, so changing one is an UPDATE, not a deploy. The seed never overwrites a row that exists.
- */
+/** Dev catalog. Prices live in `KnightsShopItem`, so changing one is an UPDATE, not a deploy; the seed never overwrites an existing row. */
 export type SeedItem = {
   id: string;
   kind: 'buzz_pack' | 'cosmetic' | 'membership';

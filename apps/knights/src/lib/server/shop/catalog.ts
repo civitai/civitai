@@ -1,7 +1,8 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { rankIndex } from '../ranks';
-import { stockFor, utcDay, type ShopItem } from './rotation';
+import { cosmeticImageKey, holdingBlocksPurchase, stickerUses } from './cosmetics';
+import { msUntilNextDay, stockFor, utcDay, type ShopItem } from './rotation';
 
 /** Why a card cannot be bought right now; `available` means it can (affordability is the player's gold, checked at the press). */
 export type CardState = 'available' | 'owned' | 'rank' | 'sold-out' | 'closed';
@@ -33,8 +34,6 @@ export type ShopView = {
   refreshesAt: string;
   cards: ShopCard[];
 };
-
-const dataOf = (data: unknown) => (data ?? {}) as { uses?: unknown; url?: unknown };
 
 /** The shop as one player sees it today: the day's stock and deals, each card with what stops the player buying it. */
 export async function loadShop(
@@ -87,17 +86,13 @@ export async function loadShop(
     if (item.kind === 'cosmetic' && !cosmetic) return [];
     const held = owned.filter((row) => row.cosmeticId === item.cosmeticId);
     const isSticker = cosmetic?.type === 'Sticker';
-    const data = dataOf(cosmetic?.data);
-    const uses =
-      isSticker && typeof data.uses === 'number' && data.uses > 0 ? Math.floor(data.uses) : null;
+    const uses = isSticker ? stickerUses(cosmetic?.data) : null;
 
     let state: CardState = 'available';
     if (item.kind === 'buzz_pack' && !buzzPacksOpen) state = 'closed';
     else if (item.minRank && rankIndex(rank) < rankIndex(item.minRank)) state = 'rank';
     else if (deal && taken.has(item.id)) state = 'sold-out';
-    else if (isSticker ? held.some((row) => row.remaining === null) : held.length > 0) {
-      state = 'owned';
-    }
+    else if (cosmetic && holdingBlocksPurchase(cosmetic.type, held)) state = 'owned';
     return [
       {
         id: item.id,
@@ -114,13 +109,12 @@ export async function loadShop(
         state,
         cosmeticType: cosmetic?.type ?? null,
         uses,
-        imageKey: typeof data.url === 'string' && data.url ? data.url : null,
+        imageKey: cosmeticImageKey(cosmetic?.data),
         heldUses:
           isSticker && held.length ? held.reduce((n, row) => n + (row.remaining ?? 0), 0) : null,
       },
     ];
   });
 
-  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
-  return { day, refreshesAt: new Date(next).toISOString(), cards };
+  return { day, refreshesAt: new Date(now.getTime() + msUntilNextDay(now)).toISOString(), cards };
 }

@@ -7,7 +7,6 @@ import {
   shopEnabled,
 } from '$lib/server/conversion/runtime';
 import { logToAxiom } from '$lib/server/axiom';
-import { count } from '$lib/format';
 import { db } from '$lib/server/db';
 import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
@@ -114,16 +113,12 @@ export const actions: Actions = {
         itemId,
       });
     }
-    const pending = result.status === 'pending';
     return {
       ok: true as const,
-      pending,
+      pending: result.status === 'pending',
       itemId,
       kind: result.kind,
       gold: result.gold,
-      message: pending
-        ? 'Your gold is reserved. Civitai has not confirmed it yet; we retry automatically and never charge twice.'
-        : `Bought for ${count(result.gold)} gold.`,
     };
   },
 };

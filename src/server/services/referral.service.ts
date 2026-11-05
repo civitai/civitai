@@ -1376,8 +1376,7 @@ export async function grantMembershipMonths(params: {
     }
     throw error;
   }
-  if ('already' in result) return { outcome: 'already' };
-
+  // Also on a replay: a try that committed and died before this line is repaired by the caller's retry.
   await invalidateSubscriptionCaches(userId);
-  return { outcome: 'granted' };
+  return { outcome: 'already' in result ? 'already' : 'granted' };
 }

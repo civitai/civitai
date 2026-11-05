@@ -2,7 +2,7 @@
   import type { ComponentProps } from 'svelte';
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import { cosmeticTypeLabel, monthsLabel, tierName } from '$lib/shop-view';
+  import { cardBlurb, cardTitle, cosmeticIcon } from '$lib/shop-view';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
@@ -33,37 +33,9 @@
     onbuy: (card: Card) => void;
   } = $props();
 
-  const icon = $derived<IconName>(
-    card.kind === 'buzz_pack'
-      ? 'zap'
-      : card.kind === 'membership'
-      ? 'crown'
-      : card.cosmeticType === 'Sticker'
-      ? 'sticker'
-      : card.cosmeticType === 'Badge'
-      ? 'award'
-      : card.cosmeticType === 'NamePlate'
-      ? 'id-card'
-      : 'sparkles'
-  );
-
-  const title = $derived(
-    card.kind === 'buzz_pack'
-      ? `Buzz pack · ${count(card.buzz ?? 0)}`
-      : card.kind === 'membership'
-      ? `${tierName(card.tier)} membership · ${monthsLabel(card.months)}`
-      : card.name
-  );
-  const note = $derived(
-    card.description ||
-      (card.kind === 'buzz_pack'
-        ? `${count(card.buzz ?? 0)} Yellow Buzz, sent to your Civitai wallet.`
-        : card.kind === 'membership'
-        ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(card.months)}. Stacks after any membership you already have.`
-        : card.cosmeticType === 'Sticker'
-        ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
-        : cosmeticTypeLabel(card.cosmeticType))
-  );
+  const icon = $derived<IconName>(cosmeticIcon(card.kind, card.cosmeticType));
+  const title = $derived(cardTitle(card));
+  const note = $derived(cardBlurb(card));
 
   const cta = $derived(
     card.state === 'owned'

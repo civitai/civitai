@@ -3,10 +3,12 @@ import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { BuzzPort } from '../conversion/buzz';
+import { spendableOf } from '../conversion/balance';
 import { releaseReservation, settleConversion } from '../conversion/convert';
 import { heldSql } from '../conversion/held';
 import { rankIndex } from '../ranks';
 import { PENDING_PURCHASE_RETRY_AFTER_MS } from './config';
+import { holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { stockFor, utcDay, type ShopItem } from './rotation';
 
@@ -62,12 +64,6 @@ type Reserved =
   | { refused: BuyResult & { status: 'refused' } }
   | { purchase: Purchase; replayed: boolean };
 
-/** A sticker with no `uses` is unlimited; with `uses`, each purchase is a row holding that many. */
-const stickerUses = (data: unknown): number | null => {
-  const uses = (data as { uses?: unknown } | null)?.uses;
-  return typeof uses === 'number' && Number.isFinite(uses) && uses > 0 ? Math.floor(uses) : null;
-};
-
 const refuse = (
   reason: Refusal,
   shortfall?: number
@@ -80,13 +76,7 @@ const refuse = (
 
 const KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
-/**
- * Buys one item with gold. Two steps, like a conversion: reserve the gold under the player's row lock (the same
- * spendable rule, hold check and `goldConverted` counter conversion uses), then deliver. A cosmetic is inserted in the
- * reserving transaction itself. A Buzz pack becomes a `KnightsGoldConversion` and the existing grant and retry
- * path; membership is asked of the main app with the purchase's key. An unknown outcome leaves the purchase pending
- * for the tick, and a definitive refusal releases the gold.
- */
+/** Reserves the gold under the player's row lock (same spendable rule as conversion), then delivers. An unknown outcome leaves the purchase pending for the tick; a definitive refusal releases the gold. */
 export async function buyItem(
   db: Kysely<DB>,
   deps: BuyDeps,
@@ -154,16 +144,12 @@ export async function buyItem(
         .where('userId', '=', playerId)
         .where('cosmeticId', '=', item.cosmeticId!)
         .execute();
-      if (cosmetic.type === 'Sticker') {
-        // Repeat sticker purchases add rows with their own uses; there is nothing to add to once a holding is unlimited.
-        if (owned.some((row) => row.remaining === null)) return refuse('unlimited');
-        uses = stickerUses(cosmetic.data);
-      } else if (owned.length > 0) {
-        return refuse('owned');
-      }
+      const blocked = holdingBlocksPurchase(cosmetic.type, owned);
+      if (blocked) return refuse(blocked);
+      if (cosmetic.type === 'Sticker') uses = stickerUses(cosmetic.data);
     }
 
-    const spendable = Math.max(0, player.goldEarned - player.goldConverted);
+    const spendable = spendableOf(player);
     if (entry.price > spendable) return refuse('insufficient', entry.price - spendable);
 
     const externalKey = `knights-shop:${randomUUID()}`;
@@ -266,6 +252,8 @@ async function deliver(
     return { status: 'failed', purchaseId: purchase.id, forfeited: false };
 
   if (purchase.kind === 'buzz_pack') {
+    // A replay while the Buzz kill switch is on stays reserved; the tick leaves it alone too.
+    if (!deps.buzzPacksOpen) return { status: 'pending', ...base, buzz: grant.buzz };
     const conversion = await db
       .selectFrom('KnightsGoldConversion')
       .selectAll()
@@ -334,7 +322,7 @@ async function settleMembership(
   return { status: 'granted', ...base };
 }
 
-/** Marks a pending purchase failed and releases its gold, in one transaction; see `releaseReservation`. */
+/** See `releaseReservation` for what a career reset forfeits. */
 async function failPurchase(db: Kysely<DB>, purchase: Purchase): Promise<boolean> {
   return db.transaction().execute(async (trx: Transaction<DB>) => {
     await trx

@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { MAIN_APP_TIMEOUT_MS } from './config';
 
-/** The main app definitively refused: a retry would be refused again (a 4xx other than 408 or 429). */
+/** The main app answered 409: it refused this request for good, and a retry would be refused again. */
 export class MainAppRejectedError extends Error {
   constructor(
     readonly status: number,
@@ -31,8 +31,6 @@ export type MainAppPort = {
   unequipCosmetic(userId: number, cosmeticId: number): Promise<void>;
 };
 
-const TRANSIENT = new Set([408, 429]);
-
 const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
 type Fetch = typeof fetch;
@@ -50,7 +48,9 @@ export function mainAppPort(
     });
     const answer = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) {
-      if (res.status >= 400 && res.status < 500 && !TRANSIENT.has(res.status)) {
+      // Only a 409 is the endpoint's own final answer. Any other status (a 401 from a mismatched token, a 404 from a deploy
+      // that went out of order) says nothing about whether an earlier try was granted, so it stays retryable.
+      if (res.status === 409) {
         throw new MainAppRejectedError(
           res.status,
           String(answer?.reason ?? ''),
@@ -98,5 +98,5 @@ const wired: MainAppPort = {
   unequipCosmetic: async (userId, cosmeticId) => resolve().unequipCosmetic(userId, cosmeticId),
 };
 
-/** Wired from env. A missing `WEBHOOK_TOKEN` throws on the first call that needs the main app, not at boot or when a Buzz pack is bought. */
+/** A missing `WEBHOOK_TOKEN` throws on the first main-app call, not at boot or on a Buzz-pack purchase. */
 export const getMainAppPort = (): MainAppPort => wired;

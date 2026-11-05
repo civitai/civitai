@@ -4,6 +4,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { BuzzRejectedError, type BuzzPort } from './buzz';
 import { CONVERSION, PENDING_CONVERSION_RETRY_AFTER_MS } from './config';
+import { spendableOf } from './balance';
 import { heldSql } from './held';
 
 type Conversion = Selectable<DB['KnightsGoldConversion']>;
@@ -45,9 +46,7 @@ export async function convertGold(
       .executeTakeFirst();
     if (open) return { conversion: open };
 
-    const buzzAmount = Math.floor(
-      Math.max(0, player.goldEarned - player.goldConverted) / CONVERSION.goldPerBuzz
-    );
+    const buzzAmount = Math.floor(spendableOf(player) / CONVERSION.goldPerBuzz);
     if (buzzAmount < CONVERSION.minBuzz) return { refused: 'below-minimum' };
     const gold = buzzAmount * CONVERSION.goldPerBuzz;
 
@@ -83,23 +82,25 @@ export async function markConversionPaid(
   transactionId: string | null,
   now: Date
 ) {
-  await db
-    .updateTable('KnightsGoldConversion')
-    .set({
-      status: 'paid',
-      buzzTransactionId: sql<string | null>`COALESCE("buzzTransactionId", ${transactionId})`,
-      paidAt: sql<Date>`COALESCE("paidAt", ${utc(now)})`,
-    })
-    .where('id', '=', conversionId)
-    .where('status', 'in', ['pending', 'paid'])
-    .execute();
-  // A shop Buzz pack rides on a conversion; its purchase is granted when the conversion is paid.
-  await db
-    .updateTable('KnightsShopPurchase')
-    .set({ status: 'granted', grantedAt: sql<Date>`COALESCE("grantedAt", ${utc(now)})` })
-    .where('conversionId', '=', conversionId)
-    .where('status', '=', 'pending')
-    .execute();
+  // One transaction: a shop Buzz pack rides on a conversion and is granted exactly when the conversion is paid.
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('KnightsGoldConversion')
+      .set({
+        status: 'paid',
+        buzzTransactionId: sql<string | null>`COALESCE("buzzTransactionId", ${transactionId})`,
+        paidAt: sql<Date>`COALESCE("paidAt", ${utc(now)})`,
+      })
+      .where('id', '=', conversionId)
+      .where('status', 'in', ['pending', 'paid'])
+      .execute();
+    await trx
+      .updateTable('KnightsShopPurchase')
+      .set({ status: 'granted', grantedAt: sql<Date>`COALESCE("grantedAt", ${utc(now)})` })
+      .where('conversionId', '=', conversionId)
+      .where('status', '=', 'pending')
+      .execute();
+  });
 }
 
 /**
@@ -128,7 +129,7 @@ export async function releaseReservation(
   return forfeited;
 }
 
-/** Marks a pending conversion failed and gives its gold back, in one transaction; see `releaseReservation` for what a career reset forfeits. */
+/** See `releaseReservation` for what a career reset forfeits. */
 async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
     await trx
