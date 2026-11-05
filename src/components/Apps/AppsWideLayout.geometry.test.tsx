@@ -309,11 +309,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         slug: 'lighthouse',
         name: 'Lighthouse',
         origin: 'install',
-        // ORDER IS LOAD-BEARING: the grouping arm reads the gap from the described scope's
-        // description DOWN to the NEXT scope's id, so the described one has to come first.
-        // ⚠️ `fixture.revokableScope` is APPENDED, never inserted — the two arms above resolve
-        // `describedScope` then `longScope` as consecutive rows, and putting a third between them
-        // would silently change what `inter` measures.
+        // The list renders these grouped (sensitive first, by OAuth bit), not in this order:
+        // `revokableScope` then `describedScope` in the sensitive group, `longScope` in the other.
+        // The grouping arm relies on the first two being adjacent rows.
         scopes: [fixture.describedScope, fixture.longScope, fixture.revokableScope],
         // 🔴 THE PHASE-3 CONSENT LAYER, WITHOUT WHICH THE DRAWER ARMS MEASURE THE WRONG TREE.
         // `ScopeConsentList` renders a per-scope affordance for every row — a control for a
@@ -1863,41 +1861,43 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     expect(px(description.getBoundingClientRect().height)).toBeGreaterThan(8);
 
     // 🔴 AND THE GROUPING IS UNAMBIGUOUS: the gap from a description UP to its own id must be
-    // smaller than the gap DOWN to the next scope's id. Two `Stack`s at 4/2 made that a 2px
-    // differential on a list whose entire purpose is which description belongs to which id.
+    // smaller than the gap from the PREVIOUS scope's row DOWN to this id. Two `Stack`s at 4/2 made
+    // that a 2px differential on a list whose entire purpose is which description belongs to which
+    // id.
     //
-    // 🔴 `inter` IS MEASURED FROM THE PREVIOUS ROW'S **LAST CHILD**, NOT FROM THE DESCRIPTION —
-    // AND READING IT FROM THE DESCRIPTION MADE THIS ARM VACUOUS THE MOMENT PHASE 3 LANDED.
-    // Until then the description WAS the row's last child, so `nextBadge.top − description.bottom`
-    // really did measure the outer `Stack gap`. Phase 3's `ScopeConsentList` adds a THIRD child to
-    // every row (the revoke control, or an exempt note), and for this fixture's described scope
-    // that child is a two-line note sitting INSIDE the span being measured. `inter` then became
-    // ≈40px dominated by the note's own height — a quantity independent of either `Stack` gap — so
-    // collapsing the outer gap back to `2`, or even to `0`, still satisfied `inter > intra * 2`
-    // with an order of magnitude to spare. The arm was passing over a list with NO grouping cue at
-    // all, which is the exact defect it was written to reject. Found by the test-review lane.
+    // 🔴 `inter` IS MEASURED FROM THE PREVIOUS ROW'S **LAST CHILD**, NOT ITS DESCRIPTION: a row can
+    // carry a consent child (revoke control or note) below the description, and measuring from the
+    // description put that child's height inside the span, so collapsing the row gap to 0 still
+    // passed. From the last child, the span holds nothing but the gap between rows.
     //
-    // Reading from the last child restores the property: the span contains nothing but the outer
-    // gap again, whatever children a row grows in future.
-    const prevRow = description.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
-    if (!prevRow) throw new Error('the description is not inside a scope row');
-    const prevRowLastChild = prevRow.lastElementChild;
-    if (!prevRowLastChild) throw new Error('the scope row has no children');
-    // A POSITIVE CONTROL ON THE FIX: phase 3 must really have added a third child, or this arm has
-    // silently gone back to measuring from the description and the paragraph above is stale.
-    // `>= 3`, not `=== 3`: the exact count is an incidental quantity (a `revoked` or `revokable` row
-    // also has three children, and an `unknown` row has two), while the real guard is the
-    // `.not.toBe(description)` line below. An exact count would red on a safe change to the row's
-    // internals and its message would misdescribe the cause. Round-2 test-lane nit.
+    // 🔴 AND THE PREVIOUS ROW MUST BE AN ADJACENT ROW IN THE SAME GROUP. The list groups sensitive
+    // scopes first, so the described (sensitive) scope follows `revokableScope` in the sensitive
+    // group while `longScope` sits in the other group behind a heading; measuring across the
+    // heading would pass with no gap between rows at all.
+    const describedRow = describedBadge.closest<HTMLElement>('[data-testid="block-scope-row"]');
+    if (!describedRow) throw new Error('the described id is not inside a scope row');
+    const prevRow = describedRow.previousElementSibling as HTMLElement | null;
     expect(
-      prevRow.children.length,
-      'the scope row has no consent child — re-read the comment above, this arm may be measuring ' +
-        'from the description again'
+      prevRow?.dataset.testid,
+      'the described scope is not directly preceded by another scope row in its group'
+    ).toBe('block-scope-row');
+    expect(prevRow!.querySelector('[data-testid="block-scope-id"]')?.textContent).toBe(
+      fixture.revokableScope
+    );
+    const prevRowLastChild = prevRow!.lastElementChild;
+    if (!prevRowLastChild) throw new Error('the scope row has no children');
+    // A POSITIVE CONTROL: the previous row really carries a consent child below its description, so
+    // this arm is the one that would have been vacuous if measured from the description.
+    expect(
+      prevRow!.children.length,
+      'the previous scope row has no consent child — this arm may be measuring from a description'
     ).toBeGreaterThanOrEqual(3);
-    expect(prevRowLastChild, "the description is still the row's last child").not.toBe(description);
-    const nextBadge = scopeBadge(fixture.longScope);
+    expect(
+      prevRowLastChild.querySelector('[data-testid="scope-revoke-button"]'),
+      "the previous row's last child is not its consent control"
+    ).not.toBeNull();
     const inter = px(
-      nextBadge.getBoundingClientRect().top - prevRowLastChild.getBoundingClientRect().bottom
+      describedBadge.getBoundingClientRect().top - prevRowLastChild.getBoundingClientRect().bottom
     );
     // DOUBLE, not merely greater: the shape this rejects is the original 4/2 pair, where `inter`
     // WAS larger than `intra` and the cue was still a 2px differential on a block that grows to
@@ -1970,7 +1970,7 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     // it lands one level too shallow, same result. Comparing against `controlRow` (which the
     // previous version computed and then threw away) pins the depth itself. Found by the
     // test-review lane.
-    const controlRow = control.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
+    const controlRow = control.closest<HTMLElement>('[data-testid="block-scope-row"]');
     if (!controlRow) throw new Error('the revoke control is not inside a scope row');
     // ⚠️ A `control.parentElement?.parentElement === controlRow` ASSERTION WAS HERE AND IS DELETED.
     // Round 1 added it to replace a `querySelector` off the same walk, on the grounds that the walk
@@ -2023,7 +2023,7 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     // (e) EVERY ROW HAS AN AFFORDANCE OR AN EXPLANATION — no silent row. A count relationship, not
     // a literal: it fails if the fixture grows a scope the consent layer says nothing about.
     const rows = Array.from(
-      drawerBody().querySelectorAll<HTMLElement>('[data-testid="block-scope-list"] > *')
+      drawerBody().querySelectorAll<HTMLElement>('[data-testid="block-scope-row"]')
     );
     expect(rows, 'the fixture rendered no scope rows').toHaveLength(3);
     const silent = rows.filter(

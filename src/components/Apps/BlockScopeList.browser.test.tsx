@@ -81,19 +81,25 @@ describe('BlockScopeList — the id owns a line, the description owns the next o
   });
 
   function scopeRows(): HTMLElement[] {
-    const list = document.querySelector('[data-testid="block-scope-list"]');
-    if (!list) throw new Error('BlockScopeList rendered no list container');
-    return Array.from(list.children) as HTMLElement[];
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="block-scope-row"]'));
+  }
+  /** The row whose id badge reads exactly `scope` — rows are grouped, so not in input order. */
+  function rowFor(scope: string): HTMLElement {
+    const row = scopeRows().find(
+      (r) => r.querySelector('[data-testid="block-scope-id"]')?.textContent === scope
+    );
+    if (!row) throw new Error(`no row for ${scope}`);
+    return row;
   }
 
   test('an over-long id renders its COMPLETE text, and the description is its sibling', async () => {
     renderWithProviders(<BlockScopeList scopes={[LONG_SCOPE, DESCRIBED_SCOPE]} />);
     await expect.element(page.getByTestId('block-scope-list')).toBeInTheDocument();
 
-    const rows = scopeRows();
-    expect(rows).toHaveLength(2);
+    expect(scopeRows()).toHaveLength(2);
+    const longRow = rowFor(LONG_SCOPE);
 
-    const badge = rows[0].querySelector('[data-testid="block-scope-id"]');
+    const badge = longRow.querySelector('[data-testid="block-scope-id"]');
     // The whole normalised string, never a substring: the failure mode is a TRUNCATION, and a
     // `toContain` on a prefix is satisfied by exactly that.
     expect(badge?.textContent).toBe(LONG_SCOPE);
@@ -105,13 +111,15 @@ describe('BlockScopeList — the id owns a line, the description owns the next o
     // pre-change tree, where the badge was a direct child of the row. Measured: with the
     // `origin/main` shape restored and only the two testids kept, every other assertion in this
     // arm passed too, so the whole thing was green against the defect.
-    expect(rows[0].children).toHaveLength(2);
-    expect(badge!.parentElement).toBe(rows[0].children[0]);
-    expect(rows[0].children[1].textContent).toBe('(no description)');
+    expect(longRow.children).toHaveLength(2);
+    expect(badge!.parentElement).toBe(longRow.children[0]);
+    expect(longRow.children[1].textContent).toBe('(no description)');
 
     // …and a scope WITH a description puts it in the same second slot. Derived from the owner,
     // not retyped: a copied sentence keeps passing after the map's wording changes.
-    expect(rows[1].children[1].textContent).toBe(SCOPE_DESCRIPTIONS[DESCRIBED_SCOPE]);
+    expect(rowFor(DESCRIBED_SCOPE).children[1].textContent).toBe(
+      SCOPE_DESCRIPTIONS[DESCRIBED_SCOPE]
+    );
   });
 
   test('the "Sensitive" marker stays in the scope id\'s OWN row', async () => {

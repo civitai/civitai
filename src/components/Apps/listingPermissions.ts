@@ -92,3 +92,40 @@ export function groupListingPermissions(permissions: ListingPermission[]): {
     other: ordered.filter((p) => !p.sensitive),
   };
 }
+
+/**
+ * {@link groupListingPermissions} for a list of block scope ids, returning the ids. For renderers
+ * that draw their own rows (`BlockScopeList`, the moderator manifest review) but must group and
+ * order exactly like the store listing. Every id comes back in exactly one group: a scope this
+ * build does not know is not sensitive, so it lands last in `other`.
+ */
+export function groupBlockScopes(scopes: string[]): { sensitive: string[]; other: string[] } {
+  const { sensitive, other } = groupListingPermissions(blockScopePermissions(scopes));
+  return { sensitive: sensitive.map((p) => p.id), other: other.map((p) => p.id) };
+}
+
+export const PERMISSION_GROUP_LABELS = {
+  sensitive: 'Sensitive permissions',
+  other: 'Other permissions',
+} as const;
+
+export type PermissionGroup = {
+  key: keyof typeof PERMISSION_GROUP_LABELS;
+  label: string;
+  scopes: string[];
+};
+
+/** {@link groupBlockScopes} as the ordered, non-empty groups a renderer draws, with labels. */
+export function blockScopeGroups(scopes: string[]): PermissionGroup[] {
+  const { sensitive, other } = groupBlockScopes(scopes);
+  const groups: PermissionGroup[] = [
+    { key: 'sensitive', label: PERMISSION_GROUP_LABELS.sensitive, scopes: sensitive },
+    { key: 'other', label: PERMISSION_GROUP_LABELS.other, scopes: other },
+  ];
+  return groups.filter((g) => g.scopes.length > 0);
+}
+
+/** The labels of the groups `scopes` fall into, in display order. */
+export function blockScopeGroupLabels(scopes: string[]): string[] {
+  return blockScopeGroups(scopes).map((g) => g.label);
+}

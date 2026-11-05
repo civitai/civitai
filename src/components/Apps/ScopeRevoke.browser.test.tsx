@@ -391,7 +391,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
         document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
       ).find((el) => el.textContent === scope);
       expect(id, `${name}: no row rendered for ${scope}`).toBeTruthy();
-      const row = id!.closest('[data-testid="block-scope-list"] > *');
+      const row = id!.closest('[data-testid="block-scope-row"]');
       expect(row, `${name}: ${scope}'s id is not inside a scope row`).toBeTruthy();
       const note = row!.querySelector('[data-testid="scope-fixed-note"]');
       expect(note, `${name}: no note in ${scope}'s OWN row`).toBeTruthy();
@@ -1127,7 +1127,8 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
     const ids = Array.from(
       document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
     ).map((el) => el.textContent);
-    expect(ids, name).toEqual(GRANT.scopes);
+    // Sorted: the list groups sensitive scopes first, and this arm is about presence, not order.
+    expect([...ids].sort(), name).toEqual([...GRANT.scopes].sort());
     // No control — the server did not say any of these is withdrawable.
     expect(revokeButtons(), `${name}: offered a control the server never authorised`).toHaveLength(
       0
@@ -1217,7 +1218,7 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     const row = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]'))
       .find((el) => el.textContent === UNGRANTED)
-      ?.closest('[data-testid="block-scope-list"] > *');
+      ?.closest('[data-testid="block-scope-row"]');
     if (!row) throw new Error(`${name}: no row for ${UNGRANTED}`);
     // Silence is the rejected option: a row with no affordance and no explanation, next to rows
     // that have one, reads as an oversight rather than as a statement.
@@ -1388,7 +1389,7 @@ test('🔴 the drawer and the activity page render ONE consent ledger from one f
     if (!list) throw new Error('no scope-consent-list rendered');
     return Array.from(list.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')).map(
       (id) => {
-        const row = id.closest('[data-testid="block-scope-list"] > *');
+        const row = id.closest('[data-testid="block-scope-row"]');
         if (!row) throw new Error(`scope id ${id.textContent} is not inside a scope row`);
         const control = row.querySelector('[data-testid="scope-revoke-button"]');
         const note = row.querySelector('[data-testid="scope-fixed-note"]');

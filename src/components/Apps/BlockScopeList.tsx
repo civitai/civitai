@@ -1,5 +1,6 @@
 import { Badge, Group, Stack, Text } from '@mantine/core';
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
+import { blockScopeGroups } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import {
@@ -8,14 +9,16 @@ import {
 } from '~/server/services/blocks/scope-descriptions.constants';
 
 /**
- * The OPT-IN consent layer — supplied by the two permissions surfaces only.
+ * The OPT-IN consent layer — supplied by the two permissions surfaces and the launch consent
+ * prompt (`BlockConsentModal`, which passes no revoked scopes and renders its per-scope consent
+ * detail, never a revoke control).
  *
- * 🔴 IT IS OPTIONAL SO THE OTHER TWO CALL SITES CANNOT ACQUIRE A REVOKE CONTROL. `AppSettingsModal`
- * and `AppListingDetailBody` render this same component from different scope sets (see the
- * component docstring) and neither is a place a viewer withdraws consent from — the listing body
- * is a PUBLIC pre-launch disclosure about an app the reader may not even have installed. Omitting
- * the prop leaves their rendering byte-identical, which is also what keeps
- * `BlockScopeList.browser.test.tsx`'s exact `children` count of 2 per scope true for them.
+ * 🔴 IT IS OPTIONAL SO THE OTHER CALL SITES CANNOT ACQUIRE A REVOKE CONTROL. `AppSettingsModal`,
+ * `AppDetailsModal` and `AppListingDetailBody` render this same component from different scope
+ * sets (see the component docstring) and none is a place a viewer withdraws consent from — the
+ * listing body is a PUBLIC pre-launch disclosure about an app the reader may not even have
+ * installed. Omitting the prop keeps `BlockScopeList.browser.test.tsx`'s exact `children` count
+ * of 2 per scope true for them.
  *
  * 🔴 AND IT CARRIES NO DECISION — ONLY DATA AND A RENDER PROP. This component does not know what
  * a revoke is, which scopes are withdrawable, or what the server said; it strikes through the ids
@@ -50,14 +53,17 @@ export type BlockScopeListConsent = {
  * in SCOPE_DESCRIPTIONS) render as a bare badge with an italic "(no description)" — keeping the
  * description map a soft contract so new scopes ship without breaking the UI.
  *
+ * Grouped and ordered by `blockScopeGroups` — the store listing's `groupListingPermissions` — so
+ * an app's permissions read the same on every surface: sensitive first, then the rest (unknown
+ * scopes included, last). Group headings appear only when both groups are non-empty.
+ *
  * 🔴 THIS COMPONENT IS PRESENTATION ONLY AND MAKES NO CLAIM ABOUT WHICH SET IT IS HANDED.
  * STILL TRUE AFTER THE PER-SCOPE REVOKE CONTROL: the optional `consent` prop (see
  * `BlockScopeListConsent` above) supplies DATA and a RENDER PROP, so the consent affordance is
  * built by the caller and this file holds no revoke logic, no mutation and no exempt-set copy.
  * ⚠️ The previous docstring said it was "shared by the install/manage modal … and the
  * /apps/activity panel so the two surfaces never drift". That guarantee was false and is DELETED
- * rather than restated: there are FOUR call sites and they are fed from THREE different sets, by
- * design —
+ * rather than restated: the call sites are fed from different sets, by design —
  *
  *   - `src/pages/apps/activity.tsx` and `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx`
  *     pass `listMyScopeGrants().scopes` = `manifest.scopes ∩ approved_scopes`.
@@ -68,6 +74,9 @@ export type BlockScopeListConsent = {
  *     `approved_scopes`, with no intersection, deliberately — it is a PUBLIC pre-launch
  *     disclosure and over-disclosing the stale approval is the safe direction there. The
  *     reasoning lives at `src/server/services/blocks/app-listing.service.ts`; do not "align" it.
+ *     `src/components/Apps/AppDetailsModal.tsx` passes the same public `getAppDetail` scopes.
+ *   - `src/components/AppBlocks/BlockConsentModal.tsx` passes the consent-gated scopes the viewer
+ *     has not granted yet (`missingScopes`).
  *
  * So the set is the CALLER'S choice and each caller documents its own. A docstring here that
  * promised they agree would read as coverage while providing none.
@@ -97,18 +106,11 @@ export type BlockScopeListConsent = {
  * `openExternalLinkWarning.tsx` is the precedent for the UTILITY spelling of it. Utilities are
  * UNLAYERED, so they also beat Mantine's own rules more robustly than a `modules`-layer rule.
  *
- * ⚠️ TWO OTHER LIVE SURFACES PUT A SCOPE ID IN AN ELLIPSISING BADGE AND STILL TRUNCATE IT,
- * deliberately not changed here. Start with `OnsiteReviewModal.tsx`'s `ManifestScopeRow`: it is
- * the NEAR-LITERAL shape this file just replaced — a `wrap="nowrap"` Group holding an unhardened
- * Badge, then `SensitiveScopeBadge`, then the description — and it is the MODERATOR MANIFEST
- * REVIEW, where the exact scope string is the approve/reject input. `AppDetailsModal.tsx` is the
- * same shape rather than the same code (a `List.Item`, an `outline`/`gray`/`xs` Badge, no
- * `SensitiveScopeBadge`, and a `SCOPE_DESCRIPTIONS[scope] ?? scope` fallback that prints an
- * undescribed id twice). Neither is a drop-in for this component.
- * ⚠️ THE ENUMERATION IS "IN AN ELLIPSISING BADGE", NOT "EVERY SURFACE SHOWING A SCOPE ID":
- * `BlockConsentModal.tsx` renders `SCOPE_DESCRIPTIONS[scope] ?? scope`, so an UNDESCRIBED scope
- * reaches the screen there as a raw id — in a `Text`, not a Badge, so it cannot ellipsise, which
- * is why it is out of this fix's scope rather than missing from it.
+ * ⚠️ ONE OTHER LIVE SURFACE PUTS A SCOPE ID IN AN ELLIPSISING BADGE AND STILL TRUNCATES IT:
+ * `OnsiteReviewModal.tsx`'s `ManifestScopeRow` — a `wrap="nowrap"` Group holding an unhardened
+ * Badge, then `SensitiveScopeBadge`, then the description — in the MODERATOR MANIFEST REVIEW,
+ * where the exact scope string is the approve/reject input. It groups with `groupBlockScopes`
+ * too, but carries per-scope justifications, so it is not a drop-in for this component.
  */
 export function BlockScopeList({
   scopes,
@@ -119,6 +121,7 @@ export function BlockScopeList({
   emptyLabel?: string;
   consent?: BlockScopeListConsent;
 }) {
+  const groupId = useId();
   if (scopes.length === 0) {
     return (
       <Text size="xs" c="dimmed" fs="italic">
@@ -126,86 +129,115 @@ export function BlockScopeList({
       </Text>
     );
   }
+  const groups = blockScopeGroups(scopes);
+  // Headings only when there are two groups to tell apart, as on the store listing.
+  const labelled = groups.length > 1;
+
   return (
-    /* 🔴 THE OUTER GAP MUST EXCEED THE INNER ONE, or the list stops saying which description
-       belongs to which id — the single mapping this surface exists to communicate. With both at
-       4/2 the cue was a 2px differential, and it gets weaker exactly where this change helps: a
-       wrapped id makes each scope block ~36px tall and the 2px is a smaller fraction of it.
-       Pinned by the geometry arm, which compares the two gaps rather than asserting either. */
-    <Stack gap="xs" data-testid="block-scope-list">
-      {scopes.map((scope) => {
-        const desc = SCOPE_DESCRIPTIONS[scope];
-        const sensitive = isSensitiveBlockScope(scope);
-        const revoked = consent?.revokedScopes.includes(scope) ?? false;
-        return (
-          <Stack key={scope} gap={2}>
-            {/* `wrap="nowrap"` keeps the "Sensitive" marker BESIDE the id it qualifies: under
-                `flex-wrap: nowrap` no item can move to a line of its own.
-                ⚠️ AND THE SYMPTOM `break-all` PREVENTS IS THE ID BEING ELLIPSISED — not the row
-                overflowing, and not a wrapped marker. Two earlier revisions named those instead.
-                What keeps the row inside is Mantine's own `width: fit-content` on the Badge root,
-                which clamps to the available inline space; `globals.css`'s UNLAYERED
-                `.mantine-Badge-root { flex-shrink: 0 }` only stops the Badge shrinking BELOW its
-                flex base size, and that base size is already the clamp. `break-all` does not widen
-                or narrow anything — the label's automatic minimum size has already collapsed to
-                zero under Mantine's own `overflow: hidden` — it makes the clamped width able to
-                HOLD the id wrapped instead of ellipsising it. Which is why the geometry arm catches
-                its removal on the one-line HEIGHT: that file records its own overflow detector as
-                reached by no mutant, because Mantine clips first.
-                And the margin is narrower than it looks: no arm builds a long SENSITIVE id,
-                because none is constructible — the longest sensitive scope in
-                `SENSITIVE_BLOCK_SCOPES` is 25 chars. */}
-            {/* `align="center"` rather than the pre-change `flex-start`: once the id can wrap to
-                two lines, the "Sensitive" marker reads as belonging to the pill as a whole rather
-                than to its first line. Cosmetic, and nothing asserts it. */}
-            {consent && SCOPE_PLAIN_TITLES[scope] ? (
-              <Text size="sm" fw={500} data-testid="block-scope-title">
-                {SCOPE_PLAIN_TITLES[scope]}
-              </Text>
-            ) : null}
-            <Group gap="xs" wrap="nowrap" align="center">
-              <Badge
-                size="sm"
-                variant="light"
-                /* A revoked id goes GREY as well as struck: `orange` is the "Sensitive" cue and
-                   keeping it on a withdrawn scope reads as a live warning about a permission the
-                   app no longer has. The `SensitiveScopeBadge` beside it still carries that fact
-                   for anyone who needs it. */
-                color={revoked ? 'gray' : sensitive ? 'orange' : undefined}
-                h="auto"
-                /* 🔴 `line-through` is APPENDED — the other three utilities are phase 1's
-                   truncation fix and each is killed on its own by a geometry mutant
-                   (`whitespace-normal` lets the label wrap, `break-all` lets it wrap mid-token,
-                   `text-start` un-centres the wrapped id). Do not reorder or replace this string;
-                   add to it. */
-                classNames={{
-                  label: `whitespace-normal break-all text-start${revoked ? ' line-through' : ''}`,
-                }}
-                data-testid="block-scope-id"
-                data-revoked={revoked ? 'true' : undefined}
-              >
-                {scope}
-              </Badge>
-              {sensitive && <SensitiveScopeBadge size="sm" />}
-            </Group>
-            {desc ? (
-              <Text size="xs" c="dimmed">
-                {desc}
-              </Text>
-            ) : (
-              <Text size="xs" c="dimmed" fs="italic">
-                (no description)
-              </Text>
-            )}
-            {/* 🔴 A THIRD CHILD ONLY WHEN `consent` IS PASSED, and the conditional is
-                load-bearing beyond taste: `BlockScopeList.browser.test.tsx` asserts an EXACT
-                `children` length of 2 per scope for the no-consent callers, so an
-                unconditionally-rendered wrapper (even an empty one) would fail that arm for the
-                two call sites this phase does not touch. `null` renders no node at all. */}
-            {consent ? consent.renderScopeAction(scope) : null}
+    <Stack gap="md" data-testid="block-scope-list">
+      {groups.map((g) => (
+        <Stack
+          key={g.key}
+          gap="xs"
+          data-scope-group={g.key}
+          role={labelled ? 'group' : undefined}
+          aria-labelledby={labelled ? `${groupId}-${g.key}` : undefined}
+        >
+          {labelled ? (
+            <Text
+              id={`${groupId}-${g.key}`}
+              size="sm"
+              fw={600}
+              c={g.key === 'sensitive' ? 'orange' : undefined}
+              data-testid="block-scope-group-label"
+            >
+              {g.label} ({g.scopes.length})
+            </Text>
+          ) : null}
+          {/* 🔴 THE GAP BETWEEN ROWS MUST EXCEED THE ONE INSIDE A ROW, or the list stops saying
+              which description belongs to which id. Pinned by the geometry arm, which compares
+              the two gaps rather than asserting either. */}
+          <Stack gap="xs" role="list">
+            {g.scopes.map((scope) => (
+              <BlockScopeRow key={scope} scope={scope} consent={consent} />
+            ))}
           </Stack>
-        );
-      })}
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+function BlockScopeRow({ scope, consent }: { scope: string; consent?: BlockScopeListConsent }) {
+  const desc = SCOPE_DESCRIPTIONS[scope];
+  const sensitive = isSensitiveBlockScope(scope);
+  const revoked = consent?.revokedScopes.includes(scope) ?? false;
+  return (
+    <Stack gap={2} role="listitem" data-testid="block-scope-row">
+      {/* `wrap="nowrap"` keeps the "Sensitive" marker BESIDE the id it qualifies: under
+          `flex-wrap: nowrap` no item can move to a line of its own.
+          ⚠️ AND THE SYMPTOM `break-all` PREVENTS IS THE ID BEING ELLIPSISED — not the row
+          overflowing, and not a wrapped marker. Two earlier revisions named those instead.
+          What keeps the row inside is Mantine's own `width: fit-content` on the Badge root,
+          which clamps to the available inline space; `globals.css`'s UNLAYERED
+          `.mantine-Badge-root { flex-shrink: 0 }` only stops the Badge shrinking BELOW its
+          flex base size, and that base size is already the clamp. `break-all` does not widen
+          or narrow anything — the label's automatic minimum size has already collapsed to
+          zero under Mantine's own `overflow: hidden` — it makes the clamped width able to
+          HOLD the id wrapped instead of ellipsising it. Which is why the geometry arm catches
+          its removal on the one-line HEIGHT: that file records its own overflow detector as
+          reached by no mutant, because Mantine clips first.
+          And the margin is narrower than it looks: no arm builds a long SENSITIVE id,
+          because none is constructible — the longest sensitive scope in
+          `SENSITIVE_BLOCK_SCOPES` is 25 chars. */}
+      {/* `align="center"` rather than the pre-change `flex-start`: once the id can wrap to
+          two lines, the "Sensitive" marker reads as belonging to the pill as a whole rather
+          than to its first line. Cosmetic, and nothing asserts it. */}
+      {consent && SCOPE_PLAIN_TITLES[scope] ? (
+        <Text size="sm" fw={500} data-testid="block-scope-title">
+          {SCOPE_PLAIN_TITLES[scope]}
+        </Text>
+      ) : null}
+      <Group gap="xs" wrap="nowrap" align="center">
+        <Badge
+          size="sm"
+          variant="light"
+          /* A revoked id goes GREY as well as struck: `orange` is the "Sensitive" cue and
+             keeping it on a withdrawn scope reads as a live warning about a permission the
+             app no longer has. The `SensitiveScopeBadge` beside it still carries that fact
+             for anyone who needs it. */
+          color={revoked ? 'gray' : sensitive ? 'orange' : undefined}
+          h="auto"
+          /* 🔴 `line-through` is APPENDED — the other three utilities are phase 1's
+             truncation fix and each is killed on its own by a geometry mutant
+             (`whitespace-normal` lets the label wrap, `break-all` lets it wrap mid-token,
+             `text-start` un-centres the wrapped id). Do not reorder or replace this string;
+             add to it. */
+          classNames={{
+            label: `whitespace-normal break-all text-start${revoked ? ' line-through' : ''}`,
+          }}
+          data-testid="block-scope-id"
+          data-revoked={revoked ? 'true' : undefined}
+        >
+          {scope}
+        </Badge>
+        {sensitive && <SensitiveScopeBadge size="sm" />}
+      </Group>
+      {desc ? (
+        <Text size="xs" c="dimmed">
+          {desc}
+        </Text>
+      ) : (
+        <Text size="xs" c="dimmed" fs="italic">
+          (no description)
+        </Text>
+      )}
+      {/* 🔴 A THIRD CHILD ONLY WHEN `consent` IS PASSED, and the conditional is
+          load-bearing beyond taste: `BlockScopeList.browser.test.tsx` asserts an EXACT
+          `children` length of 2 per scope for the no-consent callers, so an
+          unconditionally-rendered wrapper (even an empty one) would fail that arm for the
+          two call sites this phase does not touch. `null` renders no node at all. */}
+      {consent ? consent.renderScopeAction(scope) : null}
     </Stack>
   );
 }

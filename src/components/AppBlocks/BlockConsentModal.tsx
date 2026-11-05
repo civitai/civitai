@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
 import { useState } from 'react';
-import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
@@ -20,9 +20,7 @@ import {
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   BLOCK_SPEND_SCOPE,
-  isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
-import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import {
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
@@ -174,36 +172,27 @@ export default function BlockConsentModal({
             to:
           </Text>
         </Group>
-        <List size="sm" spacing={4}>
-          {missingScopes.map((scope) => {
-            const sensitive = isSensitiveBlockScope(scope);
-            return (
-              <List.Item key={scope}>
-                <Group component="span" gap="xs" wrap="nowrap" align="center">
-                  <Text component="span" fw={600} c={sensitive ? 'orange' : undefined}>
-                    {SCOPE_DESCRIPTIONS[scope] ?? scope}
-                  </Text>
-                  {sensitive && <SensitiveScopeBadge size="xs" />}
-                </Group>
-                {forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
-                  <SourcePublishConsentDetail
-                    consumerName={appLabel}
-                    sourceName={sourceName}
-                    available={source !== undefined}
-                    loading={imports.isLoading}
-                  />
-                ) : null}
-                {!forSource && scope === APP_STORAGE_IMPORT_SCOPE ? (
-                  <StorageImportConsentDetail
-                    consumerName={blockName ?? 'This app'}
-                    imports={imports.data?.imports}
-                    loading={imports.isLoading}
-                  />
-                ) : null}
-              </List.Item>
-            );
-          })}
-        </List>
+        <BlockScopeList
+          scopes={missingScopes}
+          consent={{
+            revokedScopes: [],
+            renderScopeAction: (scope) =>
+              forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
+                <SourcePublishConsentDetail
+                  consumerName={appLabel}
+                  sourceName={sourceName}
+                  available={source !== undefined}
+                  loading={imports.isLoading}
+                />
+              ) : !forSource && scope === APP_STORAGE_IMPORT_SCOPE ? (
+                <StorageImportConsentDetail
+                  consumerName={blockName ?? 'This app'}
+                  imports={imports.data?.imports}
+                  loading={imports.isLoading}
+                />
+              ) : null,
+          }}
+        />
         {grantsSpend ? (
           <Stack gap="xs" data-testid="block-consent-budget">
             <Switch
