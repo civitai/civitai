@@ -551,6 +551,29 @@ export async function sweepStaleSendDirs(root = baseDir) {
   return stale.map(({ path }) => path);
 }
 
+const ARCHIVE_SCRATCH_ROOTS = ['base', 'images', 'generated-images', 'training-data'];
+
+/**
+ * Removes the archive scratch directories, named by report id alone, that a pass which died left
+ * behind. Safe only at the start of the archive job: its run lock means no other pass owns one.
+ * Send directories in the same roots are named `<id>-<claim>` and are left.
+ */
+export async function sweepArchiveScratchDirs(root = baseDir) {
+  const removed: string[] = [];
+  for (const scratch of ARCHIVE_SCRATCH_ROOTS) {
+    const rootDir = `${root}/${scratch}`;
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names.filter((name) => /^\d+$/.test(name))) {
+      await fsAsync.rm(`${rootDir}/${name}`, { recursive: true, force: true });
+      removed.push(`${rootDir}/${name}`);
+    }
+  }
+  return removed;
+}
+
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
 export async function processCsamReport(runStart: CsamReportProps) {
   const status = await cybertipClient.getStatus();

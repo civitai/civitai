@@ -311,6 +311,8 @@ async function readRange(
   try {
     if (response.ContentRange !== `bytes ${start}-${end}/${size}`)
       throw new Error('original image part has the wrong range');
+    // Checked here too, so a store that ignores If-Match still cannot mix two versions.
+    if (response.ETag !== etag) throw new Error('original image part is from another version');
     const bytes = await body.transformToByteArray();
     return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   } catch (e) {

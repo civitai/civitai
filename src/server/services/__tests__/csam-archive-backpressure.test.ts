@@ -116,6 +116,7 @@ type ArchiveProbe = {
   peakRetainedBytes: number;
   entryNames: string[];
   options: { zlib?: { level?: number } } | undefined;
+  archive: Archiver;
 };
 const probes: ArchiveProbe[] = [];
 
@@ -135,6 +136,7 @@ vi.mock('archiver', async (importOriginal) => {
         peakRetainedBytes: 0,
         entryNames: [],
         options: options as ArchiveProbe['options'],
+        archive,
       };
       probes.push(probe);
       let retained = 0;
@@ -255,6 +257,8 @@ import {
 } from '~/server/services/csam.service-new';
 import { createHash } from 'crypto';
 import { Readable } from 'stream';
+import fsAsync from 'fs/promises';
+import type { ReadStream } from 'fs';
 import JSZip from 'jszip';
 import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -1374,6 +1378,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
           destroy: () => undefined,
         },
         ContentRange: `bytes ${start}-${end}/${size}`,
+        ETag: '"etag"',
       };
     };
   });
@@ -1796,6 +1801,7 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
       return {
         Body: resettingBody(video.subarray(start, end + 1), resetAfter(start, firstTry)),
         ContentRange: `bytes ${start}-${end}/${video.length}`,
+        ETag: '"etag-2"',
       };
     };
     return ranges;
@@ -1834,6 +1840,36 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
     expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
     expect(JSON.stringify(lines)).not.toContain('key-seven');
+  });
+
+  it('closes the spooled file when the archive fails before its entry is appended', async () => {
+    storeLargeSeven(() => undefined);
+    const readLast = mockGetObject;
+    mockGetObject = async (key, input) => {
+      const response = await readLast(key, input);
+      // The archive fails while the last part is being read, so the entry's append is refused.
+      if (input.Range?.endsWith(`-${video.length - 1}`))
+        probes.at(-1)!.archive.emit('error', new Error('archive failed'));
+      return response;
+    };
+    const streams: ReadStream[] = [];
+    const realOpen = fsAsync.open.bind(fsAsync);
+    vi.spyOn(fsAsync, 'open').mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      const createReadStream = handle.createReadStream.bind(handle);
+      handle.createReadStream = (options) => {
+        const stream = createReadStream(options);
+        streams.push(stream);
+        return stream;
+      };
+      return handle;
+    });
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('archive failed');
+
+    expect(streams).toHaveLength(1);
+    expect(streams[0].destroyed).toBe(true);
+    expect(uploads.has('images.zip')).toBe(false);
   });
 
   it('fails the pass, archiving no images, when a part of a large object keeps resetting', async () => {

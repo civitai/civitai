@@ -444,6 +444,7 @@ describe('spoolOriginalImage', () => {
             destroy: vi.fn(),
           },
           ContentRange: `bytes ${start}-${end}/${data.length}`,
+          ETag: ETAG,
         }
       );
     });
@@ -538,6 +539,7 @@ describe('spoolOriginalImage', () => {
               destroy: vi.fn(),
             },
             ContentRange: `bytes ${start}-${end}/${large.length}`,
+            ETag: ETAG,
           }
         : undefined
     );
@@ -556,6 +558,28 @@ describe('spoolOriginalImage', () => {
 
     await expect(spoolOriginalImage(image, { backend, spoolDir })).rejects.toThrow(/wrong range/);
     expect(transformToByteArray).not.toHaveBeenCalled();
+    expect(spooled()).toEqual([]);
+  });
+
+  it('fails without retrying on a part from another version, even when the store ignores If-Match', async () => {
+    const transformToByteArray = vi.fn(async () => new Uint8Array(RANGE_PART_BYTES));
+    const { backend, inputs } = largeStore(large, (index, _attempt, { start, end }) =>
+      index === 1
+        ? {
+            Body: { transformToByteArray, destroy: vi.fn() },
+            ContentRange: `bytes ${start}-${end}/${large.length}`,
+            ETag: '"etag-3"',
+          }
+        : undefined
+    );
+
+    await expect(spoolOriginalImage(image, { backend, spoolDir })).rejects.toThrow(
+      /another version/
+    );
+    expect(transformToByteArray).not.toHaveBeenCalled();
+    expect(
+      inputs.filter((input) => input.Range?.startsWith(`bytes=${RANGE_PART_BYTES}-`))
+    ).toHaveLength(1);
     expect(spooled()).toEqual([]);
   });
 

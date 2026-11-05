@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   logOverdueEvidenceApprovals: vi.fn(async () => undefined),
   getCsamsToRemoveContent: vi.fn(async () => []),
   sweepStaleSendDirs: vi.fn(async (): Promise<string[]> => []),
+  sweepArchiveScratchDirs: vi.fn(async (): Promise<string[]> => []),
 }));
 
 vi.mock('~/server/services/csam.service-new', () => mocks);
@@ -305,6 +306,27 @@ describe('send-csam-reports scratch sweep', () => {
     const logged = loggingMock.logToAxiom.mock.calls
       .map(([arg]) => arg as { subType?: string; message?: unknown })
       .filter((arg) => arg?.subType === 'send-scratch-sweep');
+    expect(logged).toEqual([expect.objectContaining({ message: 'EACCES' })]);
+  });
+});
+
+describe('archive-csam-reports scratch sweep', () => {
+  it('sweeps before the first report is archived', async () => {
+    await archiveJob!.run({}).result;
+    expect(mocks.sweepArchiveScratchDirs.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.archiveCsamDataForReport.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still archives every report when the sweep fails, and logs the failure', async () => {
+    mocks.sweepArchiveScratchDirs.mockRejectedValueOnce(new Error('EACCES'));
+
+    await archiveJob!.run({}).result;
+
+    expect(mocks.archiveCsamDataForReport).toHaveBeenCalledTimes(reports.length);
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as { subType?: string; message?: unknown })
+      .filter((arg) => arg?.subType === 'archive-scratch-sweep');
     expect(logged).toEqual([expect.objectContaining({ message: 'EACCES' })]);
   });
 });
