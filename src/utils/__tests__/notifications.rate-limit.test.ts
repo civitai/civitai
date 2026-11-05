@@ -15,7 +15,9 @@ beforeEach(() => showNotification.mockClear());
 
 describe('showErrorNotification', () => {
   it('adds the retry time to a rate-limited error', () => {
-    showErrorNotification({ error: { message: 'Slow down.', data: { rateLimit } } as Error });
+    showErrorNotification({
+      error: Object.assign(new Error('Slow down.'), { data: { rateLimit } }),
+    });
     expect(showNotification.mock.calls[0][0].message).toMatch(/^Slow down\. Try again at .+\.$/);
   });
 
