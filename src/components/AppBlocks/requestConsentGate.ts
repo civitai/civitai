@@ -165,23 +165,43 @@ export function resolveHostConsentNotice(input: HostConsentNoticeInput): string[
 
 /**
  * A host's per-mount memory of the missing-permissions notice: which app the viewer
- * dismissed it for (read by {@link resolveHostConsentNotice} as `dismissedFor`), and
- * whether the notice now showing was brought back by a refusal (the host passes it to
- * `BlockConsentNotice` as `highlight`).
+ * dismissed it for (read by {@link resolveHostConsentNotice} as `dismissedFor`),
+ * whether the notice now showing was brought back by a refusal and has not yet played
+ * its flash (the host passes it to `BlockConsentNotice` as `highlight`), and the apps
+ * whose one revival this mount has already been used.
  */
 export type ConsentNoticeDismissal = {
   dismissedFor: string | null;
   revived: boolean;
+  revivalSpentFor: readonly string[];
 };
 
 export const CONSENT_NOTICE_NOT_DISMISSED: ConsentNoticeDismissal = {
   dismissedFor: null,
   revived: false,
+  revivalSpentFor: [],
 };
 
-/** The viewer dismissed the notice for `appBlockId`. A later revival highlights it again. */
-export function dismissConsentNotice(appBlockId: string): ConsentNoticeDismissal {
-  return { dismissedFor: appBlockId, revived: false };
+/**
+ * The viewer dismissed the notice for `appBlockId`. Clears the highlight. Keeps the
+ * record of spent revivals, so a dismissal made after a revival sticks for the rest of
+ * the mount.
+ */
+export function dismissConsentNotice(
+  current: ConsentNoticeDismissal,
+  appBlockId: string
+): ConsentNoticeDismissal {
+  return { dismissedFor: appBlockId, revived: false, revivalSpentFor: current.revivalSpentFor };
+}
+
+/**
+ * The revived notice's flash has played: clear the highlight so an unrelated remount
+ * does not replay it. Returns the same object when there is nothing to clear.
+ */
+export function consentNoticeHighlightPlayed(
+  current: ConsentNoticeDismissal
+): ConsentNoticeDismissal {
+  return current.revived ? { ...current, revived: false } : current;
 }
 
 /**
@@ -208,8 +228,13 @@ export function dismissConsentNotice(appBlockId: string): ConsentNoticeDismissal
  *   - at least one refused scope is in `missingScopes`, the set the mint withheld and
  *     that consent can add. A scope outside that set is un-grantable here and keeps
  *     its own handling (the CONSENT_UNAVAILABLE push and toast): bringing back a
- *     notice whose "Allow…" cannot help would be a false offer.
- *
+ *     notice whose "Allow…" cannot help would be a false offer;
+ *   - 🔴 this app's ONE revival for this mount is unused. The app decides when to send
+ *     the refused request, with no user gesture required, so without a cap it could
+ *     bring the bar back after every dismissal — the viewer could never get rid of it,
+ *     and it would become a way to pressure them into a sensitive grant. Once it has
+ *     been revived and dismissed again, that dismissal sticks until the host remounts.
+ *     Tracked per app, because the page host is not remounted between apps.
  *
  * Returns the SAME object when nothing changes, so a React state updater that calls
  * this does not re-render.
@@ -223,10 +248,15 @@ export function resolveConsentNoticeAfterRefusal(
   }
 ): ConsentNoticeDismissal {
   if (current.dismissedFor !== input.appBlockId) return current;
+  if (current.revivalSpentFor.includes(input.appBlockId)) return current;
   const missing = new Set(input.missingScopes ?? []);
   const blocksAGrantableScope = input.refusedScopes.some((s) => missing.has(s));
   if (!blocksAGrantableScope) return current;
-  return { dismissedFor: null, revived: true };
+  return {
+    dismissedFor: null,
+    revived: true,
+    revivalSpentFor: [...current.revivalSpentFor, input.appBlockId],
+  };
 }
 
 /** What an un-grantable (prod-path) REQUEST_CONSENT should produce. */

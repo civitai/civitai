@@ -159,6 +159,7 @@ import {
 } from './resourceFileParse';
 import {
   CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
   dismissConsentNotice,
   resolveAdvertisedScopes,
   resolveConsentNoticeAfterRefusal,
@@ -5919,7 +5920,8 @@ export function PageBlockHost({
             const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNotice(dismissConsentNotice(appBlockId))}
+          onDismiss={() => setConsentNotice((current) => dismissConsentNotice(current, appBlockId))}
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when

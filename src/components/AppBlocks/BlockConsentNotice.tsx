@@ -21,6 +21,11 @@ type BlockConsentNoticeProps = {
    * play the short attention flash once, on mount.
    */
   highlight?: boolean;
+  /**
+   * The flash finished. The host clears `highlight` so a later remount of this bar
+   * does not replay it. Not called under reduced motion, where nothing animates.
+   */
+  onHighlightPlayed?: () => void;
   /** Open the consent modal. The caller RE-RESOLVES the scope set at click time. */
   onReview: () => void;
   /** Retire the notice for this app, for this mount. */
@@ -91,8 +96,11 @@ type BlockConsentNoticeProps = {
  * still grant — today a reaction refused as `needs-consent` (see
  * `resolveConsentNoticeAfterRefusal` for what does and does not count). Because the notice was unmounted while
  * dismissed, it mounts fresh with `highlight`, and the `attention-flash` animation
- * (defined in `tailwind.config.js`) plays once. It sits behind `motion-safe:`, so a
- * viewer who asked for reduced motion sees the notice return without the flash.
+ * (defined in `tailwind.config.js`) plays once; `onHighlightPlayed` then lets the host
+ * clear the highlight so a remount does not replay it. The host revives it at most
+ * once per app per mount (see `resolveConsentNoticeAfterRefusal`). The flash sits
+ * behind `motion-safe:`, so a viewer who asked for reduced motion sees the notice
+ * return without it.
  *
  * ── THE NARROW FORM ─────────────────────────────────────────────────────────────
  *
@@ -219,6 +227,7 @@ export function BlockConsentNotice({
   appName,
   missingScopes,
   highlight = false,
+  onHighlightPlayed,
   onReview,
   onDismiss,
 }: BlockConsentNoticeProps) {
@@ -229,6 +238,11 @@ export function BlockConsentNotice({
       data-variant="warning"
       data-highlight={highlight ? 'true' : undefined}
       className={clsx('@container', highlight && 'motion-safe:animate-attention-flash')}
+      onAnimationEnd={(event) => {
+        // Only this box's own flash — not an animation bubbling up from a child
+        // (the tooltips animate too).
+        if (highlight && event.target === event.currentTarget) onHighlightPlayed?.();
+      }}
       px="md"
       py="xs"
       style={{

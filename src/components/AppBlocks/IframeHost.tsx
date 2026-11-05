@@ -44,6 +44,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
   CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
   dismissConsentNotice,
   resolveAdvertisedScopes,
   resolveConsentNoticeAfterRefusal,
@@ -3504,7 +3505,10 @@ export function IframeHost({
             const scopes = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNotice(dismissConsentNotice(install.appBlockId))}
+          onDismiss={() =>
+            setConsentNotice((current) => dismissConsentNotice(current, install.appBlockId))
+          }
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {children}
