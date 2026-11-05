@@ -1,6 +1,7 @@
 import { getListingCta } from '~/components/Apps/appListingCardView';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import { storeVisibleListingRowGate } from '~/server/services/blocks/app-listing-store-gate';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type {
   AppListingVisibility,
   ListingAudienceFloor,
@@ -145,6 +146,9 @@ export function buildMyApps(
       scope: opts.scope,
       floor: opts.floor,
       redCapable: opts.redCapable,
+      // My apps is the viewer's own launcher, not a public store surface: an r/x app they have
+      // keeps showing whatever their browsing level (the host gate still applies).
+      browsingLevel: allBrowsingLevelsFlag,
     });
     if (!visible) continue;
 

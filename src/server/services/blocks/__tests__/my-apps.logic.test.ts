@@ -385,6 +385,18 @@ describe('exclusions', () => {
     ).toHaveLength(1);
   });
 
+  // My apps is the viewer's own launcher: it is not narrowed by their browsing level (only the
+  // store's public surfaces are). An extra option is ignored, which is the point.
+  it('an R app the viewer has stays in My apps whatever their browsing level', () => {
+    expect(
+      buildMyApps(LIVE_GRANT, [delta({ contentRating: 'r' })], {
+        ...BASE_OPTS,
+        redCapable: true,
+        viewerBrowsingLevel: 1,
+      } as BuildMyAppsOptions)
+    ).toHaveLength(1);
+  });
+
   it('an off-site-only scope drops page apps and keeps off-site ones; a dark scope drops all', () => {
     const signals: MyAppsSignals = {
       ...LIVE_GRANT,

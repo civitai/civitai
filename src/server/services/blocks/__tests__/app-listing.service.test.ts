@@ -812,8 +812,12 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedSql()).toMatch(/content_rating.*NOT IN \('r', 'x'\)/i);
   });
 
-  it('maturity gate is a no-op (TRUE) on a red-capable host', async () => {
-    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 }, { redCapable: true });
+  // R and X also need their own browsing-level bits now; PG|PG13|R|X (15) allows both.
+  it('maturity gate is a no-op (TRUE) on a red-capable host for a viewer with R and X', async () => {
+    await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      { redCapable: true, viewerBrowsingLevel: 15 }
+    );
     expect(capturedSql()).not.toMatch(/content_rating.*NOT IN/i);
   });
 
@@ -1110,7 +1114,8 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     });
     const detail = await getListingDetail(
       { slug: 'cool-app' },
-      { redCapable: true, scope: 'full' }
+      // An X listing also needs X in the viewer's browsing level (PG|PG13|R|X).
+      { redCapable: true, scope: 'full', viewerBrowsingLevel: 15 }
     );
     expect(detail?.contentRating).toBe('x');
   });

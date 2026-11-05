@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 
+import { logToAxiom, safeError } from '~/server/logging/client';
+import { getAccountStanding } from '~/server/services/account-standing.service';
 import { readApiKeyBuzzLimit } from '~/server/services/api-key.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Flags } from '~/shared/utils/flags';
@@ -25,6 +27,24 @@ export default AuthedEndpoint(
       buzzLimit = current;
     }
 
+    // The stored standing, not only the session's copy, which can predate a mute or ban. On a failed
+    // read, the session's copy, logged like `isAccountMuted`.
+    const standing = await getAccountStanding(user.id).catch((error) => {
+      Promise.resolve()
+        .then(() =>
+          logToAxiom({
+            name: 'account-standing.cache-read-failed',
+            type: 'error',
+            userId: user.id,
+            error: safeError(error),
+          })
+        )
+        .catch(() => undefined);
+      return null;
+    });
+    const banned = !!user.bannedAt || !!standing?.banned;
+    const muted = !!user.muted || !!standing?.muted;
+
     // Release email and moderator status for session auth (no token) or when the
     // token carries the UserRead scope — same gate the OIDC userinfo endpoint uses.
     const canReadProfile = subject === null || Flags.hasFlag(tokenScope ?? 0, TokenScope.UserRead);
@@ -33,7 +53,7 @@ export default AuthedEndpoint(
       id: user.id,
       username: user.username,
       tier: user.tier,
-      status: user.bannedAt ? 'banned' : user.muted ? 'muted' : 'active',
+      status: banned ? 'banned' : muted ? 'muted' : 'active',
       isMember: user.tier ? user.tier !== 'free' : false,
       subscriptions: Object.keys(user.subscriptions ?? {}),
       // Never `false`: a non-moderator must look identical to a caller the gate withheld it from.

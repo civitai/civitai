@@ -104,6 +104,12 @@ export const markReadInput = z.object({
 });
 export type MarkReadInput = z.infer<typeof markReadInput>;
 
+export const markReadByKeysInput = z.object({
+  userId: z.number(),
+  keys: z.array(z.string()).min(1).max(10),
+});
+export type MarkReadByKeysInput = z.infer<typeof markReadByKeysInput>;
+
 export const notificationExistsInput = z.object({ key: z.string() });
 export type NotificationExistsInput = z.infer<typeof notificationExistsInput>;
 
