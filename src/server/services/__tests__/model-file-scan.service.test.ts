@@ -580,6 +580,22 @@ describe('model-file-scan.service', () => {
         expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
       });
 
+      it('busts coverage when a clean rescan recovers an errored file of a type that is never loaded', async () => {
+        setupScanWrite({ pickleScanResult: ScanResultCode.Success }, { status: 'Draft' });
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          ...baseFile,
+          type: 'Training Data',
+          pickleScanResult: ScanResultCode.Error,
+          virusScanResult: ScanResultCode.Success,
+        });
+        mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }]);
+
+        await applyScanOutcome({ fileId: 1, pickleScan: pickle(ScanResultCode.Success) });
+
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockBustOrchestratorScannedFileCache).toHaveBeenCalledTimes(1);
+      });
+
       it('logs a failed unpublish instead of failing the webhook, and still busts coverage', async () => {
         setupScanWrite(danger, { liveSiblings: 0 });
         mockUnpublishModelById.mockRejectedValueOnce(new Error('db timeout'));

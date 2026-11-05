@@ -36,7 +36,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL,
       "publishedAt" timestamp(3), availability text
     );
-    CREATE TABLE "ModelFile" (id serial PRIMARY KEY, "modelVersionId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id serial PRIMARY KEY, "modelVersionId" int NOT NULL,
+      "pickleScanResult" text NOT NULL DEFAULT 'Success',
+      "virusScanResult" text NOT NULL DEFAULT 'Success'
+    );
     CREATE TABLE "PaidAccess" (
       "entityType" text, "entityId" int, "timeframeDays" int, "endsAt" timestamp(3)
     );
@@ -117,5 +121,38 @@ describe('process-scheduled-publishing on a model a content wipe kept', () => {
       { id: 100, live: false },
       { id: 200, live: true },
     ]);
+  });
+});
+
+describe('process-scheduled-publishing on a version with a file that failed its scan', () => {
+  const ids = async (sql: { text: string; values: unknown[] }) =>
+    (await run(sql)).rows.map((r) => (r as { id: number }).id);
+
+  beforeEach(async () => {
+    // The ordinary model's version gets a second, failed file; model 3's errored file is not a failure.
+    await db.exec(`
+      INSERT INTO "ModelFile" ("modelVersionId", "virusScanResult") VALUES (20, 'Danger');
+      INSERT INTO "Model" (id, "userId", status, "publishedAt", meta)
+        VALUES (3, ${OWNER}, 'Scheduled', '${DUE}', '{}');
+      INSERT INTO "ModelVersion" VALUES (30, 3, 'Scheduled', '${DUE}', 'Private');
+      INSERT INTO "ModelFile" ("modelVersionId", "pickleScanResult") VALUES (30, 'Error');
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (300, ${OWNER}, 30);
+    `);
+  });
+
+  it('neither selects nor publishes it, nor its post', async () => {
+    expect(await ids(scheduledVersionsDueSql(NOW))).toEqual([30]);
+    expect(await ids(scheduledPostsDueSql(NOW))).toEqual([300]);
+    const { rows } = await run(
+      scheduledPostsGoLiveSql(
+        [
+          { postId: 200, versionId: 20 },
+          { postId: 300, versionId: 30 },
+        ],
+        NOW
+      )
+    );
+    expect(rows).toEqual([{ id: 300, userId: OWNER }]);
+    expect(await ids(scheduledVersionsGoLiveSql([20, 30], NOW))).toEqual([30]);
   });
 });

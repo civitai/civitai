@@ -1487,6 +1487,7 @@ export async function publishPrivateModelVersionHandler({
   if (!selectedEpochUrl) {
     throw throwBadRequestError('No selected epoch found');
   }
+  await assertNoFailedScanFiles({ id: version.id });
 
   if (!version.posts.length) {
     const post = await createModelVersionPostFromTraining({
@@ -1504,7 +1505,6 @@ export async function publishPrivateModelVersionHandler({
     }
   }
 
-  await assertNoFailedScanFiles({ id: version.id });
   const modelVersion = await updateModelVersionById({
     id: version.id,
     data: {

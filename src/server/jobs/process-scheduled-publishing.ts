@@ -36,6 +36,16 @@ const REWARD_SWEEP_LIMIT = 5000;
 // The due selects skip a model a content wipe kept as the go-live statements do, or its side effects
 // (cache busts, index updates) fire again every run on a model that never goes live.
 
+// A version with a file that failed its scan never goes live on schedule; the scan webhook normally
+// takes it down first, and this holds when that did not happen.
+const noFailedScanFileSql = (versionId: string) => Prisma.sql`
+  NOT EXISTS (
+    SELECT 1 FROM "ModelFile" mf
+    WHERE mf."modelVersionId" = ${Prisma.raw(versionId)}
+      AND (mf."pickleScanResult" = 'Danger' OR mf."virusScanResult" = 'Danger')
+  )
+`;
+
 /** Scheduled models due by `now`. */
 export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
   SELECT id, "userId"
@@ -70,6 +80,7 @@ export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('m.meta')}
     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf."modelVersionId" = mv.id)
+    AND ${noFailedScanFileSql('mv.id')}
 `;
 
 /** Unpublished posts by the model's owner on a scheduled version due by `now`. */
@@ -82,7 +93,7 @@ export const scheduledPostsDueSql = (now: Date) => Prisma.sql`
     AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
     AND m."userId" = p."userId"
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${notRemovedWithOwnerSql('m.meta')}    AND ${noFailedScanFileSql('mv.id')}
 `;
 
 // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the
@@ -124,6 +135,7 @@ export const scheduledPostsGoLiveSql = (
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
     AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${noFailedScanFileSql('mv.id')}
   RETURNING p.id, p."userId"
 `;
 
@@ -143,6 +155,7 @@ export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.s
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
     -- A model a content wipe kept goes live only by a moderator's hand.
     AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${noFailedScanFileSql('mv.id')}
   RETURNING mv.id
 `;
 

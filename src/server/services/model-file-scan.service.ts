@@ -164,6 +164,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
       headerData: true,
       sizeKB: true,
+      pickleScanResult: true,
+      virusScanResult: true,
       modelVersion: {
         select: {
           modelId: true,
@@ -244,7 +246,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: { pickleScanResult: true, virusScanResult: true },
   });
   const failedScan = ranScan && hasFailedScan(written);
-  const uncovered = ranScan && excludedFromCoverage(written);
+  // The version leaves coverage, or may come back to it.
+  const coverageMoved = ranScan && (excludedFromCoverage(written) || excludedFromCoverage(file));
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
@@ -440,12 +443,13 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
   // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
   // already written, and a throw would make the orchestrator redeliver the whole workflow.
-  // A failed or errored scan of any file type uncovers the version, so it busts too.
-  if (uncovered || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
+  // A failed or errored scan of any file type uncovers the version, and a clean rescan of one
+  // recovers it, so both bust too.
+  if (coverageMoved || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
       bustOrchestratorModelCache(modelVersionId),
-      uncovered && file.modelVersion && bustScannedFileAirs(modelVersionId, file.modelVersion),
+      coverageMoved && file.modelVersion && bustScannedFileAirs(modelVersionId, file.modelVersion),
     ]).catch((e) =>
       logToAxiom(
         {
