@@ -61,12 +61,12 @@ beforeAll(async () => {
       "modelId" int PRIMARY KEY, "userId" int DEFAULT 1, "lastVersionAt" timestamp,
       status "ModelStatus" DEFAULT 'Published', availability "Availability" DEFAULT 'Public',
       mode "ModelModifier", "nsfwLevel" int DEFAULT 1, minor bool DEFAULT false,
-      poi bool DEFAULT false, "downloadCount" int, "thumbsUpCount" int,
+      poi bool DEFAULT false, "downloadCount" int NOT NULL, "thumbsUpCount" int NOT NULL,
       "thumbsDownCount" int DEFAULT 0, "commentCount" int DEFAULT 0,
       "collectedCount" int DEFAULT 0, "tippedAmountCount" int DEFAULT 0
     );
     CREATE TABLE "ModelBaseModelMetric" (
-      "modelId" int, "baseModel" text, "downloadCount" int, "thumbsUpCount" int,
+      "modelId" int, "baseModel" text, "downloadCount" int NOT NULL, "thumbsUpCount" int NOT NULL,
       "imageCount" int DEFAULT 0, status "ModelStatus" DEFAULT 'Published',
       availability "Availability" DEFAULT 'Public', mode "ModelModifier",
       "nsfwLevel" int DEFAULT 1, minor bool DEFAULT false, poi bool DEFAULT false,
@@ -139,6 +139,7 @@ describe('ordering on the capped counts', () => {
     expect(page.map((r) => r.id)).toEqual([SINGLE, STALE]);
     capturedQueries.length = 0;
     const next = await feed('Most Downloaded', { take: 1, cursor: page[1].cursorId });
+    expect(capturedQueries[0].text).toContain('UNION ALL'); // the split-cursor branch
     expect(next.map((r) => r.id)).toEqual([STALE, SHARED_LIKERS]);
   });
 });
