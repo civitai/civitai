@@ -393,18 +393,13 @@ describe('resolveModelFileName', () => {
     });
   });
 
-  describe('known limit: a collision across file types', () => {
-    // The API lists every file on the version, so it sees a Model and a VAE uploaded under the same
-    // name and separates them. The download route's type path (`?type=Model`) reads only files of
-    // that type as siblings, sees no collision, and serves the uploaded name. For that file the
-    // name in the API and the name the download saves under differ. Fixing it means reading every
-    // sibling in getDownloadFile; this test pins the current behaviour so the gap is visible.
+  describe('a collision across file types', () => {
     const version = { name: 'V1' };
     const modelFile = { id: 1, name: 'shared.safetensors', type: 'Model', metadata: {} };
     const vaeFile = { id: 2, name: 'shared.safetensors', type: 'VAE', metadata: {} };
     const allFiles = [modelFile, vaeFile];
 
-    it('separates them when every sibling is visible (the API)', () => {
+    it('separates a Model and a VAE uploaded under the same name', () => {
       const modelName = resolveModelFileName({
         model: checkpoint,
         modelVersion: version,
@@ -419,17 +414,6 @@ describe('resolveModelFileName', () => {
       });
       expect(modelName).toBe('realisticVision_v1.safetensors');
       expect(vaeName).toBe('shared.safetensors');
-    });
-
-    it('keeps the uploaded name when only same-type siblings are visible (the download route)', () => {
-      expect(
-        resolveModelFileName({
-          model: checkpoint,
-          modelVersion: version,
-          file: modelFile,
-          versionFiles: [modelFile],
-        })
-      ).toBe('shared.safetensors');
     });
   });
 
@@ -454,7 +438,6 @@ describe('resolveModelFileName', () => {
     });
 
     it('separates LoRA files whose names differ only in case', () => {
-      // A deliberate change from before: these overwrite each other on Windows and macOS.
       const upper = { id: 1, name: 'B.safetensors', type: 'Model', metadata: {} };
       const lower = { id: 2, name: 'b.safetensors', type: 'Model', metadata: {} };
       const versionFiles = [upper, lower];

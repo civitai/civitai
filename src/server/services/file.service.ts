@@ -364,9 +364,8 @@ export const getFileForModelVersion = async ({
   }
   if (!file) return { status: 'not-found' };
 
-  // Named against every file on the version, as the API and search index name it, not only the
-  // files this request could pick from: otherwise two files sharing an uploaded name both download
-  // under it and overwrite each other.
+  // Named against every file on the version, not only the files this request could pick from:
+  // otherwise two files sharing an uploaded name both download under it and overwrite each other.
   const pickedFromAll = !!fileId && (isOwner || !!isMod);
   if (versionFiles.length && !pickedFromAll) {
     versionFiles = (await readFiles({ modelVersionId })) as FileResult[];
