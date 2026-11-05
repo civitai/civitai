@@ -1,4 +1,5 @@
 import type { NextApiResponse } from 'next';
+import { AppDeveloperTermsNotAcceptedError } from '~/shared/constants/app-developer-terms.constants';
 import { isProd } from '~/env/other';
 import {
   submitVersionParseErrorMessage,
@@ -152,6 +153,10 @@ export default AuthedEndpoint(
       // Service throws plain Errors with human-readable messages (bundle too
       // large, missing manifest, invalid blockId / version / name, etc).
       // Surface as 400 so the form can render them inline.
+      if (err instanceof AppDeveloperTermsNotAcceptedError) {
+        res.status(403).json({ message: err.message });
+        return;
+      }
       const { isStorageMigrationRefusal } = await import(
         '~/server/services/apps/storage-schema-migrations'
       );

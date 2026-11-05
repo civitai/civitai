@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
+import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
 
 import {
   addListingScreenshotSchema,
@@ -1204,6 +1206,36 @@ export const appListingsRouter = router({
         '~/server/services/blocks/listing-meta.service'
       );
       return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
+    }),
+
+  getDeveloperTermsStatus: appDeveloperProcedure.query(async ({ ctx }) => {
+    const { getAppDeveloperTermsStatus } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getAppDeveloperTermsStatus(ctx.user.id);
+  }),
+
+  getDeveloperRateCard: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.features?.appDeveloperRateCard) throw new TRPCError({ code: 'NOT_FOUND' });
+    const { getDeveloperRateCard } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getDeveloperRateCard();
+  }),
+
+  acceptDeveloperTerms: appDeveloperProcedure
+    .input(z.object({ version: z.string().min(1).max(32) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.version !== APP_DEVELOPER_TERMS_VERSION) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'The App Developer Terms changed. Reload the page and accept the new version.',
+        });
+      }
+      const { acceptAppDeveloperTerms } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      return acceptAppDeveloperTerms({ userId: ctx.user.id, version: input.version });
     }),
 
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
