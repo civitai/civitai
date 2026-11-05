@@ -2085,9 +2085,8 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
 
   // ── A REFUSAL BRINGS A DISMISSED NOTICE BACK ─────────────────────────────────
   // The rule is `resolveConsentNoticeAfterRefusal` (unit-tested in
-  // `__tests__/requestConsentGate.test.ts`); these pin that THIS host wires its two
-  // refusal signals to it: a reaction refused as `needs-consent`, and the SDK's
-  // REQUEST_CONSENT naming the refused scope.
+  // `__tests__/requestConsentGate.test.ts`); these pin that THIS host wires a reaction
+  // refused as `needs-consent` to it, and that REQUEST_CONSENT does not revive it.
   const REACT = 'social:react:self';
   const reactionRequest = {
     requestId: 'react-1',
@@ -2149,24 +2148,14 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     }
   });
 
-  test('🔴 dismissed, then REQUEST_CONSENT names a missing scope → the notice is back behind the modal', async () => {
+  test('🔴 dismissed, then REQUEST_CONSENT for a missing scope opens the modal and does NOT bring the notice back', async () => {
+    // That path already answers the request with the consent modal, so a notice
+    // reappearing behind it (and staying after the viewer declines) would only undo
+    // the dismissal. The modal is the positive control that the request was handled.
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
     await driveToReady();
     await dismissNotice();
     postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
-    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
-    // If the viewer closes the modal without allowing, the notice is still there.
-    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
-  });
-
-  test('CONTROL — REQUEST_CONSENT naming only a scope outside the missing set leaves it dismissed', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
-    await driveToReady();
-    await dismissNotice();
-    // `apps:storage:read` is granted, not missing. The modal still opens for the
-    // missing set (the hint never decides that), which is the positive control that
-    // the request was handled.
-    postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:read'] });
     await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
     await new Promise((r) => setTimeout(r, 150));
     expect(noticeQuery()).toBeNull();

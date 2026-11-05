@@ -538,27 +538,6 @@ describe('resolveConsentNoticeAfterRefusal (a refusal brings a dismissed notice 
     }
   });
 
-  it('untrusted hint shapes never revive it: not an array, non-strings, a prototype key', () => {
-    const dismissed = dismissConsentNotice(APP);
-    for (const refusedScopes of [
-      undefined,
-      null,
-      'social:tip:self',
-      { 0: 'social:tip:self' },
-      [42],
-      ['constructor'],
-    ]) {
-      expect(
-        resolveConsentNoticeAfterRefusal(dismissed, {
-          appBlockId: APP,
-          refusedScopes,
-          missingScopes: MISSING,
-        }),
-        `revived on ${JSON.stringify(refusedScopes)}`
-      ).toBe(dismissed);
-    }
-  });
-
   it('dismissing again after a revival clears the highlight', () => {
     expect(dismissConsentNotice(APP)).toEqual({ dismissedFor: APP, revived: false });
     expect(CONSENT_NOTICE_NOT_DISMISSED).toEqual({ dismissedFor: null, revived: false });
