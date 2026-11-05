@@ -2,10 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { Gesture } from '~/components/Sticker/draft-gesture';
 import { knobRotation, rotate } from '~/components/Sticker/draft-gesture';
 import { capScaleFromWidth, STICKER_PLACEMENT_MIN_SCALE } from '~/shared/utils/sticker-placement';
-import {
-  pointerToSurfaceFraction,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+import { pointerToSurfaceFraction, useDraftStoreHook } from '~/store/sticker-placement-draft.store';
 
 /**
  * The one window-bound gesture for every draft on the placement surface: move,
@@ -13,9 +10,10 @@ import {
  * calls on pointer down. `maxScale` caps a resize.
  */
 export function useDraftGestures(maxScale: number) {
-  const move = useStickerPlacementDraftStore((state) => state.move);
-  const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
-  const selectedDraftId = useStickerPlacementDraftStore((state) => state.selectedDraftId);
+  const useStore = useDraftStoreHook();
+  const move = useStore((state) => state.move);
+  const setInteraction = useStore((state) => state.setInteraction);
+  const selectedDraftId = useStore((state) => state.selectedDraftId);
 
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
@@ -39,9 +37,9 @@ export function useDraftGestures(maxScale: number) {
   const onGesture = useCallback((next: Gesture) => {
     if (gesture.current) return false;
     gesture.current = next;
-    useStickerPlacementDraftStore.getState().setInteraction(next.mode);
+    useStore.getState().setInteraction(next.mode);
     return true;
-  }, []);
+  }, [useStore]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -53,13 +51,11 @@ export function useDraftGestures(maxScale: number) {
       // screen is somebody else's finger.
       if (!active || event.pointerId !== active.pointerId) return;
 
-      const point = pointerToSurfaceFraction(event.clientX, event.clientY);
+      const point = pointerToSurfaceFraction(event.clientX, event.clientY, useStore);
       // By id, not by selection: a press selects and drags in one gesture, and a
       // selection that changed under a drag in flight would otherwise start
       // moving a sticker nobody is touching.
-      const current = useStickerPlacementDraftStore
-        .getState()
-        .drafts.find((draft) => draft.id === active.draftId);
+      const current = useStore.getState().drafts.find((draft) => draft.id === active.draftId);
       if (!point || !current) return;
 
       const { bounds } = point;
@@ -156,13 +152,13 @@ export function useDraftGestures(maxScale: number) {
     // (`maxScale`, `drafts`, `targetImageId`) turns the cleanup into a
     // per-render `gesture.current = null`, which kills any drag in progress the
     // moment anything re-renders. Read values through refs instead.
-  }, [move, setInteraction]);
+  }, [move, setInteraction, useStore]);
 
   // Picking a sticker up from the tray starts a move with no offset — the press
   // happened outside the image, so there is no grab point to preserve. The draft
   // it belongs to is the one `begin` just appended and selected.
-  const trayInteraction = useStickerPlacementDraftStore((state) => state.interaction);
-  const trayPointerId = useStickerPlacementDraftStore((state) => state.interactionPointerId);
+  const trayInteraction = useStore((state) => state.interaction);
+  const trayPointerId = useStore((state) => state.interactionPointerId);
   useEffect(() => {
     if (trayInteraction !== 'move' || gesture.current || !selectedDraftId || trayPointerId == null)
       return;

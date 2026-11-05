@@ -48,10 +48,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { DraftPurchase, StickerDraft } from '~/store/sticker-placement-draft.store';
-import {
-  pointerToSurfaceFraction,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+import { pointerToSurfaceFraction, useDraftStoreHook } from '~/store/sticker-placement-draft.store';
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
@@ -204,9 +201,10 @@ export function DraftSticker({
    */
   commit?: ReactNode;
 }) {
-  const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
-  const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
-  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
+  const useStore = useDraftStoreHook();
+  const markPurchased = useStore((state) => state.markPurchased);
+  const markPaidForUse = useStore((state) => state.markPaidForUse);
+  const previewing = useStore((state) => state.previewing);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
   // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
@@ -216,8 +214,8 @@ export function DraftSticker({
   // something you only get once; duplicating put those two buttons a click
   // apart. The per-use path below is unaffected: each use genuinely is another
   // purchase.
-  const packPurchaseKey = useStickerPlacementDraftStore((state) => state.packPurchaseKey);
-  const clearPackPurchaseKey = useStickerPlacementDraftStore((state) => state.clearPackPurchaseKey);
+  const packPurchaseKey = useStore((state) => state.packPurchaseKey);
+  const clearPackPurchaseKey = useStore((state) => state.clearPackPurchaseKey);
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
@@ -301,9 +299,9 @@ export function DraftSticker({
     }
   };
 
-  const select = useStickerPlacementDraftStore((state) => state.select);
-  const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
-  const move = useStickerPlacementDraftStore((state) => state.move);
+  const select = useStore((state) => state.select);
+  const cancelDraft = useStore((state) => state.cancelDraft);
+  const move = useStore((state) => state.move);
 
   // `null` until somebody presses the control, which is what lets the default
   // track an offer that arrives with a query rather than freezing whatever was
@@ -364,7 +362,7 @@ export function DraftSticker({
     below: 0,
     above: 0,
   });
-  const trayElement = useStickerPlacementDraftStore((state) => state.tray);
+  const trayElement = useStore((state) => state.tray);
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
@@ -381,7 +379,7 @@ export function DraftSticker({
     if (!element || !button) return;
 
     const { flipped, rotation } = frame.current;
-    const tray = useStickerPlacementDraftStore.getState().tray;
+    const tray = useStore.getState().tray;
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
@@ -410,7 +408,7 @@ export function DraftSticker({
         ? current
         : next
     );
-  }, []);
+  }, [useStore]);
 
   const remeasure = useCallback(() => {
     clip.current = rootRef.current ? nearestClipElement(rootRef.current) : null;
@@ -473,7 +471,7 @@ export function DraftSticker({
       event.preventDefault();
       event.stopPropagation();
 
-      const point = pointerToSurfaceFraction(event.clientX, event.clientY);
+      const point = pointerToSurfaceFraction(event.clientX, event.clientY, useStore);
       const element = rootRef.current;
       if (!point || !element) return;
 
@@ -567,7 +565,7 @@ export function DraftSticker({
   // neighbour under the finger holding it.
   const pressPanel = (event: React.PointerEvent) => {
     event.stopPropagation();
-    if (!useStickerPlacementDraftStore.getState().interaction) select(draft.id);
+    if (!useStore.getState().interaction) select(draft.id);
   };
 
   // One payload for both buttons, so the two offers cannot drift into placing
