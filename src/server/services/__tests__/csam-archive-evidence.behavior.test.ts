@@ -534,6 +534,30 @@ describe('the check', () => {
     expect(counts.stale).toBe(1);
   });
 
+  it('counts an unarchived generated-image report naming no URL as unsupported, not stale', async () => {
+    const ids = [
+      await addReport('GeneratedImage', { archivedAt: null }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: { generatedImages: [{ blobs: [{ id: 'b1' }, { id: 'b2', url: '' }] }] },
+      }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: { generatedImages: [{ blobs: [{ id: 'b3', url: 'https://example.com/b3' }] }] },
+      }),
+    ];
+    for (const id of ids)
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '12 hours' WHERE id = $1`,
+        [id]
+      );
+
+    const { counts } = await run();
+
+    expect(counts.unsupported).toBe(2);
+    expect(counts.stale).toBe(1);
+  });
+
   it('never writes a storage key to the lines it logs', async () => {
     const ok = await addReport('TrainingData');
     const keys = [await addObject(ok, 'base'), await addObject(ok, 'trainingData')];

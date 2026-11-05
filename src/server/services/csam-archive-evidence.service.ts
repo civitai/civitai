@@ -29,9 +29,18 @@ type ArchiveObjectRow = {
 
 type CheckFailure = Exclude<CsamArchiveIncompleteReason, 'skipped' | 'stale' | 'unsupported'>;
 
-const GENERATOR_EVIDENCE_SQL = Prisma.sql`COALESCE(details -> 'generatorEvidence' ->> 'version' = ${String(
-  GENERATOR_EVIDENCE_VERSION
-)}, false)`;
+// Mirrors the `unsupported` filter in getCsamsToArchive: generator evidence, and a generated-image
+// report naming no URL. Both stay unarchived, and their users' image-retention hold stays, until a
+// dedicated archiver for them stamps `archivedAt`.
+const UNSUPPORTED_SQL = Prisma.sql`(
+  COALESCE(details -> 'generatorEvidence' ->> 'version' = ${String(
+    GENERATOR_EVIDENCE_VERSION
+  )}, false)
+  OR (
+    type::text = 'GeneratedImage'
+    AND NOT COALESCE(jsonb_path_exists(details, '$.generatedImages[*].blobs[*].url ? (@ != "")'), false)
+  )
+)`;
 
 const MEDIA_KIND: Partial<Record<string, CsamArchiveObjectKind>> = {
   Image: 'images',
@@ -142,18 +151,17 @@ export async function checkCsamArchiveEvidence({
     check_error: 0,
   };
 
-  // Generator-evidence reports are left out of the archive job (getCsamsToArchive), so they are
-  // counted apart rather than read as stale.
+  // The archive job leaves these out, so they are counted apart rather than read as stale.
   const [pending] = await dbWrite.$queryRaw<
     { skipped: number; stale: number; unsupported: number }[]
   >`
     SELECT
       count(*) FILTER (WHERE details ->> 'archiveSkipped' IS NOT NULL)::int AS skipped,
       count(*) FILTER (
-        WHERE details ->> 'archiveSkipped' IS NULL AND ${GENERATOR_EVIDENCE_SQL}
+        WHERE details ->> 'archiveSkipped' IS NULL AND ${UNSUPPORTED_SQL}
       )::int AS unsupported,
       count(*) FILTER (
-        WHERE details ->> 'archiveSkipped' IS NULL AND NOT ${GENERATOR_EVIDENCE_SQL}
+        WHERE details ->> 'archiveSkipped' IS NULL AND NOT ${UNSUPPORTED_SQL}
           AND "reportSentAt" < now() - interval '6 hours'
       )::int AS stale
     FROM "CsamReport"
