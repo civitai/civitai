@@ -84,12 +84,12 @@ describe('restart', () => {
     expect(log).toHaveBeenCalled();
   });
 
-  it('sends a user who has not joined to the front page', async () => {
+  it('sends a user who has not joined to the home page', async () => {
     restartCareer.mockResolvedValue({ reset: false });
 
     expect(await submit({ confirmed: 'yes' })).toMatchObject({
       status: 200,
-      body: { ok: true, to: '/' },
+      body: { ok: true, to: '/home' },
     });
     expect(forgetLegacyCounters).not.toHaveBeenCalled();
   });

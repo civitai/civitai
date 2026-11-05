@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
-  import PageNav from '$lib/PageNav.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
   import { count, formatDate } from '$lib/format';
@@ -42,7 +41,6 @@
 </script>
 
 <div class="page-wide codex">
-  <PageNav />
   <header class="head">
     <p class="eyebrow">Knights of New Order</p>
     <h1 class="page-title">Codex of the Order</h1>

@@ -14,11 +14,11 @@ describe('requireMember', () => {
     expect(getPlayerStatus).toHaveBeenCalledWith({}, 7);
   });
 
-  it('sends a user with no player row to the front page', async () => {
+  it('sends a user with no player row to the home page', async () => {
     getPlayerStatus.mockResolvedValue(null);
     await expect(requireMember({} as never, 7)).rejects.toMatchObject({
       status: 303,
-      location: '/',
+      location: '/home',
     });
   });
 });

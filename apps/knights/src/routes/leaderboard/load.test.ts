@@ -37,9 +37,9 @@ beforeEach(() => {
 });
 
 describe('leaderboard load', () => {
-  it('sends a user who has not joined to the front page', async () => {
+  it('sends a user who has not joined to the home page', async () => {
     getPlayerStatus.mockResolvedValue(null);
-    await expect(run()).rejects.toMatchObject({ status: 303, location: '/' });
+    await expect(run()).rejects.toMatchObject({ status: 303, location: '/home' });
   });
 
   it('turns image keys into avatar urls, gives a rank its badge image, and finds the viewer', async () => {

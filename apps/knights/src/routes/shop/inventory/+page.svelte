@@ -5,7 +5,6 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { count, formatDate } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import PageNav from '$lib/PageNav.svelte';
   import { cosmeticIcon, cosmeticTypeLabel, tierName } from '$lib/shop-view';
   import type { ActionData, PageData } from './$types';
 
@@ -58,7 +57,6 @@
 </script>
 
 <div class="page-wide inventory">
-  <PageNav />
   <header class="head">
     <div>
       <p class="eyebrow">Your armory</p>
