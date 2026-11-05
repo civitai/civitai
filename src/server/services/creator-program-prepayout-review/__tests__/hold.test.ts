@@ -251,6 +251,17 @@ describe('openPayoutHold', () => {
     expect(table.rows[0].status).toBe('escalated');
   });
 
+  it('sends a withhold superseded by a later clear back to review instead of retrying', async () => {
+    table.rows.push(
+      review({ period: '2026-10', status: 'withheld', hold: false, signals: [] }),
+      review({ id: 42, period: '2026-11', status: 'cleared', hold: false, signals: [] })
+    );
+    expect(await hasPayoutHold(9)).toBe(false);
+
+    await expect(open()).rejects.toThrow('is withheld; decide it in payout review');
+    expect(table.rows[0]).toMatchObject({ status: 'withheld', version: 3 });
+  });
+
   it('files a period-scoped row once and reports a concurrent filing as a conflict', async () => {
     reviews.findUnique.mockResolvedValueOnce(null);
     table.rows.push(review({ period: '2026-10', status: 'cleared', hold: false, signals: [] }));

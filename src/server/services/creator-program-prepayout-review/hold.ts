@@ -214,6 +214,7 @@ export const payoutHoldGrounds = [
   'fraud',
   'chargeback',
   'terms-of-service-breach',
+  'acceptance-pending',
 ] as const;
 export type PayoutHoldGround = (typeof payoutHoldGrounds)[number];
 
@@ -275,7 +276,12 @@ export async function openPayoutHold(input: OpenPayoutHold, openedBy: string, no
       throw e;
     }
   } else {
-    // hasPayoutHold was false, so a row in this period can only be a cleared one.
+    // An unheld open/escalated row, or a withhold a later cleared period superseded: deciding it
+    // belongs to the review it already is.
+    if (existing.status !== 'cleared')
+      throw conflict(
+        `Review ${existing.id} for ${period} is ${existing.status}; decide it in payout review instead`
+      );
     const { count } = await dbWrite.creatorProgramPayoutReview.updateMany({
       where: { id: existing.id, version: existing.version, status: 'cleared' },
       data: {
