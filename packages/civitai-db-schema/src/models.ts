@@ -7286,7 +7286,7 @@ export interface CreatorProgramPayoutReviewRun {
 }
 
 export interface KnightsShopItem {
-  id: string;
+  id: number;
   kind: string;
   name: string;
   description: string;
@@ -7306,7 +7306,7 @@ export interface KnightsShopItem {
 
 export interface KnightsShopItemChange {
   id: number;
-  itemId: string;
+  itemId: number;
   item?: KnightsShopItem;
   userId: number;
   action: string;
@@ -7319,7 +7319,7 @@ export interface KnightsShopPurchase {
   playerId: number;
   requestKey: string;
   externalKey: string;
-  itemId: string;
+  itemId: number;
   item?: KnightsShopItem;
   kind: string;
   gold: number;

@@ -32,12 +32,12 @@
   let openedWith = 0;
   let stopSequence = () => {};
   let floater = $state<{ amount: number; key: number } | null>(null);
-  let stamped = $state<string | null>(null);
+  let stamped = $state<number | null>(null);
   let skipped = $state(false);
   let reloadedFor = '';
   let confirming = $state<Card | null>(null);
   let requestKey = $state('');
-  let short = $state<{ id: string; key: number; by: number } | null>(null);
+  let short = $state<{ id: number; key: number; by: number } | null>(null);
   let notice = $state<string | null>(null);
   let noticePending = $state(false);
   let noticeInventory = $state(false);

@@ -55,10 +55,10 @@ export const newShopItemSchema = z.discriminatedUnion(
 );
 export type NewShopItem = z.infer<typeof newShopItemSchema>;
 
-export const editShopItemSchema = z.object({ id: z.string().min(1).max(200), ...settings });
+export const editShopItemSchema = z.object({ id: int4Id, ...settings });
 export type EditShopItem = z.infer<typeof editShopItemSchema>;
 
-export const itemIdSchema = z.object({ id: z.string().min(1).max(200) });
+export const itemIdSchema = z.object({ id: int4Id });
 
 export type FieldChange = { from: unknown; to: unknown };
 

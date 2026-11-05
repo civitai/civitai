@@ -3,7 +3,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
 
-  let { items, itemId }: { items: { id: string; name: string }[]; itemId: string } = $props();
+  let { items, itemId }: { items: { id: number; name: string }[]; itemId: string } = $props();
 
   let selected = $state(untrack(() => itemId));
   const ALL = 'All items';
@@ -16,12 +16,12 @@
     Item
     <Select.Root type="single" bind:value={selected}>
       <Select.Trigger class="w-56">
-        {items.find((item) => item.id === selected)?.name ?? ALL}
+        {items.find((item) => String(item.id) === selected)?.name ?? ALL}
       </Select.Trigger>
       <Select.Content>
         <Select.Item value="">{ALL}</Select.Item>
         {#each items as item (item.id)}
-          <Select.Item value={item.id}>{item.name}</Select.Item>
+          <Select.Item value={String(item.id)}>{item.name}</Select.Item>
         {/each}
       </Select.Content>
     </Select.Root>

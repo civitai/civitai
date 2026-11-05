@@ -22,7 +22,7 @@ type Log = (event: Record<string, unknown>) => unknown;
 
 export type BuyRequest = {
   playerId: number;
-  itemId: string;
+  itemId: number;
   /** The buyer's idempotency key: a repeat of it replays the first answer and never charges twice. */
   requestKey: string;
   /** The price the buyer saw; a different current price refuses the purchase. */

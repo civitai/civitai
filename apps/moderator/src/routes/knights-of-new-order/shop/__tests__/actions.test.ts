@@ -45,7 +45,7 @@ describe('Knights shop catalog actions', () => {
 
   it('shows a refusal from the service as a conflict', async () => {
     svc.setShopItemActive.mockResolvedValueOnce({ ok: false, error: 'gone' });
-    expect(await actions.retire(formEvent({ id: 'buzz-50' }))).toMatchObject({
+    expect(await actions.retire(formEvent({ id: '12' }))).toMatchObject({
       status: 409,
       data: { error: 'gone' },
     });
@@ -55,7 +55,7 @@ describe('Knights shop catalog actions', () => {
     svc.updateShopItem.mockRejectedValueOnce(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(
-      await actions.save(formEvent({ id: 'buzz-50', name: 'x', price: '5', sortOrder: '0' }))
+      await actions.save(formEvent({ id: '12', name: 'x', price: '5', sortOrder: '0' }))
     ).toMatchObject({ status: 500 });
   });
 });

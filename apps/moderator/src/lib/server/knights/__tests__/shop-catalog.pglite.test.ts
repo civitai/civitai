@@ -47,8 +47,9 @@ const valid = {
   rotating: 'on',
 };
 
+/** Inserts an item named `name` and returns its serial id. */
 async function seedItem(
-  id: string,
+  name: string,
   o: Partial<{
     kind: string;
     price: number;
@@ -62,12 +63,12 @@ async function seedItem(
   }> = {}
 ) {
   const kind = o.kind ?? 'buzz_pack';
-  await db.query(
-    `INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","tier","months","cosmeticId","active","rotating","sortOrder")
-     VALUES ($1,$2,$1,$3,$4,$5,$6,$7,$8,$9,$10)`,
+  const { rows } = await db.query<{ id: number }>(
+    `INSERT INTO "KnightsShopItem" ("kind","name","price","buzz","tier","months","cosmeticId","active","rotating","sortOrder")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING "id"`,
     [
-      id,
       kind,
+      name,
       o.price ?? 1000,
       o.buzz === undefined ? (kind === 'buzz_pack' ? 50 : null) : o.buzz,
       o.tier ?? null,
@@ -78,11 +79,12 @@ async function seedItem(
       o.sortOrder ?? 0,
     ]
   );
+  return rows[0].id;
 }
 
 const changes = async () =>
   (
-    await db.query<{ itemId: string; userId: number; action: string; changes: unknown }>(
+    await db.query<{ itemId: number; userId: number; action: string; changes: unknown }>(
       `SELECT "itemId","userId","action","changes" FROM "KnightsShopItemChange" ORDER BY "id"`
     )
   ).rows;
@@ -95,12 +97,9 @@ beforeAll(async () => {
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER);
     CREATE TABLE "Cosmetic" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "type" TEXT NOT NULL, "data" JSONB);`);
-  for (const dir of [
-    '20261210120000_knights_v2_tables',
-    '20261213120000_knights_v2_shop_item_change',
-  ]) {
-    await db.exec(readFileSync(path.join(MIGRATIONS, dir, 'migration.sql'), 'utf8'));
-  }
+  await db.exec(
+    readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
+  );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -162,14 +161,16 @@ describe('diffFields', () => {
 });
 
 describe('createShopItem', () => {
-  it('writes the item under the seed id scheme and one create row with the whole item', async () => {
+  it('writes the item under a generated id and one create row with the whole item', async () => {
     const input = newShopItemSchema.parse({
       ...valid,
       kind: 'membership',
       tier: 'gold',
       months: '1',
     });
-    expect(await createShopItem(input, MOD)).toEqual({ ok: true, id: 'membership-gold-1m' });
+    const created = await createShopItem(input, MOD);
+    expect(created).toEqual({ ok: true, id: expect.any(Number) });
+    const id = (created as { id: number }).id;
 
     const rows = (
       await db.query(
@@ -178,7 +179,7 @@ describe('createShopItem', () => {
     ).rows;
     expect(rows).toEqual([
       {
-        id: 'membership-gold-1m',
+        id,
         kind: 'membership',
         price: 500,
         tier: 'gold',
@@ -188,18 +189,11 @@ describe('createShopItem', () => {
       },
     ]);
     const [change] = await changes();
-    expect(change).toMatchObject({ itemId: 'membership-gold-1m', userId: MOD, action: 'create' });
+    expect(change).toMatchObject({ itemId: id, userId: MOD, action: 'create' });
     expect(change.changes).toMatchObject({
       price: { from: null, to: 500 },
       tier: { from: null, to: 'gold' },
     });
-  });
-
-  it('refuses an id that is already taken, without a second change row', async () => {
-    await seedItem('buzz-50');
-    const input = newShopItemSchema.parse({ ...valid, kind: 'buzz_pack', buzz: '50' });
-    expect(await createShopItem(input, MOD)).toMatchObject({ ok: false });
-    expect(await changes()).toEqual([]);
   });
 
   it('refuses a cosmetic that does not exist', async () => {
@@ -211,17 +205,26 @@ describe('createShopItem', () => {
     expect((await db.query(`SELECT 1 FROM "KnightsShopItem"`)).rows).toEqual([]);
   });
 
-  it('sells a cosmetic that exists as cosmetic-<id>', async () => {
+  it('lists the same cosmetic again, for example a retired one back at a new price', async () => {
     await db.query(`INSERT INTO "Cosmetic" ("id","name","type") VALUES (77,'Halo','Badge')`);
     const input = newShopItemSchema.parse({ ...valid, kind: 'cosmetic', cosmeticId: '77' });
-    expect(await createShopItem(input, MOD)).toEqual({ ok: true, id: 'cosmetic-77' });
+    const first = await createShopItem(input, MOD);
+    const again = await createShopItem({ ...input, price: 900 }, MOD);
+
+    expect(first).toEqual({ ok: true, id: expect.any(Number) });
+    expect(again).toEqual({ ok: true, id: expect.any(Number) });
+    expect((again as { id: number }).id).not.toBe((first as { id: number }).id);
+    expect((await db.query(`SELECT "price" FROM "KnightsShopItem" ORDER BY "id"`)).rows).toEqual([
+      { price: 500 },
+      { price: 900 },
+    ]);
   });
 });
 
 describe('updateShopItem', () => {
-  const edit = (fields: Record<string, string>) =>
+  const edit = (id: number, fields: Record<string, string> = {}) =>
     editShopItemSchema.parse({
-      id: 'buzz-50',
+      id: String(id),
       name: 'buzz-50',
       description: '',
       price: '1000',
@@ -230,15 +233,18 @@ describe('updateShopItem', () => {
     });
 
   it('writes the new price and a change row holding exactly that difference', async () => {
-    await seedItem('buzz-50');
-    expect(await updateShopItem(edit({ price: '1200' }), MOD)).toEqual({ ok: true, changed: true });
+    const id = await seedItem('buzz-50');
+    expect(await updateShopItem(edit(id, { price: '1200' }), MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
 
     expect((await db.query(`SELECT "price" FROM "KnightsShopItem"`)).rows).toEqual([
       { price: 1200 },
     ]);
     expect(await changes()).toEqual([
       {
-        itemId: 'buzz-50',
+        itemId: id,
         userId: MOD,
         action: 'update',
         changes: { price: { from: 1000, to: 1200 } },
@@ -247,32 +253,32 @@ describe('updateShopItem', () => {
   });
 
   it('writes nothing when nothing differs', async () => {
-    await seedItem('buzz-50');
-    expect(await updateShopItem(edit({}), MOD)).toEqual({ ok: true, changed: false });
+    const id = await seedItem('buzz-50');
+    expect(await updateShopItem(edit(id), MOD)).toEqual({ ok: true, changed: false });
     expect(await changes()).toEqual([]);
   });
 
   it('refuses an unknown item', async () => {
-    expect(await updateShopItem(edit({ id: 'nope' }), MOD)).toMatchObject({ ok: false });
+    expect(await updateShopItem(edit(9999), MOD)).toMatchObject({ ok: false });
   });
 });
 
 describe('setShopItemActive', () => {
   it('retires and restores, one change row each, and nothing for a repeat', async () => {
-    await seedItem('buzz-50');
-    expect(await setShopItemActive('buzz-50', false, MOD)).toEqual({ ok: true, changed: true });
-    expect(await setShopItemActive('buzz-50', false, MOD)).toEqual({ ok: true, changed: false });
-    expect(await setShopItemActive('buzz-50', true, MOD)).toEqual({ ok: true, changed: true });
+    const id = await seedItem('buzz-50');
+    expect(await setShopItemActive(id, false, MOD)).toEqual({ ok: true, changed: true });
+    expect(await setShopItemActive(id, false, MOD)).toEqual({ ok: true, changed: false });
+    expect(await setShopItemActive(id, true, MOD)).toEqual({ ok: true, changed: true });
 
     expect(await changes()).toEqual([
       {
-        itemId: 'buzz-50',
+        itemId: id,
         userId: MOD,
         action: 'retire',
         changes: { active: { from: true, to: false } },
       },
       {
-        itemId: 'buzz-50',
+        itemId: id,
         userId: MOD,
         action: 'restore',
         changes: { active: { from: false, to: true } },
@@ -284,9 +290,14 @@ describe('setShopItemActive', () => {
 describe('previewShop', () => {
   it('rotates the active, sellable items exactly as the shop does, and reports the rest', async () => {
     for (let i = 0; i < 8; i++) await seedItem(`rot-${i}`, { rotating: true, sortOrder: i });
-    await seedItem('fixed', { sortOrder: 20 });
-    await seedItem('retired', { active: false });
-    await seedItem('three-months', { kind: 'membership', buzz: null, tier: 'gold', months: 3 });
+    const fixed = await seedItem('fixed', { sortOrder: 20 });
+    const retired = await seedItem('retired', { active: false });
+    const threeMonths = await seedItem('three-months', {
+      kind: 'membership',
+      buzz: null,
+      tier: 'gold',
+      months: 3,
+    });
 
     const preview = await previewShop('2026-12-20');
     const sellable = (
@@ -298,36 +309,46 @@ describe('previewShop', () => {
     expect(preview.stock.map((s) => [s.item.id, s.price, s.deal])).toEqual(
       stockFor(sellable, '2026-12-20').stock.map((s) => [s.item.id, s.price, s.deal])
     );
-    expect(preview.stock.map((s) => s.item.id)).toContain('fixed');
-    expect(preview.stock.map((s) => s.item.id)).not.toContain('retired');
-    expect(preview.excluded.map((i) => i.id)).toEqual(['three-months']);
+    expect(preview.stock.map((s) => s.item.id)).toContain(fixed);
+    expect(preview.stock.map((s) => s.item.id)).not.toContain(retired);
+    expect(preview.excluded.map((i) => i.id)).toEqual([threeMonths]);
   });
 });
 
 describe('previewShop cosmetics', () => {
   it('keeps an item whose cosmetic is missing in its slot but flags it as hidden from players', async () => {
     await db.query(`INSERT INTO "Cosmetic" ("id","name","type") VALUES (1,'Halo','Badge')`);
-    await seedItem('cosmetic-1', { kind: 'cosmetic', buzz: null, cosmeticId: 1, sortOrder: 1 });
-    await seedItem('cosmetic-2', { kind: 'cosmetic', buzz: null, cosmeticId: 2, sortOrder: 2 });
-    await seedItem('buzz-50', { sortOrder: 3 });
+    const present = await seedItem('present', {
+      kind: 'cosmetic',
+      buzz: null,
+      cosmeticId: 1,
+      sortOrder: 1,
+    });
+    const missing = await seedItem('missing', {
+      kind: 'cosmetic',
+      buzz: null,
+      cosmeticId: 2,
+      sortOrder: 2,
+    });
+    const pack = await seedItem('buzz-50', { sortOrder: 3 });
 
     const { stock } = await previewShop('2026-12-20');
     expect(stock.map((s) => [s.item.id, s.hidden])).toEqual([
-      ['cosmetic-1', null],
-      ['cosmetic-2', 'cosmetic missing'],
-      ['buzz-50', null],
+      [present, null],
+      [missing, 'cosmetic missing'],
+      [pack, null],
     ]);
   });
 });
 
 describe('listShopChanges', () => {
   it('pages newest first by id and keeps the item filter across pages', async () => {
-    await seedItem('buzz-50');
-    await seedItem('buzz-100');
+    const pack = await seedItem('buzz-50');
+    const other = await seedItem('buzz-100');
     for (let i = 0; i < 3; i++) {
-      await setShopItemActive('buzz-50', i % 2 === 1, MOD);
+      await setShopItemActive(pack, i % 2 === 1, MOD);
     }
-    await setShopItemActive('buzz-100', false, MOD);
+    await setShopItemActive(other, false, MOD);
 
     const first = await listShopChanges({ limit: 3 });
     expect(first.changes).toHaveLength(3);
@@ -340,11 +361,11 @@ describe('listShopChanges', () => {
     expect(ids).toEqual([...ids].sort((a, b) => b - a));
     expect(new Set(ids).size).toBe(4);
 
-    const filtered = await listShopChanges({ itemId: 'buzz-50', limit: 2 });
-    expect(filtered.changes.every((c) => c.itemId === 'buzz-50')).toBe(true);
+    const filtered = await listShopChanges({ itemId: pack, limit: 2 });
+    expect(filtered.changes.every((c) => c.itemId === pack)).toBe(true);
     expect(filtered.nextBefore).toBe(filtered.changes[1].id);
     const rest = await listShopChanges({
-      itemId: 'buzz-50',
+      itemId: pack,
       limit: 2,
       before: filtered.nextBefore ?? undefined,
     });

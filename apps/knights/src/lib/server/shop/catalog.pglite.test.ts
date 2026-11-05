@@ -23,8 +23,8 @@ beforeEach(async () => {
   );
   await pg.exec(`
     INSERT INTO "KnightsShopItem" ("id","kind","name","price","tier","months") VALUES
-      ('member-silver','membership','Silver',12000,'silver',1),
-      ('member-gold-3m','membership','Gold x3',90000,'gold',3);
+      (1,'membership','Silver',12000,'silver',1),
+      (2,'membership','Gold x3',90000,'gold',3);
     INSERT INTO "Product" ("id","metadata") VALUES ('p-bronze', '{"tier":"bronze"}');`);
   await seedPlayer(pg, 1);
 });
@@ -34,9 +34,7 @@ const cards = async () =>
 
 describe('the shop view of a membership', () => {
   it('offers a month to a player with no membership, and does not list one that is not a single month', async () => {
-    expect((await cards()).map((card) => [card.id, card.state])).toEqual([
-      ['member-silver', 'available'],
-    ]);
+    expect((await cards()).map((card) => [card.id, card.state])).toEqual([[1, 'available']]);
   });
 
   it('marks it as already a member while any membership is running, whatever it was bought with', async () => {

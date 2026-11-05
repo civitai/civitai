@@ -3828,7 +3828,7 @@ export type KnightsReferenceImage = {
   updatedAt: Timestamp;
 };
 export type KnightsShopItem = {
-  id: string;
+  id: Generated<number>;
   kind: string;
   name: string;
   description: Generated<string>;
@@ -3845,7 +3845,7 @@ export type KnightsShopItem = {
 };
 export type KnightsShopItemChange = {
   id: Generated<number>;
-  itemId: string;
+  itemId: number;
   userId: number;
   action: string;
   changes: unknown;
@@ -3856,7 +3856,7 @@ export type KnightsShopPurchase = {
   playerId: number;
   requestKey: string;
   externalKey: string;
-  itemId: string;
+  itemId: number;
   kind: string;
   gold: number;
   grant: unknown;

@@ -46,16 +46,9 @@ export async function listShopItems() {
 }
 export type ShopItemRow = Awaited<ReturnType<typeof listShopItems>>[number];
 
-/** The id scheme the dev seed uses, so a re-seed never duplicates an item added here. */
-export function shopItemId(item: NewShopItem): string {
-  if (item.kind === 'buzz_pack') return `buzz-${item.buzz}`;
-  if (item.kind === 'cosmetic') return `cosmetic-${item.cosmeticId}`;
-  return `membership-${item.tier}-${item.months}m`;
-}
-
 async function record(
   trx: Transaction<DB>,
-  itemId: string,
+  itemId: number,
   userId: number,
   action: Action,
   changes: Record<string, FieldChange>
@@ -69,10 +62,8 @@ async function record(
 export async function createShopItem(
   input: NewShopItem,
   userId: number
-): Promise<Outcome<{ id: string }>> {
-  const id = shopItemId(input);
+): Promise<Outcome<{ id: number }>> {
   const row = {
-    id,
     kind: input.kind,
     name: input.name,
     description: input.description,
@@ -88,7 +79,7 @@ export async function createShopItem(
   };
   return db()
     .transaction()
-    .execute(async (trx): Promise<Outcome<{ id: string }>> => {
+    .execute(async (trx): Promise<Outcome<{ id: number }>> => {
       if (row.cosmeticId !== null) {
         const cosmetic = await trx
           .selectFrom('Cosmetic')
@@ -97,23 +88,17 @@ export async function createShopItem(
           .executeTakeFirst();
         if (!cosmetic) return { ok: false, error: 'That cosmetic does not exist.' };
       }
-      const inserted = await trx
+      const { id } = await trx
         .insertInto('KnightsShopItem')
         .values(row)
-        .onConflict((oc) => oc.column('id').doNothing())
-        .executeTakeFirst();
-      if (!inserted.numInsertedOrUpdatedRows) {
-        return {
-          ok: false,
-          error: `An item with the id ${id} already exists. Edit or restore it instead.`,
-        };
-      }
+        .returning('id')
+        .executeTakeFirstOrThrow();
       await record(trx, id, userId, 'create', diffFields({}, row, Object.keys(row)));
       return { ok: true, id };
     });
 }
 
-async function lockItem(trx: Transaction<DB>, id: string) {
+async function lockItem(trx: Transaction<DB>, id: number) {
   return trx
     .selectFrom('KnightsShopItem')
     .selectAll()
@@ -155,7 +140,7 @@ export async function updateShopItem(
 
 /** Retiring hides an item from the shop; purchases keep pointing at it, so it is never deleted. */
 export async function setShopItemActive(
-  id: string,
+  id: number,
   active: boolean,
   userId: number
 ): Promise<Outcome<{ changed: boolean }>> {
@@ -208,7 +193,7 @@ export async function listShopChanges({
   before,
   limit = 100,
 }: {
-  itemId?: string;
+  itemId?: number;
   before?: number;
   limit?: number;
 }) {

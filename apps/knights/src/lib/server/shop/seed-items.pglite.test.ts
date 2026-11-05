@@ -41,7 +41,9 @@ describe('the dev shop seed', () => {
     const count = async () =>
       (await pg.query<{ n: number }>(`SELECT count(*)::int n FROM "KnightsShopItem"`)).rows[0].n;
     const first = await count();
-    await pg.exec(`UPDATE "KnightsShopItem" SET "price" = 777 WHERE "id" = 'buzz-50'`);
+    await pg.exec(
+      `UPDATE "KnightsShopItem" SET "price" = 777 WHERE "kind" = 'buzz_pack' AND "buzz" = 50`
+    );
 
     await pg.exec(sql);
 
@@ -49,7 +51,7 @@ describe('the dev shop seed', () => {
     expect(
       (
         await pg.query<{ price: number }>(
-          `SELECT "price" FROM "KnightsShopItem" WHERE "id"='buzz-50'`
+          `SELECT "price" FROM "KnightsShopItem" WHERE "kind" = 'buzz_pack' AND "buzz" = 50`
         )
       ).rows[0].price
     ).toBe(777);
@@ -78,9 +80,7 @@ describe('the dev shop seed', () => {
     await seedCosmetics([seal]);
     await pg.exec(seedSql(cosmeticItems([seal])));
     const row = (
-      await pg.query<{ name: string }>(
-        `SELECT name FROM "KnightsShopItem" WHERE "id"='cosmetic-90'`
-      )
+      await pg.query<{ name: string }>(`SELECT name FROM "KnightsShopItem" WHERE "cosmeticId" = 90`)
     ).rows[0];
     expect(row.name).toBe("Knight's Seal");
   });
@@ -96,14 +96,11 @@ describe('the dev shop seed', () => {
 
     expect(
       (
-        await pg.query<{ id: string; cosmeticId: number }>(
-          `SELECT "id","cosmeticId" FROM "KnightsShopItem" ORDER BY "id"`
+        await pg.query<{ cosmeticId: number }>(
+          `SELECT "cosmeticId" FROM "KnightsShopItem" ORDER BY "cosmeticId"`
         )
       ).rows
-    ).toEqual([
-      { id: 'cosmetic-501', cosmeticId: 501 },
-      { id: 'cosmetic-502', cosmeticId: 502 },
-    ]);
+    ).toEqual([{ cosmeticId: 501 }, { cosmeticId: 502 }]);
   });
 
   it('gates the decorations to ranks', () => {

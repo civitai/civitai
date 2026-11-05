@@ -5,7 +5,7 @@ export const DEAL_PERCENT = 20;
 export const SHOP_TIERS = ['bronze', 'silver', 'gold'] as const;
 
 export type ShopItem = {
-  id: string;
+  id: number;
   kind: string;
   name: string;
   description: string;
@@ -44,7 +44,7 @@ function hash(text: string): number {
 }
 
 const byHash = (salt: string) => (a: ShopItem, b: ShopItem) =>
-  hash(`${salt}:${a.id}`) - hash(`${salt}:${b.id}`) || (a.id < b.id ? -1 : 1);
+  hash(`${salt}:${String(a.id)}`) - hash(`${salt}:${String(b.id)}`) || a.id - b.id;
 
 export const dealPrice = (price: number) =>
   Math.max(1, Math.floor((price * (100 - DEAL_PERCENT)) / 100));
@@ -61,9 +61,7 @@ export function stockFor(
     .filter((item) => item.rotating)
     .sort(byHash(`${day}:stock`))
     .slice(0, ROTATION_SIZE);
-  const inStock = [...fixed, ...rotated].sort(
-    (a, b) => a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : 1)
-  );
+  const inStock = [...fixed, ...rotated].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
   const dealIds = new Set(
     [...inStock]
       .sort(byHash(`${day}:deal`))

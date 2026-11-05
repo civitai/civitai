@@ -11491,7 +11491,7 @@ model CreatorProgramPayoutReviewRun {
 
 /// One thing the Knights gold shop sells. `kind` decides which reference columns apply (see the migration's CHECK): a Buzz pack (`buzz`), a cosmetic (`cosmeticId`) or membership time (`tier` + `months`). Prices and the catalog live here, so changing them needs no deploy. `rotating` items take part in the daily rotation; the others are always on sale. `minRank` gates the purchase to that rank or above.
 model KnightsShopItem {
-  id          String   @id
+  id          Int      @id @default(autoincrement())
   kind        String // buzz_pack | cosmetic | membership
   name        String
   description String   @default("")
@@ -11513,7 +11513,7 @@ model KnightsShopItem {
 /// The audit trail of catalog edits made from the moderator app. `changes` maps each changed field to `{from, to}`; a `create` holds the whole row as `{field: {from: null, to}}`. `userId` is the moderator, deliberately not a foreign key so deleting a user never rewrites the trail.
 model KnightsShopItemChange {
   id        Int             @id @default(autoincrement())
-  itemId    String
+  itemId    Int
   item      KnightsShopItem @relation(fields: [itemId], references: [id])
   userId    Int
   action    String // create | update | retire | restore
@@ -11529,7 +11529,7 @@ model KnightsShopPurchase {
   playerId      Int
   requestKey    String
   externalKey   String          @unique
-  itemId        String
+  itemId        Int
   item          KnightsShopItem @relation(fields: [itemId], references: [id])
   kind          String
   gold          Int

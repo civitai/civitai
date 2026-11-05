@@ -29,7 +29,7 @@ const isDay = (value: string | null): value is string =>
   !Number.isNaN(Date.parse(value)) &&
   new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
-const cursor = (value: string | null) =>
+const intParam = (value: string | null) =>
   value && /^\d{1,9}$/.test(value) ? Number(value) : undefined;
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -39,8 +39,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const today = utcDay(new Date());
   const requestedDay = url.searchParams.get('day');
   const day = isDay(requestedDay) && requestedDay > today ? requestedDay : today;
-  const itemId = url.searchParams.get('item') || undefined;
-  const before = cursor(url.searchParams.get('before'));
+  const itemId = intParam(url.searchParams.get('item'));
+  const before = intParam(url.searchParams.get('before'));
   const items = await listShopItems();
   const audit = tab === 'audit' ? await listShopChanges({ itemId, before }) : null;
   return {
@@ -50,7 +50,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     today,
     day,
     preview: tab === 'preview' ? await previewShop(day) : null,
-    itemId: itemId ?? '',
+    itemId: itemId === undefined ? '' : String(itemId),
     before: before ?? null,
     changes: audit?.changes ?? [],
     nextBefore: audit?.nextBefore ?? null,

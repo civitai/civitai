@@ -49,7 +49,7 @@ const post = (fields: Record<string, string>) =>
       body: new URLSearchParams(fields),
     }),
   } as never);
-const FIELDS = { itemId: 'badge-seal', price: '400', requestKey: 'request-0001' };
+const FIELDS = { itemId: '41', price: '400', requestKey: 'request-0001' };
 
 beforeEach(() => {
   getGoldBalance.mockReset();
@@ -140,7 +140,7 @@ describe('buying', () => {
     expect(await post(FIELDS)).toMatchObject({
       ok: true,
       pending: false,
-      itemId: 'badge-seal',
+      itemId: 41,
       gold: 400,
     });
     expect(buyItem).toHaveBeenCalledWith(
@@ -148,7 +148,7 @@ describe('buying', () => {
       expect.objectContaining({ buzzPacksOpen: true }),
       expect.objectContaining({
         playerId: 7,
-        itemId: 'badge-seal',
+        itemId: 41,
         price: 400,
         requestKey: 'request-0001',
       })
@@ -163,7 +163,8 @@ describe('buying', () => {
   });
 
   it('answers 400 for a form with no item or a price that is not a number', async () => {
-    expect(await post({ ...FIELDS, itemId: '' })).toMatchObject({ status: 400 });
+    for (const itemId of ['', 'badge-seal', '0', '-3', '4.5', '41abc'])
+      expect(await post({ ...FIELDS, itemId })).toMatchObject({ status: 400 });
     expect(await post({ ...FIELDS, price: 'free' })).toMatchObject({ status: 400 });
     expect(buyItem).not.toHaveBeenCalled();
   });
@@ -282,7 +283,7 @@ describe('buying', () => {
 
     expect(await post(FIELDS)).toMatchObject({
       status: 500,
-      data: { itemId: 'badge-seal', message: expect.any(String) },
+      data: { itemId: 41, message: expect.any(String) },
     });
   });
 

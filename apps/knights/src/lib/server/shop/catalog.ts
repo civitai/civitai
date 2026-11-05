@@ -15,7 +15,7 @@ import {
 export type CardState = 'available' | 'owned' | 'member' | 'rank' | 'sold-out' | 'closed';
 
 export type ShopCard = {
-  id: string;
+  id: number;
   kind: 'buzz_pack' | 'cosmetic' | 'membership';
   name: string;
   description: string;

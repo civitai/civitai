@@ -1,6 +1,5 @@
 /** Dev catalog. Prices live in `KnightsShopItem`, so changing one is an UPDATE, not a deploy; the seed never overwrites an existing row. */
 export type SeedItem = {
-  id: string;
   kind: 'buzz_pack' | 'cosmetic' | 'membership';
   name: string;
   description?: string;
@@ -32,7 +31,6 @@ const MEMBERSHIPS: ['bronze' | 'silver' | 'gold', number][] = [
 export const FIXED_ITEMS: SeedItem[] = [
   ...BUZZ_PACKS.map(
     ([buzz, price], i): SeedItem => ({
-      id: `buzz-${buzz}`,
       kind: 'buzz_pack',
       name: `${buzz} Buzz`,
       price,
@@ -42,7 +40,6 @@ export const FIXED_ITEMS: SeedItem[] = [
   ),
   ...MEMBERSHIPS.map(
     ([tier, price], i): SeedItem => ({
-      id: `membership-${tier}-1m`,
       kind: 'membership',
       name: `${tier[0].toUpperCase()}${tier.slice(1)} membership`,
       price,
@@ -63,7 +60,6 @@ export function cosmeticItems(rows: CosmeticRow[]): SeedItem[] {
     sortOrder: number,
     minRank?: string
   ): SeedItem => ({
-    id: `cosmetic-${row.id}`,
     kind: 'cosmetic',
     name: row.name,
     price,
@@ -91,63 +87,53 @@ const lit = (value: string | number | undefined) =>
     ? String(Math.trunc(value))
     : quote(value);
 
-const COLUMNS = `"id","kind","name","description","price","buzz","cosmeticId","tier","months","minRank","rotating","sortOrder"`;
+const COLUMNS = `"kind","name","description","price","buzz","cosmeticId","tier","months","minRank","rotating","sortOrder"`;
+
+/** What makes two rows the same item. Within a kind the database allows duplicates, so the seed has to ask. */
+function identity(item: SeedItem, cosmeticRef: string | null): string {
+  const kind = `"kind" = ${quote(item.kind)}`;
+  if (item.kind === 'buzz_pack') return `${kind} AND "buzz" = ${lit(item.buzz)}`;
+  if (item.kind === 'membership')
+    return `${kind} AND "tier" = ${lit(item.tier)} AND "months" = ${lit(item.months)}`;
+  return `${kind} AND "cosmeticId" = ${cosmeticRef ?? lit(item.cosmeticId)}`;
+}
 
 /**
- * `ON CONFLICT DO NOTHING`: a price someone edited survives a re-seed. A cosmetic item names its cosmetic and is
+ * Inserts only the items the catalog does not already have (a buzz pack by its Buzz, a membership by tier and months,
+ * a cosmetic by its cosmetic), so a price someone edited survives a re-seed. A cosmetic item names its cosmetic and is
  * inserted from the `Cosmetic` row of that name and type in the target database, so the SQL is the same anywhere;
  * where no such cosmetic exists the item is skipped.
  */
 export function seedSql(items: SeedItem[]): string {
-  const plain = items.filter((item) => !item.cosmeticType);
-  const statements: string[] = [];
-  if (plain.length > 0) {
-    const rows = plain.map(
-      (item) =>
-        `(${[
-          quote(item.id),
-          quote(item.kind),
-          quote(item.name),
-          quote(item.description ?? ''),
-          lit(item.price),
-          lit(item.buzz),
-          lit(item.cosmeticId),
-          lit(item.tier),
-          lit(item.months),
-          lit(item.minRank),
-          item.rotating ? 'true' : 'false',
-          lit(item.sortOrder),
-        ].join(', ')})`
-    );
-    statements.push(
-      `INSERT INTO "KnightsShopItem" (${COLUMNS}) VALUES\n${rows.join(
-        ',\n'
-      )}\nON CONFLICT ("id") DO NOTHING;`
-    );
-  }
-  for (const item of items.filter((entry) => entry.cosmeticType)) {
-    statements.push(
-      `INSERT INTO "KnightsShopItem" (${COLUMNS})
-SELECT 'cosmetic-' || c."id", ${[
-        quote(item.kind),
-        quote(item.name),
-        quote(item.description ?? ''),
-        lit(item.price),
-        lit(item.buzz),
-        'c."id"',
-        lit(item.tier),
-        lit(item.months),
-        lit(item.minRank),
-        item.rotating ? 'true' : 'false',
-        lit(item.sortOrder),
-      ].join(', ')}
+  const values = (item: SeedItem, cosmeticRef: string | null) =>
+    [
+      quote(item.kind),
+      quote(item.name),
+      quote(item.description ?? ''),
+      lit(item.price),
+      lit(item.buzz),
+      cosmeticRef ?? lit(item.cosmeticId),
+      lit(item.tier),
+      lit(item.months),
+      lit(item.minRank),
+      item.rotating ? 'true' : 'false',
+      lit(item.sortOrder),
+    ].join(', ');
+  return items
+    .map((item) => {
+      if (!item.cosmeticType) {
+        return `INSERT INTO "KnightsShopItem" (${COLUMNS})
+SELECT ${values(item, null)}
+WHERE NOT EXISTS (SELECT 1 FROM "KnightsShopItem" WHERE ${identity(item, null)});`;
+      }
+      return `INSERT INTO "KnightsShopItem" (${COLUMNS})
+SELECT ${values(item, 'c."id"')}
 FROM (SELECT "id" FROM "Cosmetic" WHERE "name" = ${quote(item.name)} AND "type" = ${quote(
-        item.cosmeticType!
+        item.cosmeticType
       )} AND "source" = 'Purchase' ORDER BY "id" DESC LIMIT 1) c
-ON CONFLICT ("id") DO NOTHING;`
-    );
-  }
-  return statements.join('\n');
+WHERE NOT EXISTS (SELECT 1 FROM "KnightsShopItem" WHERE ${identity(item, 'c."id"')});`;
+    })
+    .join('\n');
 }
 
 export function pickCosmetics(rows: CosmeticRow[]): CosmeticRow[] {
