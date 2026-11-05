@@ -8,6 +8,7 @@
   import PrimaryNav from './PrimaryNav.svelte';
   import RankBadge from './RankBadge.svelte';
   import RecapButton from './RecapButton.svelte';
+  import FeedbackDialog from './FeedbackDialog.svelte';
   import RestartCareerDialog from './RestartCareerDialog.svelte';
   import { rankPill } from './chrome';
   import { sound } from './sound';
@@ -22,6 +23,7 @@
     civitaiUrl,
     shopOpen,
     isPlayer = false,
+    feedbackOpen = false,
     status,
     streak,
     recapUnseen = false,
@@ -36,6 +38,8 @@
     shopOpen: boolean;
     /** Whether the viewer has a career, and so can restart it. */
     isPlayer?: boolean;
+    /** Feedback is being collected from this viewer (its Flipt area flag is on). */
+    feedbackOpen?: boolean;
     status?: PlayerStatus;
     streak?: Streak;
     /** Today's recap has not been seen: the recap button wears a dot. */
@@ -48,6 +52,7 @@
 
   let open = $state(false);
   let restarting = $state(false);
+  let sendingFeedback = $state(false);
   let wrapper = $state<HTMLElement>();
   let trigger = $state<HTMLButtonElement>();
   let panel = $state<HTMLElement>();
@@ -152,6 +157,18 @@
           {/each}
           <hr />
           <a href={civitaiUrl}><Icon name="arrow-left" size={18} />Back to Civitai</a>
+          {#if feedbackOpen}
+            <button
+              type="button"
+              class="item"
+              onclick={() => {
+                close(true);
+                sendingFeedback = true;
+              }}
+            >
+              <Icon name="send" size={18} />Send feedback
+            </button>
+          {/if}
           {#if isPlayer}
             <button
               type="button"
@@ -176,6 +193,10 @@
 
 {#if restarting}
   <RestartCareerDialog onclose={() => (restarting = false)} />
+{/if}
+
+{#if sendingFeedback}
+  <FeedbackDialog onclose={() => (sendingFeedback = false)} />
 {/if}
 
 <style>
@@ -287,7 +308,11 @@
     font: 600 15px/1.2 var(--io-font-ui);
     text-decoration: none;
   }
-  nav a :global(svg) {
+  nav .item {
+    color: var(--io-parchment);
+  }
+  nav a :global(svg),
+  nav .item :global(svg) {
     color: var(--io-gold);
   }
   nav a:hover,
@@ -312,6 +337,7 @@
     font-size: 12px;
     font-weight: 400;
   }
+  nav .item,
   nav .restart {
     display: flex;
     align-items: center;
@@ -325,6 +351,7 @@
     font: 600 15px/1.2 var(--io-font-ui);
     text-align: left;
   }
+  nav .item:hover,
   nav .restart:hover:not(:disabled) {
     background: var(--io-bg);
   }
