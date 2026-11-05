@@ -18,7 +18,7 @@ import { trpc } from '~/utils/trpc';
 function chapterPosition(storyline: ActiveStorylineMode, imageId: number) {
   const chapterId = storyline.chapterIdOfImage(imageId);
   const chapter = storyline.path.chapters.find((c) => c.chapterId === chapterId);
-  return { chapterId, depth: chapter?.depth };
+  return { chapterId, depth: chapter?.depth, post: chapter?.post };
 }
 
 /**
@@ -59,10 +59,8 @@ export function StorylineToolbarChip({
  */
 export function StorylineChapterDescription({ imageId }: { imageId: number | undefined }) {
   const storyline = useStorylineMode();
-  const chapterId = storyline.active && imageId ? storyline.chapterIdOfImage(imageId) : undefined;
-  const postId = storyline.active
-    ? storyline.path.chapters.find((c) => c.chapterId === chapterId)?.post?.id
-    : undefined;
+  const postId =
+    storyline.active && imageId ? chapterPosition(storyline, imageId).post?.id : undefined;
   const { data: post } = trpc.post.get.useQuery({ id: postId ?? 0 }, { enabled: !!postId });
   if (!postId || post?.id !== postId || !post.detail) return null;
 
@@ -94,9 +92,7 @@ export function StorylineStageOverlay({
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
   const caption = imageId ? storyline.path.captions[imageId] : undefined;
   const showNext = isLastImage && !storyline.endOpen;
-  const post = imageId
-    ? storyline.path.chapters.find((c) => c.chapterId === storyline.chapterIdOfImage(imageId))?.post
-    : undefined;
+  const post = imageId ? chapterPosition(storyline, imageId).post : undefined;
   const isAuthor = !!currentUser && !!post && currentUser.id === post.userId;
   const captionNote = caption && <StorylineCaptionNote key={imageId} caption={caption} hideable />;
 
