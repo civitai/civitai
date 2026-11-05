@@ -24,7 +24,7 @@ const { cancelPendingWorkflows, CANCEL_PENDING_DEADLINE_MS } = await import(
 );
 const { createCivitaiClient } = await import('@civitai/orchestration-client');
 
-type Listed = { id: string; status: string; tags: string[] };
+type Listed = { id: string; status: string; tags?: string[] };
 const gen = (id: string, status = 'scheduled', extra: string[] = []): Listed => ({
   id,
   status,
@@ -69,6 +69,9 @@ describe('cancelPendingWorkflows', () => {
           gen('w-done', 'succeeded'),
           gen('w-block', 'scheduled', ['app-block', 'app-block:app:1']),
           { id: 'w-training', status: 'processing', tags: ['training', 'modelVersion:1'] },
+          // An item without tags cannot be shown to be a site generation, so it is left alone.
+          { id: 'w-untagged', status: 'scheduled' },
+          { id: 'w-empty-tags', status: 'scheduled', tags: [] },
         ],
       },
     ];
