@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   stock: { available: 3, optedIn: true, mode: 'live' } as {
     available: number;
     optedIn: boolean;
+    left?: boolean;
     mode: string;
     cap?: number;
     nextAt?: Date | null;
@@ -237,6 +238,17 @@ describe('Hat Turf on image detail', () => {
     click(q('hat-turf-detail-badge'));
     await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
     expect(q('hat-turf-detail-closed')).toBeNull();
+  });
+
+  // Justin's call: a leaver is not invited again unprompted; the hat button still rejoins.
+  test('left: no invite opens by itself, and pressing the hat opens it', async () => {
+    h.stock = { available: 3, optedIn: false, left: true, mode: 'live' };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(q('hat-turf-detail-invite')).toBeNull();
+    click(q('hat-turf-detail-hat'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
   });
 
   test('Not now closes the invite and records the dismissal', async () => {

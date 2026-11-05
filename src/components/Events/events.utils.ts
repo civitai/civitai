@@ -70,7 +70,11 @@ export const useMutateEvent = () => {
 
   const activateCosmeticMutation = trpc.event.activateCosmetic.useMutation({
     onSuccess: async (_, payload) => {
-      await queryUtils.event.getCosmetic.invalidate({ event: payload.event });
+      // A new team means new sticker hats: placing refuses the old team's.
+      await Promise.all([
+        queryUtils.event.getCosmetic.invalidate({ event: payload.event }),
+        queryUtils.hatTurf.getMyStickerHats.invalidate({ event: payload.event }),
+      ]);
     },
   });
   const donateMutation = trpc.event.donate.useMutation({
