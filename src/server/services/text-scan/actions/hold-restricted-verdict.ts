@@ -9,6 +9,29 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 export const holdsRatingSql = Prisma.sql`(m.minor OR m.poi OR m.availability = 'Private'
   OR 'sfwOnly' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`;
 
+/** Where being Private is the one thing holding the rating, for a write that adds no lead otherwise. */
+export const onlyPrivateHoldsRatingSql = Prisma.sql`(m.availability = 'Private'
+  AND NOT (m.minor OR m.poi OR m."sfwOnly"))`;
+
+/**
+ * The `restrictedNsfwVerdict` a hold merges into `m.meta`. A lead already waiting keeps its time and
+ * restriction; on a model no longer minor or POI it drops `liftedBy`, as a new verdict is no lifted
+ * flag's.
+ */
+export function heldLeadSql(source: string) {
+  return Prisma.sql`jsonb_build_object(
+    'restrictedNsfwVerdict', COALESCE(
+      CASE WHEN m.minor OR m.poi THEN m.meta->'restrictedNsfwVerdict'
+        ELSE (m.meta->'restrictedNsfwVerdict') - 'liftedBy' END,
+      jsonb_build_object(
+        'source', ${source}::text,
+        'at', now(),
+        'restriction', CASE WHEN m.minor THEN 'minor' WHEN m.poi THEN 'poi' ELSE 'sfwOnly' END
+      )
+    )
+  )`;
+}
+
 /**
  * Records the verdict as a moderator's lead, without touching nsfw, where the rating may not be
  * overridden (`holdsRatingSql`). Guarded on there being no nsfw lock: a moderator's lock is already a
@@ -27,25 +50,11 @@ export async function holdRestrictedVerdict(
 ) {
   const held = await db.$executeRaw`
     UPDATE "Model" m
-    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
-          'restrictedNsfwVerdict', COALESCE(
-            CASE WHEN m.minor OR m.poi THEN m.meta->'restrictedNsfwVerdict'
-              ELSE (m.meta->'restrictedNsfwVerdict') - 'liftedBy' END,
-            jsonb_build_object(
-              'source', ${source}::text,
-              'at', now(),
-              'restriction', CASE WHEN m.minor THEN 'minor' WHEN m.poi THEN 'poi' ELSE 'sfwOnly' END
-            )
-          )
-        )
+    SET meta = ${asJsonbObjectSql('m.meta')} || ${heldLeadSql(source)}
     WHERE m.id = ${modelId}
       AND ${holdsRatingSql}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
-      ${
-        privateOnly
-          ? Prisma.sql`AND m.availability = 'Private' AND NOT (m.minor OR m.poi OR m."sfwOnly")`
-          : Prisma.empty
-      }
+      ${privateOnly ? Prisma.sql`AND ${onlyPrivateHoldsRatingSql}` : Prisma.empty}
   `;
   return held > 0;
 }

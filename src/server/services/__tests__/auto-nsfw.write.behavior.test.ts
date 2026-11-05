@@ -138,9 +138,31 @@ describe('writeAutoNsfw', () => {
   it('holds no lead on a Private model whose nsfw a moderator already ruled on', async () => {
     await seed({ availability: 'Private', locked: ['nsfw'] });
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: false });
+    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
 
     expect((await read()).meta).toEqual(metaPatch);
+  });
+
+  // A publish that commits while the write is under way: the model must end rated or with the lead
+  // waiting for the publish to apply, never with neither.
+  it('leaves the rating or the lead when the model is published while it writes', async () => {
+    await seed({ availability: 'Private' });
+    let published = false;
+    const interleaved = {
+      $executeRaw: async (...args: Parameters<typeof db.$executeRaw>) => {
+        const written = await db.$executeRaw(...args);
+        if (!published) {
+          published = true;
+          await pg.exec(`UPDATE "Model" SET availability = 'Public'`);
+        }
+        return written;
+      },
+    };
+
+    await writeAutoNsfw(interleaved, { id: ID, metaPatch, lock: true });
+
+    const m = await read();
+    expect(m.nsfw || 'restrictedNsfwVerdict' in (m.meta ?? {})).toBe(true);
   });
 
   it('repairs a JSON-null meta instead of concatenating onto it', async () => {

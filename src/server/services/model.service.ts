@@ -3934,9 +3934,8 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
-  // The detection is on this save: the transaction decides again, against the locked row.
+  // The transaction decides again, against the locked row.
   let profanityDetected = false;
-  // Set in the transaction: the model is Private, so the detection is held as a lead.
   let profanityHeldLead = false;
   // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
   let nsfwBeforeProfanity: boolean | undefined;
