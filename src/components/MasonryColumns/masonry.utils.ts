@@ -45,7 +45,7 @@ const SPAN_MIN_COLUMNS = 3;
 /** How many items after a wide one are candidates to fill the blank room beside it. */
 export const MASONRY_FILL_LOOKAHEAD = 8;
 /** Blank room this small stays a spacer rather than being filled. */
-const MIN_FILL_ROOM = 48;
+export const MASONRY_MIN_FILL_ROOM = 48;
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -188,7 +188,7 @@ export function useMasonryColumns<TData>(
       const target = Math.max(nextStart(pair), nextStart(pair + 1));
       const lookaheadEnd = Math.min(feed.length, index + 1 + MASONRY_FILL_LOOKAHEAD);
       for (let k = index + 1; k < lookaheadEnd; k++) {
-        if (target - nextStart(shorter) <= MIN_FILL_ROOM) break;
+        if (target - nextStart(shorter) <= MASONRY_MIN_FILL_ROOM) break;
         const candidate = feed[k];
         if (placed.has(k) || candidate.type !== 'data' || spansWide(candidate)) continue;
         const candidateHeight = itemHeight(candidate, columnWidth, maxItemHeight);
