@@ -2,20 +2,27 @@ import { ActionIcon, Button, Loader, Modal, Text, TextInput, UnstyledButton } fr
 import { Menu } from '~/components/MantineOverlays';
 import { IconDots, IconX } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
-import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RemixResultLine } from '~/components/Image/Remix/RemixResultLine';
 import { isRunningWorkflow, useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
-import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
-import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
+import { setCachedWorkflowTag } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { remixResultGalleryOffer } from '~/components/RemixGallery/remix-gallery.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RemixRunState } from '~/server/services/remix-app-run.service';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
-import type { RemixAnswer, RemixAsk, RemixImage } from '~/shared/remix-apps/define';
+import type { RemixAnswer, RemixImage, RemixViewerAsk } from '~/shared/remix-apps/define';
+import { REMIX_DONE_TAG } from '~/shared/remix-apps/tags';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { showErrorNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 
 export type RemixModalApp = { slug: string; name: string; runtime: boolean };
@@ -33,7 +40,14 @@ export type RemixAppModalProps = {
 type Phase =
   | { kind: 'offer' }
   | { kind: 'running'; runId?: string; workflowId: string }
-  | { kind: 'ask'; runId: string; workflowId?: string; ask: RemixAsk; answers: RemixAnswer[] }
+  | {
+      kind: 'ask';
+      runId: string;
+      workflowId?: string;
+      ask: RemixViewerAsk;
+      answers: RemixAnswer[];
+      prices?: Record<string, number>;
+    }
   | { kind: 'priced'; runId: string; workflowId?: string; answers: RemixAnswer[]; cost: number }
   | { kind: 'done'; runId?: string; workflowId: string; outputs: RemixImage[] }
   | { kind: 'failed'; runId?: string; workflowId: string; reason: string };
@@ -84,10 +98,12 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
 
 function AskStep({
   ask,
+  prices,
   pending,
   onAnswer,
 }: {
-  ask: RemixAsk;
+  ask: RemixViewerAsk;
+  prices?: Record<string, number>;
   pending: boolean;
   onAnswer: (answer: RemixAnswer) => void;
 }) {
@@ -103,6 +119,11 @@ function AskStep({
               variant="default"
               disabled={pending}
               onClick={() => onAnswer(option.value)}
+              rightSection={
+                prices?.[option.value] ? (
+                  <CurrencyBadge currency="BUZZ" unitAmount={prices[option.value]} size="sm" />
+                ) : undefined
+              }
             >
               {option.label}
             </Button>
@@ -111,17 +132,20 @@ function AskStep({
       )}
       {ask.kind === 'pick' && (
         <div className="grid grid-cols-2 gap-2">
-          {ask.images.map((image, index) => (
-            <UnstyledButton
-              key={image.url}
-              aria-label={`Pick image ${index + 1}`}
-              disabled={pending}
-              onClick={() => onAnswer(index)}
-              className="overflow-hidden rounded-md"
-            >
-              <EdgeMedia2 src={image.url} type="image" alt="" className="w-full object-cover" />
-            </UnstyledButton>
-          ))}
+          {ask.images.map((image, index) =>
+            // One the viewer may not see is left out; the rest keep the index the app gave them.
+            image ? (
+              <UnstyledButton
+                key={image.url}
+                aria-label={`Pick image ${index + 1}`}
+                disabled={pending}
+                onClick={() => onAnswer(index)}
+                className="overflow-hidden rounded-md"
+              >
+                <EdgeMedia2 src={image.url} type="image" alt="" className="w-full object-cover" />
+              </UnstyledButton>
+            ) : null
+          )}
         </div>
       )}
       {ask.kind === 'text' && (
@@ -158,8 +182,8 @@ export function RemixAppModalContent({
   note,
   onClose,
 }: RemixAppModalProps & { onClose: () => void }) {
-  const router = useRouter();
-  const showCreatePostError = useShowCreatePostError();
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const [phase, setPhase] = useState<Phase>(run ? { kind: 'running', ...run } : { kind: 'offer' });
   // One nonce per offer: a repeated Run of the same offer names the same run.
   const [nonce, setNonce] = useState(() => crypto.randomUUID());
@@ -170,8 +194,11 @@ export function RemixAppModalContent({
   const start = trpc.remixApp.start.useMutation();
   const runOnce = trpc.remixApp.run.useMutation();
   const advance = trpc.remixApp.advance.useMutation();
-  const createPost = trpc.post.create.useMutation();
-  const [posting, setPosting] = useState(false);
+  const postRun = trpc.remixApp.post.useMutation();
+  const gallery = useResultGallery(
+    phase.kind === 'done' && features.remixGallery ? imageId : undefined,
+    currentUser?.id
+  );
   const pending = start.isPending || runOnce.isPending || advance.isPending;
 
   const onError = (error: { message: string }) =>
@@ -188,7 +215,14 @@ export function RemixAppModalContent({
         setPhase({ kind: 'running', runId: state.runId, workflowId: state.workflowId });
         break;
       case 'ask':
-        setPhase({ kind: 'ask', runId: state.runId, workflowId, ask: state.ask, answers });
+        setPhase({
+          kind: 'ask',
+          runId: state.runId,
+          workflowId,
+          ask: state.ask,
+          answers,
+          prices: state.prices,
+        });
         break;
       case 'priced':
         setPhase({ kind: 'priced', runId: state.runId, workflowId, answers, cost: state.cost });
@@ -257,9 +291,17 @@ export function RemixAppModalContent({
   function answer(value: RemixAnswer) {
     if (phase.kind !== 'ask') return;
     const answers = [...phase.answers, value];
+    // A priced option's button showed its price: the tap agrees to it and submits.
+    const quote = phase.prices?.[String(value)] || undefined;
     advance.mutate(
-      { runId: phase.runId, answers },
-      { onSuccess: (state) => apply(state, answers), onError }
+      { runId: phase.runId, answers, quote },
+      {
+        onSuccess: (state) => {
+          if (quote) refetchQueue();
+          apply(state, answers);
+        },
+        onError,
+      }
     );
   }
 
@@ -283,20 +325,27 @@ export function RemixAppModalContent({
     setPhase({ kind: 'offer' });
   }
 
-  async function post(outputs: RemixImage[], workflowId: string) {
-    setPosting(true);
-    try {
-      await postGeneratedMedia({
-        media: outputs.map(({ url }) => ({ url, generationWorkflowId: workflowId })),
-        router,
-        createPost: () => createPost.mutateAsync({}),
-      });
-      onClose();
-    } catch (e) {
-      showCreatePostError(e as Error);
-    } finally {
-      setPosting(false);
-    }
+  function post(workflowId: string, runId?: string) {
+    postRun.mutate(
+      runId ? { runId, gallery: gallery.submit } : { workflowId, gallery: gallery.submit },
+      {
+        onSuccess: (result) => {
+          setCachedWorkflowTag(workflowId, REMIX_DONE_TAG, 'add');
+          showSuccessNotification({
+            title: result.gallery?.submitted ? 'Posted and sent to the Remix gallery' : 'Posted',
+            message: <Link href={`/posts/${result.postId}`}>View post</Link>,
+          });
+          if (result.gallery && !result.gallery.submitted)
+            showWarningNotification({
+              title: 'Not sent to the Remix gallery',
+              message: result.gallery.reason,
+            });
+          onClose();
+        },
+        onError: (error) =>
+          showErrorNotification({ title: 'Could not post', error: new Error(error.message) }),
+      }
+    );
   }
 
   const workflowId = phaseWorkflowId(phase);
@@ -376,7 +425,9 @@ export function RemixAppModalContent({
         </div>
       )}
 
-      {phase.kind === 'ask' && <AskStep ask={phase.ask} pending={pending} onAnswer={answer} />}
+      {phase.kind === 'ask' && (
+        <AskStep ask={phase.ask} prices={phase.prices} pending={pending} onAnswer={answer} />
+      )}
 
       {phase.kind === 'priced' && (
         <Button
@@ -422,15 +473,59 @@ export function RemixAppModalContent({
             openQueue();
             onClose();
           }}
+          gallery={gallery.control}
           onPost={() =>
-            phase.kind === 'done' && phase.outputs.length && post(phase.outputs, phase.workflowId)
+            phase.kind === 'done' && phase.outputs.length && post(phase.workflowId, phase.runId)
           }
-          posting={posting}
+          posting={postRun.isPending}
           postDisabled={phase.kind !== 'done' || !phase.outputs.length}
         />
       )}
     </div>
   );
+}
+
+/**
+ * The Remix gallery switch for a finished run: priced from the source's gallery, on by default
+ * only when it costs no Buzz. A choice is kept for the price it was made at, so a switch turned on
+ * while free never carries over to a paid offer.
+ */
+function useResultGallery(hostImageId: number | undefined, viewerId: number | undefined) {
+  const enabled = hostImageId != null && viewerId != null;
+  const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery(
+    { imageId: hostImageId ?? 0 },
+    { enabled }
+  );
+  const { data: eligibility } = trpc.placement.getRemixGalleryFreeEligibility.useQuery(
+    { hostImageId: hostImageId ?? 0, imageIds: [] },
+    { enabled }
+  );
+  const [choice, setChoice] = useState<{ method: string; on: boolean } | null>(null);
+  const offer = enabled ? remixResultGalleryOffer({ visibility, eligibility, viewerId }) : null;
+  if (!offer || hostImageId == null) return { control: undefined, submit: undefined };
+
+  const on = choice?.method === offer.method ? choice.on : offer.method !== 'paid';
+  return {
+    control: {
+      checked: on,
+      onChange: (checked: boolean) => setChoice({ method: offer.method, on: checked }),
+      price:
+        offer.method === 'paid' ? (
+          <CurrencyBadge currency="BUZZ" unitAmount={offer.price} size="xs" />
+        ) : offer.method === 'team' ? (
+          `free for Team ${offer.team}`
+        ) : (
+          'free'
+        ),
+    },
+    submit: on
+      ? {
+          hostImageId,
+          method: offer.method,
+          expectedPrice: offer.method === 'paid' ? offer.price : undefined,
+        }
+      : undefined,
+  };
 }
 
 function phaseWorkflowId(phase: Phase) {

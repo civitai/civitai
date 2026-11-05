@@ -34,6 +34,13 @@ const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
   queryWorkflows: vi.fn(),
   assertInputs: vi.fn(async () => undefined),
+  headlessPost: vi.fn(),
+  patchTags: vi.fn(),
+  patchWorkflows: vi.fn(),
+  /** What the whatIf prices an upscale at, apart from every other workflow. */
+  upscalePrice: 12,
+  /** sysRedis, where the option prices are cached. */
+  sys: new Map<string, string>(),
 }));
 
 vi.mock('@civitai/orchestration-client', async () => ({
@@ -47,6 +54,14 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: h.submitWorkflow,
   queryWorkflows: h.queryWorkflows,
   deleteWorkflow: vi.fn(async () => undefined),
+  getWorkflow: vi.fn(async ({ path }: { path: { workflowId: string } }) =>
+    h.workflows.find((w) => w.id === path.workflowId)
+  ),
+  patchWorkflowTags: h.patchTags,
+  patchWorkflows: h.patchWorkflows,
+}));
+vi.mock('~/server/services/headless-post.service', () => ({
+  createHeadlessPost: h.headlessPost,
 }));
 vi.mock('~/server/orchestrator/orchestrator-identity-metrics', () => ({
   observeConsumerMismatch: vi.fn(),
@@ -199,7 +214,56 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
       return images;
     },
   });
-  const apps = new Map([pickThenEdit, endless, asksFirst].map((app) => [app.slug, app]));
+  /** A choice straight after its first workflow: a run whose recorded state stops at a choice. */
+  const thenChoose = defineRemixApp({
+    slug: 'then-choose',
+    name: 'Then choose',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      const finish = await ctx.ask({
+        kind: 'choice',
+        prompt: 'Finish it',
+        options: [
+          { value: 'upscale', label: 'Upscale' },
+          { value: 'keep', label: 'Keep' },
+        ],
+      });
+      if (finish === 'keep') return images;
+      return (await ctx.workflow({ kind: 'upscale', image: images[0], scale: 2 })).images;
+    },
+  });
+  /** Slips a url no workflow of the run made into its pick and its outputs. */
+  const foreign = { url: 'https://example.com/not-from-this-run.png' };
+  const smuggles = defineRemixApp({
+    slug: 'smuggles',
+    name: 'Smuggles',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      await ctx.ask({ kind: 'pick', prompt: 'Pick one', images: [...images, foreign] });
+      return [...images, foreign];
+    },
+  });
+  const apps = new Map(
+    [pickThenEdit, endless, asksFirst, thenChoose, smuggles].map((app) => [app.slug, app])
+  );
   return {
     ...real,
     getRuntimeRemixApp: (slug: string) => apps.get(slug) ?? real.getRuntimeRemixApp(slug),
@@ -207,11 +271,13 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
 });
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import { verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   advanceRemixRun,
   MAX_RUN_SEGMENTS,
+  postRemixResult,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
@@ -279,7 +345,9 @@ async function runToPick(nonce: string, viewer = caller()) {
     quote: 30,
     caller: viewer,
   });
-  finish(submits()[0].id, ['a', 'b', 'c', 'd'].map(blob));
+  const takes = ['a', 'b', 'c', 'd'].map(blob);
+  // Rated, so the pick is shown to every viewer.
+  finish(submits()[0].id, takes, Object.fromEntries(takes.map((url) => [url, 'pg'])));
   return runId;
 }
 
@@ -293,7 +361,10 @@ beforeEach(() => {
   );
   h.submitWorkflow.mockImplementation(
     async ({ body, query }: { body: Record<string, unknown>; query?: { whatif?: boolean } }) => {
-      if (query?.whatif) return { cost: { total: h.price }, steps: [] };
+      if (query?.whatif) {
+        const upscale = JSON.stringify(body).includes('upscale');
+        return { cost: { total: upscale ? h.upscalePrice : h.price }, steps: [] };
+      }
       const existing = h.workflows.find((w) => w.externalId && w.externalId === body.externalId);
       if (existing) return existing;
       const workflow: FakeWorkflow = {
@@ -316,6 +387,32 @@ beforeEach(() => {
   h.queryWorkflows.mockImplementation(async ({ tags }: { tags: string[] }) => ({
     items: h.workflows.filter((w) => tags.every((tag) => w.tags.includes(tag))),
   }));
+  h.headlessPost.mockResolvedValue({ postId: 500, imageIds: [1], deduped: false });
+  h.patchTags.mockResolvedValue(undefined);
+  h.upscalePrice = 12;
+  const { sys } = h;
+  sys.clear();
+  redisMock.sysRedis.get.mockImplementation((async (key: string) => sys.get(key) ?? null) as never);
+  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+    sys.set(key, value);
+    return 'OK';
+  }) as never);
+  // `add` at /metadata/remixRun/<key>: the one patch the run service writes.
+  h.patchWorkflows.mockImplementation(
+    async ({
+      input,
+    }: {
+      input: { workflowId: string; patches: { path: string; value: unknown }[] }[];
+    }) => {
+      for (const { workflowId, patches } of input) {
+        const workflow = h.workflows.find((w) => w.id === workflowId)!;
+        for (const { path, value } of patches) {
+          const key = path.replace('/metadata/remixRun/', '');
+          (workflow.metadata!.remixRun as Record<string, unknown>)[key] = value;
+        }
+      }
+    }
+  );
 });
 
 describe('remix app runs', () => {
@@ -604,10 +701,336 @@ describe('remix app runs', () => {
       expect(urls(await finishedRun('nonce-0018', viewer))).toEqual([blob('pg')]);
     });
   });
+
+  it.each([
+    ['who shows mature content off green', () => caller()],
+    ['on green', () => caller({ isGreenDomain: true })],
+  ])('never sends a url the run did not make, to a viewer %s', async (_, viewer) => {
+    const FOREIGN = 'https://example.com/not-from-this-run.png';
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'smuggles',
+      imageId: SOURCE_ID,
+      nonce: `nonce-foreign-${viewer().isGreenDomain}`,
+      quote: 30,
+      caller: viewer(),
+    });
+    finish(submits()[0].id, [blob('one')], { [blob('one')]: 'pg' });
+
+    const pick = await advanceRemixRun({ runId, caller: viewer() });
+    expect(pick).toMatchObject({ status: 'ask', ask: { images: [{ url: blob('one') }, null] } });
+    expect(JSON.stringify(pick)).not.toContain(FOREIGN);
+    await expect(advanceRemixRun({ runId, answers: [1], caller: viewer() })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+
+    const done = await advanceRemixRun({ runId, answers: [0], caller: viewer() });
+    expect(done).toMatchObject({ status: 'done', outputs: [{ url: blob('one') }] });
+    expect(JSON.stringify(done)).not.toContain(FOREIGN);
+  });
+});
+
+describe('posting a finished run', () => {
+  /** A finished Anime it run whose one output is `url`. */
+  async function finishedAnime(nonce: string, url: string, level?: string) {
+    addImage(SOURCE_ID);
+    const { workflowId } = (await startRemixRun({
+      slug: 'anime-it',
+      imageId: SOURCE_ID,
+      nonce,
+      quote: 30,
+      caller: caller(),
+    })) as { workflowId: string };
+    finish(workflowId, [url], level ? { [url]: level } : {});
+    return workflowId;
+  }
+  const post = (
+    workflowId: string,
+    over: {
+      caller?: RemixAppCaller;
+      gallery?: Parameters<typeof postRemixResult>[0]['gallery'];
+    } = {}
+  ) => postRemixResult({ workflowId, caller: caller(), ctx: {} as never, ...over });
+
+  it("posts the workflow's own outputs, published, once per workflow, and takes the run off the tray", async () => {
+    const workflowId = await finishedAnime('nonce-post-1', blob('out'));
+
+    await post(workflowId);
+
+    expect(h.headlessPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [expect.objectContaining({ workflowId, url: blob('out') })],
+        publish: true,
+        idempotencyKey: `remix:${workflowId}`,
+      })
+    );
+    expect(h.patchTags).toHaveBeenCalledWith(
+      expect.objectContaining({ input: [{ workflowId, tag: 'remix:done', op: 'add' }] })
+    );
+  });
+
+  it('refuses while an output is unrated for a viewer who hides mature content', async () => {
+    const workflowId = await finishedAnime('nonce-post-2', blob('unrated'));
+    const viewer = caller();
+    viewer.user = { ...viewer.user, showNsfw: false };
+
+    await expect(post(workflowId, { caller: viewer })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+    expect(h.headlessPost).not.toHaveBeenCalled();
+    expect(h.patchTags).not.toHaveBeenCalled();
+  });
+
+  it('leaves a mature output out on green', async () => {
+    const workflowId = await finishedAnime('nonce-post-3', blob('x'), 'x');
+
+    await expect(post(workflowId, { caller: caller({ isGreenDomain: true }) })).rejects.toThrow(
+      'Nothing from this remix can be posted.'
+    );
+    expect(h.headlessPost).not.toHaveBeenCalled();
+  });
+
+  it("submits to the source's gallery only, and still posts when asked for another", async () => {
+    const workflowId = await finishedAnime('nonce-post-4', blob('out'));
+    const ownGallery = { hostImageId: SOURCE_ID, method: 'free' as const };
+
+    await post(workflowId, { gallery: ownGallery });
+    expect(h.headlessPost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ remixGallery: ownGallery })
+    );
+
+    const other = await post(workflowId, { gallery: { hostImageId: 999, method: 'free' } });
+    expect(h.headlessPost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ remixGallery: undefined })
+    );
+    expect(other).toMatchObject({ postId: 500, gallery: { submitted: false } });
+  });
+
+  it('does not post a workflow that is not a remix', async () => {
+    h.workflows.push({
+      id: 'plain',
+      status: 'succeeded',
+      tags: ['gen'],
+      createdAt: new Date().toISOString(),
+      steps: [{ output: { images: [{ url: blob('plain') }] } }],
+      cost: { total: 0 },
+    });
+
+    await expect(post('plain')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.headlessPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('Pick of four', () => {
+  const takes = ['a', 'b', 'c', 'd'].map(blob);
+
+  /** Four takes finished, the third one picked: the run waits on "Finish it". */
+  async function atFinish(nonce: string) {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'pick-of-four',
+      imageId: SOURCE_ID,
+      nonce,
+      quote: 30,
+      caller: caller(),
+    });
+    finish(submits()[0].id, takes);
+    const pick = await advanceRemixRun({ runId, caller: caller() });
+    expect(pick).toMatchObject({ status: 'ask', ask: { kind: 'pick' } });
+    const state = await advanceRemixRun({ runId, answers: [2], caller: caller() });
+    return { runId, state };
+  }
+
+  describe('the pick shows only takes the viewer may see', () => {
+    /** Four takes finished with `levels` (url → nsfw level; absent = not rated yet). */
+    async function atPick(nonce: string, levels: Record<string, string>, viewer = caller()) {
+      addImage(SOURCE_ID);
+      const { runId } = await startRemixRun({
+        slug: 'pick-of-four',
+        imageId: SOURCE_ID,
+        nonce,
+        quote: 30,
+        caller: viewer,
+      });
+      finish(submits()[0].id, takes, levels);
+      return runId;
+    }
+    const rated = Object.fromEntries(takes.map((url) => [url, 'pg']));
+    const hidesMature = () => {
+      const viewer = caller();
+      viewer.user = { ...viewer.user, showNsfw: false };
+      return viewer;
+    };
+
+    it('holds the run while a take is not rated yet', async () => {
+      const viewer = hidesMature();
+      const { [takes[1]]: _, ...oneUnrated } = rated;
+      const runId = await atPick('nonce-p4-unrated', oneUnrated, viewer);
+
+      expect(await advanceRemixRun({ runId, caller: viewer })).toMatchObject({ status: 'running' });
+      // POSITIVE CONTROL: rated, the pick is shown.
+      finish(submits()[0].id, takes, rated);
+      expect(await advanceRemixRun({ runId, caller: viewer })).toMatchObject({ status: 'ask' });
+    });
+
+    it.each([
+      ['on green', () => caller({ isGreenDomain: true })],
+      ['for a viewer who hides mature content', hidesMature],
+    ])('leaves a mature take out %s, and refuses a pick of it', async (_, viewer) => {
+      const runId = await atPick('nonce-p4-mature', { ...rated, [takes[1]]: 'x' }, viewer());
+
+      const state = await advanceRemixRun({ runId, caller: viewer() });
+
+      expect(state).toMatchObject({ status: 'ask', ask: { kind: 'pick' } });
+      const images = (state as { ask: { images: ({ url: string } | null)[] } }).ask.images;
+      expect(images.map((image) => image?.url ?? null)).toEqual([
+        takes[0],
+        null,
+        takes[2],
+        takes[3],
+      ]);
+      expect(JSON.stringify(state)).not.toContain(takes[1]);
+      await expect(
+        advanceRemixRun({ runId, answers: [1], caller: viewer() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it('ends the run when none of the takes can be shown', async () => {
+      const allMature = Object.fromEntries(takes.map((url) => [url, 'x']));
+      const runId = await atPick('nonce-p4-none', allMature);
+
+      expect(
+        await advanceRemixRun({ runId, caller: caller({ isGreenDomain: true }) })
+      ).toMatchObject({
+        status: 'failed',
+        reason: 'None of the results can be shown here.',
+      });
+    });
+  });
+
+  it('prices each option from a whatIf on the workflow it leads to, and keeping as free', async () => {
+    const { state } = await atFinish('nonce-p4-prices');
+
+    expect(state).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
+    expect(state).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
+    // The priced body is the upscaler run on the picked take. Graph values nested under `input`
+    // would validate as an empty form and price the default model instead, silently.
+    const [[{ body }]] = whatIfs().slice(-1) as [[{ body: unknown }]];
+    const priced = JSON.stringify(body);
+    expect(priced).toContain('ImageUpscaleWithModel');
+    expect(priced).toContain(takes[2]);
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('upscales the pick at the price its button showed, with the source still proven', async () => {
+    const { runId } = await atFinish('nonce-p4-upscale');
+
+    const state = await advanceRemixRun({
+      runId,
+      answers: [2, 'upscale'],
+      quote: h.upscalePrice,
+      caller: caller(),
+    });
+
+    expect(state).toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(2);
+    const [first, second] = submits();
+    // The upscale graph, on the picked take.
+    expect(second.tags).toEqual(expect.arrayContaining(['img2img:upscale', 'remix-seg:1']));
+    expect(JSON.stringify(h.submitWorkflow.mock.calls.at(-1))).toContain(takes[2]);
+    expect(verifyProvenance(second.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID]);
+    expect(verifyProvenance(second.metadata?.provenance, USER_ID)).toEqual(
+      verifyProvenance(first.metadata?.provenance, USER_ID)
+    );
+  });
+
+  it('keeps the pick, and a run that ends on that answer stays ended', async () => {
+    const { runId } = await atFinish('nonce-p4-keep');
+
+    const kept = await advanceRemixRun({ runId, answers: [2, 'keep'], caller: caller() });
+    expect(kept).toMatchObject({ status: 'done', outputs: [{ url: takes[2] }] });
+
+    // A reload, and a repeat of the same tap, find the run ended rather than asking again.
+    for (const answers of [[], [2, 'keep']]) {
+      expect(await advanceRemixRun({ runId, answers, caller: caller() })).toMatchObject({
+        status: 'done',
+        outputs: [{ url: takes[2] }],
+      });
+    }
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('posts only the kept take, from the workflow that made it', async () => {
+    const { runId } = await atFinish('nonce-p4-post');
+    await advanceRemixRun({ runId, answers: [2, 'keep'], caller: caller() });
+    const [takesWorkflow] = submits();
+
+    await postRemixResult({ runId, caller: caller(), ctx: {} as never });
+
+    expect(h.headlessPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [expect.objectContaining({ workflowId: takesWorkflow.id, url: takes[2] })],
+        idempotencyKey: `remix:${runId}`,
+      })
+    );
+    expect(h.patchTags).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: [{ workflowId: takesWorkflow.id, tag: 'remix:done', op: 'add' }],
+      })
+    );
+  });
+
+  it('prices the options once while that ask is open', async () => {
+    const { runId } = await atFinish('nonce-p4-cache');
+    const priced = whatIfs().length;
+
+    const again = await advanceRemixRun({ runId, answers: [2], caller: caller() });
+
+    expect(again).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
+    expect(whatIfs()).toHaveLength(priced);
+  });
+
+  it('will not post a run still waiting on an answer, and prices nothing to find that out', async () => {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'then-choose',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-choose-post',
+      quote: 30,
+      caller: caller(),
+    });
+    finish(submits()[0].id, [blob('one')]);
+    // POSITIVE CONTROL: at this ask, an advance prices its options.
+    const before = whatIfs().length;
+    expect(await advanceRemixRun({ runId, caller: caller() })).toHaveProperty('prices');
+    expect(whatIfs().length).toBeGreaterThan(before);
+    h.sys.clear();
+
+    const priced = whatIfs().length;
+    await expect(postRemixResult({ runId, caller: caller(), ctx: {} as never })).rejects.toThrow(
+      'This remix has not finished.'
+    );
+    expect(h.headlessPost).not.toHaveBeenCalled();
+    expect(whatIfs()).toHaveLength(priced);
+  });
 });
 
 describe('replay', () => {
   const source = { imageId: SOURCE_ID, url: blob('source'), width: 1200, height: 800 };
+
+  it('will not continue a run whose recorded answer does not fit its ask', async () => {
+    // Recorded answers sit in workflow metadata, which its owner can patch.
+    const runId = await runToPick('nonce-forged-answer');
+    await advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() });
+    finish(submits()[1].id, [blob('polished')]);
+    // POSITIVE CONTROL: as recorded, the run is done.
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'done' });
+    (submits()[1].metadata!.remixRun as { answers: unknown[] }).answers = [9];
+
+    await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+  });
 
   it('builds the next workflow from the recorded answer alone', async () => {
     const app = (await import('~/shared/remix-apps/system-apps')).getRuntimeRemixApp(
@@ -620,7 +1043,9 @@ describe('replay', () => {
         { type: 'ask', answer },
       ]);
     const imagesOf = (outcome: Awaited<ReturnType<typeof replayWith>>) =>
-      outcome.status === 'effect' && outcome.effect.type === 'workflow'
+      outcome.status === 'effect' &&
+      outcome.effect.type === 'workflow' &&
+      outcome.effect.request.kind === 'image'
         ? outcome.effect.request.images
         : outcome;
 

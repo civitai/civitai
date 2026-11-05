@@ -17,6 +17,10 @@ const h = vi.hoisted(() => ({
   run: vi.fn<(input: Record<string, unknown>) => Promise<{ workflowId: string }>>(),
   advance: vi.fn<(input: Record<string, unknown>) => Promise<State>>(),
   patch: vi.fn<(input: unknown) => Promise<void>>(async () => undefined),
+  post: vi.fn<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>(),
+  /** The source's Remix gallery, as `getRemixGalleryVisibility` returns it. */
+  gallery: { open: true, price: 50, ownerId: 3, freeSlots: 2, freeSlotsRemaining: 2 },
+  allowance: 1,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
@@ -34,8 +38,8 @@ vi.mock('~/providers/FiltersProvider', async (orig) => ({
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsProvider>()),
-  useOptionalFeatureFlags: () => ({ remixApps: true }),
-  useFeatureFlags: () => ({ remixApps: true }),
+  useOptionalFeatureFlags: () => ({ remixApps: true, remixGallery: true }),
+  useFeatureFlags: () => ({ remixApps: true, remixGallery: true }),
 }));
 vi.mock('~/components/Signals/SignalsProvider', async (orig) => ({
   ...(await orig<object>()),
@@ -101,6 +105,25 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'remixApp.start': mutation(h.start),
         'remixApp.run': mutation(h.run),
         'remixApp.advance': mutation(h.advance),
+        'remixApp.post': mutation(h.post),
+        'placement.getRemixGalleryVisibility': {
+          useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => ({
+            data: opts.enabled && input.imageId === 5 ? h.gallery : undefined,
+          }),
+        },
+        'placement.getRemixGalleryFreeEligibility': {
+          useQuery: (input: { hostImageId: number }, opts: { enabled: boolean }) => ({
+            data:
+              opts.enabled && input.hostImageId === 5
+                ? {
+                    allowance: { remaining: h.allowance, resetsAt: new Date() },
+                    usedHere: false,
+                    verifiedImageIds: [],
+                    teamWaiver: null,
+                  }
+                : undefined,
+          }),
+        },
       },
       { orchestrator }
     ),
@@ -148,7 +171,29 @@ beforeEach(() => {
     return { status: 'running', runId: RUN, workflowId: 'wf-0' };
   });
   h.run.mockImplementation(async () => ({ workflowId: 'wf-team' }));
+  h.post.mockResolvedValue({ postId: 77, imageIds: [1], gallery: { submitted: true } });
+  h.gallery = { open: true, price: 50, ownerId: 3, freeSlots: 2, freeSlotsRemaining: 2 };
+  h.allowance = 1;
 });
+
+/** Runs Anime it on image 5 through to its result line. */
+async function finishedRun() {
+  h.advance.mockResolvedValue({
+    status: 'done',
+    runId: RUN,
+    workflowId: 'wf-0',
+    outputs: [{ url: 'https://example.com/out.png' }],
+  });
+  const screen = await renderWithProviders(
+    <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+  );
+  await runButton().click();
+  await setStatus('wf-0', 'succeeded');
+  await expect.element(page.getByTestId('remix-result-line')).toBeVisible();
+  return screen;
+}
+
+const gallerySwitch = () => page.getByRole('switch', { name: /Remix gallery/ });
 
 describe('RemixAppModal', () => {
   test('Run is held while the price loads, then starts the run capped at the price shown', async () => {
@@ -328,6 +373,70 @@ describe('RemixAppModal', () => {
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
   });
 
+  test('a pick leaves out a take the viewer may not see, and the rest keep their index', async () => {
+    h.items = [workflow('wf-0', 'succeeded')];
+    const take = (n: number) => ({ url: `https://example.com/take-${n}.png` });
+    h.advance
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: { kind: 'pick', prompt: 'Pick your favourite', images: [take(1), null, take(3)] },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-1' });
+    await renderWithProviders(
+      <RemixAppModalContent
+        app={animeIt}
+        run={{ runId: RUN, workflowId: 'wf-0' }}
+        onClose={onClose}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: 'Pick image 3' })).toBeVisible();
+    expect(page.getByRole('button', { name: /^Pick image/ }).elements()).toHaveLength(2);
+
+    await page.getByRole('button', { name: 'Pick image 3' }).click();
+    await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
+    expect(h.advance.mock.calls[1][0]).toMatchObject({ runId: RUN, answers: [2] });
+  });
+
+  test('a priced option shows its price, and tapping it runs the step at that price', async () => {
+    h.items = [workflow('wf-0', 'succeeded')];
+    h.advance
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: {
+          kind: 'choice',
+          prompt: 'Finish it',
+          options: [
+            { value: 'upscale', label: 'Upscale 2×' },
+            { value: 'keep', label: 'Keep it' },
+          ],
+        },
+        prices: { upscale: 12, keep: 0 },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-1' });
+    await renderWithProviders(
+      <RemixAppModalContent
+        app={animeIt}
+        run={{ runId: RUN, workflowId: 'wf-0' }}
+        onClose={onClose}
+      />
+    );
+
+    const upscale = page.getByRole('button', { name: /^Upscale 2×/ });
+    await expect.element(upscale).toHaveTextContent('12');
+    // Free to keep: no price on its button.
+    await expect
+      .element(page.getByRole('button', { name: 'Keep it' }))
+      .toHaveTextContent(/^Keep it$/);
+
+    await upscale.click();
+    await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
+    expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['upscale'], quote: 12 });
+    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+  });
+
   test('⋯ Dismiss adds remix:dismissed to the run and closes', async () => {
     h.items = [workflow('wf-0', 'processing')];
     await renderWithProviders(
@@ -363,5 +472,76 @@ describe('RemixAppModal', () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(h.patch).not.toHaveBeenCalled();
+  });
+
+  describe('Post', () => {
+    test('posts the run with the free gallery submit on, then takes it off the tray', async () => {
+      await finishedRun();
+      await expect
+        .element(page.getByRole('switch', { name: /^Remix gallery\W+free$/ }))
+        .toBeChecked();
+
+      await page.getByRole('button', { name: 'Post' }).click();
+
+      await vi.waitFor(() =>
+        expect(h.post).toHaveBeenCalledWith({
+          runId: RUN,
+          gallery: { hostImageId: 5, method: 'free', expectedPrice: undefined },
+        })
+      );
+      await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+      const queue = queryClient.getQueriesData<{ pages: { items: Item[] }[] }>({
+        queryKey: getQueryKey(trpc.orchestrator.queryGeneratedImages),
+      });
+      const tags = queue.flatMap(([, data]) => data?.pages[0].items[0]?.tags ?? []);
+      expect(tags).toContain('remix:done');
+    });
+
+    test('a paid gallery is off by default, and turning it on agrees to the price shown', async () => {
+      h.allowance = 0;
+      await finishedRun();
+      await expect.element(gallerySwitch()).not.toBeChecked();
+
+      await page.getByRole('button', { name: 'Post' }).click();
+      await vi.waitFor(() =>
+        expect(h.post).toHaveBeenLastCalledWith({ runId: RUN, gallery: undefined })
+      );
+
+      await gallerySwitch().click();
+      await page.getByRole('button', { name: 'Post' }).click();
+      await vi.waitFor(() =>
+        expect(h.post).toHaveBeenLastCalledWith({
+          runId: RUN,
+          gallery: { hostImageId: 5, method: 'paid', expectedPrice: 50 },
+        })
+      );
+    });
+
+    test('a switch turned on while free is off again once it would cost Buzz', async () => {
+      const screen = await finishedRun();
+      await gallerySwitch().click();
+      await gallerySwitch().click();
+      await expect.element(gallerySwitch()).toBeChecked();
+
+      // Today's free placement is spent elsewhere: the offer becomes the paid one.
+      h.allowance = 0;
+      await screen.rerender(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+      await expect.element(gallerySwitch()).not.toBeChecked();
+      await page.getByRole('button', { name: 'Post' }).click();
+      await vi.waitFor(() =>
+        expect(h.post).toHaveBeenCalledWith({ runId: RUN, gallery: undefined })
+      );
+    });
+
+    test('no switch on your own image, and Post still posts', async () => {
+      h.gallery = { ...h.gallery, ownerId: 9 };
+      await finishedRun();
+      expect(gallerySwitch().query()).toBeNull();
+
+      await page.getByRole('button', { name: 'Post' }).click();
+      await vi.waitFor(() =>
+        expect(h.post).toHaveBeenCalledWith({ runId: RUN, gallery: undefined })
+      );
+    });
   });
 });

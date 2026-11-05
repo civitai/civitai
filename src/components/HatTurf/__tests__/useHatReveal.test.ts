@@ -24,4 +24,20 @@ describe('hatRevealDelays', () => {
     expect(delays.get('2')!).toBeGreaterThan(0);
     expect(delays.get('3')!).toBeGreaterThan(delays.get('2')!);
   });
+
+  test('a hat with no time reveals after every timed hat', () => {
+    const t0 = Date.parse('2026-11-01T00:00:00Z');
+    const delays = hatRevealDelays([
+      { id: 'untimed' },
+      { id: 'unreadable', createdAt: 'not a date' },
+      { id: 'b', createdAt: new Date(t0 + 60_000) },
+      { id: 'a', createdAt: new Date(t0) },
+    ]);
+    expect([...delays].sort((x, y) => x[1] - y[1]).map(([id]) => id)).toEqual([
+      'a',
+      'b',
+      'unreadable',
+      'untimed',
+    ]);
+  });
 });

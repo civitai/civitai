@@ -355,6 +355,19 @@ describe('a hat is placed with the sticker editor', () => {
     expect(onCardY).toBeLessThanOrEqual(CARD.height);
   });
 
+  // There is no move: keep this warning until a placed hat can be moved.
+  test("Place hat warns that a placed hat can't be moved afterwards", async () => {
+    renderPicture('contain', [400, 100]);
+    const button = await vi.waitFor(() => {
+      const el = [...document.body.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Place hat'
+      );
+      if (!el) throw new Error('no Place hat button');
+      return el;
+    });
+    expect(button.getAttribute('aria-label')).toMatch(/can't be moved afterwards/);
+  });
+
   test('remove ends the placement and sends nothing', async () => {
     renderPicture('contain', [400, 300]);
     (await editorPart('[aria-label="Remove this sticker"]')).click();

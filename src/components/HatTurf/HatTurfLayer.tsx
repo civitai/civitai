@@ -160,6 +160,9 @@ function HatDraftSticker({
           radius="xl"
           loading={saving}
           disabled={!width}
+          // A placed hat has no move or undo (only a moderator can remove it).
+          aria-label="Place hat (free, can't be moved afterwards)"
+          title="Free. Can't be moved afterwards."
           onClick={() => onSave({ x, y, scale, rotation, flip, opacity: 1 })}
         >
           Place hat

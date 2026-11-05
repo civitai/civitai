@@ -521,6 +521,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
             {features.modelComFace ? (
               <ModelListingTabs
                 modelId={model?.id}
+                comFaceRemoved={!!model?.comFaceRemoved}
                 redFields={
                   <>
                     {nameInput}

@@ -149,8 +149,9 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
     }),
-    dbRead.$queryRaw<{ optedIn: boolean | null; ownerOff: boolean | null }[]>`
+    dbRead.$queryRaw<{ optedIn: boolean | null; left: boolean | null; ownerOff: boolean | null }[]>`
       SELECT ${inTurf('u', event.name)} AS "optedIn",
+        (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'false' AS "left",
         (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff"
       FROM "User" u WHERE u.id = ${userId}
     `,
@@ -160,6 +161,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     ...supply,
     mode: event.turf.mode,
     optedIn: !!user?.optedIn,
+    /** Joined once and then left: they rejoin from the button, unprompted. */
+    left: !!user?.left,
     ownerOff: !!user?.ownerOff,
   };
 }
@@ -805,6 +808,8 @@ export type FeedSticker = {
   cosmeticId: number;
   data: Prisma.JsonValue;
   art: TurfHatArt | null;
+  // When it was placed, so a push reveals in placement order as a read does.
+  createdAt: Date;
 };
 
 /**
@@ -842,6 +847,7 @@ export function pickFeedStickers(
       cosmeticId: row.cosmeticId,
       data: row.data,
       art: row.art,
+      createdAt: row.createdAt,
     }));
 }
 

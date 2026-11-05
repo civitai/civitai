@@ -100,7 +100,7 @@ export type HatSticker = {
   data: unknown;
   /** The hat's art; absent from an older server's push, which draws the team cone instead. */
   art?: TurfHatArt | null;
-  /** When it was placed. The reads carry it; a live push does not. */
+  /** When it was placed. Absent from an older server's push. */
   createdAt?: Date | string | null;
 };
 
@@ -208,13 +208,14 @@ function readPushedStickers(raw: unknown): HatSticker[] | undefined {
     );
   });
   if (!ok) return undefined;
-  return raw.map(({ id, userId, team, cosmeticId, data, art }) => ({
+  return raw.map(({ id, userId, team, cosmeticId, data, art, createdAt }) => ({
     id,
     userId,
     team,
     cosmeticId,
     data,
     ...(readHatArt(art) && { art: readHatArt(art) }),
+    ...(typeof createdAt === 'string' && !isNaN(Date.parse(createdAt)) && { createdAt }),
   }));
 }
 

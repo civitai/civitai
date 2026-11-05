@@ -230,7 +230,7 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
   },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': {
     calls: 1,
-    spreads: ['blurhashMetadata(blur)'],
+    spreads: [],
     serverColumns: [],
   },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {

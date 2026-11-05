@@ -423,6 +423,8 @@ export type RestrictedNsfwVerdictRulingRecord = {
   prior: RestrictedNsfwPrior;
 };
 
+export type ComFaceRemovedReason = 'detected' | 'recheck-unverified';
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -495,6 +497,10 @@ export type ModelMeta = Partial<{
   poiHashCleared: { at: string };
   /** A system check (not a moderator) added the nsfw lock. Server-owned. */
   systemNsfwLock: { source: string; at: string };
+  /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
+   *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
+   *  verdict. A save that sets a .com cover clears it. Server-owned. */
+  comFaceRemoved: { at: string; sfwCoverImageId: number; reason: ComFaceRemovedReason };
   /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
    *  in Needs review. Server-owned, moderator-only. */
   restrictedNsfwVerdict: RestrictedNsfwVerdict;

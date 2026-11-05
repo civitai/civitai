@@ -59,7 +59,7 @@ function ImageCardContent({ data }: Props) {
       }
       header={
         <div className="flex w-full items-start justify-between">
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex flex-nowrap items-center gap-1">
             <HatTurfBadge imageId={data.id} />
             {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
               <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
