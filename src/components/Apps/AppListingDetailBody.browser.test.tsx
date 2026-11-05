@@ -45,6 +45,10 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
+  // When set, the answer to the rail's query WITHOUT a category (the popular top-up).
+  relatedPopularItems: null as unknown[] | null,
+  // When true, every enabled `listAvailable` query is still pending (no data yet).
+  relatedPending: false,
   // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
   // `{ app, ownerId }`, because the owner is now half the contract (#4048).
   recorded: [] as unknown[],
@@ -131,10 +135,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     appListings: {
       listAvailable: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => ({
-          data: opts?.enabled === false ? undefined : { items: mocks.relatedItems },
-          isLoading: false,
-        }),
+        useQuery: (input: { category?: string } | undefined, opts?: { enabled?: boolean }) => {
+          const pending = opts?.enabled === false || mocks.relatedPending;
+          const items =
+            mocks.relatedPopularItems && input?.category === undefined
+              ? mocks.relatedPopularItems
+              : mocks.relatedItems;
+          return { data: pending ? undefined : { items }, isLoading: false, isPending: pending };
+        },
       },
       // Consumed by the REAL `ReviewListingModal` / `ReportListingModal`, which the
       // `⋮` menu opens. They are NOT mocked away — the menu → modal wiring is the
@@ -301,6 +309,8 @@ beforeEach(async () => {
   mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
   mocks.currentUser = null;
   mocks.relatedItems = [];
+  mocks.relatedPopularItems = null;
+  mocks.relatedPending = false;
   mocks.recorded = [];
   mocks.creator = null;
   mocks.reportMutate.mockClear();
@@ -2567,6 +2577,64 @@ describe('AppListingDetailBody — page order and the related-rail link', () => 
       );
     }
   );
+
+  /**
+   * 🔴 The link names what it lands on: its text is the rail's FIRST rendered heading. An app
+   * alone in its category gets only the "Popular apps" group (other categories' apps), so a
+   * link reading "More in <category>" would send the reader to exactly the mismatch the
+   * rail's own headings fix.
+   */
+  const railFirstHeading = (container: Element) =>
+    container.querySelector('[data-testid="apps-related-rail"] h4')?.textContent;
+
+  test.each([
+    {
+      name: 'a category with other apps',
+      category: 'games',
+      same: [relatedCard('l2', 'Sibling One')],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'More in Games →',
+    },
+    {
+      name: 'an app alone in its category',
+      category: 'games',
+      same: [],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'Popular apps →',
+    },
+    {
+      name: 'no category',
+      category: null,
+      same: [],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'Popular apps →',
+    },
+  ])('🔴 $name: the Details link reads "$label", the rail\'s first heading', async (c) => {
+    mocks.relatedItems = c.same;
+    mocks.relatedPopularItems = c.popular;
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: c.category })} />
+    );
+    await expect.element(within.getByText('Popular One').first()).toBeInTheDocument();
+    const link = within.getByTestId('apps-listing-details-related-link');
+    await expect.element(link).toHaveTextContent(c.label);
+    expect(link.element().textContent).toBe(c.label);
+    expect(`${railFirstHeading(container)} →`).toBe(c.label);
+    // Still the same-page jump onto the element that holds the rail.
+    const href = link.element().getAttribute('href') ?? '';
+    const target = container.querySelector(`[id="${href.slice(1)}"]`);
+    expect(target?.querySelector('[data-testid="apps-related-rail"]')).not.toBeNull();
+  });
+
+  test('while the rail is loading the link reads a neutral "Related apps →"', async () => {
+    mocks.relatedPending = true;
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} />
+    );
+    const link = within.getByTestId('apps-listing-details-related-link');
+    await expect.element(link).toBeInTheDocument();
+    expect(link.element().textContent).toBe('Related apps →');
+  });
 
   test('🔴 preview renders no related-rail link — with its live positive control', async () => {
     const live = await renderScoped(<AppListingDetailBody detail={base({})} />);
