@@ -3,6 +3,7 @@ import {
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
+  relatedRailFirstHeading,
   relatedRailHeading,
   relatedRailSections,
   type RelatedRailSection,
@@ -275,5 +276,54 @@ describe('🔴 relatedRailHeading — the rail names the category by its LABEL',
     expect(relatedRailHeading(null)).toBe('More apps');
     expect(relatedRailHeading(undefined)).toBe('More apps');
     expect(relatedRailHeading('')).toBe('More apps');
+  });
+});
+
+describe('🔴 relatedRailFirstHeading — what a link to the rail may call it', () => {
+  const sections = (o: Parameters<typeof relatedRailSections>[0]) => relatedRailSections(o);
+
+  it('a category with other apps leads with "More in <category>"', () => {
+    const s = sections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: [same('a')],
+      popular: [pop('p')],
+    });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: false })).toBe(
+      'More in Utility'
+    );
+  });
+
+  it('🔴 an app alone in its category leads with "Popular apps", not its category', () => {
+    const s = sections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: [same('me')],
+      popular: [pop('p')],
+    });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: false })).toBe(
+      'Popular apps'
+    );
+  });
+
+  it('no category with popular apps leads with "Popular apps"', () => {
+    const s = sections({ selfId: 'me', category: null, popular: [pop('p')] });
+    expect(relatedRailFirstHeading({ category: null, sections: s, loading: false })).toBe(
+      'Popular apps'
+    );
+  });
+
+  it('an empty rail is named by the heading over its empty note', () => {
+    expect(relatedRailFirstHeading({ category: 'utility', sections: [], loading: false })).toBe(
+      'More in Utility'
+    );
+    expect(relatedRailFirstHeading({ category: null, sections: [], loading: false })).toBe(
+      'More apps'
+    );
+  });
+
+  it('while loading there is no answer yet (null), whatever the partial sections say', () => {
+    const s = sections({ selfId: 'me', category: 'utility', sameCategory: [same('a')] });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: true })).toBeNull();
   });
 });

@@ -170,3 +170,23 @@ export function relatedRailHeading(category: string | null | undefined): string 
   if (!category) return 'More apps';
   return `More in ${marketplaceCategoryLabel(category)}`;
 }
+
+/** Shown by anything that names the rail before the rail knows its own first heading. */
+export const RELATED_RAIL_NEUTRAL_HEADING = 'Related apps';
+
+/**
+ * The heading the rail renders FIRST, or `null` while it is still loading (it does not know
+ * yet). One rule for the rail and for anything that links to it, so a link can never promise
+ * "More in <category>" and land on "Popular apps": a category with other apps leads with its
+ * own group, an app alone in its category (or with none) leads with the popular top-up, and
+ * an empty rail shows {@link relatedRailHeading} over its empty note.
+ */
+export function relatedRailFirstHeading(opts: {
+  /** The listing's stored category — the same value the rail's empty-state heading reads. */
+  category: string | null | undefined;
+  sections: RelatedRailSection[];
+  loading: boolean;
+}): string | null {
+  if (opts.loading) return null;
+  return opts.sections[0]?.heading ?? relatedRailHeading(opts.category);
+}

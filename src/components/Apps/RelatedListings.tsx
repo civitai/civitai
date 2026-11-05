@@ -46,7 +46,12 @@ export interface RelatedListingsProps {
   category: string | null;
 }
 
-export function RelatedListings({ listingId, category }: RelatedListingsProps) {
+/**
+ * The rail's data: its sections and whether it is still loading. Shared by the rail and by
+ * the Details panel's link to it, so both read ONE answer. Both callers pass the same inputs,
+ * so React Query serves them from the same two queries (no extra request).
+ */
+export function useRelatedRail({ listingId, category }: RelatedListingsProps) {
   const features = useFeatureFlags();
   // Same store-visibility gate the grid + detail use — the SHARED
   // `hasAppsStoreAccess` predicate — so this rail can never fire a read the page
@@ -95,6 +100,12 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     popularPending: popularQuery.isPending,
   });
 
+  return { sections, loading, canOpenPage: !!features.appBlocksPages };
+}
+
+export function RelatedListings({ listingId, category }: RelatedListingsProps) {
+  const { sections, loading, canOpenPage } = useRelatedRail({ listingId, category });
+
   // Persistent store link — always rendered, even with an empty rail. It sits beside the
   // FIRST heading on screen, whichever group that is.
   const headerRow = (heading: string) => (
@@ -115,6 +126,8 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
       <>
         {/* 🔴 From the PURE module, so the blocking `unit` gate covers the one string on
             this surface that a reader actually sees the category in. */}
+        {/* Over an empty rail this IS `relatedRailFirstHeading`'s answer, which the
+            Details panel's link reads. */}
         {headerRow(relatedRailHeading(category))}
         {loading ? (
           <Center py="md">
@@ -144,7 +157,7 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
               span={{ base: 12, sm: 6, md: 4, lg: 4 }}
               data-testid="apps-related-grid-col"
             >
-              <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+              <AppListingCard card={card} canOpenPage={canOpenPage} />
             </Grid.Col>
           ))}
         </Grid>

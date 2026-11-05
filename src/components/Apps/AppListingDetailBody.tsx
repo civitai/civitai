@@ -71,8 +71,11 @@ import {
   withBrokenIndex,
   type BrokenScreenshotIndexes,
 } from '~/components/Apps/appListingScreenshotNav';
-import { RelatedListings } from '~/components/Apps/RelatedListings';
-import { relatedRailHeading } from '~/components/Apps/related-listings';
+import { RelatedListings, useRelatedRail } from '~/components/Apps/RelatedListings';
+import {
+  RELATED_RAIL_NEUTRAL_HEADING,
+  relatedRailFirstHeading,
+} from '~/components/Apps/related-listings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
@@ -917,22 +920,40 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
               </div>
             ))}
             {/* Not a `data-listing-detail-row`: it is navigation, not a listing fact. */}
-            {!preview && (
-              <div className={detailClasses.detailRow}>
-                <Anchor
-                  size="sm"
-                  href={`#${RELATED_RAIL_ANCHOR_ID}`}
-                  underline="always"
-                  data-testid="apps-listing-details-related-link"
-                >
-                  {`${relatedRailHeading(detail.category)} →`}
-                </Anchor>
-              </div>
-            )}
+            {!preview && <RelatedRailLink detail={detail} />}
           </Stack>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>
+  );
+}
+
+/**
+ * The Details panel's jump to the related rail. 🔴 Its text is the rail's FIRST rendered
+ * heading, read from the rail's own data (`useRelatedRail` — the same queries, deduped), so
+ * it never says "More in <category>" over a rail that leads with "Popular apps". Until the
+ * rail has loaded it reads the neutral {@link RELATED_RAIL_NEUTRAL_HEADING}, which cannot be
+ * wrong about what it lands on.
+ */
+function RelatedRailLink({ detail }: { detail: ListingDetail }) {
+  const { sections, loading } = useRelatedRail({
+    listingId: detail.id,
+    category: detail.category,
+  });
+  const heading =
+    relatedRailFirstHeading({ category: detail.category, sections, loading }) ??
+    RELATED_RAIL_NEUTRAL_HEADING;
+  return (
+    <div className={detailClasses.detailRow}>
+      <Anchor
+        size="sm"
+        href={`#${RELATED_RAIL_ANCHOR_ID}`}
+        underline="always"
+        data-testid="apps-listing-details-related-link"
+      >
+        {`${heading} →`}
+      </Anchor>
+    </div>
   );
 }
 
