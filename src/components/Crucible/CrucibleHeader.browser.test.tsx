@@ -98,6 +98,14 @@ describe('CrucibleHeader description links', () => {
     expect(links[0].getAttribute('href')).toBe('http://example.com/song');
   });
 
+  test('links every URL, including an uppercase scheme', async () => {
+    const links = await renderDescription('one HTTPS://example.com/a then https://example.org/b');
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([
+      'HTTPS://example.com/a',
+      'https://example.org/b',
+    ]);
+  });
+
   test.each([
     ['see https://civitai.com/articles/37938.', 'https://civitai.com/articles/37938'],
     ['(see https://civitai.com/articles/37938)', 'https://civitai.com/articles/37938'],
