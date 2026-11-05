@@ -947,8 +947,15 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(items).toHaveLength(1);
     // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped. (The
     // restricted-audience level read is also a `$queryRaw`, but it is skipped for this
-    // anonymous, `public`-floor call because it could disclose nothing.)
-    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    // anonymous, `public`-floor call because it could disclose nothing.) The Official-badge
+    // batch read is a `$queryRaw` that runs AFTER the id page and is not a mean read, so it
+    // is excluded by name rather than by count — and asserted to be the only other call.
+    const rawSql = mockDbRead.$queryRaw.mock.calls.map(
+      (c) => (c[0] as { sql?: string } | undefined)?.sql ?? ''
+    );
+    const nonOfficial = rawSql.filter((sql) => !sql.includes('is_official'));
+    expect(nonOfficial).toHaveLength(1);
+    expect(rawSql.length - nonOfficial.length).toBe(1);
     const idPage = mockDbRead.$queryRaw.mock.calls[0]?.[0] as { sql: string; values: unknown[] };
     expect(idPage.sql).toContain('sort_key');
     // The pinned mean 0.25 is bound into the Bayesian key (C*m term).
