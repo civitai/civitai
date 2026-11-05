@@ -179,8 +179,9 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
  * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
  * dispute. `comFaceRemoved` records that the listing re-check took the model off civitai.com.
- * `restrictedNsfwVerdict` is a moderator's lead that only its ruling clears, and its rulings (and a kept lead's dormant verdict) are kept beside it. Client meta that carries them is ignored, so on update the stored values survive the
- * `{ ...prevMeta, ...meta }` merge.
+ * `restrictedNsfwVerdict` is a moderator's lead that only its ruling clears; its rulings (and a
+ * kept lead's dormant verdict) sit beside it. Client meta carrying any of these is ignored, so on
+ * update the stored values survive the `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',

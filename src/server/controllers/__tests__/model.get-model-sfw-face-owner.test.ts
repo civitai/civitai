@@ -120,7 +120,11 @@ describe('model.getById .com face', () => {
   ])(
     'the listing re-check removal reaches the %s only as it should',
     async (_, user, told, seesRecord) => {
-      const comFaceRemoved = { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5 };
+      const comFaceRemoved = {
+        at: '2026-11-05T00:00:00.000Z',
+        sfwCoverImageId: 5,
+        reason: 'detected',
+      };
       const stored = await getModel();
       getModel.mockResolvedValue({ ...stored, meta: { comFaceRemoved } });
 

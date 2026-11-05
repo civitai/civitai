@@ -36,7 +36,7 @@ export default AuthedEndpoint(
     if (!parsed.success) return res.status(400).json({ error: 'Invalid request body' });
     const input = parsed.data;
 
-    // Read from the primary: minor/sfwOnly/etc. are written back by the save, and a lagging replica would revert a change the owner just made.
+    // Primary: the save writes these flags back, and a lagging replica would revert a fresh change.
     const model = await dbWrite.model.findUnique({
       where: { id: input.modelId },
       select: {
