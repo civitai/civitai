@@ -9,6 +9,7 @@ import type * as RedisCaches from '~/server/redis/caches';
 import type * as ModelModerationAdapter from '~/server/services/model-moderation.adapter';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as AutoNsfw from '~/server/services/auto-nsfw';
+import type * as ComFaceRecheck from '~/server/services/model-com-face-recheck.service';
 
 // The Model half of the blurb save path, run against the REAL `upsertModel` /
 // `applyModelContentChange`. Only the blurb modules, the blocklist guard and the Redis-backed
@@ -59,6 +60,11 @@ vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventReplicationLag,
+}));
+const { queueComFaceRecheck } = vi.hoisted(() => ({ queueComFaceRecheck: vi.fn() }));
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ComFaceRecheck>()),
+  queueComFaceRecheck,
 }));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
@@ -359,6 +365,21 @@ describe('applyModelContentChange', () => {
     ).rejects.toThrow('invalid urls');
 
     expect(descriptionSql()).toEqual([]);
+  });
+
+  it('queues the .com face re-check for the description it wrote', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(queueComFaceRecheck).toHaveBeenCalledTimes(1);
+    expect(queueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue the re-check when the write matched no row', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(queueComFaceRecheck).not.toHaveBeenCalled();
   });
 
   it('runs the follow-up work a content change implies', async () => {

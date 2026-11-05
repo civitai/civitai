@@ -180,10 +180,10 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
  * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
- * dispute. `restrictedNsfwVerdict` is a moderator's lead that only its ruling clears, and its
- * rulings (and a kept lead's dormant verdict) are kept beside it; `ownerDeclaredFlags` outlives the
- * override a ruling drops. Client meta that carries them is ignored, so on update the stored values
- * survive the `{ ...prevMeta, ...meta }` merge.
+ * dispute. `comFaceRemoved` records that the listing re-check took the model off civitai.com.
+ * `restrictedNsfwVerdict` is a moderator's lead, kept with its rulings and dormant verdict;
+ * `ownerDeclaredFlags` outlives the override a ruling drops. Client meta carrying any of these is
+ * ignored, so on update the stored values survive the `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',
@@ -193,6 +193,7 @@ export const SERVER_OWNED_META_KEYS = [
   'restrictedNsfwVerdictRulings',
   'restrictedNsfwVerdictDormant',
   'ownerDeclaredFlags',
+  'comFaceRemoved',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 export function systemNsfwLockMarker(source: string): ModelMeta['systemNsfwLock'] {
@@ -261,5 +262,9 @@ export function pickModerationOwnedMeta(
 }
 
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {
-  return stripMinorHashMeta(filterSensitiveProfanityData(meta, isModerator));
+  const filtered = stripMinorHashMeta(filterSensitiveProfanityData(meta, isModerator));
+  if (isModerator || !filtered?.comFaceRemoved) return filtered;
+  // Moderators only; the owner's editor gets a boolean from `getModelHandler`.
+  const { comFaceRemoved: _removed, ...rest } = filtered;
+  return rest;
 }

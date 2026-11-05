@@ -112,6 +112,31 @@ describe('model.getById .com face', () => {
     expect(model.sfwDescription).toBeNull();
   });
 
+  it.each([
+    ['owner', owner, true, false],
+    ['moderator', moderator, true, true],
+    ['non-owner', stranger, false, false],
+    ['signed-out viewer', undefined, false, false],
+  ])(
+    'the listing re-check removal reaches the %s only as it should',
+    async (_, user, told, seesRecord) => {
+      const comFaceRemoved = {
+        at: '2026-11-05T00:00:00.000Z',
+        sfwCoverImageId: 5,
+        reason: 'detected',
+      };
+      const stored = await getModel();
+      getModel.mockResolvedValue({ ...stored, meta: { comFaceRemoved } });
+
+      const model = await get(user, COM);
+
+      expect(model.comFaceRemoved).toBe(told);
+      expect((model.meta as Record<string, unknown> | null)?.comFaceRemoved).toEqual(
+        seesRecord ? comFaceRemoved : undefined
+      );
+    }
+  );
+
   it('civitai.red keeps the .red face for an owner who browses mature content', async () => {
     const model = await get({ ...owner, showNsfw: true, browsingLevel: 31 }, RED);
     expect(model.name).toBe('Red title');

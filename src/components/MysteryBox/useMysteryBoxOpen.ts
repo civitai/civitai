@@ -92,7 +92,10 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
     }
     addToUnopenedCount(-1);
     void utils.mysteryBox.getOpenings.invalidate();
-    if (event) void utils.event.getMyHats.invalidate({ event });
+    if (event) {
+      void utils.event.getMyHats.invalidate({ event });
+      void utils.hatTurf.getMyStickerHats.invalidate({ event });
+    }
   };
   const refresh = () =>
     'event' in source

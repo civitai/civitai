@@ -2895,6 +2895,10 @@ export const REDIS_SYS_KEYS = {
   HEADLESS_POST: {
     IDEMPOTENCY: 'headless-post:idempotency',
   },
+  REMIX_APP: {
+    // A choice ask's per-option prices, per run, segment and step, while that ask is open.
+    OPTION_PRICES: 'remix-app:option-prices',
+  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
     SEND_LOCK: 'message-as-civitai:send-lock',
