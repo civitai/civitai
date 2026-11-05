@@ -1960,7 +1960,7 @@ export async function getListingCard(
     redCapable
       ? readListingRedMediaManyForRender(dbRead, [row.id])
       : Promise.resolve(new Map<string, ListingRedMediaImages>()),
-    readListingOfficialForRender(row.id, dbRead),
+    readListingOfficialForRender(input.slug ?? row.id, dbRead),
   ]);
   return projectListingCard(
     row,
@@ -2588,7 +2588,7 @@ export async function listAllListingsForModeration(
       r,
       pendingBlockRequestSlugs,
       betaById.get(r.id) ?? BETA_NOT_SET,
-      officialIds.has(r.id)
+      officialIds.size > 0
     )
   );
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
