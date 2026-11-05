@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActionIcon, Badge, Group, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowBackUp,
   IconBookmark,

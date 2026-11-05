@@ -110,6 +110,14 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
   recordAppListingOpen: mockRecordOpen,
 }));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+const mockIsMyAppHidden = vi.hoisted(() =>
+  vi.fn<(a: unknown) => Promise<boolean>>(async () => false)
+);
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: mockIsMyAppHidden,
+}));
 vi.mock('~/components/Apps/recentlyOpenedAppsStore', () => ({
   recordRecentlyOpenedApp: mockRecordRecent,
 }));
@@ -224,6 +232,21 @@ describe('private-run SSR — the grant path [REG]', () => {
       trustTier: 'unverified',
       sandbox: 'allow-scripts',
     });
+  });
+
+  it('🔴 a private run never clears a My apps hide, even when the viewer has one', async () => {
+    // The read runs concurrently with the resolve (before the private fallback is known), so it
+    // is stubbed TRUE here: the private path must still hand the page `false`, or a moderator's
+    // look at a suspended app would rewrite the viewer's home.
+    mockIsMyAppHidden.mockResolvedValueOnce(true);
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK(),
+    });
+    const res = await resolver()(ctx());
+    expect(res.props.audience).toBe('moderator'); // positive control: the private path ran
+    expect(res.props.isHiddenForViewer).toBe(false);
   });
 
   it('🔴 a private run records NO play', async () => {

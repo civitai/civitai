@@ -3,15 +3,14 @@ import {
   Badge,
   Button,
   Divider,
-  Popover,
   Text,
-  Tooltip,
   UnstyledButton,
   useComputedColorScheme,
   useMantineTheme,
   getPrimaryShade,
   useMantineColorScheme,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';

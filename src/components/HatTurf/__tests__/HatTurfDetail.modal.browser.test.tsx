@@ -130,7 +130,7 @@ const isOnTop = (el: HTMLElement) => {
   return el.contains(top);
 };
 
-test('in the image modal, change ▸ opens Your hats on top of the modal', async () => {
+test('in the image modal, the panel and its hats tray open on top of the modal', async () => {
   renderWithProviders(
     <PageModal opened onClose={() => undefined} fullScreen>
       <TurfSummaryContext.Provider
@@ -150,6 +150,7 @@ test('in the image modal, change ▸ opens Your hats on top of the modal', async
           },
           open: { 9: true },
           stickers: {},
+          joined: h.stock.optedIn,
           watch: () => () => undefined,
         }}
       >
@@ -159,13 +160,14 @@ test('in the image modal, change ▸ opens Your hats on top of the modal', async
       </TurfSummaryContext.Provider>
     </PageModal>
   );
-  await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+  await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
   // Positive control: the modal's own content hit-tests as on top, so a covered drawer reads false.
-  await vi.waitFor(() => expect(isOnTop(q('hat-turf-detail-badge')!)).toBe(true));
-  q('hat-turf-detail-badge')!.click();
-  await vi.waitFor(() => expect(byText(/change/)).toBeTruthy());
-  byText(/change/)!.click();
-  await vi.waitFor(() => expect(q('hat-turf-detail-tray')).not.toBeNull());
-  const tile = q('hat-turf-detail-tray')!.querySelector<HTMLElement>('button')!;
+  await vi.waitFor(() => expect(isOnTop(q('hat-turf-gear')!)).toBe(true));
+  q('hat-turf-gear')!.click();
+  await vi.waitFor(() => expect(q('hat-turf-panel-change')).not.toBeNull());
+  await vi.waitFor(() => expect(isOnTop(q('hat-turf-panel-change')!)).toBe(true));
+  q('hat-turf-panel-change')!.click();
+  await vi.waitFor(() => expect(q('hat-turf-tray')).not.toBeNull());
+  const tile = q('hat-turf-tray')!.querySelector<HTMLElement>('button[aria-pressed]')!;
   await vi.waitFor(() => expect(isOnTop(tile)).toBe(true));
 });

@@ -41,21 +41,19 @@
 .disc {
   position: absolute;
   inset: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
   color: var(--mantine-color-white);
-  /* White has to read on the lightest team colour (yellow) too. */
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
   transition: background-color 0.3s ease;
+}
 
-  & svg {
-    filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.6));
-  }
+/* A darker shade of the disc: a backdrop for the count, not a second thing to read. */
+.hat {
+  display: grid;
+  place-items: center;
+  margin-top: -1px;
 }
 
 .neutral {
@@ -63,23 +61,21 @@
 }
 
 .count {
-  font-size: 11px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -45%);
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  color: var(--mantine-color-white);
+  /* White has to read on the lightest team colour (yellow) too. */
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.8), 0 0 1px rgba(0, 0, 0, 0.9);
 }
 
 .bump {
   animation: bump 0.55s ease;
-}
-
-.mine {
-  position: absolute;
-  width: 11px;
-  height: 11px;
-  border: 2px solid rgba(0, 0, 0, 0.75);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
 }
 
 .lock {
@@ -98,7 +94,7 @@
 
 @keyframes bump {
   35% {
-    transform: scale(1.5);
+    transform: translate(-50%, -45%) scale(1.5);
   }
 }
 

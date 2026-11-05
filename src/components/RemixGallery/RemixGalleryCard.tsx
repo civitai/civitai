@@ -6,13 +6,12 @@ import {
   Card,
   Center,
   Group,
-  HoverCard,
   Skeleton,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import {
   IconClock,
   IconHierarchy,

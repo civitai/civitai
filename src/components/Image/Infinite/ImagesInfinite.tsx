@@ -14,7 +14,10 @@ import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
-import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import {
+  IMAGES_CARD_FOOTER_HEIGHT,
+  ImagesCardMemoized,
+} from '~/components/Image/Infinite/ImagesCard';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -241,7 +244,7 @@ export function ImagesInfiniteContent({
               }}
               adjustHeight={({ height }) => {
                 const imageHeight = Math.max(Math.min(height, 600), 150);
-                return imageHeight + 38;
+                return imageHeight + IMAGES_CARD_FOOTER_HEIGHT;
               }}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCardMemoized}

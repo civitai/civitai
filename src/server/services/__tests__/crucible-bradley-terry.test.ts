@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock, redisMock } from '~/__tests__/mocks';
+import {
+  getAnchorVotesKey,
+  getJudgesKey,
+  getVotedPairsKey,
+} from '~/server/services/crucible-redis-keys';
 
 const chQuery = vi.fn();
 const logToAxiom = loggingMock.logToAxiom;
@@ -7,9 +12,12 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }
 
 const {
   BRADLEY_TERRY_INGEST_WAIT_MS,
+  BRADLEY_TERRY_RANKING_FROM,
   CrucibleRankingDeferredError,
   fitBradleyTerry,
+  fitBradleyTerryStrengths,
   fitCrucibleScoresForPrizes,
+  tallyJudgeVotes,
   usesBradleyTerryRanking,
 } = await import('~/server/services/crucible-bradley-terry');
 
@@ -83,15 +91,23 @@ describe('fitBradleyTerry', () => {
 });
 
 describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
-  const tallies = [
-    { winnerEntryId: 1, loserEntryId: 2, votes: 2 },
-    { winnerEntryId: 2, loserEntryId: 3, votes: 1 },
-  ]; // 3 distinct (judge, pair) votes
-  /** Two judges whose voted-pairs sets hold `a` and `b` pairs. */
+  // ClickHouse rows: 3 distinct (judge, pair) votes.
+  const judgeVotes = [
+    { userId: 7, winnerEntryId: 1, loserEntryId: 2 },
+    { userId: 7, winnerEntryId: 2, loserEntryId: 3 },
+    { userId: 8, winnerEntryId: 1, loserEntryId: 2 },
+  ];
+  /**
+   * Two judges whose voted-pairs sets hold `a` and `b` pairs. Only the exact keys the vote path
+   * writes answer (the writer side is pinned in crucible-vote-integrity), so a guard that reads
+   * any other key counts 0 and these tests fail.
+   */
   const withRedisPairs = (a: number, b: number) => {
-    redisMock.sysRedis.sMembers.mockResolvedValue(['7', '8']);
+    redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
+      key === getJudgesKey(1) ? ['7', '8'] : []
+    );
     redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
-      key.endsWith(':7') ? a : key.endsWith(':8') ? b : 0
+      key === getVotedPairsKey(1, 7) ? a : key === getVotedPairsKey(1, 8) ? b : 0
     );
   };
   const now = new Date('2026-12-01T12:00:00Z');
@@ -101,7 +117,7 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    chQuery.mockResolvedValue(tallies);
+    chQuery.mockResolvedValue(judgeVotes);
   });
 
   it('ranks by the fit when ClickHouse holds exactly the votes Redis counts', async () => {
@@ -140,9 +156,98 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     expect(logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   });
 
+  it('counts every judge when there are more than one batch of them', async () => {
+    const judges = Array.from({ length: 250 }, (_, i) => i + 1);
+    redisMock.sysRedis.sMembers.mockResolvedValue(judges.map(String));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    redisMock.sysRedis.sCard.mockImplementation(async () => {
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight--;
+      return 1;
+    });
+    chQuery.mockResolvedValue(
+      judges.map((userId) => ({ userId, winnerEntryId: 1, loserEntryId: 2 }))
+    );
+    expect(await fit(), 'fit over 250 judges').not.toBeNull();
+    expect(redisMock.sysRedis.sCard).toHaveBeenCalledTimes(250);
+    expect(maxInFlight, 'SCARDs in flight at once').toBe(100);
+  });
+
+  it('pays from a fit that freezes the anchors Redis recorded for each judge', async () => {
+    const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((loser) => ({
+      userId: 9,
+      winnerEntryId: 10,
+      loserEntryId: loser,
+    }));
+    const anchors = new Map([[9, new Map([6, 7, 8].map((loser) => [`${loser}:10`, 10]))]]);
+    redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
+      key === getJudgesKey(1) ? ['9'] : []
+    );
+    redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
+      key === getVotedPairsKey(1, 9) ? 8 : 0
+    );
+    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) =>
+      key === getAnchorVotesKey(1, 9) ? { '6:10': '10', '7:10': '10', '8:10': '10' } : {}
+    );
+    chQuery.mockResolvedValue(rows);
+
+    const scores = await fit();
+    expect(scores).toEqual(fitBradleyTerry(tallyJudgeVotes(rows, anchors)));
+    expect(scores, 'differs from a fit that ignores the anchors').not.toEqual(
+      fitBradleyTerry(tallyJudgeVotes(rows, new Map()))
+    );
+  });
+
   it('falls back to Elo when Redis is unreachable', async () => {
     redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
     expect(await fit(endedAgo(60_000))).toBeNull();
+  });
+});
+
+describe('the per-judge, per-entry cap, as Elo recorded it', () => {
+  // Judge 1 votes X (10) over A-E: five votes, all counted for X.
+  const firstFive = [1, 2, 3, 4, 5].map((loser) => ({
+    userId: 1,
+    winnerEntryId: 10,
+    loserEntryId: loser,
+  }));
+  // Then X over F-H with X at the cap: Elo recorded X as the anchor, so these place F-H only.
+  const pastCap = [6, 7, 8].map((loser) => ({ userId: 1, winnerEntryId: 10, loserEntryId: loser }));
+  const xAnchored = new Map([[1, new Map([6, 7, 8].map((loser) => [`${loser}:10`, 10]))]]);
+
+  it('moves an entry a judge voted on 8 times exactly as if they had cast only 5', () => {
+    const onlyFive = fitBradleyTerryStrengths(tallyJudgeVotes(firstFive, new Map()));
+    const eight = fitBradleyTerryStrengths(tallyJudgeVotes([...firstFive, ...pastCap], xAnchored));
+    // Strength ratios are scale-free; the fit's centring moves with F-H, the ratios do not.
+    for (const opponent of [1, 2, 3, 4, 5]) {
+      const ratio = (fit: Map<number, number>) => Math.log10(fit.get(10)! / fit.get(opponent)!);
+      expect(ratio(eight), `X against ${opponent}`).toBeCloseTo(ratio(onlyFive), 6);
+    }
+    // F-H still lose to X, so they place below it.
+    expect(eight.get(6)!).toBeLessThan(eight.get(10)!);
+  });
+
+  it('freezes the recorded side, whichever side it is, and only for that judge', () => {
+    const votes = [
+      { userId: 1, winnerEntryId: 10, loserEntryId: 6 }, // anchor 10: the winner
+      { userId: 1, winnerEntryId: 7, loserEntryId: 10 }, // anchor 10: the loser
+      { userId: 2, winnerEntryId: 10, loserEntryId: 6 }, // another judge, no anchor
+    ];
+    const anchors = new Map([
+      [
+        1,
+        new Map([
+          ['6:10', 10],
+          ['7:10', 10],
+        ]),
+      ],
+    ]);
+    const frozen = tallyJudgeVotes(votes, anchors)
+      .map((t) => `${t.winnerEntryId}>${t.loserEntryId}:${t.frozen ?? '-'}x${t.votes}`)
+      .sort();
+    expect(frozen).toEqual(['10>6:-x1', '10>6:winnerx1', '7>10:loserx1']);
   });
 });
 
@@ -153,14 +258,28 @@ describe('usesBradleyTerryRanking — which crucibles the fit ranks', () => {
     createdAt: new Date(createdAt),
   });
 
-  // Deliberately off: the fit must honour the per-judge, per-entry cap before it pays prizes.
-  it('ranks no crucible while the switch date is unset', () => {
-    expect(usesBradleyTerryRanking(crucible('2030-01-01T00:00:00Z'))).toBe(false);
+  // The fit freezes anchors only for votes cast after anchor recording was live in prod
+  // (2026-11-04T21:25Z); a crucible starting before that has anchorless votes and must stay on Elo.
+  it('switches on no earlier than the release that records anchors', () => {
+    expect(BRADLEY_TERRY_RANKING_FROM).not.toBeNull();
+    expect(BRADLEY_TERRY_RANKING_FROM!.getTime()).toBeGreaterThanOrEqual(
+      Date.parse('2026-11-04T21:25:00Z')
+    );
   });
 
   it('ranks crucibles starting on or after the date, and leaves earlier ones on Elo', () => {
     expect(usesBradleyTerryRanking(crucible('2026-12-01T00:00:00Z'), from)).toBe(true);
     expect(usesBradleyTerryRanking(crucible('2026-11-30T23:59:00Z'), from)).toBe(false);
+  });
+
+  // Anchors are recorded only from the deploy that ships the fit on: a crucible already judging
+  // then has votes without them, so it must finish on Elo however late it ends.
+  it('leaves a crucible that started before the date on Elo, even when it ends after it', () => {
+    const running = {
+      ...crucible('2026-11-30T12:00:00Z'),
+      endAt: new Date('2026-12-05T00:00:00Z'),
+    };
+    expect(usesBradleyTerryRanking(running, from)).toBe(false);
   });
 
   it('goes by creation time for a crucible with no start time', () => {

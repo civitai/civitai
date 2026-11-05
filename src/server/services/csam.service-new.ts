@@ -476,15 +476,17 @@ const SEND_SCRATCH_NAME = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 /**
  * Removes the send scratch directories no live claim owns: a run that died never reached its own
- * cleanup. Run at the start of the send job, before any claim is taken. Archive directories in the
- * same roots, named by report id alone, are not send directories and are left.
+ * cleanup. Archive directories in the same roots, named by report id alone, are left.
  */
 export async function sweepStaleSendDirs(root = baseDir) {
   const found: { path: string; reportId: number; claimId: string }[] = [];
   for (const scratch of SEND_SCRATCH_ROOTS) {
     const rootDir = `${root}/${scratch}`;
-    if (!fs.existsSync(rootDir)) continue;
-    for (const name of fs.readdirSync(rootDir)) {
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names) {
       const match = SEND_SCRATCH_NAME.exec(name);
       if (match)
         found.push({ path: `${rootDir}/${name}`, reportId: Number(match[1]), claimId: match[2] });
@@ -502,7 +504,7 @@ export async function sweepStaleSendDirs(root = baseDir) {
   });
   const liveDirs = new Set(live.map(({ id, sendClaimId }) => `${id}-${sendClaimId}`));
   const stale = found.filter(({ reportId, claimId }) => !liveDirs.has(`${reportId}-${claimId}`));
-  for (const { path } of stale) fs.rmSync(path, { recursive: true, force: true });
+  for (const { path } of stale) await fsAsync.rm(path, { recursive: true, force: true });
   return stale.map(({ path }) => path);
 }
 
@@ -1513,8 +1515,8 @@ async function sendGenerationData(
   // that cannot be fetched is held for and sent without as an image's is.
   const budget = spoolBudget();
   let n = 0;
-  // A report past the cap fails whole. No fetch rejects, so every one has settled before the caller
-  // removes `dir`, and none starts once the cap is passed.
+  // No fetch rejects, so every one has settled before the caller removes `dir`; a report past the cap
+  // fails whole after they settle.
   const cap: { passed?: SpoolLimitError } = {};
   const blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
     Promise.all(
@@ -2486,6 +2488,12 @@ async function archiveAndUpload({
 const bigintReplacer: JsonReplacer = (_key, value) =>
   typeof value === 'bigint' ? value.toString() : value;
 
+/** The error's name and code without its message, which can quote a storage key or a URL. */
+const errorClass = (e: unknown) => ({
+  errorName: (e as Error | undefined)?.name,
+  errorCode: (e as { code?: unknown } | undefined)?.code,
+});
+
 export async function archiveCsamDataForReport(data: CsamReportProps) {
   const { userId } = data;
   if (!userId) {
@@ -2629,6 +2637,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-failed',
+      message: `archiving report ${report.id} failed after ${archived.length} object(s)`,
+      reportId: report.id,
+      stored: archived.map((object) => object.kind),
+      ...errorClass(e),
+    });
     if (e instanceof Error) {
       if (e.message === 'training data not found') {
         await dbWrite.csamReport.update({
@@ -2820,11 +2837,20 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           } catch (e) {
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
-            if (
-              !isEdgeUrlPassthrough(image.url) ||
-              hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS
-            )
-              throw e;
+            const retried =
+              !isEdgeUrlPassthrough(image.url) || hoursSinceSent < CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS;
+            logToAxiom({
+              name: 'csam-report',
+              type: retried ? 'error' : 'info',
+              subType: 'archive-image-read',
+              message: `report ${report.id}: image ${image.id} could not be read`,
+              reportId: report.id,
+              imageId: image.id,
+              ...errorClass(e),
+              fullUrl: isEdgeUrlPassthrough(image.url),
+              retried,
+            });
+            if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
           }
           if (original.source === 'missing') {

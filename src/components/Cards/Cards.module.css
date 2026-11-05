@@ -423,3 +423,20 @@
     padding-left: 6px;
   }
 }
+
+/* Footer in a card whose height the masonry fixed: reactions and tip flow as one wrapping line,
+   since a second stacked row would overflow into the picture. */
+.actions.oneLine {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+
+  & .actionRow,
+  & .tipRow {
+    display: contents;
+  }
+
+  & .tipEnd {
+    padding-left: 6px;
+  }
+}

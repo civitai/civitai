@@ -203,6 +203,8 @@ const contestOf = (sql: string) => {
   const at = sql.indexOf('EXISTS ( SELECT 1 FROM "CollectionItem"');
   return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
 };
+const OWNER_ALLOWS_TURF =
+  'EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL AND (ow.settings -> ? ->> ?) IS DISTINCT FROM \'true\')';
 const sqlOf = (call: unknown[]) => {
   const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
   return Prisma.sql(strings, ...values).sql.replace(/\s+/g, ' ');
@@ -260,7 +262,9 @@ describe('the stickers a turf push carries', () => {
       ' WHERE s.event = ? AND s."imageId" = ANY(?::int[]) AND s."removedAt" IS NULL AND' +
         visibleOf(read) +
         '"blockedFor" IS NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ' +
-        contestOf(read)
+        contestOf(read) +
+        ' AND ' +
+        OWNER_ALLOWS_TURF
     );
 
     realWrite();
@@ -275,6 +279,8 @@ describe('the stickers a turf push carries', () => {
     // The push reads the contest rule too, and carries nothing for an entry (turf-contest.pglite).
     expect(contestOf(read)).not.toBe('');
     expect(live).toContain(`${contestOf(read)} AS contest`);
+    // The owner's switch on both reads (turf-owner-off.pglite).
+    expect(live).toContain(`AND ${OWNER_ALLOWS_TURF}`);
   });
 
   it('rides on the push a placement sends, with no extra read', async () => {

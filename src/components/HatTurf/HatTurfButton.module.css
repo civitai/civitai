@@ -2,98 +2,87 @@
   position: relative;
   display: inline-flex;
   flex: none;
-  align-items: center;
-  gap: 2px;
   pointer-events: auto;
 }
 
 .button {
-  display: flex;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
   border: 0;
+  border-radius: 6px;
+  background-color: var(--mantine-color-gray-6);
+  color: var(--mantine-color-white);
   cursor: pointer;
-  align-items: center;
-  gap: 3px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: var(--mantine-radius-sm);
-  background-color: var(--mantine-color-yellow-4);
-  color: var(--mantine-color-black);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+
+  & svg {
+    filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.4));
+  }
+}
+
+.invite {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--mantine-color-gray-6);
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
 }
 
 .empty {
-  background-color: rgba(255, 255, 255, 0.18);
-  color: var(--mantine-color-gray-3);
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-5));
   box-shadow: none;
-}
-
-.done {
-  background-color: var(--mantine-color-green-6);
-  color: var(--mantine-color-white);
 }
 
 .active {
   outline: 2px solid var(--mantine-color-white);
+  outline-offset: 1px;
 }
 
-/* Always on screen: a phone has no hover to reveal it. */
+.tick {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--mantine-color-white);
+  border-radius: 50%;
+  background-color: var(--mantine-color-green-8);
+  color: var(--mantine-color-white);
+}
+
+/* Over the button's top-right corner, nudged in so a card's edge never clips it. */
 .gear {
-  position: relative;
+  position: absolute;
+  top: -6px;
+  right: -5px;
+  z-index: 1;
   display: grid;
   place-items: center;
   width: 16px;
-  height: 22px;
+  height: 16px;
   padding: 0;
   border: 0;
-  background: none;
-  color: var(--mantine-color-white);
-  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+  border-radius: 50%;
+  background-color: #000;
+  color: #fff;
   cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
-/* The visible gear is 16px; its tap area is not. It never reaches left, over the button. */
+/*
+ * A bigger tap target than the 16px it draws. Kept to a 24px circle: any wider and it reaches the
+ * button's centre, which must stay the button's.
+ */
 .gear::before {
   content: '';
   position: absolute;
-  inset: -5px -5px -5px 0;
-}
-
-/* On the card background the white-on-photo styling vanishes in light mode. */
-.panel {
-  & .gear {
-    color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
-    filter: none;
-  }
-
-  & .empty {
-    background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
-    color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
-  }
-}
-
-.option {
-  display: flex;
-  border: 0;
-  background-color: transparent;
-  color: inherit;
-  cursor: pointer;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--mantine-radius-sm);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-}
-
-.selected {
-  background-color: light-dark(var(--mantine-color-yellow-1), rgba(252, 196, 25, 0.2));
-  box-shadow: inset 0 0 0 1.5px var(--mantine-color-yellow-4);
+  inset: -4px;
+  border-radius: 50%;
 }
 
 .anchor {

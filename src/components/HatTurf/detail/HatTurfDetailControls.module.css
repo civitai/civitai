@@ -5,34 +5,6 @@
 }
 
 /* The reaction buttons' height and fill, so the row keeps their height. */
-.hat {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-  background-color: rgba(52, 58, 64, 0.4);
-  color: var(--mantine-color-white);
-}
-
-.hatOn {
-  background-color: var(--mantine-color-yellow-4);
-  color: var(--mantine-color-dark-9);
-}
-
-.hatActive {
-  outline: 2px solid var(--mantine-color-white);
-}
-
-.hatEmpty {
-  opacity: 0.55;
-}
-
-/* The 48px standings ring overflows this 30px box instead of growing the reaction row. */
 .badgeButton {
   display: inline-flex;
   align-items: center;
@@ -118,89 +90,26 @@
   font-weight: 600;
 }
 
-.stats {
-  width: 230px;
-  padding: 0;
+/* The reaction row is 30px; the button fills it. Scoped to win over the feed button's size. */
+.group .hat {
+  width: 30px;
+  height: 30px;
 }
 
-.statsBody {
-  padding: 10px 12px;
-}
+/* Struck through: hats are off, and this is the way back to the switch. */
+.hidden {
+  position: relative;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-1));
 
-/* Full width: the negative margin cancels .statsBody's side padding. */
-.divider {
-  margin: 8px -12px;
-  border: 0;
-  border-top: 1px solid var(--mantine-color-default-border);
-}
-
-.footer {
-  padding: 8px 12px;
-  border-top: 1px solid var(--mantine-color-default-border);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.dot {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 50%;
-}
-
-.count {
-  margin-left: auto;
-  font-weight: 800;
-}
-
-.tag {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--mantine-color-yellow-4);
-}
-
-.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  color: var(--mantine-color-dimmed);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 6px 2px;
-  border: 0;
-  border-radius: var(--mantine-radius-md);
-  background-color: var(--mantine-color-default-hover);
-  color: var(--mantine-color-dimmed);
-  font-size: 10px;
-  text-align: center;
-  cursor: pointer;
-}
-
-.tileActive {
-  outline: 2px solid var(--mantine-color-yellow-4);
-  color: var(--mantine-color-text);
+  &::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 22px;
+    height: 2px;
+    border-radius: 1px;
+    background-color: currentColor;
+    transform: translate(-50%, -50%) rotate(-45deg);
+  }
 }

@@ -25,9 +25,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { Dropzone } from '@mantine/dropzone';
 import {
   IconCheck,

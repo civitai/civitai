@@ -9,8 +9,8 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconListCheck, IconSearch, IconSettings, IconX } from '@tabler/icons-react';
 import React, { forwardRef, useMemo, useState } from 'react';

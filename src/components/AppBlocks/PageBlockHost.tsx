@@ -27,6 +27,7 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
@@ -852,6 +853,15 @@ export interface PageBlockHostProps {
    */
   canOpenPage?: boolean;
   /**
+   * Where this run was launched from, for the chrome's way out (breadcrumb + mobile back
+   * chevron): `home` → "My apps" (`/apps`), otherwise "Marketplace" (`/apps/store`). Only
+   * the `/apps/run` route sets it (from `?from=home`, in `getServerSideProps`); every other
+   * mounter leaves the store default. Never put on the iframe `src` or in BLOCK_INIT; its
+   * one use outside the chrome is re-stamping `?from=home` on the URL a block NAVIGATE
+   * pushes, so a reload keeps the way out. See `apps-run-origin.ts`.
+   */
+  launchOrigin?: AppsRunOrigin;
+  /**
    * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
    * it is spelled out rather than inferred from `surface`.
    *
@@ -950,6 +960,7 @@ export function PageBlockHost({
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
+  launchOrigin = 'store',
   fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
@@ -2273,6 +2284,10 @@ export function PageBlockHost({
         base: BLOCK_HOST_DEEP_LINK_BASE[surface],
         slug,
         siteNavigation: BLOCK_HOST_SITE_NAVIGATION[surface],
+        // Keeps `?from=home` on the pushed URL of a home-launched run, so a reload after the
+        // app navigates still leads back to "My apps"; the host's value beats any `from` in
+        // the block's own path (see `resolveNavigateRequest`).
+        launchOrigin,
       });
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
@@ -2321,7 +2336,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode, surface]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
@@ -5809,6 +5824,7 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         hostSurface={surface}
         canOpenPage={canOpenPage}
+        launchOrigin={launchOrigin}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`

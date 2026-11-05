@@ -2,13 +2,13 @@ import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
   Code,
   Group,
-  HoverCard,
   Select,
   Stack,
   Text,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';

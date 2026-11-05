@@ -30,7 +30,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => features,
 }));
 const h = vi.hoisted(() => ({
-  stock: { available: 3, optedIn: true },
+  stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -173,6 +173,7 @@ function renderCard(ctx: Ctx = {}, ownerId = 2, width = PHONE_CARD) {
         images: {},
         open: {},
         stickers: {},
+        joined: h.stock?.optedIn === true,
         watch: () => () => undefined,
         ...ctx,
       }}
@@ -215,11 +216,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('Hat Turf button on a feed ImageCard', () => {
-  test('shows how many hats are available before pressing, and the gear is already on screen', async () => {
+  test('the button is a square in the team colour with only the hat, and the gear is already on screen', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('3');
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    expect(button.textContent).toBe('');
+    const box = button.getBoundingClientRect();
+    expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(2);
+    // The viewer is on blue: the theme's blue at its primary shade (#228be6), not the grey fallback.
+    expect(getComputedStyle(button).backgroundColor).toBe('rgb(34, 139, 230)');
     const gear = q('hat-turf-gear')!;
+    expect(getComputedStyle(gear).backgroundColor).toBe('rgb(0, 0, 0)');
     expect(getComputedStyle(gear).display).not.toBe('none');
     const card = q('card-root')!.getBoundingClientRect();
     const g = gear.getBoundingClientRect();
@@ -242,10 +249,10 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button');
 
     expect(hit(g.left + g.width / 2, g.top + g.height / 2)).toBe(gear);
-    // Every corner of the button, 2px in: the gear's tap halo used to cover the top-right one.
+    // The gear sits on the top-right corner; the centre and the other three corners stay the button's.
     for (const [x, y] of [
+      [b.left + b.width / 2, b.top + b.height / 2],
       [b.left + 2, b.top + 2],
-      [b.right - 2, b.top + 2],
       [b.left + 2, b.bottom - 2],
       [b.right - 2, b.bottom - 2],
     ])
@@ -347,22 +354,24 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.stock = { available: 0, optedIn: true };
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('0');
     expect(document.body.querySelector('[aria-label="No hats left to place"]')).not.toBeNull();
     await press();
     expect(q('hat-turf-draft')).toBeNull();
   });
 
-  test('the gear lists the viewer’s hats by name and the pick is the one placed', async () => {
+  test('the gear opens the panel; a hat picked in its tray is the one placed', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Top Hat'));
-    expect(document.body.textContent).toContain('Party Cap');
-    const option = [...document.body.querySelectorAll('[aria-label="Hat to place"] button')].find(
-      (o) => o.textContent?.includes('Top Hat')
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Party Cap'));
+    expect(onCardClick).not.toHaveBeenCalled();
+    q('hat-turf-panel-change')!.click();
+    await vi.waitFor(() => expect(q('hat-turf-tray')).not.toBeNull());
+    const option = [...q('hat-turf-tray')!.querySelectorAll('button[aria-pressed]')].find((o) =>
+      o.textContent?.includes('Top Hat')
     ) as HTMLElement;
     option.click();
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Top Hat'));
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
     (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
@@ -387,11 +396,26 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(q('hat-turf-button')).toBeNull();
   });
 
-  test('not joined: an image whose owner has not joined still offers Join', async () => {
+  // Until the stock is read, the card cannot tell a joined viewer's hat from the join invite, and a
+  // hat press there would start a placement that no layer draws.
+  test('no button until the viewer’s stock is read', async () => {
+    h.stock = undefined;
+    renderCard();
+    await cardRendered();
+    expect(q('hat-turf-button')).toBeNull();
+  });
+
+  // The control for the absences above: by the time the reactions are drawn, the button is too.
+  test('joined: the button is drawn by the time the reactions are', async () => {
+    renderCard();
+    await cardRendered();
+    expect(q('hat-turf-button')).not.toBeNull();
+  });
+
+  test('not joined: a closed image still offers Join', async () => {
     h.stock = { available: 3, optedIn: false };
     renderCard({ open: { 77: false } });
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('+');
     await press();
     const join = await vi.waitFor(() => {
       const button = [...document.body.querySelectorAll('button')].find(
@@ -415,7 +439,8 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.stock = { available: 3, optedIn: false };
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('+');
+    // Not joined has nothing to set yet: no gear.
+    expect(q('hat-turf-gear')).toBeNull();
     await press();
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Join Hat Turf to place hats')
@@ -484,14 +509,15 @@ describe('hats on a feed ImageCard', () => {
     expect(hats().map((el) => el.dataset.tone)).toEqual(['lead', 'dim']);
   });
 
-  test('a protected image shows its hats muted with a lock and who would take it', async () => {
+  test('a protected image shows its hats muted, with no "would take it" pill', async () => {
     renderCard({
       images: { 77: summary({ hatted: true }) },
       stickers: { 77: [sticker(1, 'blue')] },
     });
     await vi.waitFor(() => expect(hats().length).toBe(1));
     expect(hats()[0].dataset.tone).toBe('muted');
-    expect(q('hat-turf-lock')!.textContent).toContain('Pink would take it');
+    expect(q('hat-turf-badge-lock')).not.toBeNull();
+    expect(document.body.textContent).not.toMatch(/would take it/);
   });
 
   test('hats past what is drawn show as a +N chip', async () => {
@@ -505,31 +531,21 @@ describe('hats on a feed ImageCard', () => {
     expect(q('hat-turf-more')!.textContent).toContain('+10');
   });
 
-  test('Show hats off hides the hats but the badge stays', async () => {
-    useHatTurfStore.setState({ showHats: false });
-    renderCard({
-      images: { 77: summary() },
-      stickers: { 77: [sticker(1, 'blue')] },
-    });
-    await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
-    expect(hats().length).toBe(0);
-    useHatTurfStore.setState({ showHats: true });
-  });
-
-  test('turning Show hats off and on again in the gear menu logs both', async () => {
+  // Show hats off drops every Hat Turf control from the card, the gear with it, so the way back
+  // on is the image page (HatTurfDetail.browser.test.tsx).
+  test('turning Show hats off in the gear menu logs it, and the card drops its hat button and gear', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
-    const toggle = () =>
-      (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() =>
       expect(document.body.querySelector('input[type="checkbox"]')).not.toBeNull()
     );
-    toggle();
+    (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
-    toggle();
-    await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(true));
-    expect(actions()).toEqual(['hide_all_hats_on', 'hide_all_hats_off']);
+    await vi.waitFor(() => expect(q('hat-turf-gear')).toBeNull());
+    expect(q('hat-turf-button')).toBeNull();
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(actions()).toEqual(['hide_all_hats_on']);
   });
 
   test('tells the provider the card is on screen, and stops when it leaves', async () => {
@@ -544,6 +560,7 @@ describe('hats on a feed ImageCard', () => {
           images: {},
           open: {},
           stickers: {},
+          joined: true,
           watch,
         }}
       >

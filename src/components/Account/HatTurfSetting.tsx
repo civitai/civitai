@@ -1,37 +1,22 @@
 import { Switch } from '@mantine/core';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
-import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
+import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
 
 export const HAT_TURF_SETTING_LABEL = 'Take part in Hat Turf';
 const HAT_TURF_SETTING_DESCRIPTION =
-  'Others can stick team hats on your images. Hats already there keep counting if you turn this off.';
+  "Place your team's hats on images and see everyone's. Hats you placed keep counting if you turn this off.";
+export const SHOW_HATS_SETTING_LABEL = 'Show hats';
+const SHOW_HATS_SETTING_DESCRIPTION =
+  'Hats, team standings and the hat button on images. Off, images show none of Hat Turf, on this device.';
 
 /** In account settings, while Hat Turf runs on any surface this viewer can see. */
 export function HatTurfSetting() {
-  const user = useCurrentUser();
-  const features = useFeatureFlags();
-  const definition = usePlayableEventDecoration(
-    'Image',
-    !!user && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard)
-  );
-  const event = definition?.event;
-  const utils = trpc.useUtils();
-  const { data: stock } = trpc.hatTurf.getStock.useQuery(
-    { event: event ?? '' },
-    { enabled: !!event, staleTime: 30_000 }
-  );
-  const setOptIn = trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => {
-      void utils.hatTurf.getStock.invalidate();
-      void utils.hatTurf.getSummaries.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
-  });
-  if (!event || !stock || stock.mode === 'off') return null;
+  const { event, stock } = useTurfGate();
+  const setOptIn = useJoin();
+  const showHats = useHatTurfStore((state) => state.showHats);
+  const setShowHats = useHatTurfStore((state) => state.setShowHats);
+  if (!event || !stock) return null;
 
   return (
     <SettingsSection title="Hat Turf" id="hat-turf">
@@ -46,6 +31,20 @@ export function HatTurfSetting() {
             disabled={setOptIn.isPending}
             onChange={(e) => setOptIn.mutate({ event, optedIn: e.currentTarget.checked })}
             data-testid="hat-turf-setting-toggle"
+          />
+        }
+      />
+      {/* With hats off, cards drop the gear too, and the image page may not run Hat Turf. */}
+      <SettingRow
+        label={SHOW_HATS_SETTING_LABEL}
+        description={SHOW_HATS_SETTING_DESCRIPTION}
+        control={
+          <Switch
+            name="hatTurfShowHats"
+            aria-label={SHOW_HATS_SETTING_LABEL}
+            checked={showHats}
+            onChange={(e) => setShowHats(e.currentTarget.checked)}
+            data-testid="hat-turf-show-hats-setting"
           />
         }
       />

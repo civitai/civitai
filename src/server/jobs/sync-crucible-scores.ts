@@ -20,16 +20,8 @@ const logJob = (data: MixedObject) => {
 };
 
 /**
- * Sync crucible scores from Redis to PostgreSQL
- *
- * This job runs every 5 minutes to:
- * 1. Query active crucibles
- * 2. Fetch ELO scores and vote counts from Redis (the Bradley-Terry fit replaces the score where
- *    `usesBradleyTerryRanking` says so)
- * 3. Update CrucibleEntry records in PostgreSQL
- *
- * This provides data loss protection in case Redis restarts,
- * ensuring competition progress is preserved in the database.
+ * Copies active crucibles' scores from Redis to Postgres, so a Redis restart loses no progress.
+ * Where `usesBradleyTerryRanking` covers a crucible, the displayed score is the fit, not Elo.
  */
 export const syncCrucibleScoresJob = createJob(
   'sync-crucible-scores',

@@ -584,7 +584,7 @@ const row = (rows: { key: string }[], key: string) =>
 describe('buildListingDetailRows — category store link', () => {
   it('a known category links to the store filtered to it', () => {
     const rows = buildListingDetailRows(detail({ category: 'games' }), { formatDate: fmt });
-    expect(row(rows, 'category')?.storeHref).toBe('/apps?category=games');
+    expect(row(rows, 'category')?.storeHref).toBe('/apps/store?category=games');
     // Not the OUTBOUND field — that one obliges target=_blank + noopener.
     expect(row(rows, 'category')?.href).toBeUndefined();
   });

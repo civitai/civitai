@@ -137,7 +137,7 @@ export function RenderHtml({
                 tagName: 'a',
                 attribs: {
                   ...attribs,
-                  href: `/user/${attribs['data-label'] ?? attribs['data-id']}`,
+                  href: `/user/${encodeURIComponent(attribs['data-label'] ?? attribs['data-id'])}`,
                 },
               }
             : {

@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   playable: true,
   user: { id: 1 } as { id: number } | null,
   set: vi.fn(),
+  flags: { hatTurfImageDetail: true } as Record<string, boolean>,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
@@ -34,7 +35,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
-  useFeatureFlags: () => ({ hatTurfImageDetail: true }),
+  useFeatureFlags: () => h.flags,
 }));
 vi.mock('~/components/Decorations/usePlayableEventDecoration', () => ({
   usePlayableEventDecoration: (_type: string, enabled = true) =>
@@ -42,6 +43,7 @@ vi.mock('~/components/Decorations/usePlayableEventDecoration', () => ({
 }));
 
 import { HatTurfSetting } from '~/components/Account/HatTurfSetting';
+import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders } from '../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
 
@@ -53,6 +55,8 @@ beforeEach(() => {
   h.playable = true;
   h.user = { id: 1 };
   h.set.mockReset();
+  h.flags = { hatTurfImageDetail: true };
+  useHatTurfStore.setState({ showHats: true });
 });
 afterEach(() => cleanup());
 
@@ -90,5 +94,25 @@ describe('Take part in Hat Turf, in profile settings', () => {
       expect(document.body.querySelector('[data-testid="root"]')).not.toBeNull()
     );
     expect(toggle()).toBeNull();
+  });
+});
+
+// Show hats off drops the card's gear too, and a viewer with Hat Turf on feeds only has no image
+// page switch, so settings must carry it whenever any surface runs.
+describe('Show hats, in profile settings', () => {
+  const showHats = () =>
+    document.body.querySelector<HTMLInputElement>('[data-testid="hat-turf-show-hats-setting"]');
+
+  test.each([
+    ['feeds only', { hatTurfFeedCard: true }],
+    ['the image page only', { hatTurfImageDetail: true }],
+  ])('with Hat Turf on %s, hats switched off can be switched back on', async (_, flags) => {
+    h.flags = flags;
+    useHatTurfStore.setState({ showHats: false });
+    renderWithProviders(<HatTurfSetting />);
+    await vi.waitFor(() => expect(showHats()).not.toBeNull());
+    expect(showHats()!.checked).toBe(false);
+    showHats()!.click();
+    await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(true));
   });
 });

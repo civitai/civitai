@@ -151,7 +151,8 @@ CREATE TABLE "hot_reads_5_parity"."ModelVersion" (
   "createdAt"    TIMESTAMP(3)                                 NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "status"       "hot_reads_5_parity"."ModelStatus"           NOT NULL DEFAULT 'Draft',
   "requireAuth"  BOOLEAN                                      NOT NULL DEFAULT false,
-  "usageControl" "hot_reads_5_parity"."ModelUsageControl"     NOT NULL DEFAULT 'Download'
+  "usageControl" "hot_reads_5_parity"."ModelUsageControl"     NOT NULL DEFAULT 'Download',
+  "baseModel"    TEXT                                         NOT NULL
 );
 
 CREATE TABLE "hot_reads_5_parity"."ResourceReview" (

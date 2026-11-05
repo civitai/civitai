@@ -16,9 +16,9 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
@@ -40,6 +40,7 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { ListingPermissionsDisclosure } from '~/components/Apps/ListingPermissionsDisclosure';
@@ -1009,7 +1010,7 @@ export function AppListingDetailBody({
         {!preview && (
           <ActionIcon
             component={Link}
-            href="/apps/store-preview"
+            href={APPS_STORE_HREF}
             aria-label="Back to store"
             variant="filled"
             color="dark"

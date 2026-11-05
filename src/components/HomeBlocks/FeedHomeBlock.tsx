@@ -4,12 +4,12 @@ import {
   Box,
   Button,
   Group,
-  Popover,
   Skeleton,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { CrucibleCard } from '~/components/Cards/CrucibleCard';

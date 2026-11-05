@@ -118,7 +118,8 @@ const FEEDS = [
   '/tools',
   '/tools/[slug]',
   '/comics',
-  '/apps',
+  // The app store's filters live on the store (`/apps/store`); `/apps` is the viewer's app home.
+  '/apps/store',
   '/storylines',
 ] as const;
 

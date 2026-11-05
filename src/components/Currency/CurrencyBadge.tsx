@@ -1,5 +1,6 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import { Badge, Loader, Text, Tooltip, useComputedColorScheme } from '@mantine/core';
+import { Badge, Loader, Text, useComputedColorScheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';

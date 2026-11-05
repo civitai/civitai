@@ -14,5 +14,5 @@
 /** `?view=` value that switches an author in the assistant view to their app list. */
 export const APPS_BUILD_APPS_VIEW = 'apps';
 
-/** Every "My apps" / "your submissions" link and redirect. */
+/** Every "My builds" (the author's app list) / "your submissions" link and redirect. */
 export const MY_APPS_HREF = `/apps/build?view=${APPS_BUILD_APPS_VIEW}`;

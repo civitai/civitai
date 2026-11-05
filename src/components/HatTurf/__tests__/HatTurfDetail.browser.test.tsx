@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
     available: number;
     optedIn: boolean;
     mode: string;
+    cap?: number;
+    nextAt?: Date | null;
   },
   stickers: [] as unknown[],
   nextCursor: null as { createdAt: string; id: string } | null,
@@ -25,6 +27,7 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(async () => undefined),
   user: { id: 1 } as { id: number } | null,
   mine: null as unknown,
+  noHats: false,
   trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
@@ -46,10 +49,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         'hatTurf.getMyStickerHats': {
           useQuery: () => ({
-            data: [
-              { cosmeticId: 11, usageCount: 3, lastUsedAt: null },
-              { cosmeticId: 12, usageCount: 9, lastUsedAt: null },
-            ],
+            data: h.noHats
+              ? []
+              : [
+                  { cosmeticId: 11, usageCount: 3, lastUsedAt: null },
+                  { cosmeticId: 12, usageCount: 9, lastUsedAt: null },
+                ],
           }),
         },
         'event.getMyHats': {
@@ -96,6 +101,7 @@ import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLay
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
+import { page, userEvent } from 'vitest/browser';
 
 const sticker = (id: number, team: string, x: number, y: number) => ({
   id,
@@ -124,6 +130,7 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
         },
         open: { 9: true },
         stickers: {},
+        joined: h.stock.optedIn,
         watch: () => () => undefined,
         ...ctx,
       }}
@@ -151,7 +158,7 @@ const text = (re: RegExp) =>
 
 beforeEach(() => {
   h.trackAction.mockClear();
-  h.stock = { available: 3, optedIn: true, mode: 'live' };
+  h.stock = { available: 3, optedIn: true, mode: 'live', cap: 50, nextAt: null };
   h.stickers = [
     sticker(1, 'blue', 0.3, 0.3),
     sticker(2, 'pink', 0.6, 0.5),
@@ -159,6 +166,7 @@ beforeEach(() => {
   ];
   h.user = { id: 1 };
   h.mine = null;
+  h.noHats = false;
   h.place.mockReset();
   h.info.mockReset();
   h.nextCursor = null;
@@ -182,7 +190,7 @@ describe('Hat Turf on image detail', () => {
     );
   });
 
-  test('not joined: an image whose owner has not joined still invites', async () => {
+  test('not joined: a closed image still invites', async () => {
     h.stock = { available: 3, optedIn: false, mode: 'live' };
     render({ open: { 9: false } });
     await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
@@ -193,23 +201,21 @@ describe('Hat Turf on image detail', () => {
     );
   });
 
-  test('joined: an image whose owner has not joined has no hat to place, and the card says why', async () => {
+  test('joined: a closed image has no hat to place, and the card says so', async () => {
     render({ open: { 9: false } });
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     expect(q('hat-turf-detail-hat')).toBeNull();
     click(q('hat-turf-detail-badge'));
     await vi.waitFor(() =>
-      expect(q('hat-turf-detail-closed')?.textContent).toBe(
-        "This creator hasn't joined Hat Turf yet"
-      )
+      expect(q('hat-turf-detail-closed')?.textContent).toBe("Hats can't go on this picture")
     );
   });
 
-  test('joined: an open image says nothing about the creator', async () => {
+  test('joined: an open image says nothing about being closed', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     click(q('hat-turf-detail-badge'));
-    await vi.waitFor(() => expect(q('hat-turf-detail-stats')).not.toBeNull());
+    await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
     expect(q('hat-turf-detail-closed')).toBeNull();
   });
 
@@ -281,37 +287,127 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-draft')).toBeNull();
   });
 
-  test('the switcher lists hats most used first and picking one drops it', async () => {
+  test('Change opens the hats tray; picking one makes it your hat and brings the panel back', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     click(q('hat-turf-detail-badge'));
-    await vi.waitFor(() => expect(text(/change/)).toBeTruthy());
-    click(text(/change/));
-    await vi.waitFor(() => expect(q('hat-turf-detail-tray')).not.toBeNull());
-    const names = [...q('hat-turf-detail-tray')!.querySelectorAll('button')].map(
-      (b) => b.textContent
-    );
-    expect(names[0]).toContain('Top Hat');
-    click(q('hat-turf-detail-tray')!.querySelectorAll('button')[0]);
-    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Party Cap'));
+    click(q('hat-turf-panel-change'));
+    await vi.waitFor(() => expect(q('hat-turf-tray')).not.toBeNull());
+    const tiles = () => [...q('hat-turf-tray')!.querySelectorAll('button[aria-pressed]')];
+    // Recently used first, as the query returns them; "Most used" re-sorts.
+    expect(tiles().map((b) => b.textContent)).toEqual(['Party Cap', 'Top Hat']);
+    click(tiles()[1]);
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Top Hat'));
+    await vi.waitFor(() => expect(q('hat-turf-tray')).toBeNull());
     expect(useHatTurfStore.getState().cosmeticId).toBe(12);
+    // Picking chooses the hat; it does not drop one on the image.
+    expect(q('hat-turf-draft')).toBeNull();
   });
 
-  test('the badge card shows every team count, never supply, and Show hats hides the hats only', async () => {
+  test('the tray searches your hats by name', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-change')).not.toBeNull());
+    click(q('hat-turf-panel-change'));
+    await vi.waitFor(() => expect(q('hat-turf-tray')).not.toBeNull());
+    await userEvent.fill(page.getByLabelText('Search your hats'), 'top');
+    await vi.waitFor(() =>
+      expect(
+        [...q('hat-turf-tray')!.querySelectorAll('button[aria-pressed]')].map((b) => b.textContent)
+      ).toEqual(['Top Hat'])
+    );
+  });
+
+  test('with no hats to place, Place hat is off and drops nothing', async () => {
+    h.noHats = true;
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-place')).not.toBeNull());
+    expect(q('hat-turf-panel')!.textContent).toContain('You have no hats to place yet.');
+    expect((q('hat-turf-panel-place') as HTMLButtonElement).disabled).toBe(true);
+    click(q('hat-turf-panel-place'));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(q('hat-turf-draft')).toBeNull();
+  });
+
+  test('Place hat in the panel drops your hat as a draft and closes the panel', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-place')).not.toBeNull());
+    click(q('hat-turf-panel-place'));
+    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
+    await vi.waitFor(() => expect(q('hat-turf-panel')).toBeNull());
+  });
+
+  test('the panel shows every team count, hats left of the cap, and Show hats off hides all of Hat Turf', async () => {
     render();
     await vi.waitFor(() => expect(hats().length).toBe(3));
+    expect(q('hat-turf-detail-hat')).not.toBeNull();
+    expect(q('hat-turf-gear')).not.toBeNull();
     click(q('hat-turf-detail-badge'));
-    await vi.waitFor(() => expect(q('hat-turf-detail-stats')).not.toBeNull());
-    const card = q('hat-turf-detail-stats')!;
-    expect(card.textContent).toMatch(/Blue/);
-    expect(card.textContent).toMatch(/Pink/);
-    expect(q('hat-turf-detail-left')!.textContent).toBe('3 hats left');
-    expect(card.textContent).toContain('Your supply grows during the event.');
-    expect(card.textContent).not.toMatch(/refill|per hour|\/h|cap\b/i);
-    click(card.querySelector('input[type="checkbox"]'));
+    await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
+    expect(q('hat-turf-panel-standings')!.textContent).toMatch(/Blue leads.*Blue 2.*Pink 1/);
+    expect(q('hat-turf-panel-supply')!.textContent).toMatch(/^3 of 50 hats/);
+    click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
     await vi.waitFor(() => expect(hats().length).toBe(0));
+    expect(q('hat-turf-detail-badge')).toBeNull();
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(q('hat-turf-detail-hat')).toBeNull();
+    expect(q('hat-turf-gear')).toBeNull();
+
+    // The one control left is the way back to the switch.
+    click(q('hat-turf-detail-hidden'));
+    await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
+    click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
+    await vi.waitFor(() => expect(hats().length).toBe(3));
     expect(q('hat-turf-detail-badge')).not.toBeNull();
-    expect(q('hat-turf-detail-stats')!.textContent).toMatch(/Blue/);
+    expect(q('hat-turf-detail-hat')).not.toBeNull();
+    expect(q('hat-turf-detail-hidden')).toBeNull();
+  });
+
+  test('the next hat counts down', async () => {
+    h.stock = { ...h.stock, nextAt: new Date(Date.now() + (7 * 60 + 12) * 1000) };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() =>
+      expect(q('hat-turf-panel-refill')?.textContent).toMatch(/^\+1 in 7m 1[12]s$/)
+    );
+  });
+
+  test('a full supply says Full', async () => {
+    h.stock = { ...h.stock, available: 50, nextAt: null };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-refill')?.textContent).toBe('Full'));
+  });
+
+  test('a protected image says which team holds it', async () => {
+    render({
+      images: {
+        9: {
+          shown: { blue: 2, pink: 12 },
+          counted: { blue: 2, pink: 12 },
+          leader: 'pink',
+          leaderCosmeticId: 11,
+          hatted: true,
+          hattedTeam: 'blue',
+        },
+      },
+    });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() =>
+      expect(q('hat-turf-panel-standings')?.textContent).toMatch(/^Pink leads · Blue holds/)
+    );
+    expect(q('hat-turf-panel-standings')!.textContent).toContain(
+      "The owner's hat protects it for Blue until it comes off."
+    );
   });
 
   test("a hat-protected image shows its hats muted, the viewer's own included", async () => {
@@ -333,7 +429,9 @@ describe('Hat Turf on image detail', () => {
     const opacities = new Set([...hats()].map((hat) => getComputedStyle(hat).opacity));
     expect(opacities.size).toBe(1);
     expect(Number([...opacities][0])).toBeLessThan(1);
-    expect(q('hat-turf-lock')).not.toBeNull();
+    // The badge's lock says it; the picture carries no "would take it" pill any more.
+    expect(q('hat-turf-badge-lock')).not.toBeNull();
+    expect(document.body.textContent).not.toMatch(/would take it/);
   });
 
   test("the viewer's own hat never dims when their team is behind; other trailing hats do", async () => {
@@ -428,15 +526,76 @@ describe('Hat Turf on image detail', () => {
     }
   );
 
-  test('the hat controls fit the 30px reaction row, standings ring included', async () => {
+  test('the hat button fills the 30px reaction row and is square', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    expect(q('hat-turf-detail-controls')!.getBoundingClientRect().height).toBeLessThanOrEqual(30);
+    const hat = q('hat-turf-detail-hat')!.getBoundingClientRect();
+    expect(hat.height).toBe(30);
+    expect(hat.width).toBe(30);
+    expect(q('hat-turf-gear')).not.toBeNull();
+  });
+
+  test('the badge sits on the picture’s top-left corner, not in the action row', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
-    expect(q('hat-turf-detail-controls')!.getBoundingClientRect().height).toBeLessThanOrEqual(30);
-    expect(q('hat-turf-detail-hat')!.getBoundingClientRect().height).toBe(30);
+    expect(q('hat-turf-detail-controls')!.contains(q('hat-turf-detail-badge'))).toBe(false);
+    const picture = document.body.querySelector('img')!.getBoundingClientRect();
+    const badge = q('hat-turf-detail-badge')!.getBoundingClientRect();
+    expect(badge.left - picture.left).toBeGreaterThanOrEqual(0);
+    expect(badge.left - picture.left).toBeLessThan(16);
+    expect(badge.top - picture.top).toBeGreaterThanOrEqual(0);
+    expect(badge.top - picture.top).toBeLessThan(16);
+  });
+
+  test('the hat button’s gear opens the same panel as the badge', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    click(q('hat-turf-gear'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-standings')).not.toBeNull());
+    expect(q('hat-turf-panel-hat')!.textContent).toBe('Party Cap');
+  });
+
+  // Turf is seen by joined players only. A viewer who
+  // has not joined gets the hat button as their way in, and no standings, counts or hats.
+  // The same picture with hats and counts on it, joined and not: the joined row is the positive
+  // control that hats and the badge do draw from this context.
+  test.each([
+    { who: 'joined', optedIn: true },
+    { who: 'not joined', optedIn: false },
+  ])('$who: hats and the standings badge only when joined', async ({ optedIn }) => {
+    h.stock = { available: 3, optedIn, mode: 'live' };
+    localStorage.setItem('hat-turf-detail-invite-dismissed', String(Date.now()));
+    render({ joined: optedIn, stickers: { 9: h.stickers as never } });
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    if (optedIn) {
+      await vi.waitFor(() => expect(hats().length).toBe(3));
+      expect(q('hat-turf-detail-badge')).not.toBeNull();
+      return;
+    }
+    // Give a gate that let them through the time the joined row needs to draw them.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(hats().length).toBe(0);
+    expect(q('hat-turf-layer')).toBeNull();
+    expect(q('hat-turf-detail-badge')).toBeNull();
+    click(q('hat-turf-detail-hat'));
+    await vi.waitFor(() => expect(text(/^Join$/)).toBeTruthy());
+  });
+
+  test('signed out: no hats, but the badge stays and its card invites them to sign in and join', async () => {
+    h.user = null;
+    // The provider hands a viewer who has not joined no counts (images empty) but the stickers stay
+    // in reach of the layer, which must still not draw them.
+    render({ joined: false, images: {}, stickers: { 9: h.stickers as never } });
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(hats().length).toBe(0);
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-empty')).not.toBeNull());
+    expect(q('hat-turf-detail-empty')!.textContent).toMatch(/Sign in and join Hat Turf/);
   });
 
   test.each([
-    ['not joined', { available: 3, optedIn: false }, /Join Hat Turf to put/, true],
     ['joined', { available: 3, optedIn: true }, /tap the hat button/, false],
     ['joined, out of hats', { available: 0, optedIn: true }, /out of hats for now/, false],
   ])('no hats yet, %s: the card says what to do', async (_, stock, says, joinButton) => {

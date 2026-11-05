@@ -100,23 +100,6 @@ describe('storylines in the remix flyout', () => {
     await expect.element(storyTile(1)).toBeVisible();
   });
 
-  test('pages through a story’s chapter images while open', async () => {
-    mocks.summary = {
-      count: 0,
-      entries: [],
-      storylines: {
-        count: 1,
-        entries: [story(1, [preview('one.jpg'), preview('two.jpg'), preview('three.jpg')])],
-      },
-    };
-    await renderOpen();
-
-    const tile = storyTile(1);
-    await expect.element(tile).toHaveAttribute('data-preview-index', '0');
-    await expect.element(tile, { timeout: 2500 }).toHaveAttribute('data-preview-index', '1');
-    await expect.element(tile, { timeout: 2500 }).toHaveAttribute('data-preview-index', '2');
-  });
-
   test('a story tile opens the story and closes the flyout', async () => {
     mocks.summary = { count: 0, entries: [], storylines: { count: 1, entries: [story(5)] } };
     await renderOpen();

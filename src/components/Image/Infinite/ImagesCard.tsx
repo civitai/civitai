@@ -1,4 +1,5 @@
-import { Alert, Anchor, Badge, Loader, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -51,6 +52,9 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
   const minIndex = index - 50 > -1 ? index - 50 : 0;
   return images.slice(minIndex, index + 50);
 }
+
+/** The masonry adds this to each card's image height for the reaction footer. */
+export const IMAGES_CARD_FOOTER_HEIGHT = 38;
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   return (
@@ -421,6 +425,7 @@ function ImageReactions({
         return (
           <div
             className={clsx(cardClasses.footer, classes.actionsFooter)}
+            style={{ ['--footer-height' as string]: `${IMAGES_CARD_FOOTER_HEIGHT}px` }}
             onClick={(e) => {
               // The padding around the buttons must not open the card's image link.
               if (!readonly) {
@@ -429,7 +434,7 @@ function ImageReactions({
               }
             }}
           >
-            <div className={cardClasses.actions}>
+            <div className={clsx(cardClasses.actions, cardClasses.oneLine)}>
               <div className={cardClasses.actionRow}>
                 <Reactions
                   className={clsx(cardClasses.reactions, classes.bar)}
@@ -458,7 +463,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
-                  {turf && <HatTurfButton imageId={image.id} surface="panel" />}
+                  {turf && <HatTurfButton imageId={image.id} />}
                 </div>
               </div>
             </div>

@@ -10,8 +10,8 @@ import {
   Stack,
   ScrollArea,
   Divider,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { CollectionInvitesButton } from '~/components/Collections/CollectionCollaborators/CollectionInvitesButton';
 import { MyCollections } from '~/components/Collections/MyCollections';
 import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';

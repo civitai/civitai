@@ -5,13 +5,13 @@ import {
   Divider,
   Group,
   Loader,
-  Popover,
   Stack,
   Text,
   TextInput,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';

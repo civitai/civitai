@@ -7,9 +7,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * Who is in Hat Turf, run on a real Postgres through the service's own SQL: Hat Turf is opt-OUT for
- * anyone who has placed one of the event's hats, so the rule lives in a CASE over a jsonb setting and
- * an EXISTS, which a mocked query cannot evaluate.
+ * Who is in Hat Turf, run on a real Postgres through the service's own SQL: only an explicit opt-in
+ * counts, so the fixture includes hat placers who never chose, to prove they stay out. Joining is
+ * for players only: any owner's image is turf, opted in or not.
  */
 
 const START = new Date('2026-11-01T00:00:00Z');
@@ -31,6 +31,10 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// Blocks and suspensions have their own tests; nobody here is blocked.
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  assertCanPlace: () => Promise.resolve(),
+}));
 
 const { getTurfStock, getTurfSummaries, placeTurfSticker, setTurfOptIn } = await import(
   '~/server/events/turf/turf.service'
@@ -46,10 +50,14 @@ const NEVER_SET = 1;
 const OPTED_OUT = 2;
 const OPTED_IN = 3;
 const NO_HAT = 4;
+const BANNED = 5;
+const DELETED = 6;
 
 beforeAll(async () => {
   await pg.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, settings jsonb);
+    CREATE TABLE "User" (
+      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz
+    );
     CREATE TABLE "EventCosmeticPlacement" (
       id serial PRIMARY KEY, event text NOT NULL, "userId" int NOT NULL, "endedAt" timestamp
     );
@@ -77,6 +85,8 @@ beforeEach(async () => {
       (2, '{"eventTurfOptIn":{"e":false}}'),
       (3, '{"eventTurfOptIn":{"e":true}}'),
       (4, '{"eventTurfOptIn":{"other":true}}');
+    INSERT INTO "User" (id, "bannedAt") VALUES (5, now());
+    INSERT INTO "User" (id, "deletedAt") VALUES (6, now());
     -- Hats placed: an ended one still counts; a hat of another event does not.
     INSERT INTO "EventCosmeticPlacement" (event, "userId", "endedAt") VALUES
       ('e', 1, now()), ('e', 2, NULL), ('other', 4, NULL);
@@ -102,8 +112,10 @@ beforeEach(async () => {
 const inTurf = async (userId: number) => (await getTurfStock('e', userId)).optedIn;
 
 describe('who is in Hat Turf', () => {
-  it('never chosen, with a hat placed (even one since taken off): in', async () => {
-    expect(await inTurf(NEVER_SET)).toBe(true);
+  // Deliberate: Hat Turf is opt-in only. Making placing a hat count as joining is a product
+  // decision for the event owner, not a code cleanup.
+  it('placing a hat never opts anyone in: never chosen, with a hat placed, is out', async () => {
+    expect(await inTurf(NEVER_SET)).toBe(false);
   });
 
   it('never chosen for this event, no hat of this event placed: out', async () => {
@@ -118,20 +130,27 @@ describe('who is in Hat Turf', () => {
     expect(await inTurf(OPTED_IN)).toBe(true);
   });
 
-  it('an owner who placed a hat has open images; an owner who opted out does not', async () => {
+  // Deliberate: turf is played on anyone's image; an owner need not join. Gating on the owner again
+  // is a product decision for the event owner, not a code cleanup.
+  it('every visible image is open, whatever its owner chose', async () => {
     const { open } = await getTurfSummaries('e', [101, 102, 103, 104]);
-    expect(open).toEqual({ 101: true, 102: false, 103: true, 104: false });
+    expect(open).toEqual({ 101: true, 102: true, 103: true, 104: true });
   });
 
-  it('turning it off writes an explicit false, which beats a placed hat', async () => {
+  it("a banned or deleted owner's images are closed", async () => {
+    const { open } = await getTurfSummaries('e', [101, 105, 106]);
+    expect(open).toEqual({ 101: true, 105: false, 106: false });
+  });
+
+  it('turning it on writes an explicit true, and turning it off takes the user out again', async () => {
+    expect((await setTurfOptIn('e', NEVER_SET, true)).changed).toBe(true);
+    expect(await inTurf(NEVER_SET)).toBe(true);
     expect((await setTurfOptIn('e', NEVER_SET, false)).changed).toBe(true);
     expect(await inTurf(NEVER_SET)).toBe(false);
     const { rows } = await pg.query<{ v: unknown }>(
       `SELECT settings -> 'eventTurfOptIn' -> 'e' AS v FROM "User" WHERE id = 1`
     );
     expect(rows[0].v).toBe(false);
-    expect((await setTurfOptIn('e', NEVER_SET, true)).changed).toBe(true);
-    expect(await inTurf(NEVER_SET)).toBe(true);
   });
 });
 
@@ -149,15 +168,28 @@ describe('placing a hat sticker', () => {
       NOW
     );
 
-  it('a placer in by default may place', async () => {
-    await expect(place(NEVER_SET, 101)).rejects.toThrow('passed the checks');
+  it('a placer who opted in may place', async () => {
+    await expect(place(OPTED_IN, 103)).rejects.toThrow('passed the checks');
+  });
+
+  it('a placer who placed hats but never opted in may not', async () => {
+    await expect(place(NEVER_SET, 103)).rejects.toThrow('Join Hat Turf');
   });
 
   it('a placer who opted out may not', async () => {
-    await expect(place(OPTED_OUT, 102)).rejects.toThrow('Turn on "accept team hat stickers"');
+    await expect(place(OPTED_OUT, 102)).rejects.toThrow('Join Hat Turf');
   });
 
-  it("an owner who opted out doesn't take stickers, even from someone in", async () => {
-    await expect(place(NEVER_SET, 102)).rejects.toThrow("This creator doesn't accept");
+  it('an owner who never opted in still takes stickers from someone in', async () => {
+    await expect(place(OPTED_IN, 101)).rejects.toThrow('passed the checks');
+  });
+
+  it('an owner who opted out still takes stickers from someone in', async () => {
+    await expect(place(OPTED_IN, 102)).rejects.toThrow('passed the checks');
+  });
+
+  it("a banned or deleted owner's image takes none", async () => {
+    await expect(place(OPTED_IN, 100 + BANNED)).rejects.toThrow("can't put hat stickers");
+    await expect(place(OPTED_IN, 100 + DELETED)).rejects.toThrow("can't put hat stickers");
   });
 });

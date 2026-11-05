@@ -12,6 +12,7 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import { onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -98,7 +99,7 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
       <Group justify="space-between" align="center">
         <Title order={4}>{heading}</Title>
         {/* Persistent store link — always rendered, even with an empty rail. */}
-        <Anchor component={Link} href="/apps" size="sm" data-testid="apps-browse-all">
+        <Anchor component={Link} href={APPS_STORE_HREF} size="sm" data-testid="apps-browse-all">
           <Group gap={4}>
             <IconLayoutGrid size={14} />
             Browse all apps

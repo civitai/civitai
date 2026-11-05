@@ -159,6 +159,9 @@ export type StoreScopeEntrypoint =
   // Starting a fork (`appListings.startFork`): the parent must be a store listing the viewer could
   // open, under this scope.
   | 'trpc-fork-start'
+  // The signed-in "My apps" home (`appListings.listMyApps`): a store read keyed on the
+  // viewer's own rows, gated like the grid.
+  | 'trpc-my-apps'
   | 'rest-list'
   | 'rest-detail'
   // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail

@@ -13,6 +13,11 @@ const h = vi.hoisted(() => ({
   // Every mounted provider's push handler: one per simulated viewer.
   viewers: new Set<(raw: unknown) => void>(),
   utils: undefined as unknown,
+  user: { id: 1 } as { id: number } | null,
+  stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
+  // A cached stock answer survives a disabled query (react-query keeps data), so the gate must not
+  // trust it alone: rows set this to answer even when the provider disables the read.
+  stockIgnoresEnabled: false,
 }));
 h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
 
@@ -25,6 +30,7 @@ const summary = (leader: string, hatted = false) => ({
 });
 
 vi.mock('~/components/HatTurf/useHatTurfFeed', () => ({ useHatTurfFeed: () => h.gate }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
 vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: (_message: string, cb: (raw: unknown) => void) => {
@@ -37,7 +43,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof Trpc>()),
     trpc: makeTrpcProxy(
-      { 'hatTurf.watch': { useMutation: () => ({ mutate: h.mark }) } },
+      {
+        'hatTurf.watch': { useMutation: () => ({ mutate: h.mark }) },
+        'hatTurf.getStock': {
+          useQuery: (_input: unknown, opts: { enabled?: boolean }) => ({
+            data: opts.enabled === false && !h.stockIgnoresEnabled ? undefined : h.stock,
+          }),
+        },
+      },
       {
         // Answer each chunk's query by the procedure and input the provider asked for.
         useQueries: (build: (t: unknown) => { proc: string; input: any }[]) => {
@@ -117,6 +130,9 @@ const mount = (imageIds: number[]) =>
 
 beforeEach(() => {
   h.gate = { event: 'birthday2026', arm: 'control' };
+  h.user = { id: 1 };
+  h.stock = { available: 3, optedIn: true };
+  h.stockIgnoresEnabled = false;
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
@@ -155,6 +171,37 @@ describe('TurfSummaryProvider', () => {
     await mount(ids(3));
     expect(h.asked).toEqual([]);
     expect(latest).toBeNull();
+  });
+
+  // Only a viewer who joined Hat Turf sees turf. The
+  // others keep the context (the join invite needs it) but get no hats, counts or pushes. The joined
+  // row is the positive control for the rest.
+  test.each([
+    { who: 'joined', user: { id: 1 }, stock: { available: 3, optedIn: true }, joined: true },
+    { who: 'not joined', user: { id: 1 }, stock: { available: 3, optedIn: false }, joined: false },
+    { who: 'stock not loaded', user: { id: 1 }, stock: undefined, joined: false },
+    // Stock that says joined, served even though the read is disabled: only the signed-in check can
+    // keep turf hidden here.
+    {
+      who: 'signed out',
+      user: null,
+      stock: { available: 3, optedIn: true },
+      joined: false,
+      cached: true,
+    },
+  ])('$who: hats, counts and pushes only when joined', async ({ user, stock, joined, ...row }) => {
+    h.user = user;
+    h.stock = stock;
+    h.stockIgnoresEnabled = 'cached' in row;
+    await mount([1, 3]);
+    await vi.waitFor(() => expect(latest).not.toBeNull());
+    const procs = new Set(h.asked.map((a) => a.proc));
+    expect(procs.has('getSummaries')).toBe(true);
+    expect(procs.has('getStickersForImages')).toBe(joined);
+    expect(Object.keys(latest!.images).length).toBe(joined ? 2 : 0);
+    expect(Object.keys(latest!.stickers).length).toBe(joined ? 2 : 0);
+    expect(h.viewers.size).toBe(joined ? 1 : 0);
+    expect(latest!.joined).toBe(joined);
   });
 
   test('a push replaces the image’s counts, keeps hatted, and reads its hats back once', async () => {

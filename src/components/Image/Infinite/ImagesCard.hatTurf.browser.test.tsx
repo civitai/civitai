@@ -132,7 +132,7 @@ vi.mock('~/components/Tours/ToursProvider', async (o) => ({
   useTourContext: () => ({ running: false, helpers: undefined }),
 }));
 
-import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { IMAGES_CARD_FOOTER_HEIGHT, ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
@@ -141,6 +141,7 @@ import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/c
 import { cleanup } from 'vitest-browser-react';
 import { CollectionMode, MediaType } from '~/shared/utils/prisma/enums';
 import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
+import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 
 const image = {
   id: 77,
@@ -176,8 +177,16 @@ const turf = (): TurfSummaries => ({
   },
   open: { 77: true },
   stickers: {},
+  joined: h.stock.optedIn,
   watch: () => () => undefined,
 });
+
+const stickerOnCard = {
+  id: 501,
+  userId: 9,
+  team: 'blue',
+  data: { x: 0.5, y: 0.4, scale: 0.18, rotation: 0, flip: false },
+};
 
 /** The /images card, under the feed's turf context (null: Hat Turf is off for the viewer). */
 function renderCard(value: TurfSummaries | null) {
@@ -200,14 +209,43 @@ const cardRendered = () =>
 afterEach(() => {
   cleanup();
   h.stock = { available: 3, optedIn: true };
+  useHatTurfStore.setState({ showHats: true });
 });
 
 describe('Hat Turf on the /images feed card', () => {
-  test('a joined player on a flagged feed gets the hat button and the standings badge', async () => {
+  test('a joined player on a flagged feed gets the hat button, the standings badge and the hat layer', async () => {
     renderCard(turf());
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('3');
+    expect(q('hat-turf-gear')).not.toBeNull();
     expect(q('hat-turf-badge')).not.toBeNull();
+    expect(q('hat-turf-layer')).not.toBeNull();
+  });
+
+  // Turf is seen by joined players only; a viewer who has not joined keeps the hat button as the
+  // way in. The joined test above is the positive control for the badge and the layer.
+  test('a viewer who has not joined gets the hat button but no standings badge or hat layer', async () => {
+    h.stock = { available: 3, optedIn: false };
+    renderCard(turf());
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(q('hat-turf-layer')).toBeNull();
+  });
+
+  // The joined test above is the positive control: same card, same context, showHats on.
+  test('with Show hats off a joined player gets no badge, hat button, gear or hats', async () => {
+    useHatTurfStore.setState({ showHats: false });
+    renderCard({ ...turf(), stickers: { 77: [stickerOnCard] as never } });
+    await cardRendered();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(q('hat-turf-button')).toBeNull();
+    expect(q('hat-turf-gear')).toBeNull();
+    expect(q('hat-turf-hat')).toBeNull();
+  });
+
+  test('a joined player with Show hats on sees the hats placed on the card', async () => {
+    renderCard({ ...turf(), stickers: { 77: [stickerOnCard] as never } });
+    await vi.waitFor(() => expect(q('hat-turf-hat')).not.toBeNull());
   });
 
   test('with Hat Turf off for the viewer the card has none of it', async () => {
@@ -239,5 +277,67 @@ describe('Hat Turf on the /images feed card', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(q('hat-turf-button')).toBeNull();
     }
+  });
+});
+
+// /search/images sizes its cards with no footer reservation, which holds only while hideReactions
+// keeps the footer off the card. The feed row is the control that the footer does draw here.
+test.each([
+  ['a feed', false],
+  ['search (hideReactions)', true],
+])('under ImagesProvider, %s draws the reaction footer: %s → hidden', async (_, hideReactions) => {
+  renderWithProviders(
+    <ImagesProvider images={[image]} hideReactions={hideReactions}>
+      <IntersectionObserverProvider>
+        <div style={{ width: 300 }}>
+          <ImagesCard data={image} height={400} />
+        </div>
+      </IntersectionObserverProvider>
+    </ImagesProvider>
+  );
+  await vi.waitFor(() => expect(q('hat-turf-layer')).not.toBeNull());
+  const footer = () => document.body.querySelector('[class*="actionsFooter"]');
+  if (!hideReactions) return void (await vi.waitFor(() => expect(footer()).not.toBeNull()));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(footer()).toBeNull();
+});
+
+// The masonry sizes a card as image + IMAGES_CARD_FOOTER_HEIGHT, so a taller footer takes its
+// excess from the bottom of the picture. Columns are 320px; a phone's single column is its width.
+describe('the /images card footer fits the height the masonry gives it', () => {
+  const reacted = {
+    ...image,
+    stats: {
+      likeCountAllTime: 35,
+      heartCountAllTime: 22,
+      laughCountAllTime: 14,
+      cryCountAllTime: 4,
+      tippedAmountCountAllTime: 30,
+    },
+  };
+  const footerHeight = () =>
+    document.body.querySelector<HTMLElement>('[class*="actionsFooter"]')!.getBoundingClientRect()
+      .height;
+
+  test.each([
+    [288, 'with the hat button', turf()],
+    [320, 'with the hat button', turf()],
+    [358, 'with the hat button', turf()],
+    [320, 'without Hat Turf', null],
+  ])('a %ipx card with four reaction counts and a tip, %s', async (width, _, value) => {
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={value}>
+        <IntersectionObserverProvider>
+          <div style={{ width }}>
+            <ImagesCard data={reacted} height={400} />
+          </div>
+        </IntersectionObserverProvider>
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() =>
+      expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(3)
+    );
+    if (value) await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
   });
 });

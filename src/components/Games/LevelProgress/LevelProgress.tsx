@@ -1,4 +1,5 @@
-import { HoverCard, Badge } from '@mantine/core';
+import { Badge } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconStarFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 

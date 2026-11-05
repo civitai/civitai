@@ -758,10 +758,10 @@ describe('AppListingDetailBody', () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     await expect.element(within.getByTestId('apps-listing-category')).toBeInTheDocument();
     const badge = container.querySelector('[data-testid="apps-listing-category"]') as HTMLElement;
-    // The exact URL the store's own category filter writes (`/apps?category=<stored value>`),
+    // The exact URL the store's own category filter writes (`/apps/store?category=<stored value>`),
     // a literal — not read back from the helper that builds it.
     expect(badge.tagName).toBe('A');
-    expect(badge.getAttribute('href')).toBe('/apps?category=utility');
+    expect(badge.getAttribute('href')).toBe('/apps/store?category=utility');
     expect(badge.getAttribute('target')).toBeNull();
     expect(badge.textContent).toBe('Utility');
   });
@@ -919,7 +919,7 @@ describe('AppListingDetailBody', () => {
     const row = container.querySelector('[data-listing-detail-row="category"]') as HTMLElement;
     const link = row.querySelector('a') as HTMLAnchorElement | null;
     expect(link, 'the category value must be a link').not.toBeNull();
-    expect(link!.getAttribute('href')).toBe('/apps?category=games');
+    expect(link!.getAttribute('href')).toBe('/apps/store?category=games');
     // Same-site navigation: no new tab (that contract belongs to the outbound Source link).
     expect(link!.getAttribute('target')).toBeNull();
     expect(link!.textContent).toBe('Games');
@@ -1527,7 +1527,7 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByText('My App')).toBeInTheDocument();
     const browse = container.querySelector('[data-testid="apps-browse-all"]');
     expect(browse).not.toBeNull();
-    expect(browse?.getAttribute('href')).toBe('/apps');
+    expect(browse?.getAttribute('href')).toBe('/apps/store');
   });
 
   // ── Hero banner click-to-launch ────────────────────────────────────────────

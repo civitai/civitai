@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconCheck, IconLock, IconX } from '@tabler/icons-react';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
@@ -12,6 +12,7 @@ import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import {
+  FALLBACK_COLOR,
   HAT_DEFAULT_SCALE,
   badgeLeader,
   clampSpot,
@@ -27,7 +28,8 @@ import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type Box = { width: number; height: number; left: number; top: number };
+/** `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider. */
+type Box = { width: number; height: number; left: number; top: number; shownWidth: number };
 
 /** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
@@ -60,11 +62,17 @@ export type HatTurfLayerProps = {
   moreLoading?: boolean;
   /** After a hat is saved, for a surface that reads its hats itself. */
   onPlaced?: () => void;
+  /** Pinned to the picture's own top-left corner, not the frame's, on a letterboxed picture. */
+  corner?: React.ReactNode;
 };
 
 export function HatTurfLayer(props: HatTurfLayerProps) {
-  // Hooks stay in the inner component so flag-off cards run none.
-  return useTurfFeed() ? <HatTurfLayerContent {...props} /> : null;
+  const feed = useTurfFeed();
+  // Hooks stay in the inner component so cards without a joined viewer run none.
+  if (feed?.joined) return <HatTurfLayerContent {...props} />;
+  // A viewer who has not joined sees no hats, though a surface may still pin its corner.
+  if (feed && props.corner) return <HatTurfLayerContent {...props} stickers={[]} />;
+  return null;
 }
 
 function HatTurfLayerContent({
@@ -75,6 +83,7 @@ function HatTurfLayerContent({
   onMore,
   moreLoading,
   onPlaced,
+  corner,
 }: HatTurfLayerProps) {
   const card = useHatTurfCard();
   const feed = useTurfFeed();
@@ -89,7 +98,7 @@ function HatTurfLayerContent({
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
   const stickers = stickersProp ?? feed?.stickers[imageId];
-  const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length);
+  const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length || !!corner);
 
   const seen = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -115,13 +124,15 @@ function HatTurfLayerContent({
         height: drawn.height,
         left: at.x - self.x + drawn.left,
         top: at.y - self.y + drawn.top,
+        shownWidth: Math.min(drawn.width, media.offsetWidth),
       };
       setBox((current) =>
         current &&
         current.width === next.width &&
         current.height === next.height &&
         current.left === next.left &&
-        current.top === next.top
+        current.top === next.top &&
+        current.shownWidth === next.shownWidth
           ? current
           : next
       );
@@ -152,15 +163,14 @@ function HatTurfLayerContent({
 
   if (!card || !feed) return null;
   const { draft, setDraft, placed, setPlaced } = card;
-  const colorOf = (team: string | null | undefined) =>
-    (team && teamColor(team)) || 'var(--mantine-color-gray-6)';
+  const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
-  const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
+  const hatSize = (scale: number) => (box ? Math.max(22, box.shownWidth * scale) : 0);
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
-  const limit = drawLimit ?? (box && box.width < NARROW_PICTURE ? 3 : 5);
+  const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
   const drawn = showHats ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
   const overflow = showHats ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
@@ -223,12 +233,15 @@ function HatTurfLayerContent({
 
   return (
     <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
-      <HatTurfLive imageId={imageId} />
+      {feed?.joined && <HatTurfLive imageId={imageId} />}
+      {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
+      {!box && corner && <div className={classes.corner}>{corner}</div>}
       {box && (
         <div
           className={classes.box}
           style={{ width: box.width, height: box.height, left: box.left, top: box.top }}
         >
+          {corner && <div className={classes.corner}>{corner}</div>}
           {drawn.map((sticker) => {
             const pose = readHatPose(sticker.data);
             if (!pose) return null;
@@ -268,7 +281,7 @@ function HatTurfLayerContent({
               <TeamHat color={colorOf(feed.team)} size={hatSize(HAT_DEFAULT_SCALE)} />
             </div>
           )}
-          {draft && (
+          {draft && showHats && (
             <>
               <div
                 className={classes.draft}
@@ -350,11 +363,6 @@ function HatTurfLayerContent({
                 <HatIcon size={14} />+{overflow}
               </div>
             ))}
-          {showHats && protectedImage && leader && (
-            <div className={classes.lock} data-testid="hat-turf-lock">
-              <IconLock size={11} /> {leader[0].toUpperCase() + leader.slice(1)} would take it
-            </div>
-          )}
         </div>
       )}
     </div>

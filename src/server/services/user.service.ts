@@ -4098,10 +4098,12 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
  *                      two `tourSettings.welcome` writes), because it replaces
  *                      `tourSettings.welcome` wholesale; this composes the two
  *                      writers' fields instead. Only `tourSettings` uses this today.
+ *  - `removeFrom`    — delete these SUB-keys from a top-level object key (e.g. one
+ *                      slug from `hiddenApps`), leaving its other sub-keys alone.
  *  - `remove`        — delete these top-level keys.
  *
  * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key, and neither
- * does `deepMergeInto` with either of them. All three read `settings->key` — the
+ * does `deepMergeInto` or `removeFrom` with any of them. All of them read `settings->key` — the
  * STORED column — not the partially-built expression, so combining ops on one key
  * makes the later op win over the earlier op's in-progress result rather than
  * compose with it. No caller does this today; if one ever needs to, make the ops
@@ -4120,6 +4122,8 @@ export type UserSettingsPatch = {
   mergeInto?: Record<string, Record<string, unknown>>;
   /** One level deeper than `mergeInto`: top-level key -> sub-key -> patch. */
   deepMergeInto?: Record<string, Record<string, Record<string, unknown>>>;
+  /** Top-level object key -> the sub-keys to delete from it. */
+  removeFrom?: Record<string, string[]>;
   remove?: string[];
   /** `userUpdateCounter` label, so consolidating the writers does not collapse the
    *  per-call-site attribution the metric already carried. */
@@ -4165,6 +4169,9 @@ export async function patchUserSettings(
         ] as const
     )
     .filter(([, subEntries]) => subEntries.length);
+  const removeFrom = Object.entries(patch.removeFrom ?? {}).filter(
+    ([, subKeys]) => subKeys && subKeys.length
+  );
   const remove = patch.remove?.length ? patch.remove : undefined;
 
   const client = tx ?? dbWrite;
@@ -4178,7 +4185,7 @@ export async function patchUserSettings(
   // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
   // see it. Reading the row also keeps the return value consistent with the write
   // path below, which returns `RETURNING settings` rather than a cached blob.
-  if (!set && !mergeInto.length && !deepMergeInto.length && !remove) {
+  if (!set && !mergeInto.length && !deepMergeInto.length && !removeFrom.length && !remove) {
     const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
       `SELECT settings FROM "User" WHERE id = $1`,
       userId
@@ -4237,6 +4244,15 @@ export async function patchUserSettings(
         `|| ${bind(JSON.stringify(value))}::jsonb))`;
     }
     expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
+  }
+  for (const [key, subKeys] of removeFrom) {
+    // Same stored-column read and the same non-object guard as `mergeInto`: a malformed
+    // value under `key` becomes `{}` (self-healing) rather than raising on `jsonb - text[]`
+    // over a scalar. `jsonb - text[]` drops every listed sub-key in one go.
+    const k = bind(key);
+    expr =
+      `(${expr} || jsonb_build_object(${k}::text, ` +
+      `${asJsonbObject(`settings->${k}::text`)} - ${bind(subKeys)}::text[]))`;
   }
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;

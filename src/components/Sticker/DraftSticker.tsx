@@ -1,14 +1,13 @@
 import {
   ActionIcon,
   Button,
-  Popover,
   SegmentedControl,
   Slider,
   Text,
   Textarea,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangleFilled,
   IconCopy,
