@@ -89,7 +89,7 @@ const lit = (value: string | number | undefined) =>
 
 const COLUMNS = `"kind","name","description","price","buzz","cosmeticId","tier","months","minRank","rotating","sortOrder"`;
 
-/** What makes two rows the same item. Within a kind the database allows duplicates, so the seed has to ask. */
+/** The table has no unique key within a kind, so the seed checks identity itself to stay idempotent. */
 function identity(item: SeedItem, cosmeticRef: string | null): string {
   const kind = `"kind" = ${quote(item.kind)}`;
   if (item.kind === 'buzz_pack') return `${kind} AND "buzz" = ${lit(item.buzz)}`;
@@ -98,12 +98,7 @@ function identity(item: SeedItem, cosmeticRef: string | null): string {
   return `${kind} AND "cosmeticId" = ${cosmeticRef ?? lit(item.cosmeticId)}`;
 }
 
-/**
- * Inserts only the items the catalog does not already have (a buzz pack by its Buzz, a membership by tier and months,
- * a cosmetic by its cosmetic), so a price someone edited survives a re-seed. A cosmetic item names its cosmetic and is
- * inserted from the `Cosmetic` row of that name and type in the target database, so the SQL is the same anywhere;
- * where no such cosmetic exists the item is skipped.
- */
+/** Inserts only items the catalog does not already have, so a price someone edited survives a re-seed. A cosmetic item names its cosmetic and is inserted from the Cosmetic row of that name and type in the target database, so the SQL is the same anywhere; where no such cosmetic exists the item is skipped. */
 export function seedSql(items: SeedItem[]): string {
   const values = (item: SeedItem, cosmeticRef: string | null) =>
     [

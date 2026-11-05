@@ -49,7 +49,6 @@ const byHash = (salt: string) => (a: ShopItem, b: ShopItem) =>
 export const dealPrice = (price: number) =>
   Math.max(1, Math.floor((price * (100 - DEAL_PERCENT)) / 100));
 
-/** Pure: the same catalog and day give the same stock and deals. */
 export function stockFor(
   items: ShopItem[],
   day: string,

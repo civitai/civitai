@@ -379,8 +379,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "KnightsShopPurchase_deal_once_key" ON "Knight
 CREATE INDEX IF NOT EXISTS "KnightsShopPurchase_playerId_createdAt_idx" ON "KnightsShopPurchase" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsShopPurchase_pending_idx" ON "KnightsShopPurchase" ("createdAt") WHERE "status" = 'pending';
 
--- The audit trail of Knights shop catalog edits made from the moderator app (/knights-of-new-order/shop).
--- `changes` maps each changed field to {from, to}. `userId` is the moderator and has no foreign key on purpose.
+-- userId is the moderator and has no foreign key, so deleting a user never rewrites the trail.
 CREATE TABLE IF NOT EXISTS "KnightsShopItemChange" (
   "id" SERIAL PRIMARY KEY,
   "itemId" INTEGER NOT NULL REFERENCES "KnightsShopItem"("id"),

@@ -10,7 +10,7 @@ export const SHOP_RANKS = Object.values(NewOrderRankType);
 const positiveInt = (message: string) =>
   z.coerce.number({ error: message }).int(message).positive(message).max(MAX_INT4, message);
 
-/** Settings every kind shares, and the only ones an edit can change. */
+/** Fields shared by every kind. Keep in step with EDITABLE in shop-catalog.service.ts: an edit can change only these. */
 const settings = {
   name: z.string().trim().min(1, 'Enter a name.').max(120, 'The name is too long.'),
   description: z.string().trim().max(500, 'The description is too long.').default(''),
@@ -27,7 +27,7 @@ const settings = {
     .max(100_000),
 };
 
-/** One shape per kind, mirroring the `KnightsShopItem_kind_check` constraint: a column that does not apply is not accepted, so it stays NULL. */
+/** Mirrors KnightsShopItem_kind_check: a column that does not apply to the kind stays NULL. */
 export const newShopItemSchema = z.discriminatedUnion(
   'kind',
   [
@@ -62,7 +62,6 @@ export const itemIdSchema = z.object({ id: int4Id });
 
 export type FieldChange = { from: unknown; to: unknown };
 
-/** The `{field: {from, to}}` map of what differs, in `keys` order. Empty means a no-op. */
 export function diffFields(
   before: Record<string, unknown>,
   after: Record<string, unknown>,

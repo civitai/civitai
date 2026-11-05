@@ -11510,7 +11510,7 @@ model KnightsShopItem {
   changes   KnightsShopItemChange[]
 }
 
-/// The audit trail of catalog edits made from the moderator app. `changes` maps each changed field to `{from, to}`; a `create` holds the whole row as `{field: {from: null, to}}`. `userId` is the moderator, deliberately not a foreign key so deleting a user never rewrites the trail.
+/// Audit trail of catalog edits: field -> {from, to} (a create is {from: null, to} per field). userId is the moderator, deliberately not a foreign key so deleting a user never rewrites the trail.
 model KnightsShopItemChange {
   id        Int             @id @default(autoincrement())
   itemId    Int

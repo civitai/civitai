@@ -14,7 +14,7 @@ import {
 const EDITABLE = ['name', 'description', 'price', 'minRank', 'rotating', 'sortOrder'] as const;
 type Action = 'create' | 'update' | 'retire' | 'restore';
 
-/** Catalog edits read and write the primary: an operator who just saved must see it, and the edit is diffed against the row it locks. */
+/** The primary, not the replica: an edit locks and diffs the row, and the operator who just saved must see it. */
 const db = () => dbWrite;
 
 export async function listShopItems() {
@@ -109,7 +109,6 @@ async function lockItem(trx: Transaction<DB>, id: number) {
 
 const NOT_FOUND = { ok: false, error: 'That item no longer exists.' } as const;
 
-/** Edits the settings of an item. A save that changes nothing writes nothing. */
 export async function updateShopItem(
   input: EditShopItem,
   userId: number
@@ -138,7 +137,7 @@ export async function updateShopItem(
     });
 }
 
-/** Retiring hides an item from the shop; purchases keep pointing at it, so it is never deleted. */
+/** Retire, never delete: purchases and audit rows keep pointing at the item. */
 export async function setShopItemActive(
   id: number,
   active: boolean,
@@ -158,7 +157,7 @@ export async function setShopItemActive(
     });
 }
 
-/** What the shop would show on `day`: the rows it reads (active, then sellable) through the same `stockFor`. */
+/** Mirrors what apps/knights/src/lib/server/shop/catalog.ts reads (active, sellable, same stockFor); change them together or the preview lies. */
 export async function previewShop(day: string) {
   const rows: ShopItem[] = await db()
     .selectFrom('KnightsShopItem')
@@ -187,7 +186,6 @@ export async function previewShop(day: string) {
   };
 }
 
-/** Newest first, `limit` per page; `nextBefore` is the `before` cursor of the next page, null on the last. */
 export async function listShopChanges({
   itemId,
   before,
