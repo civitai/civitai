@@ -35,6 +35,7 @@ export const settingPanes: Record<string, string> = {
 
   'metric-visibility': 'creator',
   stickers: 'creator',
+  'hat-turf-owner': 'creator',
 
   'manage-subscription': 'billing',
   'payment-methods': 'billing',
