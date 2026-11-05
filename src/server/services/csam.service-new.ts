@@ -1,5 +1,6 @@
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyV3Read } from '~/server/db/kyselyDb';
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
@@ -2268,6 +2269,29 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
   for await (const page of pages) for (const row of page) yield row;
 }
 
+/** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
+export const userContentSections: {
+  name: string;
+  rows: (userId: number) => AsyncIterable<unknown>;
+}[] = [
+  {
+    name: 'comments',
+    rows: (userId) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let query = kyselyV3Read
+            .selectFrom('CommentV3')
+            .selectAll()
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) query = query.where('id', '>', afterId);
+          return query.execute();
+        })
+      ),
+  },
+];
+
 /**
  * Releases an archive and its sink after a failure that skipped `finalize()`.
  *
@@ -2569,9 +2593,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
    * pinned disabled — all of which leave the disk-staging path, which is unchanged and stays
    * reachable, in charge. That is the rollback: flip the flag off, no deploy.
    *
-   * `data.json` and `training-data.zip` are NOT affected by this flag. The first is small; the
-   * second is a file this code downloads rather than builds, and the NCMEC submission path reads
-   * it back off disk, so neither has the disk ceiling this removes.
+   * `data.json` and `training-data.zip` are NOT affected by this flag. The first is staged on disk
+   * and grows with the user's comment count; the second is a file this code downloads rather than
+   * builds, and the NCMEC submission path reads it back off disk. Neither is the media archive whose
+   * disk ceiling this removes.
    */
   const streamArchivesToStorage = await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD);
 
@@ -2709,36 +2734,19 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   }
 
   /**
-   * Writes the base evidence bundle to disk, then uploads it.
+   * Writes the base evidence bundle to disk, then uploads it: `user`, `reportId`, `models`,
+   * `modelVersions`, `images`, then one section per `userContentSections` entry.
    *
-   * 🔴 WHAT EVIDENCE IS IN THE BUNDLE IS UNCHANGED: the same five properties in the same order,
-   * the same `where` clauses with no `select` so every column still lands in it, and the same
-   * bigint replacer. `json-stream-helpers.test.ts` pins the serialiser's byte-identity against
-   * `JSON.stringify` — note that is a claim about the SERIALISER, over one fixed row order.
-   *
-   * Two things ARE different, and neither adds or removes a row. The queries now also carry
-   * `orderBy: { id: 'asc' }`, `take` and an `id > cursor` predicate, because they are paged. And
-   * as a consequence of that ordering, array element order is now `id ASC` where it was
-   * previously whatever the query plan happened to produce — so against real data this writes a
-   * document that is set-identical to the old one but NOT byte-identical to it. Making the order
-   * deterministic is an improvement for an evidence artefact, but it is a change, and anything
-   * that diffs two bundles across this commit will see it.
-   *
-   * Why it had to change: the previous shape loaded every `Image`, `Model` and `ModelVersion`
-   * row the reported user owns into three arrays and rendered them with one `JSON.stringify`.
-   * That has two ceilings. The soft one is memory — rows and rendered string resident together.
-   * The hard one is that `JSON.stringify` returns a single JavaScript string, and a JS string
-   * cannot exceed V8's maximum length — 536,870,888 characters on 64-bit
-   * (`require('buffer').constants.MAX_STRING_LENGTH`). Past that it throws
-   * `RangeError: Invalid string length`, which no amount of memory or retrying fixes. A report
-   * whose bundle crosses that line can never be archived.
+   * Streamed because `JSON.stringify` cannot exceed V8's maximum string length: a bundle past it
+   * could never be archived. Rows are written `id ASC`, so a bundle is not byte-comparable with one
+   * written before paging.
    */
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
     const user = await getReportedUser(userId);
 
-    // Model IDs are accumulated because `modelVersions` is filtered by them, exactly as before.
+    // Model IDs are accumulated because `modelVersions` is filtered by them.
     // Only the 4-byte ids are kept; the model ROWS stream through without being retained.
     const modelIds: number[] = [];
     let modelScanComplete = false;
@@ -2810,6 +2818,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         ['models', { items: streamModels() }],
         ['modelVersions', { items: streamModelVersions() }],
         ['images', { items: flattenPages(scanUserImages()) }],
+        ...userContentSections.map(
+          ({ name, rows }) =>
+            [name, { items: rows(userId) }] as [string, { items: AsyncIterable<unknown> }]
+        ),
       ],
     });
 
