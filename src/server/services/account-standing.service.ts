@@ -143,16 +143,18 @@ export async function afterAccountBanChanged(userId: number): Promise<void> {
 export type StandingSessionStep = { kind: 'refresh' | 'invalidate'; caller: SessionStateCaller };
 
 /**
- * Run after a mute or unmute has committed: drops the cached standing, takes the caller's session
- * step, then revokes the orchestrator's cached tokens, and repeats all three after
- * `ACCOUNT_STANDING_REBUST_MS`. The revoke comes last because the orchestrator re-validates through
- * `/api/v1/me`, which reports the session's standing. Never throws; returns whether the session step
- * succeeded, for a caller that must report a failed one.
+ * Run after a mute or unmute has committed: on a mute, first cancels the account's pending
+ * generations; then drops the cached standing, takes the caller's session step, then revokes the
+ * orchestrator's cached tokens, and repeats the last three after `ACCOUNT_STANDING_REBUST_MS`. The
+ * revoke comes last because the orchestrator re-validates through `/api/v1/me`, and the cancel comes
+ * before all of it because a restricted identity can no longer cancel. Never throws; returns whether
+ * the session step succeeded, for a caller that must report a failed one.
  */
 export async function afterAccountStandingChanged(
   userId: number,
   session: StandingSessionStep
 ): Promise<boolean> {
+  await cancelPendingWorkflowsIfMuted(userId);
   await bustStanding(userId);
   let sessionStepped = false;
   try {
@@ -170,6 +172,19 @@ export async function afterAccountStandingChanged(
   await expireGenerationCredentialsIfMuted(userId);
   setTimeout(() => void repeatStandingChange(userId), ACCOUNT_STANDING_REBUST_MS).unref?.();
   return sessionStepped;
+}
+
+/** Bounded by `CANCEL_PENDING_DEADLINE_MS`. Never throws. */
+export async function cancelPendingWorkflowsIfMuted(userId: number) {
+  try {
+    if (!(await readStanding(userId)).muted) return;
+    const { cancelPendingWorkflows } = await import(
+      '~/server/services/orchestrator/cancel-pending-workflows'
+    );
+    await cancelPendingWorkflows(userId);
+  } catch (error) {
+    logStandingError('account-standing.cancel-pending-workflows-failed', userId, error);
+  }
 }
 
 /** A mute also ends the generation credentials already issued, so none outlives it. Never throws. */

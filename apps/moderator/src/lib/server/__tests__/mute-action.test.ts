@@ -70,6 +70,38 @@ describe('a moderator-app mute reaches the orchestrator and the cached standing'
     expect(revokeOrchestratorUserTokens).toHaveBeenCalledWith(42);
   });
 
+  // A restricted identity can no longer cancel, so the cancel must come before the bust, the
+  // logout and the revoke. Do not move it after them.
+  it('cancels the pending generations in the main app before anything else', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/api/mod/user/cancel-pending-workflows')) order.push('cancel');
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      expect(await setMuted({ userId: 42, muted: true, moderatorId: 7 })).toEqual({ ok: true });
+      expect(order.slice(0, 4)).toEqual(['cancel', 'bust', 'sessions', 'revoke']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('still mutes and revokes when the cancel fails', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith('/api/mod/user/cancel-pending-workflows')
+        ? new Response('{}', { status: 500 })
+        : new Response('{}', { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      expect(await setMuted({ userId: 42, muted: true, moderatorId: 7 })).toEqual({ ok: true });
+      expect(order.slice(0, 3)).toEqual(['bust', 'sessions', 'revoke']);
+      expect(revokeOrchestratorUserTokens).toHaveBeenCalledWith(42);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("expires the account's generation credentials in the main app, and again after the cache settles", async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     const fetchMock = vi.fn(

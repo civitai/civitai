@@ -636,8 +636,30 @@ export async function setMuted(input: {
 
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
-  // last because the orchestrator re-validates against the session's standing.
+  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The cancel comes
+  // first because a restricted identity can no longer cancel; the revoke comes last because the
+  // orchestrator re-validates against the session's standing.
+  // The cookie is read now because the repeat below runs after this request has ended.
+  let cookie: string | undefined;
+  try {
+    cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
+  } catch {
+    cookie = undefined;
+  }
+  // Best-effort and bounded: the mute stands whatever this returns.
+  const cancelled = await postJson({
+    path: '/api/mod/user/cancel-pending-workflows',
+    body: { userId: input.userId },
+    label: 'Cancel pending generations',
+    auth: 'session',
+    timeoutMs: 8_000,
+    cookie,
+  });
+  if (!cancelled.ok)
+    void logAxiomError(new Error(cancelled.error), {
+      name: 'mute.cancel-pending-workflows-failed',
+      userId: input.userId,
+    });
   const bustStanding = () =>
     bustKeyBestEffort(
       `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
@@ -655,13 +677,6 @@ export async function setMuted(input: {
     // file for its other actions.
     const { revokeOrchestratorUserTokens } = await import('./orchestrator');
     // Best-effort, like the revoke: the main app also refuses a muted account new generation tokens.
-    // The cookie is read now because the repeat below runs after this request has ended.
-    let cookie: string | undefined;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
-    } catch {
-      cookie = undefined;
-    }
     const expireGenerationCredentials = async () => {
       const result = await postJson({
         path: '/api/mod/user/expire-generation-credentials',

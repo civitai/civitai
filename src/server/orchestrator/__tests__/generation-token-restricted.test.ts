@@ -65,6 +65,19 @@ describe('the generation token for a restricted account', () => {
     await expect(getOrchestratorToken(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  // The mute-time cancel must use the token the orchestrator already accepts: a key minted for a
+  // muted account would be refused there, and would outlive the mute's credential expiry.
+  it('existingOnly returns the cached token for a muted account, and never mints', async () => {
+    muted = true;
+    const opts = { allowRestricted: true, existingOnly: true };
+    await expect(getOrchestratorToken(USER, undefined, opts)).resolves.toBe('cached-token');
+    redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+    await expect(getOrchestratorToken(USER, undefined, opts)).rejects.toThrow(
+      'No generation token is cached'
+    );
+    expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
+  });
+
   it('a muted account is refused on a miss too, without minting', async () => {
     muted = true;
     redisMock.sysRedis.hGet.mockResolvedValue(null as never);

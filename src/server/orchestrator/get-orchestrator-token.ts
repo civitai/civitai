@@ -58,6 +58,8 @@ type GetOrchestratorTokenOptions = {
    * workflows, or a moderator acting on them (which may stamp workflow metadata). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
    */
   allowRestricted?: boolean;
+  /** Return only the token already issued and cached; throw rather than mint a new one. */
+  existingOnly?: boolean;
 };
 
 export async function getOrchestratorToken(
@@ -117,6 +119,7 @@ export async function getOrchestratorToken(
   }
 
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (!token && options.existingOnly) throw new Error('No generation token is cached');
   if (!token) {
     // Per-pod LRU + in-flight coalescing in front of the DB cold-mint, which caps DB load while
     // sysRedis is down. See orchestrator-token-cache.ts for the full rationale.
