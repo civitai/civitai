@@ -16,6 +16,8 @@
   import type { ShopItemRow } from '$lib/server/knights/shop-catalog.service';
   import LiveWarning from './LiveWarning.svelte';
 
+  const PREVIEWABLE = new Set(['Badge', 'ProfileDecoration', 'ProfileBackground']);
+
   let { item, ranks }: { item: ShopItemRow; ranks: readonly string[] } = $props();
 
   let editing = $state(false);
@@ -56,6 +58,11 @@
     isSellable(item) ? null : 'The shop sells memberships one month at a time.'
   );
 
+  const hasPreview = $derived(
+    PREVIEWABLE.has(item.cosmeticType ?? '') &&
+      !!(item.cosmeticData as { url?: string } | null)?.url
+  );
+
   const what = $derived(
     item.kind === 'buzz_pack'
       ? `${num(item.buzz ?? 0)} Buzz`
@@ -72,7 +79,17 @@
 >
   <div class="flex flex-wrap items-start gap-4">
     {#if item.kind === 'cosmetic' && item.cosmeticType}
-      <CosmeticSample type={item.cosmeticType} name={item.name} data={item.cosmeticData} />
+      <div
+        class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-dark-4"
+      >
+        {#if hasPreview}
+          <CosmeticSample type={item.cosmeticType} name={item.name} data={item.cosmeticData} />
+        {:else}
+          <span class="px-1 text-center text-[10px] leading-tight text-dark-2">
+            {item.cosmeticType}
+          </span>
+        {/if}
+      </div>
     {/if}
     <div class="flex min-w-0 flex-1 flex-col gap-1">
       <div class="flex flex-wrap items-center gap-2">
@@ -85,7 +102,7 @@
         {#if item.minRank}<Badge variant="outline">{item.minRank}+</Badge>{/if}
       </div>
       <p class="text-sm text-dark-2">
-        {what} · {num(item.price)} gold · sort {item.sortOrder} · <code>{item.id}</code>
+        {what} · {num(item.price)} gold · sort {item.sortOrder} · <code>#{item.id}</code>
       </p>
       {#if notSold}<p class="text-sm text-dark-2">Not sold: {notSold}</p>{/if}
       {#if item.description}<p class="text-sm text-dark-2">{item.description}</p>{/if}

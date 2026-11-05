@@ -100,7 +100,11 @@
         </div>
         <ul class="mt-1 text-dark-2">
           {#each Object.entries(change.changes) as [field, { from, to }] (field)}
-            <li>{field}: {show(from)} &rarr; {show(to)}</li>
+            {#if change.action !== 'create'}
+              <li>{field}: {show(from)} &rarr; {show(to)}</li>
+            {:else if to !== null && to !== undefined && to !== ''}
+              <li>{field}: {to}</li>
+            {/if}
           {/each}
         </ul>
       </div>
