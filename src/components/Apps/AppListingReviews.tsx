@@ -1,6 +1,6 @@
-import { Badge, Divider, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Button, Divider, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconThumbDown, IconThumbUp } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -8,6 +8,9 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppListingReviewListItem } from '~/server/schema/blocks/app-listing-review.schema';
 import { trpc } from '~/utils/trpc';
+
+/** Reviews shown before "Show all reviews", so a long thread does not bury the rest of the page. */
+const COLLAPSED_REVIEW_COUNT = 4;
 
 /**
  * App Store Listings (W13) — the recent-reviews LIST for a store listing (thumbs
@@ -20,6 +23,7 @@ import { trpc } from '~/utils/trpc';
  */
 export function AppListingReviews({ appListingId }: { appListingId: string }) {
   const currentUser = useCurrentUser();
+  const [expanded, setExpanded] = useState(false);
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.appListings.listReviews.useInfiniteQuery(
       { appListingId },
@@ -27,6 +31,12 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
     );
 
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
+  const visible = expanded ? items : items.slice(0, COLLAPSED_REVIEW_COUNT);
+  const hasHidden =
+    items.length > COLLAPSED_REVIEW_COUNT ||
+    (!!hasNextPage && items.length === COLLAPSED_REVIEW_COUNT);
+  // Collapsed, keep paging only until there is a full first screen to show.
+  const canLoadMore = !!hasNextPage && (expanded || items.length < COLLAPSED_REVIEW_COUNT);
 
   if (isLoading) {
     return (
@@ -46,13 +56,20 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
 
   return (
     <Stack gap="md">
-      {items.map((review) => (
+      {visible.map((review) => (
         <div key={review.id}>
           <ReviewRow review={review} isViewer={review.user?.id === currentUser?.id} />
           <Divider mt="md" />
         </div>
       ))}
-      {hasNextPage && (
+      {!expanded && hasHidden && (
+        <Group justify="center">
+          <Button variant="light" onClick={() => setExpanded(true)}>
+            Show all reviews
+          </Button>
+        </Group>
+      )}
+      {canLoadMore && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
           <Group justify="center" data-testid="apps-reviews-loading-more">
             <Loader size="sm" />
