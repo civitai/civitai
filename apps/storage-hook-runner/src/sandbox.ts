@@ -254,8 +254,6 @@ function run(
 
   // Compile-only pass, deadline disarmed: a syntax error is reported from here, and its
   // duration pays for the second compile inside the armed evaluation below.
-  // TEMPORARY MUTATION (reverted next): deadline armed before compilation, as before the fix.
-  arm(0);
   const compileStart = performance.now();
   const compiled = ctx.evalCode(args.source, 'hook.js', {
     type: 'module',
@@ -264,7 +262,7 @@ function run(
   });
   if (compiled.error) return classifyVmError(ctx, keep(compiled.error), wasInterrupted(), engine);
   keep(compiled.value);
-  void compileStart;
+  arm(performance.now() - compileStart);
 
   const evaluated = ctx.evalCode(args.source, 'hook.js', { type: 'module', strict: true });
   if (evaluated.error) {
