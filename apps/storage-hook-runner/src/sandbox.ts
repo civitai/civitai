@@ -64,7 +64,7 @@ export type EvaluateArgs = {
 
 export type EvaluateOutput = {
   result: HookResult;
-  /** Wall time from arming the deadline to the answer, measured inside the worker. */
+  /** Wall time from arming the deadline (just before the hook's module runs) to the answer. */
   elapsedMs: number;
 };
 
@@ -89,9 +89,17 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Eval
   // VM, so hook code cannot fake a timeout (or hide one) by throwing an error that looks like it.
   // QuickJS's interrupt exception is uncatchable, and once the deadline passes the handler keeps
   // answering true, so a `catch` or `finally` cannot keep running either.
+  //
+  // The deadline is ARMED by `run` immediately before the hook's module is evaluated, not here:
+  // the sandbox's own setup (the prelude) must neither spend the hook's budget nor be the place
+  // an interrupt lands, which once surfaced as a setup `error` instead of a `timeout` at 1 ms.
   let interrupted = false;
-  const start = performance.now();
-  const deadline = start + args.timeoutMs;
+  let start = performance.now();
+  let deadline = Number.POSITIVE_INFINITY;
+  const arm = () => {
+    start = performance.now();
+    deadline = start + args.timeoutMs;
+  };
   rt.setInterruptHandler(() => {
     if (performance.now() >= deadline) {
       interrupted = true;
@@ -109,7 +117,7 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Eval
 
   let result: HookResult;
   try {
-    result = run(ctx, keep, args, () => interrupted);
+    result = run(ctx, keep, args, arm, () => interrupted);
   } catch (err) {
     // A throw out of the VM boundary itself (host stack overflow, a WASM trap). The instance is
     // never reused, so nothing carries over.
@@ -137,6 +145,7 @@ function run(
   ctx: QuickJSContext,
   keep: (h: QuickJSHandle) => QuickJSHandle,
   args: EvaluateArgs,
+  arm: () => void,
   wasInterrupted: () => boolean
 ): HookResult {
   // quickjs-ng's base objects include two non-ES globals: `performance` (a high-resolution
@@ -147,10 +156,7 @@ function run(
     'prelude.js',
     { type: 'global', strict: false }
   );
-  if (strip.error) {
-    keep(strip.error);
-    return fault('error', 'sandbox prelude failed');
-  }
+  if (strip.error) return classifyVmError(ctx, keep(strip.error), wasInterrupted());
   keep(strip.value);
 
   // Taken BEFORE the hook's module runs, so a module that reassigns `JSON.parse` or
@@ -159,6 +165,7 @@ function run(
   const parse = keep(ctx.getProp(json, 'parse'));
   const stringify = keep(ctx.getProp(json, 'stringify'));
 
+  arm();
   const evaluated = ctx.evalCode(args.source, 'hook.js', { type: 'module', strict: true });
   if (evaluated.error) {
     return classifyVmError(ctx, keep(evaluated.error), wasInterrupted());
