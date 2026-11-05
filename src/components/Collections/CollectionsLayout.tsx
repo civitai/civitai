@@ -24,15 +24,23 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import classes from './CollectionsLayout.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
-const MyCollectionsDrawer = () => {
-  const [drawerOpen, { close, toggle }] = useDisclosure();
+const MyCollectionsDrawer = ({ autoOpen = false }: { autoOpen?: boolean }) => {
+  const [drawerOpen, { open, close, toggle }] = useDisclosure();
+  // Once per mount, so closing the drawer does not re-open it on the next render.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpen && !autoOpened.current) {
+      autoOpened.current = true;
+      open();
+    }
+  }, [autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -84,7 +92,14 @@ const MyCollectionsDrawer = () => {
   );
 };
 
-const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
+const CollectionsLayout = ({
+  children,
+  autoOpenDrawer = false,
+}: {
+  children: React.ReactNode;
+  /** Phone only: open the collections drawer when the page loads. */
+  autoOpenDrawer?: boolean;
+}) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const [showSidebar, setShowSidebar] = useState(true);
@@ -182,7 +197,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
         </MyCollections>
       )}
       <div className={classes.content}>
-        {!!currentUser && isMobile && <MyCollectionsDrawer />}
+        {!!currentUser && isMobile && <MyCollectionsDrawer autoOpen={autoOpenDrawer} />}
         {children}
       </div>
     </Container>

@@ -6,19 +6,19 @@ import type * as PromotionService from '~/server/services/promotion.service';
 import type * as ArticleService from '~/server/services/article.service';
 import type * as GenerationService from '~/server/services/generation/generation.service';
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Any flag read on these paths answers false, so the associated-resources handler's own coverage
+// flag reads false.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read-6 statement stubbed: their rows against Prisma's are compared in
+// Every hot-read-6 statement stubbed: their rows, against a real database, are pinned in
 // hot-reads-6.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads6>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
-// The lag decision, so a test can make it pick the primary and see both paths follow it.
+// The lag decision, so a test can make it pick the primary and see the read follow it.
 const { getDbWithoutLag, getKyselyWithoutLag } = vi.hoisted(() => ({
   getDbWithoutLag: vi.fn(),
   getKyselyWithoutLag: vi.fn(),
@@ -54,23 +54,22 @@ import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 
 /**
- * Each call site behind `kysely-hot-reads-6`: the flag is evaluated by its key, with no entity or
- * context, once per call; OFF reads through Prisma only, exactly as before; ON reads through
- * Kysely only, on the client the Prisma read used, and returns a value that can only have come
- * from the Kysely row (each ON fixture differs from the OFF one and from any default). Row parity
- * against a real database is in hot-reads-6.kysely-parity.test.ts.
+ * Each hot-reads-6 call site: it reads through Kysely only, on the client the Prisma read used,
+ * and returns a value that can only have come from the Kysely row (each fixture differs from any
+ * default); the Prisma reads that still serve a path (an `undefined` Kysely answer's fallback, a
+ * replica miss's primary read, the donation goals cache's primary reads) are pinned where they
+ * run. Their rows, against a real database, are pinned in hot-reads-6.kysely-parity.test.ts.
  */
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
 const kyselyReads = () => Object.values(q).filter((fn) => vi.isMockFunction(fn));
-const FLAG = 'kysely-hot-reads-6';
 
 // Pairwise distinct, and distinct from every count and id below.
 const ID = 8301;
 const USER = 8402;
-const OFF_USER = 8503;
-const ON_USER = 8604;
+const PRIMARY_USER = 8503;
+const KYSELY_USER = 8604;
 const ARTICLE = 8705;
 
 const expectNoKyselyRead = () => {
@@ -147,23 +146,11 @@ describe('getModelVersionOwnerHandler', () => {
   const load = async () =>
     (await import('~/server/controllers/model-version.controller')).getModelVersionOwnerHandler;
 
-  it('OFF: the Prisma read on the client the lag decision picked', async () => {
-    dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({
-      model: { user: { id: OFF_USER } },
-    });
-    await expect((await load())({ input: { id: ID } })).resolves.toEqual({ id: OFF_USER });
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(getDbWithoutLag).toHaveBeenCalledWith('modelVersion', ID);
-    expect(dbMock.dbRead.modelVersion.findUnique.mock.calls[0][0].where).toEqual({ id: ID });
-    expectNoKyselyRead();
-  });
-
-  it('ON: one Kysely statement on the client the same lag decision picks', async () => {
-    flag.mockResolvedValue(true);
+  it('one Kysely statement on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
-    q.getModelVersionOwnerWithCosmetics.mockResolvedValue(userRow(ON_USER) as never);
+    q.getModelVersionOwnerWithCosmetics.mockResolvedValue(userRow(KYSELY_USER) as never);
     await expect((await load())({ input: { id: ID } })).resolves.toStrictEqual(
-      userPayload(ON_USER)
+      userPayload(KYSELY_USER)
     );
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('modelVersion', ID);
     expect(q.getModelVersionOwnerWithCosmetics.mock.calls).toEqual([[kyselyWrite, ID]]);
@@ -172,8 +159,7 @@ describe('getModelVersionOwnerHandler', () => {
     expect(dbMock.dbWrite.modelVersion.findUnique).not.toHaveBeenCalled();
   });
 
-  it('ON: no Kysely row runs the Prisma read, so a missing version is still not found', async () => {
-    flag.mockResolvedValue(true);
+  it('no Kysely row runs the Prisma read, so a missing version is still not found', async () => {
     q.getModelVersionOwnerWithCosmetics.mockResolvedValue(undefined as never);
     dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(null);
     await expect((await load())({ input: { id: ID } })).rejects.toMatchObject({
@@ -194,51 +180,35 @@ describe('getPostDetail', () => {
     detail: null,
     modelVersionId: null,
     publishedModelVersionId: null,
-    userId: ON_USER,
+    userId: KYSELY_USER,
     publishedAt: published,
     availability: 'Public',
     tags: [{ id: 8907, name: 'tag', isCategory: false }],
     collectionId: null,
   });
 
-  it('OFF: the Prisma read on the client the lag decision picked', async () => {
-    dbMock.dbRead.post.findFirst.mockResolvedValue({
-      ...postRow('off', publishedAt),
-      user: { id: OFF_USER },
-      tags: [],
-    });
-    const post = await (await load())({ id: ID });
-    expect(post.title).toBe('off');
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(getDbWithoutLag).toHaveBeenCalledWith('post', ID);
-    expect(dbMock.dbRead.post.findFirst.mock.calls[0][0].where).toMatchObject({ id: ID });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the post and its user through Kysely, on the client the same lag decision picks', async () => {
-    flag.mockResolvedValue(true);
+  it('the post and its user through Kysely, on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
-    q.getPostDetailRow.mockResolvedValue(postRow('on', publishedAt) as never);
-    q.getUserWithCosmetics.mockResolvedValue(userRow(ON_USER) as never);
+    q.getPostDetailRow.mockResolvedValue(postRow('kysely', publishedAt) as never);
+    q.getUserWithCosmetics.mockResolvedValue(userRow(KYSELY_USER) as never);
     const viewer = { id: USER, isModerator: false };
     const post = await (await load())({ id: ID, user: viewer as never });
-    expect(post.title).toBe('on');
-    expect(post.user).toStrictEqual(userPayload(ON_USER));
+    expect(post.title).toBe('kysely');
+    expect(post.user).toStrictEqual(userPayload(KYSELY_USER));
     expect(post.tags).toStrictEqual([{ id: 8907, name: 'tag', isCategory: false }]);
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('post', ID);
     expect(q.getPostDetailRow.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.getPostDetailRow.mock.calls[0][1]).toMatchObject({ id: ID, viewer });
-    expect(q.getUserWithCosmetics.mock.calls).toEqual([[kyselyWrite, ON_USER]]);
+    expect(q.getUserWithCosmetics.mock.calls).toEqual([[kyselyWrite, KYSELY_USER]]);
     expect(dbMock.dbRead.post.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.post.findFirst).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
   });
 
-  it('ON: an unpublished post reads its unpublish context on the primary when Kysely picked it', async () => {
-    flag.mockResolvedValue(true);
+  it('an unpublished post reads its unpublish context on the primary when Kysely picked it', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getPostDetailRow.mockResolvedValue(postRow('draft', null) as never);
-    q.getUserWithCosmetics.mockResolvedValue(userRow(ON_USER) as never);
+    q.getUserWithCosmetics.mockResolvedValue(userRow(KYSELY_USER) as never);
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     await (
       await load()
@@ -247,17 +217,28 @@ describe('getPostDetail', () => {
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it('ON: a post whose user is gone runs the Prisma read', async () => {
-    flag.mockResolvedValue(true);
-    q.getPostDetailRow.mockResolvedValue(postRow('on', publishedAt) as never);
+  it('a post whose user is gone runs the Prisma read on the replica', async () => {
+    q.getPostDetailRow.mockResolvedValue(postRow('kysely', publishedAt) as never);
     q.getUserWithCosmetics.mockResolvedValue(undefined as never);
     dbMock.dbRead.post.findFirst.mockResolvedValue(null);
     await expect((await load())({ id: ID })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(dbMock.dbRead.post.findFirst).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.post.findFirst.mock.calls[0][0].where).toMatchObject({ id: ID });
+    expect(dbMock.dbWrite.post.findFirst).not.toHaveBeenCalled();
   });
 
-  it('ON: a missing post is not found, with no user read', async () => {
-    flag.mockResolvedValue(true);
+  it('that Prisma read follows the lag decision to the primary', async () => {
+    getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
+    q.getPostDetailRow.mockResolvedValue(postRow('kysely', publishedAt) as never);
+    q.getUserWithCosmetics.mockResolvedValue(undefined as never);
+    dbMock.dbWrite.post.findFirst.mockResolvedValue(null);
+    await expect((await load())({ id: ID })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(dbMock.dbWrite.post.findFirst).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.post.findFirst.mock.calls[0][0].where).toMatchObject({ id: ID });
+    expect(dbMock.dbRead.post.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a missing post is not found, with no user read', async () => {
     q.getPostDetailRow.mockResolvedValue(undefined as never);
     await expect((await load())({ id: ID })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(q.getUserWithCosmetics).not.toHaveBeenCalled();
@@ -268,32 +249,19 @@ describe('getPostDetail', () => {
 describe('findUserIdByUsername', () => {
   const load = async () => (await import('~/server/services/image.service')).findUserIdByUsername;
 
-  it('OFF: the Prisma read on the replica', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: OFF_USER });
-    await expect((await load())('name')).resolves.toBe(OFF_USER);
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.user.findUnique.mock.calls[0][0]).toEqual({
-      where: { username: 'name' },
-      select: { id: true },
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the Kysely read on the replica', async () => {
-    flag.mockResolvedValue(true);
-    q.getUserIdByUsername.mockResolvedValue({ id: ON_USER } as never);
-    await expect((await load())('name')).resolves.toBe(ON_USER);
+  it('the Kysely read on the replica', async () => {
+    q.getUserIdByUsername.mockResolvedValue({ id: KYSELY_USER } as never);
+    await expect((await load())('name')).resolves.toBe(KYSELY_USER);
     expect(q.getUserIdByUsername.mock.calls).toEqual([[kyselyRead, 'name']]);
     expect(q.getUserIdByUsername.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it('ON: a replica miss still falls back to the primary through Prisma', async () => {
-    flag.mockResolvedValue(true);
+  it('a replica miss still falls back to the primary through Prisma', async () => {
     q.getUserIdByUsername.mockResolvedValue(undefined as never);
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: OFF_USER });
-    await expect((await load())('name')).resolves.toBe(OFF_USER);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: PRIMARY_USER });
+    await expect((await load())('name')).resolves.toBe(PRIMARY_USER);
     expect(dbMock.dbWrite.user.findUnique.mock.calls[0][0]).toEqual({
       where: { username: 'name' },
       select: { id: true },
@@ -304,31 +272,17 @@ describe('findUserIdByUsername', () => {
 describe('getUserBannedAtByUsername', () => {
   const load = async () =>
     (await import('~/server/services/user-banned-at.service')).getUserBannedAtByUsername;
-  const offBanned = new Date('2026-02-02T00:00:00.000Z');
-  const onBanned = new Date('2026-03-03T00:00:00.000Z');
+  const bannedAt = new Date('2026-03-03T00:00:00.000Z');
 
-  it('OFF: the Prisma read on the replica', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ bannedAt: offBanned });
-    await expect((await load())('name')).resolves.toStrictEqual({ bannedAt: offBanned });
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.user.findUnique.mock.calls[0][0]).toEqual({
-      where: { username: 'name' },
-      select: { bannedAt: true },
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the Kysely read on the replica', async () => {
-    flag.mockResolvedValue(true);
-    q.listUserBannedAtByUsername.mockResolvedValue({ bannedAt: onBanned } as never);
-    await expect((await load())('name')).resolves.toStrictEqual({ bannedAt: onBanned });
+  it('the Kysely read on the replica', async () => {
+    q.listUserBannedAtByUsername.mockResolvedValue({ bannedAt } as never);
+    await expect((await load())('name')).resolves.toStrictEqual({ bannedAt });
     expect(q.listUserBannedAtByUsername.mock.calls).toEqual([[kyselyRead, 'name']]);
     expect(q.listUserBannedAtByUsername.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it('ON: no such user is null', async () => {
-    flag.mockResolvedValue(true);
+  it('no such user is null', async () => {
     q.listUserBannedAtByUsername.mockResolvedValue(undefined as never);
     await expect((await load())('name')).resolves.toBeNull();
   });
@@ -350,25 +304,7 @@ describe('publicDonationGoalsLookupFn', () => {
   });
   const { total: _total, ...goalRow } = goal(0);
 
-  it('OFF: the Prisma reads on the replica', async () => {
-    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: ID }]);
-    dbMock.dbRead.donationGoal.findMany.mockResolvedValue([goalRow]);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 8908, total: 1234 }]);
-    const { entityId: _e, ...expected } = goal(1234);
-    await expect((await load())([ID])).resolves.toStrictEqual({
-      [ID]: { modelVersionId: ID, goal: expected },
-    });
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.donationGoal.findMany.mock.calls[0][0].where).toEqual({
-      entityType: 'ModelVersion',
-      entityId: { in: [ID] },
-      active: true,
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the version and goal reads through Kysely, the totals through Prisma, on the replica', async () => {
-    flag.mockResolvedValue(true);
+  it('the version and goal reads through Kysely, the totals through Prisma, on the replica', async () => {
     q.listExistingModelVersionIds.mockResolvedValue([{ id: ID }] as never);
     q.listActiveModelVersionDonationGoals.mockResolvedValue([
       { ...goalRow, title: 'kysely goal' },
@@ -387,8 +323,7 @@ describe('publicDonationGoalsLookupFn', () => {
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('ON: a version missing on the replica is still looked up on the primary through Prisma', async () => {
-    flag.mockResolvedValue(true);
+  it('a version missing on the replica is still looked up on the primary through Prisma', async () => {
     q.listExistingModelVersionIds.mockResolvedValue([] as never);
     q.listActiveModelVersionDonationGoals.mockResolvedValue([] as never);
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: ID }]);
@@ -401,14 +336,21 @@ describe('publicDonationGoalsLookupFn', () => {
     });
   });
 
-  it('ON with fromWrite: every read stays on the primary through Prisma, and no flag is read', async () => {
-    flag.mockResolvedValue(true);
+  it('fromWrite: every read stays on the primary through Prisma, active goals only', async () => {
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: ID }]);
-    dbMock.dbWrite.donationGoal.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.donationGoal.findMany.mockResolvedValue([goalRow]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ donationGoalId: 8908, total: 1234 }]);
+    const { entityId: _e, ...expected } = goal(1234);
     await expect((await load())([ID], true)).resolves.toStrictEqual({
-      [ID]: { modelVersionId: ID, goal: null },
+      [ID]: { modelVersionId: ID, goal: expected },
     });
-    expect(flag).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.donationGoal.findMany.mock.calls[0][0].where).toEqual({
+      entityType: 'ModelVersion',
+      entityId: { in: [ID] },
+      active: true,
+    });
+    expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.donationGoal.findMany).not.toHaveBeenCalled();
     expectNoKyselyRead();
   });
 });
@@ -417,28 +359,12 @@ describe('getUserEngagedModelVersions', () => {
   const load = async () =>
     (await import('~/server/services/user.service')).getUserEngagedModelVersions;
 
-  it('OFF: the Prisma read on the replica', async () => {
-    dbMock.dbRead.modelVersionEngagement.findMany.mockResolvedValue([
-      { modelVersionId: ID, type: 'Notify' },
-    ]);
-    await expect((await load())({ userId: USER, modelVersionIds: [ID] })).resolves.toEqual([
-      { modelVersionId: ID, type: 'Notify' },
-    ]);
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.modelVersionEngagement.findMany.mock.calls[0][0]).toEqual({
-      where: { userId: USER, modelVersionId: { in: [ID] } },
-      select: { modelVersionId: true, type: true },
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the Kysely read on the replica, a single id as a list', async () => {
-    flag.mockResolvedValue(true);
+  it('the Kysely read on the replica, a single id as a list', async () => {
     q.listModelVersionEngagements.mockResolvedValue([
-      { modelVersionId: ON_USER, type: 'Notify' },
+      { modelVersionId: KYSELY_USER, type: 'Notify' },
     ] as never);
     await expect((await load())({ userId: USER, modelVersionIds: ID })).resolves.toEqual([
-      { modelVersionId: ON_USER, type: 'Notify' },
+      { modelVersionId: KYSELY_USER, type: 'Notify' },
     ]);
     expect(q.listModelVersionEngagements.mock.calls).toEqual([
       [kyselyRead, { userId: USER, modelVersionIds: [ID] }],
@@ -452,31 +378,15 @@ describe('getResourceReviewsByUserId', () => {
   const load = async () =>
     (await import('~/server/services/resourceReview.service')).getResourceReviewsByUserId;
 
-  it('OFF: the Prisma read on the replica', async () => {
-    dbMock.dbRead.resourceReview.findMany.mockResolvedValue([{ modelId: ID, modelVersionId: 1 }]);
-    await expect(
-      (
-        await load()
-      )({ userId: USER, recommended: true, modelIds: [ID] })
-    ).resolves.toEqual([{ modelId: ID, modelVersionId: 1 }]);
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.resourceReview.findMany.mock.calls[0][0]).toEqual({
-      where: { userId: USER, recommended: true, modelId: { in: [ID] } },
-      select: { modelId: true, modelVersionId: true },
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON: the Kysely read on the replica, with the same filters', async () => {
-    flag.mockResolvedValue(true);
+  it('the Kysely read on the replica, with the filters the Prisma read had', async () => {
     q.listUserRecommendedReviews.mockResolvedValue([
-      { modelId: ON_USER, modelVersionId: 2 },
+      { modelId: KYSELY_USER, modelVersionId: 2 },
     ] as never);
     await expect(
       (
         await load()
       )({ userId: USER, recommended: true, modelIds: [ID] })
-    ).resolves.toEqual([{ modelId: ON_USER, modelVersionId: 2 }]);
+    ).resolves.toEqual([{ modelId: KYSELY_USER, modelVersionId: 2 }]);
     expect(q.listUserRecommendedReviews.mock.calls).toEqual([
       [kyselyRead, { userId: USER, recommended: true, modelIds: [ID] }],
     ]);
@@ -494,32 +404,16 @@ describe('getAssociatedResourcesCardDataHandler (the associated ids)', () => {
       ctx: { user: undefined, features: {} } as never,
     });
 
-  it('OFF: the Prisma read on the replica, whose article ids are fetched', async () => {
-    dbMock.dbRead.modelAssociations.findMany.mockResolvedValue([
-      { toModelId: null, toArticleId: ARTICLE },
-    ]);
-    await call();
-    expect(flag.mock.calls.filter(([key]) => key === FLAG)).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.modelAssociations.findMany.mock.calls[0][0]).toEqual({
-      where: { fromModelId: ID, type: 'Suggested' },
-      select: { toModelId: true, toArticleId: true },
-      orderBy: { index: 'asc' },
-    });
-    expect(getArticles.mock.calls[0][0].ids).toEqual([ARTICLE]);
-    expectNoKyselyRead();
-  });
-
-  it('ON: the Kysely read on the replica, whose article ids are fetched', async () => {
-    flag.mockImplementation(async (key: string) => key === FLAG);
+  it('the Kysely read on the replica, whose article ids are fetched', async () => {
     q.listModelAssociationTargets.mockResolvedValue([
-      { toModelId: null, toArticleId: ARTICLE + 1 },
+      { toModelId: null, toArticleId: ARTICLE },
     ] as never);
     await call();
     expect(q.listModelAssociationTargets.mock.calls).toEqual([
       [kyselyRead, { fromModelId: ID, type: 'Suggested' }],
     ]);
     expect(q.listModelAssociationTargets.mock.calls[0][0]).toBe(kyselyRead);
-    expect(getArticles.mock.calls[0][0].ids).toEqual([ARTICLE + 1]);
+    expect(getArticles.mock.calls[0][0].ids).toEqual([ARTICLE]);
     expect(dbMock.dbRead.modelAssociations.findMany).not.toHaveBeenCalled();
   });
 });
