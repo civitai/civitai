@@ -1924,6 +1924,15 @@ describe('watchOpenDeposits', () => {
       expect(mockKvSet).not.toHaveBeenCalled();
     });
 
+    it('lists a miss when the stored list is null', async () => {
+      listLedgerIds(null);
+      ledgerHas();
+
+      await watchCredited([creditedRow(7041, 2)]);
+
+      expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [7041]);
+    });
+
     it('checks at most 2000 listed ids a run and keeps the rest listed', async () => {
       const ids = Array.from({ length: 2001 }, (_, i) => 9000 + i);
       listLedgerIds(ids);

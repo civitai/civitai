@@ -1142,7 +1142,7 @@ const LEDGER_CHECK_CAP = 2000;
 const LEDGER_CHECK_SETTLE_MINUTES = 10;
 /** Bounded so a Buzz outage cannot hold the job past its lock. */
 const LEDGER_READ_OPTIONS = { retries: 1, timeoutMs: 10_000 };
-/** Lookups stop here, inside the job's 30 min lock; the rest wait for the next run. */
+/** No new lookup starts after this; the rest wait for the next run. Times this step only. */
 const LEDGER_CHECK_BUDGET_MS = 20 * 60 * 1000;
 
 type LedgerState = 'present' | 'missing' | 'lookup_failed' | 'not_checked';
@@ -1263,7 +1263,7 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
   try {
     // Re-read just before writing, so ids support added during the run are kept. A list that
     // cannot be read (an error, or not an array) is never rewritten.
-    const current = await dbKV.get<unknown>(WATCH_LEDGER_MISSING_KEY, []);
+    const current = (await dbKV.get<unknown>(WATCH_LEDGER_MISSING_KEY, [])) ?? [];
     if (!Array.isArray(current)) throw new Error('not an array');
     const next = [
       ...new Set([...current.map(ledgerListEntry), ...add].filter((e) => !drop.has(e as number))),
