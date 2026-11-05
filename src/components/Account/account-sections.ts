@@ -119,6 +119,8 @@ export const accountSections: AccountSection[] = [
       'generation count',
       'earned buzz',
       'creator showcase',
+      'hat turf',
+      'hats',
     ],
   },
   {
