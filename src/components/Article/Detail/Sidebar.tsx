@@ -22,8 +22,9 @@ export function Sidebar({ articleId, attachments, creator, hiddenNotice }: Props
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
+  // A new key: the old one holds the 'toc' default it wrote for every reader, not their choice.
   const [storedAccordion, setActiveAccordion] = useLocalStorage<string>({
-    key: 'article-active-accordion',
+    key: 'article-active-accordion-v2',
     defaultValue: '',
   });
   // The contents are `hideMobile`, so on a phone they can't be the open item.

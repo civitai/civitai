@@ -12,7 +12,8 @@ vi.mock('~/components/CreatorCard/CreatorCard', async (importOriginal) => ({
 import '~/styles/globals.css';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 
-const KEY = 'article-active-accordion';
+const KEY = 'article-active-accordion-v2';
+const OLD_KEY = 'article-active-accordion';
 const zip = { id: 1, name: 'songs.zip', sizeKB: 2048, url: 'https://example.com/songs.zip' };
 
 async function renderSidebar({ attachments = [zip], width = 1000 } = {}) {
@@ -35,6 +36,7 @@ const expanded = (name: string) =>
 afterEach(() => {
   cleanup();
   localStorage.removeItem(KEY);
+  localStorage.removeItem(OLD_KEY);
 });
 
 describe('article sidebar accordion', () => {
@@ -42,6 +44,13 @@ describe('article sidebar accordion', () => {
     await renderSidebar();
     expect(expanded('Attachments')).toBe('true');
     expect(expanded('Table of Contents')).toBe('false');
+  });
+
+  // The old key's 'toc' was written for every reader who ever opened an article, chosen or not.
+  test('a returning reader with the old stored contents still gets the attachments', async () => {
+    localStorage.setItem(OLD_KEY, JSON.stringify('toc'));
+    await renderSidebar();
+    expect(expanded('Attachments')).toBe('true');
   });
 
   test('without attachments the contents are open', async () => {
