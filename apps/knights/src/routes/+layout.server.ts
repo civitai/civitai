@@ -2,10 +2,11 @@ import { env } from '$env/dynamic/private';
 import { playerBadge } from '$lib/player-badge';
 import { imageUrl } from '$lib/server/image-url';
 import { CONVERSION } from '$lib/server/conversion/config';
-import { conversionEnabled } from '$lib/server/conversion/runtime';
-import { getRecapState } from '$lib/server/daily/daily.service';
+import { shopEnabled } from '$lib/server/conversion/runtime';
+import { getDailyStatus, getRecapState } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { ladderRows } from '$lib/server/ladder';
+import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
 import type { LayoutServerLoad } from './$types';
@@ -24,8 +25,32 @@ async function recapUnseen(playerId: number | undefined): Promise<boolean> {
   }
 }
 
+// The header's gold and rank pills and the streak chip, for every page. A page that loads its own `status`/`daily` overrides
+// these in page data (play keeps its live copy); the rest get them here, so no page can forget the header's stats. A failed
+// read only costs what failed: the pills when the status is gone, the streak alone when only the daily read failed.
+async function headerStats(playerId: number) {
+  let status: Awaited<ReturnType<typeof getPlayerStatus>>;
+  try {
+    status = await getPlayerStatus(db, playerId);
+  } catch (error) {
+    console.error('knights: could not read the header stats', { error });
+    return { status: null, daily: null };
+  }
+  if (!status) return { status: null, daily: null };
+  try {
+    const daily = await getDailyStatus(db, { playerId, rank: status.rank, now: queueDeps.now() });
+    return { status, daily };
+  } catch (error) {
+    console.error('knights: could not read the header streak', { error });
+    return { status, daily: null };
+  }
+}
+
+// Not tied to the URL, so a client navigation keeps this data. It re-runs when something invalidates 'knights:header'
+// (leaving /play, whose votes move the stats) or 'app:recap', and after every form action and restart (`invalidateAll`).
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
   depends('app:recap');
+  depends('knights:header');
   const civitaiUrl = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
   // Only a player has a career to restart, which the account menu offers.
   const player = locals.user
@@ -41,11 +66,12 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     userId: locals.user?.id ?? null,
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
-    conversionOpen: conversionEnabled(),
+    shopOpen: shopEnabled(),
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),
     badges: await rankBadgeUrls(db),
     recapUnseen: await recapUnseen(locals.user?.id),
+    headerStats: player !== undefined && locals.user ? await headerStats(locals.user.id) : null,
   };
 };

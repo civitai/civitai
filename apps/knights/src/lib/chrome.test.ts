@@ -142,7 +142,7 @@ describe('restartLosses', () => {
     expect(losses.map((l) => l.title)).toEqual([
       'Your rank',
       'Your level and experience',
-      'Gold you have not yet converted',
+      'Gold you have not yet spent',
     ]);
     expect(losses[1].detail).toBe('Level 41 and 640 XP, back to the start.');
     expect(losses[2].detail).toBe('3,200 earned and 500 still pending.');

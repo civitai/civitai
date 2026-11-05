@@ -7284,6 +7284,43 @@ export interface CreatorProgramPayoutReviewRun {
   error: string | null;
 }
 
+export interface KnightsShopItem {
+  id: string;
+  kind: string;
+  name: string;
+  description: string;
+  price: number;
+  buzz: number | null;
+  cosmeticId: number | null;
+  tier: string | null;
+  months: number | null;
+  minRank: string | null;
+  active: boolean;
+  rotating: boolean;
+  sortOrder: number;
+  createdAt: Date;
+  purchases?: KnightsShopPurchase[];
+}
+
+export interface KnightsShopPurchase {
+  id: number;
+  playerId: number;
+  requestKey: string;
+  externalKey: string;
+  itemId: string;
+  item?: KnightsShopItem;
+  kind: string;
+  gold: number;
+  grant: JsonValue;
+  status: string;
+  conversionId: number | null;
+  dealDay: Date | null;
+  attempts: number;
+  createdAt: Date;
+  lastAttemptAt: Date | null;
+  grantedAt: Date | null;
+}
+
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
 
 type Decimal = { valueOf(): string };

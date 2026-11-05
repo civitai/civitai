@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../global.css';
   import '../motion.css';
+  import { afterNavigate, invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
@@ -8,10 +9,18 @@
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
-  // Pages that already load the player's status (play, gold, ranks, judgments) hand it to the header through
-  // page.data, so the stats cost no query of their own; other pages get the plain header.
-  let status = $derived(page.data.status as PlayerStatus | undefined);
-  let streak = $derived(page.data.daily as { streak: number; shields: number; maxShields: number } | undefined);
+  // A page that loads the player's status (play keeps it live) hands it to the header through page.data; every other page
+  // gets the layout's copy, so the header is the same on each of them.
+  type Streak = { streak: number; shields: number; maxShields: number };
+  let status = $derived(
+    (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
+  );
+  let streak = $derived((page.data.daily as Streak | null | undefined) ?? data.headerStats?.daily ?? undefined);
+  // /play keeps its own live status for the header while it is open, so the layout's copy is as old as the visit. Leaving
+  // refreshes it for the pages that carry no status of their own.
+  afterNavigate(({ from }) => {
+    if (from?.route.id === '/play') void invalidate('knights:header');
+  });
   // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
   // The welcome screen is signed-out and brings its own chrome.
   let bare = $derived(page.route.id === '/welcome');
@@ -26,7 +35,7 @@
       player={data.player}
       userId={data.userId}
       civitaiUrl={data.civitaiUrl}
-      conversionOpen={data.conversionOpen}
+      shopOpen={data.shopOpen}
       isPlayer={data.isPlayer}
       {status}
       {streak}

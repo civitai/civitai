@@ -89,7 +89,7 @@ export function restartLosses(status: Standing) {
       detail: `Level ${status.level} and ${count(status.exp)} XP, back to the start.`,
     },
     {
-      title: 'Gold you have not yet converted',
+      title: 'Gold you have not yet spent',
       detail: `${count(status.goldEarned)} earned and ${count(status.goldPending)} still pending.`,
     },
   ];

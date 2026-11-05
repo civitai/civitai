@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely, type Selectable } from 'kysely';
+import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { BuzzRejectedError, type BuzzPort } from './buzz';
 import { CONVERSION, PENDING_CONVERSION_RETRY_AFTER_MS } from './config';
+import { spendableOf } from './balance';
 import { heldSql } from './held';
 
 type Conversion = Selectable<DB['KnightsGoldConversion']>;
@@ -45,9 +46,7 @@ export async function convertGold(
       .executeTakeFirst();
     if (open) return { conversion: open };
 
-    const buzzAmount = Math.floor(
-      Math.max(0, player.goldEarned - player.goldConverted) / CONVERSION.goldPerBuzz
-    );
+    const buzzAmount = Math.floor(spendableOf(player) / CONVERSION.goldPerBuzz);
     if (buzzAmount < CONVERSION.minBuzz) return { refused: 'below-minimum' };
     const gold = buzzAmount * CONVERSION.goldPerBuzz;
 
@@ -83,24 +82,68 @@ export async function markConversionPaid(
   transactionId: string | null,
   now: Date
 ) {
-  await db
-    .updateTable('KnightsGoldConversion')
+  // One transaction: a shop Buzz pack rides on a conversion and is granted exactly when the conversion is paid.
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('KnightsGoldConversion')
+      .set({
+        status: 'paid',
+        buzzTransactionId: sql<string | null>`COALESCE("buzzTransactionId", ${transactionId})`,
+        paidAt: sql<Date>`COALESCE("paidAt", ${utc(now)})`,
+      })
+      .where('id', '=', conversionId)
+      .where('status', 'in', ['pending', 'paid'])
+      .execute();
+    await trx
+      .updateTable('KnightsShopPurchase')
+      .set({ status: 'granted', grantedAt: sql<Date>`COALESCE("grantedAt", ${utc(now)})` })
+      .where('conversionId', '=', conversionId)
+      .where('status', '=', 'pending')
+      .execute();
+  });
+}
+
+/**
+ * Gives back gold a reservation took, in the caller's transaction (which holds the player's row lock). Gold reserved
+ * at or before a career reset's `startAt` was forfeited by it, so it is forfeited here too rather than given back; a
+ * tie at the clock's millisecond counts as before the reset. Returns whether it was forfeited.
+ */
+export async function releaseReservation(
+  trx: Transaction<DB>,
+  { playerId, gold, reservedAt }: { playerId: number; gold: number; reservedAt: Date }
+): Promise<boolean> {
+  const player = await trx
+    .selectFrom('NewOrderPlayer')
+    .select('startAt')
+    .where('userId', '=', playerId)
+    .executeTakeFirst();
+  const forfeited = player !== undefined && reservedAt <= player.startAt;
+  await trx
+    .updateTable('NewOrderPlayer')
     .set({
-      status: 'paid',
-      buzzTransactionId: sql<string | null>`COALESCE("buzzTransactionId", ${transactionId})`,
-      paidAt: sql<Date>`COALESCE("paidAt", ${utc(now)})`,
+      goldConverted: sql<number>`GREATEST(0, "goldConverted" - ${gold})`,
+      ...(forfeited ? { goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})` } : {}),
     })
-    .where('id', '=', conversionId)
-    .where('status', 'in', ['pending', 'paid'])
+    .where('userId', '=', playerId)
+    .execute();
+  return forfeited;
+}
+
+/** A failed shop purchase says whether its gold was forfeited, so a replay of it reports the same thing. */
+export async function markForfeited(trx: Transaction<DB>, purchaseId: number) {
+  await trx
+    .updateTable('KnightsShopPurchase')
+    .set({ grant: sql<never>`"grant" || '{"forfeited": true}'::jsonb` })
+    .where('id', '=', purchaseId)
     .execute();
 }
 
-/** Marks a pending conversion failed and gives its gold back, in one transaction. Gold reserved before a career reset was forfeited by it, so it is forfeited here too rather than given back; a tie at the clock's millisecond counts as before the reset. */
+/** See `releaseReservation` for what a career reset forfeits. */
 async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
-    const player = await trx
+    await trx
       .selectFrom('NewOrderPlayer')
-      .select('startAt')
+      .select('userId')
       .where('userId', '=', conversion.playerId)
       .forUpdate()
       .executeTakeFirst();
@@ -111,21 +154,24 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<b
       .where('status', '=', 'pending')
       .executeTakeFirst();
     if (Number(failed.numUpdatedRows) === 0) return false;
-    const forfeited = player !== undefined && conversion.createdAt <= player.startAt;
-    const gold = conversion.gold;
-    await trx
-      .updateTable('NewOrderPlayer')
-      .set({
-        goldConverted: sql<number>`GREATEST(0, "goldConverted" - ${gold})`,
-        ...(forfeited ? { goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})` } : {}),
-      })
-      .where('userId', '=', conversion.playerId)
-      .execute();
+    const purchase = await trx
+      .updateTable('KnightsShopPurchase')
+      .set({ status: 'failed' })
+      .where('conversionId', '=', conversion.id)
+      .where('status', '=', 'pending')
+      .returning('id')
+      .executeTakeFirst();
+    const forfeited = await releaseReservation(trx, {
+      playerId: conversion.playerId,
+      gold: conversion.gold,
+      reservedAt: conversion.createdAt,
+    });
+    if (forfeited && purchase) await markForfeited(trx, purchase.id);
     return forfeited;
   });
 }
 
-async function settleConversion(
+export async function settleConversion(
   db: Kysely<DB>,
   buzz: BuzzPort,
   conversion: Conversion,

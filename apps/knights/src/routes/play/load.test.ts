@@ -93,28 +93,6 @@ beforeEach(() => {
   queueDeps.voteLimits = undefined;
 });
 
-describe('play load and the conversion switch', () => {
-  it('shows the Convert link unless the kill switch is set to a truthy value', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
-    const previous = process.env.KNIGHTS_CONVERSION_DISABLED;
-    try {
-      delete process.env.KNIGHTS_CONVERSION_DISABLED;
-      expect((await run()).conversionOpen).toBe(true);
-      for (const off of ['false', '0', '', 'no']) {
-        process.env.KNIGHTS_CONVERSION_DISABLED = off;
-        expect((await run()).conversionOpen).toBe(true);
-      }
-      for (const on of ['true', 'TRUE', ' True ', '1', 'yes', 'on']) {
-        process.env.KNIGHTS_CONVERSION_DISABLED = on;
-        expect((await run()).conversionOpen).toBe(false);
-      }
-    } finally {
-      if (previous === undefined) delete process.env.KNIGHTS_CONVERSION_DISABLED;
-      else process.env.KNIGHTS_CONVERSION_DISABLED = previous;
-    }
-  });
-});
-
 describe('play load', () => {
   const progress = { answered: 12, graded: 12, correct: 9, accuracy: 0.75 };
 

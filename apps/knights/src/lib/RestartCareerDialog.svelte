@@ -78,7 +78,7 @@
         {/each}
       </ul>
     {/if}
-    <p class="kept"><Icon name="shield-check" size={18} />Gold you have already converted stays with you.</p>
+    <p class="kept"><Icon name="shield-check" size={18} />Gold you have already spent or converted stays with you.</p>
     {#if message}
       <p class="notice" role="alert">{message}</p>
     {/if}
