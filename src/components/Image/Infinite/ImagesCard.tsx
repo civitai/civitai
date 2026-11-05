@@ -380,7 +380,6 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
 export const ImagesCardMemoized = memo(ImagesCard);
 
-// Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
 /**
  * Reactions that wrap onto the bar's clipped line can't be seen, so they must not take focus or
  * be read out either. Re-checked whenever the bar or its buttons change size or number.
@@ -423,6 +422,7 @@ function useInertClippedReactions() {
   return setRow;
 }
 
+// Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
 function ImageReactions({
   image,
   readonly,
