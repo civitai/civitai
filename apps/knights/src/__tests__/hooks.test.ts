@@ -184,7 +184,7 @@ describe('welcome screen', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('renders the welcome page without a sign-in URL when the session needs re-auth at /', async () => {
+  it('renders the welcome page with the re-auth URL as its sign-in link when the session needs re-auth at /', async () => {
     guardCheck.mockResolvedValue({ status: 'reauth', authorize: 'https://auth.civitai.com/x' });
     const url = new URL('https://knights.civitai.com/');
     const locals: Record<string, unknown> = {};
@@ -195,7 +195,7 @@ describe('welcome screen', () => {
     });
     expect(response.status).toBe(200);
     expect(resolve).toHaveBeenCalled();
-    expect(locals.signInUrl).toBeUndefined();
+    expect(locals.signInUrl).toBe('https://auth.civitai.com/x');
     expect(locals.user).toBeUndefined();
     expect(accessFor).not.toHaveBeenCalled();
   });

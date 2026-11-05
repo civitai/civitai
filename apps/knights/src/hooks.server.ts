@@ -49,7 +49,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   // A signed-in user must fall through to the checks below (ban, access); only signed-out visitors get the page.
   if (onWelcome && (result.status === 'login' || result.status === 'reauth')) {
-    if (result.status === 'login') event.locals.signInUrl = result.redirect;
+    event.locals.signInUrl = result.status === 'login' ? result.redirect : result.authorize;
     return resolve(event);
   }
 
