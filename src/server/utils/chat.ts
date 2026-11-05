@@ -88,37 +88,65 @@ const inboxUnreadSql = (userId: number) => Prisma.sql`
   group by memb."chatId"
 `;
 
+/** The badge shows a bounded number, so a Request stops counting here. */
+const REQUEST_UNREAD_CAP = 99;
+
 const requestUnreadSql = (userId: number) => Prisma.sql`
   select memb."chatId" as "chatId",
          unread.cnt    as "cnt"
   from "ChatMember" memb
          cross join lateral (
-    select count(*)::integer as cnt
-    from "ChatMessage" msg
-    where msg."chatId" = memb."chatId"
-      and msg.id > coalesce(memb."lastViewedMessageId", 0)
-      and (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt")
-      and msg."deletedAt" is null
-      and msg."userId" not in (${userId}, -1)
-      and not exists (
+    -- authors, not messages, get the block and ban checks: per message they were most of the cost
+    select least(coalesce(sum(byAuthor.cnt), 0), ${REQUEST_UNREAD_CAP})::integer as cnt
+    from (
+      select msg."userId" as "authorId", count(*) as cnt
+      from "ChatMessage" msg
+      where msg."chatId" = memb."chatId"
+        and msg.id > coalesce(memb."lastViewedMessageId", 0)
+        and (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt")
+        and msg."deletedAt" is null
+        and msg."userId" not in (${userId}, -1)
+      group by msg."userId"
+    ) byAuthor
+    where not exists (
         select 1 from "UserEngagement" ue
         where ue.type = 'Block'
-          and ((ue."userId" = ${userId} and ue."targetUserId" = msg."userId")
-            or (ue."userId" = msg."userId" and ue."targetUserId" = ${userId}))
+          and ((ue."userId" = ${userId} and ue."targetUserId" = byAuthor."authorId")
+            or (ue."userId" = byAuthor."authorId" and ue."targetUserId" = ${userId}))
       )
       and not exists (
-        select 1 from "User" author where author.id = msg."userId" and author."bannedAt" is not null
-      )
-      and not exists (
-        select 1 from "ChatReport" cr
-                 join "Report" r on r.id = cr."reportId"
-        where cr."chatId" = memb."chatId"
-          and (r."userId" = ${userId} or ${userId} = any(r."alsoReportedBy"))
+        select 1 from "User" author
+        where author.id = byAuthor."authorId" and author."bannedAt" is not null
       )
     ) unread
   where memb."userId" = ${userId}
     and memb.status in (${Prisma.raw(inboxStatusLiterals)})
     and memb."notifyLevel" <> 'None'
     and memb."filteredAt" is not null
+    and not exists (
+      select 1 from "ChatReport" cr
+               join "Report" r on r.id = cr."reportId"
+      where cr."chatId" = memb."chatId"
+        and (r."userId" = ${userId} or ${userId} = any(r."alsoReportedBy"))
+    )
     and unread.cnt > 0
+`;
+
+/**
+ * "Mark all as read" covers every membership the badge counts, Requests
+ * included, so the badge can always be cleared in one action.
+ */
+export const markAllReadSql = (userId: number) => Prisma.sql`
+  update "ChatMember"
+  set "lastViewedMessageId" = data.last_msg
+  from (select *
+        from (select cm.id, cm."lastViewedMessageId" as last_viewed, max(msg.id) as last_msg
+              from "ChatMember" cm
+                     join "ChatMessage" msg on cm."chatId" = msg."chatId"
+              where cm."userId" = ${userId}
+                and cm.status in (${Prisma.raw(inboxStatusLiterals)})
+              group by 1, 2) d
+        where d.last_viewed is distinct from d.last_msg) as data
+  where "ChatMember".id = data.id
+  returning "chatId", "lastViewedMessageId"
 `;

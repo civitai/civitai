@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { unreadCountSql } from '~/server/utils/chat';
+import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
 
 /**
  * The header chat badge counts unread messages in the inbox AND in pending
@@ -126,6 +126,17 @@ describe('the header chat badge', () => {
     expect(await badge()).toBe(0);
   });
 
+  it('in a group Request, counts the other authors but not the one I blocked', async () => {
+    await chat(10, SENDER, { status: 'Invited', filtered: true });
+    await message(10, BLOCKED);
+    await message(10, BLOCKED);
+    await db.query(
+      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES ($1, $2, 'Block')`,
+      [ME, BLOCKED]
+    );
+    expect(await badge()).toBe(1);
+  });
+
   it('still counts a Request from someone I only follow', async () => {
     await chat(10, SENDER, { status: 'Invited', filtered: true });
     await db.query(
@@ -228,4 +239,26 @@ describe('system rows (user -1)', () => {
     );
     expect(await badge()).toBe(0);
   });
+});
+
+describe('mark all as read', () => {
+  it('clears every conversation the badge counts, Requests included', async () => {
+    await chat(10, SENDER);
+    await chat(11, SENDER, { status: 'Invited' });
+    await chat(12, SENDER, { status: 'Invited', filtered: true });
+    await chat(13, SENDER, { filtered: true });
+    expect(await badge()).toBe(4);
+
+    const sql = markAllReadSql(ME);
+    await db.query(sql.text, sql.values);
+    expect(await badge()).toBe(0);
+  });
+});
+
+it('a Request stops counting at 99 unread', async () => {
+  await chat(10, SENDER, { status: 'Invited', filtered: true });
+  await db.exec(
+    `INSERT INTO "ChatMessage" ("chatId", "userId") SELECT 10, ${SENDER} FROM generate_series(1, 120)`
+  );
+  expect(await badge()).toBe(99);
 });
