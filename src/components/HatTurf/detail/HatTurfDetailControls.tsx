@@ -179,7 +179,7 @@ function HatButton({ imageId }: { imageId: number }) {
   );
 }
 
-/** The feed's badge, on the picture's top-left corner; a tap opens the Hat Turf panel. */
+/** The feed's badge, in the picture's action row after Tip; a tap opens the Hat Turf panel. */
 export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
@@ -208,7 +208,7 @@ export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
           onClick={() => setOpen(!open)}
         >
           {summary ? (
-            <HatTurfBadge imageId={imageId} />
+            <HatTurfBadge imageId={imageId} className={classes.rowBadge} />
           ) : (
             <span className={classes.badgeEmpty}>
               <HatIcon size={18} />

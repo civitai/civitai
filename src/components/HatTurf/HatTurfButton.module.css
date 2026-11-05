@@ -9,8 +9,9 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 26px;
+  width: 24px;
+  /* The reaction chips' height: any taller and the card's tip row grows. */
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -75,13 +76,13 @@
 }
 
 /*
- * A bigger tap target than the 16px it draws. Kept to a 24px circle: any wider and it reaches the
+ * A bigger tap target than the 16px it draws. Kept to a 22px circle: any wider and it reaches the
  * button's centre, which must stay the button's.
  */
 .gear::before {
   content: '';
   position: absolute;
-  inset: -4px;
+  inset: -3px;
   border-radius: 50%;
 }
 
