@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely, type Selectable } from 'kysely';
+import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { BuzzRejectedError, type BuzzPort } from './buzz';
@@ -93,14 +93,47 @@ export async function markConversionPaid(
     .where('id', '=', conversionId)
     .where('status', 'in', ['pending', 'paid'])
     .execute();
+  // A shop Buzz pack rides on a conversion; its purchase is granted when the conversion is paid.
+  await db
+    .updateTable('KnightsShopPurchase')
+    .set({ status: 'granted', grantedAt: sql<Date>`COALESCE("grantedAt", ${utc(now)})` })
+    .where('conversionId', '=', conversionId)
+    .where('status', '=', 'pending')
+    .execute();
 }
 
-/** Marks a pending conversion failed and gives its gold back, in one transaction. Gold reserved before a career reset was forfeited by it, so it is forfeited here too rather than given back; a tie at the clock's millisecond counts as before the reset. */
+/**
+ * Gives back gold a reservation took, in the caller's transaction (which holds the player's row lock). Gold reserved
+ * at or before a career reset's `startAt` was forfeited by it, so it is forfeited here too rather than given back; a
+ * tie at the clock's millisecond counts as before the reset. Returns whether it was forfeited.
+ */
+export async function releaseReservation(
+  trx: Transaction<DB>,
+  { playerId, gold, reservedAt }: { playerId: number; gold: number; reservedAt: Date }
+): Promise<boolean> {
+  const player = await trx
+    .selectFrom('NewOrderPlayer')
+    .select('startAt')
+    .where('userId', '=', playerId)
+    .executeTakeFirst();
+  const forfeited = player !== undefined && reservedAt <= player.startAt;
+  await trx
+    .updateTable('NewOrderPlayer')
+    .set({
+      goldConverted: sql<number>`GREATEST(0, "goldConverted" - ${gold})`,
+      ...(forfeited ? { goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})` } : {}),
+    })
+    .where('userId', '=', playerId)
+    .execute();
+  return forfeited;
+}
+
+/** Marks a pending conversion failed and gives its gold back, in one transaction; see `releaseReservation` for what a career reset forfeits. */
 async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
-    const player = await trx
+    await trx
       .selectFrom('NewOrderPlayer')
-      .select('startAt')
+      .select('userId')
       .where('userId', '=', conversion.playerId)
       .forUpdate()
       .executeTakeFirst();
@@ -111,21 +144,21 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<b
       .where('status', '=', 'pending')
       .executeTakeFirst();
     if (Number(failed.numUpdatedRows) === 0) return false;
-    const forfeited = player !== undefined && conversion.createdAt <= player.startAt;
-    const gold = conversion.gold;
     await trx
-      .updateTable('NewOrderPlayer')
-      .set({
-        goldConverted: sql<number>`GREATEST(0, "goldConverted" - ${gold})`,
-        ...(forfeited ? { goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})` } : {}),
-      })
-      .where('userId', '=', conversion.playerId)
+      .updateTable('KnightsShopPurchase')
+      .set({ status: 'failed' })
+      .where('conversionId', '=', conversion.id)
+      .where('status', '=', 'pending')
       .execute();
-    return forfeited;
+    return releaseReservation(trx, {
+      playerId: conversion.playerId,
+      gold: conversion.gold,
+      reservedAt: conversion.createdAt,
+    });
   });
 }
 
-async function settleConversion(
+export async function settleConversion(
   db: Kysely<DB>,
   buzz: BuzzPort,
   conversion: Conversion,

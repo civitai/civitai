@@ -11487,3 +11487,46 @@ model CreatorProgramPayoutReviewRun {
 
   @@index([period, startedAt])
 }
+
+/// One thing the Knights gold shop sells. `kind` decides which reference columns apply (see the migration's CHECK): a Buzz pack (`buzz`), a cosmetic (`cosmeticId`) or membership time (`tier` + `months`). Prices and the catalog live here, so changing them needs no deploy. `rotating` items take part in the daily rotation; the others are always on sale. `minRank` gates the purchase to that rank or above.
+model KnightsShopItem {
+  id          String   @id
+  kind        String // buzz_pack | cosmetic | membership
+  name        String
+  description String   @default("")
+  price       Int
+  buzz        Int?
+  cosmeticId  Int?
+  tier        String? // bronze | silver | gold
+  months      Int?
+  minRank     String?
+  active      Boolean  @default(true)
+  rotating    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  purchases KnightsShopPurchase[]
+}
+
+/// The shop's gold ledger. A purchase reserves its gold in `NewOrderPlayer.goldConverted` in the same transaction that writes the row (`pending`), and is `granted` once the Buzz, cosmetic or membership is delivered, or `failed` when it was refused for good and the gold is released. `requestKey` is the buyer's idempotency key (unique per player); `externalKey` is the server's key for the downstream grant (UserCosmetic claimKey, membership grant key). A Buzz pack points at its `KnightsGoldConversion` through `conversionId`. `dealDay` is set when the deal price was paid.
+model KnightsShopPurchase {
+  id            Int             @id @default(autoincrement())
+  playerId      Int
+  requestKey    String
+  externalKey   String          @unique
+  itemId        String
+  item          KnightsShopItem @relation(fields: [itemId], references: [id])
+  kind          String
+  gold          Int
+  grant         Json
+  status        String          @default("pending") // pending | granted | failed
+  conversionId  Int?
+  dealDay       DateTime?       @db.Date
+  attempts      Int             @default(0)
+  createdAt     DateTime        @default(now())
+  lastAttemptAt DateTime?
+  grantedAt     DateTime?
+
+  @@unique([playerId, requestKey])
+  @@index([playerId, createdAt])
+}

@@ -8,10 +8,12 @@ export type GoldBalance = {
   convertible: number;
   /** Everything earned and not yet converted, while the player is held. */
   frozen: number;
-  /** Gold reserved by a conversion Buzz has not confirmed yet. */
+  /** Gold reserved by a conversion Buzz, or a membership purchase the main app, has not confirmed yet. */
   onItsWay: number;
   /** Gold Buzz has paid for. */
   converted: number;
+  /** Gold spent in the shop on cosmetics and membership. */
+  spent: number;
   held: boolean;
   goldPerBuzz: number;
   minBuzz: number;
@@ -24,6 +26,7 @@ type Row = {
   goldEarned: number;
   goldConverted: number;
   goldReserved: number;
+  goldSpent?: number;
 };
 
 /** `goldConverted` counts reservations too, so convertible and frozen already exclude gold that is on its way. */
@@ -36,7 +39,8 @@ export function balanceOf(row: Row, held: boolean): GoldBalance {
     convertible,
     frozen: held ? unconverted : 0,
     onItsWay: row.goldReserved,
-    converted: row.goldConverted - row.goldReserved,
+    converted: row.goldConverted - row.goldReserved - (row.goldSpent ?? 0),
+    spent: row.goldSpent ?? 0,
     held,
     goldPerBuzz: CONVERSION.goldPerBuzz,
     minBuzz: CONVERSION.minBuzz,
@@ -51,8 +55,12 @@ export async function getGoldBalance(db: Kysely<DB>, playerId: number): Promise<
       'p.goldPending',
       'p.goldEarned',
       'p.goldConverted',
-      sql<number>`(SELECT COALESCE(sum(c."gold"), 0) FROM "KnightsGoldConversion" c WHERE c."playerId" = p."userId" AND c."status" = 'pending')::int`.as(
+      sql<number>`((SELECT COALESCE(sum(c."gold"), 0) FROM "KnightsGoldConversion" c WHERE c."playerId" = p."userId" AND c."status" = 'pending')
+        + (SELECT COALESCE(sum(s."gold"), 0) FROM "KnightsShopPurchase" s WHERE s."playerId" = p."userId" AND s."status" = 'pending' AND s."kind" <> 'buzz_pack'))::int`.as(
         'goldReserved'
+      ),
+      sql<number>`(SELECT COALESCE(sum(s."gold"), 0) FROM "KnightsShopPurchase" s WHERE s."playerId" = p."userId" AND s."status" = 'granted' AND s."kind" <> 'buzz_pack')::int`.as(
+        'goldSpent'
       ),
       heldSql('p.userId').as('held'),
     ])

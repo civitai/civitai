@@ -3826,6 +3826,39 @@ export type KnightsReferenceImage = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type KnightsShopItem = {
+  id: string;
+  kind: string;
+  name: string;
+  description: Generated<string>;
+  price: number;
+  buzz: number | null;
+  cosmeticId: number | null;
+  tier: string | null;
+  months: number | null;
+  minRank: string | null;
+  active: Generated<boolean>;
+  rotating: Generated<boolean>;
+  sortOrder: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
+export type KnightsShopPurchase = {
+  id: Generated<number>;
+  playerId: number;
+  requestKey: string;
+  externalKey: string;
+  itemId: string;
+  kind: string;
+  gold: number;
+  grant: unknown;
+  status: Generated<string>;
+  conversionId: number | null;
+  dealDay: Timestamp | null;
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  lastAttemptAt: Timestamp | null;
+  grantedAt: Timestamp | null;
+};
 export type KnightsVote = {
   itemId: number;
   playerId: number;
@@ -6683,6 +6716,8 @@ export type DB = {
   KnightsQuestion: KnightsQuestion;
   KnightsQueueItem: KnightsQueueItem;
   KnightsReferenceImage: KnightsReferenceImage;
+  KnightsShopItem: KnightsShopItem;
+  KnightsShopPurchase: KnightsShopPurchase;
   KnightsVote: KnightsVote;
   KnightsYesNoReference: KnightsYesNoReference;
   Leaderboard: Leaderboard;

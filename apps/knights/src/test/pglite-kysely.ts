@@ -37,6 +37,7 @@ const MIGRATIONS = [
   '20270101120000_knights_v2_recap_opt_out',
   '20270102120000_knights_v2_player_day_day_idx',
   '20270103120000_knights_v2_acolyte_level_gold',
+  '20270104120000_knights_v2_shop',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -81,6 +82,7 @@ CREATE TABLE "NewOrderPlayer" (
 CREATE TABLE "Cosmetic" (
   "id" INTEGER PRIMARY KEY,
   "name" TEXT NOT NULL DEFAULT '',
+  "type" TEXT NOT NULL DEFAULT 'Badge',
   "source" TEXT NOT NULL,
   "data" JSONB
 );
@@ -89,6 +91,8 @@ CREATE TABLE "UserCosmetic" (
   "cosmeticId" INTEGER NOT NULL REFERENCES "Cosmetic"("id") ON DELETE CASCADE,
   "obtainedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "claimKey" TEXT NOT NULL DEFAULT 'claimed',
+  "equippedAt" TIMESTAMP(3),
+  "remaining" INTEGER,
   PRIMARY KEY ("userId", "cosmeticId", "claimKey")
 );
 CREATE TABLE "User" (
@@ -213,7 +217,7 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
-function dialect(pg: PGlite, transactions: { open: number }): Dialect {
+function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
@@ -225,9 +229,21 @@ function dialect(pg: PGlite, transactions: { open: number }): Dialect {
     },
   };
   const noop = async () => undefined;
+  // One PGlite connection cannot interleave two transactions. `serialize` hands it out to one holder at a time, the way
+  // a row lock makes two writers of the same player take turns, so a test can run two purchases at once.
+  let tail: Promise<void> = Promise.resolve();
+  let release: () => void = () => undefined;
   const driver: Driver = {
     init: noop,
-    acquireConnection: async () => connection,
+    acquireConnection: async () => {
+      if (!serialize) return connection;
+      const previous = tail;
+      let unlock: () => void = () => undefined;
+      tail = new Promise<void>((resolve) => (unlock = resolve));
+      await previous;
+      release = unlock;
+      return connection;
+    },
     beginTransaction: async (conn) => {
       await conn.executeQuery(CompiledQuery.raw('begin'));
       transactions.open++;
@@ -240,7 +256,9 @@ function dialect(pg: PGlite, transactions: { open: number }): Dialect {
       await conn.executeQuery(CompiledQuery.raw('rollback'));
       transactions.open--;
     },
-    releaseConnection: noop,
+    releaseConnection: async () => {
+      if (serialize) release();
+    },
     destroy: noop,
   };
   return {
@@ -251,7 +269,7 @@ function dialect(pg: PGlite, transactions: { open: number }): Dialect {
   };
 }
 
-export async function createQueueDb(): Promise<{
+export async function createQueueDb({ serialize = false }: { serialize?: boolean } = {}): Promise<{
   pg: PGlite;
   db: Kysely<DB>;
   transactions: { open: () => number };
@@ -262,7 +280,7 @@ export async function createQueueDb(): Promise<{
   const state = { open: 0 };
   return {
     pg,
-    db: new Kysely<DB>({ dialect: dialect(pg, state) }),
+    db: new Kysely<DB>({ dialect: dialect(pg, state, serialize) }),
     transactions: { open: () => state.open },
   };
 }
