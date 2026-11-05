@@ -11,7 +11,7 @@ export type ArchiveState =
   | 'not-archived'
   | 'unsent';
 
-/** The archiver's `JobQueue.data` for one user (csam-archiver `src/queue/jobQueue.ts`). */
+/** The archiver's `JobQueue.data` for one user. */
 export type ArchiveJobData = {
   reportIds?: number[];
   claimedAt?: string;
