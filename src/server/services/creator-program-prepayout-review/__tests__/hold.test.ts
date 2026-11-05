@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as NotificationService from '~/server/services/notification.service';
 import { OnboardingSteps } from '~/server/common/enums';
-import { decidePayoutReview, getSettlementHolds } from '../hold';
+import { decidePayoutReview, getSettlementHolds, hasPayoutHold, openPayoutHold } from '../hold';
+import { installPayoutReviewTable } from './payout-review-fake';
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: vi.fn().mockResolvedValue(undefined),
+}));
 
 const reviews = dbMock.dbWrite.creatorProgramPayoutReview;
 
@@ -164,5 +171,64 @@ describe('decidePayoutReview', () => {
     reviews.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(decide('clear')).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+});
+
+describe('openPayoutHold', () => {
+  let table: ReturnType<typeof installPayoutReviewTable>;
+  const now = new Date('2026-11-20T10:00:00Z');
+  const open = () =>
+    openPayoutHold(
+      { userId: 9, ground: 'chargeback', reason: 'disputed sales', askRef: 'card-9' },
+      'user:5',
+      now
+    );
+
+  beforeEach(() => {
+    table = installPayoutReviewTable();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: 9 });
+  });
+  afterEach(() => table.uninstall());
+
+  it('holds a creator the detector never flagged, recording ground, reason and who', async () => {
+    const hold = await open();
+
+    expect(hold).toMatchObject({ period: '2026-11', status: 'open' });
+    expect(await hasPayoutHold(9)).toBe(true);
+    expect(table.rows[0].decisions).toEqual([
+      expect.objectContaining({
+        action: 'opened',
+        ground: 'chargeback',
+        note: 'disputed sales',
+        by: 'user:5',
+        askRef: 'card-9',
+      }),
+    ]);
+  });
+
+  it('refuses a second hold while one stands', async () => {
+    await open();
+    await expect(open()).rejects.toThrow('already has a payout hold');
+  });
+
+  it('reopens a review cleared earlier in the same period', async () => {
+    table.rows.push(
+      review({ period: '2026-11', status: 'cleared', hold: false, signals: ['x'], version: 4 })
+    );
+
+    const hold = await open();
+
+    expect(hold).toMatchObject({ id: 41, version: 5 });
+    expect(table.rows[0]).toMatchObject({
+      status: 'open',
+      hold: true,
+      signals: ['x', 'manual:chargeback'],
+    });
+    expect(await hasPayoutHold(9)).toBe(true);
+  });
+
+  it('refuses an unknown user', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    await expect(open()).rejects.toThrow('No user 9');
   });
 });

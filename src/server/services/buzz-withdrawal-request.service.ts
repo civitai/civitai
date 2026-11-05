@@ -6,6 +6,7 @@ import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
+import { assertNoPayoutHold } from '~/server/services/creator-program-prepayout-review/hold';
 import {
   payToStripeConnectAccount,
   payToTipaltiAccount,
@@ -45,6 +46,7 @@ CreateBuzzWithdrawalRequestSchema & {
   if (provider === UserPaymentConfigurationProvider.Stripe) {
     throw throwBadRequestError('We have disabled Stripe payments for the time being.');
   }
+  await assertNoPayoutHold(userId);
 
   const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
     where: { userId },
