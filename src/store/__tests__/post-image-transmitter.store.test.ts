@@ -20,8 +20,6 @@ describe('orchestratorMediaTransmitter.getFiles', () => {
     h.pushError.mockReset();
   });
 
-  // Feedback #143: one rejected fetch used to reject the whole Promise.all, so the post
-  // editor opened with no files and no message.
   it('keeps the files that loaded when one fetch fails, and counts the failure', async () => {
     h.fetchBlob.mockImplementation(async (url: string) => {
       if (url === BAD_URL) throw new TypeError('Load failed');
