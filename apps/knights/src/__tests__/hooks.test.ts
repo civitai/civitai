@@ -164,6 +164,41 @@ describe('welcome screen', () => {
     expect(locals.signInUrl).toBeUndefined();
     expect(resolve).toHaveBeenCalled();
   });
+
+  it('shows a signed-in user the rollout is closed to the not-open-yet page at /, not the welcome page', async () => {
+    accessFor.mockResolvedValue('closed');
+    guardCheck.mockResolvedValue(signedIn({ id: 7 }));
+    const { response, resolve } = await run('/');
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain('not yet open');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('shuts a banned signed-in user out of / with the closed page', async () => {
+    accessFor.mockResolvedValue('allow');
+    getStanding.mockResolvedValue({ banned: true, muted: false });
+    guardCheck.mockResolvedValue(signedIn({ id: 7, username: 'sir' }));
+    const { response, resolve } = await run('/');
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain("Your account can't enter the Order.");
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('renders the welcome page without a sign-in URL when the session needs re-auth at /', async () => {
+    guardCheck.mockResolvedValue({ status: 'reauth', authorize: 'https://auth.civitai.com/x' });
+    const url = new URL('https://knights.civitai.com/');
+    const locals: Record<string, unknown> = {};
+    const resolve = vi.fn(async () => new Response('welcome'));
+    const response = await (handle as unknown as (arg: unknown) => Promise<Response>)({
+      event: { url, request: page(url), locals, route: { id: null } },
+      resolve,
+    });
+    expect(response.status).toBe(200);
+    expect(resolve).toHaveBeenCalled();
+    expect(locals.signInUrl).toBeUndefined();
+    expect(locals.user).toBeUndefined();
+    expect(accessFor).not.toHaveBeenCalled();
+  });
 });
 
 describe('banned and muted accounts', () => {
