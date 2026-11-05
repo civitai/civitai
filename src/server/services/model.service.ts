@@ -3810,6 +3810,9 @@ export const upsertModel = async (
       sfwName: storedSfwName,
       sfwDescription:
         data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      name: data.name ?? beforeUpdate?.name ?? '',
+      description: data.description !== undefined ? data.description : beforeUpdate?.description,
+      modelId: id,
       userId,
     });
   if (coverChanged) {

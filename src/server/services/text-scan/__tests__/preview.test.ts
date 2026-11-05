@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 
-const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
+const { mockSubmitWorkflow, mockLogToAxiom } = vi.hoisted(() => ({
+  mockSubmitWorkflow: vi.fn(),
+  mockLogToAxiom: vi.fn(),
+}));
+
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 // The package's ESM build can't be loaded by `importOriginal` here; every suite fakes it whole.
 vi.mock('@civitai/orchestration-client', () => ({
@@ -24,7 +29,8 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   })),
 }));
 
-import { previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import { getActiveTextScanPrompts } from '~/server/services/text-scan/prompt';
 
 const reply = (content: unknown, status = 'succeeded') => ({
   data: {
@@ -78,6 +84,37 @@ describe('previewTextScanNsfw', () => {
     mockSubmitWorkflow.mockResolvedValueOnce(reply('not json at all'));
     expect(await previewTextScanNsfw({ fields, waitSeconds: 10 })).toEqual({
       status: 'unavailable',
+    });
+  });
+});
+
+describe('previewComFaceIntent', () => {
+  beforeEach(() => {
+    mockSubmitWorkflow.mockReset();
+    mockLogToAxiom.mockReset();
+  });
+
+  it('logs a missing prompt row and reports unavailable without submitting', async () => {
+    await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
+      status: 'unavailable',
+    });
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'model-com-face-intent prompt missing' })
+    );
+  });
+
+  it("returns the label's verdict when its prompt row exists", async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValueOnce({
+      base: { id: 1, key: 'base', content: 'BASE PROMPT' },
+      'label:model-com-face-intent': { id: 3, key: 'label:model-com-face-intent', content: 'STUB' },
+    });
+    mockSubmitWorkflow.mockResolvedValue(
+      reply({ 'model-com-face-intent': { detected: true, reason: 'stub reason' } })
+    );
+    await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
+      status: 'ok',
+      output: { detected: true, reason: 'stub reason' },
     });
   });
 });

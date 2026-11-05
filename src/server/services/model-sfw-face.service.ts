@@ -10,7 +10,7 @@ import {
 } from '~/server/services/hot-reads-7.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
@@ -111,16 +111,66 @@ const fieldLabels: Record<SfwFaceCheckField, string> = {
   versions: 'version names and trigger words',
 };
 
-/** The save-time gate: a .com face is stored only once its own text passes the check. */
+export const COM_FACE_REFUSED_MESSAGE = "We can't make this model safe for civitai.com.";
+export const COM_FACE_CHECK_UNAVAILABLE_MESSAGE = "We couldn't check this right now, try again.";
+
+/**
+ * Refuses a .com face for a model whose own listing (its .red title, description and trigger words)
+ * the intent check flags. Fails closed: no verdict is a refusal.
+ */
+export async function assertComFaceAllowed({
+  name,
+  description,
+  modelId,
+  userId,
+}: {
+  name: string;
+  description?: string | null;
+  modelId?: number;
+  userId: number;
+}) {
+  const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
+  const text = removeTags(description ?? '').trim();
+  const fields: TextScanField[] = [
+    { heading: 'Name', text: name },
+    ...(text ? [{ heading: 'Description', text }] : []),
+    ...(triggerWords.length ? [{ heading: 'Trained words', text: triggerWords.join(', ') }] : []),
+  ];
+  const verdict = await previewComFaceIntent({
+    fields,
+    waitSeconds: SFW_FACE_CHECK_WAIT_SECONDS,
+  }).catch((error) => {
+    logToAxiom({
+      type: 'error',
+      name: 'model-com-face-intent',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return { status: 'unavailable' as const };
+  });
+  if (verdict.status !== 'ok') throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
+  if (verdict.output.detected) throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
+}
+
+/**
+ * The save-time gate: a .com face is stored only once its own text passes the check and the
+ * model's listing passes the intent check.
+ */
 export async function assertSfwFaceSafe({
   sfwName,
   sfwDescription,
+  name,
+  description,
+  modelId,
   userId,
 }: {
   sfwName: string;
   sfwDescription?: string | null;
+  name: string;
+  description?: string | null;
+  modelId?: number;
   userId: number;
 }) {
+  await assertComFaceAllowed({ name, description, modelId, userId });
   const verdicts = await checkSfwFace({ sfwName, sfwDescription, userId });
   const entries = Object.entries(verdicts) as [SfwFaceCheckField, SfwFaceVerdict][];
 
@@ -177,6 +227,7 @@ export async function draftSfwFace({
   modelId?: number;
   userId: number;
 }) {
+  await assertComFaceAllowed({ name, description, modelId, userId });
   const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
   const source = JSON.stringify({ title: name, description: description ?? '', triggerWords });
   let draft = await requestDraft([{ role: 'user', content: source }], userId);
