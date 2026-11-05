@@ -4257,20 +4257,36 @@ async function getChosenStorylineImages(
     imageId ? found.get(key(storylineId, imageId)) ?? null : null;
 }
 
-/** Deepest offset the most-chapters order pages to. */
+/** Deepest offset the offset-paged orders (all but newest) page to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine';
-export type StorylineFeedSort = 'newest' | 'mostChapters';
+export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine' | 'participated';
+export type StorylineFeedSort = 'newest' | 'mostChapters' | 'recentlyUpdated';
 
 /**
- * Storylines a reader may open, newest or with most chapters first. Hidden ones and stories
- * outside the reader's browsing level are left out, judged as everywhere else (see
- * `isStorylineHidden`, `isStorylineOutsideLevel`).
+ * When storyline `st` last gained a chapter readers are shown: approved (a chapter row exists only
+ * once its placement is), not removed (`isStorylineChapterRemoved`) and its post published. A
+ * scheduled chapter counts from when it goes out. Read for every listed storyline, every request:
+ * a stored `Storyline."lastChapterAt"` replaces it once the storyline count grows (follow-up filed).
+ */
+const storylineLastChapterAtSql = Prisma.sql`(
+  SELECT MAX(GREATEST(lc."createdAt", lp."publishedAt"))
+  FROM "StorylineChapter" lc
+  JOIN "Post" lp ON lp.id = lc."postId"
+  JOIN "User" lu ON lu.id = lp."userId"
+  WHERE lc."storylineId" = st.id AND lc."removedAt" IS NULL AND lp."tosViolation" = false
+    AND lp."publishedAt" <= now() AND lu."bannedAt" IS NULL AND lu."deletedAt" IS NULL
+)`;
+
+/**
+ * Storylines a reader may open, newest, most recently updated or with most chapters first. Hidden
+ * ones and stories outside the reader's browsing level are left out, judged as everywhere else
+ * (see `isStorylineHidden`, `isStorylineOutsideLevel`).
  *
  * "open" means accepting continuations from this reader: not Complete, the placement layer's
  * mode (the storyline's, else its owner's, else 'review') not 'off', and the reader among those
- * it takes them from.
+ * it takes them from. "participated" is the storylines the reader takes part in
+ * (`storylineParticipantSql`), an accepted collaborator with no chapter yet included.
  */
 export async function getStorylinesInfinite({
   filter,
@@ -4283,7 +4299,7 @@ export async function getStorylinesInfinite({
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
-  /** The last id seen when newest first; an offset when by most chapters. */
+  /** The last id seen when newest first; an offset otherwise. */
   cursor?: number;
   limit: number;
   viewer: Viewer;
@@ -4311,6 +4327,8 @@ export async function getStorylinesInfinite({
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
   if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
+  if (filter === 'participated')
+    where.push(storylineParticipantSql(Prisma.sql`${viewerId}`, Prisma.sql`st.id`));
   if (userId) where.push(Prisma.sql`st."userId" = ${userId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
@@ -4324,13 +4342,17 @@ export async function getStorylinesInfinite({
     )}
     ))`);
   }
-  // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
-  // because its order depends on counts computed per storyline.
+  // Newest pages by id (stable while storylines are added); the others by offset, capped,
+  // because their order depends on values computed per storyline.
   if (sort === 'newest' && cursor) where.push(Prisma.sql`st.id < ${cursor}`);
-  const offset = sort === 'mostChapters' ? Math.min(cursor, STORYLINE_FEED_MAX_OFFSET) : 0;
+  const offset = sort === 'newest' ? 0 : Math.min(cursor, STORYLINE_FEED_MAX_OFFSET);
 
   const orderBy =
-    sort === 'mostChapters' ? Prisma.sql`"chapterCount" DESC, st.id DESC` : Prisma.sql`st.id DESC`;
+    sort === 'mostChapters'
+      ? Prisma.sql`"chapterCount" DESC, st.id DESC`
+      : sort === 'recentlyUpdated'
+      ? Prisma.sql`${storylineLastChapterAtSql} DESC NULLS LAST, st.id DESC`
+      : Prisma.sql`st.id DESC`;
 
   const rows = await dbRead.$queryRaw<
     {

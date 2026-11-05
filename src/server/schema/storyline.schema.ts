@@ -153,8 +153,8 @@ export const joinStorylineEarlyAccessSchema = z
   .default({});
 
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine']).default('all'),
-  sort: z.enum(['newest', 'mostChapters']).default('newest'),
+  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine', 'participated']).default('all'),
+  sort: z.enum(['newest', 'mostChapters', 'recentlyUpdated']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),
   browsingLevel: z.number().int().min(0).optional(),
