@@ -220,6 +220,7 @@ describe('the stickers a turf push carries', () => {
     team,
     cosmeticId: team === 'Blue' ? 11 : 12,
     data: { x: 0.1 * id, y: 0.5 },
+    art: null,
     createdAt: at(hour),
     drawable,
   });
@@ -244,6 +245,7 @@ describe('the stickers a turf push carries', () => {
       team: 'Blue',
       cosmeticId: 11,
       data: { x: 0.1 * 6, y: 0.5 },
+      art: null,
     });
   });
 
