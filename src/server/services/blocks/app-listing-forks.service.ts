@@ -26,6 +26,8 @@ import type {
   ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { matureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   listingLevelVisibilityFilter,
   storeEligibilityWhere,
@@ -63,7 +65,9 @@ export async function listListingForks(
       levelFilter,
       kind: null,
       category: null,
-      redCapable: args.redCapable,
+      // The host gate only: the forks list is not narrowed by the viewer's browsing level (the
+      // parent's own detail page is, and the list is read only from there).
+      mature: matureRatingsAllowed(args.redCapable, allBrowsingLevelsFlag),
       scope: args.scope,
     });
     const where = Prisma.sql`al.fork_of_listing_id = ${args.parentListingId} AND ${eligible}`;

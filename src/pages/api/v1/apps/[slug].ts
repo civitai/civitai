@@ -7,6 +7,8 @@ import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-a
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { isRedCapableHost } from '~/server/utils/server-domain';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 
 /**
@@ -101,7 +103,16 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
       // per-listing audience. What keeps an UNREVIEWED listing off this endpoint is the
       // review ceiling (`maxVisibilityForStatus`), not this argument; see the sibling list
       // endpoint, whose comment used to credit the wrong guard.
-      { redCapable: isRedCapableHost(req.headers.host), scope, floor: 'public' }
+      {
+        redCapable: isRedCapableHost(req.headers.host),
+        scope,
+        floor: 'public',
+        // The caller's own browsing level (signed out → PG only) — see the sibling `index.ts`.
+        viewerBrowsingLevel: getRequestBrowsingLevel({
+          features: getFeatureFlagsLazy({ user, req }),
+          user,
+        }),
+      }
     );
     if (!detail) {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));

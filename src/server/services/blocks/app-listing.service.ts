@@ -5,7 +5,12 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
-import { storeVisibleListingRowGate } from '~/server/services/blocks/app-listing-store-gate';
+import {
+  matureRatingsAllowed,
+  storeVisibleListingRowGate,
+  type MatureRatingsAllowed,
+} from '~/server/services/blocks/app-listing-store-gate';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import type {
@@ -1049,19 +1054,26 @@ export function listingSortKeyExpr(
 }
 
 /**
- * Maturity gate — hide mature (r/x) listings off a red-capable host. Mirrors the
- * AppBlock `matureHostSqlFilter`. Fail-closed: a null/unknown rating is treated
- * as SFW (kept); the direction is fail-closed for the MATURE rows we must hide.
+ * Maturity gate — hide each mature rating (r/x) this request may not see: both off a
+ * red-capable host, and on one whichever the viewer's browsing level leaves out
+ * (`matureRatingsAllowed`). Mirrors the AppBlock `matureHostSqlFilter`. Fail-closed: a
+ * null/unknown rating is treated as SFW (kept); the direction is fail-closed for the MATURE
+ * rows we must hide. G / PG / PG-13 are never filtered here.
  */
-export function listingMatureFilter(redCapable: boolean): Prisma.Sql {
-  if (redCapable) return Prisma.sql`TRUE`;
-  return Prisma.sql`COALESCE(LOWER(al.content_rating), '') NOT IN ('r', 'x')`;
+export function listingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
+  return matureFilterFor(Prisma.sql`al.content_rating`, allowed);
 }
 
 /** {@link listingMatureFilter} for the sub-listing alias `s`. */
-export function subListingMatureFilter(redCapable: boolean): Prisma.Sql {
-  if (redCapable) return Prisma.sql`TRUE`;
-  return Prisma.sql`COALESCE(LOWER(s.content_rating), '') NOT IN ('r', 'x')`;
+export function subListingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
+  return matureFilterFor(Prisma.sql`s.content_rating`, allowed);
+}
+
+function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Prisma.Sql {
+  if (allowed.r && allowed.x) return Prisma.sql`TRUE`;
+  if (allowed.r) return Prisma.sql`COALESCE(LOWER(${column}), '') <> 'x'`;
+  if (allowed.x) return Prisma.sql`COALESCE(LOWER(${column}), '') <> 'r'`;
+  return Prisma.sql`COALESCE(LOWER(${column}), '') NOT IN ('r', 'x')`;
 }
 
 /**
@@ -1074,7 +1086,8 @@ export function storeEligibilityWhere(args: {
   levelFilter: Prisma.Sql;
   kind: ListingKind | null;
   category: string | null;
-  redCapable: boolean;
+  /** Which mature ratings this request may see — `matureRatingsAllowed(redCapable, level)`. */
+  mature: MatureRatingsAllowed;
   scope: StoreVisibilityScope;
 }): Prisma.Sql {
   return Prisma.sql`${args.levelFilter}
@@ -1085,7 +1098,7 @@ export function storeEligibilityWhere(args: {
       AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
       AND (${args.kind}::text IS NULL OR al.kind = ${args.kind}::text)
       AND (${args.category}::text IS NULL OR al.category = ${args.category}::text)
-      AND ${listingMatureFilter(args.redCapable)}
+      AND ${listingMatureFilter(args.mature)}
       AND ${listingPublicVisibilityFilter(args.scope)}`;
 }
 
@@ -1317,8 +1330,13 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *   instead of reclaiming it. The tag set holds the exact keys to delete.
  *
  * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
- * is bounded at 36 (3 scopes × 3 audience floors × 2 capabilities × 2 sub-listing states) —
- * every component is a closed enum, never a request-controlled string.
+ * is bounded at 90 (3 scopes × 3 audience floors × (1 SFW + 4 red mature states) × 2
+ * sub-listing states) — every component is a closed enum, never a request-controlled string.
+ *
+ * 🔴 THE MATURE STATE (whether R and X are allowed — `matureRatingsAllowed`) IS A LITERAL KEY
+ * SEGMENT TOO: it decides which ROWS come back, so a page built for a viewer with R enabled must
+ * never be served to a PG-only one. It is the two booleans, never the raw browsing level, so
+ * viewers whose levels differ only in PG / PG-13 / XXX / Blocked share one entry.
  *
  * The sub-listing segment is literal for the same reason: it changes which ROWS the statement
  * returns, so a flag-on page must never be served to a flag-off viewer.
@@ -1334,13 +1352,14 @@ function catalogPageCache(
   scope: StoreVisibilityScope,
   floor: ListingAudienceFloor,
   redCapable: boolean,
-  withSubListings: boolean
+  withSubListings: boolean,
+  mature: MatureRatingsAllowed
 ) {
   return queryCache(
     dbRead,
     `listAvailableAppListings:${scope}:${floor}:${redCapable ? 'red' : 'sfw'}:${
       withSubListings ? 'sl' : 'nosl'
-    }`,
+    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}`,
     'v1'
   );
 }
@@ -1456,7 +1475,11 @@ type ListAvailableListingsOpts = {
    * default, and the public REST catalog never sets it, so its output is unchanged.
    */
   includeSubListings?: boolean;
-  /** The viewer's browsing level, for the per-render check of sub-listing images. */
+  /**
+   * The viewer's browsing level: whether r/x listings are on the page (on a red-capable host,
+   * each needs its own bit; missing reads as PG, so neither) and the per-render check of
+   * sub-listing images.
+   */
   viewerBrowsingLevel?: number | null;
 };
 
@@ -1498,6 +1521,8 @@ export async function listAvailableListings(
   // `~/shared/utils/store-visibility-scope`.
   const scope = narrowStoreScope(opts.scope);
   const includeSubListings = opts.includeSubListings === true;
+  // Computed once, so the SQL predicate and the literal cache-key segment read the same value.
+  const mature = matureRatingsAllowed(redCapable, opts.viewerBrowsingLevel);
 
   const { cursorSortKey, cursorId, cursorMean } = decodeListingCursor(cursor);
 
@@ -1518,7 +1543,7 @@ export async function listAvailableListings(
       levelFilter,
       kind: kind === 'all' ? null : kind,
       category: category ?? null,
-      redCapable,
+      mature,
       scope,
     });
 
@@ -1537,8 +1562,8 @@ export async function listAvailableListings(
   // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
   // a card's mutable projection fields are never served from two different ages.
   //
-  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable` and the sub-listing
-  // state are literal segments of the redis key, deliberately outside the 32-bit
+  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable`, the sub-listing
+  // state and the mature state (`mature`) are literal segments of the redis key, deliberately outside the 32-bit
   // `hashifyObject` of the statement. See {@link catalogPageCache}.
   //
   // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
@@ -1552,7 +1577,8 @@ export async function listAvailableListings(
       scope,
       floor,
       redCapable,
-      false
+      false,
+      mature
     )<{ id: string; sort_key: string }[]>(
       Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
@@ -1586,7 +1612,8 @@ export async function listAvailableListings(
       scope,
       floor,
       redCapable,
-      true
+      true,
+      mature
     )<{ id: string; sort_key: string }[]>(
       Prisma.sql`
     SELECT u.id, u.sort_key FROM (
@@ -1616,7 +1643,7 @@ export async function listAvailableListings(
         AND CASE WHEN al.kind = 'offsite'
               THEN ${PARENT_LINK_TEMPLATE_SQL} IS NOT NULL
               ELSE ab.status = 'approved' END
-        AND ${subListingMatureFilter(redCapable)}
+        AND ${subListingMatureFilter(mature)}
         AND ${armKeyset(childKeyExpr, Prisma.sql`s.id`, 1)}
       ORDER BY sort_key ${dir}, s.id ${dir}
       LIMIT ${limit + 1})
@@ -1761,13 +1788,22 @@ export async function getListingDetail(
     floor?: ListingAudienceFloor;
     /** The viewer, for `restrictedAudience` only. Defaults to anonymous. */
     viewer?: ListingViewer;
-    /** The viewer's browsing level, for the per-image media gate on a red-capable host. */
+    /**
+     * The viewer's browsing level: an r/x listing outside it is not served (missing reads as PG),
+     * and the per-image media gate on a red-capable host.
+     */
     viewerBrowsingLevel?: number | null;
   } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
   const floor: ListingAudienceFloor = opts.floor ?? 'public';
-  const gated = await loadStoreVisibleListingRow(input, { redCapable, scope: opts.scope, floor });
+  const browsingLevel = opts.viewerBrowsingLevel;
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable,
+    scope: opts.scope,
+    floor,
+    browsingLevel,
+  });
   if (!gated) return null;
   const { row, visibility } = gated;
 
@@ -1794,7 +1830,10 @@ export async function getListingDetail(
   // store yields `{ visible: false }`, indistinguishable from a deleted one, and its name never
   // reaches the DTO. One extra round trip, and only for a fork.
   const forkOf = await resolveForkAttribution(forkProvenance, (parentId) =>
-    getStoreVisibleListingSummary({ id: parentId }, { redCapable, scope: opts.scope, floor })
+    getStoreVisibleListingSummary(
+      { id: parentId },
+      { redCapable, scope: opts.scope, floor, viewerBrowsingLevel: browsingLevel }
+    )
   );
   const detail = projectListingDetail(
     row,
@@ -1835,7 +1874,12 @@ export async function getListingCard(
 ): Promise<ListingCard | null> {
   const redCapable = opts.redCapable ?? false;
   const floor: ListingAudienceFloor = opts.floor ?? 'public';
-  const gated = await loadStoreVisibleListingRow(input, { redCapable, scope: opts.scope, floor });
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable,
+    scope: opts.scope,
+    floor,
+    browsingLevel: opts.viewerBrowsingLevel,
+  });
   if (!gated) return null;
   const { row, visibility } = gated;
   const [beta, red] = await Promise.all([
@@ -1864,12 +1908,24 @@ export async function getListingCard(
  */
 export async function getStoreVisibleListingSummary(
   input: GetAppListingDetailInput,
-  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor?: ListingAudienceFloor }
+  opts: {
+    redCapable: boolean;
+    scope?: StoreVisibilityScope;
+    floor?: ListingAudienceFloor;
+    /**
+     * The viewer's browsing level, for r/x listings. OMITTED means the host gate only — the
+     * pre-existing behaviour, kept for the fork flows (starting a fork, and the forks list's
+     * parent check), which are not narrowed by the level. The public detail page's "Forked
+     * from …" line passes the viewer's level.
+     */
+    viewerBrowsingLevel?: number | null;
+  }
 ): Promise<{ id: string; slug: string; name: string } | null> {
   const gated = await loadStoreVisibleListingRow(input, {
     redCapable: opts.redCapable,
     scope: opts.scope,
     floor: opts.floor ?? 'public',
+    browsingLevel: 'viewerBrowsingLevel' in opts ? opts.viewerBrowsingLevel : allBrowsingLevelsFlag,
   });
   if (!gated) return null;
   return { id: gated.row.id, slug: gated.row.slug, name: gated.row.name };
@@ -1961,12 +2017,19 @@ export async function getStoreListingCandidates(
  */
 export async function getListingSocialImage(
   input: GetAppListingDetailInput,
-  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor?: ListingAudienceFloor }
+  opts: {
+    redCapable: boolean;
+    scope?: StoreVisibilityScope;
+    floor?: ListingAudienceFloor;
+    /** The requester's browsing level, for the detail gate only. Missing reads as PG. */
+    viewerBrowsingLevel?: number | null;
+  }
 ): Promise<ListingSocialImage | null> {
   const gated = await loadStoreVisibleListingRow(input, {
     redCapable: opts.redCapable,
     scope: opts.scope,
     floor: opts.floor ?? 'public',
+    browsingLevel: opts.viewerBrowsingLevel,
   });
   if (!gated) return null;
   return listingSocialImage(gated.row, { redCapable: opts.redCapable });
@@ -1980,7 +2043,13 @@ export async function getListingSocialImage(
  */
 async function loadStoreVisibleListingRow(
   input: GetAppListingDetailInput,
-  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor: ListingAudienceFloor }
+  opts: {
+    redCapable: boolean;
+    scope?: StoreVisibilityScope;
+    floor: ListingAudienceFloor;
+    /** Required (nullable) so no caller can forget it; missing reads as PG (no r/x). */
+    browsingLevel: number | null | undefined;
+  }
 ) {
   const { redCapable, floor } = opts;
   // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
@@ -2036,8 +2105,8 @@ async function loadStoreVisibleListingRow(
   // listing is indistinguishable from a missing one; gate on `kind`, never
   // `connectClientId`), then the DEPLOY-GATE (an onsite listing whose block never
   // deployed has no origin; `currentVersionDeployedAt` stays set while a new version
-  // rebuilds), then the maturity gate off a non-red host. Each returns null exactly like a
-  // missing row. They live in ONE pure predicate so the batch reader behind the viewer's
+  // rebuilds), then the maturity gate (off a non-red host, or an r/x rating outside the viewer's
+  // browsing level). Each returns null exactly like a missing row. They live in ONE pure predicate so the batch reader behind the viewer's
   // "My apps" home (`getStoreListingCandidates` → `buildMyApps`) applies the identical rule.
   if (
     !storeVisibleListingRowGate({
@@ -2046,6 +2115,7 @@ async function loadStoreVisibleListingRow(
       scope,
       floor,
       redCapable,
+      browsingLevel: opts.browsingLevel,
     })
   ) {
     return null;

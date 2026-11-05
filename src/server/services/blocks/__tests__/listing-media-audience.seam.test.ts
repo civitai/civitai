@@ -368,6 +368,9 @@ describe('T7 — the in-app "Recently run" menu icon: getListingDetail.iconUrl f
   it('red host: an R icon shows to a viewer who opted into R, and not to an anonymous one', async () => {
     shape = { contentRating: 'r', iconId: 12, coverId: null, screenshotIds: [], onsite: true };
     expect(await icon(true, R_VIEWER_LEVEL)).toBe('edge:b.png@256');
+    // An anonymous viewer is not served an `r` listing at all now, so its icon cannot reach
+    // them; a PG-13 listing carries the same R icon to them to show the image gate still holds.
+    shape = { contentRating: 'pg13', iconId: 12, coverId: null, screenshotIds: [], onsite: true };
     expect(await icon(true, undefined)).toBeNull();
   });
 });
