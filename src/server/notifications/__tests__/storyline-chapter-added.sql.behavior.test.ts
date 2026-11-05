@@ -52,6 +52,17 @@ const EVERYTHING_FOLLOWER = 6;
 const INVITEE = 7;
 const MUTED = 8;
 const SAFE_ONLY = 9;
+const BANNED_AUTHOR = 10;
+const DELETED_AUTHOR = 11;
+const BANNED_FOLLOWER = 12;
+const DELETED_FOLLOWER = 13;
+const BANNED_OWNER = 14;
+const DELETED_OWNER = 15;
+const BLOCKS_AUTHOR = 16; // blocked RANDOM
+const BLOCKED_BY_AUTHOR = 17; // RANDOM blocked them
+const HIDES_AUTHOR = 18; // hid RANDOM
+const BLOCKS_OWNER = 19; // blocked OWNER
+const BLOCKED_BY_OWNER = 20; // OWNER blocked them
 
 // Each storyline has one fresh chapter (an hour ago), so a row names which chapter it announced.
 const CANON = 1; // RANDOM's chapter, on the main path
@@ -61,6 +72,15 @@ const INVITED = 4; // a chapter by someone invited, not yet accepted, off the ma
 const TAKEN_DOWN = 5; // as CANON, but the storyline's title is taken down by the scan
 const REMOVED = 6; // as CANON, but the chapter was removed
 const MATURE = 7; // as CANON, its chapter 1 rated R
+// Each of these is as CANON but for one thing, and announces nothing.
+const BY_BANNED = 8; // the chapter's author is banned
+const BY_DELETED = 9; // the chapter's author is deleted
+const UNPUBLISHED = 10; // the chapter's post is unpublished
+const POST_TAKEN_DOWN = 11; // the chapter's post is taken down
+const STALE = 12; // the chapter went out 8 days ago, past the 7-day cap
+const OWNER_BANNED = 13;
+const OWNER_DELETED = 14;
+const ROOT_HIDDEN = 15; // chapter 1 is unrated, so the storyline is hidden
 
 beforeAll(async () => {
   db.pg = new PGlite();
@@ -92,21 +112,29 @@ beforeAll(async () => {
     await db.pg.exec(migration(name));
 
   await db.pg.exec(`
-    INSERT INTO "User" (id, username, "browsingLevel")
-      SELECT g, 'u' || g, CASE WHEN g = 9 THEN 1 ELSE 31 END FROM generate_series(1, 9) g;
+    INSERT INTO "User" (id, username, "browsingLevel", "bannedAt", "deletedAt")
+      SELECT g, 'u' || g, CASE WHEN g = 9 THEN 1 ELSE 31 END,
+        CASE WHEN g IN (10, 12, 14) THEN now() - interval '1 day' END,
+        CASE WHEN g IN (11, 13, 15) THEN now() - interval '1 day' END
+      FROM generate_series(1, 20) g;
+    INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES
+      (16, 3, 'Block'), (3, 17, 'Block'), (18, 3, 'Hide'), (19, 1, 'Block'), (1, 20, 'Block');
     INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt", "tosViolation", "tosViolationByScan")
-      SELECT g, 1, 'Story ' || g, CASE WHEN g = 7 THEN 4 ELSE 1 END, now(), g = 5, g = 5
-      FROM generate_series(1, 7) g;
+      SELECT g, CASE g WHEN ${OWNER_BANNED} THEN ${BANNED_OWNER} WHEN ${OWNER_DELETED} THEN ${DELETED_OWNER} ELSE 1 END, 'Story ' || g,
+        CASE WHEN g = 7 THEN 4 ELSE 1 END, now(), g = 5, g = 5
+      FROM generate_series(1, 15) g;
     -- Per storyline g: chapter 1 (g*10) and an old canon chapter 2 (g*10+1), a month old; then the
     -- fresh chapter (g*10+2), an hour old.
     INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt")
-      SELECT g * 10, 1, CASE WHEN g = 7 THEN 4 ELSE 1 END, now() - interval '30 days' FROM generate_series(1, 7) g
-      UNION ALL SELECT g * 10 + 1, 1, 1, now() - interval '30 days' FROM generate_series(1, 7) g;
+      SELECT g * 10, s."userId", CASE g WHEN 7 THEN 4 WHEN 15 THEN 0 ELSE 1 END, now() - interval '30 days'
+        FROM generate_series(1, 15) g JOIN "Storyline" s ON s.id = g
+      UNION ALL SELECT g * 10 + 1, 1, 1, now() - interval '30 days' FROM generate_series(1, 15) g;
     INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth, "createdAt")
-      SELECT g * 10, g, g * 10, 1, 0, now() - interval '30 days' FROM generate_series(1, 7) g
-      UNION ALL SELECT g * 10 + 1, g, g * 10 + 1, 1, 1, now() - interval '30 days' FROM generate_series(1, 7) g;
+      SELECT g * 10, g, g * 10, s."userId", 0, now() - interval '30 days'
+        FROM generate_series(1, 15) g JOIN "Storyline" s ON s.id = g
+      UNION ALL SELECT g * 10 + 1, g, g * 10 + 1, 1, 1, now() - interval '30 days' FROM generate_series(1, 15) g;
     INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
-      SELECT g, g * 10 + 1, g * 10, true FROM generate_series(1, 7) g;
+      SELECT g, g * 10 + 1, g * 10, true FROM generate_series(1, 15) g;
     INSERT INTO "StorylineCollaborator" ("storylineId", "userId", "acceptedAt") VALUES
       (2, 2, now()), (4, 7, NULL);
   `);
@@ -118,15 +146,25 @@ beforeAll(async () => {
     [TAKEN_DOWN, RANDOM, true],
     [REMOVED, RANDOM, true],
     [MATURE, RANDOM, true],
+    [BY_BANNED, BANNED_AUTHOR, true],
+    [BY_DELETED, DELETED_AUTHOR, true],
+    [UNPUBLISHED, RANDOM, true],
+    [POST_TAKEN_DOWN, RANDOM, true],
+    [STALE, RANDOM, true],
+    [OWNER_BANNED, RANDOM, true],
+    [OWNER_DELETED, RANDOM, true],
+    [ROOT_HIDDEN, RANDOM, true],
   ];
   for (const [g, author, canon] of fresh) {
     const id = g * 10 + 2;
     // A canon chapter continues the main path's end; any other forks from chapter 1.
     const parent = canon ? g * 10 + 1 : g * 10;
+    const at = g === STALE ? `now() - interval '8 days'` : `now() - interval '1 hour'`;
     await db.pg.exec(`
-      INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES (${id}, ${author}, 1, now() - interval '1 hour');
+      INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt", "tosViolation")
+        VALUES (${id}, ${author}, 1, ${g === UNPUBLISHED ? 'NULL' : at}, ${g === POST_TAKEN_DOWN});
       INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth, "createdAt", "removedAt")
-        VALUES (${id}, ${g}, ${id}, ${author}, 2, now() - interval '1 hour',
+        VALUES (${id}, ${g}, ${id}, ${author}, 2, ${at},
           ${g === REMOVED ? `now() - interval '10 minutes'` : 'NULL'});
       INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
         VALUES (${g}, ${id}, ${parent}, ${canon});
@@ -138,9 +176,11 @@ beforeAll(async () => {
   await db.pg.exec(`
     INSERT INTO "StorylineFollow" ("storylineId", "userId", scope)
       SELECT s, f.id, f.scope::"StorylineFollowScope"
-      FROM generate_series(1, 7) s,
+      FROM generate_series(1, 15) s,
         (VALUES (4, 'Canon'), (5, 'Endorsed'), (6, 'Everything'), (3, 'Everything'),
-          (8, 'Everything'), (9, 'Everything')) f(id, scope);
+          (8, 'Everything'), (9, 'Everything'), (12, 'Everything'), (13, 'Everything'),
+          (16, 'Everything'), (17, 'Everything'), (18, 'Everything'), (19, 'Everything'),
+          (20, 'Everything')) f(id, scope);
     INSERT INTO "UserNotificationSettings" ("userId", type) VALUES (8, 'storyline-chapter-added');
   `);
 
@@ -202,10 +242,41 @@ describe('the scope matrix', () => {
     ]);
   });
 
-  it('says nothing about a storyline whose title is taken down, or a removed chapter', () => {
-    const storylines = rows.map((row) => row.details.storylineId);
-    expect(storylines).not.toContain(TAKEN_DOWN);
-    expect(storylines).not.toContain(REMOVED);
+  it.each([
+    ['its title is taken down', TAKEN_DOWN],
+    ['the chapter was removed', REMOVED],
+    ["the chapter's author is banned", BY_BANNED],
+    ["the chapter's author is deleted", BY_DELETED],
+    ["the chapter's post is unpublished", UNPUBLISHED],
+    ["the chapter's post is taken down", POST_TAKEN_DOWN],
+    ['the owner is banned', OWNER_BANNED],
+    ['the owner is deleted', OWNER_DELETED],
+    ['chapter 1 is hidden', ROOT_HIDDEN],
+  ])('tells nobody about a storyline when %s', (_, storylineId) => {
+    expect(rows.filter((row) => row.details.storylineId === storylineId)).toEqual([]);
+  });
+
+  it('tells nobody about a chapter past the 7-day cap, however old the cursor', async () => {
+    const fromLongAgo = await run(new Date(Date.now() - 20 * 24 * 3600_000).toISOString());
+    expect(told(fromLongAgo, [EVERYTHING_FOLLOWER])).toContain(`${CANON}:${EVERYTHING_FOLLOWER}`);
+    expect(fromLongAgo.filter((row) => row.details.storylineId === STALE)).toEqual([]);
+  });
+
+  it('tells a banned or deleted follower nothing', () => {
+    expect(told(rows, [BANNED_FOLLOWER, DELETED_FOLLOWER])).toEqual([]);
+  });
+
+  // Either direction of a block, or the follower hiding the author, silences that author's chapter
+  // only; a block between the follower and the owner silences the whole storyline.
+  it('never tells someone about a chapter by a user they blocked, hid, or who blocked them', () => {
+    for (const follower of [BLOCKS_AUTHOR, BLOCKED_BY_AUTHOR, HIDES_AUTHOR]) {
+      expect(told(rows, [follower])).not.toContain(`${CANON}:${follower}`);
+      expect(told(rows, [follower])).toContain(`${ENDORSED}:${follower}`);
+    }
+  });
+
+  it('never tells someone about a storyline whose owner they blocked, or who blocked them', () => {
+    expect(told(rows, [BLOCKS_OWNER, BLOCKED_BY_OWNER])).toEqual([]);
   });
 
   it('respects a mute, and never tells an author about their own chapter', () => {

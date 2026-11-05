@@ -21,7 +21,8 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables WHERE table_name = 'StorylineFollow'
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'StorylineFollow'
   ) THEN
     CREATE TABLE "StorylineFollow" (
       "storylineId" INTEGER NOT NULL,

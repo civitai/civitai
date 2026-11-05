@@ -44,7 +44,10 @@ import { isPlacementBlocked } from '~/server/services/placement-moderation.servi
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
-import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
+import {
+  storyLevelText,
+  storylineRootVisibleText,
+} from '~/server/services/storyline-visibility.sql';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import {
@@ -376,19 +379,13 @@ function raiseNsfwLevel(level: number, floor: number) {
 }
 
 /** The SQL twin of the level `isStorylineOutsideLevel` judges, for the feed query. */
-export const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l', 'lv.f'))}
-  FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${
-    NsfwLevel.Blocked
-  }), st."maxNsfwLevel") AS l,
-    COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
+export const storyLevelSql = Prisma.raw(storyLevelText());
 
 /**
  * `getStorylineRootHiddenReason` is null, in SQL: chapter 1 `rc` (joined), its post `rp` and that
  * post's author `ru` (both LEFT JOINed). Change both together.
  */
-export const storylineRootVisibleSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
-  AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
-  AND rp."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND rp."publishedAt" < now())`;
+export const storylineRootVisibleSql = Prisma.raw(storylineRootVisibleText());
 
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
 export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
@@ -924,7 +921,9 @@ export async function createStoryline({
         data: { userId, title, maxNsfwLevel, whoCanContinue, sparkImageId },
         select: { id: true },
       });
-      await tx.storylineFollow.create({ data: { storylineId: storyline.id, userId } });
+      await tx.$executeRaw`
+        INSERT INTO "StorylineFollow" ("storylineId", "userId") VALUES (${storyline.id}, ${userId})
+      `;
       const root = postId
         ? await createRootChapter(tx, { storylineId: storyline.id, postId, userId })
         : null;
@@ -2881,11 +2880,10 @@ export async function acceptStorylineInvite({
     // Accepting is a fresh act, so it follows again someone who unfollowed before; a follow
     // they already hold keeps its scope.
     if (count)
-      await tx.storylineFollow.upsert({
-        where: { storylineId_userId: { storylineId, userId } },
-        create: { storylineId, userId },
-        update: {},
-      });
+      await tx.$executeRaw`
+        INSERT INTO "StorylineFollow" ("storylineId", "userId") VALUES (${storylineId}, ${userId})
+        ON CONFLICT ("storylineId", "userId") DO NOTHING
+      `;
     return count > 0;
   });
   if (!accepted) throw throwNotFoundError(INVITE_CLOSED);
@@ -2907,11 +2905,11 @@ export async function followStoryline({
   browsingLevel: number;
 }) {
   await assertStorylineVisible(storylineId, viewer, browsingLevel);
-  await dbWrite.storylineFollow.upsert({
-    where: { storylineId_userId: { storylineId, userId: viewer.id } },
-    create: { storylineId, userId: viewer.id, scope },
-    update: { scope },
-  });
+  await dbWrite.$executeRaw`
+    INSERT INTO "StorylineFollow" ("storylineId", "userId", scope)
+    VALUES (${storylineId}, ${viewer.id}, ${scope}::"StorylineFollowScope")
+    ON CONFLICT ("storylineId", "userId") DO UPDATE SET scope = EXCLUDED.scope
+  `;
   return { scope };
 }
 
@@ -2922,7 +2920,9 @@ export async function unfollowStoryline({
   storylineId: number;
   userId: number;
 }) {
-  await dbWrite.storylineFollow.deleteMany({ where: { storylineId, userId } });
+  await dbWrite.$executeRaw`
+    DELETE FROM "StorylineFollow" WHERE "storylineId" = ${storylineId} AND "userId" = ${userId}
+  `;
 }
 
 /** The viewer's follow scope for a storyline, null when they do not follow it. */
@@ -2933,10 +2933,9 @@ export async function getStorylineFollow({
   storylineId: number;
   userId: number;
 }) {
-  const follow = await dbRead.storylineFollow.findUnique({
-    where: { storylineId_userId: { storylineId, userId } },
-    select: { scope: true },
-  });
+  const [follow] = await dbRead.$queryRaw<{ scope: StorylineFollowScope }[]>`
+    SELECT scope FROM "StorylineFollow" WHERE "storylineId" = ${storylineId} AND "userId" = ${userId}
+  `;
   return { scope: follow?.scope ?? null };
 }
 

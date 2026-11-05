@@ -6,8 +6,10 @@ import {
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
-import { NsfwLevel } from '~/server/common/enums';
+import {
+  storyLevelText,
+  storylineRootVisibleText,
+} from '~/server/services/storyline-visibility.sql';
 
 /**
  * Continuations are placements on the `storyline` surface: the target is the chapter post being
@@ -283,12 +285,7 @@ export function storylineChapterAddedQuery({ lastSent }: { lastSent: string }): 
           AND GREATEST(c."createdAt", p."publishedAt") > now() - interval '7 days'
       ),
       visible AS (
-        SELECT s.id, s.title, s."userId" "ownerId",
-          (SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')}
-            FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${
-              NsfwLevel.Blocked
-            }), s."maxNsfwLevel") l,
-              COALESCE(s."moderatorNsfwLevel", s."nsfwLevel") f) lv) "level"
+        SELECT s.id, s.title, s."userId" "ownerId", ${storyLevelText({ st: 's', rp: 'rp' })} "level"
         FROM "Storyline" s
         JOIN "User" o ON o.id = s."userId"
         JOIN "StorylineChapter" rc ON rc."storylineId" = s.id AND rc.depth = 0
@@ -297,9 +294,7 @@ export function storylineChapterAddedQuery({ lastSent }: { lastSent: string }): 
         WHERE s.id IN (SELECT "storylineId" FROM fresh)
           AND NOT s."tosViolation"
           AND o."bannedAt" IS NULL AND o."deletedAt" IS NULL
-          AND rc."removedAt" IS NULL AND NOT rp."tosViolation"
-          AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
-          AND rp."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND rp."publishedAt" < now()
+          AND ${storylineRootVisibleText({ rc: 'rc', rp: 'rp', ru: 'ru' })}
       ),
       main AS (
         SELECT rc.id, 1 step FROM "StorylineChapter" rc
