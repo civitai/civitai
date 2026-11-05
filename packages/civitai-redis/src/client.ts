@@ -3329,6 +3329,14 @@ const REDIS_KEYS_UNPREFIXED = {
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
+  BOT_CACHE: {
+    /*
+      Use: a verified crawler's page HTML, so a repeat request for the URL is not rendered again.
+      Structure: packed { pattern, headers, body (brotli HTML) }, key =
+      `botcache:v1:${buildId}:${host}:${path}?${sortedQuery}`, TTL 300s.
+     */
+    HTML: 'botcache:v1',
+  },
   SEMANTIC_SEARCH: {
     /*
       Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.

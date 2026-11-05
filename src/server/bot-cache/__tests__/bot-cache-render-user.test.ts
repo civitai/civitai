@@ -1,5 +1,5 @@
 /**
- * The bot HTML edge cache on the user profile page (`/user/[username]`), rendered as in
+ * The bot HTML cache on the user profile page (`/user/[username]`), rendered as in
  * bot-cache-render.test.ts: Next's own renderer over the REAL `_app`, `_document`, profile page
  * module, its layout and its `getServerSideProps`. The prefetches go to a stand-in for the SSR
  * helpers that answers each procedure with fixed public profile data, since an anonymous profile
@@ -120,6 +120,8 @@ import {
   CRAWLER_A,
   CRAWLER_B,
   CRAWLER_C,
+  expectCacheable,
+  expectNotCacheable,
   NOW,
   render as renderRoute,
   SECRET,
@@ -159,20 +161,16 @@ beforeEach(() => {
 });
 
 describe('/user/[username], flag on', () => {
-  it('is edge-cacheable, tagged as a user page, and sets no cookie', async () => {
+  it('is cacheable: private to browsers, no cookie, no edge-cache directive', async () => {
     const a = await render(CRAWLER_A);
     expect(a.html).toContain('crawled-creator');
-    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
-    expect(a.headers['cache-control']).toBe('private, no-store');
-    expect(a.headers['cache-tag']).toMatch(/^botcache,botcache-user,build-[\w-]+$/);
-    expect(a.headers).not.toHaveProperty('set-cookie');
+    expectCacheable(a.headers);
   });
 
   it('three crawlers that differ in agent, IP, country and state: byte-identical, no cookie', async () => {
     const [a, b, c] = [await render(CRAWLER_A), await render(CRAWLER_B), await render(CRAWLER_C)];
     for (const other of [b, c]) {
-      expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
-      expect(other.headers).not.toHaveProperty('set-cookie');
+      expectCacheable(other.headers);
       expect(other.html).toBe(a.html);
     }
     expect(a.pageProps).not.toHaveProperty('region');
@@ -185,20 +183,19 @@ describe('/user/[username], flag on', () => {
     expect(other.html).not.toBe(a.html);
   });
 
-  it('a failed prefetch (the fail-soft profile read): no edge-cache header', async () => {
+  it('a failed prefetch (the fail-soft profile read): not cacheable', async () => {
     h.failPath = 'userProfile.overview';
     const a = await render(CRAWLER_A);
-    expect(a.headers).not.toHaveProperty('cloudflare-cdn-cache-control');
+    expectNotCacheable(a.headers);
   });
 });
 
 describe('/user/[username], flag off', () => {
-  it('no edge-cache header, and the crawlers render different bytes (region)', async () => {
+  it('not cacheable, and the crawlers render different bytes (region)', async () => {
     setFlag(false);
     const a = await render(CRAWLER_A);
     const c = await render(CRAWLER_C);
-    expect(a.headers).not.toHaveProperty('cloudflare-cdn-cache-control');
-    expect(a.headers).not.toHaveProperty('cache-tag');
+    expectNotCacheable(a.headers);
     expect(c.pageProps.region).toMatchObject({ countryCode: 'DE' });
     expect(c.html).not.toBe(a.html);
   });
