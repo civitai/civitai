@@ -1415,7 +1415,11 @@ describe("a moderator's untick of a text-scan POI flag", () => {
     poi: true,
     sfwOnly: true,
     lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
-    meta: { textScanFlags: { poi: { textHash: 'h', prev: { lockedProperties: prevLocks } } } },
+    meta: {
+      textScanFlags: {
+        poi: { workflowId: 'wf', textHash: 'h', prev: { lockedProperties: prevLocks } },
+      },
+    },
   });
   // What the model form sends: the loaded locks, less the poi lock if the moderator removed it.
   const formLift = (extra: Partial<ModelUpsertInput> = {}) =>
@@ -1461,6 +1465,17 @@ describe("a moderator's untick of a text-scan POI flag", () => {
 
   it('strips nothing from a flag that recorded no prior locks', async () => {
     mockStored({ ...scanFlagged([]), meta: { textScanFlags: { poi: { textHash: 'h' } } } });
+    await formLift();
+    expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
+  });
+
+  // An appeal grant, or a moderator's lift, stamps `appealGranted`; a POI set by hand after it is
+  // not the scan's, and the old snapshot does not describe its locks.
+  it('strips nothing once the scan flag was ruled on and POI was set again by hand', async () => {
+    const stale = scanFlagged([]);
+    const grant = { at: '2026-11-01T00:00:00Z', by: MODERATOR_ID, via: 'moderator' as const };
+    stale.meta.textScanFlags.poi = { ...stale.meta.textScanFlags.poi, appealGranted: grant };
+    mockStored(stale);
     await formLift();
     expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
   });

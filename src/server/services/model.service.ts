@@ -190,6 +190,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
@@ -3767,6 +3768,8 @@ function rulesOnNsfw(
  * A moderator's untick of a text-scan POI flag drops the nsfw/sfwOnly locks that flag added, as the
  * appeal grant does: the form sends back the locks it loaded, which would otherwise outlive the flag.
  * A lock on a value the save leaves restrictive (SFW-only, or nsfw on) is the moderator's and stays.
+ * Once the scan's flag is ruled on (an appeal grant, or a moderator's lift), a later POI flag is not
+ * the scan's, so its `prev` snapshot no longer says which locks the flag added.
  */
 function withoutPoiFlagLocks(
   stored: ContentFlags & { lockedProperties: string[]; meta: ModelMeta | null },
@@ -3775,6 +3778,7 @@ function withoutPoiFlagLocks(
 ) {
   const prevLocks = stored.meta?.textScanFlags?.poi?.prev?.lockedProperties;
   if (!stored.poi || after.poi || after.minor || !prevLocks) return locks;
+  if (!hasOpenTextScanFlag(stored.meta, 'poi')) return locks;
   const reasserted = (prop: string) => (prop === 'sfwOnly' ? after.sfwOnly : after.nsfw);
   return locks.filter(
     (prop) =>
