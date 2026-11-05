@@ -4,7 +4,7 @@ import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
 
 /**
  * The header chat badge counts unread messages in the inbox AND in pending
- * Requests (product decision: a tester had 4 requests and no number on the icon).
+ * Requests (product decision).
  * Inside a Request, a message from someone the reader has a block with, from a
  * banned account, or in a chat the reader reported does not count.
  */
@@ -84,8 +84,6 @@ describe('the header chat badge', () => {
   });
 
   it('stops counting a Request once it is opened, until something newer arrives', async () => {
-    // Decision: the badge counts unread messages, not open requests, so looking
-    // at a request you are not answering yet does not keep the icon lit.
     await chat(10, SENDER, { status: 'Invited', filtered: true });
     await db.exec(`
       UPDATE "ChatMember" SET "lastViewedMessageId" = (SELECT max(id) FROM "ChatMessage")

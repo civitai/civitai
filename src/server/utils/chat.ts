@@ -108,6 +108,7 @@ const requestUnreadSql = (userId: number) => Prisma.sql`
         and msg."userId" not in (${userId}, -1)
       group by msg."userId"
     ) byAuthor
+    -- same two-way rule as the BlockedUsers / BlockedByUsers caches in user-preferences.service
     where not exists (
         select 1 from "UserEngagement" ue
         where ue.type = 'Block'
