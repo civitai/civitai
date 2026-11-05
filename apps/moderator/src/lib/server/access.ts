@@ -317,6 +317,7 @@ export const NAVIGATION: NavLink[] = [
         countKey: 'knightsInquisitor',
       },
       { path: '/knights-of-new-order/trials', label: 'Trials' },
+      { path: '/knights-of-new-order/shop', label: 'Shop' },
       { path: '/knights-of-new-order', label: 'Linked accounts', countKey: 'knightsLinkReviews' },
     ],
   },

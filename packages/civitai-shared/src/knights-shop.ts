@@ -2,6 +2,8 @@ export const ROTATION_SIZE = 4;
 export const DEALS_PER_DAY = 2;
 export const DEAL_PERCENT = 20;
 
+export const SHOP_TIERS = ['bronze', 'silver', 'gold'] as const;
+
 export type ShopItem = {
   id: string;
   kind: string;
