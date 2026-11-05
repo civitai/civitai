@@ -152,10 +152,22 @@ const COUNT_PAD = 20;
 const DEFAULT_RECOMMEND_MEAN = 0.5;
 
 // ---------------------------------------------------------------------------
-// Keyset cursor (opaque base64url of `sortKey␟id[␟mean]`). Mirrors block-registry.
+// Keyset cursor (opaque base64url of `version␟sortKey␟id[␟mean]`). Mirrors block-registry.
 // ---------------------------------------------------------------------------
 
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
+
+/**
+ * The sort-key ENCODING version a cursor was minted under. The cursor carries the RAW
+ * sort key, and comparing it against a key of a different shape (another width or
+ * component order) positions the page wrongly: rows are skipped or repeated. Bump this
+ * whenever any `listingSortKeyExpr` / `subListingSortKeyExpr` key changes shape.
+ *
+ * A cursor of any other version — including the un-versioned cursors minted before this
+ * field existed — decodes as "no cursor" and pages from the start, which is the safe
+ * outcome while two versions serve the store side by side during a rollout.
+ */
+export const LISTING_CURSOR_VERSION = 'v2';
 
 /**
  * Encode a keyset cursor. The `top-rated` sort PINS the global recommend mean
@@ -164,11 +176,9 @@ const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
  * mid-pagination and the keyset boundary would silently skip/duplicate a row.
  */
 export function encodeListingCursor(sortKey: string, id: string, pinnedMean?: number): string {
-  const body =
-    pinnedMean == null
-      ? `${sortKey}${CURSOR_SEPARATOR}${id}`
-      : `${sortKey}${CURSOR_SEPARATOR}${id}${CURSOR_SEPARATOR}${pinnedMean}`;
-  return Buffer.from(body, 'utf8').toString('base64url');
+  const fields = [LISTING_CURSOR_VERSION, sortKey, id];
+  if (pinnedMean != null) fields.push(String(pinnedMean));
+  return Buffer.from(fields.join(CURSOR_SEPARATOR), 'utf8').toString('base64url');
 }
 
 export function decodeListingCursor(cursor: string | undefined): {
@@ -178,12 +188,17 @@ export function decodeListingCursor(cursor: string | undefined): {
 } {
   const empty = { cursorSortKey: null, cursorId: null, cursorMean: null };
   if (!cursor) return empty;
-  let decoded: string;
+  let raw: string;
   try {
-    decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    raw = Buffer.from(cursor, 'base64url').toString('utf8');
   } catch {
     return empty; // malformed → treat as first page (fail-open to a safe default)
   }
+  // Another encoding version (or none) → first page, never a comparison against a key of
+  // a different shape. See `LISTING_CURSOR_VERSION`.
+  const versionPrefix = `${LISTING_CURSOR_VERSION}${CURSOR_SEPARATOR}`;
+  if (!raw.startsWith(versionPrefix)) return empty;
+  const decoded = raw.slice(versionPrefix.length);
   const sep1 = decoded.indexOf(CURSOR_SEPARATOR);
   if (sep1 < 0) return empty;
   const sep2 = decoded.indexOf(CURSOR_SEPARATOR, sep1 + 1);

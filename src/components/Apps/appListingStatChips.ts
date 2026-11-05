@@ -42,13 +42,13 @@
  * here does not cover the hand-off to it.
  */
 
-import { getRecommendLabel, hasShownPlayCount } from '~/components/Apps/appListingCardView';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /** One header stat chip: an `IconBadge` face wrapped in a `StatHoverCard`. */
 export type ListingStatChip = {
   /** Stable key — also the chip's `data-listing-stat` attribute in the DOM. */
-  key: 'recommend' | 'plays';
+  key: 'recommend' | 'plays' | 'installs';
   /** Hover-card TITLE. */
   label: string;
   /** The number printed on the chip face, and the hover card's `value` fallback. */
@@ -58,12 +58,15 @@ export type ListingStatChip = {
   /**
    * Hover-card body copy. When set, `StatHoverCard` renders THIS INSTEAD of the
    * numeric value — so a chip whose dropdown should just repeat its own number (the
-   * plays chip) must leave it undefined rather than spell the number again.
+   * usage chip) must leave it undefined rather than spell the number again.
    */
   message?: string;
 };
 
-type StatInput = Pick<ListingDetail, 'recommend' | 'reviewCount' | 'openCount'>;
+type StatInput = Pick<
+  ListingDetail,
+  'recommend' | 'reviewCount' | 'kindData' | 'openCount' | 'installCount'
+>;
 
 /** True when the rollup carries no reviews at all — no percentage, no negative half. */
 function hasNoReviews(detail: Pick<ListingDetail, 'recommend' | 'reviewCount'>): boolean {
@@ -129,14 +132,15 @@ export function buildListingStatChips(
     message: buildRecommendHoverMessage(detail),
   });
 
-  // PLAYS — the store card's number under the card's word, shown exactly when the card
-  // shows one (`hasShownPlayCount`: not for an off-site `null`, not for `0`).
-  if (hasShownPlayCount(detail.openCount)) {
+  // USAGE — "Plays" on-site, "Installs" off-site, by the same `listingUsageStat` rule as
+  // the Details row, so the chip and the row never disagree.
+  const usage = listingUsageStat(detail);
+  if (usage) {
     chips.push({
-      key: 'plays',
-      label: 'Plays',
-      value: detail.openCount,
-      ariaLabel: `${detail.openCount.toLocaleString()} plays`,
+      key: usage.key,
+      label: usage.label,
+      value: usage.count,
+      ariaLabel: `${usage.count.toLocaleString()} ${usage.label.toLowerCase()}`,
       // No message: the dropdown showing the full, un-abbreviated count IS the content.
     });
   }

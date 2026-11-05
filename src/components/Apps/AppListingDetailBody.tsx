@@ -25,6 +25,7 @@ import {
   IconCategory,
   IconClock,
   IconCode,
+  IconDownload,
   IconEyeOff,
   IconFlask,
   IconInfoCircle,
@@ -341,6 +342,7 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
   const glyph: Record<ListingStatChip['key'], ReactNode> = {
     recommend: <IconThumbUp size={18} />,
     plays: <IconPlayerPlay size={18} />,
+    installs: <IconDownload size={18} />,
   };
 
   return (
@@ -779,6 +781,7 @@ const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
   source: IconCode,
   reviews: IconThumbUp,
   plays: IconPlayerPlay,
+  installs: IconDownload,
   updated: IconClock,
 };
 

@@ -626,3 +626,40 @@ describe('buildListingDetailRows — rating pill colour', () => {
     expect(rows.filter((r) => r.pillColor != null).map((r) => r.key)).toEqual(['rating']);
   });
 });
+
+describe('🔴 buildListingDetailRows — the usage row is Plays on-site, Installs off-site', () => {
+  const OFFSITE = {
+    kind: 'offsite',
+    externalUrl: 'https://x.example',
+    connectClientId: null,
+  } as const;
+  const usageRows = (rows: { key: string; label: string; value: string }[]) =>
+    rows.filter((r) => r.key === 'plays' || r.key === 'installs');
+
+  it('on-site: "Plays 2,718", and no Installs row', () => {
+    const rows = buildListingDetailRows(detail(), { formatDate: fmt });
+    expect(usageRows(rows)).toEqual([{ key: 'plays', label: 'Plays', value: '2,718' }]);
+  });
+
+  it('🔴 off-site: "Installs 4,213", and no Plays row', () => {
+    const rows = buildListingDetailRows(detail({ kindData: OFFSITE, openCount: null }), {
+      formatDate: fmt,
+    });
+    expect(usageRows(rows)).toEqual([{ key: 'installs', label: 'Installs', value: '4,213' }]);
+    // In the same slot the plays row takes on-site.
+    expect(keys(rows)).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+  });
+
+  it('off-site with zero installs has no usage row; preview never has one', () => {
+    const zero = buildListingDetailRows(
+      detail({ kindData: OFFSITE, openCount: null, installCount: 0 }),
+      { formatDate: fmt }
+    );
+    expect(usageRows(zero)).toEqual([]);
+    const preview = buildListingDetailRows(detail({ kindData: OFFSITE, openCount: null }), {
+      preview: true,
+      formatDate: fmt,
+    });
+    expect(usageRows(preview)).toEqual([]);
+  });
+});

@@ -54,6 +54,7 @@ import {
   decodeListingCursor,
   encodeListingCursor,
   getListingDetail,
+  LISTING_CURSOR_VERSION,
   getListingPreviewForReview,
   listAvailableListings,
   listingHydrateSelect,
@@ -65,6 +66,8 @@ import {
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 
 const SEP = String.fromCharCode(31);
+/** The version field every current cursor starts with. */
+const VER = `${LISTING_CURSOR_VERSION}${SEP}`;
 
 /** Reconstruct the SQL string Prisma received (single Prisma.Sql arg). */
 function capturedSql(): string {
@@ -227,11 +230,37 @@ describe('cursor encode/decode', () => {
       cursorMean: null,
     });
     // Large-negative mean, encoded raw (also out of range → dropped).
-    const neg = Buffer.from(`000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
+    const neg = Buffer.from(`${VER}000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
     expect(decodeListingCursor(neg).cursorMean).toBeNull();
     // A boundary in-range mean (0 and 1) is KEPT.
     expect(decodeListingCursor(encodeListingCursor('k', 'id', 0)).cursorMean).toBe(0);
     expect(decodeListingCursor(encodeListingCursor('k', 'id', 1)).cursorMean).toBe(1);
+  });
+
+  /**
+   * 🔴 A cursor minted under another sort-key encoding must NOT be compared: the raw key it
+   * carries has another shape, so the keyset would skip or repeat rows. During a rollout
+   * both versions serve the store, so this is a live path, and the safe answer is page 1.
+   */
+  it('🔴 an UN-VERSIONED (pre-version) cursor decodes to first-page, not a keyset', () => {
+    const old = (body: string) => Buffer.from(body, 'utf8').toString('base64url');
+    const FIRST_PAGE = { cursorSortKey: null, cursorId: null, cursorMean: null };
+    expect(decodeListingCursor(old(`00000000000000000030${SEP}apl_B`))).toEqual(FIRST_PAGE);
+    expect(decodeListingCursor(old(`000000900${SEP}apl_2${SEP}0.72`))).toEqual(FIRST_PAGE);
+    // Another version marker is treated the same way.
+    expect(decodeListingCursor(old(`v1${SEP}000000900${SEP}apl_2`))).toEqual(FIRST_PAGE);
+    // Control: the same body WITH the current version decodes to its keyset.
+    expect(decodeListingCursor(old(`${VER}000000900${SEP}apl_2`))).toEqual({
+      cursorSortKey: '000000900',
+      cursorId: 'apl_2',
+      cursorMean: null,
+    });
+  });
+
+  it('a current cursor carries the version and round-trips', () => {
+    const c = encodeListingCursor('0000000005', 'apl_9');
+    expect(Buffer.from(c, 'base64url').toString('utf8').startsWith(VER)).toBe(true);
+    expect(decodeListingCursor(c).cursorSortKey).toBe('0000000005');
   });
 });
 
@@ -899,7 +928,7 @@ describe('listAvailableListings — query building + pagination', () => {
     // The cursor is the LAST returned row's (sortKey, id) — carries the sort key,
     // not just the id, so a paged scan over tied sort values is stable.
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
-    expect(decoded).toBe(`20260101000000000001${SEP}apl_1`);
+    expect(decoded).toBe(`${VER}20260101000000000001${SEP}apl_1`);
   });
 
   it('no nextCursor when the result fits in one page', async () => {
@@ -928,11 +957,13 @@ describe('listAvailableListings — query building + pagination', () => {
       limit: 2,
     });
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
-    expect(decoded).toBe(`000000790${SEP}apl_1${SEP}0.8`);
+    expect(decoded).toBe(`${VER}000000790${SEP}apl_1${SEP}0.8`);
   });
 
   it('sort=top-rated with a pinned-mean cursor REUSES it (no global-mean re-read)', async () => {
-    const cursor = Buffer.from(`000000250${SEP}apl_5${SEP}0.25`, 'utf8').toString('base64url');
+    const cursor = Buffer.from(`${VER}000000250${SEP}apl_5${SEP}0.25`, 'utf8').toString(
+      'base64url'
+    );
     // ONLY the id-page query is queued — if the service re-read the mean it would
     // consume this and the id page would get [].
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 'apl_9', sort_key: '000000240' }]);
@@ -970,7 +1001,7 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedValues()).toContain(0.8);
 
     // Also large-negative, via a raw-built cursor.
-    const neg = Buffer.from(`000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
+    const neg = Buffer.from(`${VER}000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ mean: 0.5 }]);
     mockDbRead.$queryRaw.mockResolvedValueOnce([]);
     await expect(

@@ -43,6 +43,7 @@ function detail(over: Partial<ListingDetail> = {}): Input {
   return {
     recommend: { recommendedCount: UP, notRecommendedCount: DOWN, recommendPct: UP / REVIEWS },
     reviewCount: REVIEWS,
+    kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: true, liveUrl: 'https://a.civit.ai' },
     installCount: INSTALLS,
     openCount: PLAYS,
     ...over,
@@ -285,5 +286,41 @@ describe('🔴 AppListingDetailBody delegates the chip decision (invariant guard
         'renders `message` INSTEAD of `value`, so a ternary here is what made the ' +
         'recommend percentage unreachable. The decision belongs in appListingStatChips.'
     ).not.toMatch(/message=\{[^}]*\?/);
+  });
+});
+
+describe('🔴 buildListingStatChips — the usage chip is Plays on-site, Installs off-site', () => {
+  const OFFSITE = {
+    kind: 'offsite',
+    externalUrl: 'https://x.example',
+    connectClientId: null,
+  } as const;
+  const usage = (chips: ReturnType<typeof buildListingStatChips>) =>
+    chips.filter((c) => c.key !== 'recommend');
+
+  it('on-site: "Plays" from openCount, never installs', () => {
+    expect(usage(buildListingStatChips(detail()))).toEqual([
+      { key: 'plays', label: 'Plays', value: PLAYS, ariaLabel: '2,718 plays' },
+    ]);
+  });
+
+  it('🔴 off-site: "Installs" from installCount, never plays', () => {
+    // An off-site listing has no play count; its usage is installs, as in the popular sort.
+    const chips = buildListingStatChips(detail({ kindData: OFFSITE, openCount: null }));
+    expect(usage(chips)).toEqual([
+      { key: 'installs', label: 'Installs', value: INSTALLS, ariaLabel: '4,213 installs' },
+    ]);
+  });
+
+  it('off-site with an openCount still shows installs (the kind decides, not the field)', () => {
+    const chips = buildListingStatChips(detail({ kindData: OFFSITE, openCount: PLAYS }));
+    expect(usage(chips).map((c) => [c.key, c.value])).toEqual([['installs', INSTALLS]]);
+  });
+
+  it('off-site with zero installs shows no usage chip', () => {
+    const chips = buildListingStatChips(
+      detail({ kindData: OFFSITE, openCount: null, installCount: 0 })
+    );
+    expect(chips.map((c) => c.key)).toEqual(['recommend']);
   });
 });

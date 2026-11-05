@@ -508,8 +508,9 @@ export function AppListingCard({
 
         {/* META LINE — category · "Updated 3 days ago". ALWAYS rendered and ONE line
             (`truncate`), so `AppListingCardSkeleton` reserves it unconditionally: without a
-            category it also holds a zero-width space, so it never collapses to no line. The category link sits above the
-            stretched title link (`relative z-10`) so it is the one that receives the click. */}
+            category it also holds a zero-width space, so it never collapses to no line.
+            The category link sits above the stretched title link (`relative z-10`) so it
+            is the one that receives the click. */}
         <Text size="xs" c="dimmed" truncate data-testid="apps-listing-card-meta">
           {categoryLabel &&
             (categoryHref ? (

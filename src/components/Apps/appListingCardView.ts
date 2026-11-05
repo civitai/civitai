@@ -169,6 +169,35 @@ export function hasShownPlayCount(openCount: number | null | undefined): openCou
   return typeof openCount === 'number' && openCount > 0;
 }
 
+/** The one usage number the app page shows for a listing, and its word. */
+export type ListingUsageStat = { key: 'plays' | 'installs'; label: string; count: number };
+
+/**
+ * Which usage number the app page shows: PLAYS for an on-site listing (the store card's
+ * number, by {@link hasShownPlayCount}), INSTALLS for any other kind, since an off-site
+ * listing has no play count — the same fallback the `popular` sort makes
+ * (`listingPopularSortKey`). Either is shown only when it is above zero, and `null` means
+ * show nothing.
+ *
+ * The positive `=== 'onsite'` test matches `cardOpenCount`. The `typeof` guards cover the
+ * `ListingDetail`-shaped producers that arrive through a cast.
+ */
+export function listingUsageStat(detail: {
+  kindData?: { kind?: string } | null;
+  openCount?: number | null;
+  installCount?: number | null;
+}): ListingUsageStat | null {
+  if (detail.kindData?.kind === 'onsite') {
+    return hasShownPlayCount(detail.openCount)
+      ? { key: 'plays', label: 'Plays', count: detail.openCount }
+      : null;
+  }
+  const installs = detail.installCount;
+  return typeof installs === 'number' && installs > 0
+    ? { key: 'installs', label: 'Installs', count: installs }
+    : null;
+}
+
 /**
  * https-only external-link guard. The public DTO already null-guards a non-https
  * `externalUrl`, but re-guard at the render boundary so a malformed/`javascript:`

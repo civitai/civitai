@@ -45,8 +45,8 @@ export type ListingKindFilter = z.infer<typeof listingKindFilterSchema>;
  *     many-review 90% app, and 0-review apps sit mid-pack at the global mean
  *     recommend rate (mirrors the AppBlock `rating` sort, on a proportion
  *     instead of a 1..5 average). Ties fall back to the `popular` key (plays, or
- *     installs for an off-site app), then install_count, then id — most apps have no reviews yet, so this tie-break
- *     is what orders most of the store.
+ *     installs for an off-site app), then install_count, then id — most apps have
+ *     no reviews yet, so this tie-break is what orders most of the store.
  *   - `popular`  — plays (open_count) DESC, then install_count DESC, then id (from
  *     the AppListingMetric rollup). Plays, because that is the count the store card
  *     shows; installs read ~0 for nearly every listing. An off-site listing has no
@@ -461,8 +461,9 @@ export type ListingDetail = {
    *
    * 🔴 ALLOWLIST JUSTIFICATION. It is an aggregate over the whole install base — it
    * identifies no user — and it is the store's `popular` sort tie-break (see
-   * `listAppListingsSchema`). Kept on the DTO for public REST consumers; the detail page
-   * itself shows PLAYS ({@link ListingDetail.openCount}), the number the store card shows.
+   * `listAppListingsSchema`). The detail page shows it as "Installs" for an OFF-SITE
+   * listing, which has no play count; an on-site listing shows PLAYS
+   * ({@link ListingDetail.openCount}) instead — see `listingUsageStat`.
    *
    * `0` when the metric row is absent (a listing nobody has installed yet), matching how
    * the ranking SQL reads it (`COALESCE(m.install_count, 0)`).

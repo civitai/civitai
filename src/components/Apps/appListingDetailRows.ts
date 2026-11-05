@@ -45,7 +45,7 @@ import {
   STANDALONE_KIND_LABEL,
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
-import { hasShownPlayCount } from '~/components/Apps/appListingCardView';
+import { listingUsageStat } from '~/components/Apps/appListingCardView';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   offsiteContentRatingColor,
@@ -57,7 +57,7 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 /** A single label/value row of the Details panel. */
 export type ListingDetailRow = {
   /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
-  key: 'kind' | 'category' | 'rating' | 'reviews' | 'plays' | 'updated' | 'source';
+  key: 'kind' | 'category' | 'rating' | 'reviews' | 'plays' | 'installs' | 'updated' | 'source';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
@@ -145,6 +145,7 @@ export function buildListingDetailRows(
     | 'recommend'
     | 'reviewCount'
     | 'openCount'
+    | 'installCount'
     | 'updatedAt'
   > &
     Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
@@ -257,20 +258,17 @@ export function buildListingDetailRows(
   // and a required TYPE is not a runtime guarantee about a value that crossed a cast.
   // An absent field therefore takes the same path as a null `category`: omit the row.
   //
-  // PLAYS — the store card's number (`ListingDetail.openCount`), under the card's word.
-  // `hasShownPlayCount` is the card's own rule, so the row is absent exactly when the
-  // card shows no play count (off-site `null`, and `0`), and a cast producer's
-  // `undefined` is absent too rather than a throw.
+  // USAGE — "Plays" for an on-site listing (the store card's number), "Installs" for an
+  // off-site one, which has no play count. `listingUsageStat` is the one rule, shared with
+  // the header chip; a zero or a cast producer's `undefined` shows no row rather than
+  // throwing.
   //
   // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2): a preview has no metric rollup, so
   // any number there is a fact about the POSTURE, not about the app — the same reasoning
   // that makes `buildListingStatChips` return no chips at all in preview.
-  if (!opts.preview && hasShownPlayCount(detail.openCount)) {
-    rows.push({
-      key: 'plays',
-      label: 'Plays',
-      value: detail.openCount.toLocaleString(),
-    });
+  const usage = opts.preview ? null : listingUsageStat(detail);
+  if (usage) {
+    rows.push({ key: usage.key, label: usage.label, value: usage.count.toLocaleString() });
   }
 
   // 🔴 OMITTED IN `preview` (rule 2): a preview's `updatedAt` is not the listing row's

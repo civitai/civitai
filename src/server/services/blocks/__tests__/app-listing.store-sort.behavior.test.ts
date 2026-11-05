@@ -230,6 +230,24 @@ describe('store sort orders, executed', () => {
     ]);
   });
 
+  it('🔴 a cursor minted before the key changed shape restarts at page 1, not mid-list', async () => {
+    // The old encoding: no version field and a 20-digit installs-only popular key — here
+    // the boundary after B (30 installs). Compared against the new 40-digit key it would
+    // land at an arbitrary row; it must be read as "no cursor" instead.
+    const oldCursor = Buffer.from(
+      `${'30'.padStart(20, '0')}${String.fromCharCode(31)}apl_B`,
+      'utf8'
+    ).toString('base64url');
+    const res = await listAvailableListings(
+      { kind: 'all', sort: 'popular', limit: 2, cursor: oldCursor },
+      OPTS
+    );
+    const first = await listAvailableListings({ kind: 'all', sort: 'popular', limit: 2 }, OPTS);
+    expect(res.items.map((i) => i.id)).toEqual(['apl_A', 'apl_B']);
+    expect(res.items.map((i) => i.id)).toEqual(first.items.map((i) => i.id));
+    expect(res.nextCursor).toBe(first.nextCursor);
+  });
+
   // Page size 2: three boundaries. Size 3: the boundary falls between D and E, which tie on
   // the plays position (25) and are split by installs. Size 6: between G and F, which tie on
   // every metric, so only the id half of the keyset places the cursor.
