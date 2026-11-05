@@ -114,11 +114,16 @@ import {
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
-import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
+import type {
+  OriginalImageRead,
+  OriginalImageSource,
+  SpooledImage,
+} from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  spoolOriginalImage,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -544,6 +549,29 @@ export async function sweepStaleSendDirs(root = baseDir) {
   const stale = found.filter(({ reportId, claimId }) => !liveDirs.has(`${reportId}-${claimId}`));
   for (const { path } of stale) await fsAsync.rm(path, { recursive: true, force: true });
   return stale.map(({ path }) => path);
+}
+
+const ARCHIVE_SCRATCH_ROOTS = ['base', 'images', 'generated-images', 'training-data'];
+
+/**
+ * Removes the archive scratch directories, named by report id alone, that a pass which died left
+ * behind. Run only at the start of the archive job, whose run lock keeps other archive passes out
+ * while it holds; a pass that outlives the lock can lose its directory here and fail. Send directories in the same roots are named `<id>-<claim>` and are left.
+ */
+export async function sweepArchiveScratchDirs(root = baseDir) {
+  const removed: string[] = [];
+  for (const scratch of ARCHIVE_SCRATCH_ROOTS) {
+    const rootDir = `${root}/${scratch}`;
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names.filter((name) => /^\d+$/.test(name))) {
+      await fsAsync.rm(`${rootDir}/${name}`, { recursive: true, force: true });
+      removed.push(`${rootDir}/${name}`);
+    }
+  }
+  return removed;
 }
 
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
@@ -2927,9 +2955,16 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
-          let original: OriginalImageRead;
+          let original: OriginalImageRead | SpooledImage;
+          let attempts = 1;
           try {
-            original = await readOriginalImage(image, { reserve: budget.reserve });
+            original = await spoolOriginalImage(image, {
+              reserve: budget.reserve,
+              spoolDir: `${reportDirs.images}/spool`,
+              onRetry: (failedAttempt) => {
+                attempts = Math.max(attempts, failedAttempt + 1);
+              },
+            });
           } catch (e) {
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
@@ -2945,9 +2980,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
               ...errorClass(e),
               fullUrl: isEdgeUrlPassthrough(image.url),
               retried,
+              attempts,
             });
             if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
+          }
+          if (attempts > 1) {
+            logToAxiom({
+              name: 'csam-report',
+              type: 'info',
+              subType: 'archive-image-read-retried',
+              message: `report ${report.id}: image ${image.id} read on attempt ${attempts}`,
+              reportId: report.id,
+              imageId: image.id,
+              attempts,
+            });
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });
@@ -2955,9 +3002,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           }
           // Named by id: Image.name is user input.
           const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+          let source: Buffer | Readable | undefined;
           try {
-            await boundedArchive.append(original.data, { name }, original.release);
+            // Opened here, so a failed open throws to this catch rather than from an unwatched stream.
+            source =
+              'path' in original
+                ? (await fsAsync.open(original.path, 'r')).createReadStream()
+                : original.data;
+            await boundedArchive.append(source, { name }, original.release);
           } catch (e) {
+            // An unread stream holds the deleted file's space until it is closed.
+            if (source instanceof Readable) source.destroy();
             original.release();
             throw e;
           }
@@ -2969,7 +3024,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             imageId: image.id,
             source: original.source,
             sha256: original.sha256,
-            bytes: original.data.length,
+            bytes: 'path' in original ? original.bytes : original.data.length,
             contentType: original.contentType,
           });
         };
