@@ -2,6 +2,7 @@ import { Button, CloseButton, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
 import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
@@ -169,7 +170,8 @@ export function StickerPlacementBar({
   // because the thing it announces is itself daily: tomorrow's allowance is news
   // again, and a permanent dismissal would mean the feature announces itself
   // exactly once per person, ever.
-  const showHint = !!hint && dismissedDay !== utcDay();
+  const turfPlayer = !!useTurfFeed()?.joined;
+  const showHint = !!hint && !turfPlayer && dismissedDay !== utcDay();
 
   // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
   // separate queries and a failure of either reads as empty, so an image with
