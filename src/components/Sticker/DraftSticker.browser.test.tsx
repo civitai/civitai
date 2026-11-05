@@ -85,6 +85,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   return {
     ...actual,
+    // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- spreads the real client, so an unlisted procedure is the real hook, not undefined
     trpc: {
       ...actual.trpc,
       useUtils: () => ({ cosmetic: { getStickerBalances: { invalidate: vi.fn() } } }),
