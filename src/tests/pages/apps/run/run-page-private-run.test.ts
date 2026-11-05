@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 // Module scope, not a test body: from a body this transform is charged to one test's
 // 60s budget. See vitest.config.mts.
 import '~/pages/apps/run/[slug]/[[...path]]';
@@ -127,7 +128,8 @@ vi.mock('~/server/services/blocks/app-listing-beta.service', () => ({
   readListingBetaBySlugForRender: async () => ({ isBeta: false, betaMessage: null }),
 }));
 // Real-ish host gate: mature (r/x) requires civitai.red.
-vi.mock('~/server/utils/server-domain', () => ({
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
   ratingAllowedOnHost: (rating: unknown, host: string) => {
     const mature = typeof rating === 'string' && ['r', 'x'].includes(rating.toLowerCase());
     if (!mature) return true;
@@ -476,8 +478,29 @@ describe('private-run SSR — the inherited gates [REG]', () => {
       block: BLOCK({ contentRating: 'r' }),
     });
     expect(await resolver()(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
-    const onRed = await resolver()(ctx({ host: 'civitai.red' }));
-    expect(onRed.props).toBeDefined();
+    // On .red the viewer also needs R in their browsing level — moderators included.
+    const rViewer = { user: { id: 4004, isModerator: true, showNsfw: true, browsingLevel: 7 } };
+    const onRed = await resolver()({
+      ...ctx({ host: 'civitai.red', user: rViewer }),
+      features: { appBlocks: true, appBlocksPages: true, canViewNsfw: true },
+    });
+    expect(onRed.props.appBlockId).toBeDefined();
+  });
+
+  it('🔴 a moderator (or owner) whose browsing level excludes R gets the hidden state, not the app', async () => {
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK({ contentRating: 'r' }),
+    });
+    const pgViewer = { user: { id: 4004, isModerator: true, showNsfw: true, browsingLevel: 1 } };
+    const result = await resolver()({
+      ...ctx({ host: 'civitai.red', user: pgViewer }),
+      features: { appBlocks: true, appBlocksPages: true, canViewNsfw: true },
+    });
+    expect(result).toEqual({
+      props: { hiddenByBrowsingLevel: { contentRating: 'r', signedIn: true } },
+    });
   });
 
   it('the maturity gate runs AFTER access, so it cannot be probed by an outsider', async () => {

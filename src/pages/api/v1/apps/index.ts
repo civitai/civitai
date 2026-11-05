@@ -11,6 +11,8 @@ import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { isRedCapableHost } from '~/server/utils/server-domain';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 
 /**
@@ -138,6 +140,12 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
       // the moderator-review bypass the REVIEW CEILING now closes. The property holds, but
       // it is `maxVisibilityForStatus` that holds it, not this argument.
       floor: 'public',
+      // The caller's own browsing level (signed out → PG only), as the `/apps` page applies it:
+      // an app whose content rating is outside it is not listed.
+      viewerBrowsingLevel: getRequestBrowsingLevel({
+        features: getFeatureFlagsLazy({ user, req }),
+        user,
+      }),
     });
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({

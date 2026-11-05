@@ -310,6 +310,7 @@ const start = (over: Partial<Parameters<typeof startAppFork>[0]> = {}) =>
     listingId: PARENT_LISTING,
     scope: 'full',
     redCapable: false,
+    viewerBrowsingLevel: undefined,
     ...over,
   });
 
@@ -356,14 +357,17 @@ describe('startAppFork — refusals (exact errors)', () => {
   it('🔴 a parent that is not PUBLICLY visible (hidden, removed, restricted) reads as missing', async () => {
     // Everything else about this parent would pass: the visibility check is the only refusal.
     m.summary.mockResolvedValue(null);
-    await expect(start({ scope: 'full', redCapable: true })).rejects.toMatchObject({
+    await expect(
+      start({ scope: 'full', redCapable: true, viewerBrowsingLevel: 13 })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
       message: FORK_PARENT_UNAVAILABLE_MESSAGE,
     });
-    // Asked at the PUBLIC floor whoever the viewer is, under the viewer's own scope.
+    // Asked at the PUBLIC floor whoever the viewer is, under the viewer's own scope and (🔴) the
+    // viewer's own browsing level — an R/X parent needs that rating in it (13 = PG|R|X).
     expect(m.summary).toHaveBeenCalledWith(
       { id: PARENT_LISTING },
-      { redCapable: true, scope: 'full', floor: 'public' }
+      { redCapable: true, scope: 'full', floor: 'public', viewerBrowsingLevel: 13 }
     );
     expect(m.reconstruct).not.toHaveBeenCalled();
     expect(store.size).toBe(0);
