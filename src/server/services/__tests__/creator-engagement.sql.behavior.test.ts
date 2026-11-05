@@ -41,7 +41,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   },
 }));
 
-const { getCreatorEngagement, NEWEST_SCAN_BUDGET } = await import(
+const { getCreatorEngagement, InvalidCursorError, NEWEST_SCAN_BUDGET } = await import(
   '~/server/services/creator-engagement.service'
 );
 type Query = Parameters<typeof getCreatorEngagement>[0];
@@ -78,7 +78,8 @@ const NOW = new Date('2026-06-15T12:00:00.000Z');
 const ago = (days: number, ms = 0) =>
   new Date(NOW.getTime() - days * 86_400_000 + ms).toISOString();
 
-// Synthetic ids. Caller 1 owns images 10-15 and models 30-31; creator 2 owns image 20 and model 40.
+// Synthetic ids. Caller 1 owns images 10-18 and models 30-33; creator 2 owns image 20 and model 40.
+// 14-18 and 31-33 each fail one visibility gate, and each has engagement that would rank it.
 const CALLER = 1;
 const OTHER = 2;
 
@@ -119,7 +120,7 @@ CREATE TABLE "BuzzTip" ("entityType" text, "entityId" int, "fromUserId" int, amo
 const FIXTURE = `
 INSERT INTO "Post" VALUES (1, ${CALLER}, '${ago(60)}'), (2, ${OTHER}, '${ago(
   60
-)}'), (3, ${CALLER}, NULL);
+)}'), (3, ${CALLER}, NULL), (4, ${CALLER}, '2099-01-01');
 INSERT INTO "Image"(id, "userId", "postId", name, url, type, "createdAt", ingestion) VALUES
   (10, ${CALLER}, 1, 'old', 'u10', 'image', '${ago(40)}', 'Scanned'),
   (11, ${CALLER}, 1, NULL, 'u11', 'image', '${ago(10)}', 'Scanned'),
@@ -128,10 +129,17 @@ INSERT INTO "Image"(id, "userId", "postId", name, url, type, "createdAt", ingest
   (14, ${CALLER}, 3, 'unpublished', 'u14', 'image', '${ago(2)}', 'Scanned'),
   (15, ${CALLER}, 1, 'pending', 'u15', 'image', '${ago(2)}', 'Pending'),
   (20, ${OTHER}, 2, 'not yours', 'u20', 'image', '${ago(2)}', 'Scanned');
+INSERT INTO "Image"(id, "userId", "postId", name, url, "createdAt", "needsReview", "tosViolation") VALUES
+  (16, ${CALLER}, 1, 'in review', 'u16', '${ago(2)}', 'minor', false),
+  (17, ${CALLER}, 1, 'tos', 'u17', '${ago(2)}', NULL, true),
+  (18, ${CALLER}, 4, 'scheduled post', 'u18', '${ago(2)}', NULL, false);
 INSERT INTO "Model"(id, "userId", name, "createdAt", status) VALUES
   (30, ${CALLER}, 'My LoRA', '${ago(5)}', 'Published'),
   (31, ${CALLER}, 'Draft', '${ago(4)}', 'Draft'),
   (40, ${OTHER}, 'Theirs', '${ago(5)}', 'Published');
+INSERT INTO "Model"(id, "userId", name, "createdAt", "deletedAt", availability) VALUES
+  (32, ${CALLER}, 'Deleted', '${ago(4)}', '${ago(1)}', 'Public'),
+  (33, ${CALLER}, 'Private', '${ago(4)}', NULL, 'Private');
 INSERT INTO "ModelVersion" VALUES (300, 30, 'Published'), (301, 30, 'Published'), (302, 30, 'Draft');
 INSERT INTO "ModelMetric" VALUES (30, 77), (40, 9999);
 
@@ -147,13 +155,19 @@ INSERT INTO "ImageReaction"("imageId", "userId", reaction, "createdAt") VALUES
   (12, 8, 'Dislike', '${ago(1)}'),
   (11, 3, 'Like', '${ago(2)}'),
   (20, 3, 'Like', '${ago(1)}'), (20, 4, 'Like', '${ago(1)}'), (20, 5, 'Like', '${ago(1)}'),
-  (20, 6, 'Like', '${ago(1)}'), (20, 7, 'Like', '${ago(1)}'), (20, 8, 'Like', '${ago(1)}');
+  (20, 6, 'Like', '${ago(1)}'), (20, 7, 'Like', '${ago(1)}'), (20, 8, 'Like', '${ago(1)}'),
+  (16, 3, 'Like', '${ago(1)}'), (17, 3, 'Like', '${ago(1)}'), (18, 3, 'Like', '${ago(1)}');
 INSERT INTO "CommentV3"("entityType", "entityId", "userId", "createdAt", "deletedAt", hidden) VALUES
   ('image', 12, 3, '${ago(1)}', NULL, false),
   ('image', 12, 4, '${ago(20)}', NULL, false),
   ('image', 12, ${CALLER}, '${ago(1)}', NULL, false),
   ('image', 12, 5, '${ago(1)}', '${ago(1)}', false),
-  ('model', 30, 3, '${ago(1)}', NULL, false);
+  ('model', 30, 3, '${ago(1)}', NULL, false),
+  ('model', 32, 3, '${ago(1)}', NULL, false),
+  ('model', 33, 3, '${ago(1)}', NULL, false),
+  ('image', 12, 9, '${ago(1)}', NULL, true);
+INSERT INTO "CommentV3"("entityType", "entityId", "userId", "createdAt", "tosViolation") VALUES
+  ('image', 11, 10, '${ago(1)}', true);
 INSERT INTO "CollectionItem"("imageId", "modelId", "addedById", status, "createdAt") VALUES
   (12, NULL, 3, 'ACCEPTED', '${ago(5)}'),
   (12, NULL, 4, 'REJECTED', '${ago(5)}'),
@@ -166,6 +180,8 @@ INSERT INTO "ResourceReview"("modelId", "userId", recommended, exclude, "created
   (30, ${CALLER}, true, false, '${ago(1)}'),
   (30, 5, true, true, '${ago(1)}'),
   (40, 3, true, false, '${ago(1)}');
+INSERT INTO "ResourceReview"("modelId", "userId", recommended, "tosViolation", "createdAt") VALUES
+  (30, 9, true, true, '${ago(1)}');
 `;
 
 let pg: PGlite;
@@ -296,6 +312,12 @@ describe('sort=newest', () => {
     expect(res.items.every((i) => [10, 11, 12, 13, 30].includes(i.id))).toBe(true);
   });
 
+  it('rejects a cursor whose time is outside the range a Date holds', async () => {
+    await expect(
+      getCreatorEngagement(query({ cursor: forge({ s: 'n', t: 9e15, k: 'i', id: 12 }) }))
+    ).rejects.toThrow(InvalidCursorError);
+  });
+
   it('rejects a cursor it did not issue', async () => {
     await expect(getCreatorEngagement(query({ cursor: 'not-a-cursor' }))).rejects.toThrow(
       'Invalid cursor'
@@ -345,6 +367,52 @@ describe('sort=engagement', () => {
       query({ sort: 'engagement', cursor: forge({ s: 'e', v: 1_000_000, k: 'm', id: 40 }) })
     );
     expect(forged.items.map((i) => i.id)).toEqual([12, 30, 11]);
+  });
+});
+
+describe('visibility gates', () => {
+  const RANKED = async () => {
+    holder.clickhouse = { $query: async () => [12, 11, 16, 17, 18].map((id) => ({ id })) };
+    return getCreatorEngagement(query({ sort: 'engagement' }));
+  };
+  const listedIds = async () => {
+    const newest = (await getCreatorEngagement(query({}))).items.map((i) => i.id);
+    holder.cache.clear();
+    const ranked = (await RANKED()).items.map((i) => i.id);
+    return { newest, ranked };
+  };
+
+  // Each hidden row has engagement that would list it; the visible ones are the negative control.
+  it.each([
+    ['an image awaiting review (needsReview)', 16],
+    ['a ToS-violating image', 17],
+    ['an image on a post scheduled for the future', 18],
+    ['a deleted model', 32],
+    ['a Private model', 33],
+  ])('lists neither by newest nor by engagement %s', async (_label, id) => {
+    const { newest, ranked } = await listedIds();
+    expect(newest).toEqual(expect.arrayContaining([12, 11, 30]));
+    expect(ranked).toEqual(expect.arrayContaining([12, 30, 11]));
+    expect(newest).not.toContain(id);
+    expect(ranked).not.toContain(id);
+  });
+
+  const item = async (type: 'image' | 'model', id: number) =>
+    (await getCreatorEngagement(query({ type }))).items.find((i) => i.id === id)!;
+
+  it('does not count a hidden comment', async () => {
+    // Image 12's one visible 7-day comment, beside a hidden one.
+    expect((await item('image', 12)).d7.comments).toBe(1);
+  });
+
+  it('does not count a ToS-violating comment', async () => {
+    // Image 11's only comment.
+    expect((await item('image', 11)).d7.comments).toBe(0);
+  });
+
+  it('does not count a ToS-violating review', async () => {
+    // Model 30's one visible 7-day review, beside a ToS-violating one.
+    expect((await item('model', 30)).d7.reactions).toMatchObject({ total: 1, thumbsUp: 1 });
   });
 });
 

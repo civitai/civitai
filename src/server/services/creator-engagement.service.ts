@@ -36,7 +36,8 @@ const KIND_ORDER: Record<Kind, number> = { m: 0, i: 1 };
 
 const newestCursorSchema = z.object({
   s: z.literal('n'),
-  t: z.number().int(),
+  // The range `Date` accepts; past it `toISOString` throws a RangeError.
+  t: z.number().int().min(0).max(8.64e15),
   k: z.enum(['i', 'm']),
   id: z.number().int().positive(),
 });

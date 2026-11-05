@@ -175,7 +175,8 @@ ClickHouse reads were measured once each against production for the owner with t
 `ownerId` is not in the `reactions` sort key, so the candidate read prunes on `time` only: it reads
 every reaction from the last 30 days, and its cost scales with site-wide activity rather than with
 the owner's catalogue. It runs at most once per owner per 5-minute candidate cache, whatever the
-`type`.
+`type`. That is acceptable while the flag is mod-only. The read must be bounded before the flag
+widens, which is tracked as a follow-up.
 
 ## Tests
 
