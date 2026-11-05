@@ -28,9 +28,13 @@ vi.mock('../../db', () => ({
 }));
 vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: setLevel }));
 
-const { countInquisitorQueue, getInquisitorQueue, ruleOnInquisitorItem, RULING_LEASE_MS } = await import(
-  '../inquisitor.service'
-);
+const {
+  countInquisitorQueue,
+  countInquisitorQueueByFilter,
+  getInquisitorQueue,
+  ruleOnInquisitorItem,
+  RULING_LEASE_MS,
+} = await import('../inquisitor.service');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -44,11 +48,30 @@ const MOD = 7;
 
 let db: PGlite;
 
-const insertItem = (id: number, imageId: number, status: string, questionKey = Q, priority = 2) =>
+const insertItem = (
+  id: number,
+  imageId: number,
+  status: string,
+  questionKey = Q,
+  priority = 2,
+  {
+    reason = 'blocked',
+    escalationReason = null,
+  }: { reason?: string | null; escalationReason?: string | null } = {}
+) =>
   db.query(
-    `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","createdAt")
-     VALUES ($1,$2,$3,'scan-sample',$4,5,$5,$6,'blocked', now() + ($1::int * interval '1 second'))`,
-    [id, questionKey, imageId, status === 'Inquisitor' ? 'Inquisitor' : 'Knight', priority, status]
+    `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","escalationReason","createdAt")
+     VALUES ($1,$2,$3,'scan-sample',$4,5,$5,$6,$7,$8, now() + ($1::int * interval '1 second'))`,
+    [
+      id,
+      questionKey,
+      imageId,
+      status === 'Inquisitor' ? 'Inquisitor' : 'Knight',
+      priority,
+      status,
+      reason,
+      escalationReason,
+    ]
   );
 
 const insertVote = (
@@ -152,6 +175,56 @@ describe('getInquisitorQueue', () => {
     await insertItem(3, 3, 'Inquisitor', Q, 2);
 
     expect((await getInquisitorQueue()).map((i) => i.id)).toEqual([2, 1, 3]);
+  });
+});
+
+describe('Inquisitor queue filters', () => {
+  // 1 blocked, 2 pushed down, 3 no consensus, 4 write-back conflict, 5 neither, 6 outside the queue.
+  beforeEach(async () => {
+    await db.exec(`INSERT INTO "Image" ("id","url") VALUES (4,'k4'), (5,'k5'), (6,'k6')`);
+    await insertItem(1, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'blocked' });
+    await insertItem(2, 2, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(3, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await insertItem(4, 4, 'Inquisitor', Q, 2, { reason: 'level-moved' });
+    await insertItem(5, 5, 'Inquisitor', Q, 2, { reason: null });
+    await insertItem(6, 6, 'Open', Q, 2, { reason: null, escalationReason: 'blocked' });
+  });
+
+  it.each([
+    ['all', [1, 2, 3, 4, 5]],
+    ['blocked', [1]],
+    ['pushed-down', [2]],
+    ['no-consensus', [3]],
+    ['write-back', [4]],
+  ] as const)('lists exactly the %s items', async (filter, ids) => {
+    expect((await getInquisitorQueue(filter)).map((i) => i.id)).toEqual(ids);
+  });
+
+  it('shows an item with neither reason under All only', async () => {
+    for (const filter of ['blocked', 'pushed-down', 'no-consensus', 'write-back'] as const) {
+      expect((await getInquisitorQueue(filter)).map((i) => i.id)).not.toContain(5);
+    }
+  });
+
+  it('counts each filter from the same rows it lists, with All equal to the sidebar badge', async () => {
+    replica.allowed = true;
+    const counts = await countInquisitorQueueByFilter();
+
+    expect(counts).toEqual({
+      all: 5,
+      blocked: 1,
+      'pushed-down': 1,
+      'no-consensus': 1,
+      'write-back': 1,
+    });
+    expect(counts.all).toBe(await countInquisitorQueue());
+    expect((await getInquisitorQueue()).map((i) => i.escalationReason)).toEqual([
+      'blocked',
+      'pushed-down',
+      'no-consensus',
+      null,
+      null,
+    ]);
   });
 });
 

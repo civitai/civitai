@@ -4,6 +4,7 @@ import { sql, utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import type { InquisitorFilter } from '$lib/knights/inquisitor-filters';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
@@ -21,6 +22,7 @@ export type InquisitorItem = {
   imageType: string;
   prompt: string;
   reason: string | null;
+  escalationReason: string | null;
   source: string;
   currentLevel: number;
   locked: boolean;
@@ -53,6 +55,33 @@ const waitingOnInquisitors = (db: Kysely<DB>) =>
     .where('i.status', '=', 'Inquisitor')
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION);
 
+const filterCondition = (filter: Exclude<InquisitorFilter, 'all'>) =>
+  filter === 'write-back'
+    ? sql<boolean>`i."reason" IS NOT NULL`
+    : sql<boolean>`i."escalationReason" = ${filter}`;
+
+export type InquisitorFilterCounts = Record<InquisitorFilter, number>;
+
+/** One scan over the same base query as the list, so a tab's count is what clicking it shows. */
+export async function countInquisitorQueueByFilter(): Promise<InquisitorFilterCounts> {
+  const row = await waitingOnInquisitors(dbWrite)
+    .select([
+      sql<string>`count(*)`.as('all'),
+      sql<string>`count(*) filter (where ${filterCondition('blocked')})`.as('blocked'),
+      sql<string>`count(*) filter (where ${filterCondition('pushed-down')})`.as('pushedDown'),
+      sql<string>`count(*) filter (where ${filterCondition('no-consensus')})`.as('noConsensus'),
+      sql<string>`count(*) filter (where ${filterCondition('write-back')})`.as('writeBack'),
+    ])
+    .executeTakeFirst();
+  return {
+    all: Number(row?.all ?? 0),
+    blocked: Number(row?.blocked ?? 0),
+    'pushed-down': Number(row?.pushedDown ?? 0),
+    'no-consensus': Number(row?.noConsensus ?? 0),
+    'write-back': Number(row?.writeBack ?? 0),
+  };
+}
+
 export async function countInquisitorQueue(): Promise<number> {
   const row = await waitingOnInquisitors(dbRead)
     .select((eb) => eb.fn.countAll<string>().as('count'))
@@ -60,12 +89,16 @@ export async function countInquisitorQueue(): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
-export async function getInquisitorQueue(): Promise<InquisitorItem[]> {
-  const items = await waitingOnInquisitors(dbWrite)
+export async function getInquisitorQueue(
+  filter: InquisitorFilter = 'all'
+): Promise<InquisitorItem[]> {
+  const base = waitingOnInquisitors(dbWrite);
+  const items = await (filter === 'all' ? base : base.where(filterCondition(filter)))
     .select([
       'i.id',
       'i.imageId',
       'i.reason',
+      'i.escalationReason',
       'i.source',
       'i.createdAt',
       'q.prompt',
