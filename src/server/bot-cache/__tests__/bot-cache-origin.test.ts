@@ -266,12 +266,7 @@ describe('storing', () => {
     const html = Buffer.from(
       Array.from({ length: 300 * 1024 }, () => Math.floor(Math.random() * 256))
     );
-    await storeBotCacheRender(
-      keyFor('civitai.com', '/images/1'),
-      IMAGE_ROUTE as never,
-      {},
-      html
-    );
+    await storeBotCacheRender(keyFor('civitai.com', '/images/1'), IMAGE_ROUTE as never, {}, html);
     expect(store.size).toBe(0);
     // INSTRUMENT CHECK: a page under the cap is stored by the same call.
     await storeBotCacheRender(
