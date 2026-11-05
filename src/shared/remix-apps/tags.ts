@@ -13,3 +13,21 @@ export const remixAppTag = (slug: string) => `${REMIX_APP_TAG}:${slug}`;
 export function readRemixTag(tags: readonly string[] | undefined, prefix: string) {
   return tags?.find((tag) => tag.startsWith(prefix))?.slice(prefix.length);
 }
+
+/** The tags on segment `segment` of run `runId`: what the tray and `readRun` find it by. */
+export function remixRunTags({
+  slug,
+  runId,
+  segment,
+}: {
+  slug: string;
+  runId: string;
+  segment: number;
+}) {
+  return [
+    REMIX_APP_TAG,
+    remixAppTag(slug),
+    REMIX_RUN_TAG_PREFIX + runId,
+    REMIX_SEGMENT_TAG_PREFIX + segment,
+  ];
+}

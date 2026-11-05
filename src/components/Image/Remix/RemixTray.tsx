@@ -3,6 +3,7 @@ import { IconCheck, IconLoader2, IconPhoto, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { RemixRun } from '~/components/Image/Remix/useRemixRuns';
 import { useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
+import { openRemixAppModal } from '~/components/Dialog/triggers/remix-app';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const statusLabel: Record<RemixRun['status'], string> = {
@@ -28,7 +29,8 @@ export function RemixTrayView({
   if (!inProgress && !ready) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[200] flex flex-col items-end gap-2">
+    // Above the footer and the Assistant button that floats over its right end.
+    <div className="fixed bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid)+4.5rem)] right-[calc(1rem+var(--safe-area-inset-right))] z-[100] flex flex-col items-end gap-2">
       {expanded && (
         <Paper
           withBorder
@@ -110,6 +112,21 @@ export function RemixTray({ onOpen }: { onOpen?: (run: RemixRun) => void }) {
       ready={ready}
       onOpen={onOpen}
       onDismiss={dismiss}
+    />
+  );
+}
+
+/** The tray on every page, each row reopening its run's modal. */
+export function RemixTrayMount() {
+  return (
+    <RemixTray
+      onOpen={(run) =>
+        openRemixAppModal({
+          app: { slug: run.slug, name: run.appName, runtime: run.runtime },
+          imageId: run.imageId,
+          run: { runId: run.runId, workflowId: run.workflowId },
+        })
+      }
     />
   );
 }

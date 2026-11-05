@@ -13,7 +13,8 @@ export function RemixResultLine({
   gallery,
   onPost,
   posting,
-  disabled,
+  remixAgainDisabled,
+  postDisabled,
 }: {
   onRemixAgain: () => void;
   onOpenQueue: () => void;
@@ -21,7 +22,8 @@ export function RemixResultLine({
   gallery?: { checked: boolean; onChange: (checked: boolean) => void; price: ReactNode };
   onPost: () => void;
   posting?: boolean;
-  disabled?: boolean;
+  remixAgainDisabled?: boolean;
+  postDisabled?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2" data-testid="remix-result-line">
@@ -31,7 +33,7 @@ export function RemixResultLine({
           size="lg"
           aria-label="Remix again"
           onClick={onRemixAgain}
-          disabled={disabled}
+          disabled={remixAgainDisabled}
         >
           <IconRotateClockwise size={18} />
         </ActionIcon>
@@ -47,7 +49,7 @@ export function RemixResultLine({
             size="sm"
             checked={gallery.checked}
             onChange={(e) => gallery.onChange(e.currentTarget.checked)}
-            disabled={disabled}
+            disabled={postDisabled}
             label={
               <span className="flex items-center gap-1">
                 Remix gallery <span aria-hidden>·</span> {gallery.price}
@@ -55,7 +57,7 @@ export function RemixResultLine({
             }
           />
         )}
-        <Button onClick={onPost} loading={posting} disabled={disabled}>
+        <Button onClick={onPost} loading={posting} disabled={postDisabled}>
           Post
         </Button>
       </div>

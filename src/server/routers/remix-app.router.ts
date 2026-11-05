@@ -9,7 +9,6 @@ import {
 } from '~/server/services/remix-app.service';
 import {
   advanceRemixRun,
-  listRemixRuns,
   REMIX_RUN_ID,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
@@ -30,8 +29,6 @@ const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 const teamQuoteRateLimit = rateLimit({ limit: 120, period: CacheTTL.xs });
 /** start and advance each price the next workflow with a what-if before they submit it. */
 const runStepRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
-/** Each call reads up to 100 of the viewer's workflows from the orchestrator. */
-const runsRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
 const nonce = z.string().min(8).max(64);
 const quote = z.number().int().nonnegative();
@@ -98,8 +95,4 @@ export const remixAppRouter = router({
     .mutation(async ({ ctx, input }) =>
       advanceRemixRun({ ...input, caller: await getCaller(ctx) })
     ),
-  runs: remixAppProcedure
-    .use(runsRateLimit)
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(async ({ ctx }) => listRemixRuns({ caller: await getCaller(ctx) })),
 });

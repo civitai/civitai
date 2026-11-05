@@ -40,6 +40,9 @@ export async function replayRemixApp(
   let next = 0;
   const step = (effect: RemixEffect) => {
     const index = next++;
+    // A run is stored only as its workflows: an answer given before the first has nowhere to live.
+    if (index === 0 && effect.type !== 'workflow')
+      throw new RemixReplayError(`${app.slug} must run a workflow before it asks anything`);
     const entry = log[index];
     if (!entry) throw new Suspend(index, effect);
     if (entry.type !== effect.type)

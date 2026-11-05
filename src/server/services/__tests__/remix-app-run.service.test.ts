@@ -176,7 +176,30 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
       return images;
     },
   });
-  const apps = new Map([pickThenEdit, endless].map((app) => [app.slug, app]));
+  /** Asks before it has run anything: there is no workflow to keep the answer on. */
+  const asksFirst = defineRemixApp({
+    slug: 'asks-first',
+    name: 'Asks first',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      const style = await ctx.ask({
+        kind: 'choice',
+        prompt: 'Style?',
+        options: [{ value: 'anime', label: 'Anime' }],
+      });
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: style,
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      return images;
+    },
+  });
+  const apps = new Map([pickThenEdit, endless, asksFirst].map((app) => [app.slug, app]));
   return {
     ...real,
     getRuntimeRemixApp: (slug: string) => apps.get(slug) ?? real.getRuntimeRemixApp(slug),
@@ -188,7 +211,6 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   advanceRemixRun,
-  listRemixRuns,
   MAX_RUN_SEGMENTS,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
@@ -474,6 +496,19 @@ describe('remix app runs', () => {
     expect(submits()).toHaveLength(1);
   });
 
+  it('refuses an app that asks before its first workflow, and submits nothing', async () => {
+    addImage(SOURCE_ID);
+    const start = startRemixRun({
+      slug: 'asks-first',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-0019',
+      quote: 30,
+      caller: caller(),
+    });
+    await expect(start).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(submits()).toHaveLength(0);
+  });
+
   it(`stops a run at ${MAX_RUN_SEGMENTS} steps`, async () => {
     addImage(SOURCE_ID);
     const { runId } = await startRemixRun({
@@ -568,20 +603,6 @@ describe('remix app runs', () => {
       viewer.user = { ...viewer.user, showNsfw: false };
       expect(urls(await finishedRun('nonce-0018', viewer))).toEqual([blob('pg')]);
     });
-  });
-
-  it('lists runs that are neither posted nor dismissed', async () => {
-    addImage(SOURCE_ID);
-    const start = (nonce: string) =>
-      startRemixRun({ slug: 'anime-it', imageId: SOURCE_ID, nonce, quote: 30, caller: caller() });
-    const open = await start('nonce-0008');
-    await start('nonce-0009');
-    await start('nonce-0010');
-    submits()[1].tags.push('remix:done');
-    submits()[2].tags.push('remix:dismissed');
-
-    const runs = await listRemixRuns({ caller: caller() });
-    expect(runs.map((r) => r.runId)).toEqual([open.runId]);
   });
 });
 

@@ -12,27 +12,32 @@ import {
   assertInputsUsable,
   buildRuntimeRequest,
   loadSource,
+  remixRunId,
+  remixSubmitArgs,
   runtimeSourceOf,
   viewerOf,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { RemixAnswer, RemixApp, RemixAsk, RemixImage } from '~/shared/remix-apps/define';
-import { remixAnswerRefusal, replayRemixApp, type RemixLogEntry } from '~/shared/remix-apps/replay';
+import {
+  remixAnswerRefusal,
+  RemixReplayError,
+  replayRemixApp,
+  type RemixLogEntry,
+} from '~/shared/remix-apps/replay';
 import { getRuntimeRemixApp } from '~/shared/remix-apps/system-apps';
+import {
+  readRemixTag,
+  REMIX_RUN_TAG_PREFIX,
+  REMIX_SEGMENT_TAG_PREFIX,
+  remixRunTags,
+} from '~/shared/remix-apps/tags';
 import { orchestratorRefundableStatuses } from '~/shared/constants/generation.constants';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 
-export const REMIX_APP_TAG = 'remix-app';
-export const REMIX_DONE_TAG = 'remix:done';
-export const REMIX_DISMISSED_TAG = 'remix:dismissed';
-const RUN_TAG = 'remix-run:';
-const SEGMENT_TAG = 'remix-seg:';
-const appTag = (slug: string) => `${REMIX_APP_TAG}:${slug}`;
-
 export const MAX_RUN_SEGMENTS = 8;
-const RUN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type RemixRunMetadata = { app: string; version: number; answers: RemixAnswer[] };
 
@@ -45,11 +50,6 @@ export type RemixRunState =
 
 const digest = (parts: unknown[], length: number) =>
   createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, length);
-
-/** One tap (one nonce) is one run, so a repeated start finds the run it already made. */
-export function remixRunId(args: { userId: number; slug: string; imageId: number; nonce: string }) {
-  return `r${digest([args.userId, args.slug, args.imageId, args.nonce], 20)}`;
-}
 
 export const REMIX_RUN_ID = /^r[0-9a-f]{20}$/;
 
@@ -81,19 +81,15 @@ function readMeta(workflow: Workflow): RemixRunMetadata | undefined {
   return { app: raw.app, version: raw.version, answers };
 }
 
-function tagValue(workflow: Workflow, prefix: string) {
-  return workflow.tags?.find((tag) => tag.startsWith(prefix))?.slice(prefix.length);
-}
-
 async function readRun(runId: string, caller: RemixAppCaller): Promise<Segment[]> {
   const { items } = await queryWorkflows({
     token: caller.token,
-    tags: [RUN_TAG + runId],
+    tags: [REMIX_RUN_TAG_PREFIX + runId],
     take: MAX_RUN_SEGMENTS + 1,
     hideMatureContent: false,
   });
   const segments = items.map((workflow): Segment => {
-    const index = Number(tagValue(workflow, SEGMENT_TAG));
+    const index = Number(readRemixTag(workflow.tags, REMIX_SEGMENT_TAG_PREFIX));
     const meta = readMeta(workflow);
     if (!Number.isInteger(index) || !meta) throw damaged('a step is missing its run details');
     const provenance = (workflow.metadata as Record<string, unknown> | undefined)?.provenance;
@@ -181,14 +177,18 @@ async function advance({
   }
 
   const source = runtimeSourceOf(image);
+  const replay = () =>
+    replayRemixApp(app, source, log).catch((error) => {
+      throw error instanceof RemixReplayError ? damaged(error.message) : error;
+    });
   const pending = [...answers];
-  let outcome = await replayRemixApp(app, source, log);
+  let outcome = await replay();
   while (outcome.status === 'effect' && outcome.effect.type === 'ask' && pending.length) {
     const answer = pending.shift() as RemixAnswer;
     const refusal = remixAnswerRefusal(outcome.effect.spec, answer);
     if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
     log.push({ type: 'ask', answer });
-    outcome = await replayRemixApp(app, source, log);
+    outcome = await replay();
   }
   if (pending.length) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Too many answers' });
 
@@ -231,21 +231,14 @@ async function advance({
       message: `The price changed to ${priced.cost.toLocaleString()} Buzz. Check it and run again.`,
     });
 
-  const tags = [REMIX_APP_TAG, appTag(app.slug), RUN_TAG + runId, SEGMENT_TAG + index];
+  const tags = remixRunTags({ slug: app.slug, runId, segment: index });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, answers };
   // A segment after the first reads the previous segment's output, which carries no source; the
   // mint names it again so the graph signs it into this segment's metadata and output files.
   const mint = signProvenance({ userId: caller.user.id, sourceImageIds: [image.id], kind: 'mint' });
   const result = await submitPresetImageGen({
     ...run.submit,
-    user: caller.user,
-    token: caller.token,
-    flags: caller.features,
-    currencies,
-    tags: caller.isGreenDomain ? ['green', ...tags] : tags,
-    isGreen: caller.features.isGreen,
-    allowMatureContent: caller.isGreenDomain || !caller.user.showNsfw ? false : undefined,
-    track: caller.track,
+    ...remixSubmitArgs(caller, tags, currencies),
     remixOfId: image.id,
     externalId: segmentExternalId(caller.user.id, runId, index),
     sourceProvenance: mint ? [mint] : undefined,
@@ -295,50 +288,4 @@ export async function advanceRemixRun({
     throw damaged('the app changed since it started. Start it again from the image.');
   const image = await loadSource(runSourceId(segments), caller, true);
   return advance({ runId, app, image, segments, answers, quote, caller });
-}
-
-export type RemixRunSummary = {
-  runId: string;
-  slug: string;
-  workflowId: string;
-  status: Workflow['status'];
-  segments: number;
-  createdAt: string;
-};
-
-/** The viewer's runs from the last week that were neither posted nor dismissed. */
-export async function listRemixRuns({ caller }: { caller: RemixAppCaller }) {
-  const { items } = await queryWorkflows({
-    token: caller.token,
-    tags: [REMIX_APP_TAG],
-    take: 100,
-    fromDate: new Date(Date.now() - RUN_WINDOW_MS),
-    hideMatureContent: false,
-  });
-  const latest = new Map<string, { workflow: Workflow; index: number; count: number }>();
-  for (const workflow of items) {
-    const runId = tagValue(workflow, RUN_TAG);
-    const index = Number(tagValue(workflow, SEGMENT_TAG));
-    if (!runId || !Number.isInteger(index)) continue;
-    const seen = latest.get(runId);
-    if (!seen || index > seen.index)
-      latest.set(runId, { workflow, index, count: (seen?.count ?? 0) + 1 });
-    else seen.count++;
-  }
-  const runs: RemixRunSummary[] = [];
-  for (const [runId, { workflow, count }] of latest) {
-    const tags = workflow.tags ?? [];
-    if (tags.includes(REMIX_DONE_TAG) || tags.includes(REMIX_DISMISSED_TAG)) continue;
-    const slug = readMeta(workflow)?.app;
-    if (!slug) continue;
-    runs.push({
-      runId,
-      slug,
-      workflowId: workflow.id as string,
-      status: workflow.status,
-      segments: count,
-      createdAt: workflow.createdAt,
-    });
-  }
-  return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
