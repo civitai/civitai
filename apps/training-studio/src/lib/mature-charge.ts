@@ -43,10 +43,15 @@ export function matureSpend(args: {
 }
 
 /** A mature dataset always needs the tick, even when Blue covers the quote: the balance can move before
- *  submit, and the server refuses a mature run without it. The tick belongs to one amount (the Yellow part
- *  when known, else the price) and one dataset; changing either un-ticks it. */
-export function matureAckKey(price: number | null | undefined, matureCount: number): string | null {
-  return matureCount > 0 && price != null ? `${price}:${matureCount}` : null;
+ *  submit, and the server refuses a mature run without it. The tick belongs to one price, one Yellow part
+ *  (`yellow`, null = Blue covers it) and one dataset; changing any un-ticks it, so "Blue pays" consent never
+ *  carries over to "all of it in Yellow" at the same price. */
+export function matureAckKey(
+  price: number | null | undefined,
+  yellow: number | null | undefined,
+  matureCount: number
+): string | null {
+  return matureCount > 0 && price != null ? `${price}:${yellow ?? '-'}:${matureCount}` : null;
 }
 
 /** Start is blocked while a mature-Yellow charge is unacknowledged. */

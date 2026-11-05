@@ -1,5 +1,6 @@
 import { backend, browser } from '$lib/host';
 import { matureSpend, type Spend } from '$lib/mature-charge';
+import { buzzMode } from '$lib/buzz-mode.svelte';
 
 // The live header balance. Module-scope `$state`, but only ever WRITTEN in the browser (seed/refresh guard
 // on `browser`), so it never holds one user's balance during another user's SSR render — the same
@@ -34,16 +35,16 @@ export const buzzBalance = {
 
 /** `matureSpend` against the live Blue balance, for every spend site. `mature` = the dataset has
  *  mature images (then the non-Blue part is Yellow, never Green); `member` = a paid membership, which
- *  lets Blue pay for mature content. Unknown membership counts as not a member. `blueFirst` false = Blue
+ *  lets Blue pay for mature content. Unknown membership counts as not a member. With Blue first off, Blue
  *  is not charged, so the whole price is non-Blue. */
 export function nonBlueSpend(
   price: number | null | undefined,
   mode: 'yellow' | 'green',
-  opts: { mature?: boolean; member?: boolean; blueFirst: boolean }
+  opts: { mature?: boolean; member?: boolean } = {}
 ): Spend | null {
   return matureSpend({
     price,
-    blue: opts.blueFirst ? balances?.blue : 0,
+    blue: buzzMode.blueFirst ? balances?.blue : 0,
     mode,
     mature: opts.mature ?? false,
     member: opts.member ?? false,

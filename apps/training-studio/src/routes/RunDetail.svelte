@@ -501,13 +501,12 @@
       ? nonBlueSpend(quote.cost, buzzMode.value, {
           mature: furtherMature > 0,
           member: hostConfig().isPaidMember === true,
-          blueFirst: buzzMode.blueFirst,
         })
       : null
   );
   // The run id is in the key so a tick never carries over to another run with the same price.
   const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(furtherSpend?.amount ?? quote?.cost, furtherMature);
+    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
     return key && `${workflowIdKey}:${key}`;
   });
   let furtherAckedFor = $state<string | null>(null);

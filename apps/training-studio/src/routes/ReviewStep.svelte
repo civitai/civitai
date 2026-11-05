@@ -227,13 +227,9 @@
   });
   const total = $derived(runTotal);
   const spend = $derived(
-    nonBlueSpend(total, buzzMode.value, {
-      mature,
-      member: membership === true,
-      blueFirst: buzzMode.blueFirst,
-    })
+    nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
   );
-  const ackKey = $derived(matureAckKey(spend?.amount ?? total, matureCount));
+  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
   let ackedFor = $state<string | null>(null);
   const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
@@ -422,7 +418,8 @@
   );
   // Blank rows generate no sample image, so they are not counted.
   const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
-  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder
+  // comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
   // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
   // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:

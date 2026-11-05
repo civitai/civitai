@@ -105,7 +105,8 @@
               </button>
             {/each}
           {/if}
-          <div class="flex items-center gap-2 rounded px-3 py-2 text-sm transition-colors hover:bg-dark-5">
+          <!-- id/for, not a wrapping label: the Checkbox is a button, as elsewhere in the app. -->
+          <div class="flex items-center gap-2 px-3 py-2 text-sm">
             <Checkbox
               id="buzz-blue-first"
               bind:checked={() => buzzMode.blueFirst, (v) => buzzMode.setBlueFirst(v)}
