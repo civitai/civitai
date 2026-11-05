@@ -1124,27 +1124,37 @@ const watchListedPayments = async (
 };
 
 /**
- * Payment ids marked credited with no Buzz transaction, re-checked every run until one appears.
- * The watch adds what it finds; support may add older ids. Kept out of the repo.
+ * Payment ids marked credited with no Buzz transaction, or whose lookup failed. Re-checked every
+ * run until the transaction appears or the row stops being marked credited. The watch adds what
+ * it finds; support may add older ids. Kept out of the repo.
  */
 export const WATCH_LEDGER_MISSING_KEY = 'nowpayments:watch-ledger-missing';
 /** Overlaps the daily run, so one missed run leaves no gap. */
 const LEDGER_CHECK_WINDOW_HOURS = 48;
+/** Per run, for the window and for the list each. */
 const LEDGER_CHECK_CAP = 2000;
+/** Skips rows credited moments ago (this run included), which a lagging ledger read could miss. */
+const LEDGER_CHECK_SETTLE_MINUTES = 10;
+/** Bounded so a Buzz outage cannot hold the job past its lock. */
+const LEDGER_READ_OPTIONS = { retries: 1, timeoutMs: 10_000 };
 
 type LedgerState = 'present' | 'missing' | 'lookup_failed';
 
 /** Read only. A Buzz or NowPayments error is lookup_failed, never missing. */
 const ledgerState = async (paymentId: number): Promise<LedgerState> => {
   try {
-    if (await getTransactionByExternalId(`np-deposit-${paymentId}`)) return 'present';
+    if (await getTransactionByExternalId(`np-deposit-${paymentId}`, LEDGER_READ_OPTIONS))
+      return 'present';
     // processDeposit marks a deposit credited, with no np-deposit row, when a hand grant under
     // its payin hash already paid it.
     const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
     if (!payment) throw new Error('not found on NowPayments');
     if (
       payment.payin_hash &&
-      (await getTransactionByExternalId(manualPayinCreditExternalId(payment.payin_hash)))
+      (await getTransactionByExternalId(
+        manualPayinCreditExternalId(payment.payin_hash),
+        LEDGER_READ_OPTIONS
+      ))
     )
       return 'present';
     return 'missing';
@@ -1160,14 +1170,17 @@ const ledgerState = async (paymentId: number): Promise<LedgerState> => {
 
 /**
  * Reports deposits marked credited (finished with buzzCredited) that have no Buzz transaction:
- * those updated in the last 48h, plus every id on WATCH_LEDGER_MISSING_KEY. Never credits; its
- * only write is that list.
+ * those updated in the last 48h (bar the last few minutes), plus the ids on
+ * WATCH_LEDGER_MISSING_KEY, up to the cap for each. Never credits; its only write is that list.
  */
 const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
   const windowWhere = {
     status: 'finished',
     buzzCredited: { not: null },
-    updatedAt: { gte: dayjs.utc().subtract(LEDGER_CHECK_WINDOW_HOURS, 'hour').toDate() },
+    updatedAt: {
+      gte: dayjs.utc().subtract(LEDGER_CHECK_WINDOW_HOURS, 'hour').toDate(),
+      lt: dayjs.utc().subtract(LEDGER_CHECK_SETTLE_MINUTES, 'minute').toDate(),
+    },
   };
   const select = {
     paymentId: true,
@@ -1186,7 +1199,10 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
     }),
     dbRead.cryptoDeposit.count({ where: windowWhere }),
   ]);
-  const listedIds = listed ?? [];
+  const allListed = listed ?? [];
+  // Ids past the cap wait for a later run and stay listed.
+  const listedIds = allListed.slice(0, LEDGER_CHECK_CAP);
+  const unchecked = allListed.slice(LEDGER_CHECK_CAP);
   const listedRows = listedIds.length
     ? await dbRead.cryptoDeposit.findMany({
         where: { paymentId: { in: listedIds.map((id) => BigInt(id)) } },
@@ -1198,36 +1214,51 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
   const rows = new Map<number, Row | null>(listedIds.map((id) => [id, null]));
   for (const row of [...inWindow, ...listedRows]) rows.set(Number(row.paymentId), row);
 
+  // A listed id whose row is no longer marked credited (held, owed) is the open report's to follow.
+  const markedCredited = (row: Row | null) =>
+    !row || (row.status === 'finished' && row.buzzCredited != null);
+  const notCredited = listedIds.filter((id) => !markedCredited(rows.get(id) ?? null));
+  if (notCredited.length)
+    await log({
+      type: 'info',
+      message: 'Listed deposit no longer marked credited; dropped from the ledger watch',
+      paymentIds: notCredited,
+    });
+
   const checked = await mapWithConcurrency(
-    [...rows.keys()],
+    [...rows.keys()].filter((id) => markedCredited(rows.get(id) ?? null)),
     RECONCILE_FETCH_CONCURRENCY,
     async (paymentId) => ({ paymentId, state: await ledgerState(paymentId) })
   );
 
-  const wasListed = new Set(listedIds);
-  const resolved = checked.filter((c) => c.state === 'present' && wasListed.has(c.paymentId));
+  const wasListed = new Set(allListed);
+  const resolved = checked
+    .filter((c) => c.state === 'present' && wasListed.has(c.paymentId))
+    .map((c) => c.paymentId);
   if (resolved.length)
     await log({
       type: 'info',
       message: 'Credited deposit now in the Buzz ledger; dropped from the watch',
-      paymentIds: resolved.map((c) => c.paymentId),
+      paymentIds: resolved,
     });
 
-  const keep = checked
-    .filter(
-      (c) => c.state === 'missing' || (c.state === 'lookup_failed' && wasListed.has(c.paymentId))
-    )
-    .map((c) => c.paymentId);
-  const changed = keep.length !== listedIds.length || keep.some((id) => !wasListed.has(id));
+  // A failed lookup is listed too, so a row is not lost when it leaves the window unchecked.
+  const add = checked.filter((c) => c.state !== 'present').map((c) => c.paymentId);
+  const drop = new Set([...resolved, ...notCredited]);
   if (listed === null) {
-    await log({ message: 'Ledger watch list unreadable; not rewritten', missing: keep });
-  } else if (changed) {
+    await log({ message: 'Ledger watch list unreadable; not rewritten', missing: add });
+  } else if (drop.size || add.some((id) => !wasListed.has(id))) {
     try {
-      await dbKV.set(WATCH_LEDGER_MISSING_KEY, keep);
+      // Re-read just before writing: keeps ids support added during the run, and entries as written.
+      const current = await dbKV.get<unknown>(WATCH_LEDGER_MISSING_KEY, []);
+      if (!Array.isArray(current)) throw new Error('not an array');
+      const next = current.filter((entry) => !drop.has(entry as number));
+      for (const id of add) if (!next.includes(id)) next.push(id);
+      await dbKV.set(WATCH_LEDGER_MISSING_KEY, next);
     } catch (e) {
       await log({
         message: 'Ledger watch list not saved',
-        missing: keep,
+        missing: add,
         error: e instanceof Error ? e.message : String(e),
       });
     }
@@ -1247,7 +1278,7 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
         };
       }),
     lookupFailed: checked.filter((c) => c.state === 'lookup_failed').length,
-    notChecked: Math.max(0, windowTotal - inWindow.length),
+    notChecked: Math.max(0, windowTotal - inWindow.length) + unchecked.length,
   };
 };
 
@@ -1303,7 +1334,14 @@ export const watchOpenDeposits = async () => {
     heldBack
   );
 
-  const ledger = await checkCreditedDepositsInLedger();
+  // A failure here must not cost the open-deposit digest.
+  const ledger = await checkCreditedDepositsInLedger().catch(
+    async (e): Promise<LedgerCheckReport> => {
+      const error = e instanceof Error ? e.message : String(e);
+      await log({ message: 'Ledger check for credited deposits failed', error });
+      return { missing: [], lookupFailed: 0, notChecked: 0, error };
+    }
+  );
 
   const report = await getOpenDepositReport();
   return {

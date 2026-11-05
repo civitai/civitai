@@ -35,7 +35,14 @@ export const watchOpenNowpaymentsJob = createJob(
 
     logToAxiom({
       name: 'watch-open-nowpayments-job',
-      type: result.counts.finishedUncredited > 0 || ledger.missing.length > 0 ? 'warning' : 'info',
+      type:
+        result.counts.finishedUncredited > 0 ||
+        ledger.missing.length > 0 ||
+        ledger.lookupFailed > 0 ||
+        ledger.notChecked > 0 ||
+        ledger.error
+          ? 'warning'
+          : 'info',
       message: `Open deposits: ${result.counts.open} open (oldest ${result.counts.oldestOpenDays}d), ${result.closed} closed, ${result.counts.held} held, ${result.counts.finishedUncredited} finished but uncredited, ${ledger.missing.length} credited but not in the ledger`,
       ...result.counts,
       checked: result.checked,
@@ -47,6 +54,7 @@ export const watchOpenNowpaymentsJob = createJob(
       creditedNotInLedger: ledger.missing.length,
       ledgerLookupFailed: ledger.lookupFailed,
       ledgerNotChecked: ledger.notChecked,
+      ledgerError: ledger.error,
     });
 
     return { ...result, listed, ledger, digestSent };

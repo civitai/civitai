@@ -55,6 +55,8 @@ export type LedgerCheckReport = {
   lookupFailed: number;
   /** Rows in the window past the per-run cap, left for the next run. */
   notChecked: number;
+  /** Set when the check did not run; the counts are then zero, not clean. */
+  error?: string;
 };
 
 export type OpenCryptoDepositDigestData = {
@@ -67,7 +69,9 @@ export type OpenCryptoDepositDigestData = {
 };
 
 const ledgerSummary = (l: LedgerCheckReport) =>
-  `Marked credited but no Buzz transaction: ${l.missing.length}. Ledger lookups failed: ${l.lookupFailed}. Not checked (over the cap): ${l.notChecked}.`;
+  l.error
+    ? `Ledger check did not run: ${l.error}`
+    : `Marked credited but no Buzz transaction: ${l.missing.length}. Ledger lookups failed: ${l.lookupFailed}. Not checked (over the cap): ${l.notChecked}.`;
 
 const LEDGER_NOTE =
   'These deposits are marked credited, but the Buzz ledger has no transaction for them. Hand them to the NowPayments desk; do not credit them from this digest.';
