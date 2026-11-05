@@ -28,7 +28,17 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => features,
 }));
+const STICKER_HATS = [
+  { cosmeticId: 11, usageCount: 3, lastUsedAt: null },
+  { cosmeticId: 12, usageCount: 0, lastUsedAt: null },
+];
 const h = vi.hoisted(() => ({
+  hats: [] as {
+    cosmeticId: number;
+    usageCount: number;
+    lastUsedAt: null;
+    art?: { url: string; canvas?: number[]; bounds?: number[] } | null;
+  }[],
   stock: { available: 3, optedIn: true },
   mutate: vi.fn(),
   optIn: vi.fn(),
@@ -42,14 +52,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     trpc: makeTrpcProxy(
       {
         'hatTurf.getStock': { useQuery: () => ({ data: h.stock, isLoading: false }) },
-        'hatTurf.getMyStickerHats': {
-          useQuery: () => ({
-            data: [
-              { cosmeticId: 11, usageCount: 3, lastUsedAt: null },
-              { cosmeticId: 12, usageCount: 0, lastUsedAt: null },
-            ],
-          }),
-        },
+        'hatTurf.getMyStickerHats': { useQuery: () => ({ data: h.hats }) },
         'event.getMyHats': {
           useQuery: () => ({
             data: [
@@ -126,7 +129,7 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalConnection: () => undefined,
 }));
 
-import { useEffect } from 'react';
+import { act, useEffect } from 'react';
 import { HatTurfCardProvider, useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
@@ -217,6 +220,7 @@ const savedSpot = () => {
 };
 
 beforeEach(() => {
+  h.hats = STICKER_HATS;
   h.stock = { available: 3, optedIn: true };
   h.user = { id: 1 };
   h.mutate.mockReset();
@@ -278,6 +282,33 @@ describe('hat placement against the drawn picture', () => {
     const [tall, wide] = widths;
     expect(tall).toBeGreaterThan(0);
     expect(wide).toBeCloseTo(tall, 0);
+  });
+
+  test("the draft and the placed hat draw the chosen hat's art", async () => {
+    h.hats = [
+      {
+        ...STICKER_HATS[0],
+        art: { url: 'party-cap-art', canvas: [128, 160], bounds: [24, 40, 104, 150] },
+      },
+      { ...STICKER_HATS[1], art: { url: 'top-hat-art' } },
+    ];
+    renderPicture('contain', [400, 300]);
+    const artOf = (id: string) => q(id)?.querySelector('[data-testid="hat-turf-art"] img');
+    await vi.waitFor(() => expect(artOf('hat-turf-draft')).toBeTruthy());
+    expect(artOf('hat-turf-draft')!.getAttribute('src')).toContain('party-cap-art');
+    expect(q('hat-turf-draft')!.querySelector('svg')).toBeNull();
+
+    savedSpot();
+    await act(async () => h.mutate.mock.calls.at(-1)![1].onSuccess());
+    await vi.waitFor(() => expect(artOf('hat-turf-placed')).toBeTruthy());
+    expect(artOf('hat-turf-placed')!.getAttribute('src')).toContain('party-cap-art');
+    expect(q('hat-turf-placed')!.querySelector('svg')).toBeNull();
+  });
+
+  test('a chosen hat with no known art draws the team cone', async () => {
+    renderPicture('contain', [400, 300]);
+    await vi.waitFor(() => expect(q('hat-turf-draft')?.querySelector('svg')).toBeTruthy());
+    expect(q('hat-turf-draft')!.querySelector('img')).toBeNull();
   });
 
   test('a big image-detail picture caps the hat at 96px', async () => {

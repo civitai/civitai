@@ -468,6 +468,45 @@ describe('Hat Turf on image detail', () => {
     }
   });
 
+  test('the art is scaled and centred by its visible pixels, and art with no fit fills most of the square', async () => {
+    const canvas = [128, 160];
+    const bounds = [24, 40, 104, 150];
+    h.stickers = [
+      { ...sticker(1, 'blue', 0.3, 0.3), art: { url: 'fitted-art', canvas, bounds } },
+      { ...sticker(2, 'blue', 0.6, 0.6), art: { url: 'unfitted-art' } },
+    ];
+    render({}, 900);
+    await vi.waitFor(() => expect(hats().length).toBe(2));
+    const rects = (url: string) => {
+      const box = [...document.body.querySelectorAll('[data-testid="hat-turf-art"]')].find((el) =>
+        el.querySelector('img')?.getAttribute('src')?.includes(url)
+      )!;
+      return [box.getBoundingClientRect(), box.querySelector('img')!.getBoundingClientRect()];
+    };
+
+    const [square, img] = rects('fitted-art');
+    const [cw, ch] = canvas;
+    const [l, t, r, b] = bounds;
+    const visible = {
+      left: img.left + (img.width * l) / cw,
+      right: img.left + (img.width * r) / cw,
+      top: img.top + (img.height * t) / ch,
+      bottom: img.top + (img.height * b) / ch,
+    };
+    // The visible pixels, not the canvas, sit in the middle of the square.
+    expect((visible.left + visible.right) / 2).toBeCloseTo(square.left + square.width / 2, 0);
+    expect((visible.top + visible.bottom) / 2).toBeCloseTo(square.top + square.height / 2, 0);
+    // They cover 62% of the side by area (the hat previews' rule), so every design reads the same size.
+    const side = Math.sqrt((visible.right - visible.left) * (visible.bottom - visible.top));
+    expect(side / square.width).toBeCloseTo(0.62, 2);
+
+    const [plainSquare, plainImg] = rects('unfitted-art');
+    expect(plainImg.width / plainSquare.width).toBeCloseTo(0.8, 2);
+    expect(plainImg.height / plainSquare.height).toBeCloseTo(1, 2);
+    expect((plainImg.left - plainSquare.left) / plainSquare.width).toBeCloseTo(0.1, 2);
+    expect(plainImg.top - plainSquare.top).toBeCloseTo(0, 0);
+  });
+
   test('a hat whose art is unknown falls back to the team cone', async () => {
     h.stickers = [sticker(1, 'blue', 0.3, 0.3)];
     render({}, 900);
