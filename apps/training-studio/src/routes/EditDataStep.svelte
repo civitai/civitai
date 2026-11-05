@@ -444,7 +444,6 @@
 {/snippet}
 
 <!-- The whole step is a drop target; the visible drop zone below is its keyboard/click entry. -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="relative flex flex-col gap-5" {...drop}>
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div class="min-w-0">
