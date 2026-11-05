@@ -526,6 +526,15 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
   });
 
+  it('applies a lifted lead once the owner unticks a flag set again since', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    expect(await applyHeldRestrictedVerdict(MODEL, { ownerCleared: true })).toBe('applied');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after.meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
+  });
+
   it.each(['moderator', 'hashRevert'] as const)(
     'leaves a lead whose flag was lifted by %s for a moderator to rule on',
     async (liftedBy) => {
@@ -608,6 +617,15 @@ describe('a Private model, which must stay SFW-only', () => {
     const after = await row();
     expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
     expect(after.meta).toEqual(applied);
+  });
+
+  it('a lifted lead the owner unticks again on a Private model applies at publish', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    await makePrivate();
+    expect(await applyHeldRestrictedVerdict(MODEL, { ownerCleared: true })).toBe('held_restricted');
+    expect(await publish()).toBe(true);
+    await expectApplied();
   });
 
   it('a lead whose flag a moderator lifted stays held at publish', async () => {

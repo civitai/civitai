@@ -2894,7 +2894,7 @@ export async function setModelMinor({
       }).catch(() => null);
   }
 
-  const heldVerdict = minor ? null : await import('~/server/services/text-scan/actions/model-nsfw');
+  const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
   const { before, data, result, snapshotError } = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
 
@@ -2941,7 +2941,9 @@ export async function setModelMinor({
         };
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
-    if (heldVerdict && before.minor)
+    if (minor && before.meta?.restrictedNsfwVerdict?.liftedBy)
+      await heldVerdict.dropLiftedBy(tx, id, { flagged: true });
+    else if (before.minor)
       await heldVerdict.holdLeadAfterFlagLift(
         tx,
         id,
@@ -3208,7 +3210,7 @@ export async function setModelPoi({
   const stampedAhead = !poi && flagged.poi && !fromAppeal && !onlyIf;
   if (stampedAhead) await stampLift();
 
-  const heldVerdict = poi ? null : await import('~/server/services/text-scan/actions/model-nsfw');
+  const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
   const written = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
     if (onlyIf && !onlyIf(before)) return null;
@@ -3251,7 +3253,9 @@ export async function setModelPoi({
     if (poi && !before.poi && activity === 'setPoiAutoHash') await capturePoiFlagSnapshot(tx, id);
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
-    if (heldVerdict && before.poi)
+    if (poi && before.meta?.restrictedNsfwVerdict?.liftedBy)
+      await heldVerdict.dropLiftedBy(tx, id, { flagged: true });
+    else if (before.poi)
       await heldVerdict.holdLeadAfterFlagLift(
         tx,
         id,
@@ -3758,7 +3762,9 @@ async function applyHeldVerdictAfterOwnerSave(
   const { applyHeldRestrictedVerdict } = await import(
     '~/server/services/text-scan/actions/model-nsfw'
   );
-  await applyHeldRestrictedVerdict(after.id).catch((error: Error) =>
+  await applyHeldRestrictedVerdict(after.id, {
+    ownerCleared: before.minor || before.poi,
+  }).catch((error: Error) =>
     logToAxiom({
       name: 'text-scan',
       type: 'error',
@@ -4375,16 +4381,15 @@ export const upsertModel = async (
             tx,
           });
 
+        const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
+        if ((updated.minor || updated.poi) && prevMeta?.restrictedNsfwVerdict?.liftedBy)
+          await heldVerdict.dropLiftedBy(tx, updated.id, { flagged: true });
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
           data.availability &&
           data.availability !== Availability.Private
-        ) {
-          const { applyHeldVerdictLeavingPrivate } = await import(
-            '~/server/services/text-scan/actions/model-nsfw'
-          );
-          heldVerdictApplied = await applyHeldVerdictLeavingPrivate(tx, updated.id);
-        }
+        )
+          heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
 
         return updated;
       },
@@ -7112,6 +7117,11 @@ export const privateModelFromTraining = async ({
             takenDown = true;
             throw throwAuthorizationError('You are not authorized to publish this model');
           });
+
+        if ((result.minor || result.poi) && storedMeta?.restrictedNsfwVerdict?.liftedBy) {
+          const { dropLiftedBy } = await import('~/server/services/text-scan/actions/model-nsfw');
+          await dropLiftedBy(tx, id, { flagged: true });
+        }
 
         // In the transaction, like upsertModel's, so a moderator's lock change cannot commit unlogged.
         if (user.isModerator && data.lockedProperties)

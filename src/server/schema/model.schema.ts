@@ -408,7 +408,7 @@ export type RestrictedNsfwVerdict = {
   /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
   applied?: { at: string; prior: RestrictedNsfwPrior };
   /** The flag was lifted other than by the owner's save; the lead waits for a moderator's ruling. */
-  liftedBy?: 'moderator' | 'hashRevert';
+  liftedBy?: 'moderator' | 'appeal' | 'hashRevert';
 };
 
 /** One ruling on a restricted-verdict lead, with the values it replaced. `autoApply` is the scan's own

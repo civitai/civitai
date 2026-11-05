@@ -285,7 +285,7 @@ describe('privateModelFromTraining — a held scan verdict', () => {
     mockStored({ [flag]: true, sfwOnly: true });
     await privateFromTraining({ user: owner, [flag]: false });
     expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
-    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: true });
   });
 
   it('is left held while the flag stays ticked (control)', async () => {

@@ -197,8 +197,11 @@ async function holdRestrictedVerdict(db: RawDb, modelId: number, source: string)
  * model leaves Private (`applyHeldVerdictLeavingPrivate`). Null when there is nothing to apply.
  */
 export async function applyHeldRestrictedVerdict(
-  modelId: number
+  modelId: number,
+  { ownerCleared = false }: { ownerCleared?: boolean } = {}
 ): Promise<ModelTextModerationOutcome | null> {
+  // The owner's own untick is the latest lift: an earlier moderator or revert lift no longer holds it.
+  if (ownerCleared) await dropLiftedBy(dbWrite, modelId, { flagged: false });
   const found = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
@@ -291,6 +294,20 @@ export async function holdLeadAfterFlagLift(
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
       AND m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
       AND NOT (m.minor OR m.poi)
+  `;
+}
+
+/**
+ * Forgets who lifted the flag on a waiting lead: a flag set again (`flagged`) or the owner's own untick
+ * makes that lift history, so the lead takes the ordinary owner path and its note names the last lift.
+ */
+export async function dropLiftedBy(db: RawDb, modelId: number, { flagged }: { flagged: boolean }) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = m.meta #- '{restrictedNsfwVerdict,liftedBy}'
+    WHERE m.id = ${modelId}
+      AND m.meta->'restrictedNsfwVerdict' ? 'liftedBy'
+      AND (m.minor OR m.poi) = ${flagged}
   `;
 }
 

@@ -1038,7 +1038,7 @@ describe('a held scan verdict', () => {
       mockStored({ [flag]: true });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, [flag]: false });
       expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
-      expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+      expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: true });
     }
   );
 
@@ -1048,7 +1048,7 @@ describe('a held scan verdict', () => {
     });
     await upsert({ id: MODEL_ID, userId: OWNER_ID });
     expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
-    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: false });
   });
 
   it('is not retried once applied', async () => {

@@ -423,7 +423,7 @@ export async function flagModelPoi({
               )
             )
           )
-        )
+        ) #- '{restrictedNsfwVerdict,liftedBy}'
     WHERE m.id = ${modelId}
       AND NOT m.poi
       AND ${flagGuard('poi', kept ? textHash : null)}
@@ -685,7 +685,8 @@ export async function grantModelTextScanPoi({
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
   `;
-      if (rows.length) await holdLeadAfterFlagLift(tx, modelId, 'moderator');
+      if (rows.length)
+        await holdLeadAfterFlagLift(tx, modelId, via === 'appeal' ? 'appeal' : 'moderator');
       return rows;
     },
     (rows) => rows.length > 0

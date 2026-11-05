@@ -1534,7 +1534,7 @@ describe('setModelMinor — lift restore on a real row', () => {
         mode text, meta jsonb, "lockedProperties" text[] NOT NULL DEFAULT '{}',
         nsfw bool NOT NULL DEFAULT false, minor bool NOT NULL DEFAULT false,
         "sfwOnly" bool NOT NULL DEFAULT false, poi bool NOT NULL DEFAULT false,
-        "gallerySettings" jsonb);
+        "gallerySettings" jsonb, "nsfwLevel" int NOT NULL DEFAULT 1);
       CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
       CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
       CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor bool NOT NULL DEFAULT false);
@@ -1801,6 +1801,29 @@ describe('setModelMinor — lift restore on a real row', () => {
         prevGalleryLevel: null,
         prevLockedProperties: [],
       };
+
+      it.each([
+        ['minor', () => setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })],
+        ['POI', () => setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID })],
+      ] as const)(
+        'setting %s again forgets the lift, so the owner untick applies the lead',
+        async (_, reflag) => {
+          await seedFlagged({}, { restrictedNsfwVerdict: { ...verdict, liftedBy: 'moderator' } });
+          await reflag();
+          expect(await meta()).toMatchObject({ restrictedNsfwVerdict: verdict });
+          expect((await meta()).restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
+          // The flag and its locks cleared, without the owner save path's own clear.
+          await pg.query(
+            `UPDATE "Model" SET minor = false, poi = false, "lockedProperties" = '{}' WHERE id = $1`,
+            [MODEL_ID]
+          );
+          const { applyHeldRestrictedVerdict } = await import(
+            '~/server/services/text-scan/actions/model-nsfw'
+          );
+          expect(await applyHeldRestrictedVerdict(MODEL_ID)).toBe('applied');
+          expect((await row()).nsfw).toBe(true);
+        }
+      );
 
       it('the minor-hash rollback revives a kept verdict as a pending lead', async () => {
         await seedFlagged(
