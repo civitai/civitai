@@ -35,13 +35,23 @@
     {#if ids.length}
       <dl class="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-0.5">
         {#each ids as [label, value] (label)}
-          <dt class="text-dark-2">{label}</dt>
-          <dd><code class="font-mono wrap-anywhere">{value}</code></dd>
-          <dd>
-            <Button size="sm" variant="ghost" onclick={() => clipboard.copy(value, label)}>
-              {clipboard.copied(label) ? 'Copied' : clipboard.failed(label) ? 'Copy failed' : 'Copy'}
-            </Button>
-          </dd>
+          <!-- Keyed by value too: the panel can outlive a row change, and "Copied" must not carry
+               over to a different report's id. -->
+          {@const key = `${label}:${value}`}
+          <div class="contents">
+            <dt class="text-dark-2">{label}</dt>
+            <dd><code class="font-mono wrap-anywhere">{value}</code></dd>
+            <dd>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Copy ${label}`}
+                onclick={() => clipboard.copy(value, key)}
+              >
+                {clipboard.copied(key) ? 'Copied' : clipboard.failed(key) ? 'Copy failed' : 'Copy'}
+              </Button>
+            </dd>
+          </div>
         {/each}
       </dl>
     {/if}

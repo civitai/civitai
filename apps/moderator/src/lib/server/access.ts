@@ -13,6 +13,7 @@ import {
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
 import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
+import { feedbackAreaLabel } from '$lib/feedback';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
@@ -274,12 +275,12 @@ export const NAVIGATION: NavLink[] = [
       { path: '/feedback', label: 'General queue', countKey: 'feedbackNew' },
       {
         path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
-        label: 'Apps platform (developers)',
+        label: feedbackAreaLabel(APPS_PLATFORM_FEEDBACK_AREA),
         countKey: 'feedbackAppsPlatformNew',
       },
       {
         path: `/feedback?area=${ORCHESTRATION_FEEDBACK_AREA}&status=new`,
-        label: 'Generation & training errors',
+        label: feedbackAreaLabel(ORCHESTRATION_FEEDBACK_AREA),
         countKey: 'feedbackOrchestrationNew',
       },
     ],

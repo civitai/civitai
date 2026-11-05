@@ -217,6 +217,8 @@
   <section class="flex min-w-0 flex-col gap-3">
     <h3 class="text-xs tracking-wide text-dark-2 uppercase">Report</h3>
     <p class="wrap-break-word text-sm whitespace-pre-wrap">{row.message}</p>
+    <!-- Not gated on area: with the orchestration area's flag off, "Report this" files under
+         site-bug-report and those rows carry the same ids and toast text. -->
     <FeedbackErrorReport {context} />
     <FeedbackAttachments {context} />
   </section>
