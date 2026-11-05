@@ -7,6 +7,14 @@ import { SearchError } from './lib/server/errors';
 import { searchImages } from './lib/server/images';
 import { registry, searchDuration } from './lib/server/metrics';
 
+/** Clause sizes, never values: enough to tell which part of a filter made a query slow. */
+function filterShape({ filter, offset, limit }: { filter: object; offset: number; limit: number }) {
+  const sizes = Object.fromEntries(
+    Object.entries(filter).map(([key, value]) => [key, Array.isArray(value) ? value.length : 'set'])
+  );
+  return { ...sizes, offset, limit };
+}
+
 /**
  * Build the Fastify server (no listen — server.ts calls listen; tests use `.inject`).
  * Ops routes: GET /health (no-dep liveness), GET /metrics (private-by-XFF).
@@ -41,7 +49,8 @@ export async function buildServer(options: { deps?: SearchDeps } = {}): Promise<
     } catch (err) {
       if (err instanceof SearchError) {
         end({ outcome: String(err.status) });
-        if (err.status !== 404) req.log.warn({ err }, 'image search failed');
+        if (err.status !== 404)
+          req.log.warn({ err, kind, shape: filterShape(parsed.data) }, 'image search failed');
         return reply.code(err.status).send({ error: err.message });
       }
       end({ outcome: '500' });

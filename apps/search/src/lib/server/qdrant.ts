@@ -22,6 +22,9 @@ export type VectorIndex = {
 };
 
 const STAMP_TTL_MS = 5 * 60 * 1000;
+// Vectors, graph and payload indexes live on disk: a filter shape Qdrant has not served recently can
+// take 10 s on its first query, then well under 1 s.
+export const QDRANT_TIMEOUT_MS = 20_000;
 
 /** A Qdrant collection (or alias) over REST. Reads only. */
 export function createQdrantIndex({
@@ -42,7 +45,7 @@ export function createQdrantIndex({
       method: body ? 'POST' : 'GET',
       headers: { 'content-type': 'application/json', ...(apiKey ? { 'api-key': apiKey } : {}) },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(QDRANT_TIMEOUT_MS),
     }).catch((err) => {
       throw new SearchError(502, `Vector index unreachable: ${String(err)}`);
     });

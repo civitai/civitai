@@ -35,7 +35,9 @@ export type SearchClientOptions = {
 export function createSearchClient({
   endpoint,
   token,
-  timeoutMs = 10_000,
+  // Above the service's own 20 s upstream timeout, so a slow index is answered as a 502 by the
+  // service rather than cut off here as unreachable.
+  timeoutMs = 25_000,
   fetch: fetchImpl = fetch,
 }: SearchClientOptions) {
   const base = endpoint.replace(/\/+$/, '');
