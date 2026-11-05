@@ -1,13 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { minorMatureImageVisibleSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 
-/** Scanned, not awaiting review, not removed: as SQL over `"Image" i`. */
+/** Scanned, not awaiting review, not removed, shown to non-owners: as SQL over `"Image" i`. */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  AND ${minorMatureImageVisibleSql()}
 )`;
 
 /**

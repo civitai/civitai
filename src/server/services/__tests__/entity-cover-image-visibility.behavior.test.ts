@@ -218,6 +218,19 @@ beforeAll(async () => {
     -- A connection under an entity type no rule covers.
     INSERT INTO "Image" (id) VALUES (801);
     INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
+
+    -- Public model 1101 whose first image is minor-flagged and rated R; model 1102 whose only
+    -- image is minor-flagged and rated X. Article 1141 and bounty 13 lead with one too.
+    INSERT INTO "Model" (id, status) VALUES (1101, 'Published'), (1102, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1111, 1101, 'Published'), (1112, 1102, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (1121, 1111, now() - interval '1 day'), (1122, 1112, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel", minor) VALUES
+      (1131, 1121, 0, 4, true), (1132, 1121, 1, 4, false), (1136, 1122, 0, 8, true);
+    INSERT INTO "Image" (id, "nsfwLevel", minor) VALUES (1133, 4, true), (1134, 4, true), (1135, 1, NULL);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1141, 1133, 'Published', now());
+    INSERT INTO "Bounty" VALUES (13, ${OWNER}, 'Public');
+    INSERT INTO "ImageConnection" VALUES (1134, 13, 'Bounty'), (1135, 13, 'Bounty');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -372,5 +385,29 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       ],
     } as Parameters<typeof getEntityCoverImage>[0]);
     expect(covers.map((c) => c.id)).toEqual([102]);
+  });
+});
+
+describe('a minor-flagged cover rated R or above', () => {
+  // [label, entityType, entityId, cover for anonymous/stranger, cover for owner/moderator]
+  const cases: [string, string, number, number | null, number][] = [
+    ["a model's first image", 'Model', 1101, 1132, 1131],
+    ["a version's first image", 'ModelVersion', 1111, 1132, 1131],
+    ["a post's first image", 'Post', 1121, 1132, 1131],
+    ["a model's only image", 'Model', 1102, null, 1136],
+    ["a version's only image", 'ModelVersion', 1112, null, 1136],
+    ["an article's cover", 'Article', 1141, null, 1133],
+    ["a bounty's first connected image", 'Bounty', 13, 1135, 1134],
+    ['an image asked for by id', 'Image', 1131, null, 1131],
+  ];
+
+  describe.each(cases)('as %s', (_, entityType, entityId, othersSee, ownerSees) => {
+    it.each(['anonymous', 'stranger'] as const)('is passed over for a %s viewer', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(othersSee);
+    });
+
+    it.each(['owner', 'moderator'] as const)('is kept for the %s', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerSees);
+    });
   });
 });

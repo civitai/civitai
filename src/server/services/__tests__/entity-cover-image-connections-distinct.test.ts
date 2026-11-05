@@ -232,7 +232,7 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         'LEFT JOIN "Bounty" b ON b.id = CASE e."entityType" ' +
         `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
         `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
-        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
+        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND ? ` +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
         'AND ( ?::boolean ' +

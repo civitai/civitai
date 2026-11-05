@@ -61,7 +61,9 @@ import {
 import {
   hasBlockMarker,
   imageReviewedSql,
+  isMinorMatureImage,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
@@ -6420,6 +6422,7 @@ export const getImagesForModelVersion = async ({
     );
     imageWhere.push(imageReviewedSql());
   }
+  imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   const query = Prisma.sql`
      WITH targets AS (
@@ -6584,6 +6587,8 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     return records;
   },
   appendFn: async (records) => {
+    // Entries cached before the lookup left these out still carry them.
+    for (const entry of records) entry.images = entry.images.filter((i) => !isMinorMatureImage(i));
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
     const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
     for (const entry of records) {
@@ -6692,6 +6697,7 @@ export const getImagesForPosts = async ({
         : Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`
     );
   }
+  imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   if (isModerator) {
     if (poiOnly) {
@@ -7493,6 +7499,10 @@ export const getEntityCoverImage = async ({
     [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
     ' AND '
   );
+  const minorMatureVisible = minorMatureImageVisibleSql({
+    userId: signedIn ? viewerId ?? undefined : undefined,
+    isModerator,
+  });
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -7574,6 +7584,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${minorMatureVisible}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7612,6 +7623,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${minorMatureVisible}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7656,6 +7668,7 @@ export const getEntityCoverImage = async ({
           )
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND ${minorMatureVisible}
         ) t
 
         UNION
@@ -7680,6 +7693,7 @@ export const getEntityCoverImage = async ({
             )
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${minorMatureVisible}
             AND (
               (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
               OR NOT i."modelRestricted"
@@ -7736,6 +7750,7 @@ export const getEntityCoverImage = async ({
           LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${minorMatureVisible}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
