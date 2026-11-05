@@ -83,8 +83,13 @@ describe('GET /api/v1/creator/engagement', () => {
   });
 
   it('scopes to the authenticated caller whatever user the query names', async () => {
-    const { statusCode } = await call({ userId: '202', username: 'someone', type: 'image' });
+    const { statusCode, header } = await call({
+      userId: '202',
+      username: 'someone',
+      type: 'image',
+    });
     expect(statusCode).toBe(200);
+    expect(header('Cache-Control')).toBe('private, no-store');
     expect(mockGetEngagement).toHaveBeenCalledWith(
       expect.objectContaining({ userId: CALLER, type: 'image', sort: 'engagement', limit: 20 })
     );
