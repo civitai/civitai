@@ -1,6 +1,7 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getFinalScanReading,
@@ -39,6 +40,7 @@ import { getBucket, getS3Client, uploadImageBufferToStore } from '~/utils/s3-uti
 
 /**
  * Unpacks the Finals of a deal and sends every image in them through the normal image scan.
+ * A buyer's Attachment takes the same path, with its image copies created as the buyer's.
  *
  * A zip is read by the jobs pool, one at a time, as a stream: never in a request, never to disk,
  * never holding more than one entry. Each image gets a hidden, downscaled, unmarked copy in the
@@ -63,27 +65,30 @@ type ClaimedFinal = {
   s3Key: string;
   fileName: string;
   size: number;
-  sellerId: number;
+  /** Who uploaded the file: the image scan copies are created as theirs. */
+  uploaderId: number;
 };
 
 const isImageName = (name: string) =>
   (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(fileExtension(name));
 
-/** Takes the one Final that no run holds and that has not been unpacked, oldest first. */
+/** Takes the one Final or Attachment that no run holds and that has not been unpacked, oldest first. */
 function claimFinal() {
   return dbWrite.$queryRaw<ClaimedFinal[]>`
     UPDATE "ServiceDealFile" f SET "processingAt" = now()
     FROM "ServiceDeal" d
     WHERE d."id" = f."dealId" AND f."id" IN (
       SELECT p."id" FROM "ServiceDealFile" p
-      WHERE p."kind" = 'Final'::"ServiceDealFileKind"
+      WHERE p."kind"::text IN (${SCANNED_FILE_KINDS})
         AND p."status" = 'Ready'::"ServiceDealFileStatus"
         AND p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
         AND p."unpackedAt" IS NULL
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_UNPACK_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size", d."sellerId"`;
+    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size",
+      CASE WHEN f."kind"::text = 'Attachment' THEN d."buyerId" ELSE d."sellerId" END
+        AS "uploaderId"`;
 }
 
 /** Keeps the file out of the next runs for a while, so one file that keeps failing cannot hold up the rest. */
@@ -154,7 +159,7 @@ async function submitEntryImage(
   fileId: number,
   entryIndex: number,
   original: Buffer,
-  sellerId: number
+  uploaderId: number
 ) {
   const [row] = await dbWrite.$queryRaw<EntryRow[]>`
     SELECT "id", "dealId", "path", "size", "imageId", "scanKey", "scanStatus"::text AS "scanStatus"
@@ -180,7 +185,7 @@ async function submitEntryImage(
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFileEntry" SET "scanKey" = ${scanKey}::text WHERE "id" = ${row.id}::int`;
     }
-    imageId = (await createScanImage(scanKey, copy, sellerId)).id;
+    imageId = (await createScanImage(scanKey, copy, uploaderId)).id;
   }
   const attached = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" SET "imageId" = ${imageId}::int WHERE "id" = ${row.id}::int`;
@@ -233,7 +238,7 @@ async function unpackZip(file: ClaimedFinal, shouldStop: () => boolean) {
       if (shouldStop()) return false;
       const read = await readEntry(opened.zipfile, entry, budget, (kind) => kind === 'image');
       try {
-        await submitEntryImage(file.id, entry.index, read.data!, file.sellerId);
+        await submitEntryImage(file.id, entry.index, read.data!, file.uploaderId);
       } catch (error) {
         if (!(error instanceof PreviewRejectedError)) throw error;
         await failEntry(file.id, entry.index, 'An image in this file could not be read.');
@@ -279,7 +284,7 @@ async function unpackImage(file: ClaimedFinal) {
     ON CONFLICT ("fileId", "entryIndex") DO NOTHING`;
   const original = await readObject(await getBucket(), file.s3Key);
   try {
-    await submitEntryImage(file.id, 0, original, file.sellerId);
+    await submitEntryImage(file.id, 0, original, file.uploaderId);
   } catch (error) {
     if (!(error instanceof PreviewRejectedError)) throw error;
     await failEntry(file.id, 0, 'This image could not be read.');
@@ -379,7 +384,7 @@ export async function settleEntryScans() {
 }
 
 const WAITING_FOR_MALWARE_SCAN = Prisma.sql`
-  "kind" = 'Final'::"ServiceDealFileKind"
+  "kind"::text IN (${SCANNED_FILE_KINDS})
   AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
   AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
 
@@ -497,7 +502,7 @@ export async function settleFinals() {
         "malwareScanStartedAt" = now()
       WHERE "id" IN (
         SELECT "id" FROM "ServiceDealFile"
-        WHERE "kind" = 'Final'::"ServiceDealFileKind"
+        WHERE "kind"::text IN (${SCANNED_FILE_KINDS})
           AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
           AND "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
         ORDER BY "id" LIMIT 50)
@@ -507,7 +512,7 @@ export async function settleFinals() {
 
   const failing = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT f."id" FROM "ServiceDealFile" f
-    WHERE f."kind" = 'Final'::"ServiceDealFileKind"
+    WHERE f."kind"::text IN (${SCANNED_FILE_KINDS})
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (f."failReason" IS NOT NULL
         OR (f."unpackedAt" < now() - (${SERVICE_FINAL_SCAN_GIVE_UP_MS}::int * interval '1 millisecond')
@@ -528,7 +533,7 @@ export async function settleFinals() {
 
   const clear = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT f."id" FROM "ServiceDealFile" f
-    WHERE f."kind" = 'Final'::"ServiceDealFileKind"
+    WHERE f."kind"::text IN (${SCANNED_FILE_KINDS})
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND f."unpackedAt" IS NOT NULL
       AND f."repackedAt" IS NOT NULL

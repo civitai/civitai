@@ -12,7 +12,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { holdServiceDealForReview } from '~/server/services/creator-service-escrow.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
-import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
+import {
+  dealReadyToDeliver,
+  SCANNED_FILE_KINDS,
+} from '~/server/services/creator-service-deal-file-sql';
 import { isFinalsMalwareScanOn } from '~/server/services/creator-service-deal-file-scan';
 import {
   throwBadRequestError,
@@ -25,6 +28,7 @@ import {
   PreviewRejectedError,
 } from '~/server/utils/service-deal-preview';
 import {
+  SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   SERVICE_FINAL_EXTENSIONS,
   SERVICE_FINAL_MAX_BYTES,
@@ -62,10 +66,20 @@ import {
  * Who may do what is decided in SQL on the deal row, never from an id in the input: uploads need
  * the deal's seller and a deal still being worked (Accepted or InRevision). A file belongs to the
  * deal's CURRENT round (`revisionsUsed`), the same round the escrow's gates read.
+ *
+ * An Attachment is the buyer's: uploaded from the request until the seller delivers, scanned by the
+ * Final pipeline, and kept from the seller until it passes. Nothing that gates delivery or payout
+ * counts it.
  */
 
 /** Statuses a seller may upload in. */
 const WORKING = Prisma.sql`'Accepted'::"ServiceDealStatus", 'InRevision'::"ServiceDealStatus"`;
+/** Statuses a buyer may attach in: from the request until the seller delivers. */
+const ATTACHABLE = Prisma.sql`'Requested'::"ServiceDealStatus", 'Accepted'::"ServiceDealStatus",
+  'InRevision'::"ServiceDealStatus"`;
+// Compared as text, so seller paths do not depend on the enum value existing: the client deploys
+// before the migration that adds it.
+const NOT_ATTACHMENT = Prisma.sql`f."kind"::text <> 'Attachment'`;
 
 const UPLOAD_KEY_ROOT = 'service-deals';
 
@@ -89,6 +103,22 @@ export function assertFinalFileType(fileName: string) {
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
     throw throwBadRequestError(
       'This file type cannot be delivered. Use a .zip, a model file, or an image, audio or text file.'
+    );
+}
+
+/** The type and size limits a Final has, which an Attachment shares. */
+function assertScannableFile(fileName: string, size: number) {
+  assertFinalFileType(fileName);
+  if (size > SERVICE_FINAL_MAX_BYTES) throw throwBadRequestError('That file is too large.');
+  // An image is scanned whole, so it has its own, lower, cap.
+  if (
+    (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
+      fileExtension(cleanFileName(fileName))
+    ) &&
+    size > SERVICE_ZIP_MAX_IMAGE_BYTES
+  )
+    throw throwBadRequestError(
+      `An image cannot be more than ${Math.floor(SERVICE_ZIP_MAX_IMAGE_BYTES / (1024 * 1024))} MB.`
     );
 }
 
@@ -118,7 +148,7 @@ export async function requestServiceDealUpload({
 }: {
   dealId: number;
   userId: number;
-  kind: ServiceDealFileKind;
+  kind: Exclude<ServiceDealFileKind, 'Attachment'>;
   fileName: string;
   mimeType: string;
   size: number;
@@ -134,21 +164,7 @@ export async function requestServiceDealUpload({
         `Preview is too large (max ${Math.floor(previewByteCap(mimeType) / (1024 * 1024))} MB).`
       );
   } else {
-    assertFinalFileType(fileName);
-    if (size > SERVICE_FINAL_MAX_BYTES)
-      throw throwBadRequestError('That file is too large to deliver.');
-    // An image is scanned whole, so it has its own, lower, cap.
-    if (
-      (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
-        fileExtension(cleanFileName(fileName))
-      ) &&
-      size > SERVICE_ZIP_MAX_IMAGE_BYTES
-    )
-      throw throwBadRequestError(
-        `An image cannot be more than ${Math.floor(
-          SERVICE_ZIP_MAX_IMAGE_BYTES / (1024 * 1024)
-        )} MB.`
-      );
+    assertScannableFile(fileName, size);
   }
 
   const created = await dbWrite.$transaction(async (tx) => {
@@ -190,6 +206,58 @@ export async function requestServiceDealUpload({
   return { fileId: created.id, uploadUrl: url };
 }
 
+/**
+ * The buyer attaches a file to their deal. The attestations are required by the input schema; the
+ * time they were given is stored on the row.
+ */
+export async function requestServiceDealAttachment({
+  dealId,
+  userId,
+  fileName,
+  mimeType,
+  size,
+}: {
+  dealId: number;
+  userId: number;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}) {
+  // The seller sees the file name once the file passes. Scanned as it will be stored.
+  await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
+  assertScannableFile(fileName, size);
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    const [deal] = await tx.$queryRaw<{ id: number; round: number; files: number }[]>`
+      SELECT d."id", d."revisionsUsed" AS "round",
+        (SELECT count(*)::int FROM "ServiceDealFile" f
+          WHERE f."dealId" = d."id" AND f."kind"::text = 'Attachment') AS "files"
+      FROM "ServiceDeal" d
+      WHERE d."id" = ${dealId}::int AND d."buyerId" = ${userId}::int
+        AND d."status" IN (${ATTACHABLE})
+      FOR UPDATE`;
+    if (!deal) throw throwNotFoundError('Deal not found');
+    if (deal.files >= SERVICE_ATTACHMENT_MAX_FILES)
+      throw throwConflictError(
+        `A request can have at most ${SERVICE_ATTACHMENT_MAX_FILES} attached files.`
+      );
+
+    const s3Key = `${UPLOAD_KEY_ROOT}/uploads/${dealId}/${deal.round}/attachment/${randomUUID()}`;
+    const [row] = await tx.$queryRaw<{ id: number }[]>`
+      INSERT INTO "ServiceDealFile"
+        ("dealId", "round", "kind", "s3Key", "fileName", "mimeType", "size", "attestedAt")
+      VALUES (${dealId}::int, ${
+      deal.round
+    }::int, 'Attachment'::"ServiceDealFileKind", ${s3Key}::text,
+        ${cleanFileName(fileName)}::text, ${mimeType}::text, ${size}::int, now())
+      RETURNING "id"`;
+    return { id: row.id, s3Key };
+  });
+
+  const { url } = await getPutUrl(created.s3Key);
+  return { fileId: created.id, uploadUrl: url };
+}
+
 type OwnedFileRow = {
   id: number;
   dealId: number;
@@ -203,16 +271,23 @@ type OwnedFileRow = {
   imageId: number | null;
 };
 
-/** The seller's own file in a deal still being worked, or null. */
-async function findSellerFile(fileId: number, userId: number) {
+/** Which of a deal's files a user may change: `scope` is a condition on `f` and `d`. */
+async function findOwnFile(fileId: number, scope: Prisma.Sql) {
   const [file] = await dbWrite.$queryRaw<OwnedFileRow[]>`
     SELECT f."id", f."dealId", f."round", f."kind", f."s3Key", f."fileName", f."mimeType", f."size",
       f."status", f."imageId"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
-    WHERE f."id" = ${fileId}::int AND d."sellerId" = ${userId}::int
-      AND d."status" IN (${WORKING}) AND f."round" = d."revisionsUsed"`;
+    WHERE f."id" = ${fileId}::int AND ${scope}`;
   return file ?? null;
 }
+
+/** The seller's own delivery file, in the current round of a deal still being worked. */
+const sellerScope = (userId: number) => Prisma.sql`d."sellerId" = ${userId}::int
+  AND d."status" IN (${WORKING}) AND f."round" = d."revisionsUsed" AND ${NOT_ATTACHMENT}`;
+
+/** The buyer's own attachment, in a deal the seller has not delivered yet. */
+const buyerAttachmentScope = (userId: number) => Prisma.sql`d."buyerId" = ${userId}::int
+  AND d."status" IN (${ATTACHABLE}) AND f."kind"::text = 'Attachment'`;
 
 const ZIP_LOCAL_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
@@ -252,20 +327,25 @@ const failFile = (fileId: number, reason: string, onlyFrom: ServiceDealFileStatu
     WHERE "id" = ${fileId}::int
       AND (${onlyFrom}::text IS NULL OR "status"::text = ${onlyFrom}::text)`;
 
-/**
- * The seller says the bytes are in the bucket. The seller holds a long-lived upload URL for the key
- * they were given, so nothing they could still write to is trusted: the object is COPIED to a key
- * only the server ever has, and every check here, and every later read, is of that copy. A size
- * that is not the declared one fails the file and removes both objects.
- */
-export async function completeServiceDealUpload({
+export const completeServiceDealUpload = ({ fileId, userId }: { fileId: number; userId: number }) =>
+  completeUpload(fileId, sellerScope(userId));
+
+export const completeServiceDealAttachment = ({
   fileId,
   userId,
 }: {
   fileId: number;
   userId: number;
-}) {
-  const file = await findSellerFile(fileId, userId);
+}) => completeUpload(fileId, buyerAttachmentScope(userId));
+
+/**
+ * The uploader says the bytes are in the bucket. They hold a long-lived upload URL for the key
+ * they were given, so nothing they could still write to is trusted: the object is COPIED to a key
+ * only the server ever has, and every check here, and every later read, is of that copy. A size
+ * that is not the declared one fails the file and removes both objects.
+ */
+async function completeUpload(fileId: number, scope: Prisma.Sql) {
+  const file = await findOwnFile(fileId, scope);
   if (!file) throw throwNotFoundError('File not found');
   if (file.status !== 'Uploading') return { id: file.id, status: file.status };
 
@@ -291,7 +371,7 @@ export async function completeServiceDealUpload({
     throw couldNotCheck();
   }
 
-  // The copy is what gets measured. The seller can no longer change it.
+  // The copy is what gets measured. The uploader can no longer change it.
   const held = await headObject(bucket, heldKey);
   if (held.status === 'unknown') throw couldNotCheck();
   if (held.status === 'absent' || held.size !== file.size) {
@@ -302,7 +382,7 @@ export async function completeServiceDealUpload({
     throw throwBadRequestError(reason);
   }
 
-  if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
+  if (file.kind !== 'Preview' && fileExtension(file.fileName) === 'zip') {
     const refusal = await zipRefusal(bucket, heldKey);
     if (refusal) {
       if ((await failFile(file.id, refusal, 'Uploading')) === 0) return currentState(file.id);
@@ -312,13 +392,13 @@ export async function completeServiceDealUpload({
     }
   }
 
-  // A preview is processed by the job; a final is ready now and is unpacked by the job.
+  // A preview is processed by the job; a final or attachment is ready now and is unpacked by the job.
   const next: ServiceDealFileStatus = file.kind === 'Preview' ? 'Processing' : 'Ready';
   const moved = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "status" = ${next}::"ServiceDealFileStatus", "uploadedAt" = now(), "s3Key" = ${heldKey}::text
     WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
-  // The seller's key is dead either way. A repeat call that lost the race removes its own copy.
+  // The uploader's key is dead either way. A repeat call that lost the race removes its own copy.
   await deleteObject(bucket, moved === 1 ? file.s3Key : heldKey).catch(() => null);
   return { id: file.id, status: next };
 }
@@ -342,18 +422,23 @@ const couldNotCheck = () =>
  * Removes a file from a delivery that has not been sent yet. The deal row is locked first, as
  * delivering locks it, so a delete cannot slip between "the round is ready" and "it is delivered".
  */
-export async function deleteServiceDealFile({
+export const deleteServiceDealFile = ({ fileId, userId }: { fileId: number; userId: number }) =>
+  deleteFile(fileId, sellerScope(userId));
+
+/** The buyer removes an attachment, until the seller delivers. */
+export const deleteServiceDealAttachment = ({
   fileId,
   userId,
 }: {
   fileId: number;
   userId: number;
-}) {
+}) => deleteFile(fileId, buyerAttachmentScope(userId));
+
+async function deleteFile(fileId: number, scope: Prisma.Sql) {
   const removed = await dbWrite.$transaction(async (tx) => {
     const [deal] = await tx.$queryRaw<{ id: number }[]>`
       SELECT d."id" FROM "ServiceDeal" d JOIN "ServiceDealFile" f ON f."dealId" = d."id"
-      WHERE f."id" = ${fileId}::int AND d."sellerId" = ${userId}::int
-        AND d."status" IN (${WORKING})
+      WHERE f."id" = ${fileId}::int AND ${scope}
       FOR UPDATE OF d`;
     if (!deal) throw throwNotFoundError('File not found');
     // Re-read under the lock: the state above is the one that is true now.
@@ -378,8 +463,7 @@ export async function deleteServiceDealFile({
       }[]
     >`
       DELETE FROM "ServiceDealFile" f USING "ServiceDeal" d
-      WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND f."round" = d."revisionsUsed"
-        AND d."status" IN (${WORKING})
+      WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND ${scope}
       RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId", f."scanKey"`;
     if (!file) throw throwNotFoundError('File not found');
     return { ...file, copies };
@@ -403,10 +487,12 @@ export async function deleteServiceDealFile({
 }
 
 /**
- * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
- * overturn an earlier one. Passed also needs the file unpacked and ready, never refused, its malware
- * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a
- * delivered deal to the moderators; one not yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
+ * Records a verdict on a Final or Attachment. Only a Pending file takes one, so a repeat or late
+ * result cannot overturn an earlier one. Passed also needs the file unpacked and ready, never
+ * refused, its malware scan passed (or skipped while the scan is off) and every image passed. A
+ * Failed Final sends a delivered deal to the moderators; one not yet delivered cannot be delivered
+ * while it stands (see `dealReadyToDeliver`). A Failed Attachment holds nothing: the seller is not
+ * answerable for the buyer's file, which simply never reaches them.
  */
 export async function recordFinalScanResult({
   fileId,
@@ -418,9 +504,9 @@ export async function recordFinalScanResult({
   // A skipped malware scan stands in for a passed one only while the scan is off, so turning it on
   // stops passing the Finals it skipped until they are scanned (see `settleFinals`).
   const malwareScanOn = verdict === 'Passed' ? await isFinalsMalwareScanOn() : true;
-  const [file] = await dbWrite.$queryRaw<{ dealId: number }[]>`
+  const [file] = await dbWrite.$queryRaw<{ dealId: number; kind: ServiceDealFileKind }[]>`
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
-    WHERE "id" = ${fileId}::int AND "kind" = 'Final'::"ServiceDealFileKind"
+    WHERE "id" = ${fileId}::int AND "kind"::text IN (${SCANNED_FILE_KINDS})
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (${verdict}::text = 'Failed' OR (
         "unpackedAt" IS NOT NULL
@@ -432,10 +518,10 @@ export async function recordFinalScanResult({
           SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = "ServiceDealFile"."id"
             AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")))
-    RETURNING "dealId"`;
+    RETURNING "dealId", "kind"`;
   if (!file) return { recorded: false, held: false };
   const held =
-    verdict === 'Failed'
+    verdict === 'Failed' && file.kind === 'Final'
       ? await holdServiceDealForReview(file.dealId, SERVICE_DEAL_HOLD_REASONS.finalScanFailed)
       : false;
   return { recorded: true, held };
@@ -480,6 +566,20 @@ type DealForFiles = {
   completedAt: Date | null;
   /** The seller has delivered the round now being worked (a Delivered event for it exists). */
   currentRoundDelivered: boolean;
+};
+
+type ListedFile = {
+  id: number;
+  round: number;
+  kind: ServiceDealFileKind;
+  fileName: string | null;
+  mimeType: string | null;
+  size: number;
+  status: ServiceDealFileStatus;
+  failReason: string | null;
+  scanStatus: ServiceDealFileScanStatus | null;
+  previewUrl: string | null;
+  canDownload: boolean;
 };
 
 type FileRow = {
@@ -551,7 +651,30 @@ export async function listServiceDealFiles({
     ORDER BY f."round", f."id"`;
 
   const privileged = isSeller || isModerator;
-  return rows.flatMap((row) => {
+  return rows.flatMap((row): ListedFile[] => {
+    if (row.kind === 'Attachment') {
+      // The buyer's file. The seller is not told it exists until its scans pass, and then gets what
+      // a buyer gets of a Final: the delivery copy's size, no failure detail.
+      const owner = isBuyer || isModerator;
+      const cleared = row.status === 'Ready' && finalScansClear(row);
+      if (!owner && !cleared) return [];
+      return [
+        {
+          id: row.id,
+          round: row.round,
+          kind: row.kind,
+          fileName: row.fileName,
+          mimeType: row.mimeType,
+          size: owner ? row.size : row.deliverySize ?? row.size,
+          status: row.status,
+          failReason: owner ? row.failReason : null,
+          scanStatus: row.scanStatus,
+          previewUrl: null,
+          canDownload: row.status === 'Ready' && (owner || cleared),
+        },
+      ];
+    }
+
     const buyerOnly = !privileged;
     if (buyerOnly && !buyerSeesRound(deal, row.round)) return [];
     // A buyer sees a preview only once it is scanned, marked and published: never the original.
@@ -607,6 +730,8 @@ export type ServiceDealFileDownload = {
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
  * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
  * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
+ * An Attachment reverses the roles: the buyer may take back their own, and the seller gets the
+ * delivery copy only once its scans pass.
  *
  * A buyer gets the delivery file, never the upload: for a zip that is the archive the server built,
  * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
@@ -652,19 +777,27 @@ export async function resolveServiceDealFileDownload({
     WHERE f."id" = ${fileId}::int`;
   if (!row) return null;
 
-  const allowed =
-    row.sellerId === userId ||
-    isModerator ||
-    (row.buyerId === userId &&
-      row.kind === 'Final' &&
-      row.status === 'Ready' &&
-      row.round === row.revisionsUsed &&
-      finalScansClear(row) &&
-      buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
+  const isAttachment = row.kind === 'Attachment';
+  const ready = row.status === 'Ready';
+  const allowed = isAttachment
+    ? isModerator ||
+      (row.buyerId === userId && ready) ||
+      (row.sellerId === userId && ready && finalScansClear(row))
+    : row.sellerId === userId ||
+      isModerator ||
+      (row.buyerId === userId &&
+        row.kind === 'Final' &&
+        ready &&
+        row.round === row.revisionsUsed &&
+        finalScansClear(row) &&
+        buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
   if (!allowed) return null;
 
-  const isBuyer = row.buyerId === userId && row.sellerId !== userId;
-  const wantsDelivered = isBuyer || (isModerator && delivered);
+  // The party receiving the file gets the copy the server built, never the upload.
+  const receives = isAttachment
+    ? row.sellerId === userId && row.buyerId !== userId
+    : row.buyerId === userId && row.sellerId !== userId;
+  const wantsDelivered = receives || (isModerator && delivered);
   let key = row.s3Key;
   if (wantsDelivered) {
     if (row.deliveryKey) key = row.deliveryKey;

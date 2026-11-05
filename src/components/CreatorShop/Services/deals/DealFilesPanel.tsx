@@ -29,7 +29,6 @@ import {
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ServiceDealFileKind } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -50,7 +49,9 @@ export function useServiceDealFiles(deal: ServiceDealView) {
 }
 
 export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
-  const { data: files = [], isLoading } = useServiceDealFiles(deal);
+  const { data = [], isLoading } = useServiceDealFiles(deal);
+  // The buyer's attachments have their own panel and take no part in the delivery.
+  const files = data.filter((file) => file.kind !== 'Attachment');
   const features = useFeatureFlags();
   const working = deal.status === 'Accepted' || deal.status === 'InRevision';
   const canUpload = deal.viewerRole === 'seller' && working && !!features.creatorServices;
@@ -101,7 +102,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
   });
 
   const round = deal.revisionsUsed;
-  const upload = async (kind: ServiceDealFileKind, picked: File[]) => {
+  const upload = async (kind: 'Preview' | 'Final', picked: File[]) => {
     // So the same file can be picked again after a failed attempt.
     (kind === 'Preview' ? resetPreview : resetFinal).current?.();
     const slots = uploadSlotsLeft(kind, deal.previewKind, files, round);

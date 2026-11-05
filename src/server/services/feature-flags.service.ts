@@ -496,6 +496,9 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'creator-services-finals-malware-scan',
   },
+  // Buyers attaching files to a deal. Its own switch because the rows it writes need the migration
+  // applied and every pod on a build that hides unscanned attachments from the seller.
+  creatorServicesAttachments: { availability: [], fliptKey: 'creator-services-attachments' },
   // One flag drives both halves of creator announcements: these surfaces and the
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.

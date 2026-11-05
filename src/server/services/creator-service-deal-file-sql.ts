@@ -11,6 +11,14 @@ import { Prisma } from '@prisma/client';
 const DEAL = Prisma.sql`"ServiceDeal"`;
 
 /**
+ * The kinds the Final scan pipeline (unpack, repack, malware scan, verdict) runs on, as text to
+ * compare `"kind"::text` with: the pipeline must keep running on a database that does not have the
+ * Attachment value yet. Only the scan steps use it: what gates delivery and payout counts Finals
+ * alone.
+ */
+export const SCANNED_FILE_KINDS = Prisma.sql`'Final', 'Attachment'`;
+
+/**
  * The seller may mark the round delivered: its preview is Ready (watermarked and scanned clean),
  * unless the offering takes no preview, and at least one Final has been uploaded. A Final still
  * uploading does not count, and neither does one not yet unpacked: a file the unpack step is going

@@ -5360,7 +5360,7 @@ export type ServiceDealFile = {
   mimeType: string;
   size: number;
   /**
-   * Uploading until the seller confirms the object is in the bucket.
+   * Uploading until the uploader confirms the object is in the bucket.
    */
   status: Generated<ServiceDealFileStatus>;
   failReason: string | null;
@@ -5396,6 +5396,10 @@ export type ServiceDealFile = {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Timestamp | null;
+  /**
+   * An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
+   */
+  attestedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFileEntry = {

@@ -54,7 +54,7 @@ export type DealFile = {
   dealId: number;
   id: number;
   round: number;
-  kind: 'Preview' | 'Final';
+  kind: 'Preview' | 'Final' | 'Attachment';
   /** Null only for a buyer who has not paid for the file; a moderator always gets the name. */
   fileName: string | null;
   mimeType: string;
