@@ -3752,7 +3752,8 @@ const cannotPublishError = () =>
  */
 async function applyHeldVerdictAfterOwnerSave(
   before: { minor: boolean; poi: boolean; meta: Prisma.JsonValue },
-  after: { id: number; minor: boolean; poi: boolean }
+  after: { id: number; minor: boolean; poi: boolean },
+  { isModerator = false }: { isModerator?: boolean } = {}
 ) {
   const meta = before.meta as ModelMeta | null;
   const waiting =
@@ -3763,7 +3764,7 @@ async function applyHeldVerdictAfterOwnerSave(
     '~/server/services/text-scan/actions/model-nsfw'
   );
   await applyHeldRestrictedVerdict(after.id, {
-    ownerCleared: before.minor || before.poi,
+    ownerCleared: !isModerator && (before.minor || before.poi),
   }).catch((error: Error) =>
     logToAxiom({
       name: 'text-scan',
@@ -4384,6 +4385,8 @@ export const upsertModel = async (
         const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
         if ((updated.minor || updated.poi) && prevMeta?.restrictedNsfwVerdict?.liftedBy)
           await heldVerdict.dropLiftedBy(tx, updated.id, { flagged: true });
+        else if (isModerator && (locked?.minor || locked?.poi) && !updated.minor && !updated.poi)
+          await heldVerdict.holdLeadAfterFlagLift(tx, updated.id, 'moderator');
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
           data.availability &&
@@ -4511,7 +4514,7 @@ export const upsertModel = async (
       );
       await settleFlagAppealsAfterModeratorLift({ modelId: result.id, userId, liftedLabels });
     }
-    await applyHeldVerdictAfterOwnerSave(beforeUpdate, result);
+    await applyHeldVerdictAfterOwnerSave(beforeUpdate, result, { isModerator });
 
     // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
     // each resource: without this, a creator who adds RentCivit is told the model is "not enabled
@@ -7118,10 +7121,11 @@ export const privateModelFromTraining = async ({
             throw throwAuthorizationError('You are not authorized to publish this model');
           });
 
-        if ((result.minor || result.poi) && storedMeta?.restrictedNsfwVerdict?.liftedBy) {
-          const { dropLiftedBy } = await import('~/server/services/text-scan/actions/model-nsfw');
-          await dropLiftedBy(tx, id, { flagged: true });
-        }
+        const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
+        if ((result.minor || result.poi) && storedMeta?.restrictedNsfwVerdict?.liftedBy)
+          await heldVerdict.dropLiftedBy(tx, id, { flagged: true });
+        else if (user.isModerator && (locked.minor || locked.poi) && !result.minor && !result.poi)
+          await heldVerdict.holdLeadAfterFlagLift(tx, id, 'moderator');
 
         // In the transaction, like upsertModel's, so a moderator's lock change cannot commit unlogged.
         if (user.isModerator && data.lockedProperties)
@@ -7179,7 +7183,7 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
-    await applyHeldVerdictAfterOwnerSave(model, result);
+    await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
     return withoutMinorHashMeta(result);
   } catch (error) {

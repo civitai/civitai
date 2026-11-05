@@ -102,7 +102,15 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   getTextScanMode: vi.fn(),
 }));
 
-const { mockApplyHeldVerdict, mockLeavingPrivate, mockFinishApply } = vi.hoisted(() => ({
+const {
+  mockApplyHeldVerdict,
+  mockLeavingPrivate,
+  mockFinishApply,
+  mockDropLiftedBy,
+  mockHoldLead,
+} = vi.hoisted(() => ({
+  mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
+  mockHoldLead: vi.fn(async (..._args: unknown[]) => undefined),
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
@@ -112,6 +120,8 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal)
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
+  dropLiftedBy: mockDropLiftedBy,
+  holdLeadAfterFlagLift: mockHoldLead,
 }));
 
 import {
@@ -281,11 +291,42 @@ describe('privateModelFromTraining — gallery settings cache', () => {
 });
 
 describe('privateModelFromTraining — a held scan verdict', () => {
+  const lifted = {
+    restrictedNsfwVerdict: {
+      source: 'text-scan',
+      at: 'x',
+      restriction: 'minor',
+      liftedBy: 'moderator',
+    },
+  };
+
+  it('a save that keeps the flag forgets an earlier lift', async () => {
+    mockStored({ minor: true, sfwOnly: true, meta: lifted });
+    await privateFromTraining({ user: owner, minor: true });
+    expect(mockDropLiftedBy.mock.calls.map((c) => c.slice(1))).toEqual([
+      [MODEL_ID, { flagged: true }],
+    ]);
+  });
+
+  it('leaves the lead alone when no lift is recorded (control)', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await privateFromTraining({ user: owner, minor: true });
+    expect(mockDropLiftedBy).not.toHaveBeenCalled();
+  });
+
+  it('a moderator untick is a moderator lift: the lead waits', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await privateFromTraining({ user: moderator, minor: false });
+    expect(mockHoldLead.mock.calls.map((c) => c.slice(1))).toEqual([[MODEL_ID, 'moderator']]);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: false });
+  });
+
   it.each(['minor', 'poi'] as const)('is applied when the owner unticks %s', async (flag) => {
     mockStored({ [flag]: true, sfwOnly: true });
     await privateFromTraining({ user: owner, [flag]: false });
     expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
     expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: true });
+    expect(mockHoldLead).not.toHaveBeenCalled();
   });
 
   it('is left held while the flag stays ticked (control)', async () => {
