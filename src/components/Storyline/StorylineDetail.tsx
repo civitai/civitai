@@ -53,10 +53,7 @@ export function StorylineToolbarChip({
   );
 }
 
-/**
- * The post's description for the chapter the image belongs to, under the stage. Rendered the way
- * the post page renders it, clamped to a few lines.
- */
+/** The description of the image's chapter post, rendered as the post page does, clamped. */
 export function StorylineChapterDescription({ imageId }: { imageId: number | undefined }) {
   const storyline = useStorylineMode();
   const postId =
@@ -65,7 +62,7 @@ export function StorylineChapterDescription({ imageId }: { imageId: number | und
   if (!postId || post?.id !== postId || !post.detail) return null;
 
   return (
-    // Expanded, a long description scrolls here instead of shrinking the image above it.
+    // Expanded, it scrolls instead of shrinking the image.
     <div className="max-h-[40vh] overflow-y-auto px-1" data-testid="storyline-chapter-description">
       <ContentClamp key={postId} maxHeight={72}>
         <RenderHtml html={post.detail} withMentions />

@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Button,
-  Card,
   CloseButton,
   Group,
   RingProgress,
@@ -27,7 +26,6 @@ import {
   IconDownload,
   IconFlag,
   IconInfoCircle,
-  IconLayoutList,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
@@ -58,7 +56,6 @@ import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelP
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
@@ -74,6 +71,7 @@ import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailCommen
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
+import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
@@ -106,7 +104,6 @@ import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -709,19 +706,7 @@ function ImageDetail2Content() {
                       nsfwLevel={image.nsfwLevel}
                       mediaType={image.type}
                     />
-                    {post && (post.title || post.detail) && (
-                      <Card className="flex flex-col gap-3 rounded-xl">
-                        <Text className="flex items-center gap-2 text-xl font-semibold">
-                          <IconLayoutList />
-                          <span>{post.title}</span>
-                        </Text>
-                        {post.detail && (
-                          <ContentClamp maxHeight={75}>
-                            <RenderHtml html={post.detail} />
-                          </ContentClamp>
-                        )}
-                      </Card>
-                    )}
+                    <ImageDetailPostCard post={post} />
                     <ImageProcess imageId={image.id} />
                     <ImageRemixOfDetails imageId={image.id} />
                     <RemixGalleryCard imageId={image.id} />

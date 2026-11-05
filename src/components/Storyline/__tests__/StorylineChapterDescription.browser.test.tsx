@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import { StorylineChapterDescription } from '~/components/Storyline/StorylineDetail';
+import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
 
 /**
  * In the reader, the post's description shows under the stage for the chapter the current image
@@ -12,6 +13,9 @@ import { StorylineChapterDescription } from '~/components/Storyline/StorylineDet
 const mocks = vi.hoisted(() => ({
   details: {} as Record<number, string | null>,
   postGet: vi.fn(),
+  active: true,
+  // React Query keeps the previous post's data while the next one loads.
+  previousPostId: undefined as number | undefined,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -22,9 +26,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       'post.get': {
         useQuery: (input: { id: number }, options?: { enabled?: boolean }) => {
           mocks.postGet(input, options);
-          if (options?.enabled === false || !(input.id in mocks.details))
-            return { data: undefined };
-          return { data: { id: input.id, detail: mocks.details[input.id] } };
+          if (options?.enabled === false) return { data: undefined };
+          const id = mocks.previousPostId ?? input.id;
+          if (!(id in mocks.details)) return { data: undefined };
+          return { data: { id, detail: mocks.details[id] } };
         },
       },
     }),
@@ -40,7 +45,7 @@ vi.mock('~/components/Sticker/sticker.util', async (orig) => ({
 }));
 vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
   useStorylineMode: () => ({
-    active: true,
+    active: mocks.active,
     // Image 7 is in chapter 10 (post 41), image 8 in chapter 11 (post 42), image 9 in a removed
     // chapter 12.
     chapterIdOfImage: (imageId: number) => ({ 7: 10, 8: 11, 9: 12 }[imageId]),
@@ -69,6 +74,8 @@ beforeEach(() => {
   document.documentElement.style.removeProperty('--mantine-scale');
   mocks.details = {};
   mocks.postGet.mockReset();
+  mocks.active = true;
+  mocks.previousPostId = undefined;
 });
 
 describe('StorylineChapterDescription', () => {
@@ -131,6 +138,70 @@ describe('StorylineChapterDescription', () => {
     );
 
     await expect.element(page.getByText('rendered')).toBeVisible();
+    expect(description().elements()).toHaveLength(0);
+  });
+
+  test("moving to another chapter clamps the new chapter's description again", async () => {
+    mocks.details = { 41: LONG, 42: LONG.replaceAll('the gate', 'the road') };
+    document.documentElement.style.setProperty('--mantine-scale', '1');
+    const { rerender } = await renderWithProviders(<StorylineChapterDescription imageId={7} />);
+    await showMore().click();
+    await expect.element(page.getByRole('button', { name: 'Hide' })).toBeVisible();
+
+    await rerender(<StorylineChapterDescription imageId={8} />);
+
+    await expect
+      .element(page.getByText('Line 1 of what happened at the road.'))
+      .toBeInTheDocument();
+    expect(page.getByText('Line 1 of what happened at the gate.').elements()).toHaveLength(0);
+    await expect.element(showMore()).toBeVisible();
+    await expect.poll(shownHeight).toBeLessThanOrEqual(72);
+  });
+
+  test("shows nothing while the next chapter's post loads", async () => {
+    mocks.details = { 41: '<p>The gate opens at dawn.</p>' };
+    mocks.previousPostId = 41;
+    renderWithProviders(
+      <>
+        <span>rendered</span>
+        <StorylineChapterDescription imageId={8} />
+      </>
+    );
+
+    await expect.element(page.getByText('rendered')).toBeVisible();
+    expect(description().elements()).toHaveLength(0);
+  });
+});
+
+describe('the sidebar post card beside the reader', () => {
+  const post = { title: 'The Gate', detail: '<p>The gate opens at dawn.</p>' };
+  const renderBoth = () =>
+    renderWithProviders(
+      <>
+        <StorylineChapterDescription imageId={7} />
+        <ImageDetailPostCard post={post} />
+      </>
+    );
+
+  test('in storyline mode the description shows once, under the stage', async () => {
+    mocks.details = { 41: post.detail };
+    renderBoth();
+
+    await expect.element(description()).toBeVisible();
+    await expect.element(page.getByTestId('image-detail-post-card')).toBeVisible();
+    expect(page.getByText('The gate opens at dawn.').elements()).toHaveLength(1);
+    expect(
+      page.getByTestId('image-detail-post-card').getByText('The gate opens at dawn.').elements()
+    ).toHaveLength(0);
+  });
+
+  test('outside storyline mode the sidebar card shows it', async () => {
+    mocks.active = false;
+    renderBoth();
+
+    await expect
+      .element(page.getByTestId('image-detail-post-card').getByText('The gate opens at dawn.'))
+      .toBeVisible();
     expect(description().elements()).toHaveLength(0);
   });
 });
