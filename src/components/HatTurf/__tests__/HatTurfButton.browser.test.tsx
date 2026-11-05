@@ -259,14 +259,26 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button');
 
     expect(hit(g.left + g.width / 2, g.top + g.height / 2)).toBe(gear);
-    // The gear sits on the top-right corner; the centre and the other three corners stay the button's.
+    // The gear sits on the top-right; the centre and the rest of the circle stay the button's.
+    const [cx, cy, r] = [b.left + b.width / 2, b.top + b.height / 2, b.width / 2 - 2];
     for (const [x, y] of [
-      [b.left + b.width / 2, b.top + b.height / 2],
-      [b.left + 2, b.top + 2],
-      [b.left + 2, b.bottom - 2],
-      [b.right - 2, b.bottom - 2],
+      [cx, cy],
+      [cx - r * Math.SQRT1_2, cy - r * Math.SQRT1_2],
+      [cx - r * Math.SQRT1_2, cy + r * Math.SQRT1_2],
+      [cx + r * Math.SQRT1_2, cy + r * Math.SQRT1_2],
     ])
       expect(hit(x, y)).toBe(button);
+  });
+
+  test('the hat button is a full circle', async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    const b = button.getBoundingClientRect();
+    expect(b.width).toBe(b.height);
+    // A rounded square still takes a tap 2px in from its corner; a circle does not.
+    const corner = document.elementFromPoint(b.left + 2, b.bottom - 2)?.closest('button');
+    expect(corner).not.toBe(button);
   });
 
   test('pressing drops a draft hat on the picture without opening the card', async () => {
@@ -530,6 +542,7 @@ describe('hats on a feed ImageCard', () => {
     });
     await vi.waitFor(() => expect(hats().length).toBe(1));
     expect(hats()[0].dataset.tone).toBe('muted');
+    expect(getComputedStyle(hats()[0]).filter).not.toMatch(/grayscale|saturate/);
     expect(q('hat-turf-badge-lock')).not.toBeNull();
     expect(document.body.textContent).not.toMatch(/would take it/);
   });

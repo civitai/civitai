@@ -188,60 +188,59 @@ function ImagesCardContent({
                 )}
                 {safe && <HatTurfLayer imageId={image.id} />}
                 {/* Steps clear of an event decoration sitting on the corner. */}
-                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-col items-start gap-1">
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-nowrap items-center gap-1">
                   <HatTurfBadge imageId={image.id} />
-                  <div className="flex flex-nowrap items-center gap-1">
-                    <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
-                    {safe && storyline && (
-                      <StorylinePill
-                        title={storyline.title}
-                        depth={storyline.depth}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          triggerRoutedDialog({
-                            name: 'imageDetail',
-                            state: {
-                              imageId: image.id,
-                              images: getDialogState(image.id, getImages()),
-                              ...contextProps,
-                              storylineChapterId: storyline.chapterId,
-                            },
-                          });
-                        }}
-                      />
+                  {/* This row's chips take the Hat Turf badge's 24px so they read as one line. */}
+                  <ImageGuard2.BlurToggle radius="xl" h={24} style={{ pointerEvents: 'auto' }} />
+                  {safe && storyline && (
+                    <StorylinePill
+                      title={storyline.title}
+                      depth={storyline.depth}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        triggerRoutedDialog({
+                          name: 'imageDetail',
+                          state: {
+                            imageId: image.id,
+                            images: getDialogState(image.id, getImages()),
+                            ...contextProps,
+                            storylineChapterId: storyline.chapterId,
+                          },
+                        });
+                      }}
+                    />
+                  )}
+                  {safe &&
+                    image.type === MediaType.video &&
+                    image.metadata &&
+                    'duration' in image.metadata && (
+                      <DurationBadge duration={image.metadata.duration ?? 0} h={24} />
                     )}
-                    {safe &&
-                      image.type === MediaType.video &&
-                      image.metadata &&
-                      'duration' in image.metadata && (
-                        <DurationBadge duration={image.metadata.duration ?? 0} />
-                      )}
-                    {safe && image.judgeScore && (
-                      <JudgeScoreBadge
-                        score={image.judgeScore}
-                        imageId={image.id}
-                        judgeInfo={contextProps.judgeInfo}
-                        judgingCategories={contextProps.judgingCategories}
-                      />
+                  {safe && image.judgeScore && (
+                    <JudgeScoreBadge
+                      score={image.judgeScore}
+                      imageId={image.id}
+                      judgeInfo={contextProps.judgeInfo}
+                      judgingCategories={contextProps.judgingCategories}
+                    />
+                  )}
+                  {isModerator && image.poi && (
+                    <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                      POI
+                    </Badge>
+                  )}
+                  {(currentUser?.id === data.user.id || isModerator) &&
+                    data.collectionItemStatus === CollectionItemStatus.REVIEW && (
+                      <Tooltip
+                        label="Still being reviewed — not yet eligible for judging"
+                        withinPortal
+                      >
+                        <Badge variant="filled" radius="xl" h={26} color="yellow">
+                          Pending review
+                        </Badge>
+                      </Tooltip>
                     )}
-                    {isModerator && image.poi && (
-                      <Badge variant="filled" radius="xl" h={26} color="pink.3">
-                        POI
-                      </Badge>
-                    )}
-                    {(currentUser?.id === data.user.id || isModerator) &&
-                      data.collectionItemStatus === CollectionItemStatus.REVIEW && (
-                        <Tooltip
-                          label="Still being reviewed — not yet eligible for judging"
-                          withinPortal
-                        >
-                          <Badge variant="filled" radius="xl" h={26} color="yellow">
-                            Pending review
-                          </Badge>
-                        </Tooltip>
-                      )}
-                  </div>
                 </div>
                 {safe && (
                   <div className="absolute right-2 top-2 z-[4] flex flex-col gap-2">
