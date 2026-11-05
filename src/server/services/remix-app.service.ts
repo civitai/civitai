@@ -14,6 +14,7 @@ import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
+  buildPresetGraphInput,
   submitPresetImageGen,
   whatIfPresetImageGen,
   type PresetEngine,
@@ -30,7 +31,7 @@ import {
   type RemixAppDefinition,
 } from '~/shared/constants/remix-apps.constants';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
-import type { RemixApp, RemixWorkflowRequest } from '~/shared/remix-apps/define';
+import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
 import { REMIX_MENU_APPS, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
@@ -112,7 +113,10 @@ export function buildRemixAppRun({
   };
 }
 
-/** `buildRemixAppRun` for one workflow a runtime app asks for. */
+/**
+ * The graph input for one workflow a runtime app asks for. Throws when the source may not reach
+ * the app's engines, for an upscale too: the app's mature rule covers every step it runs.
+ */
 export function buildRuntimeRequest({
   app,
   image,
@@ -127,25 +131,43 @@ export function buildRuntimeRequest({
   const resolved = resolveRemixAppEngine(app, image, viewer);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
   const { tier, engine } = resolved;
-  const aspectRatio =
-    request.aspectRatio === 'source' ? snapAspectRatio(image) : request.aspectRatio;
-  const images = request.images.map(({ url, width, height }) => ({
+  const sized = ({ url, width, height }: RemixImage) => ({
     url,
     width: width || REMIX_FALLBACK_DIMENSIONS.width,
     height: height || REMIX_FALLBACK_DIMENSIONS.height,
-  }));
-  const modelConfig: PresetEngine = { ...engine, maxReferenceImages: images.length };
+  });
+
+  if (request.kind === 'upscale') {
+    const input = sized(request.image);
+    return {
+      tier,
+      // The upscaler prices by the output size, so by the input's.
+      shape: `upscale:${request.scale}:${input.width}x${input.height}`,
+      inputUrls: [input.url],
+      graphInput: {
+        workflow: 'img2img:upscale',
+        images: [input],
+        upscaleSelection: { type: 'multiplier', multiplier: request.scale },
+      },
+    };
+  }
+
+  const aspectRatio =
+    request.aspectRatio === 'source' ? snapAspectRatio(image) : request.aspectRatio;
+  const images = request.images.map(sized);
   return {
     tier,
-    aspectRatio,
+    // An edit prices by its output, which the snapped aspect ratio sizes, not by its inputs.
+    shape: ['image', aspectRatio, request.quantity, images.length].join(':'),
     inputUrls: images.map((i) => i.url),
-    submit: {
+    graphInput: buildPresetGraphInput({
       prompt: request.prompt,
       aspectRatio,
       quantity: request.quantity,
       images,
-      modelConfig,
-    },
+      ecosystem: engine.ecosystem,
+      versionId: engine.versionId,
+    }),
   };
 }
 
@@ -322,7 +344,12 @@ function featureDigest(features: Partial<FeatureAccess>) {
 }
 
 type Pricing = Awaited<ReturnType<typeof pricingFor>>;
-type BuiltRun = Pick<ReturnType<typeof buildRemixAppRun>, 'tier' | 'aspectRatio' | 'submit'>;
+/** What a quote prices: `shape` is everything in `submit` the price can depend on, minus urls. */
+type BuiltRun = {
+  tier: string;
+  shape: string;
+  submit: ReturnType<typeof buildRemixAppRun>['submit'] | { graphInput: Record<string, unknown> };
+};
 
 async function quoteApp(
   app: RemixAppDefinition,
@@ -332,8 +359,11 @@ async function quoteApp(
 ) {
   const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
-  const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
-  return { slug: app.slug, ...(await quoteBuiltRun(app.slug, run, caller, pricing)) };
+  const { tier, aspectRatio, submit } = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
+  return {
+    slug: app.slug,
+    ...(await quoteBuiltRun(app.slug, { tier, shape: aspectRatio, submit }, caller, pricing)),
+  };
 }
 
 async function quoteRuntimeApp(
@@ -346,7 +376,13 @@ async function quoteRuntimeApp(
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
   const request = await firstRuntimeRequest(app, image);
   if (!request) return { slug: app.slug, refusal: PRICE_UNAVAILABLE };
-  const run = buildRuntimeRequest({ app, image, request, viewer: viewerOf(caller) });
+  const { tier, shape, graphInput } = buildRuntimeRequest({
+    app,
+    image,
+    request,
+    viewer: viewerOf(caller),
+  });
+  const run = { tier, shape, submit: { graphInput } };
   return {
     slug: app.slug,
     ...(await quoteBuiltRun(`${app.slug}@${app.version}`, run, caller, pricing)),
@@ -365,7 +401,7 @@ async function quoteBuiltRun(
   const cacheKey = [
     key,
     run.tier,
-    run.aspectRatio,
+    run.shape,
     caller.user.tier ?? 'free',
     caller.user.isModerator ? 'mod' : 'user',
     currencies.join('+'),

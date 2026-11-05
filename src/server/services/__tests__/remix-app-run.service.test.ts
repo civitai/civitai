@@ -36,6 +36,9 @@ const h = vi.hoisted(() => ({
   assertInputs: vi.fn(async () => undefined),
   headlessPost: vi.fn(),
   patchTags: vi.fn(),
+  patchWorkflows: vi.fn(),
+  /** What the whatIf prices an upscale at, apart from every other workflow. */
+  upscalePrice: 12,
 }));
 
 vi.mock('@civitai/orchestration-client', async () => ({
@@ -53,6 +56,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
     h.workflows.find((w) => w.id === path.workflowId)
   ),
   patchWorkflowTags: h.patchTags,
+  patchWorkflows: h.patchWorkflows,
 }));
 vi.mock('~/server/services/headless-post.service', () => ({
   createHeadlessPost: h.headlessPost,
@@ -303,7 +307,10 @@ beforeEach(() => {
   );
   h.submitWorkflow.mockImplementation(
     async ({ body, query }: { body: Record<string, unknown>; query?: { whatif?: boolean } }) => {
-      if (query?.whatif) return { cost: { total: h.price }, steps: [] };
+      if (query?.whatif) {
+        const upscale = JSON.stringify(body).includes('upscale');
+        return { cost: { total: upscale ? h.upscalePrice : h.price }, steps: [] };
+      }
       const existing = h.workflows.find((w) => w.externalId && w.externalId === body.externalId);
       if (existing) return existing;
       const workflow: FakeWorkflow = {
@@ -328,6 +335,23 @@ beforeEach(() => {
   }));
   h.headlessPost.mockResolvedValue({ postId: 500, imageIds: [1], deduped: false });
   h.patchTags.mockResolvedValue(undefined);
+  h.upscalePrice = 12;
+  // `add` at /metadata/remixRun/<key>: the one patch the run service writes.
+  h.patchWorkflows.mockImplementation(
+    async ({
+      input,
+    }: {
+      input: { workflowId: string; patches: { path: string; value: unknown }[] }[];
+    }) => {
+      for (const { workflowId, patches } of input) {
+        const workflow = h.workflows.find((w) => w.id === workflowId)!;
+        for (const { path, value } of patches) {
+          const key = path.replace('/metadata/remixRun/', '');
+          (workflow.metadata!.remixRun as Record<string, unknown>)[key] = value;
+        }
+      }
+    }
+  );
 });
 
 describe('remix app runs', () => {
@@ -704,8 +728,121 @@ describe('posting a finished run', () => {
   });
 });
 
+describe('Pick of four', () => {
+  const takes = ['a', 'b', 'c', 'd'].map(blob);
+
+  /** Four takes finished, the third one picked: the run waits on "Finish it". */
+  async function atFinish(nonce: string) {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'pick-of-four',
+      imageId: SOURCE_ID,
+      nonce,
+      quote: 30,
+      caller: caller(),
+    });
+    finish(submits()[0].id, takes);
+    const pick = await advanceRemixRun({ runId, caller: caller() });
+    expect(pick).toMatchObject({ status: 'ask', ask: { kind: 'pick' } });
+    const state = await advanceRemixRun({ runId, answers: [2], caller: caller() });
+    return { runId, state };
+  }
+
+  it('prices each option from a whatIf on the workflow it leads to, and keeping as free', async () => {
+    const { state } = await atFinish('nonce-p4-prices');
+
+    expect(state).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
+    expect(state).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
+    // The priced body is the upscale of the picked take.
+    const [[{ body }]] = whatIfs().slice(-1) as [[{ body: unknown }]];
+    expect(JSON.stringify(body)).toContain(takes[2]);
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('upscales the pick at the price its button showed, with the source still proven', async () => {
+    const { runId } = await atFinish('nonce-p4-upscale');
+
+    const state = await advanceRemixRun({
+      runId,
+      answers: [2, 'upscale'],
+      quote: h.upscalePrice,
+      caller: caller(),
+    });
+
+    expect(state).toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(2);
+    const [first, second] = submits();
+    // The upscale graph, on the picked take.
+    expect(second.tags).toEqual(expect.arrayContaining(['img2img:upscale', 'remix-seg:1']));
+    expect(JSON.stringify(h.submitWorkflow.mock.calls.at(-1))).toContain(takes[2]);
+    expect(verifyProvenance(second.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID]);
+    expect(verifyProvenance(second.metadata?.provenance, USER_ID)).toEqual(
+      verifyProvenance(first.metadata?.provenance, USER_ID)
+    );
+  });
+
+  it('keeps the pick, and a run that ends on that answer stays ended', async () => {
+    const { runId } = await atFinish('nonce-p4-keep');
+
+    const kept = await advanceRemixRun({ runId, answers: [2, 'keep'], caller: caller() });
+    expect(kept).toMatchObject({ status: 'done', outputs: [{ url: takes[2] }] });
+
+    // A reload, and a repeat of the same tap, find the run ended rather than asking again.
+    for (const answers of [[], [2, 'keep']]) {
+      expect(await advanceRemixRun({ runId, answers, caller: caller() })).toMatchObject({
+        status: 'done',
+        outputs: [{ url: takes[2] }],
+      });
+    }
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('posts only the kept take, from the workflow that made it', async () => {
+    const { runId } = await atFinish('nonce-p4-post');
+    await advanceRemixRun({ runId, answers: [2, 'keep'], caller: caller() });
+    const [takesWorkflow] = submits();
+
+    await postRemixResult({ runId, caller: caller(), ctx: {} as never });
+
+    expect(h.headlessPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [expect.objectContaining({ workflowId: takesWorkflow.id, url: takes[2] })],
+        idempotencyKey: `remix:${runId}`,
+      })
+    );
+    expect(h.patchTags).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: [{ workflowId: takesWorkflow.id, tag: 'remix:done', op: 'add' }],
+      })
+    );
+  });
+
+  it('will not post a run still waiting on an answer', async () => {
+    const { runId } = await atFinish('nonce-p4-unfinished');
+
+    await expect(postRemixResult({ runId, caller: caller(), ctx: {} as never })).rejects.toThrow(
+      'This remix has not finished.'
+    );
+    expect(h.headlessPost).not.toHaveBeenCalled();
+  });
+});
+
 describe('replay', () => {
   const source = { imageId: SOURCE_ID, url: blob('source'), width: 1200, height: 800 };
+
+  it('will not continue a run whose recorded answer does not fit its ask', async () => {
+    // Recorded answers sit in workflow metadata, which its owner can patch.
+    const runId = await runToPick('nonce-forged-answer');
+    await advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() });
+    finish(submits()[1].id, [blob('polished')]);
+    // POSITIVE CONTROL: as recorded, the run is done.
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'done' });
+    (submits()[1].metadata!.remixRun as { answers: unknown[] }).answers = [9];
+
+    await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+  });
 
   it('builds the next workflow from the recorded answer alone', async () => {
     const app = (await import('~/shared/remix-apps/system-apps')).getRuntimeRemixApp(

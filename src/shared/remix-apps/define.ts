@@ -5,17 +5,26 @@ export type RemixImage = { url: string; width?: number; height?: number };
 
 export type RemixAppSource = { imageId: number; url: string; width: number; height: number };
 
+export const REMIX_UPSCALE_SCALES = [1.5, 2, 2.5, 3] as const;
+
 /**
- * One workflow an app asks the host to run. v1 has image generation only; plain orchestrator
- * bodies are a later `kind` behind the same `ctx.workflow` call.
+ * One workflow an app asks the host to run: an image generation on the app's engine, or an
+ * upscale of one image. Plain orchestrator bodies are a later `kind` behind the same call.
  */
-export type RemixWorkflowRequest = {
-  kind: 'image';
-  prompt: string;
-  images: RemixImage[];
-  aspectRatio: 'source' | GenerationAspectRatio;
-  quantity: 1 | 2 | 4;
-};
+export type RemixWorkflowRequest =
+  | {
+      kind: 'image';
+      prompt: string;
+      images: RemixImage[];
+      aspectRatio: 'source' | GenerationAspectRatio;
+      quantity: 1 | 2 | 4;
+    }
+  | {
+      kind: 'upscale';
+      image: RemixImage;
+      /** Capped by the upscaler's 4096px limit; the largest scale up to this that fits is used. */
+      scale: (typeof REMIX_UPSCALE_SCALES)[number];
+    };
 
 export type RemixWorkflowResult = { workflowId: string; images: RemixImage[] };
 

@@ -83,7 +83,14 @@ export async function createHeadlessPost({
     const stored = await sysRedis.get(key);
     if (!stored || stored === PENDING)
       throw new TRPCError({ code: 'CONFLICT', message: 'This is already being posted.' });
-    return { ...(JSON.parse(stored) as HeadlessPostResult), deduped: true };
+    const first = JSON.parse(stored) as HeadlessPostResult;
+    // A gallery asked for on the repeat, or refused the first time. Safe to send again: the gallery
+    // takes one image once, and refuses before it charges.
+    if (remixGallery && !first.gallery?.submitted) {
+      first.gallery = await submitToGallery(ctx, remixGallery, first.imageIds[0]);
+      await storeResult(key, first);
+    }
+    return { ...first, deduped: true };
   }
 
   let result: HeadlessPostResult;
@@ -115,16 +122,19 @@ export async function createHeadlessPost({
       ctx,
     });
     result = { postId: post.id, imageIds: post.imageIds };
-    if (remixGallery) result.gallery = await submitToGallery(ctx, remixGallery, post.imageIds[0]);
   } catch (error) {
     await sysRedis.del(key).catch(() => undefined);
     throw error;
   }
 
-  // Posted: if storing the result fails, the pending key still refuses a repeat until it lapses.
-  await sysRedis
-    .set(key, JSON.stringify(result), { EX: IDEMPOTENCY_TTL_SECONDS })
-    .catch(() => undefined);
+  // Recorded before any charge. A repeat after the pending key lapses would post again, so a
+  // post the key cannot vouch for is never sent to a paid gallery.
+  const recorded = await storeResult(key, result);
+  if (remixGallery)
+    result.gallery = recorded
+      ? await submitToGallery(ctx, remixGallery, result.imageIds[0])
+      : { submitted: false, reason: GALLERY_NOT_SENT };
+  if (result.gallery) await storeResult(key, result);
   logToAxiom({
     name: 'headless-post',
     type: 'info',
@@ -133,6 +143,29 @@ export async function createHeadlessPost({
     gallery: result.gallery ? result.gallery.submitted : undefined,
   }).catch(() => undefined);
   return { ...result, deduped: false };
+}
+
+const GALLERY_NOT_SENT = 'It was not sent to the Remix gallery. Post again to send it.';
+
+/** The result for repeats of `key`; false when it could not be stored. */
+async function storeResult(
+  key: `${typeof REDIS_SYS_KEYS.HEADLESS_POST.IDEMPOTENCY}:${string}`,
+  result: HeadlessPostResult
+) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const stored = await sysRedis
+      .set(key, JSON.stringify(result), { EX: IDEMPOTENCY_TTL_SECONDS })
+      .then(() => true)
+      .catch(() => false);
+    if (stored) return true;
+  }
+  logToAxiom({
+    name: 'headless-post',
+    type: 'error',
+    message: 'the result for repeats could not be stored',
+    postId: result.postId,
+  }).catch(() => undefined);
+  return false;
 }
 
 async function submitToGallery(
@@ -154,7 +187,19 @@ async function submitToGallery(
     });
     return { submitted: true };
   } catch (error) {
-    const message = (error as Error).message.replace(GALLERY_PREFIX, '');
-    return { submitted: false, reason: message.charAt(0).toUpperCase() + message.slice(1) };
+    const message = (error as Error).message;
+    // The gallery's own refusals are written for the submitter; anything else is not.
+    if (error instanceof TRPCError && GALLERY_PREFIX.test(message)) {
+      const reason = message.replace(GALLERY_PREFIX, '');
+      return { submitted: false, reason: reason.charAt(0).toUpperCase() + reason.slice(1) };
+    }
+    logToAxiom({
+      name: 'headless-post',
+      type: 'error',
+      message: `remix gallery submit failed: ${message}`,
+      hostImageId,
+      imageId,
+    }).catch(() => undefined);
+    return { submitted: false, reason: GALLERY_NOT_SENT };
   }
 }

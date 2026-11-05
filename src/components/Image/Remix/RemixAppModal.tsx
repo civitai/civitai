@@ -40,7 +40,14 @@ export type RemixAppModalProps = {
 type Phase =
   | { kind: 'offer' }
   | { kind: 'running'; runId?: string; workflowId: string }
-  | { kind: 'ask'; runId: string; workflowId?: string; ask: RemixAsk; answers: RemixAnswer[] }
+  | {
+      kind: 'ask';
+      runId: string;
+      workflowId?: string;
+      ask: RemixAsk;
+      answers: RemixAnswer[];
+      prices?: Record<string, number>;
+    }
   | { kind: 'priced'; runId: string; workflowId?: string; answers: RemixAnswer[]; cost: number }
   | { kind: 'done'; runId?: string; workflowId: string; outputs: RemixImage[] }
   | { kind: 'failed'; runId?: string; workflowId: string; reason: string };
@@ -91,10 +98,12 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
 
 function AskStep({
   ask,
+  prices,
   pending,
   onAnswer,
 }: {
   ask: RemixAsk;
+  prices?: Record<string, number>;
   pending: boolean;
   onAnswer: (answer: RemixAnswer) => void;
 }) {
@@ -110,6 +119,11 @@ function AskStep({
               variant="default"
               disabled={pending}
               onClick={() => onAnswer(option.value)}
+              rightSection={
+                prices?.[option.value] ? (
+                  <CurrencyBadge currency="BUZZ" unitAmount={prices[option.value]} size="sm" />
+                ) : undefined
+              }
             >
               {option.label}
             </Button>
@@ -198,7 +212,14 @@ export function RemixAppModalContent({
         setPhase({ kind: 'running', runId: state.runId, workflowId: state.workflowId });
         break;
       case 'ask':
-        setPhase({ kind: 'ask', runId: state.runId, workflowId, ask: state.ask, answers });
+        setPhase({
+          kind: 'ask',
+          runId: state.runId,
+          workflowId,
+          ask: state.ask,
+          answers,
+          prices: state.prices,
+        });
         break;
       case 'priced':
         setPhase({ kind: 'priced', runId: state.runId, workflowId, answers, cost: state.cost });
@@ -267,9 +288,17 @@ export function RemixAppModalContent({
   function answer(value: RemixAnswer) {
     if (phase.kind !== 'ask') return;
     const answers = [...phase.answers, value];
+    // A priced option's button showed its price: the tap agrees to it and submits.
+    const quote = phase.prices?.[String(value)] || undefined;
     advance.mutate(
-      { runId: phase.runId, answers },
-      { onSuccess: (state) => apply(state, answers), onError }
+      { runId: phase.runId, answers, quote },
+      {
+        onSuccess: (state) => {
+          if (quote) refetchQueue();
+          apply(state, answers);
+        },
+        onError,
+      }
     );
   }
 
@@ -293,9 +322,9 @@ export function RemixAppModalContent({
     setPhase({ kind: 'offer' });
   }
 
-  function post(workflowId: string) {
+  function post(workflowId: string, runId?: string) {
     postRun.mutate(
-      { workflowId, gallery: gallery.submit },
+      runId ? { runId, gallery: gallery.submit } : { workflowId, gallery: gallery.submit },
       {
         onSuccess: (result) => {
           setCachedWorkflowTag(workflowId, REMIX_DONE_TAG, 'add');
@@ -393,7 +422,9 @@ export function RemixAppModalContent({
         </div>
       )}
 
-      {phase.kind === 'ask' && <AskStep ask={phase.ask} pending={pending} onAnswer={answer} />}
+      {phase.kind === 'ask' && (
+        <AskStep ask={phase.ask} prices={phase.prices} pending={pending} onAnswer={answer} />
+      )}
 
       {phase.kind === 'priced' && (
         <Button
@@ -440,7 +471,9 @@ export function RemixAppModalContent({
             onClose();
           }}
           gallery={gallery.control}
-          onPost={() => phase.kind === 'done' && phase.outputs.length && post(phase.workflowId)}
+          onPost={() =>
+            phase.kind === 'done' && phase.outputs.length && post(phase.workflowId, phase.runId)
+          }
           posting={postRun.isPending}
           postDisabled={phase.kind !== 'done' || !phase.outputs.length}
         />

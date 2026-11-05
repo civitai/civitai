@@ -119,7 +119,13 @@ export const remixAppRouter = router({
     // `post.create`'s own limit, shared with it: this makes a post just as that does.
     .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .meta({ requiredScope: TokenScope.MediaWrite })
-    .input(z.object({ workflowId: z.string().min(1).max(64), gallery: gallery.optional() }))
+    .input(
+      z.union([
+        // A runtime run posts what the app returned, read by replaying the run.
+        z.object({ runId: z.string().regex(REMIX_RUN_ID), gallery: gallery.optional() }),
+        z.object({ workflowId: z.string().min(1).max(64), gallery: gallery.optional() }),
+      ])
+    )
     .mutation(async ({ ctx, input }) =>
       postRemixResult({
         ...input,
