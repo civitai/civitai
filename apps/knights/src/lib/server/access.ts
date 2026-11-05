@@ -18,13 +18,13 @@ function getFlipt(): FliptFeatureFlags {
 }
 
 // Segments match on context properties, not the entity id; a context-less call matches no segment.
-async function isFlagOn(user: FliptTargetUser): Promise<boolean> {
+export async function isFlagOn(user: FliptTargetUser, flag: string = KNIGHTS_APP_FLAG): Promise<boolean> {
   try {
     const flipt = getFlipt();
     await flipt.ensureInitialized();
-    return flipt.isEnabledSync(KNIGHTS_APP_FLAG, String(user.id), buildFliptContext(user)) === true;
+    return flipt.isEnabledSync(flag, String(user.id), buildFliptContext(user)) === true;
   } catch (error) {
-    console.warn('[knights] access flag eval failed', error);
+    console.warn('[knights] flag eval failed', { flag, error });
     return false;
   }
 }

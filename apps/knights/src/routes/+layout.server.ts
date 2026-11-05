@@ -5,6 +5,7 @@ import { CONVERSION } from '$lib/server/conversion/config';
 import { shopEnabled } from '$lib/server/conversion/runtime';
 import { getDailyStatus, getRecapState } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
+import { feedbackEnabled } from '$lib/server/feedback/enabled';
 import { ladderRows } from '$lib/server/ladder';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -67,6 +68,8 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
     shopOpen: shopEnabled(),
+    // The "Send feedback" control is hidden while the area's flag is off for this player.
+    feedbackOpen: locals.user ? await feedbackEnabled(locals.user) : false,
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),

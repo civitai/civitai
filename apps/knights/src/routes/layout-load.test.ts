@@ -17,6 +17,8 @@ vi.mock('$lib/server/db', () => ({
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState, getDailyStatus }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
+const feedbackEnabled = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
 vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES }));
 
 const { load } = await import('./+layout.server');
@@ -37,6 +39,8 @@ const run = (user: unknown = { id: 7, username: 'ana' }) =>
   load(eventFor(user)) as Promise<Record<string, any>>;
 
 beforeEach(() => {
+  feedbackEnabled.mockReset();
+  feedbackEnabled.mockResolvedValue(false);
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
   getDailyStatus.mockReset();
@@ -54,6 +58,17 @@ afterEach(() => {
 });
 
 describe('layout load', () => {
+  it('opens the feedback control only for a signed-in player the flag is on for', async () => {
+    feedbackEnabled.mockResolvedValue(true);
+    expect(await run()).toMatchObject({ feedbackOpen: true });
+    expect(feedbackEnabled).toHaveBeenCalledWith({ id: 7, username: 'ana' });
+    feedbackEnabled.mockResolvedValue(false);
+    expect(await run()).toMatchObject({ feedbackOpen: false });
+    feedbackEnabled.mockClear();
+    expect(await load(event(undefined))).toMatchObject({ feedbackOpen: false });
+    expect(feedbackEnabled).not.toHaveBeenCalled();
+  });
+
   it('carries the header stats for a player, so a page that loads none still shows them', async () => {
     playerRow.value = { userId: 7 };
     expect(await run()).toMatchObject({

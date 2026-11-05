@@ -69,6 +69,7 @@ export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [
 const FEEDBACK_AREA_LABELS = new Map<string, string>([
   [APP_BLOCK_FEEDBACK_AREA, 'App feedback'],
   [APPS_PLATFORM_FEEDBACK_AREA, 'Apps platform (developers)'],
+  ['knights', 'Knights of New Order'],
 ]);
 
 /** The display name for an area slug; unlabelled slugs render as themselves. */

@@ -6,7 +6,8 @@
   import BlockReasons from './BlockReasons.svelte';
   import ApprenticeMeter from './ApprenticeMeter.svelte';
   import CheckpointRecap from './CheckpointRecap.svelte';
-  import GuideDialog from './GuideDialog.svelte';
+  import FeedbackDialog from '$lib/FeedbackDialog.svelte';
+import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
   import LevelToast from './LevelToast.svelte';
   import QueueClear from './QueueClear.svelte';
@@ -53,6 +54,7 @@
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
   let guideReopened = $state(false);
+let feedbackOpen = $state(false);
   let guideOpen = $derived(data.showGuide || guideReopened);
   // A title shows on hover and focus only; touch players get the same text from the Guide button.
   let levelHint = $derived(
@@ -66,7 +68,7 @@
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
-  let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
+  let dialogOpen = $derived(guideOpen || feedbackOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
@@ -561,6 +563,9 @@
           {#if !yesNo}
             <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
           {/if}
+          {#if data.feedbackOpen}
+            <button type="button" class="quiet guide" onclick={() => (feedbackOpen = true)}>Send feedback</button>
+          {/if}
           {@render soundToggle()}
         </div>
         {#if formMessage}
@@ -652,6 +657,9 @@
         {#if !yesNo}
           <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
         {/if}
+        {#if data.feedbackOpen}
+          <button type="button" class="quiet guide" onclick={() => (feedbackOpen = true)}>Send feedback</button>
+        {/if}
         {@render soundToggle()}
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -672,6 +680,10 @@
   </div>
   {/if}
 </div>
+
+{#if feedbackOpen}
+  <FeedbackDialog onclose={() => (feedbackOpen = false)} />
+{/if}
 
 {#if guideOpen}
   <GuideDialog

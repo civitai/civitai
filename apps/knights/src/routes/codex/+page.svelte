@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import FeedbackDialog from '$lib/FeedbackDialog.svelte';
   import Icon from '$lib/Icon.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
@@ -10,6 +11,7 @@
   let { data }: { data: PageData } = $props();
   let facts = $derived(data.facts);
   let restarting = $state(false);
+  let feedbackOpen = $state(false);
 
   const TABS = [
     { id: 'ranks', label: 'Ranks' },
@@ -258,7 +260,23 @@
       </button>
     </section>
   {/if}
+  {#if data.feedbackOpen}
+    <hr class="rule" />
+    <section id="feedback" class="career" aria-labelledby="feedback-heading">
+      <div>
+        <p class="kicker" id="feedback-heading">Feedback</p>
+        <p class="muted">Something unclear or broken? Tell the team.</p>
+      </div>
+      <button type="button" class="feedback" onclick={() => (feedbackOpen = true)}>
+        <Icon name="send" size={14} />Send feedback
+      </button>
+    </section>
+  {/if}
 </div>
+
+{#if feedbackOpen}
+  <FeedbackDialog onclose={() => (feedbackOpen = false)} />
+{/if}
 
 {#if restarting}
   <RestartCareerDialog onclose={() => (restarting = false)} />
@@ -465,14 +483,17 @@
     gap: 1.5rem;
     padding-bottom: 1rem;
   }
+  .feedback,
   .restart {
     display: inline-flex;
     flex: none;
     align-items: center;
     gap: 8px;
     min-height: 40px;
-    border-color: var(--io-crimson);
     background: transparent;
+  }
+  .restart {
+    border-color: var(--io-crimson);
     color: var(--io-crimson-text);
   }
 
