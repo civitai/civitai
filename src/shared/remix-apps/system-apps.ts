@@ -45,6 +45,7 @@ export const pickOfFour = defineRemixApp({
     const finish = await ctx.ask({
       kind: 'choice',
       prompt: 'Finish it',
+      image: chosen,
       options: [
         { value: 'upscale', label: 'Upscale 2×' },
         { value: 'keep', label: 'Keep it' },

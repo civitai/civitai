@@ -29,13 +29,19 @@ export type RemixWorkflowRequest =
 export type RemixWorkflowResult = { workflowId: string; images: RemixImage[] };
 
 export type RemixAsk =
-  | { kind: 'choice'; prompt: string; options: { value: string; label: string }[] }
+  | {
+      kind: 'choice';
+      prompt: string;
+      options: { value: string; label: string }[];
+      /** The image the choice is about, shown above its options. */
+      image?: RemixImage;
+    }
   | { kind: 'pick'; prompt: string; images: RemixImage[] }
   | { kind: 'text'; prompt: string; maxLength: number };
 
 /**
  * An ask as the viewer receives it: a pick's images the viewer may not see are `null`, so every
- * other image keeps the index the app gave it.
+ * other image keeps the index the app gave it; a choice's image the viewer may not see is left off.
  */
 export type RemixViewerAsk =
   | Exclude<RemixAsk, { kind: 'pick' }>

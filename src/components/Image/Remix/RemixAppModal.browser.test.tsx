@@ -399,7 +399,7 @@ describe('RemixAppModal', () => {
     expect(h.advance.mock.calls[1][0]).toMatchObject({ runId: RUN, answers: [2] });
   });
 
-  test('a priced option shows its price, and tapping it runs the step at that price', async () => {
+  test('Finish it shows the picked take, a priced option its price, and a tap runs the step at that price', async () => {
     h.items = [workflow('wf-0', 'succeeded')];
     h.advance
       .mockResolvedValueOnce({
@@ -408,6 +408,7 @@ describe('RemixAppModal', () => {
         ask: {
           kind: 'choice',
           prompt: 'Finish it',
+          image: { url: 'https://example.com/picked-take.png' },
           options: [
             { value: 'upscale', label: 'Upscale 2×' },
             { value: 'keep', label: 'Keep it' },
@@ -426,6 +427,8 @@ describe('RemixAppModal', () => {
 
     const upscale = page.getByRole('button', { name: /^Upscale 2×/ });
     await expect.element(upscale).toHaveTextContent('12');
+    // The picked take, above the options.
+    expect(document.querySelector('img[src*="picked-take"]')).not.toBeNull();
     // Free to keep: no price on its button.
     await expect
       .element(page.getByRole('button', { name: 'Keep it' }))

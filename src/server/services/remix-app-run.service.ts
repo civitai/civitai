@@ -385,11 +385,16 @@ async function advance({
       if (!images.some(Boolean)) return { status: 'failed', runId, workflowId, reason: NONE_SHOWN };
       return { status: 'ask', runId, ask: { ...spec, images } };
     }
-    if (spec.kind !== 'choice' || !priceOptions) return { status: 'ask', runId, ask: spec };
+    if (spec.kind !== 'choice') return { status: 'ask', runId, ask: spec };
+    // The same gate again, failing closed: an image not rated yet is left off rather than waited on.
+    const { image: shown, ...choice } = spec;
+    const ask =
+      shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
+    if (!priceOptions) return { status: 'ask', runId, ask };
     const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
       optionPrices({ app, image, source, log, spec, caller, currencies })
     );
-    return { status: 'ask', runId, ask: spec, prices };
+    return { status: 'ask', runId, ask, prices };
   }
 
   const index = segments.length;
