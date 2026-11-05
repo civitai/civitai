@@ -11,8 +11,8 @@ const { equipCosmetic, CosmeticEquipRefusedError } = await import('~/server/serv
 const ownershipQuery = expect.objectContaining({
   where: { userId: 9, cosmeticId: { in: [5] } },
 });
-const owned = (type: string) =>
-  [{ obtainedAt: new Date(), cosmetic: { type, data: { url: 'x.png' } } }] as never;
+const owned = (type: string, data: object = { url: 'x.png' }) =>
+  [{ obtainedAt: new Date(), cosmetic: { type, data } }] as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -44,6 +44,10 @@ describe('equipCosmetic', () => {
   it.each([
     ["You don't have that cosmetic", []],
     ['Stickers cannot be equipped', owned('Sticker')],
+    [
+      'Event decorations are placed on content, not equipped',
+      owned('ProfileDecoration', { event: 'spring' }),
+    ],
   ])('refuses with a typed error and the same message: %s', async (message, rows) => {
     dbMock.dbRead.userCosmetic.findMany.mockResolvedValue(rows as never);
 

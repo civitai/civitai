@@ -183,6 +183,7 @@ describe('/api/mod/knights/shop/cosmetics', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(mocks.refresh).not.toHaveBeenCalled();
     expect(mocks.equip).not.toHaveBeenCalled();
+    expect(mocks.unequip).not.toHaveBeenCalled();
   });
 
   it('only answers POST', async () => {
