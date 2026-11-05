@@ -13,7 +13,7 @@ describe('activeHref', () => {
   });
 
   it('keeps the pages reached from Home on the Home tab', () => {
-    for (const path of ['/judgments', '/leaderboard', '/gold']) expect(activeHref(path)).toBe('/home');
+    for (const path of ['/judgments', '/leaderboard']) expect(activeHref(path)).toBe('/home');
   });
 
   it('does not match on a shared prefix alone', () => {

@@ -13,7 +13,7 @@ export type NavItem = {
 
 /** The primary navigation, in tab order. */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { href: '/home', label: 'Home', icon: 'house', also: ['/judgments', '/leaderboard', '/gold'] },
+  { href: '/home', label: 'Home', icon: 'house', also: ['/judgments', '/leaderboard'] },
   { href: '/play', label: 'Judge', icon: 'gavel' },
   { href: '/codex', label: 'Codex', icon: 'book-open' },
   { href: '/shop', label: 'Shop', icon: 'coins' },
