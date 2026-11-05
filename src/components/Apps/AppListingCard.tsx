@@ -15,7 +15,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
@@ -43,10 +43,9 @@ import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import useIsClient from '~/hooks/useIsClient';
+import dayjs from '~/shared/utils/dayjs';
 import {
   isMarketplaceCategory,
   marketplaceCategoryLabel,
@@ -217,6 +216,22 @@ export function ListingCover({
   );
 }
 
+const noopSubscribe = () => () => undefined;
+
+/**
+ * `false` on the server AND during hydration, `true` once rendered on the client. A relative
+ * date ("3 days ago") depends on the clock, so rendering it before then would make the server
+ * HTML and the first client paint disagree. Not `useIsClient`: that needs a provider some
+ * surfaces that render this card do not mount.
+ */
+function useRenderedOnClient() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false
+  );
+}
+
 export interface AppListingCardProps {
   card: ListingCard;
   /**
@@ -255,10 +270,9 @@ export function AppListingCard({
   coverBadge,
 }: AppListingCardProps) {
   const currentUser = useCurrentUser();
-  // The relative date is client-only (`DaysFromNow` renders nothing on the server), so the
-  // whole "Updated …" part waits for the client: no "Updated" with a hole in it, and the
-  // server and first client paint stay identical.
-  const isClient = useIsClient();
+  // The relative date is client-only, so the whole "Updated …" part waits for the client:
+  // no "Updated" with a hole in it, and the server and first client paint stay identical.
+  const isClient = useRenderedOnClient();
   const cta = getListingCta(card, { canOpenPage });
   // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
   // second inline copy. #3539 already gave each CTA its own icon; what was still
@@ -493,8 +507,8 @@ export function AppListingCard({
         </Group>
 
         {/* META LINE — category · "Updated 3 days ago". ALWAYS rendered and ONE line
-            (`truncate`), so `AppListingCardSkeleton` reserves it unconditionally: with
-            neither part it holds a non-breaking space. The category link sits above the
+            (`truncate`), so `AppListingCardSkeleton` reserves it unconditionally: without a
+            category it also holds a zero-width space, so it never collapses to no line. The category link sits above the
             stretched title link (`relative z-10`) so it is the one that receives the click. */}
         <Text size="xs" c="dimmed" truncate data-testid="apps-listing-card-meta">
           {categoryLabel &&
@@ -514,12 +528,17 @@ export function AppListingCard({
               <span data-testid="apps-listing-card-category">{categoryLabel}</span>
             ))}
           {categoryLabel && showUpdated && ' · '}
-          {showUpdated && (
+          {showUpdated && card.updatedAt && (
             <span data-testid="apps-listing-card-updated">
-              Updated <DaysFromNow date={card.updatedAt} />
+              Updated{' '}
+              <time dateTime={card.updatedAt} title={dayjs(card.updatedAt).format()}>
+                {dayjs(card.updatedAt).fromNow()}
+              </time>
             </span>
           )}
-          {!categoryLabel && !showUpdated && '\u00A0'}
+          {/* A zero-width space keeps the line box when there is nothing else to show yet
+              (no category; the date waits for the client), so the line never collapses. */}
+          {!categoryLabel && '\u200B'}
         </Text>
 
         {/* ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES TRUNCATE — it never
