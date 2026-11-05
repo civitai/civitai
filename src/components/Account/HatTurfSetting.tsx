@@ -8,7 +8,7 @@ const HAT_TURF_SETTING_DESCRIPTION =
   "Place your team's hats on images and see everyone's. Hats you placed keep counting if you turn this off.";
 export const SHOW_HATS_SETTING_LABEL = 'Show hats';
 const SHOW_HATS_SETTING_DESCRIPTION =
-  'Hats, team standings and the hat button on images. Off, images show none of Hat Turf, on this device.';
+  "The hats placed on images, everyone's and yours. Off hides them on this device; the standings and the hat button stay, and placing a hat shows them again while you place.";
 
 /** In account settings, while Hat Turf runs on any surface this viewer can see. */
 export function HatTurfSetting() {
@@ -34,7 +34,7 @@ export function HatTurfSetting() {
           />
         }
       />
-      {/* With hats off, cards drop the gear too, and the image page may not run Hat Turf. */}
+      {/* A viewer with Hat Turf on feeds only has no image page switch, so it is here too. */}
       <SettingRow
         label={SHOW_HATS_SETTING_LABEL}
         description={SHOW_HATS_SETTING_DESCRIPTION}

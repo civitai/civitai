@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
+import type * as TrpcModule from '~/utils/trpc';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -19,6 +20,11 @@ const OWNER_ID = 7;
 const PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==';
 
+// The event hat's popover reads tRPC; this test only needs where the hat is drawn.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpc: (await import('../../../test/trpcProxyStub')).makeTrpcProxy(),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/components/Sticker/StickerPlacementActions', () => ({
   StickerPlacementActions: () => (
@@ -47,6 +53,10 @@ vi.mock('~/components/Sticker/StickerPlacementHoverCard', () => ({
 }));
 
 const { StickerPlacementOverlay } = await import('~/components/Sticker/StickerPlacementOverlay');
+const { ImageMediaHat } = await import(
+  '~/components/Cosmetics/EventDecoration/EventDecorationOverlay'
+);
+const { EVENT_HAT_CORNERS } = await import('~/components/Sticker/peek-toggle-corner');
 
 const sticker = new Map([[9, { id: 9, name: 'Test', slug: 'test', url: PNG }]]);
 
@@ -78,10 +88,21 @@ const LAYOUT = `
   .left-2{left:8px} .bottom-2{bottom:8px}
 `;
 
-const stage = (placements: PlacedSticker[], viewerId = OWNER_ID) => (
+const stage = (placements: PlacedSticker[], viewerId = OWNER_ID, wearsHat = false) => (
   <div style={{ position: 'relative', width: 390, height: 390 }}>
     <style>{LAYOUT}</style>
-    <StickerPlacementOverlay placements={placements} viewerId={viewerId} sticker={sticker} />
+    {wearsHat && (
+      <ImageMediaHat
+        imageId={1}
+        decoration={{ data: { type: 'hat', event: 'birthday2026', url: PNG } }}
+      />
+    )}
+    <StickerPlacementOverlay
+      placements={placements}
+      viewerId={viewerId}
+      sticker={sticker}
+      takenCorners={wearsHat ? EVENT_HAT_CORNERS : undefined}
+    />
   </div>
 );
 
@@ -164,5 +185,43 @@ describe('peeking past the review chrome', () => {
     expect(overlaps(pill, art)).toBe(false);
     expect(overlaps(pill, await rect(page.getByText('Approve')))).toBe(false);
     expect(overlaps(pill, await rect(page.getByText('Decline')))).toBe(false);
+  });
+
+  // A tester's report: with a sticker near the top-right, the toggle moved to the top-left, under
+  // the image's event hat.
+  test('the toggle stays off the event hat the image wears', async () => {
+    renderWithProviders(
+      stage(
+        [
+          placed({
+            data: {
+              cosmeticId: 9,
+              x: 0.85,
+              y: 0.1,
+              scale: 0.3,
+              rotation: 0,
+              flip: false,
+              opacity: 1,
+            },
+          }),
+        ],
+        OWNER_ID,
+        true
+      )
+    );
+
+    const toggle = page.getByRole('button', { name: 'Hide controls' });
+    await expect.element(toggle).toBeInTheDocument();
+    const hat = document.querySelector('[data-event-decoration="hat"]') as HTMLElement | null;
+    expect(hat).not.toBeNull();
+    const h = hat!.getBoundingClientRect();
+    expect(h.width).toBeGreaterThan(0);
+    const pill = ((await toggle.element()) as HTMLElement).getBoundingClientRect();
+    const overlaps = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    expect(overlaps(pill, h)).toBe(false);
+    expect(
+      overlaps(pill, (page.getByAltText(':test:').element() as HTMLElement).getBoundingClientRect())
+    ).toBe(false);
   });
 });

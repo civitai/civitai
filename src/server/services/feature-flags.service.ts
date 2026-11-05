@@ -56,7 +56,10 @@ const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
+  creatorEngagementApi: { availability: ['mod'], fliptKey: 'creator-engagement-api' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // Landscape images cover two feed columns on /images (3+ columns). Mods only while it is reviewed.
+  masonryLandscapeSpan: { availability: ['mod'], fliptKey: 'masonry-landscape-span' },
   // App mode of /intent/post (manifest links from approved apps). Off: every intent is open mode.
   appPostIntent: { availability: ['mod'], fliptKey: 'app-post-intent' },
   // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
@@ -808,6 +811,7 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
   appAssistant: { availability: [], fliptKey: 'app-assistant' },

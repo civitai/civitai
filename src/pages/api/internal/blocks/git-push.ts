@@ -9,9 +9,15 @@ import {
   BlockManifestValidator,
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
+import { userIdForForgejoUsername } from '~/server/services/blocks/dev-git-access.service';
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import {
+  APP_DEVELOPER_TERMS_ACCEPT_PATH,
+  AppDeveloperTermsNotAcceptedError,
+} from '~/shared/constants/app-developer-terms.constants';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -403,8 +409,21 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       appBlockId: appBlock.id,
       manifest: manifest as object,
       version: reviewVersion,
+      pusherUserId: userIdForForgejoUsername(payload.pusher?.login ?? payload.pusher?.username),
     });
   } catch (e) {
+    if (e instanceof AppDeveloperTermsNotAcceptedError) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/review',
+        description: e.message, // setCommitStatus truncates to Forgejo's 140
+        targetUrl: `${getBaseUrl()}${APP_DEVELOPER_TERMS_ACCEPT_PATH}`,
+      });
+      res.status(403).json({ error: 'App Developer Terms not accepted' });
+      return;
+    }
     notifyModsOfWebhookFailure({
       slug,
       sha,

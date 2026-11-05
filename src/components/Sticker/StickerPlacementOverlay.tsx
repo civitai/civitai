@@ -10,6 +10,7 @@ import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
 import { placementMarkLayout } from '~/components/Sticker/placement-mark-layout';
 import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
+import type { PeekToggleCorner } from '~/components/Sticker/peek-toggle-corner';
 import {
   PEEK_TOGGLE_CORNER_CLASS,
   peekToggleCorner,
@@ -89,8 +90,11 @@ export function StickerPlacementOverlay({
   armed = false,
   paced = true,
   step = null,
+  takenCorners,
 }: {
   placements: PlacedSticker[];
+  /** Corners another decoration draws in, which the peek toggle keeps out of. */
+  takenCorners?: PeekToggleCorner[];
   viewerId?: number;
   className?: string;
   /**
@@ -363,7 +367,8 @@ export function StickerPlacementOverlay({
   const toggleCorner = peekToggleCorner(
     visible
       .filter((placement) => placement.isPending && placement.ownerId === viewerId)
-      .map(({ data }) => data)
+      .map(({ data }) => data),
+    takenCorners
   );
 
   return (
