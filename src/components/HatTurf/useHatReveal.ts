@@ -56,11 +56,14 @@ export function useHatReveal(showHats: boolean, placing: boolean) {
 
 /**
  * Each hat's delay in the reveal, oldest first and spaced by the real time between placements,
- * squeezed into HAT_REVEAL_MAX_MS. A hat with no time comes after every timed one, keeping its place
- * in the list, which is newest first.
+ * squeezed into HAT_REVEAL_MAX_MS. A hat with no time (or an unreadable one) comes after every timed
+ * one, last listed first, since a read lists newest first.
  */
 export function hatRevealDelays(hats: { id: unknown; createdAt?: Date | string | null }[]) {
-  const times = hats.map((hat) => (hat.createdAt ? new Date(hat.createdAt).getTime() : null));
+  const times = hats.map((hat) => {
+    const at = hat.createdAt ? new Date(hat.createdAt).getTime() : NaN;
+    return Number.isFinite(at) ? at : null;
+  });
   const latest = Math.max(0, ...times.filter((at): at is number => at !== null));
   const timed = hats.map((hat, index) => ({
     key: String(hat.id),
