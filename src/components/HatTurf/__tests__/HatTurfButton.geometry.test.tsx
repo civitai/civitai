@@ -133,6 +133,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   LOADABLE_IMAGE_DATA_URI,
   PHONE_VIEWPORT,
+  nextLayout,
   renderAtViewport,
 } from '../../../../test/geometry-setup';
 
@@ -200,14 +201,25 @@ describe('Hat Turf button geometry on a feed card', () => {
     expect(hat.getBoundingClientRect().height).toBe(reactionHeight);
   });
 
-  test('the gear glyph is centred in its round chip', async () => {
-    await renderCard();
-    const chip = document.body.querySelector('[data-testid="hat-turf-gear"]')!;
-    // The drawn gear, not the svg's box: a glyph can sit off-centre inside a centred viewBox.
-    const ink = chip.querySelector('svg path:not([stroke="none"][fill="none"])')!;
-    const c = centre(chip.getBoundingClientRect());
-    const g = centre(ink.getBoundingClientRect());
-    expect(Math.abs(g.x - c.x)).toBeLessThanOrEqual(0.5);
-    expect(Math.abs(g.y - c.y)).toBeLessThanOrEqual(0.5);
-  });
+  // Layout only: device-pixel snapping at a fractional devicePixelRatio never reaches
+  // getBoundingClientRect, so this cannot see the drift reported at 1.275.
+  test.each([1, 1.275, 1.5])(
+    'the gear glyph is centred in its round chip at zoom %s',
+    async (z) => {
+      await renderCard();
+      document.documentElement.style.zoom = String(z);
+      try {
+        await nextLayout();
+        const chip = document.body.querySelector('[data-testid="hat-turf-gear"]')!;
+        // The drawn gear, not the svg's box: a glyph can sit off-centre inside a centred viewBox.
+        const ink = chip.querySelector('svg path:not([stroke="none"][fill="none"])')!;
+        const c = centre(chip.getBoundingClientRect());
+        const g = centre(ink.getBoundingClientRect());
+        expect(Math.abs(g.x - c.x) * z).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(g.y - c.y) * z).toBeLessThanOrEqual(0.5);
+      } finally {
+        document.documentElement.style.zoom = '';
+      }
+    }
+  );
 });

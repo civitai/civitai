@@ -73,6 +73,16 @@
   color: #fff;
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.18);
+  /*
+   * Its own layer, so the disc and the glyph rasterise together: at a 1.275 devicePixelRatio the
+   * gear was seen a pixel low and right of the disc.
+   */
+  transform: translateZ(0);
+
+  /* Even icon in an even chip: the 2px inset lands on whole CSS pixels. */
+  & svg {
+    display: block;
+  }
 }
 
 /*
