@@ -381,7 +381,7 @@ function ImageContent({
             layer={hatLayer}
             embla={embla}
           />
-          {safe && <ImageStickerOverlay imageId={image.id} />}
+          {safe && <ImageStickerOverlay imageId={image.id} wearsHat={!!image.eventDecoration} />}
           {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}
