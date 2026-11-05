@@ -56,6 +56,7 @@ const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
+  creatorEngagementApi: { availability: ['mod'], fliptKey: 'creator-engagement-api' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
   // App mode of /intent/post (manifest links from approved apps). Off: every intent is open mode.
   appPostIntent: { availability: ['mod'], fliptKey: 'app-post-intent' },

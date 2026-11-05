@@ -25,6 +25,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
+| Creator engagement API (`GET /api/v1/creator/engagement`) | [docs/features/creator-engagement-api.md](creator-engagement-api.md) |
 | Feed Impressions | [docs/features/feed-impressions.md](feed-impressions.md) |
 | Semantic image search page (`/search/semantic`) | [docs/features/semantic-image-search-page.md](semantic-image-search-page.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](bitwise-flags.md) |
