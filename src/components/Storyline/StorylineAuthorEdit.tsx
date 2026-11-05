@@ -121,7 +121,7 @@ function CaptionEditor({
         minRows={2}
         maxRows={8}
         autoFocus
-        // Editing an existing caption carries on from its end, not its first letter.
+        // Cursor after the existing text.
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
           event.currentTarget.setSelectionRange(end, end);
@@ -158,7 +158,6 @@ function TitleEditor({
   const utils = trpc.useUtils();
   const mutation = trpc.post.update.useMutation({
     onSuccess: async () => {
-      // The title shows in the reader's path, the chips and the post page.
       await Promise.all([
         utils.storyline.getPath.invalidate(),
         utils.storyline.getForPosts.invalidate(),

@@ -77,10 +77,11 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
     active: true,
     endOpen: false,
     setEndOpen: () => undefined,
-    // Image 7 is in chapter 10 by user 1; image 8 in chapter 11 by user 2.
+    // Image 7 is in chapter 10 by user 1; image 8 in chapter 11 by user 2. User 3 owns the
+    // storyline and wrote neither chapter.
     chapterIdOfImage: (imageId: number) => ({ 7: 10, 8: 11 }[imageId]),
     path: {
-      storyline: { id: 3, userId: 2 },
+      storyline: { id: 3, userId: 3 },
       captions: mocks.captions,
       chapters: [
         { chapterId: 10, depth: 0, post: { id: 41, title: 'The Gate', userId: 1 } },
@@ -126,17 +127,18 @@ describe('StorylineStageOverlay: who sees the edit controls', () => {
   });
 
   test.each([
-    ['another signed-in user', () => (mocks.userId = 2), 7],
-    ['a signed-out reader', () => (mocks.userId = undefined), 7],
-    // The storyline's owner (user 2 owns it) reading someone else's chapter.
-    ['the author of a different chapter', () => (mocks.userId = 1), 8],
-  ])('%s sees no edit controls', async (_name, setup, imageId) => {
-    setup();
-    mocks.captions = { [imageId]: 'A caption.' };
-    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={imageId} />);
+    ['another signed-in user', 4],
+    ['a signed-out reader', undefined],
+    ['the author of a different chapter', 2],
+    ['the storyline owner', 3],
+  ])('%s sees no edit controls on chapter 10', async (_name, userId) => {
+    mocks.userId = userId;
+    mocks.captions = { 7: 'A caption.' };
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
 
     await expect.element(page.getByText('A caption.')).toBeVisible();
-    expect(page.getByTestId('storyline-author-edit').elements()).toHaveLength(0);
+    for (const control of [editCaption(), addCaption(), editTitle()])
+      expect(control.elements()).toHaveLength(0);
   });
 });
 
@@ -155,7 +157,6 @@ describe('StorylineStageOverlay: saving', () => {
       imageId: 7,
       content: 'The gate is shut.',
     });
-    // Saved and closed: the controls are back, and the reader's path refetches the new caption.
     await expect.element(editCaption()).toBeVisible();
     expect(mocks.invalidate.getPath).toHaveBeenCalledOnce();
   });
@@ -171,7 +172,6 @@ describe('StorylineStageOverlay: saving', () => {
 
     expect(mocks.updatePost).toHaveBeenCalledExactlyOnceWith({ id: 41, title: 'The Iron Gate' });
     expect(mocks.setCaption).not.toHaveBeenCalled();
-    // The new title reaches the reader's path, the chapter chips and the post page.
     await expect.element(editTitle()).toBeVisible();
     expect(mocks.invalidate.getPath).toHaveBeenCalledOnce();
     expect(mocks.invalidate.getForPosts).toHaveBeenCalledOnce();
