@@ -45,6 +45,11 @@
           'Not marked mature: where it is listed follows its images, not a civitai.com version.',
       };
     if (model.onCom) return { state: 'skipped', reason: 'Already listed on civitai.com.' };
+    if (model.hasComFace)
+      return {
+        state: 'skipped',
+        reason: 'Already has a civitai.com version. Edit it in the model editor.',
+      };
     return { state: 'waiting' };
   }
 
@@ -91,10 +96,13 @@
     controller = new AbortController();
     const { signal } = controller;
     drafting = true;
-    for (const model of models) {
-      if (signal.aborted) break;
-      if (cards[model.id]?.state !== 'waiting') continue;
-      if (!(await draftOne(model, signal))) break;
+    // Re-scanned each turn, so a card retried mid-run is picked up too.
+    let next: CreatorModel | undefined;
+    while (
+      !signal.aborted &&
+      (next = models.find((model) => cards[model.id]?.state === 'waiting'))
+    ) {
+      if (!(await draftOne(next, signal))) break;
     }
     drafting = false;
   }

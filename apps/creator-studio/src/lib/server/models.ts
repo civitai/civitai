@@ -81,6 +81,8 @@ export type CreatorModel = {
   poi: boolean;
   /** Its rating has a PG or PG-13 bit, which is what lists it on civitai.com. */
   onCom: boolean;
+  /** Has its own civitai.com title, which a fresh draft would replace. */
+  hasComFace: boolean;
   /** A moderator locked it as mature, so it cannot get a civitai.com face. */
   lockedMature: boolean;
   versions: CreatorModelVersion[];
@@ -295,7 +297,17 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi', 'lockedProperties'])
+      .select([
+        'id',
+        'name',
+        'type',
+        'status',
+        'nsfw',
+        'nsfwLevel',
+        'poi',
+        'lockedProperties',
+        'sfwName',
+      ])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -453,6 +465,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       nsfwLevel: Number(m.nsfwLevel ?? 0),
       poi: !!m.poi,
       onCom: (Number(m.nsfwLevel ?? 0) & sfwBrowsingLevelsFlag) !== 0,
+      hasComFace: m.sfwName != null,
       lockedMature: !!m.nsfw && (m.lockedProperties ?? []).includes('nsfw'),
       versions: byModel.get(m.id) ?? [],
     })),

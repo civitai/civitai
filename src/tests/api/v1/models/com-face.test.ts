@@ -50,6 +50,9 @@ const stored = {
   deletedAt: null,
 };
 
+let row: typeof stored = stored;
+let levelAfterSave = 0;
+
 async function call(body: unknown) {
   let statusCode = 0;
   let payload: unknown;
@@ -79,12 +82,16 @@ describe('POST /api/v1/models/com-face', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     callerContexts.length = 0;
-    dbMock.dbRead.model.findUnique.mockResolvedValue(stored);
-    dbMock.dbWrite.model.findUnique.mockResolvedValue({ nsfwLevel: 2 | 8 });
+    row = stored;
+    levelAfterSave = 2 | 8;
+    // The handler reads the model row, then (after a save) only its level.
+    dbMock.dbWrite.model.findUnique.mockImplementation((async (args: {
+      select: Record<string, unknown>;
+    }) => (args.select.userId ? row : { nsfwLevel: levelAfterSave })) as never);
   });
 
   it("refuses another creator's model", async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue({ ...stored, userId: 8 });
+    row = { ...stored, userId: 8 };
     expect((await call({ action: 'draft', modelId: 11 })).statusCode).toBe(403);
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
@@ -92,7 +99,7 @@ describe('POST /api/v1/models/com-face', () => {
   // Decision (Justin, hq:creator_studio_show_cf07): a model a moderator locked as mature is
   // skipped, not drafted; its owner disputes the lock instead.
   it('refuses a model locked as mature, for draft and save', async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue({ ...stored, lockedProperties: ['nsfw'] });
+    row = { ...stored, lockedProperties: ['nsfw'] };
     const draft = await call({ action: 'draft', modelId: 11 });
     expect(draft.statusCode).toBe(409);
     expect(draft.body.code).toBe('locked');
@@ -130,7 +137,7 @@ describe('POST /api/v1/models/com-face', () => {
   // and passes every flag the upsert schema would default back as stored: an omitted `minor` or
   // `sfwOnly` parses as false and would clear it.
   it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue({ ...stored, minor: true, nsfw: false });
+    row = { ...stored, minor: true, nsfw: false };
     const res = await call({
       action: 'save',
       modelId: 11,
@@ -156,7 +163,7 @@ describe('POST /api/v1/models/com-face', () => {
   });
 
   it('reports a saved face whose cover does not list the model on .com', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue({ nsfwLevel: 8 });
+    levelAfterSave = 8;
     const res = await call({ action: 'save', modelId: 11, sfwName: 'Safe', sfwCoverImageId: 2 });
     expect(res.body).toEqual({ listedOnCom: false });
   });

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { createContext } from '~/server/createContext';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { appRouter } from '~/server/routers';
 import { createCallerFactory } from '~/server/trpc';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -36,7 +36,9 @@ export default AuthedEndpoint(
     if (!parsed.success) return res.status(400).json({ error: 'Invalid request body' });
     const input = parsed.data;
 
-    const model = await dbRead.model.findUnique({
+    // Primary: these flags are written straight back by the save, and a lagging copy would revert a
+    // change the owner just made.
+    const model = await dbWrite.model.findUnique({
       where: { id: input.modelId },
       select: {
         id: true,
