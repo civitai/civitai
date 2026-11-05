@@ -45,6 +45,11 @@ leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the except
   which is retried with no limit; a full-URL file that stays unreadable is recorded `missing` in the
   manifest after a bounded time. The images archive bounds the source bytes it holds at once
   (`MAX_ARCHIVE_SOURCE_BYTES`).
+- `data.json` carries the reported user's record and `reportId`, their `models`, `modelVersions` and
+  `images`, then one section per entry of `userContentSections` in `csam.service-new.ts` (today
+  `comments`, every `CommentV3` row by the user, keyset-paged). Comments carry no legal hold; this
+  archive is their evidence copy. To archive more of a user's content, add an entry there (`name`
+  plus a paged `rows(userId)`).
 
 Other causes of a stranded report (these also retry hourly with no limit):
 

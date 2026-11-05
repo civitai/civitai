@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
+import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
 
 import {
   addListingScreenshotSchema,
@@ -107,6 +109,7 @@ import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-sc
 
 /** Moderator authority on the listing editor needs a session or full-access key, never an app-scoped token. */
 const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+const listingEditorUser = (ctx: Context) => ({ ...ctx.user!, isModerator: actsAsModerator(ctx) });
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
@@ -215,16 +218,11 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  *      `getMyListingForEdit`, `getMyListingForApp`, `beginListingRevision`,
  *      `submitListingRevision`, `updateListing`, `updateRevisionDraft`.
  *
- * For a caller who IS a moderator, the shape-1 members are cross-listing, so this meta
- * lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit that
- * reach — where an un-annotated proc would have 403'd it. That is delegated moderator
- * authority rather than widened authority, and it is the accepted cost of admitting the
- * CLI on the media procs; it is written down rather than left to be discovered.
+ * Moderator authority on the shape-1 members needs a session or a full-access personal key
+ * (`listingEditorUser`, the same rule as the details procs); any other token acts as its user.
  *
- * 🔴 IT IS ALSO WHY `getAssets` IS **NOT** IN THIS SET. It was annotated during the
- * `civitai app doctor` work and the annotation was withdrawn as a product decision: it is
- * shape 1, and it is a pure READ whose whole payload was already reachable from procs
- * already in this set, so it carried the bypass and bought nothing. New annotations are
+ * `getAssets` is NOT in this set: it is a pure READ whose whole payload is already reachable
+ * from procs in this set, so annotating it buys nothing. New annotations are
  * decided on that basis — what the proc ADDS, weighed against which gate it sits behind —
  * never by copying a sibling's `.meta(...)`.
  */
@@ -513,17 +511,11 @@ export const appListingsRouter = router({
   /**
    * Owner/mod read of a listing's current assets (creator dashboard).
    *
-   * 🔴 DELIBERATELY **NOT** `listingMediaCliScope`, and this is the note that keeps it
-   * that way. It was annotated during the `civitai app doctor` work and the annotation
-   * was then withdrawn as a product decision: its service gate
-   * ({@link loadOwnedListing}) SHORT-CIRCUITS for moderators, so admitting a scoped OAuth
-   * token here would let a third-party app a moderator authorised inherit that
-   * cross-listing reach. `app doctor` does not need it — every datum it wanted is already
-   * on annotated procs (`listMine.problems[]` for the advisory + `hasBlockedAsset` /
-   * `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
+   * Deliberately NOT `listingMediaCliScope`: `app doctor` does not need it — every datum it
+   * wanted is already on annotated procs (`listMine.problems[]` for the advisory +
+   * `hasBlockedAsset` / `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
    * `getMyListingForApp` for per-screenshot `{id, imageId, order, caption}`;
-   * `getAssetScanStatuses` for per-image scan state). Re-annotating this proc needs the
-   * mod-bypass question answered first, not a copy of a sibling's `.meta(...)`.
+   * `getAssetScanStatuses` for per-image scan state).
    *
    * `app-listings.router.cli-scope.test.ts` asserts a scoped OAuth token is REFUSED here,
    * so the exclusion is behaviourally pinned rather than left to this comment.
@@ -535,7 +527,7 @@ export const appListingsRouter = router({
       const { getListingAssets } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return getListingAssets({ listingId: input.listingId }, ctx.user);
+      return getListingAssets({ listingId: input.listingId }, listingEditorUser(ctx));
     }),
 
   /**
@@ -563,7 +555,8 @@ export const appListingsRouter = router({
    * Poll the scan status of freshly-attached asset images. The listing-media step
    * attaches an in-flight image IMMEDIATELY (the server stores the pending id), then
    * polls THIS to flip a per-asset "Scanning…" badge to "Scanned" / "Blocked". Owner-
-   * scoped in the service (mods read any; a not-owned id is silently omitted).
+   * scoped in the service (a moderator acting as one reads any; a not-owned id is silently
+   * omitted).
    */
   getAssetScanStatuses: protectedProcedure
     .meta(listingMediaCliScope)
@@ -573,7 +566,7 @@ export const appListingsRouter = router({
       const { getAssetScanStatuses } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return getAssetScanStatuses(input.imageIds, ctx.user);
+      return getAssetScanStatuses(input.imageIds, listingEditorUser(ctx));
     }),
 
   // -------------------------------------------------------------------------
@@ -599,7 +592,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await setListingIcon(input, ctx.user);
+        return await setListingIcon(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -614,7 +607,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await setListingCover(input, ctx.user);
+        return await setListingCover(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -642,7 +635,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await setListingRedMedia(input, ctx.user);
+        return await setListingRedMedia(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -657,7 +650,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await addListingScreenshot(input, ctx.user);
+        return await addListingScreenshot(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -672,7 +665,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await reorderListingScreenshots(input, ctx.user);
+        return await reorderListingScreenshots(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -694,7 +687,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await updateListingScreenshotCaption(input, ctx.user);
+        return await updateListingScreenshotCaption(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -714,7 +707,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await removeListingScreenshot(input, ctx.user);
+        return await removeListingScreenshot(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -782,7 +775,7 @@ export const appListingsRouter = router({
       return submitExternalListing({
         input,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
+        isModerator: actsAsModerator(ctx),
       });
     }),
 
@@ -1213,6 +1206,36 @@ export const appListingsRouter = router({
         '~/server/services/blocks/listing-meta.service'
       );
       return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
+    }),
+
+  getDeveloperTermsStatus: appDeveloperProcedure.query(async ({ ctx }) => {
+    const { getAppDeveloperTermsStatus } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getAppDeveloperTermsStatus(ctx.user.id);
+  }),
+
+  getDeveloperRateCard: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.features?.appDeveloperRateCard) throw new TRPCError({ code: 'NOT_FOUND' });
+    const { getDeveloperRateCard } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getDeveloperRateCard();
+  }),
+
+  acceptDeveloperTerms: appDeveloperProcedure
+    .input(z.object({ version: z.string().min(1).max(32) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.version !== APP_DEVELOPER_TERMS_VERSION) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'The App Developer Terms changed. Reload the page and accept the new version.',
+        });
+      }
+      const { acceptAppDeveloperTerms } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      return acceptAppDeveloperTerms({ userId: ctx.user.id, version: input.version });
     }),
 
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */

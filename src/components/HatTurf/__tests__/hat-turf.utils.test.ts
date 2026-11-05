@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { STICKER_PLACEMENT_DEFAULT_SCALE } from '~/shared/utils/sticker-placement';
 import { eventTurfTopic } from '~/server/events/turf/turf-map';
 import {
   teamStandings,
-  HAT_DEFAULT_SCALE,
   RING_LENGTH,
   applyTurfPush,
   hatTone,
@@ -87,15 +87,20 @@ describe('readHatPose', () => {
       scale: 0.4,
       rotation: 10,
       flip: true,
+      opacity: 1,
     });
   });
-  it('defaults size, turn and flip when absent', () => {
+  it('draws a hat opaque whatever opacity its row stored', () => {
+    expect(readHatPose({ x: 0.5, y: 0.5, opacity: 0.6 })?.opacity).toBe(1);
+  });
+  it('defaults size, turn, flip and opacity when absent', () => {
     expect(readHatPose({ x: 0.5, y: 0.5 })).toEqual({
       x: 0.5,
       y: 0.5,
-      scale: HAT_DEFAULT_SCALE,
+      scale: STICKER_PLACEMENT_DEFAULT_SCALE,
       rotation: 0,
       flip: false,
+      opacity: 1,
     });
   });
   it('is null for anything that cannot be placed', () => {

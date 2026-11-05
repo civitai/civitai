@@ -576,7 +576,7 @@ describe('the challenge comment count', () => {
       INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('challenge', 60);
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "deletedAt") VALUES
         (600, 'challenge', 60, 4, 'live', false, NULL),
-        (601, 'challenge', 60, 5, 'kept for a hold', true, NULL),
+        (601, 'challenge', 60, 5, 'hidden for ToS', true, NULL),
         (602, 'challenge', 60, 6, '', false, now());
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "parentId") VALUES
         (603, 'challenge', 60, 7, 'a reply', 600);
@@ -618,9 +618,9 @@ describe('a comment hidden for ToS', () => {
       INSERT INTO "ResourceReview" (id) VALUES (70);
       INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('review', 70);
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation") VALUES
-        (610, 'image', 10, 8, 'kept for a hold', true),
+        (610, 'image', 10, 8, 'hidden for ToS', true),
         (611, 'image', 10, 9, 'live', false),
-        (612, 'review', 70, 8, 'kept for a hold', true),
+        (612, 'review', 70, 8, 'hidden for ToS', true),
         (613, 'review', 70, 9, 'live', false);
     `);
   });

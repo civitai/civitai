@@ -1,22 +1,44 @@
+/*
+ * A 24px dial (team ring around the leader's disc), and, when there is more to say, a dark chip
+ * that carries the count (10 and up) and the lock to its right. A surface resizes it by setting
+ * `--hat-turf-badge-size`: a different property from `--dial`, so it wins whatever the order the
+ * two stylesheets load in.
+ */
 .badge {
+  --dial: var(--hat-turf-badge-size, 24px);
   position: relative;
-  display: block;
+  display: inline-flex;
   flex: none;
-  width: 48px;
-  height: 48px;
+  align-items: center;
+  gap: 2px;
+  height: var(--dial);
   padding: 0;
   border: 0;
+  border-radius: calc(var(--dial) / 2);
   background: none;
-  color: inherit;
+  color: var(--mantine-color-white);
   cursor: pointer;
   pointer-events: auto;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.chip {
+  padding-right: 6px;
+  background-color: rgba(0, 0, 0, 0.55);
+  filter: none;
 }
 
 /* Control arm: taps fall through to the card. */
 .passive {
   cursor: inherit;
   pointer-events: none;
+}
+
+.dial {
+  position: relative;
+  flex: none;
+  width: var(--dial);
+  height: var(--dial);
 }
 
 .ring {
@@ -27,50 +49,48 @@
 
 .track {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.55);
-  stroke-width: 6;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 4;
 }
 
 .arc {
   fill: none;
-  stroke-width: 5;
+  stroke-width: 4;
   transition: stroke-dasharray 0.55s ease, stroke-dashoffset 0.55s ease;
 }
 
-/* The dark gap between disc and ring keeps the leader's arc from merging into its own disc. */
+/* The dark gap keeps the leader's own colour apart from its arc of the ring. */
 .disc {
   position: absolute;
-  inset: 8px;
+  inset: calc(var(--dial) * 0.21);
   display: grid;
   place-items: center;
   border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 2px rgba(12, 12, 14, 0.95);
   color: var(--mantine-color-white);
   transition: background-color 0.3s ease;
-}
-
-/* A darker shade of the disc: a backdrop for the count, not a second thing to read. */
-.hat {
-  display: grid;
-  place-items: center;
-  margin-top: -1px;
 }
 
 .neutral {
   background-color: rgba(255, 255, 255, 0.2);
 }
 
+.hat {
+  width: 82%;
+  height: 82%;
+}
+
+/* The reaction counts' size and weight. */
 .count {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -45%);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 600;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--mantine-color-white);
-  /* White has to read on the lightest team colour (yellow) too. */
+}
+
+/* White has to read on the lightest team colour (yellow) too. */
+.countInside {
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.8), 0 0 1px rgba(0, 0, 0, 0.9);
 }
 
@@ -79,22 +99,14 @@
 }
 
 .lock {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--mantine-color-white);
-  border-radius: 50%;
-  background-color: var(--mantine-color-dark-7);
   color: var(--mantine-color-white);
 }
 
 @keyframes bump {
   35% {
-    transform: translate(-50%, -45%) scale(1.5);
+    transform: scale(1.5);
   }
 }
 

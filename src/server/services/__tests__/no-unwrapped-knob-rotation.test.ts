@@ -8,7 +8,7 @@ import { knobRotation } from '~/components/Sticker/draft-gesture';
  *
  * `knobRotation` wraps the knob's angle into the ±180 the draft store clamps to,
  * and `draft-gesture.test.ts` covers that thoroughly. The other half is
- * `DraftStickerLayer` **calling** it instead of inlining `atan2 + 90` — and
+ * `useDraftGestures` **calling** it instead of inlining `atan2 + 90` — and
  * reverting that one line reintroduces `868kv5d35` in full while every test in
  * the repo stays green. There is no `DraftStickerLayer` test and no browser test
  * drives the knob, so this file is what stands between that line and a silent
@@ -31,7 +31,7 @@ const LAYER = path.resolve(
   '..',
   'components',
   'Sticker',
-  'DraftStickerLayer.tsx'
+  'useDraftGestures.ts'
 );
 
 const source = fs.readFileSync(LAYER, 'utf8');
