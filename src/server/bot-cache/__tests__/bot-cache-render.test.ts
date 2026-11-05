@@ -1,10 +1,10 @@
 /**
- * The bot HTML edge cache as Next 16 actually renders a page: Next's own pages renderer
+ * The bot HTML cache as Next 16 actually renders a page: Next's own pages renderer
  * (`renderToHTML` in `next/dist/server/render.js`) over the REAL `_app`, `_document` and
  * `/images/[imageId]` page module, including its `getServerSideProps` (only the page body and its
- * data resolver are stubbed). What is compared is the HTML string the edge would store.
+ * data resolver are stubbed). What is compared is the HTML string the cache would store.
  *
- * An edge-cacheable render is served to every crawler that asks for the URL, so two cookie-less
+ * A cacheable render is served to every crawler that asks for the URL, so two cookie-less
  * crawler requests that differ in everything a requester varies (user agent, IP, country, state)
  * must produce the same bytes and set no cookie. Off the flag, nothing may change.
  *
@@ -141,6 +141,8 @@ import {
   CRAWLER_A,
   CRAWLER_B,
   CRAWLER_C,
+  expectCacheable,
+  expectNotCacheable,
   makeReq,
   makeRes,
   NOW,
@@ -187,14 +189,13 @@ beforeEach(() => {
 /** What the bot-detection middleware adds for an IP-verified Googlebot on this path. */
 const GOOGLEBOT: Variant = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
 
-describe('flag on: an edge-cacheable render is one object for every crawler', () => {
-  it('is edge-cacheable for 5 min, private to browsers, tagged, and sets no cookie', async () => {
+describe('flag on: a cacheable render is one object for every crawler', () => {
+  it('is private to browsers, sets no cookie, and carries no edge-cache directive', async () => {
     const a = await render(CRAWLER_A);
     expect(a.html).toContain('data-testid="bot-cache-page"');
-    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
-    expect(a.headers['cache-control']).toBe('private, no-store');
-    expect(a.headers['cache-tag']).toMatch(/^botcache,botcache-images,build-[\w-]+$/);
-    expect(a.headers).not.toHaveProperty('set-cookie');
+    // Names are stored lowercased, as Node does: this covers `Cloudflare-CDN-Cache-Control` and
+    // `Cache-Tag` as sent.
+    expectCacheable(a.headers);
   });
 
   it.each([
@@ -204,8 +205,7 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
   ])('byte-identical HTML for %s, and no cookie', async (_, variant) => {
     const a = await render(CRAWLER_A);
     const other = await render(variant);
-    expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
-    expect(other.headers).not.toHaveProperty('set-cookie');
+    expectCacheable(other.headers);
     expect(other.html).toBe(a.html);
   });
 
@@ -220,17 +220,16 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
   it('INSTRUMENT CHECK: another URL does change the bytes', async () => {
     const a = await render(CRAWLER_A);
     const other = await render({ url: '/images/987654321' });
-    expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
+    expectCacheable(other.headers);
     expect(other.html).not.toBe(a.html);
   });
 });
 
 describe('flag off: nothing changes', () => {
-  it('no edge-cache header, and the render keeps its per-request region, seed and verifiedBot', async () => {
+  it('not cacheable, and the render keeps its per-request region, seed and verifiedBot', async () => {
     setFlag(false);
     const b = await render({ headers: { ...CRAWLER_B.headers, ...GOOGLEBOT.headers } });
-    for (const name of ['cloudflare-cdn-cache-control', 'cache-tag'])
-      expect(b.headers, name).not.toHaveProperty(name);
+    expectNotCacheable(b.headers);
     expect(b.pageProps.region).toMatchObject({ countryCode: 'US', regionCode: 'CA' });
     expect(b.pageProps.seed).toBe(NOW);
     expect(b.pageProps.verifiedBot).toBe('googlebot');
@@ -246,33 +245,32 @@ describe('flag off: nothing changes', () => {
 });
 
 describe('a render that must not be stored', () => {
-  it('a failed prefetch: no edge-cache header', async () => {
+  it('a failed prefetch: not cacheable', async () => {
     h.failPrefetch = true;
     const a = await render(CRAWLER_A);
     expect(a.html).toContain('data-testid="bot-cache-page"');
-    expect(a.headers).not.toHaveProperty('cloudflare-cdn-cache-control');
-    expect(a.headers).not.toHaveProperty('cache-tag');
+    expectNotCacheable(a.headers);
   });
 
-  it('a degraded settings bootstrap: no edge-cache header', async () => {
+  it('a degraded settings bootstrap: not cacheable', async () => {
     h.bootstrap.mockImplementation(async () => {
       throw new Error('bootstrap down');
     });
     const a = await render(CRAWLER_A);
     expect(a.html).toContain('data-testid="bot-cache-page"');
-    expect(a.headers).not.toHaveProperty('cloudflare-cdn-cache-control');
+    expectNotCacheable(a.headers);
   });
 
-  it('a request without the edge secret: no edge-cache header, and the ordinary render', async () => {
+  it('a request without the edge secret: not cacheable, and the ordinary render', async () => {
     const a = await render({ headers: { 'x-civ-cf-verified-bot': 'guess' } });
-    expect(a.headers).not.toHaveProperty('cloudflare-cdn-cache-control');
+    expectNotCacheable(a.headers);
     expect(a.pageProps.verifiedBot).toBeNull();
     expect(a.pageProps.region).toMatchObject({ countryCode: 'US' });
   });
 
-  it('civitai.red: no edge-cache header', async () => {
+  it('civitai.red: not cacheable', async () => {
     const a = await render({ headers: { host: 'civitai.red' } });
-    expect(a.headers).not.toHaveProperty('cloudflare-cdn-cache-control');
+    expectNotCacheable(a.headers);
   });
 
   it('a page that throws: the error page carries none of the edge-cache headers', async () => {
@@ -292,7 +290,7 @@ describe('a render that must not be stored', () => {
     // then render `/_error`.
     res.statusCode = 500;
     res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
-    // As if the failed run had already set the edge headers: only `_app` can take them off again.
+    // A shell attempt can leave the edge headers on the response: only `_app` takes them off again.
     res.setHeader('Cloudflare-CDN-Cache-Control', 'public, max-age=300');
     res.setHeader('Cache-Tag', 'botcache,botcache-images,build-x');
     const marks = req as unknown as Record<string, unknown>;
@@ -314,7 +312,7 @@ describe('flag evaluation', () => {
   it('a marked request: neither `_app` nor the page hands the evaluation the request', async () => {
     vi.mocked(getFeatureFlagsAsync).mockClear();
     const a = await render(CRAWLER_A);
-    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
+    expectCacheable(a.headers);
     expect(calls()).toEqual([
       { user: undefined, host: 'civitai.com', req: undefined },
       { user: undefined, host: 'civitai.com', req: undefined },
@@ -379,8 +377,9 @@ describe('origin cache: a stored render is served to the next crawler', () => {
     expect(second.headers.get('set-cookie')).toBeNull();
     expect(second.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(second.headers.get('cache-control')).toBe('private, no-store');
-    expect(second.headers.get('cloudflare-cdn-cache-control')).toBe('public, max-age=300');
-    expect(second.headers.get('cache-tag')).toBe(res.getHeader('cache-tag'));
+    expect(second.headers.get('Cloudflare-CDN-Cache-Control')).toBeNull();
+    expect(second.headers.get('Cache-Tag')).toBeNull();
+    expectCacheable(res.getHeaders());
   });
 
   it.each<[string, () => void]>([

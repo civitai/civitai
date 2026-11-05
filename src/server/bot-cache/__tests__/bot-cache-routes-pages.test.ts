@@ -8,7 +8,7 @@ import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache';
  * `createServerSideProps` (`~/server/utils/server-side-helpers`), and the render tests go through
  * only some of the allowlisted pages. So every allowlisted route must be a page file whose
  * `getServerSideProps` is built with it: a page that defines its own would hand the flag evaluation
- * the request (and its region) and never mark a failed prefetch, and still be edge-cached.
+ * the request (and its region) and never mark a failed prefetch, and still be cached.
  */
 
 const PAGES_DIR = path.join(process.cwd(), 'src/pages');

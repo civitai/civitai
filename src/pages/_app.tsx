@@ -862,7 +862,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
-      // Which crawler asked is not part of the edge's cache key.
+      // Which crawler asked is not part of the cache key.
       verifiedBot: botCache ? null : verifiedBot,
     },
     ...appProps,

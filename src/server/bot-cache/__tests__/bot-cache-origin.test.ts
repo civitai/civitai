@@ -45,8 +45,6 @@ const HTML = '<!DOCTYPE html><html><body><main>stored image 1 é</main></body></
 const STORED_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'private, no-store',
-  'cloudflare-cdn-cache-control': 'public, max-age=300',
-  'cache-tag': 'botcache,botcache-images,build-build-a',
 };
 
 const store = new Map<string, unknown>();
@@ -145,8 +143,9 @@ describe('serving a stored render', () => {
     await expectServed(response);
     expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(response.headers.get('cache-control')).toBe('private, no-store');
-    expect(response.headers.get('cloudflare-cdn-cache-control')).toBe('public, max-age=300');
     expect(response.headers.get('set-cookie')).toBeNull();
+    expect(response.headers.get('Cloudflare-CDN-Cache-Control')).toBeNull();
+    expect(response.headers.get('Cache-Tag')).toBeNull();
   });
 
   it('a miss renders, marked as a miss', async () => {
@@ -189,8 +188,10 @@ describe('never served to a request botCacheRefusal refuses, though its entry ex
     expect(response.headers.get('x-civ-bot-cache')).toBeNull();
   });
 
-  it('a route that is not allowlisted, though its path reads like one', async () => {
-    // Its own page, not allowlisted, though the path alone reads as `[list]`.
+  it('INVARIANT GUARD: an entry stored under a non-allowlisted pattern is not served', async () => {
+    // Production never stores one: only a render `botCacheResponseRefusal` allows is captured, and
+    // it needs an allowlisted pattern. This pins the check against the entry's own pattern, which
+    // is all that stands between a path that READS as `[list]` and a page that is not.
     const url = 'https://civitai.com/user/bob/manage-categories';
     await seed(url, '/user/[username]/manage-categories');
     const response = await serve(crawler(url));

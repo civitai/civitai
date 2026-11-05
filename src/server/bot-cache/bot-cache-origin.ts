@@ -11,14 +11,14 @@ import {
 import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
-import { SHELL_CDN_CACHE_CONTROL_HEADER, shellBuildId } from '~/server/shell/shell-response';
+import { shellBuildId } from '~/server/shell/shell-response';
 
 /**
- * Bot HTML origin cache: an edge-cacheable crawler render (`~/server/bot-cache/bot-cache`) is also
- * kept in redis for a few minutes, so a repeat request for the same URL is answered by the proxy
- * (`~/server/middleware/bot-cache.middleware`) instead of being rendered again. Only what
- * `_document` marks edge-cacheable is stored, and only a request `botCacheRefusal` allows is
- * served, so the two caches hold the same objects for the same requests.
+ * Bot HTML origin cache: a cacheable crawler render (`~/server/bot-cache/bot-cache`) is kept in
+ * redis for a few minutes, so a repeat request for the same URL is answered by the proxy
+ * (`~/server/middleware/bot-cache.middleware`) instead of being rendered again. Only a response
+ * `botCacheResponseRefusal` allows is stored, and only a request `botCacheRefusal` allows is
+ * served.
  */
 
 export const BOT_CACHE_ORIGIN_TTL_S = 300;
@@ -34,8 +34,6 @@ const BROTLI_QUALITY = 6;
 const REPLAYED_HEADERS = [
   'content-type',
   'cache-control',
-  SHELL_CDN_CACHE_CONTROL_HEADER.toLowerCase(),
-  'cache-tag',
   'x-robots-tag',
   'content-language',
   'link',
@@ -179,8 +177,8 @@ type Chunk = string | Uint8Array | null | undefined | (() => void);
 
 /**
  * Keeps a copy of the HTML Next writes for this response and stores it once the response has
- * ended, if it is still a 200 without a cookie. Call only for a response that got the edge-cache
- * headers (`_document`). Next writes the page with `res.end(html)` (`send-payload.js`), or streams
+ * ended, if it is still a 200 without a cookie. Call only for a response `botCacheResponseRefusal`
+ * allows (`_document`). Next writes the page with `res.end(html)` (`send-payload.js`), or streams
  * it through `res.write`; `compress: false`, so these are the uncompressed bytes.
  */
 export function captureBotCacheRender(
