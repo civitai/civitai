@@ -1205,6 +1205,9 @@ export const getModelsRaw = async ({
   // 4. Base model metrics, multiple base models, per-base-model-stat sort
   //    (HighestRated/MostDownloaded/ImageCount): aggregate subquery on
   //    ModelBaseModelMetric so the mbmm_feed_* covering indexes can be used.
+  // Paths 3 and 4 cap each summed count at the model's own total: a user who liked versions
+  // in two bases is in both rows, and a row for a base the model no longer has keeps its old
+  // counts, so a raw SUM can read above the whole model.
   const fromClause = !useBaseModelMetrics
     ? Prisma.sql`FROM "ModelMetric" mm
       JOIN "Model" m ON m."id" = mm."modelId"`
@@ -1217,8 +1220,8 @@ export const getModelsRaw = async ({
       JOIN "Model" m ON m."id" = mm."modelId"
       LEFT JOIN LATERAL (
         SELECT
-          SUM("downloadCount")::int as "downloadCount",
-          SUM("thumbsUpCount")::int as "thumbsUpCount"
+          LEAST(SUM("downloadCount")::int, mm."downloadCount") as "downloadCount",
+          LEAST(SUM("thumbsUpCount")::int, mm."thumbsUpCount") as "thumbsUpCount"
         FROM "ModelBaseModelMetric"
         WHERE "modelId" = mm."modelId"
           AND "baseModel" IN (${Prisma.join(baseModels!, ',')})
@@ -1237,9 +1240,16 @@ export const getModelsRaw = async ({
         FROM "ModelBaseModelMetric"
         WHERE "baseModel" IN (${Prisma.join(baseModels!, ',')})
         GROUP BY "modelId"
-      ) mbm
-      JOIN "Model" m ON m."id" = mbm."modelId"
-      JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`;
+      ) mbs
+      JOIN "Model" m ON m."id" = mbs."modelId"
+      JOIN "ModelMetric" mm ON mm."modelId" = mbs."modelId"
+      CROSS JOIN LATERAL (
+        SELECT mbs."modelId",
+          LEAST(mbs."downloadCount", mm."downloadCount") as "downloadCount",
+          LEAST(mbs."thumbsUpCount", mm."thumbsUpCount") as "thumbsUpCount",
+          mbs."imageCount", mbs."status", mbs."nsfwLevel", mbs."availability",
+          mbs."mode", mbs."minor", mbs."poi"
+      ) mbm`;
 
   // Unified query - uses pSql for denormalized fields and per-base-model stats.
   //
