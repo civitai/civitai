@@ -866,9 +866,12 @@ describe('Pick of four', () => {
 
     expect(state).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
     expect(state).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
-    // The priced body is the upscale of the picked take.
+    // The priced body is the upscaler run on the picked take. Graph values nested under `input`
+    // would validate as an empty form and price the default model instead, silently.
     const [[{ body }]] = whatIfs().slice(-1) as [[{ body: unknown }]];
-    expect(JSON.stringify(body)).toContain(takes[2]);
+    const priced = JSON.stringify(body);
+    expect(priced).toContain('ImageUpscaleWithModel');
+    expect(priced).toContain(takes[2]);
     expect(submits()).toHaveLength(1);
   });
 
