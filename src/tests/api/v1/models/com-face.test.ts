@@ -41,7 +41,7 @@ const stored = {
   type: 'LORA',
   uploadType: 'Created',
   status: 'Published',
-  checkpointType: null,
+  checkpointType: null as string | null,
   availability: 'Public',
   nsfw: true,
   poi: false,
@@ -102,7 +102,6 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  // A mature lock is no bar: the .com face's own check and the background re-check are the gate.
   it('accepts a model locked as mature, for draft and save', async () => {
     row = { ...stored, lockedProperties: ['nsfw'] };
     caller.model.getCoverCandidates.mockResolvedValue([{ id: 2, url: 'b', nsfwLevel: 2 }]);
@@ -209,6 +208,13 @@ describe('POST /api/v1/models/com-face', () => {
   });
 
   it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
+    row = {
+      ...stored,
+      uploadType: 'Trained',
+      checkpointType: 'Merge',
+      availability: 'Unsearchable',
+      lockedProperties: ['nsfw'],
+    };
     const res = await call({
       action: 'save',
       modelId: 11,
@@ -226,7 +232,11 @@ describe('POST /api/v1/models/com-face', () => {
         minor: false,
         sfwOnly: false,
         poi: false,
-        availability: 'Public',
+        type: 'LORA',
+        uploadType: 'Trained',
+        status: 'Published',
+        checkpointType: 'Merge',
+        availability: 'Unsearchable',
         sfwName: 'Safe',
         sfwCoverImageId: 2,
       })
