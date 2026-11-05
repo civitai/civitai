@@ -21,7 +21,8 @@
 --   4. For the step-0 versions, bust the caches that hold coverage, as
 --      20260817200000_generation_coverage_require_rentcivit prescribes: resourceDataCache,
 --      the orchestrator model cache (bustMvCache covers it per version), dataForModelsCache, and
---      re-queue the models into the models search index.
+--      re-queue the models into the models search index. Also bust the file-pinned AIRs of every
+--      file of those versions (bustOrchestratorScannedFileCache): version busts do not reach them.
 -- Files whose scan fails or errors later are busted by the scan webhook.
 
 CREATE OR REPLACE VIEW "GenerationCoverage" AS
