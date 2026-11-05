@@ -148,7 +148,8 @@ export const markNotificationsRead = async ({
   }
 };
 
-// The old notifications app has no such route; its 404 lands here and the badge stays as it was.
+// Best-effort: any client failure (an old app's 404 for this route, a 5xx, a timeout) is already logged
+// once as `notifications-request-failed` by the shared client, so return [] and leave the badge as it was.
 export async function markImageMilestonesRead({
   userId,
   imageId,
