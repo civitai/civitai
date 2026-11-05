@@ -1,11 +1,11 @@
 import { Button, Stack, Text } from '@mantine/core';
 import { IconArrowRight, IconShoppingBag } from '@tabler/icons-react';
 import React, { useState } from 'react';
+import type { ComponentProps } from 'react';
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { storefrontSectionId, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -69,7 +69,7 @@ export const ServicesRow = ({
   offerings,
   href,
 }: {
-  offerings: ServiceOffering[];
+  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & { id: number })[];
   href: string;
 }) => {
   const [columns, setColumns] = useState(1);
