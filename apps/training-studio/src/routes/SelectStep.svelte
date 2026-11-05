@@ -826,17 +826,20 @@
     class="sticky bottom-3 z-20 rounded-xl border border-dark-4 bg-dark-6 p-3 shadow-lg lg:hidden"
   >
     <div class="flex items-center gap-3">
-      <div class="min-w-0 flex-1 leading-tight">
-        <div class="font-mono text-xs text-dark-2">Starting at</div>
-        {#if total != null}
+      <!-- No quote: drop the price and let the button take the row rather than show a bare dash. -->
+      {#if total != null}
+        <div class="min-w-0 flex-1 leading-tight">
+          <div class="font-mono text-xs text-dark-2">Starting at</div>
           <span class="font-mono text-lg font-bold text-buzz">
             <IconBoltFilled size={16} stroke={2} class="mb-0.5 inline" />{total.toLocaleString()}
           </span>
-        {:else}
-          <span class="font-mono text-lg font-bold text-dark-2">—</span>
-        {/if}
-      </div>
-      <Button class="h-11 shrink-0" disabled={customIncomplete} onclick={continueToData}>
+        </div>
+      {/if}
+      <Button
+        class="h-11 {total != null ? 'shrink-0' : 'w-full'}"
+        disabled={customIncomplete}
+        onclick={continueToData}
+      >
         Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
       </Button>
     </div>
