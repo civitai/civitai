@@ -1,6 +1,7 @@
 -- Idempotent: applied by hand, possibly more than once.
 -- Knights-owned tables only (none exists on main; "Image" must). Apply BEFORE deploying the Knights app, the moderator app
--- build that manages yes/no reference pairs and the main app build that enqueues rating items; the yes/no import runs after.
+-- build that manages yes/no reference pairs, the main app build that enqueues rating items and the one with the shop endpoints;
+-- the yes/no import runs after.
 -- Apply after 20261209120000_knights_new_order_player_and_link_review.
 
 CREATE TABLE IF NOT EXISTS "KnightsQuestion" (
@@ -294,3 +295,56 @@ CREATE TABLE IF NOT EXISTS "KnightsAcolyteLevelGold" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "KnightsAcolyteLevelGold_pkey" PRIMARY KEY ("playerId", "level")
 );
+
+-- The gold shop: a catalog, and the gold ledger of what was bought. Load the catalog with `pnpm run seed:shop` in apps/knights
+-- after the main app build with the shop endpoints (/api/mod/knights/shop) is deployed.
+CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
+  "id" TEXT PRIMARY KEY,
+  "kind" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "description" TEXT NOT NULL DEFAULT '',
+  "price" INTEGER NOT NULL,
+  "buzz" INTEGER,
+  "cosmeticId" INTEGER,
+  "tier" TEXT,
+  "months" INTEGER,
+  "minRank" TEXT,
+  "active" BOOLEAN NOT NULL DEFAULT true,
+  "rotating" BOOLEAN NOT NULL DEFAULT false,
+  "sortOrder" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "KnightsShopItem_kind_check" CHECK (
+    ("kind" = 'buzz_pack' AND "buzz" > 0 AND "cosmeticId" IS NULL AND "tier" IS NULL)
+    OR ("kind" = 'cosmetic' AND "cosmeticId" IS NOT NULL AND "buzz" IS NULL AND "tier" IS NULL)
+    OR ("kind" = 'membership' AND "tier" IN ('bronze', 'silver', 'gold') AND "months" > 0 AND "buzz" IS NULL AND "cosmeticId" IS NULL)
+  ),
+  CONSTRAINT "KnightsShopItem_price_check" CHECK ("price" > 0)
+);
+
+CREATE TABLE IF NOT EXISTS "KnightsShopPurchase" (
+  "id" SERIAL PRIMARY KEY,
+  "playerId" INTEGER NOT NULL,
+  "requestKey" TEXT NOT NULL,
+  "externalKey" TEXT NOT NULL,
+  "itemId" TEXT NOT NULL REFERENCES "KnightsShopItem"("id"),
+  "kind" TEXT NOT NULL,
+  "gold" INTEGER NOT NULL,
+  "grant" JSONB NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'pending',
+  "conversionId" INTEGER,
+  "dealDay" DATE,
+  "attempts" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "lastAttemptAt" TIMESTAMP(3),
+  "grantedAt" TIMESTAMP(3),
+  CONSTRAINT "KnightsShopPurchase_status_check" CHECK ("status" IN ('pending', 'granted', 'failed'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsShopPurchase_playerId_requestKey_key" ON "KnightsShopPurchase" ("playerId", "requestKey");
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsShopPurchase_externalKey_key" ON "KnightsShopPurchase" ("externalKey");
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsShopPurchase_conversionId_key" ON "KnightsShopPurchase" ("conversionId") WHERE "conversionId" IS NOT NULL;
+-- One deal-priced purchase of an item per player per UTC day.
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsShopPurchase_deal_once_key" ON "KnightsShopPurchase" ("playerId", "itemId", "dealDay")
+  WHERE "dealDay" IS NOT NULL AND "status" <> 'failed';
+CREATE INDEX IF NOT EXISTS "KnightsShopPurchase_playerId_createdAt_idx" ON "KnightsShopPurchase" ("playerId", "createdAt");
+CREATE INDEX IF NOT EXISTS "KnightsShopPurchase_pending_idx" ON "KnightsShopPurchase" ("createdAt") WHERE "status" = 'pending';

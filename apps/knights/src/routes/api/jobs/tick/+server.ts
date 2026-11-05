@@ -5,6 +5,9 @@ import { runLabelPass } from '$lib/server/conversion/label-pass';
 import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
 import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { db } from '$lib/server/db';
+import { TICK_PURCHASE_RETRY } from '$lib/server/shop/config';
+import { getMainAppPort } from '$lib/server/shop/main-app';
+import { retryPendingPurchases } from '$lib/server/shop/purchase';
 import { settleHiddenChecks } from '$lib/server/hidden/settle';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { isJobRequest } from '$lib/server/jobs-auth';
@@ -70,6 +73,14 @@ export const POST: RequestHandler = async ({ request }) => {
       ...TICK_CONVERSION_RETRY,
     });
   });
+  // Membership purchases the main app never confirmed. Not behind the Buzz kill switch: they never touch Buzz.
+  const purchases = await settle('shop purchase retries', () =>
+    retryPendingPurchases(db, getMainAppPort(), {
+      now: new Date(),
+      log: logToAxiom,
+      ...TICK_PURCHASE_RETRY,
+    })
+  );
   const labels = await settle('label write-back', () =>
     runLabelPass(db, { now: new Date(), log: logToAxiom })
   );
@@ -85,6 +96,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !resets.ok ||
     resets.value.failed > 0 ||
     !conversions.ok ||
+    !purchases.ok ||
     !labels.ok
   ) {
     return json({ error: 'job failed' }, { status: 500 });
@@ -98,6 +110,7 @@ export const POST: RequestHandler = async ({ request }) => {
     expiredSmites: smites.value,
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,
+    purchasesRetried: purchases.value.retried,
     labels: labels.value,
   });
 };

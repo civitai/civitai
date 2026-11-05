@@ -98,7 +98,7 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal, popup opt-out) and `Kn
 
 ## Conversion (`src/lib/server/conversion`)
 
-Gold -> Buzz, the label pass and the tick's retries. Conversion is on by default; the kill switch `KNIGHTS_CONVERSION_DISABLED` (`conversionEnabled()`) set to exactly `true` turns it off, and `/gold` then refuses Convert. Apply by hand, in order: `20261209120000_knights_new_order_player_and_link_review`, `20261210120000_knights_v2_tables`, then deploy the main app, then Knights (never earlier: the previous main app's reset does not zero `goldEarned`). Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md).
+Gold -> Buzz, the label pass and the tick's retries. Conversion is on by default; the kill switch `KNIGHTS_CONVERSION_DISABLED` (`conversionEnabled()`) set to exactly `true` turns it off, and Buzz packs are then refused (the rest of the shop still sells). Apply by hand, in order: `20261209120000_knights_new_order_player_and_link_review`, `20261210120000_knights_v2_tables`, then deploy the main app, then Knights (never earlier: the previous main app's reset does not zero `goldEarned`). Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md). The gold shop (`/shop`, `src/lib/server/shop`, tables `KnightsShopItem` and `KnightsShopPurchase`, migration `20261210120000_knights_v2_tables` by hand, `KNIGHTS_SHOP_DISABLED`; spending adds to `NewOrderPlayer.goldConverted` under the player row lock): [`docs/features/knights-shop.md`](../../docs/features/knights-shop.md).
 
 ## Reference images and the apprenticeship (`src/lib/server/trials`, `src/lib/server/apprenticeship`)
 
@@ -137,7 +137,7 @@ Tokens and easings are in `src/global.css`, keyframes in `src/motion.css`. Keep 
 
 ## Wired packages
 
-`@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
+`@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
 `@civitai/flipt` (access flag), `@civitai/redis` (sys client: the guard's session revocation check, the skip sets, the leaderboard cache),
 `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
 

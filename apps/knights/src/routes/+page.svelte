@@ -27,7 +27,7 @@
     { href: '/judgments', icon: 'scroll-text' as const, title: 'Judgments' },
     { href: '/leaderboard', icon: 'trophy' as const, title: 'Leaderboard' },
     { href: '/codex', icon: 'book-open' as const, title: 'Codex' },
-    ...(data.conversionOpen ? [{ href: '/gold', icon: 'coins' as const, title: 'Gold' }] : []),
+    ...(data.shopOpen ? [{ href: '/shop', icon: 'coins' as const, title: 'Shop' }] : []),
   ]);
 
   // The stat counters tick up from zero once on load (a reduced-motion player gets the final numbers at once), and yesterday's

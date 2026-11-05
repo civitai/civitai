@@ -17,7 +17,6 @@ import { dismissGuide, dismissProgress, readNotices, type ProgressNotice } from 
 import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
-import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
@@ -138,7 +137,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     const view = await getApprentice(db, locals.user.id);
     if (view.kind !== 'not-acolyte') {
       return {
-        conversionOpen: conversionEnabled(),
         mode: 'apprentice' as const,
         ...common,
         progress: await acolyteMilestone(common.progress, status, locals.user.id),
@@ -159,7 +157,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     railFor(locals.user.id, now, status.fervor),
   ]);
-  const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
     ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
     : null;
@@ -171,7 +168,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     daily,
     rail,
     resetPending,
-    conversionOpen,
     lockoutSeconds,
     question: picked?.question ?? null,
     item: picked?.item ?? null,

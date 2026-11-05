@@ -18,13 +18,13 @@
     status,
     streak,
     goldPerBuzz,
-    conversionOpen,
+    shopOpen,
     ladder,
   }: {
     status: PlayerStatus;
     streak?: Streak;
     goldPerBuzz: number;
-    conversionOpen: boolean;
+    shopOpen: boolean;
     ladder: LadderRow[];
   } = $props();
 
@@ -97,8 +97,8 @@
         <div class="label"><strong>Worth in Buzz</strong><span>{gold.rate}</span></div>
         <b class="value"><Icon name="zap" />{gold.buzz}</b>
       </div>
-      {#if conversionOpen}
-        <a class="convert" href="/gold">Convert gold<Icon name="arrow-right" size={14} /></a>
+      {#if shopOpen}
+        <a class="convert" href="/shop">Visit the shop<Icon name="arrow-right" size={14} /></a>
       {/if}
     </StatPopover>
   </li>
