@@ -218,6 +218,26 @@ describe('createHeadlessPost', () => {
     );
   });
 
+  it('forwards the price a paid submission was shown, so a changed price is refused', async () => {
+    // Without it the gallery service charges whatever the owner's price is at submit time.
+    const result = await post({
+      remixGallery: { hostImageId: HOST_IMAGE_ID, method: 'paid', expectedPrice: 250 },
+    } as never);
+
+    expect(result.gallery).toEqual({ submitted: true });
+    expect(h.submitGallery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ expectedPrice: 250, free: false, teamWaiver: false })
+    );
+  });
+
+  it('asks for the team waiver on a team submission, rather than paying', async () => {
+    await post({ remixGallery: { hostImageId: HOST_IMAGE_ID, method: 'team' } } as never);
+
+    expect(h.submitGallery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ teamWaiver: true, free: false })
+    );
+  });
+
   it('refuses blocked text before copying anything or creating a post', async () => {
     h.blocked.add('bad words');
 
