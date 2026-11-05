@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
-  import { invalidate } from '$app/navigation';
+  import { goto, invalidate } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import RankBadge from '$lib/RankBadge.svelte';
   import SmiteNotice from '$lib/SmiteNotice.svelte';
@@ -161,9 +161,10 @@
           use:enhance={() => {
             submitting = true;
             attempted = true;
-            return async ({ update }) => {
+            return async ({ result, update }) => {
               try {
-                await update();
+                if (result.type === 'redirect') await goto(result.location, { replaceState: true, invalidateAll: true });
+                else await update();
               } finally {
                 submitting = false;
               }
