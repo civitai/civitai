@@ -329,7 +329,11 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      if (event.type === 'paymentGroupApproved' && (await hasPayoutHold(cashWithdrawal.userId)))
+      // Alert only: Tipalti has already approved, so a failed hold read must not stop recording it.
+      if (
+        event.type === 'paymentGroupApproved' &&
+        (await hasPayoutHold(cashWithdrawal.userId).catch(() => false))
+      )
         await logToAxiom({
           name: 'creator-program-payout-approved-while-held',
           type: 'error',

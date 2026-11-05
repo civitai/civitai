@@ -1,16 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as PaymentConfigService from '~/server/services/user-payment-configuration.service';
 
 const mocks = vi.hoisted(() => ({
   createBuzzTransaction: vi.fn(),
   getUserBuzzAccount: vi.fn(),
+  payToTipaltiAccount: vi.fn(),
+  payToStripeConnectAccount: vi.fn(),
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   createBuzzTransaction: mocks.createBuzzTransaction,
   getUserBuzzAccount: mocks.getUserBuzzAccount,
+}));
+vi.mock('~/server/services/user-payment-configuration.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PaymentConfigService>()),
+  payToTipaltiAccount: mocks.payToTipaltiAccount,
+  payToStripeConnectAccount: mocks.payToStripeConnectAccount,
 }));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -79,36 +87,79 @@ describe('createBuzzWithdrawalRequest with a payout-review hold', () => {
 
 describe('updateBuzzWithdrawalRequest with a payout-review hold', () => {
   let table: ReturnType<typeof installPayoutReviewTable>;
-  beforeEach(() => {
-    vi.clearAllMocks();
-    table = installPayoutReviewTable();
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: userId });
+  const filed = (status: BuzzWithdrawalRequestStatus, provider: UserPaymentConfigurationProvider) =>
     dbMock.dbRead.buzzWithdrawalRequest.findMany.mockResolvedValue([
       {
         id: 'req-0',
         userId,
-        status: BuzzWithdrawalRequestStatus.Requested,
-        requestedToProvider: UserPaymentConfigurationProvider.Tipalti,
+        status,
+        requestedToProvider: provider,
         requestedBuzzAmount: 5000,
         platformFeeRate: 3000,
         buzzWithdrawalTransactionId: 'tx-0',
         metadata: {},
       },
     ]);
+  const move = (status: BuzzWithdrawalRequestStatus, by: number) =>
+    updateBuzzWithdrawalRequest({ requestIds: ['req-0'], status, userId: by });
+  const hold = () =>
+    openPayoutHold({ userId, ground: 'investigation', reason: 'test hold' }, 'user:1');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    table = installPayoutReviewTable();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: userId });
+    dbMock.dbRead.userPaymentConfiguration.findFirst.mockResolvedValue({
+      userId,
+      tipaltiPaymentsEnabled: true,
+      tipaltiAccountId: 'tipalti-77',
+      stripeAccountId: 'acct_77',
+    });
+    dbMock.dbWrite.buzzWithdrawalRequest.findUniqueOrThrow.mockResolvedValue({ id: 'req-0' });
+    mocks.payToTipaltiAccount.mockResolvedValue({ paymentBatchId: 'b-1', paymentRefCode: 'r-1' });
+    mocks.payToStripeConnectAccount.mockResolvedValue({ id: 'tr_1' });
   });
   afterEach(() => table.uninstall());
 
-  const approve = (by: number) =>
-    updateBuzzWithdrawalRequest({
-      requestIds: ['req-0'],
-      status: BuzzWithdrawalRequestStatus.Approved,
-      userId: by,
-    });
+  it('refuses a moderator approval while held and sends it to Tipalti once cleared', async () => {
+    filed(BuzzWithdrawalRequestStatus.Requested, UserPaymentConfigurationProvider.Tipalti);
+    const review = await hold();
 
-  it('refuses a moderator approval of a request filed before the hold', async () => {
-    await openPayoutHold({ userId, ground: 'investigation', reason: 'test hold' }, 'user:1');
+    await expect(move(BuzzWithdrawalRequestStatus.Approved, 1)).rejects.toThrow(
+      'active payout hold'
+    );
+    expect(mocks.payToTipaltiAccount).not.toHaveBeenCalled();
 
-    await expect(approve(1)).rejects.toThrow('active payout hold');
-    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    await decidePayoutReview(
+      { id: review.id, userId, period: review.period, action: 'clear', version: review.version },
+      'user:1'
+    );
+
+    await expect(move(BuzzWithdrawalRequestStatus.Approved, 1)).resolves.toEqual([{ id: 'req-0' }]);
+    expect(mocks.payToTipaltiAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a moderator transfer while held', async () => {
+    filed(BuzzWithdrawalRequestStatus.Requested, UserPaymentConfigurationProvider.Stripe);
+    await hold();
+
+    await expect(move(BuzzWithdrawalRequestStatus.Transferred, 1)).rejects.toThrow(
+      'active payout hold'
+    );
+    expect(mocks.payToStripeConnectAccount).not.toHaveBeenCalled();
+  });
+
+  it('still records what the provider reports while held', async () => {
+    filed(BuzzWithdrawalRequestStatus.Approved, UserPaymentConfigurationProvider.Tipalti);
+    await hold();
+
+    await expect(move(BuzzWithdrawalRequestStatus.Transferred, -1)).resolves.toEqual([
+      { id: 'req-0' },
+    ]);
+    expect(dbMock.dbWrite.buzzWithdrawalRequestHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BuzzWithdrawalRequestStatus.Transferred }),
+      })
+    );
   });
 });

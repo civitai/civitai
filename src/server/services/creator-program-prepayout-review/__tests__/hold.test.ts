@@ -1,8 +1,16 @@
+import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as NotificationService from '~/server/services/notification.service';
 import { OnboardingSteps } from '~/server/common/enums';
-import { decidePayoutReview, getSettlementHolds, hasPayoutHold, openPayoutHold } from '../hold';
+import {
+  assertNoPayoutHold,
+  decidePayoutReview,
+  getSettlementHolds,
+  hasPayoutHold,
+  openPayoutHold,
+} from '../hold';
 import { installPayoutReviewTable } from './payout-review-fake';
 
 const { createNotification } = vi.hoisted(() => ({
@@ -301,5 +309,37 @@ describe('hasPayoutHold', () => {
   ])('%s → %s', async (_label, rows, held) => {
     for (const [i, r] of rows.entries()) table.rows.push(review({ id: 100 + i, userId: 9, ...r }));
     expect(await hasPayoutHold(9)).toBe(held);
+  });
+});
+
+describe('assertNoPayoutHold when the hold cannot be read', () => {
+  const unchecked = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([e]) => (e as { name?: string }).name === 'creator-program-payout-hold-unchecked'
+    );
+  beforeEach(() => loggingMock.logToAxiom.mockClear());
+  afterEach(() => reviews.findMany.mockReset().mockResolvedValue([]));
+
+  it('refuses the cash-out and alerts when the review table is missing', async () => {
+    reviews.findMany.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('missing table', {
+        code: 'P2021',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(assertNoPayoutHold(9)).rejects.toThrow('temporarily unavailable');
+    expect(unchecked()).toHaveLength(1);
+  });
+
+  it('rethrows any other database error unchanged', async () => {
+    reviews.findMany.mockRejectedValue(new Error('connection reset'));
+
+    await expect(assertNoPayoutHold(9)).rejects.toThrow('connection reset');
+    expect(unchecked()).toHaveLength(0);
+  });
+
+  it('lets a creator with no review through', async () => {
+    await expect(assertNoPayoutHold(9)).resolves.toBeUndefined();
   });
 });

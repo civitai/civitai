@@ -53,9 +53,13 @@ export async function hasPayoutHold(userId: number) {
       name: 'creator-program-payout-hold-unchecked',
       type: 'error',
       userId,
-      message: 'Payout review table missing; cash-out hold not checked',
+      message: 'Payout review table missing; cash-out refused',
     }).catch(() => undefined);
-    return false;
+    // Fail closed: a hold that cannot be read must not let money out.
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Cash-out is temporarily unavailable. Please try again later.',
+    });
   }
 }
 
