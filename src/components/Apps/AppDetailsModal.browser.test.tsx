@@ -214,7 +214,8 @@ describe('AppDetailsModal', () => {
     ];
     resolveDetail(makeDetail({ scopes: input }));
     renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
-    await expect.element(page.getByText(unknown)).toBeInTheDocument();
+    // `.first()`: before the shared list, an undescribed id was printed twice (badge + label).
+    await expect.element(page.getByText(unknown).first()).toBeInTheDocument();
 
     const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
     for (const scope of input) expect(text, scope).toContain(scope);
