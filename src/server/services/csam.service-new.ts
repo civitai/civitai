@@ -202,11 +202,14 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
   unconfirmedOpens?: UnconfirmedOpen[];
   clearedUnconfirmedOpens?: ClearedUnconfirmedOpen[];
-  /** Why the send holds this report unsent for a moderator to decide; it is never deleted for it. */
+  /**
+   * The case and reason a send run last held this report unsent for a moderator, written when the
+   * case changes and removed when the report is sent.
+   */
   sendHold?: SendHold;
 };
 
-/** A report the send cannot file: one with no file left to send, or a missing reporter or reported user. */
+/** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
 type SendHoldCase = 'no-files' | 'missing-user';
 type SendHold = { case: SendHoldCase; reason: string; at: string };
 
@@ -940,7 +943,11 @@ async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason:
   };
   logSendLine(claim, 'send-held', fields, 'error');
   logSendLine(claim, 'send-decision-needed', fields, 'error');
-  if (!isProd || report.details?.sendHold?.case === holdCase) return;
+  await recordSendHold(claim, holdCase, reason);
+}
+
+async function recordSendHold(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  if (!isProd || claim.report.details?.sendHold?.case === holdCase) return;
   const sendHold: SendHold = { case: holdCase, reason, at: new Date().toISOString() };
   await updateUnderClaim(claim, 'send-hold', {}, (details) => ({ ...details, sendHold }));
 }
@@ -1021,8 +1028,8 @@ async function cancelStoredCyberTip(
   return delivered ? 'held' : 'cancelled';
 }
 
-/** A report naming no file that can be sent opens no CyberTip: it waits, alerted, for a decision. */
-function logNoFiles(claim: SendClaim, message: string) {
+/** A report naming no file that can be sent opens no CyberTip: it waits, alerted and held, for a decision. */
+async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
   const stored = {
@@ -1041,6 +1048,7 @@ function logNoFiles(claim: SendClaim, message: string) {
       },
       'error'
     );
+  await recordSendHold(claim, 'no-files', message);
 }
 
 /**
@@ -1224,7 +1232,8 @@ async function sendCyberTip(
           sendClaimId: null,
           sendClaimedAt: null,
         },
-        (stored) => ({ ...stored, ...details }),
+        // A hold no longer applies to a report that is sent.
+        ({ sendHold: _cleared, ...stored }) => ({ ...stored, ...details }),
         'send-stamp-lost'
       )
     )
@@ -1245,7 +1254,7 @@ async function reportImages(claim: SendClaim) {
 
   const images = await getImages(report.images.map((x) => x.id));
   if (!images.length)
-    return logNoFiles(claim, `report ${report.id} names no image that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no image that still exists`);
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
@@ -1559,7 +1568,7 @@ async function reportGenerationData(claim: SendClaim) {
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
   // A moderator's filing is the record that it was reported, so a report with nothing to send is kept.
   if (!generatedImages?.length)
-    return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
+    return await logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
   // Named by claim, so two runs never share a scratch directory.
   const dir = `${baseDir}/generated-send/${report.id}-${claim.claimId}`;
@@ -1617,7 +1626,10 @@ async function sendGenerationData(
   for (const { url } of failed) readFailures[url] = (readFailures[url] ?? 0) + 1;
   if (failed.length > 0) await recordReadFailures(claim, readFailures);
   if (!fetched.length)
-    return logNoFiles(claim, `report ${report.id} has no generated image that can be fetched`);
+    return await logNoFiles(
+      claim,
+      `report ${report.id} has no generated image that can be fetched`
+    );
   const sendShort =
     hoursSinceFiled(report) >= CSAM_SEND_SHORT_AFTER_HOURS &&
     failed.every(({ url }) => readFailures[url] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
@@ -1705,7 +1717,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
   const files = evidenceFilesToSend(details);
   if (!files.length)
-    return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+    return await logNoFiles(claim, `report ${report.id} has no preserved generator file`);
   if (evidenceSizeProblem(details))
     return logSendFailure(
       report,
@@ -1800,7 +1812,7 @@ async function reportTrainingData(claim: SendClaim) {
 
   const version = modelVersions[0];
   if (!version)
-    return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
   const dir = `${baseDir}/training-data/${report.id}-${claim.claimId}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
@@ -1833,7 +1845,8 @@ async function reportTrainingData(claim: SendClaim) {
       return logSendFailure(report, e, 'archive-data');
     }
     await recordSkippedEntries(claim, inflated);
-    if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
+    if (!files.length)
+      return await logNoFiles(claim, `report ${report.id} training data holds no image`);
 
     const fileDetailsOf = (filename: string) =>
       ({ originalFileName: xmlText(filename), fileViewedByEsp: false } satisfies FileDetailsXml);
