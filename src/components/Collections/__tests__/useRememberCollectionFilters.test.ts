@@ -13,11 +13,17 @@ const router = vi.hoisted(() => {
     pathname: '/collections/[collectionId]',
     query: {} as Record<string, string | string[]>,
     replaceCalls: 0,
-    replace: (target: { query: Record<string, string | string[]> }) => {
-      state.replaceCalls++;
+    defer: false,
+    pending: null as null | { query: Record<string, string | string[]> },
+    apply: (target: { query: Record<string, string | string[]> }) => {
       state.query = target.query;
       state.snapshot = { ...state };
       listeners.forEach((l) => l());
+    },
+    replace: (target: { query: Record<string, string | string[]> }) => {
+      state.replaceCalls++;
+      if (state.defer) state.pending = target;
+      else state.apply(target);
       return Promise.resolve(true);
     },
     snapshot: null as unknown,
@@ -82,6 +88,9 @@ const storedQuery = (key: string) => JSON.parse(localStorage.getItem(key) ?? '{}
 beforeEach(() => {
   localStorage.clear();
   router.state.replaceCalls = 0;
+  router.state.defer = false;
+  router.state.pending = null;
+  router.state.isReady = true;
   router.navigate({});
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -129,6 +138,53 @@ describe('useRememberCollectionFilters', () => {
     open(2, {});
 
     expect(router.state.query).toEqual({ collectionId: '2' });
+  });
+
+  it('keeps the remembered value while the address it was applied to is still on its way', () => {
+    open(1, { sort: 'Oldest' });
+    router.state.defer = true;
+    open(2, {});
+
+    expect(router.state.pending?.query).toMatchObject({ sort: 'Oldest' });
+    expect(storedQuery('collection-model-filters')).toEqual({ sort: 'Oldest' });
+  });
+
+  it('does nothing before the router is ready', () => {
+    open(1, { sort: 'Oldest' });
+    router.state.isReady = false;
+    open(2, {});
+
+    expect(router.state.replaceCalls).toBe(0);
+    expect(router.state.query).toEqual({ collectionId: '2' });
+  });
+
+  it.each([
+    ['posts', { sort: 'Most Comments', period: 'Week' }],
+    ['articles', { sort: 'Most Comments', period: 'Week' }],
+  ] as const)('brings the sort and period across for %s', (type, remembered) => {
+    open(1, remembered, { type });
+    open(2, {}, { type });
+
+    expect(router.state.query).toEqual({ collectionId: '2', ...remembered });
+  });
+
+  it('seeds only the keys it remembers, even when a stored one would parse', () => {
+    localStorage.setItem(
+      'collection-model-filters',
+      JSON.stringify({ query: { followed: 'true', collectionTagId: '5', sort: 'Oldest' } })
+    );
+
+    open(1, {});
+
+    expect(router.state.query).toEqual({ collectionId: '1', sort: 'Oldest' });
+  });
+
+  it('still brings the remembered value to a collection that was first seen as a contest', () => {
+    open(1, { sort: 'Oldest' });
+    open(2, {}, { isContest: true });
+    render({ type: 'models', collectionId: 2, isContest: false });
+
+    expect(router.state.query).toEqual({ collectionId: '2', sort: 'Oldest' });
   });
 
   it('keeps each content type to its own remembered value', () => {
