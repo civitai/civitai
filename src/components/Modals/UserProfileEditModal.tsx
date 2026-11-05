@@ -220,19 +220,22 @@ export default function UserProfileEditModal() {
     [user]
   );
 
-  const badges = useMemo(
+  const allBadges = useMemo(
     () =>
       user
-        ? dedupeBadgesByImage(
-            owned.filter(({ cosmetic: c }) => c.type === CosmeticType.Badge),
-            (item) => getBadgeImageUrl(item.cosmetic)
-          ).map(({ cosmetic, cosmeticId, ...c }) => ({
-            ...c,
-            ...cosmetic,
-            data: cosmetic.data as BadgeCosmetic['data'],
-          }))
+        ? owned
+            .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge)
+            .map(({ cosmetic, cosmeticId, ...c }) => ({
+              ...c,
+              ...cosmetic,
+              data: cosmetic.data as BadgeCosmetic['data'],
+            }))
         : [],
     [user, owned]
+  );
+  const badges = useMemo(
+    () => dedupeBadgesByImage(allBadges, (badge) => getBadgeImageUrl(badge)),
+    [allBadges]
   );
 
   const nameplates = useMemo(
@@ -658,7 +661,7 @@ export default function UserProfileEditModal() {
                 count={highlightedBadgeIds.length}
               >
                 <HighlightedBadgesInput
-                  badges={badges}
+                  badges={allBadges}
                   value={highlightedBadgeIds}
                   onChange={(nextHighlighted) =>
                     form.setValue('privacySettings', {
@@ -685,7 +688,7 @@ export default function UserProfileEditModal() {
               >
                 <HighlightedBadgesInput
                   variant="hide"
-                  badges={badges}
+                  badges={allBadges}
                   value={hiddenBadgeIds}
                   onChange={(nextHidden) =>
                     form.setValue('privacySettings', {
