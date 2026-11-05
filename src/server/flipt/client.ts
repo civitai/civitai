@@ -377,9 +377,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
 
-  // On: a verified crawler's page render may be marked edge-cacheable
-  // (`~/server/bot-cache/bot-cache`). Off (and unknown, or a client that has not initialised): no
-  // response is, as before.
+  // On: a verified crawler's page render may be stored by the origin cache and served to other
+  // crawlers (`~/server/bot-cache/bot-cache`). Off (and unknown, or a client that has not
+  // initialised): nothing is stored or served, as before. The key keeps its original name.
   //
   // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
