@@ -520,7 +520,8 @@ describe('approvedListingSlugQuery — the approved-only precondition', () => {
         status: 'approved',
         revisionOfId: null,
       },
-      select: { slug: true },
+      // `contentRating` is the input of the R/X gate (`legacyListingSlugForViewer`).
+      select: { slug: true, contentRating: true },
     });
   });
 
