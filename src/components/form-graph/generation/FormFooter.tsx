@@ -7,6 +7,8 @@
  * engine-free and imported from `~/components/Generation/footer-parts`.
  */
 
+import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { trackRecentEcosystem } from '~/store/recent-ecosystems.store';
 import { ActionIcon, Alert, Button, Card, NumberInput, Text } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
@@ -304,6 +306,11 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-red-8/20"
       >
         {submitError}
+        <ReportProblemButton
+          area={ORCHESTRATION_FEEDBACK_AREA}
+          title="Generation failed to submit"
+          message={submitError}
+        />
       </Notification>
     );
   } else if (insufficientBuzz) {
