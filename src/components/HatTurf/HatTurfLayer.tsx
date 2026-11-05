@@ -24,7 +24,7 @@ import type { HatPose, HatSticker } from '~/components/HatTurf/hat-turf.utils';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useDraftGestures } from '~/components/Sticker/useDraftGestures';
-import { STICKER_PLACEMENT_MAX_SCALE } from '~/shared/utils/sticker-placement';
+import { HAT_MAX_SCALE } from '~/server/schema/turf.schema';
 import {
   createStickerPlacementDraftStore,
   DraftStoreContext,
@@ -35,8 +35,21 @@ import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider. */
-type Box = { width: number; height: number; left: number; top: number; shownWidth: number };
+/**
+ * `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider.
+ * `visible` is that shown part as fractions of the picture, inset so a hat's controls stay on the card.
+ */
+type Box = {
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  shownWidth: number;
+  visible: Visible;
+};
+type Visible = { x0: number; x1: number; y0: number; y1: number };
+/** How far a dragged hat's centre stays inside the card's edge, in px, so its controls stay reachable. */
+const DRAG_MARGIN = 28;
 
 /** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
@@ -58,6 +71,8 @@ type HatDraftProps = {
   surface: HTMLElement;
   /** The drawn picture's width in px, to size the art like the draft's frame. */
   width: number;
+  /** Where on the picture the card shows it; the hat is kept there. */
+  visible: Visible;
   artwork: (scale: number) => React.ReactNode;
   saving: boolean;
   onSave: (pose: HatPose) => void;
@@ -84,6 +99,7 @@ function HatDraftSticker({
   spot,
   surface,
   width,
+  visible,
   artwork,
   saving,
   onSave,
@@ -91,7 +107,17 @@ function HatDraftSticker({
   useStore,
 }: HatDraftProps & { useStore: DraftStoreHook }) {
   const draft = useStore((state) => state.drafts[0]);
-  const onGesture = useDraftGestures(STICKER_PLACEMENT_MAX_SCALE);
+  const onGesture = useDraftGestures(HAT_MAX_SCALE);
+
+  // A cropped feed card hides part of the picture; a hat dragged there would take its
+  // controls with it. The store only keeps it on the picture, so this keeps it on the card.
+  const { x0, x1, y0, y1 } = visible;
+  useEffect(() => {
+    if (!draft) return;
+    const x = Math.min(x1, Math.max(x0, draft.x));
+    const y = Math.min(y1, Math.max(y0, draft.y));
+    if (x !== draft.x || y !== draft.y) useStore.getState().move(draft.id, { x, y });
+  }, [draft, x0, x1, y0, y1, useStore]);
 
   useEffect(() => useStore.getState().setSurface(surface), [useStore, surface]);
   useEffect(() => {
@@ -120,7 +146,7 @@ function HatDraftSticker({
       selected
       dressed={UNDRESSED}
       price={0}
-      creatorMaxScale={STICKER_PLACEMENT_MAX_SCALE}
+      creatorMaxScale={HAT_MAX_SCALE}
       freeOffer={null}
       ownerShare={undefined}
       ownerUsername={null}
@@ -216,12 +242,22 @@ function HatTurfLayerContent({
       const self = offsetWithin(node, stop);
       if (!at || !self) return;
       const drawn = mediaContentRectOf(media);
+      const left = at.x - self.x + drawn.left;
+      const top = at.y - self.y + drawn.top;
+      const span = (start: number, size: number, frame: number) => {
+        const lo = Math.max(0, (DRAG_MARGIN - start) / size);
+        const hi = Math.min(1, (frame - DRAG_MARGIN - start) / size);
+        return lo < hi ? [lo, hi] : [0, 1];
+      };
+      const [x0, x1] = span(left, drawn.width, node.offsetWidth);
+      const [y0, y1] = span(top, drawn.height, node.offsetHeight);
       const next = {
         width: drawn.width,
         height: drawn.height,
-        left: at.x - self.x + drawn.left,
-        top: at.y - self.y + drawn.top,
+        left,
+        top,
         shownWidth: Math.min(drawn.width, media.offsetWidth),
+        visible: { x0, x1, y0, y1 },
       };
       setBox((current) =>
         current &&
@@ -229,7 +265,11 @@ function HatTurfLayerContent({
         current.height === next.height &&
         current.left === next.left &&
         current.top === next.top &&
-        current.shownWidth === next.shownWidth
+        current.shownWidth === next.shownWidth &&
+        current.visible.x0 === x0 &&
+        current.visible.x1 === x1 &&
+        current.visible.y0 === y0 &&
+        current.visible.y1 === y1
           ? current
           : next
       );
@@ -369,6 +409,7 @@ function HatTurfLayerContent({
                 spot={draft}
                 surface={surface}
                 width={box.width}
+                visible={box.visible}
                 artwork={(scale) => (
                   <TurfHatArt art={chosenArt} color={colorOf(feed.team)} size={hatSize(scale)} />
                 )}

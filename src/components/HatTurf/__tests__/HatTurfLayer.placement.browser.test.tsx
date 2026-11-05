@@ -136,7 +136,7 @@ import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { STICKER_PLACEMENT_MAX_SCALE } from '~/shared/utils/sticker-placement';
+import { HAT_MAX_SCALE } from '~/server/schema/turf.schema';
 
 const svg = (w: number, h: number) =>
   `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -310,11 +310,11 @@ describe('a hat is placed with the sticker editor', () => {
     expect(pose.y).toBeCloseTo(0.2, 2);
   });
 
-  test('a corner drag saves a bigger hat, stopping at the sticker maximum', async () => {
+  test("a corner drag saves a bigger hat, stopping at a sticker's default ceiling", async () => {
     renderPicture('contain', [400, 300]);
     await drag(CORNER, { x: 5000, y: 5000 });
 
-    expect((await saved()).scale).toBeCloseTo(STICKER_PLACEMENT_MAX_SCALE, 10);
+    expect((await saved()).scale).toBeCloseTo(HAT_MAX_SCALE, 10);
   });
 
   test('the rotate knob saves a rotation', async () => {
@@ -339,6 +339,19 @@ describe('a hat is placed with the sticker editor', () => {
     expect(pose.opacity).toBe(1);
   });
 
+  test('on a cropped card the hat stays on the part the card shows', async () => {
+    renderPicture('cover', [100, 400]);
+    await editorPart(BODY);
+    await measured('cover', [100, 400]);
+    const frame = q('frame')!.getBoundingClientRect();
+    await drag(BODY, { x: frame.left + CARD.width / 2, y: frame.top - 200 });
+
+    const rect = drawnRect('cover', [100, 400]);
+    const onCardY = rect.top + (await saved()).y * rect.height;
+    expect(onCardY).toBeGreaterThanOrEqual(0);
+    expect(onCardY).toBeLessThanOrEqual(CARD.height);
+  });
+
   test('remove ends the placement and sends nothing', async () => {
     renderPicture('contain', [400, 300]);
     (await editorPart('[aria-label="Remove this sticker"]')).click();
@@ -358,11 +371,11 @@ describe('a hat is placed with the sticker editor', () => {
     const pose = await saved();
     expect(pose.x).not.toBeCloseTo(0.5, 2);
     expect(pose.y).not.toBeCloseTo(0.5, 2);
-    expect(pose.scale).toBeCloseTo(STICKER_PLACEMENT_MAX_SCALE, 10);
+    expect(pose.scale).toBeCloseTo(HAT_MAX_SCALE, 10);
   });
 
   test('the placed hat draws at its saved pose: width a fraction of the picture, rotation on the art', async () => {
-    // Image-detail size: 40% of 700px is a 280px hat, past the old 96px cap.
+    // Image-detail size: 25% of 700px is a 175px hat, past the old 96px cap.
     renderPictures([['contain', [700, 500]]], { width: 700, height: 500 });
     await measured('contain', [700, 500], { width: 700, height: 500 });
     await drag(CORNER, { x: 5000, y: 5000 });
@@ -376,7 +389,7 @@ describe('a hat is placed with the sticker editor', () => {
     const placed = await editorPart('[data-testid="hat-turf-placed"]');
     const picture = drawnRect('contain', [700, 500], { width: 700, height: 500 });
     // The unrotated container is as wide as the art it holds.
-    expect(placed.offsetWidth).toBeCloseTo(STICKER_PLACEMENT_MAX_SCALE * picture.width, 0);
+    expect(placed.offsetWidth).toBeCloseTo(HAT_MAX_SCALE * picture.width, 0);
     const drawn = (placed.firstElementChild as HTMLElement).style.transform;
     expect(parseFloat(drawn.match(/rotate\(([-\d.]+)deg\)/)![1])).toBeCloseTo(pose.rotation, 2);
   });

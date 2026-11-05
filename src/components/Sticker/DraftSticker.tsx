@@ -758,6 +758,7 @@ export function DraftSticker({
         onPointerDown={begin('move')}
         // The keyboard path to the same move: arrows nudge, Shift for a bigger step.
         tabIndex={0}
+        data-arrow-keys
         aria-label="Sticker position: arrow keys to move"
         onKeyDown={(event) => {
           const step = event.shiftKey ? 0.05 : 0.01;

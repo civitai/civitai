@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { placeTurfStickerSchema } from '~/server/schema/turf.schema';
 import { STICKER_PLACEMENT_MIN_OPACITY } from '~/shared/utils/sticker-placement';
+import { HAT_MAX_SCALE } from '~/server/schema/turf.schema';
 
 const place = (data: Record<string, unknown>) =>
   placeTurfStickerSchema.safeParse({ event: 'e', imageId: 1, cosmeticId: 2, data });
 
-const pose = { x: 0.3, y: 0.7, scale: 0.31, rotation: -40, flip: true };
+const pose = { x: 0.3, y: 0.7, scale: 0.21, rotation: -40, flip: true };
 
 describe('a hat is placed with the whole sticker pose', () => {
   it('keeps every field the sticker editor sends, opacity included', () => {
@@ -20,5 +21,11 @@ describe('a hat is placed with the whole sticker pose', () => {
 
   it('refuses an opacity under the sticker floor, as a sticker does', () => {
     expect(place({ ...pose, opacity: STICKER_PLACEMENT_MIN_OPACITY / 2 }).success).toBe(false);
+  });
+
+  // A free hat on anyone's picture gets a sticker's default ceiling, not the creator-raisable maximum.
+  it('refuses a hat bigger than a sticker gets by default', () => {
+    expect(place({ ...pose, scale: HAT_MAX_SCALE }).success).toBe(true);
+    expect(place({ ...pose, scale: HAT_MAX_SCALE + 0.01 }).success).toBe(false);
   });
 });
