@@ -400,7 +400,6 @@ export async function acceptTransfer(opts: {
   now?: Date;
 }): Promise<{ transferId: string; appListingId: string; fromUserId: number; toUserId: number }> {
   const now = opts.now ?? new Date();
-  // The new owner publishes in their own name from here on.
   const { assertAcceptedAppDeveloperTermsTrpc } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTermsTrpc(opts.userId);
 

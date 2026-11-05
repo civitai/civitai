@@ -336,6 +336,47 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
   });
 
+  it("a collaborator's push blocked by the OWNER says the owner must accept, not the pusher", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockResolvedValueOnce(false);
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    expect(res._status).toBe(403);
+    expect(vi.mocked(terms.hasAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(77);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'failure',
+        description: expect.stringMatching(/^The app's owner has not accepted/),
+      })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  it("a collaborator's push blocked by the PUSHER shows the pusher's own refusal", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new terms.AppDeveloperTermsNotAcceptedError('pusher-refusal-marker')
+    );
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    expect(res._status).toBe(403);
+    expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failure', description: 'pusher-refusal-marker' })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
   it('the new pending push supersedes any older pending request for the slug (one-pending-per-slug)', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);

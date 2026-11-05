@@ -48,6 +48,16 @@ afterEach(() => {
   vi.resetModules();
 });
 
+describe('userIdForForgejoUsername', () => {
+  it('maps only an exact dev-<digits> handle to a user id', async () => {
+    const { userIdForForgejoUsername } = await import('../dev-git-access.service');
+    expect(userIdForForgejoUsername('dev-42')).toBe(42);
+    expect(userIdForForgejoUsername('civitai-apps')).toBeNull();
+    expect(userIdForForgejoUsername(undefined)).toBeNull();
+    expect(userIdForForgejoUsername('dev-42x')).toBeNull();
+  });
+});
+
 describe('encrypt/decrypt round-trip', () => {
   it('round-trips a token through AES-256-GCM', async () => {
     const { __testing } = await import('../dev-git-access.service');

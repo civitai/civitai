@@ -424,6 +424,18 @@ describe('offsite-listing::submitListingRevision', () => {
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
+  it("an editor's revision is refused while the editor has not accepted the App Developer Terms", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const actorGate = vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc);
+    actorGate.mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN', message: 'actor' }));
+    seatFor(EDITOR);
+    await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
+      { code: 'FORBIDDEN', message: 'actor' }
+    );
+    expect(actorGate).toHaveBeenCalledWith(EDITOR);
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
   it('still admits an ACCEPTED editor on the parent, and still refuses a stranger', async () => {
     // The seat lives on the PARENT — the resolver hops there. This is the case the bare
     // comparison could never serve: the shadow's column names the (stale) parent owner,

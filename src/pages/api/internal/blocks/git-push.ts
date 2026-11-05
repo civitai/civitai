@@ -17,7 +17,6 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import {
   APP_DEVELOPER_TERMS_ACCEPT_PATH,
   AppDeveloperTermsNotAcceptedError,
-  appDeveloperTermsRefusalMessage,
 } from '~/shared/constants/app-developer-terms.constants';
 
 /**
@@ -419,7 +418,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         sha,
         state: 'failure',
         context: 'civitai/review',
-        description: appDeveloperTermsRefusalMessage(getBaseUrl()),
+        description: e.message, // setCommitStatus truncates to Forgejo's 140
         targetUrl: `${getBaseUrl()}${APP_DEVELOPER_TERMS_ACCEPT_PATH}`,
       });
       res.status(403).json({ error: 'App Developer Terms not accepted' });

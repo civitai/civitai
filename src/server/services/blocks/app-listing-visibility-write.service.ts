@@ -406,7 +406,6 @@ export async function setListingVisibilityAsOwner(args: {
   if (!access || access.role == null) {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_NOT_OWNED_MESSAGE });
   }
-  // Going public is publishing; going less visible is free.
   if (args.visibility === 'public') {
     const { assertAcceptedAppDeveloperTermsTrpc, assertOwnerAcceptedAppDeveloperTerms } =
       await import('~/server/services/blocks/app-developer-terms.service');

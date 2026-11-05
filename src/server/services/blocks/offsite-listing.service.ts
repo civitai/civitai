@@ -3407,7 +3407,7 @@ export async function approveExternalRequest(opts: {
     throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
   }
 
-  // A request filed before the owner accepted (or before this gate existed) must not go live.
+  // A request filed before the owner accepted must not go live.
   await assertListingOwnerAcceptedAppDeveloperTerms(appListingId);
 
   // REVISION branch: the request points at a SHADOW (an edit of an approved

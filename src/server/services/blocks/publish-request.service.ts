@@ -2181,10 +2181,19 @@ export async function recordPendingFromPush(args: {
   }
   // A push has no checkbox, so the app owner, in whose name the request is filed, must have accepted.
   // Before the refresh and the supersede below: a refused push changes no pending request.
-  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
-  await assertAcceptedAppDeveloperTerms(ownerUserId);
-  if (args.pusherUserId != null && args.pusherUserId !== ownerUserId)
+  const { assertAcceptedAppDeveloperTerms, hasAcceptedAppDeveloperTerms } = await import(
+    './app-developer-terms.service'
+  );
+  if (args.pusherUserId != null && args.pusherUserId !== ownerUserId) {
+    // The pusher sees this message, so it names the owner when the owner is the blocker.
+    if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
     await assertAcceptedAppDeveloperTerms(args.pusherUserId);
+  } else {
+    await assertAcceptedAppDeveloperTerms(ownerUserId);
+  }
 
   // Already captured this exact (slug, sha) as pending? Refresh + done.
   const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
@@ -2957,7 +2966,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   });
   const isFirstVersion = !existingAppBlock;
 
-  // A request filed before the owner accepted (or before this gate existed) must not go live.
+  // A request filed before the owner accepted must not go live.
   const termsOwnerUserId = existingAppBlock?.app?.userId ?? request.submittedByUserId;
   {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
