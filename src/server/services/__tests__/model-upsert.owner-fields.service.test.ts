@@ -4,6 +4,9 @@ import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
 import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 import type * as ModelCoverService from '~/server/services/model-cover.service';
+import type * as ComFaceRecheck from '~/server/services/model-com-face-recheck.service';
+import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type { TextScanField } from '~/server/services/text-scan/types';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
 // Scaffold mirrors model-locked-properties.service.test.ts.
@@ -96,6 +99,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustFetchThroughCache: vi.fn(),
   fetchThroughCache: vi.fn(),
 }));
+vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 // Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
@@ -109,6 +113,20 @@ const { mockAssertCoverImagesValid } = vi.hoisted(() => ({
 vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCoverService>()),
   assertCoverImagesValid: mockAssertCoverImagesValid,
+}));
+const { mockQueueComFaceRecheck } = vi.hoisted(() => ({ mockQueueComFaceRecheck: vi.fn() }));
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ComFaceRecheck>()),
+  queueComFaceRecheck: mockQueueComFaceRecheck,
+}));
+const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
+  mockPreviewComFaceIntent: vi.fn(),
+  mockPreviewTextScanNsfw: vi.fn(),
+}));
+vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPreview>()),
+  previewComFaceIntent: mockPreviewComFaceIntent,
+  previewTextScanNsfw: mockPreviewTextScanNsfw,
 }));
 const { mockSettleAppeals } = vi.hoisted(() => ({ mockSettleAppeals: vi.fn() }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
@@ -173,6 +191,7 @@ const storedModel = {
   allowDerivatives: true,
   allowDifferentLicense: false,
   coverImageId: null as number | null,
+  sfwName: null as string | null,
   sfwCoverImageId: null as number | null,
 };
 
@@ -990,6 +1009,124 @@ describe('cover gate', () => {
     expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
     );
+  });
+});
+
+describe('.com face re-check after a listing edit', () => {
+  const withFace = { sfwName: 'Retro Style', sfwCoverImageId: 5 };
+
+  it('queues it for an owner who renames a model that has a .com face', async () => {
+    mockStored(withFace);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledTimes(1);
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('queues it for an owner who edits the description', async () => {
+    mockStored(withFace);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, description: 'New description' });
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledTimes(1);
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue it for a moderator’s edit', async () => {
+    mockStored(withFace);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('does not queue it for a model without a .com face', async () => {
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  describe('with the stored title and description sent back unchanged', () => {
+    // The save repeats the stored listing, so only the field under test can trigger the queue.
+    const unchanged = { name: baseInput.name, description: baseInput.description };
+    beforeEach(() => {
+      mockPreviewComFaceIntent.mockResolvedValue({
+        status: 'ok',
+        output: { detected: false, reason: 'stub' },
+      });
+      mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+    });
+
+    it('does not queue it when nothing in the listing changed', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: withFace.sfwName });
+      expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+    });
+
+    it('queues it when the owner retitles the .com face', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+      expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    });
+
+    it('queues it when the owner picks another .com cover', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 6 });
+      expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    });
+
+    it('does not queue it when the owner clears the .com face', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+      expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+    });
+  });
+
+  it('checks the stored title, description and the owner’s trigger words when an owner sets a face', async () => {
+    mockStored({ name: 'Stored Title', description: '<p>Stored description</p>' });
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { trainedWords: ['stored-trigger'] },
+    ] as never);
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'stub' },
+    });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+
+    // Neither listing field is in the save, so both come from the stored row.
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      sfwName: 'Retro Style',
+      name: undefined,
+      description: undefined,
+    });
+
+    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modelId: MODEL_ID, model: { userId: OWNER_ID } } })
+    );
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+    const text = (mockPreviewComFaceIntent.mock.calls[0][0] as { fields: TextScanField[] }).fields
+      .map((field) => field.text)
+      .join(' ');
+    expect(text).toContain('Stored Title');
+    expect(text).toContain('Stored description');
+    expect(text).toContain('stored-trigger');
+  });
+
+  it('refuses an owner’s save whose .com cover was cleared after the save read it', async () => {
+    mockStored(withFace);
+    mockLocked({ sfwCoverImageId: null });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 5 })).rejects.toThrow(
+      'civitai.com card changed while you were editing'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('drops the removal marker when a save sets a .com cover again', async () => {
+    mockStored({
+      sfwName: 'Retro Style',
+      sfwCoverImageId: null,
+      meta: {
+        comFaceRemoved: { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5, reason: 'detected' },
+      },
+    });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwCoverImageId: 6 });
+    expect(updateData().meta).not.toHaveProperty('comFaceRemoved');
   });
 });
 

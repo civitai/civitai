@@ -28,9 +28,13 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { InputRTE, InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
-import { normalizeSfwFaceText, SFW_DESCRIPTION_MAX_LENGTH } from '~/shared/utils/model-sfw-face';
+import {
+  COM_FACE_REFUSED_MESSAGE,
+  isComSafeLevel,
+  normalizeSfwFaceText,
+  SFW_DESCRIPTION_MAX_LENGTH,
+} from '~/shared/utils/model-sfw-face';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -56,9 +60,12 @@ const CHECK_DEBOUNCE_MS = 800;
 export function ModelListingTabs({
   modelId,
   redFields,
+  comFaceRemoved,
 }: {
   modelId?: number;
   redFields: ReactNode;
+  /** The listing re-check took the model off civitai.com. */
+  comFaceRemoved?: boolean;
 }) {
   const form = useFormContext<ListingForm>();
   const [sfwName, sfwDescription, nsfw] = useWatch({
@@ -133,6 +140,11 @@ export function ModelListingTabs({
           </Tabs.Panel>
 
           <Tabs.Panel value="com" pt="md">
+            {comFaceRemoved && (
+              <Alert color="red" p="xs" mb="md">
+                <Text size="xs">{COM_FACE_REFUSED_MESSAGE}</Text>
+              </Alert>
+            )}
             <ComListing
               modelId={modelId}
               ownContent={ownComContent}
@@ -306,9 +318,6 @@ function ComListing({
   );
 }
 
-const isSafeLevel = (nsfwLevel: number) =>
-  !!nsfwLevel && (nsfwLevel & sfwBrowsingLevelsFlag) === nsfwLevel;
-
 /** The cover a site leads with, picked from the creator's own published images on the model. */
 function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
   const features = useFeatureFlags();
@@ -326,7 +335,8 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
       </Text>
     );
 
-  const images = site === 'com' ? candidates.filter((i) => isSafeLevel(i.nsfwLevel)) : candidates;
+  const images =
+    site === 'com' ? candidates.filter((i) => isComSafeLevel(i.nsfwLevel)) : candidates;
   const description =
     site === 'com'
       ? 'Only your images rated PG or PG-13 can lead on civitai.com. Click a picked image again to clear it.'
