@@ -2083,6 +2083,95 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
   });
 
+  // ── A REFUSAL BRINGS A DISMISSED NOTICE BACK ─────────────────────────────────
+  // The rule is `resolveConsentNoticeAfterRefusal` (unit-tested in
+  // `__tests__/requestConsentGate.test.ts`); these pin that THIS host wires its two
+  // refusal signals to it: a reaction refused as `needs-consent`, and the SDK's
+  // REQUEST_CONSENT naming the refused scope.
+  const REACT = 'social:react:self';
+  const reactionRequest = {
+    requestId: 'react-1',
+    entityType: 'image',
+    entityId: 5,
+    reaction: 'Heart',
+    reacted: true,
+  };
+
+  async function dismissNotice() {
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+  }
+
+  test('🔴 dismissed, then a reaction is refused for a MISSING permission → the notice is back, highlighted', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={['ai:write:budgeted', REACT]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      // The refusal itself happened — the block was told why.
+      await vi.waitFor(() =>
+        expect(posts.of('ENTITY_REACTION_RESULT').map((m) => m.payload)).toEqual([
+          { requestId: 'react-1', error: 'needs-consent' },
+        ])
+      );
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+      expect((noticeQuery() as HTMLElement).getAttribute('data-highlight')).toBe('true');
+      // Back as a notice, not as a modal.
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('CONTROL — the same refusal for a permission the viewer CANNOT grant here leaves it dismissed', async () => {
+    // `social:react:self` is not in the missing set, so consent cannot add it: the
+    // block is still refused (positive control below), but the notice must not come
+    // back offering an "Allow…" that cannot help.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 dismissed, then REQUEST_CONSENT names a missing scope → the notice is back behind the modal', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    // If the viewer closes the modal without allowing, the notice is still there.
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+  });
+
+  test('CONTROL — REQUEST_CONSENT naming only a scope outside the missing set leaves it dismissed', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    // `apps:storage:read` is granted, not missing. The modal still opens for the
+    // missing set (the hint never decides that), which is the positive control that
+    // the request was handled.
+    postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:read'] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
   test('not before BLOCK_READY — no notice over a still-loading block', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
     await vi.waitFor(() => {

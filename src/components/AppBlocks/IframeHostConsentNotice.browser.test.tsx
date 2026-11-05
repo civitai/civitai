@@ -639,6 +639,84 @@ describe('IframeHost consent backstop — the surface', () => {
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
+  // ── A REFUSAL BRINGS A DISMISSED NOTICE BACK ───────────────────────────────
+  // The rule is `resolveConsentNoticeAfterRefusal` (unit-tested in
+  // `__tests__/requestConsentGate.test.ts`); these pin that the MODEL SLOT wires its
+  // two refusal signals to it, as PageBlockHost does.
+  const REACT = 'social:react:self';
+  const reactionRequest = {
+    requestId: 'react-1',
+    entityType: 'image',
+    entityId: 5,
+    reaction: 'Heart',
+    reacted: true,
+  };
+
+  async function dismissNotice() {
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+  }
+
+  test('🔴 dismissed, then a reaction is refused for a MISSING permission → the notice is back, highlighted', async () => {
+    renderWithProviders(
+      <IframeHost {...baseProps} missingScopes={[WITHHELD, REACT]} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() =>
+        expect(posts.of('ENTITY_REACTION_RESULT').map((m) => m.payload)).toEqual([
+          { requestId: 'react-1', error: 'needs-consent' },
+        ])
+      );
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+      expect((noticeQuery() as HTMLElement).getAttribute('data-highlight')).toBe('true');
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('CONTROL — the same refusal for a permission the viewer CANNOT grant here leaves it dismissed', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      // Positive control: the refusal reached the block.
+      await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 dismissed, then REQUEST_CONSENT names a missing scope → the notice is back behind the modal', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    postFromBlock('REQUEST_CONSENT', { scopes: [WITHHELD] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+  });
+
+  test('CONTROL — REQUEST_CONSENT naming only an un-grantable scope leaves it dismissed', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    // The modal still opens for the missing set (the hint never decides that) — the
+    // positive control that the request was handled.
+    postFromBlock('REQUEST_CONSENT', { scopes: [UNGRANTABLE] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
   // 🔴 ONE VARIABLE EACH. A fixture that moves `missingScopes` AND `needsConsent`
   // together cannot attribute the absence to either term, which is how the page
   // host's `needsConsent &&` once sat in a render condition with no killing

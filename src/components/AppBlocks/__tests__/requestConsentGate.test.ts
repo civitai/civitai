@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
@@ -447,6 +450,118 @@ describe('resolveHostConsentNotice (the host-side missing-permissions backstop)'
         );
       }
     }
+  });
+});
+
+describe('resolveConsentNoticeAfterRefusal (a refusal brings a dismissed notice back)', () => {
+  // Two missing scopes and one that is neither missing nor granted, so "it revived on
+  // the refused scope" is a reading, not an echo of the only value in play.
+  const APP = 'apb_tipper';
+  const OTHER_APP = 'apb_other';
+  const MISSING = ['social:tip:self', 'social:react:self'];
+  const UNGRANTABLE = 'apps:storage:read';
+
+  /** Would the host render the notice for `state`? Read through the REAL show rule. */
+  const shows = (state: { dismissedFor: string | null }) =>
+    resolveHostConsentNotice({
+      status: 'ready',
+      needsConsent: true,
+      missingScopes: MISSING,
+      dismissedFor: state.dismissedFor,
+      appBlockId: APP,
+    }) != null;
+
+  it('dismissed, then a refusal for a MISSING scope: the notice shows again, highlighted', () => {
+    const dismissed = dismissConsentNotice(APP);
+    expect(shows(dismissed)).toBe(false); // the control: dismissing hides it
+    const next = resolveConsentNoticeAfterRefusal(dismissed, {
+      appBlockId: APP,
+      refusedScopes: ['social:react:self'],
+      missingScopes: MISSING,
+    });
+    expect(next).toEqual({ dismissedFor: null, revived: true });
+    expect(shows(next)).toBe(true);
+  });
+
+  it('one missing scope among others in the refusal is enough', () => {
+    const next = resolveConsentNoticeAfterRefusal(dismissConsentNotice(APP), {
+      appBlockId: APP,
+      refusedScopes: [UNGRANTABLE, 'social:tip:self'],
+      missingScopes: MISSING,
+    });
+    expect(next).toEqual({ dismissedFor: null, revived: true });
+  });
+
+  it('dismissed, then a refusal for an UN-GRANTABLE scope: stays dismissed (the toast path owns it)', () => {
+    const dismissed = dismissConsentNotice(APP);
+    const next = resolveConsentNoticeAfterRefusal(dismissed, {
+      appBlockId: APP,
+      refusedScopes: [UNGRANTABLE],
+      missingScopes: MISSING,
+    });
+    expect(next).toBe(dismissed);
+    expect(shows(next)).toBe(false);
+  });
+
+  it('a refusal BEFORE any dismissal changes nothing — and returns the same object', () => {
+    const next = resolveConsentNoticeAfterRefusal(CONSENT_NOTICE_NOT_DISMISSED, {
+      appBlockId: APP,
+      refusedScopes: ['social:tip:self'],
+      missingScopes: MISSING,
+    });
+    // Same reference, so a React updater returning it does not re-render, and no
+    // highlight is switched on for a notice that never went away.
+    expect(next).toBe(CONSENT_NOTICE_NOT_DISMISSED);
+    expect(next.revived).toBe(false);
+  });
+
+  it("another app's dismissal is left alone", () => {
+    const otherDismissed = dismissConsentNotice(OTHER_APP);
+    const next = resolveConsentNoticeAfterRefusal(otherDismissed, {
+      appBlockId: APP,
+      refusedScopes: ['social:tip:self'],
+      missingScopes: MISSING,
+    });
+    expect(next).toBe(otherDismissed);
+    expect(next.dismissedFor).toBe(OTHER_APP);
+  });
+
+  it('no missing set (legacy mint) or nothing refused: stays dismissed', () => {
+    const dismissed = dismissConsentNotice(APP);
+    for (const input of [
+      { refusedScopes: ['social:tip:self'], missingScopes: undefined },
+      { refusedScopes: [], missingScopes: MISSING },
+    ]) {
+      expect(resolveConsentNoticeAfterRefusal(dismissed, { appBlockId: APP, ...input })).toBe(
+        dismissed
+      );
+    }
+  });
+
+  it('untrusted hint shapes never revive it: not an array, non-strings, a prototype key', () => {
+    const dismissed = dismissConsentNotice(APP);
+    for (const refusedScopes of [
+      undefined,
+      null,
+      'social:tip:self',
+      { 0: 'social:tip:self' },
+      [42],
+      ['constructor'],
+    ]) {
+      expect(
+        resolveConsentNoticeAfterRefusal(dismissed, {
+          appBlockId: APP,
+          refusedScopes,
+          missingScopes: MISSING,
+        }),
+        `revived on ${JSON.stringify(refusedScopes)}`
+      ).toBe(dismissed);
+    }
+  });
+
+  it('dismissing again after a revival clears the highlight', () => {
+    expect(dismissConsentNotice(APP)).toEqual({ dismissedFor: APP, revived: false });
+    expect(CONSENT_NOTICE_NOT_DISMISSED).toEqual({ dismissedFor: null, revived: false });
   });
 });
 
