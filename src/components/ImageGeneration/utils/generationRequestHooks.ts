@@ -221,6 +221,14 @@ function updateCachedWorkflow(
   });
 }
 
+/** Adds or removes a tag on a workflow in every cached queue list, as a tag patch would. */
+export function setCachedWorkflowTag(workflowId: string, tag: string, op: 'add' | 'remove') {
+  updateCachedWorkflow(workflowId, (items, index) => {
+    const tags = items[index].tags ?? [];
+    items[index].tags = op === 'add' ? [...new Set([...tags, tag])] : tags.filter((t) => t !== tag);
+  });
+}
+
 export function useUpdateWorkflow() {
   return trpc.orchestrator.updateWorkflow.useMutation({
     onSuccess: (response, { workflowId }) => {

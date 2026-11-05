@@ -31,7 +31,8 @@ import {
 } from '~/shared/constants/remix-apps.constants';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixApp, RemixWorkflowRequest } from '~/shared/remix-apps/define';
-import { replayRemixApp } from '~/shared/remix-apps/replay';
+import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { remixRunTags } from '~/shared/remix-apps/tags';
 import { REMIX_MENU_APPS, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
 import {
   getRemixSourceUrl,
@@ -150,8 +151,11 @@ export function buildRuntimeRequest({
 
 /** The workflow a runtime app runs first, or `null` when it asks something before any spend. */
 export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
-  const outcome = await replayRemixApp(app, runtimeSourceOf(image), []);
-  return outcome.status === 'effect' && outcome.effect.type === 'workflow'
+  const outcome = await replayRemixApp(app, runtimeSourceOf(image), []).catch((error) => {
+    if (error instanceof RemixReplayError) return null;
+    throw error;
+  });
+  return outcome?.status === 'effect' && outcome.effect.type === 'workflow'
     ? outcome.effect.request
     : null;
 }
@@ -180,6 +184,15 @@ export function remixAppExternalId(args: {
   return `remix-app_${digest}`;
 }
 
+/** One tap (one nonce) is one run, so a repeated start finds the run it already made. */
+export function remixRunId(args: { userId: number; slug: string; imageId: number; nonce: string }) {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([args.userId, args.slug, args.imageId, args.nonce]))
+    .digest('hex')
+    .slice(0, 20);
+  return `r${digest}`;
+}
+
 export type RemixAppCaller = {
   user: SessionUser;
   token: string;
@@ -189,6 +202,24 @@ export type RemixAppCaller = {
   isApiCaller: boolean;
   track?: unknown;
 };
+
+/** What every remix submit sends for the caller: who pays, in what, and what it may show. */
+export function remixSubmitArgs(
+  caller: RemixAppCaller,
+  tags: string[],
+  currencies: ReturnType<typeof getAllowedAccountTypes>
+) {
+  return {
+    user: caller.user,
+    token: caller.token,
+    flags: caller.features,
+    currencies,
+    tags: caller.isGreenDomain ? ['green', ...tags] : tags,
+    isGreen: caller.features.isGreen,
+    allowMatureContent: caller.isGreenDomain || !caller.user.showNsfw ? false : undefined,
+    track: caller.track,
+  };
+}
 
 export const viewerOf = (caller: Pick<RemixAppCaller, 'isGreenDomain' | 'user'>) => ({
   isGreen: caller.isGreenDomain,
@@ -453,17 +484,12 @@ export async function runRemixApp({
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertInputsUsable([run.sourceUrl], caller, 'remixAppRun');
 
-  const tags = [`remix-app:${app.slug}`];
+  // A one-segment run, so the tray lists it beside the runtime apps' runs.
+  const runId = remixRunId({ userId: caller.user.id, slug, imageId: image.id, nonce });
+  const tags = remixRunTags({ slug: app.slug, runId, segment: 0 });
   const result = await submitPresetImageGen({
     ...run.submit,
-    user: caller.user,
-    token: caller.token,
-    flags: caller.features,
-    currencies: getAllowedAccountTypes(caller.features, ['blue']),
-    tags: caller.isGreenDomain ? ['green', ...tags] : tags,
-    isGreen: caller.features.isGreen,
-    allowMatureContent: caller.isGreenDomain || !caller.user.showNsfw ? false : undefined,
-    track: caller.track,
+    ...remixSubmitArgs(caller, tags, getAllowedAccountTypes(caller.features, ['blue'])),
     remixOfId: image.id,
     externalId: remixAppExternalId({ userId: caller.user.id, slug, imageId: image.id, nonce }),
   });

@@ -46,8 +46,7 @@ export type RemixApp = {
   /**
    * Must be deterministic over `ctx`: no clock, randomness or I/O outside `ctx`. The host re-runs
    * it from the start on every advance and feeds back the recorded results. Its first effect
-   * must be a `workflow`: a run is stored only as its workflows, so an ask before the first has
-   * nowhere to keep its answer.
+   * must be a `workflow`; replay refuses an app that asks first.
    */
   run(ctx: RemixCtx): Promise<RemixImage[]>;
 };
