@@ -3,7 +3,7 @@ import { gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { isRatingLevel } from '$lib/nsfw-levels';
-import { dbWrite } from '../db';
+import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
 import { consensusBlockReason, type ConsensusBlockReason } from './block-reason';
 
@@ -42,11 +42,24 @@ const parseOptions = (value: unknown): QuestionOption[] =>
 const hasBlockMarker = (image: { ingestion: string; blockedFor: string | null }) =>
   image.ingestion === 'Blocked' || image.blockedFor !== null;
 
-export async function getInquisitorQueue(): Promise<InquisitorItem[]> {
-  const items = await dbWrite
+/** The page and its badge both read through this, so they cannot disagree about what is waiting. */
+const waitingOnInquisitors = (db: typeof dbWrite) =>
+  db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .where('i.status', '=', 'Inquisitor')
+    .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION);
+
+export async function countInquisitorQueue(): Promise<number> {
+  const row = await waitingOnInquisitors(dbRead)
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
+export async function getInquisitorQueue(): Promise<InquisitorItem[]> {
+  const items = await waitingOnInquisitors(dbWrite)
     .select([
       'i.id',
       'i.imageId',
@@ -63,8 +76,6 @@ export async function getInquisitorQueue(): Promise<InquisitorItem[]> {
       'img.ingestion',
       'img.blockedFor',
     ])
-    .where('i.status', '=', 'Inquisitor')
-    .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .orderBy('i.priority', 'asc')
     .orderBy('i.createdAt', 'asc')
     .orderBy('i.id', 'asc')

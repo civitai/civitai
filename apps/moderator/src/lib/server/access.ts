@@ -307,9 +307,16 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
-  { path: '/knights-of-new-order', label: 'Knights of New Order Review' },
-  { path: '/knights-of-new-order/inquisitor', label: 'Knights of New Order Inquisitor Queue' },
-  { path: '/knights-of-new-order/trials', label: 'Knights of New Order Trials' },
+  // No path of its own, so each page keeps its existing grant. `/knights-of-new-order` is the linked-account
+  // review and must stay that path: the stored grant for it predates the group.
+  {
+    label: 'Knights of New Order',
+    children: [
+      { path: '/knights-of-new-order/inquisitor', label: 'Inquisitor' },
+      { path: '/knights-of-new-order/trials', label: 'Trials' },
+      { path: '/knights-of-new-order', label: 'Linked accounts' },
+    ],
+  },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];
