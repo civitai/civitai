@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   countJudgedPairs,
   countRemainingPairs,
-  countTotalPairs,
+  countJudgingProgress,
   countUnjudgedRemainingPairs,
 } from '~/server/services/crucible.service';
+import { getPairProgress } from '~/components/Crucible/judging-progress';
 
 const CAP = 5;
 const count = (
@@ -157,33 +158,46 @@ describe('countUnjudgedRemainingPairs', () => {
   });
 });
 
-describe('countTotalPairs', () => {
+describe('countJudgingProgress', () => {
   const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+  /** Votes 1>2, 2>3, ... (k-1)>k: each settles every pair down the chain by transitivity. */
+  const chain = (k: number) => {
+    const voted = ids(k - 1).map((i) => `${i}:${i + 1}`);
+    const decided = new Set(voted);
+    for (let a = 1; a <= k; a++) for (let b = a + 1; b <= k; b++) decided.add(`${a}:${b}`);
+    const votes: Record<string, string> = {};
+    for (let i = 1; i <= k; i++) votes[i] = String(i === 1 || i === k ? 1 : 2);
+    return { voted, decided: [...decided], votes };
+  };
+  const progress = (n: number, k: number) => {
+    const { voted, decided, votes } = chain(k);
+    return countJudgingProgress({
+      entryIds: ids(n),
+      judgeEntryVotes: votes,
+      votedPairKeys: voted,
+      decidedPairKeys: decided,
+      maxVotesPerEntry: CAP,
+    });
+  };
 
-  it('does not shrink when a vote caps an entry and drops the pairs left by more than one', () => {
-    const entryIds = ids(4);
-    const before = { votes: { 2: 3, 3: 4, 4: CAP }, voted: [] as string[] };
-    const after = { votes: { 1: 1, 2: 4, 3: 4, 4: CAP }, voted: ['1:2'] };
-    // Entry 4 is already an anchor and 2:3 run low, so one vote removes two pairs from the count.
-    expect(count(entryIds, before) - count(entryIds, after)).toBeGreaterThan(1);
-    expect(countTotalPairs({ entryCount: 4, judgedPairs: 1, maxVotesPerEntry: CAP })).toBe(6);
+  it('counts one judged pair per vote, not the pairs those votes settle', () => {
+    // 1>2 and 2>3 settle 1:3 too; the judge voted twice.
+    expect(progress(4, 3).judgedPairs).toBe(2);
   });
 
-  it('grows when an entry is added and shrinks when one is hidden', () => {
-    const total = (n: number) =>
-      countTotalPairs({ entryCount: n, judgedPairs: 0, maxVotesPerEntry: CAP });
-    expect(total(5)).toBeGreaterThan(total(4));
-    expect(total(3)).toBeLessThan(total(4));
+  it('keeps pairs to go while pairs are still served, however many votes settled', () => {
+    // 14 votes down a chain of 15 settle 105 pairs, more than the 99 a judge can reach by voting
+    // in 20 entries, while 16-20 are still unjudged. Counting settled pairs as judged read
+    // "105 of 105, 0 to go" here and kept serving.
+    const p = progress(20, 15);
+    expect(p.judgedPairs).toBe(14);
+    expect(p.remainingPairs).toBeGreaterThan(0);
+    expect(getPairProgress({ ...p, votesUsedUp: false }).toGo).toBe(p.remainingPairs);
   });
 
-  it('is never below the pairs already judged', () => {
-    expect(countTotalPairs({ entryCount: 3, judgedPairs: 9, maxVotesPerEntry: CAP })).toBe(9);
-  });
-
-  it('matches the pairs a judge can reach from nothing', () => {
-    expect(countTotalPairs({ entryCount: 30, judgedPairs: 0, maxVotesPerEntry: CAP })).toBe(
-      countUnjudgedRemainingPairs(30, CAP)
-    );
-    expect(countTotalPairs({ entryCount: 1, judgedPairs: 0, maxVotesPerEntry: CAP })).toBe(0);
+  it('reaches zero to go when nothing is left to serve', () => {
+    const p = progress(3, 3);
+    expect(p).toEqual({ judgedPairs: 2, remainingPairs: 0, totalPairs: 2 });
+    expect(getPairProgress({ ...p, votesUsedUp: true })).toMatchObject({ toGo: 0, finished: true });
   });
 });

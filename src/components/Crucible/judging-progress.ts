@@ -1,6 +1,7 @@
 /**
- * What the judging footer shows. `totalPairs` is stable across votes, so "to go" falls by one per
- * vote. `votesUsedUp` (the server's "no pairs left among entries you can see") collapses the total
+ * What the judging footer shows. `totalPairs` (`countJudgingProgress`) holds still across votes,
+ * so "to go" falls by one per vote, or by more when a vote settles other pairs, and stays above zero
+ * while pairs are still served. `votesUsedUp` (the server's "no pairs left among entries you can see") collapses the total
  * to what the judge voted, rather than leaving a count that can't be cleared. Zero pairs because the
  * browsing level hides entries is not that, so it stays unfinished.
  */
