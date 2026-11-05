@@ -2979,10 +2979,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           }
           // Named by id: Image.name is user input.
           const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+          let source: Buffer | Readable | undefined;
           try {
-            const source = 'path' in original ? fs.createReadStream(original.path) : original.data;
+            // Opened here, so a failed open throws to this catch rather than from an unwatched stream.
+            source =
+              'path' in original
+                ? (await fsAsync.open(original.path, 'r')).createReadStream()
+                : original.data;
             await boundedArchive.append(source, { name }, original.release);
           } catch (e) {
+            // An unread stream holds the deleted file's space until it is closed.
+            if (source instanceof Readable) source.destroy();
             original.release();
             throw e;
           }

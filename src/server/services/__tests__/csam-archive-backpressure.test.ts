@@ -1328,7 +1328,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     details: {},
     images: [],
   };
-  // Small bodies that declare large sizes: the budget acts on the declared size.
+  // Over the spool threshold, so each is read in ranged parts; the budget acts on the object's size.
   const declared: Record<string, number> = {
     'big-1': 200 * MiB,
     'big-2': 200 * MiB,
@@ -1350,19 +1350,32 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
-    mockGetObject = async (key) => ({
-      Body: {
-        transformToByteArray: async () => {
-          bodiesRead++;
-          // Bodies read but not yet written by the archiver: what the budget holds in memory.
-          const written = probes.at(-1)?.processed ?? 0;
-          peakReadsAhead = Math.max(peakReadsAhead, bodiesRead - written);
-          return new Uint8Array(Buffer.from(key));
+    mockGetObject = async (key, input) => {
+      const size = declared[key];
+      if (!input.Range)
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(0), destroy: () => undefined },
+          ContentType: 'image/png',
+          ContentLength: size,
+          ETag: '"etag"',
+        };
+      const [start, end] = input.Range.replace('bytes=', '').split('-').map(Number);
+      return {
+        Body: {
+          transformToByteArray: async () => {
+            if (start === 0) {
+              bodiesRead++;
+              // Objects started but not yet written by the archiver: what the budget holds.
+              const written = probes.at(-1)?.processed ?? 0;
+              peakReadsAhead = Math.max(peakReadsAhead, bodiesRead - written);
+            }
+            return new Uint8Array(end - start + 1);
+          },
+          destroy: () => undefined,
         },
-      },
-      ContentType: 'image/png',
-      ContentLength: declared[key],
-    });
+        ContentRange: `bytes ${start}-${end}/${size}`,
+      };
+    };
   });
 
   it('holds one large original at a time, and still archives one larger than the budget', async () => {
@@ -1376,13 +1389,13 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
 
   it('rejects instead of hanging when a read fails while others wait on the budget', async () => {
     const base = mockGetObject;
-    mockGetObject = async (key) => {
+    mockGetObject = async (key, input) => {
       if (key === 'big-2')
         throw Object.assign(new Error('synthetic storage outage'), {
           name: 'InternalError',
           $metadata: { httpStatusCode: 500 },
         });
-      return base(key);
+      return base(key, input);
     };
 
     const outcome = await Promise.race([
@@ -1500,14 +1513,14 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
 
   it('archives a stored object of an undeclared type as .bin, and still counts it as held', async () => {
     const base = mockGetObject;
-    mockGetObject = async (key) =>
+    mockGetObject = async (key, input) =>
       key === 'key-seven'
         ? {
             Body: { transformToByteArray: async () => new Uint8Array(stored) },
             ContentType: 'application/hta',
             ContentLength: stored.length,
           }
-        : base(key);
+        : base(key, input);
 
     await archiveCsamDataForReport({ ...report, images: [{ id: 7 }] } as never);
     const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
@@ -1701,8 +1714,8 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     };
     const base = mockGetObject;
     let sevenReads = 0;
-    mockGetObject = async (key) => {
-      if (key !== 'key-seven') return base(key);
+    mockGetObject = async (key, input) => {
+      if (key !== 'key-seven') return base(key, input);
       sevenReads += 1;
       const resetAfter = sevenReads === 1 ? 12 : undefined;
       return {
@@ -1739,29 +1752,33 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     expect(JSON.stringify(retried)).not.toContain('key-seven');
   });
 
-  it('reads a large stored object in ranged parts, and archives it whole and once when a part resets', async () => {
-    // Every whole-object read resets partway, as a long single GET from storage did. Sized over
-    // the spool threshold (this file may not import csam-original-image for its constants).
-    const video = Buffer.alloc(48 * 1024 * 1024 + 4321);
-    for (let i = 0; i + 4 <= video.length; i += 4) video.writeUInt32BE(i, i);
-    const resettingBody = (bytes: Buffer, resetAfter?: number) => ({
-      transformToByteArray: async () => {
-        const body = new Readable({ read: () => undefined });
-        if (resetAfter === undefined) {
-          body.push(bytes);
-          body.push(null);
-        } else {
-          body.push(bytes.subarray(0, resetAfter));
-          setImmediate(() =>
-            body.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }))
-          );
-        }
-        const chunks: Buffer[] = [];
-        for await (const chunk of body) chunks.push(chunk as Buffer);
-        return new Uint8Array(Buffer.concat(chunks));
-      },
-      destroy: () => undefined,
-    });
+  // Over the spool threshold (this file may not import csam-original-image for its constants).
+  const video = Buffer.alloc(48 * 1024 * 1024 + 4321);
+  for (let i = 0; i + 4 <= video.length; i += 4) video.writeUInt32BE(i, i);
+  const resettingBody = (bytes: Buffer, resetAfter?: number) => ({
+    transformToByteArray: async () => {
+      const body = new Readable({ read: () => undefined });
+      if (resetAfter === undefined) {
+        body.push(bytes);
+        body.push(null);
+      } else {
+        body.push(bytes.subarray(0, resetAfter));
+        setImmediate(() =>
+          body.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }))
+        );
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) chunks.push(chunk as Buffer);
+      return new Uint8Array(Buffer.concat(chunks));
+    },
+    destroy: () => undefined,
+  });
+  /**
+   * Stores `video` under key-seven. Every whole-object read resets partway, as a long single GET
+   * from storage did; `resetAfter` decides where a ranged part resets, if it does. Returns the
+   * ranges requested.
+   */
+  function storeLargeSeven(resetAfter: (start: number, firstTry: boolean) => number | undefined) {
     const base = mockGetObject;
     const ranges: string[] = [];
     mockGetObject = async (key, input) => {
@@ -1777,13 +1794,17 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
       const firstTry = !ranges.includes(input.Range);
       ranges.push(input.Range);
       return {
-        Body: resettingBody(
-          video.subarray(start, end + 1),
-          start === 0 && firstTry ? 512 : undefined
-        ),
+        Body: resettingBody(video.subarray(start, end + 1), resetAfter(start, firstTry)),
         ContentRange: `bytes ${start}-${end}/${video.length}`,
       };
     };
+    return ranges;
+  }
+
+  it('reads a large stored object in ranged parts, and archives it whole and once when a part resets', async () => {
+    const ranges = storeLargeSeven((start, firstTry) =>
+      start === 0 && firstTry ? 512 : undefined
+    );
 
     const zip = await archivedZip();
 
@@ -1813,6 +1834,21 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
     expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
     expect(JSON.stringify(lines)).not.toContain('key-seven');
+  });
+
+  it('fails the pass, archiving no images, when a part of a large object keeps resetting', async () => {
+    storeLargeSeven((start) => (start > 0 ? 512 : undefined));
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('aborted');
+
+    expect(uploads.has('images.zip')).toBe(false);
+    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    expect(lines.find((p) => p.subType === 'archive-image-read')).toMatchObject({
+      imageId: 7,
+      attempts: 3,
+      retried: true,
+    });
   });
 });
 

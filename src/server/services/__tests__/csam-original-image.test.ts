@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { S3Client } from '@aws-sdk/client-s3';
+import type * as FsPromises from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   extensionForContentType,
@@ -14,6 +15,24 @@ import {
   SPOOL_THRESHOLD_BYTES,
   spoolOriginalImage,
 } from '~/server/services/csam-original-image';
+
+// Set to cap how many bytes each spool write call may write, as a full disk does.
+const shortWrites = vi.hoisted(() => ({ limit: undefined as number | undefined }));
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  const open: typeof actual.open = async (...args) => {
+    const handle = await actual.open(...args);
+    const write = handle.write.bind(handle) as (...a: unknown[]) => ReturnType<typeof handle.write>;
+    const limit = shortWrites.limit;
+    if (limit !== undefined)
+      Object.assign(handle, {
+        write: (buffer: Buffer, offset = 0, length = buffer.length - offset) =>
+          write(buffer, offset, Math.min(length, limit)),
+      });
+    return handle;
+  };
+  return { ...actual, open, default: { ...actual, open } };
+});
 
 const BUCKET = 'test-images';
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
@@ -96,6 +115,26 @@ describe('readOriginalImage', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     // Only a socket failure is retried.
     expect(s3.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a read cut off by its own timeout, which surfaces as a reset', async () => {
+    const timeouts: AbortController[] = [];
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+      const controller = new AbortController();
+      timeouts.push(controller);
+      return controller.signal;
+    });
+    try {
+      const { s3, backend } = backendReturning(async () => {
+        timeouts.at(-1)!.abort();
+        throw Object.assign(new Error('aborted'), { code: 'ECONNRESET' });
+      });
+
+      await expect(readOriginalImage(image, { backend })).rejects.toThrow('aborted');
+      expect(s3.send).toHaveBeenCalledTimes(1);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('reports missing when the edge has no copy, and never stores an edge error body', async () => {
@@ -416,8 +455,10 @@ describe('spoolOriginalImage', () => {
       index === 0 && attempt === 1 ? reset() : undefined
     );
     const onRetry = vi.fn();
+    const release = vi.fn();
+    const reserve = vi.fn(async () => release);
 
-    const read = await spoolOriginalImage(image, { backend, spoolDir, onRetry });
+    const read = await spoolOriginalImage(image, { backend, spoolDir, onRetry, reserve });
 
     if (!('path' in read)) throw new Error('expected a spooled read');
     expect(read).toMatchObject({
@@ -436,10 +477,43 @@ describe('spoolOriginalImage', () => {
       `bytes=${3 * RANGE_PART_BYTES}-${large.length - 1}`,
     ]);
     expect(ranged.every((input) => input.IfMatch === ETAG)).toBe(true);
+    expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onRetry).toHaveBeenCalledWith(1);
+    expect(reserve).toHaveBeenCalledWith(large.length);
+    expect(spooled()).toHaveLength(1);
+    expect(release).not.toHaveBeenCalled();
 
     read.release();
+    read.release();
     expect(spooled()).toEqual([]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a large object whose response names no version, before reading any part', async () => {
+    const { s3, backend } = largeStore(large);
+    const send = s3.send.getMockImplementation()!;
+    s3.send.mockImplementation(async (command) => {
+      const response = (await send(command)) as Record<string, unknown>;
+      return { ...response, ETag: undefined };
+    });
+
+    await expect(spoolOriginalImage(image, { backend, spoolDir })).rejects.toThrow(/no ETag/);
+    expect(s3.send).toHaveBeenCalledTimes(1);
+    expect(spooled()).toEqual([]);
+  });
+
+  it('writes a whole part when a write call writes less than it was given', async () => {
+    const { backend } = largeStore(large);
+    shortWrites.limit = 3 * 1024 * 1024 + 7;
+    try {
+      const read = await spoolOriginalImage(image, { backend, spoolDir });
+
+      if (!('path' in read)) throw new Error('expected a spooled read');
+      expect(sha256(readFileSync(read.path))).toBe(sha256(large));
+      read.release();
+    } finally {
+      shortWrites.limit = undefined;
+    }
   });
 
   it('keeps the single in-memory read for an object at or under the threshold', async () => {
@@ -502,7 +576,7 @@ describe('spoolOriginalImage', () => {
   });
 
   it('gives up on a part that keeps resetting, removes the file and returns the reservation', async () => {
-    const { backend } = largeStore(large, (index) => (index === 1 ? reset() : undefined));
+    const { backend, inputs } = largeStore(large, (index) => (index === 1 ? reset() : undefined));
     const release = vi.fn();
     const reserve = vi.fn(async () => release);
 
@@ -511,6 +585,9 @@ describe('spoolOriginalImage', () => {
     });
     expect(reserve).toHaveBeenCalledWith(large.length);
     expect(release).toHaveBeenCalled();
+    expect(
+      inputs.filter((input) => input.Range?.startsWith(`bytes=${RANGE_PART_BYTES}-`))
+    ).toHaveLength(3);
     expect(spooled()).toEqual([]);
   });
 });

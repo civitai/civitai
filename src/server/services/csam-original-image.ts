@@ -197,7 +197,6 @@ const STORED_READ_RETRY_DELAY_MS = 250;
 export const SPOOL_THRESHOLD_BYTES = 32 * 1024 * 1024;
 export const RANGE_PART_BYTES = 16 * 1024 * 1024;
 
-// Not a timeout: that has already waited the whole read window.
 const SOCKET_FAILURE_CODES = new Set(['ECONNRESET', 'EPIPE', 'ETIMEDOUT']);
 const isSocketFailure = (e: unknown) =>
   SOCKET_FAILURE_CODES.has((e as { code?: unknown } | undefined)?.code as string);
@@ -206,13 +205,23 @@ type Reserve = (bytes: number) => Promise<() => void>;
 type OnRetry = (failedAttempt: number) => void;
 const noReservation = () => undefined;
 
-/** Retries a socket failure with a fresh request, never a resume. */
-async function withSocketRetry<T>(read: () => Promise<T>, onRetry?: OnRetry): Promise<T> {
+/**
+ * Retries a socket failure with a fresh request, never a resume. Each attempt gets the read timeout,
+ * cut short by `deadline` if given.
+ */
+async function withSocketRetry<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  onRetry?: OnRetry,
+  deadline?: AbortSignal
+): Promise<T> {
   for (let attempt = 1; ; attempt++) {
+    const timeout = AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+    const signal = deadline ? AbortSignal.any([deadline, timeout]) : timeout;
     try {
-      return await read();
+      return await read(signal);
     } catch (e) {
-      if (attempt >= STORED_READ_ATTEMPTS || !isSocketFailure(e)) throw e;
+      // A timeout surfaces as the same reset, after the whole window: not retried.
+      if (signal.aborted || attempt >= STORED_READ_ATTEMPTS || !isSocketFailure(e)) throw e;
       onRetry?.(attempt);
       await new Promise((resolve) => setTimeout(resolve, STORED_READ_RETRY_DELAY_MS * attempt));
     }
@@ -232,12 +241,13 @@ async function readStoredObject(
   { s3, bucket }: ImageBackend,
   image: ImageInput,
   reserve: Reserve | undefined,
-  spoolDir: string | undefined
+  spoolDir: string | undefined,
+  abortSignal: AbortSignal
 ): Promise<OriginalImageRead | LargeStoredObject | undefined> {
   let response;
   try {
     response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
-      abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
+      abortSignal,
     });
   } catch (e) {
     if (isMissingObject(e)) return undefined;
@@ -284,7 +294,8 @@ async function readRange(
   key: string,
   { etag, size }: LargeStoredObject,
   start: number,
-  end: number
+  end: number,
+  abortSignal: AbortSignal
 ) {
   const response = await s3.send(
     new GetObjectCommand({
@@ -293,7 +304,7 @@ async function readRange(
       Range: `bytes=${start}-${end}`,
       IfMatch: etag,
     }),
-    { abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS) }
+    { abortSignal }
   );
   const body = response.Body;
   if (!body) throw new Error('original image part has no body');
@@ -326,23 +337,31 @@ async function spoolStoredObject(
     await mkdir(large.spoolDir, { recursive: true });
     path = join(large.spoolDir, `${randomUUID()}.part`);
     const hash = createHash('sha256');
-    let total = 0;
+    // The whole object gets the window one whole-object read had.
+    const deadline = AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+    let written = 0;
     const file = await open(path, 'wx');
     try {
       for (let start = 0; start < large.size; start += RANGE_PART_BYTES) {
         const end = Math.min(start + RANGE_PART_BYTES, large.size) - 1;
         const part = await withSocketRetry(
-          () => readRange(storage, image.url, large, start, end),
-          onRetry
+          (signal) => readRange(storage, image.url, large, start, end, signal),
+          onRetry,
+          deadline
         );
         hash.update(part);
-        await file.write(part);
-        total += part.length;
+        // A write can return having written less, with no error (a full disk does).
+        for (let offset = 0; offset < part.length; ) {
+          const { bytesWritten } = await file.write(part, offset, part.length - offset);
+          if (bytesWritten === 0) throw new Error('spooled original image write made no progress');
+          offset += bytesWritten;
+          written += bytesWritten;
+        }
       }
     } finally {
       await file.close();
     }
-    if (total !== large.size) throw new Error('spooled original image has the wrong size');
+    if (written !== large.size) throw new Error('spooled original image has the wrong size');
 
     const spooled = path;
     let released = false;
@@ -388,7 +407,7 @@ async function readOriginal(
   if (!passthrough) {
     const storage = backend ?? (await getImageUploadBackend());
     const stored = await withSocketRetry(
-      () => readStoredObject(storage, image, reserve, spoolDir),
+      (signal) => readStoredObject(storage, image, reserve, spoolDir, signal),
       onRetry
     );
     if (stored && 'large' in stored)
