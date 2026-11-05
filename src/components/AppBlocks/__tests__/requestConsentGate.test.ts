@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
+  type ConsentNoticeDismissal,
   type HostConsentNoticeInput,
 } from '../requestConsentGate';
 import { BLOCK_HOST_LOCAL_PREVIEW_STORAGE, type BlockHostSurface } from '../blockInitFragmentGate';
@@ -447,6 +452,139 @@ describe('resolveHostConsentNotice (the host-side missing-permissions backstop)'
         );
       }
     }
+  });
+});
+
+describe('resolveConsentNoticeAfterRefusal (a refusal brings a dismissed notice back)', () => {
+  // Two missing scopes and one that is neither missing nor granted, so "it revived on
+  // the refused scope" is a reading, not an echo of the only value in play.
+  const APP = 'apb_tipper';
+  const OTHER_APP = 'apb_other';
+  const MISSING = ['social:tip:self', 'social:react:self'];
+  const UNGRANTABLE = 'apps:storage:read';
+
+  /** Would the host render the notice for `state` and `app`? Read through the REAL show rule. */
+  const shows = (state: { dismissedFor: string | null }, app = APP) =>
+    resolveHostConsentNotice({
+      status: 'ready',
+      needsConsent: true,
+      missingScopes: MISSING,
+      dismissedFor: state.dismissedFor,
+      appBlockId: app,
+    }) != null;
+
+  const refuse = (
+    state: ConsentNoticeDismissal,
+    app = APP,
+    refusedScopes: string[] = ['social:react:self']
+  ) =>
+    resolveConsentNoticeAfterRefusal(state, {
+      appBlockId: app,
+      refusedScopes,
+      missingScopes: MISSING,
+    });
+
+  it('dismissed, then a refusal for a MISSING scope: the notice shows again, highlighted', () => {
+    const dismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP);
+    expect(shows(dismissed)).toBe(false); // the control: dismissing hides it
+    const next = refuse(dismissed);
+    expect(next.dismissedFor).toBeNull();
+    expect(next.revived).toBe(true);
+    expect(shows(next)).toBe(true);
+  });
+
+  it('one missing scope among others in the refusal is enough', () => {
+    const next = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP), APP, [
+      UNGRANTABLE,
+      'social:tip:self',
+    ]);
+    expect(shows(next)).toBe(true);
+    expect(next.revived).toBe(true);
+  });
+
+  it('🔴 ONE revival per mount: dismissed again after a revival, further refusals do NOT bring it back', () => {
+    // An app can send the refused request whenever it likes, with no user gesture. If
+    // every refusal revived the notice, the viewer could never get rid of it — and it
+    // would become a way to pressure them into a sensitive grant.
+    const revived = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP));
+    expect(shows(revived)).toBe(true); // the control: the first revival happened
+    const dismissedAgain = dismissConsentNotice(revived, APP);
+    expect(shows(dismissedAgain)).toBe(false);
+    let state = dismissedAgain;
+    for (let i = 0; i < 3; i++) {
+      state = refuse(state);
+      expect(state, `refusal #${i + 1} after the second dismissal`).toBe(dismissedAgain);
+    }
+    expect(shows(state)).toBe(false);
+  });
+
+  it("the one-revival cap is per app: one app's spent revival does not block another's", () => {
+    // App A revives and is dismissed again (its revival is spent)…
+    const aSpent = dismissConsentNotice(
+      refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP)),
+      APP
+    );
+    expect(shows(refuse(aSpent))).toBe(false);
+    // …then the same host mount moves to app B, which is dismissed and refused once.
+    const bRevived = refuse(dismissConsentNotice(aSpent, OTHER_APP), OTHER_APP);
+    expect(shows(bRevived, OTHER_APP)).toBe(true);
+    // And back on A, A's spent revival still holds.
+    expect(shows(refuse(dismissConsentNotice(bRevived, APP)))).toBe(false);
+  });
+
+  it('dismissed, then a refusal for an UN-GRANTABLE scope: stays dismissed (the toast path owns it)', () => {
+    const dismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP);
+    const next = refuse(dismissed, APP, [UNGRANTABLE]);
+    expect(next).toBe(dismissed);
+    expect(shows(next)).toBe(false);
+  });
+
+  it('a refusal BEFORE any dismissal changes nothing — and returns the same object', () => {
+    const next = refuse(CONSENT_NOTICE_NOT_DISMISSED, APP, ['social:tip:self']);
+    // Same reference, so a React updater returning it does not re-render, and no
+    // highlight is switched on for a notice that never went away.
+    expect(next).toBe(CONSENT_NOTICE_NOT_DISMISSED);
+    expect(next.revived).toBe(false);
+  });
+
+  it("another app's dismissal is left alone", () => {
+    const otherDismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, OTHER_APP);
+    const next = refuse(otherDismissed, APP, ['social:tip:self']);
+    expect(next).toBe(otherDismissed);
+    expect(next.dismissedFor).toBe(OTHER_APP);
+  });
+
+  it('no missing set (legacy mint) or nothing refused: stays dismissed', () => {
+    const dismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP);
+    for (const input of [
+      { refusedScopes: ['social:tip:self'], missingScopes: undefined },
+      { refusedScopes: [], missingScopes: MISSING },
+    ]) {
+      expect(resolveConsentNoticeAfterRefusal(dismissed, { appBlockId: APP, ...input })).toBe(
+        dismissed
+      );
+    }
+  });
+
+  it('dismissing clears the highlight', () => {
+    const revived = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP));
+    expect(dismissConsentNotice(revived, APP).revived).toBe(false);
+    expect(CONSENT_NOTICE_NOT_DISMISSED.dismissedFor).toBeNull();
+    expect(CONSENT_NOTICE_NOT_DISMISSED.revived).toBe(false);
+  });
+
+  it('🟢 the flash is one-shot: once it has played the highlight is cleared, and nothing else changes', () => {
+    const revived = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP));
+    const played = consentNoticeHighlightPlayed(revived);
+    expect(played.revived).toBe(false);
+    expect(played.dismissedFor).toBeNull();
+    expect(shows(played)).toBe(true);
+    // The cap is not reset by it: a later dismissal still sticks.
+    expect(refuse(dismissConsentNotice(played, APP)).dismissedFor).toBe(APP);
+    // With nothing to clear it returns the same object (no re-render).
+    expect(consentNoticeHighlightPlayed(CONSENT_NOTICE_NOT_DISMISSED)).toBe(
+      CONSENT_NOTICE_NOT_DISMISSED
+    );
   });
 });
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PlacementEscrow from '~/server/services/placement-escrow.service';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
@@ -17,6 +18,12 @@ const assertCanContinueStoryline = vi.fn();
 // The free tier's display count (`getFreePlacementAllowance`, `hasUsedFreePlacementOn`), a Kysely
 // read. It answers from the same table the fakes below write (`givenTable`).
 const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: vi.fn(async () => undefined),
+}));
 vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),

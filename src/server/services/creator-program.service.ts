@@ -43,6 +43,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { getHighestPaidTierSubscription } from '~/server/services/subscriptions.service';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { assertNoPayoutHold } from '~/server/services/creator-program-prepayout-review/hold';
 import {
   bustFetchThroughCache,
   clearCacheByPattern,
@@ -899,6 +900,7 @@ export async function withdrawCash(userId: number, amount: number) {
   if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
     throw throwBadRequestError('User is banned from the Creator Program');
   }
+  await assertNoPayoutHold(userId);
 
   const cash = await getCash(userId);
   if (cash.status === 'pending') throw new Error('Payment setup is pending');

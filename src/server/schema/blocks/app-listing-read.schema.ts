@@ -235,6 +235,18 @@ export type ListingCard = {
    */
   isBeta: boolean;
   /**
+   * MODERATOR-SET "Official" flag: the app is made by the Civitai team. Renders a badge.
+   * A provenance claim no author input can set (`app-listing-official.service.ts`).
+   *
+   * Every server projection emits it (`false` also while the manual-apply migration is
+   * outstanding). Optional in the TYPE only so hand-built fixtures and the client-side review
+   * preview need not name it; absent reads as not official.
+   *
+   * Not served by the public REST `GET /api/v1/apps` — its handler strips it, because adding a
+   * field changes a hand-documented contract (`withoutUndocumentedRestFields`).
+   */
+  isOfficial?: boolean;
+  /**
    * Play count from the `AppListingMetric` rollup (`open_count`) — how many times
    * the app was OPENED — or `null` when the number is structurally unmeasurable.
    *
@@ -359,6 +371,19 @@ export function withoutViewerScopedFields<T extends { restrictedAudience: unknow
   dto: T
 ): Omit<T, 'restrictedAudience'> {
   const { restrictedAudience: _viewerScoped, ...rest } = dto;
+  return rest;
+}
+
+/**
+ * The store DTO exactly as the public REST `GET /api/v1/apps` and `/api/v1/apps/{slug}` serve
+ * it: {@link withoutViewerScopedFields}, and without `isOfficial`, which the tRPC store renders
+ * but the hand-documented REST contract does not list. Adding it there is a contract change
+ * that needs its docs page updated in the same piece of work, so it stays out until then.
+ */
+export function withoutUndocumentedRestFields<
+  T extends { restrictedAudience: unknown; isOfficial?: boolean }
+>(dto: T): Omit<T, 'restrictedAudience' | 'isOfficial'> {
+  const { restrictedAudience: _viewerScoped, isOfficial: _undocumented, ...rest } = dto;
   return rest;
 }
 
@@ -598,6 +623,9 @@ export type ListingDetail = {
    * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   isBeta: boolean;
+  /** Same moderator-set flag as `ListingCard.isOfficial`, for the page header badge. Stripped
+   *  from the public REST `GET /api/v1/apps/{slug}` response, like the card's. */
+  isOfficial?: boolean;
   /**
    * The author's optional short beta note (≤`BETA_MESSAGE_MAX`), or null.
    *

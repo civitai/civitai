@@ -124,8 +124,7 @@ export function CollectionContextMenu({
           });
 
           // Cache for getAllUser is already updated optimistically in onMutate,
-          // so /collections's auto-redirect will pick a non-deleted collection
-          // (or fall through to the landing view if none remain).
+          // so the list /collections shows no longer includes the deleted one.
           if (onDeletedCollectionPage) {
             await router.replace('/collections');
           }

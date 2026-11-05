@@ -39,19 +39,34 @@ export type ListingPermission = {
 
 /**
  * On-site block scope ids → rows. A scope with no plain title falls back to its description,
- * then to the id, so a new scope is never silently dropped from the disclosure.
+ * then to a humanised form of the id, so a new scope is never silently dropped from the
+ * disclosure and a viewer never reads a raw id.
  */
 export function blockScopePermissions(scopes: string[]): ListingPermission[] {
   return scopes.map((scope) => {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
     return {
       id: scope,
-      title: SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? scope,
+      title: SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? humaniseScopeId(scope),
       detail: SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined,
       sensitive: isSensitiveBlockScope(scope),
       rank: typeof bit === 'number' ? bit : Number.POSITIVE_INFINITY,
     };
   });
+}
+
+/** The plain-language name a viewer reads for one block scope. */
+export function blockScopeTitle(scope: string): string {
+  return blockScopePermissions([scope])[0].title;
+}
+
+/** `apps:storage:shared_write` → "Apps storage shared write". */
+function humaniseScopeId(scope: string): string {
+  const words = scope
+    .split(/[:_-]+/)
+    .filter(Boolean)
+    .join(' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
@@ -91,4 +106,36 @@ export function groupListingPermissions(permissions: ListingPermission[]): {
     sensitive: ordered.filter((p) => p.sensitive),
     other: ordered.filter((p) => !p.sensitive),
   };
+}
+
+/**
+ * {@link groupListingPermissions} for a list of block scope ids, returning the ids. For renderers
+ * that draw their own rows (`BlockScopeList`, the moderator manifest review) but must group and
+ * order exactly like the store listing. Every id comes back in exactly one group: a scope this
+ * build does not know is not sensitive, so it lands last in `other`.
+ */
+export function groupBlockScopes(scopes: string[]): { sensitive: string[]; other: string[] } {
+  const { sensitive, other } = groupListingPermissions(blockScopePermissions(scopes));
+  return { sensitive: sensitive.map((p) => p.id), other: other.map((p) => p.id) };
+}
+
+export const PERMISSION_GROUP_LABELS = {
+  sensitive: 'Sensitive permissions',
+  other: 'Other permissions',
+} as const;
+
+export type PermissionGroup = {
+  key: keyof typeof PERMISSION_GROUP_LABELS;
+  label: string;
+  scopes: string[];
+};
+
+/** {@link groupBlockScopes} as the ordered, non-empty groups a renderer draws, with labels. */
+export function blockScopeGroups(scopes: string[]): PermissionGroup[] {
+  const { sensitive, other } = groupBlockScopes(scopes);
+  const groups: PermissionGroup[] = [
+    { key: 'sensitive', label: PERMISSION_GROUP_LABELS.sensitive, scopes: sensitive },
+    { key: 'other', label: PERMISSION_GROUP_LABELS.other, scopes: other },
+  ];
+  return groups.filter((g) => g.scopes.length > 0);
 }

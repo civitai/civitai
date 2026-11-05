@@ -154,10 +154,6 @@ export async function getCreatorAnnouncements({
       // other one. Without this the profile shows both, which is a browsing-boundary
       // leak rather than a double-render.
       ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      // The shared live window, as a member of a literal `AND` key rather than spread: the
-      // helper carries its own `AND`, and a spread followed by another `AND` here would
-      // silently drop the window. As a literal key, a second `AND` is TS1117 and does not
-      // compile. `includeHidden` gets the empty conjunction, which Prisma treats as no filter.
       AND: includeHidden ? [] : [activeAnnouncementWhere(now)],
     },
     select: creatorAnnouncementSelect,
@@ -235,10 +231,6 @@ const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
         ...(domainKey !== ANY_DOMAIN
           ? { domain: { hasSome: [DomainColor.all, domainKey as DomainColor] } }
           : {}),
-        // The shared "is this announcement showing" window (enabled, open-ended start and end),
-        // widened: one TTL back past `endsAt`, two ahead past `startsAt`. The feed query uses
-        // the same helper at its exact `now`, so the set is a superset of it by construction.
-        // An AND member, never spread: see `followedAnnouncementsWhere`.
         AND: [
           announcementWindowOverlapsWhere(
             new Date(now - LIVE_AUTHORS_LOOKBACK_MS),
@@ -349,10 +341,7 @@ function followedAnnouncementsWhere({
       ],
     },
     ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-    // The shared live window — the same helper the live-author set widens, so the set stays a
-    // superset of this query by construction. An AND member, never spread: the helper carries
-    // its own `AND` key, and a spread followed by another `AND` here would silently drop the
-    // window. As a literal key, a second `AND` is TS1117 and does not compile.
+    // The same helper the live-author set widens, so that set stays a superset of this query.
     AND: [activeAnnouncementWhere(now)],
   } satisfies Prisma.AnnouncementWhereInput;
 }

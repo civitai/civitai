@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
-// Off, so `getPlacementConfig`'s own KeyValue read (`kysely-hot-reads-5`) stays on its Prisma mock.
+// Any flag read on these paths answers false, without a Flipt client.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -13,6 +14,13 @@ vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
   const actual = await importOriginal<typeof PlacementQueries>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
+// `getPlacementConfig`'s KeyValue read: no stored row, so the compiled defaults apply. Its rows,
+// against a real database, are pinned in hot-reads-5.kysely-parity.test.ts.
+const { getKeyValue } = vi.hoisted(() => ({ getKeyValue: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue,
+}));
 
 import * as queries from '@civitai/db-queries/placement';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
@@ -124,6 +132,7 @@ beforeEach(() => {
   resetSharedMocks();
   for (const fn of kyselyReads()) fn.mockReset();
   flag.mockReset().mockResolvedValue(false);
+  getKeyValue.mockReset().mockResolvedValue(undefined);
 });
 
 it('control: the read/write identity checks below can tell the two Kysely clients apart', () => {
@@ -134,11 +143,12 @@ describe('resolvePlacementSpaceFor', () => {
   const imageSpace = () =>
     resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: IMAGE });
 
-  it('invariant: no placement flag check remains; every evaluation is `getPlacementConfig`s, by key alone', async () => {
+  it('the config is read through Kysely on the replica', async () => {
     givenRows();
     await imageSpace();
-    expect(flag).toHaveBeenCalledWith('kysely-hot-reads-5');
-    for (const call of flag.mock.calls) expect(call).toEqual(['kysely-hot-reads-5']);
+    expect(getKeyValue.mock.calls).toEqual([[kyselyRead, 'placement:config']]);
+    expect(getKeyValue.mock.calls[0][0]).toBe(kyselyRead);
+    expect(dbMock.dbRead.keyValue.findUnique).not.toHaveBeenCalled();
   });
 
   it('resolves an image space through Kysely only, each read on its own database', async () => {
@@ -333,7 +343,6 @@ describe('getPendingPlacementCounts', () => {
     expect(q.countPendingPlacementsBySurface.mock.calls[0]).toEqual([kyselyRead, OWNER]);
     expect(q.countPendingPlacementsBySurface.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.placement.groupBy).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a surface with no pending rows reads 0', async () => {

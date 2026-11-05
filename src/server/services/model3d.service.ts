@@ -4,11 +4,7 @@ import { newTagNames } from '~/server/services/new-tag-names';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readPostModel3dViaKysely,
-  readPostModel3dViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readPostModel3dViaKysely } from '~/server/services/hot-reads-5.reads';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
@@ -1253,9 +1249,7 @@ export const getVisibleModel3DIdForPost = async ({
   userId?: number;
   isModerator?: boolean;
 }): Promise<number | null> => {
-  const post = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-    ? await readPostModel3dViaKysely((await loadKyselyDb()).kyselyRead, postId)
-    : await readPostModel3dViaPrisma(dbRead, postId);
+  const post = await readPostModel3dViaKysely((await loadKyselyDb()).kyselyRead, postId);
   const model3d = post?.model3d;
   if (!model3d) return null;
   if (

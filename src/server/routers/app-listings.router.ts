@@ -66,6 +66,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -2243,6 +2244,30 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD mark / unmark a listing Official ("made by the Civitai team") — the badge on its store
+   * card and page. `moderatorProcedure` + the inner `isModerator` recheck, like `delistListing`;
+   * the acting moderator is bound to `ctx.user.id`. A listing's OWNER has no path to this flag:
+   * it is not a key of any author input schema, and the column is absent from the Prisma client
+   * every author write goes through. One `set-official` moderation event per change, written in
+   * the same transaction as the flag.
+   */
+  setListingOfficial: moderatorProcedure
+    .input(setListingOfficialSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Marking apps as Official is restricted to civitai team');
+      }
+      const { setListingOfficialAsModerator } = await import(
+        '~/server/services/blocks/app-listing-official.service'
+      );
+      return setListingOfficialAsModerator({
+        appListingId: input.appListingId,
+        isOfficial: input.isOfficial,
+        moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /**
    * The PUBLISHED forks of one listing — "N forks" and a paged list on its store page.
    *
    * Behind the `app-blocks-fork` rollout flag: off (or absent, or Flipt down) → `null`, and the
@@ -2268,12 +2293,14 @@ export const appListingsRouter = router({
       const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
       if (scope === 'none') return null;
       const redCapable = isRedCapableRequest(ctx);
+      // An R/X parent or fork is visible only to a viewer whose browsing level includes it.
+      const viewerBrowsingLevel = getRequestBrowsingLevel(ctx);
       const { getStoreVisibleListingSummary } = await import(
         '~/server/services/blocks/app-listing.service'
       );
       const parent = await getStoreVisibleListingSummary(
         { id: input.listingId },
-        { redCapable, scope, floor }
+        { redCapable, scope, floor, viewerBrowsingLevel }
       );
       if (!parent) return null;
       const [{ listListingForks }, { dbRead }] = await Promise.all([
@@ -2287,6 +2314,7 @@ export const appListingsRouter = router({
         scope,
         floor,
         redCapable,
+        viewerBrowsingLevel,
       });
     }),
 
@@ -2308,6 +2336,9 @@ export const appListingsRouter = router({
         listingId: input.listingId,
         scope,
         redCapable: isRedCapableRequest(ctx),
+        // Any signed-in viewer may fork a publicly visible listing, so "visible" includes their
+        // own browsing level for an R/X parent.
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
         req: ctx.req,
       });
     }),
@@ -2353,6 +2384,36 @@ export const appListingsRouter = router({
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  /**
+   * Why `getAppDetail` 404'd, when the ONLY reason is the viewer's browsing level: an R/X app
+   * whose rating their level leaves out. Returns `{ contentRating }` (nothing else of the app) so
+   * the detail page can show a hidden state that explains it; `null` otherwise, and the page
+   * shows its ordinary NotFound. Same gates and rate limit as `getAppDetail`.
+   */
+  getAppHiddenState: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') return null;
+      const { getListingHiddenByBrowsingLevel } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingHiddenByBrowsingLevel(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
     }),
 
   getAppCard: publicProcedure

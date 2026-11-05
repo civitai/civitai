@@ -38,6 +38,7 @@ import {
   LISTING_CARD_TITLE_LINE_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
+import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
@@ -479,7 +480,7 @@ export function AppListingCard({
             grows a second line. "Beta" never shrinks (short, and the whole signal); the long
             badges shrink (`flexShrink: 1` + `minWidth: 0`), and their Tooltip carries the full
             text. Rendered only when at least one badge is. */}
-        {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
+        {(card.isOfficial || card.isBeta || showOwnerIncomplete || visibilityBadge) && (
           <Group
             gap={4}
             wrap="nowrap"
@@ -489,6 +490,8 @@ export function AppListingCard({
             {/* AUTHOR-DECLARED beta label: PUBLIC (the `Incomplete` badge is owner-only), and no
                 tooltip because the card DTO carries no `betaMessage`. `card.isBeta` is `false`
                 both for "not in beta" and while the manual-apply migration is outstanding. */}
+            {/* MODERATOR-SET provenance marker ("made by Civitai"); never author-controlled. */}
+            {card.isOfficial && <AppListingOfficialBadge size="xs" />}
             {card.isBeta && (
               <Badge
                 color="violet"

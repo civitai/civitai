@@ -76,19 +76,20 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   Model3D, dismissed announcement ids, a post's collaborators, a home block, the unclaimed prize
   count, a model's version ids, a user's model reviews, the download path's model version, the image
   reads of `reaction.toggle`, a model's `meta`), two of them joining what
-  Prisma read in two queries. They are served behind the default-off server Flipt flag
-  `kysely-hot-reads-5` and read base tables only. Parity is pinned by
-  `<civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts`, on the same Postgres
-  service, with the same no-view check.
+  Prisma read in two queries. They replaced the Prisma reads, each on the database the Prisma read
+  used, and read base tables only.
+  `<civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts` pins them to the values
+  the Prisma reads returned (and compares live with the three Prisma reads that still serve a path),
+  on the same Postgres service, with the same no-view check.
 
   `hot-reads-6.db.ts` holds more high-volume lookups (a model version's owner and a post's detail
   row, each with the user's cosmetics; a model's POI/owner check; user lookups by username; the
   public donation goals cache's reads; a user's version engagements and recommended reviews; a
   model's associated resources; the public API's metric-privacy inputs; the download path's file
-  list). They are served behind the default-off server Flipt flag `kysely-hot-reads-6` and read
-  base tables only. Parity is pinned by
-  `<civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts`, on the same Postgres
-  service, with the same no-view check.
+  list). They replaced the Prisma reads, each on the database the Prisma read used, and read base
+  tables only. `<civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts` pins them
+  to the values the Prisma reads returned (and compares live with the Prisma reads that still serve
+  a fallback or the primary), on the same Postgres service, with the same no-view check.
 
   `hot-reads-7.db.ts` holds three feed-path lookups (the .com titles of a set of models; a set of
   posts' model versions; a user's held items counted by definition, for one definition type and set

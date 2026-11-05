@@ -13,6 +13,10 @@ const { revokeTokens, refreshSession, invalidateSession, clearSessionCache } = v
   invalidateSession: vi.fn(async (_userId: number, _caller?: unknown) => undefined),
 }));
 vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache }));
+// A mute calls the orchestrator to cancel the account's generations; never from a test.
+vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
+  cancelPendingWorkflows: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
   refreshSession,
