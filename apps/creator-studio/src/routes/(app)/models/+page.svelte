@@ -63,7 +63,7 @@
     IconChevronRight,
     IconExternalLink,
   } from '@tabler/icons-svelte';
-  import { modelUrl } from '$lib/model-url';
+  import { modelUrl, siteModelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
   import type { ModelsView } from '$lib/server/models-view';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
@@ -157,6 +157,13 @@
     { value: 'draft', label: 'Drafts only' },
     { value: 'all', label: 'All statuses' },
   ];
+  const SITES = ['com', 'red'] as const;
+  const siteOptions = [
+    { value: '', label: 'Any site' },
+    { value: 'both', label: 'On both sites' },
+    { value: 'com', label: 'Only on civitai.com' },
+    { value: 'red', label: 'Only on civitai.red' },
+  ];
   const feeOptions = [
     { value: '', label: 'All fees' },
     { value: 'set', label: 'Has a fee' },
@@ -168,7 +175,8 @@
       (view.query.bm ? 1 : 0) +
       (view.query.mt ? 1 : 0) +
       (view.query.access ? 1 : 0) +
-      (view.query.fee ? 1 : 0)
+      (view.query.fee ? 1 : 0) +
+      (view.query.site ? 1 : 0)
   );
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
@@ -419,6 +427,7 @@
       !!view.query.mt ||
       !!view.query.usage ||
       !!view.query.status ||
+      !!view.query.site ||
       view.query.access
   );
 
@@ -714,13 +723,38 @@
           {/each}
         </RadioGroup>
       </fieldset>
+      <fieldset>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2"
+          >Listed on</legend
+        >
+        <RadioGroup
+          value={view.query.site ?? ''}
+          onValueChange={(v) => navigate({ site: v || null, page: null })}
+        >
+          {#each siteOptions as opt (opt.value)}
+            {@const id = `site-${opt.value || 'any'}`}
+            <div class="flex items-center gap-2">
+              <RadioGroupItem value={opt.value} {id} />
+              <Label for={id} class="cursor-pointer font-normal">{opt.label}</Label>
+            </div>
+          {/each}
+        </RadioGroup>
+      </fieldset>
       {#if activeFilterCount > 0}
         <Button
           variant="link"
           size="sm"
           class="h-auto p-0 text-xs"
           onclick={() =>
-            navigate({ status: null, bm: null, mt: null, access: null, fee: null, page: null })}
+            navigate({
+              status: null,
+              bm: null,
+              mt: null,
+              access: null,
+              fee: null,
+              site: null,
+              page: null,
+            })}
         >
           Clear filters
         </Button>
@@ -823,6 +857,7 @@
               usage: null,
               status: null,
               access: null,
+              site: null,
               page: null,
             })}>Clear</button
         >
@@ -859,6 +894,32 @@
                 <CardTitle class="text-base text-white">{model.name}</CardTitle>
               {/if}
               <Badge variant="secondary">{model.type}</Badge>
+              {#if model.listing.com || model.listing.red}
+                {#each SITES as site (site)}
+                  {#if model.listing[site]}
+                    <Badge
+                      href={siteModelUrl(site, model.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      variant="outline"
+                      class={site === 'com'
+                        ? 'border-blue-4/30 bg-blue-4/10 text-blue-3'
+                        : 'border-red-5/30 bg-red-5/10 text-red-4'}
+                      title="View on civitai.{site}"
+                      aria-label="View {model.name} on civitai.{site} (opens in a new tab)"
+                    >
+                      .{site}
+                    </Badge>
+                  {/if}
+                {/each}
+              {:else}
+                <Badge variant="outline" class="border-dark-4 bg-dark-6 text-dark-2">
+                  Not listed
+                </Badge>
+              {/if}
+              {#if model.listing.note}
+                <span class="text-xs text-dark-2">{model.listing.note}</span>
+              {/if}
               {#if model.poi}
                 <Badge
                   variant="outline"

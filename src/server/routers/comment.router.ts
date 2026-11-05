@@ -57,6 +57,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
     ownerId = comment?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
+      // Hidden for ToS is gone to its author too: their own delete keeps a comment that way for a hold.
       if (comment?.tosViolation) throw throwNotFoundError(`No comment with id ${id}`);
     }
   }

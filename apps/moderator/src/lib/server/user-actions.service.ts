@@ -451,7 +451,7 @@ export async function bulkCommentAction(input: {
   commentV2Ids: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult & { affected?: number }> {
+}): Promise<ActionResult & { affected?: number; retainedHidden?: number }> {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
@@ -482,13 +482,21 @@ export async function bulkCommentAction(input: {
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
       : nested('comment') + nested('commentV2');
 
+  // A delete or a restore keeps some comments hidden; the endpoint never says why, and neither does this.
+  const retainedHidden =
+    input.action === 'bulkDelete'
+      ? countOf(result.body, ['retainedHidden'])
+      : input.action === 'restoreFromTos'
+      ? nested('comment', 'retainedHidden') + nested('commentV2', 'retainedHidden')
+      : 0;
+
   const failed =
     input.action === 'restoreFromTos'
       ? nested('comment', 'failed') + nested('commentV2', 'failed')
       : 0;
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0 && failed === 0)
+  if (affected === 0 && retainedHidden === 0 && failed === 0)
     return {
       ok: false,
       error:
@@ -499,13 +507,19 @@ export async function bulkCommentAction(input: {
 
   if (affected)
     await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+  if (retainedHidden)
+    await logAction(
+      `comments:${input.action}:retainedHidden:${retainedHidden}`,
+      input.userId,
+      input.moderatorId
+    );
   if (failed)
     return {
       ok: false,
-      error: `${failed} could not be restored and stay hidden. Restored ${affected}.`,
+      error: `${failed} could not be restored and stay hidden. Restored ${affected}, kept hidden ${retainedHidden}.`,
     };
   // Both endpoints count rows they actually wrote, so a short count is real.
-  return { ok: true, affected };
+  return { ok: true, affected, retainedHidden };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).

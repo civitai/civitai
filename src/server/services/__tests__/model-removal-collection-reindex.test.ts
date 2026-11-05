@@ -140,9 +140,11 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import {
   deleteModelById,
+  MODEL_KEPT_FOR_HELD_COMMENT,
   MODEL_KEPT_FOR_HOLD,
   permaDeleteModelById,
 } from '~/server/services/model.service';
+import { HOLD_UNCONFIRMED } from '~/server/services/legal-hold.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -470,6 +472,7 @@ describe('permaDeleteModelById — legal hold', () => {
   );
   let db: PGlite;
   let refusal: string | undefined;
+  let executed: string[] = [];
 
   beforeAll(async () => {
     db = new PGlite();
@@ -523,19 +526,25 @@ describe('permaDeleteModelById — legal hold', () => {
     {
       exists = true,
       deleteFails = false,
+      detachFails = false as boolean | 'post',
       heldCommenter = null as number | null,
       threadCommenter = null as number | null,
       reviewers = [] as number[],
     } = {}
   ) {
-    // The post and image deletes run for real.
+    // The post and image deletes run for real, each with its thread detach in the same statement.
     mockDbWrite.$executeRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
+      executed.push(sql.text);
+      const post = sql.text.includes('p."modelVersionId"');
+      if (detachFails === true || (detachFails === 'post' && post))
+        throw new Error('relation "EvidenceHeldUser" does not exist');
       return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
     }) as never);
+    executed = [];
     await db.exec(
       `DELETE FROM "Thread"; DELETE FROM "Model"; DELETE FROM "Comment"; DELETE FROM "HeldResourceReview";`
     );
@@ -569,6 +578,8 @@ describe('permaDeleteModelById — legal hold', () => {
       ...values: unknown[]
     ) => {
       const flat = Prisma.sql(strings, ...(values as never[]));
+      if (flat.text.includes('"ownerHeld"'))
+        return (await db.query(flat.text, flat.values as unknown[])).rows;
       if (!isModelDelete(flat.text)) return [];
       if (deleteFails) throw new Error('relation "EvidenceHeldUser" does not exist');
       return (await db.query(flat.text, flat.values as unknown[])).rows;
@@ -613,13 +624,19 @@ describe('permaDeleteModelById — legal hold', () => {
     }
   );
 
-  // Another account's comments are not kept for a hold: they go with the model.
-  it('deletes a model a held author left a legacy comment on', async () => {
+  // Only another account's legacy comment keeps it: its owner is not held, and is told so.
+  it('refuses a model a held author left a legacy comment on, with its own message', async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID, { heldCommenter: REPORTED_OWNER })).toEqual({
-      result: 'deleted',
-      left: 0,
-      rolledBack: false,
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
     });
+    expect(refusal).toBe(MODEL_KEPT_FOR_HELD_COMMENT);
+  });
+
+  it("keeps the owner's message when the owner is held too", async () => {
+    await permaDeleteOwnedBy(MARKED_OWNER, { heldCommenter: REPORTED_OWNER });
+    expect(refusal).toBe(MODEL_KEPT_FOR_HOLD);
   });
 
   describe('with an earlier owner on record', () => {
@@ -689,7 +706,7 @@ describe('permaDeleteModelById — legal hold', () => {
     expect(vi.mocked(deleteModelFileObjects)).toHaveBeenCalledWith(['models/held.safetensors']);
   });
 
-  it("deletes the model's post and image, and the threads on them, a held author's included", async () => {
+  it("deletes the model's post and image, and keeps a held author's threads off them", async () => {
     await db.exec(`
       DELETE FROM "Post"; DELETE FROM "Image" WHERE id = ${IMAGE_ID};
       INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (${POST_ID}, ${OWNER_ID}, ${VERSION_ID});
@@ -715,15 +732,34 @@ describe('permaDeleteModelById — legal hold', () => {
     const threads = await db.query<{ id: number; postId: number | null; imageId: number | null }>(
       `SELECT id, "postId", "imageId" FROM "Thread" WHERE id >= 800 ORDER BY id`
     );
-    expect(threads.rows).toEqual([]);
+    // The unheld ones cascade with their parents; the held ones were detached first.
+    expect(threads.rows).toEqual([
+      { id: 800, postId: null, imageId: null },
+      { id: 801, postId: null, imageId: null },
+    ]);
+    // In the statement that deletes them: a hold placed between two statements would be missed.
+    for (const table of ['Image', 'Post'])
+      expect(
+        executed.find((text) => text.includes(`DELETE FROM "${table}"`)),
+        table
+      ).toMatch(/detachedFrom[\s\S]*DELETE FROM/);
   });
 
-  it("deletes the model, and its thread, a held author's comment included", async () => {
+  it("deletes the model, and keeps a held author's comment thread off it", async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID, { threadCommenter: REPORTED_OWNER })).toEqual({
       result: 'deleted',
       left: 0,
       rolledBack: false,
     });
+    const { rows } = await db.query(
+      `SELECT t."modelId", t.metadata -> 'detachedFrom' AS "detachedFrom", c.id AS "commentId"
+       FROM "Thread" t JOIN "CommentV2" c ON c."threadId" = t.id`
+    );
+    expect(rows).toEqual([{ modelId: null, detachedFrom: { modelId: MODEL_ID }, commentId: 7001 }]);
+  });
+
+  it('deletes the model and its thread when no held author commented (control)', async () => {
+    await permaDeleteOwnedBy(OWNER_ID, { threadCommenter: OWNER_ID });
     expect((await db.query(`SELECT id FROM "CommentV2"`)).rows).toEqual([]);
   });
 
@@ -734,6 +770,24 @@ describe('permaDeleteModelById — legal hold', () => {
       left: 0,
       rolledBack: true,
     });
+  });
+
+  it('refuses, and rolls back, when the post and image detaches cannot check their holds', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { detachFails: true })).toEqual({
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
+    });
+    expect(refusal).toBe(HOLD_UNCONFIRMED);
+  });
+
+  it('refuses, and rolls back, when only the post detach cannot check its holds', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { detachFails: 'post' })).toEqual({
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
+    });
+    expect(refusal).toBe(HOLD_UNCONFIRMED);
   });
 
   it('refuses, and rolls back, when the hold cannot be checked', async () => {

@@ -78,7 +78,7 @@ faithful choice (no callback, no query/packed-write duplication).
 
 ### Article delete — `deleteArticle`  ·  (articles) — ✅ complete
 - [x] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN** — done via the spoke's storage client; see `docs/moderator-app/side-effect-parity-checklist.md`
-- [x] Comments go with the article, as in the main app's delete: `CommentTopic` delete first, for lock order
+- [x] Comment holds as the main app's delete: `CommentTopic` lock and delete, refusal on a held author's CommentV3-only comment, held CommentV2 thread detach (`delete-hold-sql.ts`)
 
 ### Article rating resolve — `resolveArticleRatingReview`  ·  (article-rating-review) — ✅ complete
 - [x] Notify owner (`article-rating-review-approved` when the mod grants the suggested level / `-rejected` when a different level is applied; level labels + modComment) — **notifications** (`@civitai/notifications`)

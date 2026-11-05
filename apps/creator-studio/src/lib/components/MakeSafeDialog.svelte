@@ -44,7 +44,7 @@
         reason:
           'Not marked mature: where it is listed follows its images, not a civitai.com version.',
       };
-    if (model.onCom) return { state: 'skipped', reason: 'Already listed on civitai.com.' };
+    if (model.listing.com) return { state: 'skipped', reason: 'Already listed on civitai.com.' };
     if (model.hasComFace)
       return {
         state: 'skipped',

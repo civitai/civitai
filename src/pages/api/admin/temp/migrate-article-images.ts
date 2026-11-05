@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -172,7 +173,8 @@ async function runRollback(params: MigrationParams): Promise<{
         SELECT i.id FROM "Image" i
         WHERE i.id IN (${Prisma.join(orphanedImageIds)})
           AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
-      )
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, true)}
       DELETE FROM "Image" WHERE id IN (SELECT id FROM doomed)
     `;
     imagesDeleted = imgResult;

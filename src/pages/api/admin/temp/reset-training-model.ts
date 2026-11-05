@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { invalidateManyImageExistence } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -49,7 +50,8 @@ export default WebhookEndpoint(async (req, res) => {
     where: { modelVersionId: { in: modelVersions.map((v) => v.id) } },
   });
 
-  // Images first, by id: the post delete only unlinks them. A held owner's rows are left.
+  // Images first, by id: the post delete only unlinks them. A held owner's rows are left, and the
+  // comment threads of the rows that go are detached when they hold a held author's comment.
   const postIds = posts.map((p) => p.id);
   if (postIds.length)
     await dbWrite.$transaction([
@@ -58,7 +60,8 @@ export default WebhookEndpoint(async (req, res) => {
           SELECT i.id FROM "Image" i
           WHERE i."postId" = ANY(${postIds}::int[])
             AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
-        )
+        ),
+        ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, true)}
         DELETE FROM "Image" WHERE id IN (SELECT id FROM doomed)
       `,
       dbWrite.$executeRaw`
@@ -66,7 +69,8 @@ export default WebhookEndpoint(async (req, res) => {
           SELECT p.id FROM "Post" p
           WHERE p.id = ANY(${postIds}::int[])
             AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
-        )
+        ),
+        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
         DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `,
     ]);

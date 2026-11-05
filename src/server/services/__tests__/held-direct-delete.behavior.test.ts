@@ -194,7 +194,7 @@ describe('deleteResourceReview', () => {
     expect(await reviewIds()).toHaveLength(3);
   });
 
-  it('takes the comments on it with it, a held account’s included', async () => {
+  it('still detaches a thread a held account commented in', async () => {
     await seedReviewThread(db, {
       reviewId: 5000,
       versionId: versionOf(CLEAN, 2),
@@ -203,7 +203,7 @@ describe('deleteResourceReview', () => {
     });
     await deleteResourceReview({ id: 5000 });
 
-    expect(await commentsLeft(db)).toEqual([]);
+    expect(await commentsLeft(db)).toEqual([{ id: 5000, onReview: false }]);
   });
 });
 
@@ -223,6 +223,18 @@ describe('deleteResourceReviews', () => {
 
     expect(count).toBe(1);
   });
+
+  it('still detaches a thread a held account commented in', async () => {
+    await seedReviewThread(db, {
+      reviewId: 5000,
+      versionId: versionOf(CLEAN, 2),
+      reviewer: CLEAN,
+      commenter: MARKED,
+    });
+    await deleteResourceReviews({ ids: [5000] });
+
+    expect(await commentsLeft(db)).toEqual([{ id: 5000, onReview: false }]);
+  });
 });
 
 describe('toggleReview off', () => {
@@ -231,6 +243,16 @@ describe('toggleReview off', () => {
 
     expect(await reviewIds()).not.toContain(reviewOf(MARKED));
     expect((await heldReviews()).map((c) => c.id)).toEqual([reviewOf(MARKED)]);
+  });
+
+  it('still detaches a thread a held account commented in', async () => {
+    await db.exec(`
+      INSERT INTO "Thread" (id, "reviewId") VALUES (7000, ${reviewOf(CLEAN)});
+      INSERT INTO "CommentV2" VALUES (7000, ${MARKED}, 7000);
+    `);
+    await toggleReview({ modelId: CLEAN * 10, userId: CLEAN, setTo: false });
+
+    expect(await commentsLeft(db)).toEqual([{ id: 7000, onReview: false }]);
   });
 
   it('removes an unheld author review with no copy (control)', async () => {
