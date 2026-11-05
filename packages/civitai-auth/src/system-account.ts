@@ -2,8 +2,7 @@
 // receives the onboarding Buzz bonus. The marker lives in `User.meta`.
 export const SYSTEM_ACCOUNT_META = { systemAccount: true } as const;
 
-// Fails closed: any truthy marker counts, including a hand-written `"true"`, and so does `meta`
-// stored as a JSON string rather than an object.
+// `User.meta` may be stored as a JSON string; invalid JSON reads as null.
 export function parseMeta(meta: unknown): Record<string, unknown> | null {
   let value = meta;
   if (typeof value === 'string') {
@@ -16,6 +15,7 @@ export function parseMeta(meta: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+// Fails closed: any truthy marker counts, including a hand-written `"true"`.
 export function isSystemAccountMeta(meta: unknown): boolean {
   return !!parseMeta(meta)?.systemAccount;
 }

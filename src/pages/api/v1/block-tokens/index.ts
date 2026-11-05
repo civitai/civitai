@@ -1147,7 +1147,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
-  // feature flag, evaluated for THIS caller (possibly anon). Today the flag is
+  // feature flag, evaluated for THIS caller (possibly anon); system accounts are
+  // refused regardless. Today the flag is
   // `availability: ['mod']`, so this is behaviour-identical to the previous
   // hardcoded `isModerator` check — anon/non-mod callers fail the flag and are
   // refused. When the flag is later widened (preview/GA → `['user']`/`['public']`
