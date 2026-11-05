@@ -418,6 +418,41 @@ describe('removal record keys', () => {
   });
 });
 
+// The .com re-check's record that it took the model off civitai.com. If client meta could clear it,
+// the owner would lose the notice; if it could forge one, the owner would see a removal that never happened.
+describe('comFaceRemoved', () => {
+  const MARKER = { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5, reason: 'detected' };
+
+  it.each([
+    ['an owner', OWNER_ID, false],
+    ['a moderator', MODERATOR_ID, true],
+  ])('is dropped from %s’s meta on a model without it', async (_, userId, isModerator) => {
+    mockStored({ meta: {} });
+    await upsert({
+      id: MODEL_ID,
+      userId,
+      isModerator,
+      meta: { comFaceRemoved: MARKER, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+
+  it.each([
+    ['an owner clears', OWNER_ID, false, null],
+    ['a moderator clears', MODERATOR_ID, true, null],
+    ['an owner rewrites', OWNER_ID, false, { ...MARKER, sfwCoverImageId: 999 }],
+  ])('keeps the stored marker when %s it', async (_, userId, isModerator, sent) => {
+    mockStored({ meta: { comFaceRemoved: MARKER } });
+    await upsert({
+      id: MODEL_ID,
+      userId,
+      isModerator,
+      meta: { comFaceRemoved: sent, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ comFaceRemoved: MARKER, hideBuzz: true });
+  });
+});
+
 describe('the locked row', () => {
   const RECORD = {
     removedWithOwner: true,
