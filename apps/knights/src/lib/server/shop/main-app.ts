@@ -3,7 +3,12 @@ import { MAIN_APP_TIMEOUT_MS } from './config';
 
 /** The main app definitively refused: a retry would be refused again (a 4xx other than 408 or 429). */
 export class MainAppRejectedError extends Error {
-  constructor(readonly status: number, readonly reason: string) {
+  constructor(
+    readonly status: number,
+    readonly reason: string,
+    /** The main app's own wording of the refusal, fit to show a player. */
+    readonly detail = ''
+  ) {
     super(`The main app refused the request: ${status} ${reason}`);
     this.name = 'MainAppRejectedError';
   }
@@ -46,7 +51,11 @@ export function mainAppPort(
     const answer = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) {
       if (res.status >= 400 && res.status < 500 && !TRANSIENT.has(res.status)) {
-        throw new MainAppRejectedError(res.status, String(answer?.reason ?? answer?.error ?? ''));
+        throw new MainAppRejectedError(
+          res.status,
+          String(answer?.reason ?? ''),
+          typeof answer?.error === 'string' ? answer.error : ''
+        );
       }
       throw new Error(`main app answered ${res.status}`);
     }
@@ -72,9 +81,8 @@ export function mainAppPort(
   };
 }
 
-/** Wired from env; a missing `WEBHOOK_TOKEN` throws on first use, not at boot. */
 let port: MainAppPort | undefined;
-export function getMainAppPort(): MainAppPort {
+function resolve(): MainAppPort {
   if (!port) {
     const token = env.WEBHOOK_TOKEN;
     if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
@@ -82,3 +90,13 @@ export function getMainAppPort(): MainAppPort {
   }
   return port;
 }
+
+const wired: MainAppPort = {
+  grantMembership: async (grant) => resolve().grantMembership(grant),
+  refreshCosmetics: async (userId) => resolve().refreshCosmetics(userId),
+  equipCosmetic: async (userId, cosmeticId) => resolve().equipCosmetic(userId, cosmeticId),
+  unequipCosmetic: async (userId, cosmeticId) => resolve().unequipCosmetic(userId, cosmeticId),
+};
+
+/** Wired from env. A missing `WEBHOOK_TOKEN` throws on the first call that needs the main app, not at boot or when a Buzz pack is bought. */
+export const getMainAppPort = (): MainAppPort => wired;

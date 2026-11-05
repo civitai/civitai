@@ -8,6 +8,7 @@ const settleHiddenChecks = vi.hoisted(() => vi.fn());
 const resetPendingPlayers = vi.hoisted(() => vi.fn());
 const retryPendingConversions = vi.hoisted(() => vi.fn());
 const runLabelPass = vi.hoisted(() => vi.fn());
+const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
@@ -21,6 +22,8 @@ vi.mock('$lib/server/conversion/runtime', () => ({
 }));
 vi.mock('$lib/server/conversion/convert', () => ({ retryPendingConversions }));
 vi.mock('$lib/server/conversion/label-pass', () => ({ runLabelPass }));
+vi.mock('$lib/server/shop/purchase', () => ({ retryPendingPurchases }));
+vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({}) }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
@@ -57,6 +60,8 @@ beforeEach(() => {
   conversionEnabled.mockReturnValue(true);
   retryPendingConversions.mockReset();
   retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0, failed: 0 });
+  retryPendingPurchases.mockReset();
+  retryPendingPurchases.mockResolvedValue({ retried: 0, granted: 0, failed: 0 });
   closeStrandedYesNo.mockReset();
   closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
   runLabelPass.mockReset();
@@ -81,6 +86,7 @@ describe('POST /api/jobs/tick', () => {
       expiredSmites: 0,
       resets: 0,
       conversionsRetried: 0,
+      purchasesRetried: 0,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
   });
@@ -229,5 +235,32 @@ describe('POST /api/jobs/tick', () => {
 
     closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 1 });
     expect((await run()).status).toBe(500);
+  });
+});
+
+describe('POST /api/jobs/tick shop purchases', () => {
+  it('retries membership purchases even while the Buzz kill switch is on', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    conversionEnabled.mockReturnValue(false);
+    retryPendingPurchases.mockResolvedValue({ retried: 3, granted: 3, failed: 0 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(retryPendingPurchases).toHaveBeenCalledTimes(1);
+    expect(retryPendingConversions).not.toHaveBeenCalled();
+    expect((await response.json()).purchasesRetried).toBe(3);
+  });
+
+  it('fails the tick when a purchase retry throws, after the other steps ran', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    retryPendingPurchases.mockRejectedValue(new Error('db down'));
+
+    const response = await run();
+
+    expect(response.status).toBe(500);
+    expect(runLabelPass).toHaveBeenCalledTimes(1);
   });
 });

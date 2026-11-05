@@ -4,7 +4,13 @@ import { buzzPort, type BuzzPort } from './buzz';
 
 /** Converting gold to Buzz is on unless the `KNIGHTS_CONVERSION_DISABLED` kill switch is `true`, `1`, `yes` or `on` (any case). Gold still accrues. */
 export const conversionEnabled = () =>
-  !['true', '1', 'yes', 'on'].includes((env.KNIGHTS_CONVERSION_DISABLED ?? '').trim().toLowerCase());
+  !['true', '1', 'yes', 'on'].includes(
+    (env.KNIGHTS_CONVERSION_DISABLED ?? '').trim().toLowerCase()
+  );
+
+/** The gold shop is open unless `KNIGHTS_SHOP_DISABLED` is `true`, `1`, `yes` or `on` (any case). Gold still accrues. Buzz packs have their own switch, `conversionEnabled()`. */
+export const shopEnabled = () =>
+  !['true', '1', 'yes', 'on'].includes((env.KNIGHTS_SHOP_DISABLED ?? '').trim().toLowerCase());
 
 export const buzzConfigured = () => Boolean(env.BUZZ_ENDPOINT);
 

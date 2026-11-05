@@ -1,89 +1,138 @@
 import { fail } from '@sveltejs/kit';
 import { getGoldBalance } from '$lib/server/conversion/balance';
-import { convertGold, type ConvertResult } from '$lib/server/conversion/convert';
-import { listRecentConversions } from '$lib/server/conversion/recent';
-import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
+import {
+  buzzConfigured,
+  conversionEnabled,
+  getBuzzPort,
+  shopEnabled,
+} from '$lib/server/conversion/runtime';
 import { logToAxiom } from '$lib/server/axiom';
 import { count } from '$lib/format';
 import { db } from '$lib/server/db';
+import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
+import { loadShop } from '$lib/server/shop/catalog';
+import { recentPurchases } from '$lib/server/shop/inventory';
+import { getMainAppPort } from '$lib/server/shop/main-app';
+import { buyItem } from '$lib/server/shop/purchase';
+import { REFUSAL_STATUS, refusalText } from '$lib/shop-view';
 import type { Actions, PageServerLoad } from './$types';
 
-const CLOSED_TEXT = "Converting gold to Buzz isn't open yet. Your gold keeps accruing.";
+const CLOSED_TEXT = "The shop isn't open yet. Your gold keeps accruing.";
 
-const REFUSAL_TEXT = {
-  'no-player': 'You have not joined the Order yet.',
-  held: 'Your gold is frozen while your account is under review.',
-  'below-minimum': 'You do not have enough convertible gold yet.',
-} as const;
+/** Buzz packs need the kill switch off and a Buzz service to talk to. */
+const buzzPacksOpen = () => conversionEnabled() && buzzConfigured();
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const [status, balance, recent] = await Promise.all([
-    getPlayerStatusOrNew(db, locals.user.id),
+  const now = new Date();
+  const open = shopEnabled();
+  const status = await getPlayerStatusOrNew(db, locals.user.id);
+  const [balance, shop, recent] = await Promise.all([
     getGoldBalance(db, locals.user.id),
-    listRecentConversions(db, locals.user.id),
+    open
+      ? loadShop(db, {
+          playerId: locals.user.id,
+          rank: status.rank,
+          now,
+          buzzPacksOpen: buzzPacksOpen(),
+        })
+      : null,
+    open ? recentPurchases(db, locals.user.id) : [],
   ]);
-  const today = new Date().toISOString().slice(0, 10);
   return {
     status,
     balance,
-    conversionOpen: conversionEnabled(),
-    recent: recent.map(({ at, ...row }) => ({
-      ...row,
-      at: at.toISOString(),
-      today: at.toISOString().slice(0, 10) === today,
-    })),
+    shopOpen: open,
+    shop: shop && {
+      ...shop,
+      cards: shop.cards.map(({ imageKey, ...card }) => ({
+        ...card,
+        image: imageKey ? imageUrl(imageKey, 192) : null,
+      })),
+    },
+    now: now.toISOString(),
+    recent: recent.map(({ createdAt, ...row }) => ({ ...row, at: createdAt.toISOString() })),
   };
 };
 
-let warnedNoEndpoint = false;
-
 export const actions: Actions = {
-  convert: async ({ locals }) => {
-    if (!conversionEnabled()) return fail(403, { message: CLOSED_TEXT });
-    if (!buzzConfigured()) {
-      if (!warnedNoEndpoint) {
-        warnedNoEndpoint = true;
-        await logToAxiom({
-          type: 'warning',
-          name: 'knights-conversion-unavailable',
-          message: 'BUZZ_ENDPOINT is not configured; gold cannot be converted',
-        });
-      }
-      return fail(503, {
-        message: 'Converting gold is not available right now. Your gold is untouched.',
+  buy: async ({ locals, request }) => {
+    if (!shopEnabled()) return fail(403, { message: CLOSED_TEXT });
+    const form = await request.formData();
+    const itemId = String(form.get('itemId') ?? '');
+    const requestKey = String(form.get('requestKey') ?? '');
+    const price = Number(form.get('price'));
+    if (!itemId || !Number.isInteger(price)) {
+      return fail(400, { message: refusalText('bad-key'), reason: 'bad-key' as const, itemId });
+    }
+
+    const open = buzzPacksOpen();
+    if (!open && conversionEnabled()) {
+      await logToAxiom({
+        type: 'warning',
+        name: 'knights-conversion-unavailable',
+        message: 'BUZZ_ENDPOINT is not configured; Buzz packs are not sold',
       });
     }
-    let result: ConvertResult;
+    let result;
     try {
-      result = await convertGold(db, getBuzzPort(), {
-        playerId: locals.user.id,
-        now: new Date(),
-        log: logToAxiom,
-      });
+      result = await buyItem(
+        db,
+        {
+          buzz: open
+            ? getBuzzPort()
+            : { grantYellow: async () => Promise.reject(new Error('Buzz is not configured')) },
+          mainApp: getMainAppPort(),
+          buzzPacksOpen: open,
+          log: logToAxiom,
+        },
+        { playerId: locals.user.id, itemId, requestKey, price, now: new Date() }
+      );
     } catch (error) {
-      console.error('knights: gold conversion failed', { error });
-      return fail(500, { message: 'Your gold could not be converted. Try again in a moment.' });
+      console.error('knights: shop purchase failed', { error });
+      return fail(500, {
+        message: 'Your purchase could not be completed. Try again in a moment.',
+        itemId,
+      });
     }
-    if (result.status === 'refused') return fail(409, { message: REFUSAL_TEXT[result.reason] });
+
+    if (result.status === 'refused') {
+      const rank = result.reason === 'rank' ? await rankGateOf(itemId) : null;
+      return fail(REFUSAL_STATUS[result.reason], {
+        message: refusalText(result.reason, { shortfall: result.shortfall, minRank: rank }),
+        reason: result.reason,
+        shortfall: result.shortfall ?? 0,
+        itemId,
+      });
+    }
     if (result.status === 'failed') {
       return fail(502, {
         message: result.forfeited
-          ? 'Buzz refused this conversion, which was made before your career reset, so its gold is forfeited with the rest.'
-          : 'Buzz could not take this conversion. Your gold is untouched; try again later.',
+          ? 'This purchase was refused, and as it was made before your career reset its gold is forfeited with the rest.'
+          : 'This could not be delivered. Your gold is untouched; try again later.',
+        reason: 'failed' as const,
+        itemId,
       });
     }
-    if (result.status === 'pending') {
-      return {
-        ok: true,
-        pending: true,
-        message: `Your ${result.buzz} Buzz is on its way. It is paid within a few minutes, and the gold is not spent twice.`,
-      };
-    }
+    const pending = result.status === 'pending';
     return {
-      ok: true,
-      converted: result.buzz,
-      message: `Converted ${count(result.gold)} gold into ${result.buzz} Buzz.`,
+      ok: true as const,
+      pending,
+      itemId,
+      kind: result.kind,
+      gold: result.gold,
+      message: pending
+        ? 'Your gold is reserved. Civitai has not confirmed it yet; we retry automatically and never charge twice.'
+        : `Bought for ${count(result.gold)} gold.`,
     };
   },
 };
+
+async function rankGateOf(itemId: string): Promise<string | null> {
+  const row = await db
+    .selectFrom('KnightsShopItem')
+    .select('minRank')
+    .where('id', '=', itemId)
+    .executeTakeFirst();
+  return row?.minRank ?? null;
+}

@@ -19,7 +19,7 @@
     player,
     userId = null,
     civitaiUrl,
-    conversionOpen,
+    shopOpen,
     isPlayer = false,
     status,
     streak,
@@ -32,7 +32,7 @@
     /** Keys this player's sound setting in the browser. */
     userId?: number | null;
     civitaiUrl: string;
-    conversionOpen: boolean;
+    shopOpen: boolean;
     /** Whether the viewer has a career, and so can restart it. */
     isPlayer?: boolean;
     status?: PlayerStatus;
@@ -54,7 +54,7 @@
   const links = $derived([
     { href: '/play', label: 'Play', icon: 'play' as const },
     { href: '/judgments', label: 'Judgments', icon: 'scroll-text' as const },
-    ...(conversionOpen ? [{ href: '/gold', label: 'Convert gold', icon: 'coins' as const }] : []),
+    ...(shopOpen ? [{ href: '/gold', label: 'Shop', icon: 'coins' as const }] : []),
     { href: '/leaderboard', label: 'Leaderboard', icon: 'crown' as const },
     { href: '/codex', label: 'Codex', icon: 'book-open' as const },
   ]);
@@ -105,7 +105,7 @@
   </a>
 
   {#if status}
-    <HeaderStats {status} {streak} {goldPerBuzz} {conversionOpen} {ladder} />
+    <HeaderStats {status} {streak} {goldPerBuzz} {shopOpen} {ladder} />
   {/if}
 
   {#if player}

@@ -1,170 +1,236 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getGoldBalance = vi.hoisted(() => vi.fn());
-const listRecentConversions = vi.hoisted(() => vi.fn());
-const convertGold = vi.hoisted(() => vi.fn());
 const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/db', () => ({ db: {} }));
+const loadShop = vi.hoisted(() => vi.fn());
+const recentPurchases = vi.hoisted(() => vi.fn());
+const buyItem = vi.hoisted(() => vi.fn());
+const rankGate = vi.hoisted(() => ({ value: null as string | null }));
+vi.mock('$lib/server/db', () => ({
+  db: {
+    selectFrom: () => ({
+      select: () => ({
+        where: () => ({ executeTakeFirst: async () => ({ minRank: rankGate.value }) }),
+      }),
+    }),
+  },
+}));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
 vi.mock('$lib/server/conversion/balance', () => ({ getGoldBalance }));
-vi.mock('$lib/server/conversion/recent', () => ({ listRecentConversions }));
-vi.mock('$lib/server/conversion/convert', () => ({ convertGold }));
+vi.mock('$lib/server/shop/catalog', () => ({ loadShop }));
+vi.mock('$lib/server/shop/inventory', () => ({ recentPurchases }));
+vi.mock('$lib/server/shop/purchase', () => ({ buyItem }));
+vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({ main: true }) }));
 const buzzConfigured = vi.hoisted(() => vi.fn());
 const conversionEnabled = vi.hoisted(() => vi.fn());
+const shopEnabled = vi.hoisted(() => vi.fn());
 const logToAxiom = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 vi.mock('$lib/server/conversion/runtime', () => ({
-  getBuzzPort: () => ({}),
+  getBuzzPort: () => ({ buzz: true }),
   buzzConfigured,
   conversionEnabled,
-}));
-
-const getStanding = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/standing', async (original) => ({
-  ...(await original<typeof import('$lib/server/standing')>()),
-  getStanding,
+  shopEnabled,
 }));
 
 const { load, actions } = await import('./+page.server');
 const locals = { user: { id: 7 } };
 
+const post = (fields: Record<string, string>) =>
+  actions.buy({
+    locals,
+    request: new Request('http://knights.test/gold?/buy', {
+      method: 'POST',
+      body: new URLSearchParams(fields),
+    }),
+  } as never);
+const FIELDS = { itemId: 'badge-seal', price: '400', requestKey: 'request-0001' };
+
 beforeEach(() => {
-  getStanding.mockReset();
-  getStanding.mockResolvedValue({ banned: false, muted: false });
   getGoldBalance.mockReset();
-  listRecentConversions.mockReset();
-  listRecentConversions.mockResolvedValue([]);
-  convertGold.mockReset();
+  getPlayerStatusOrNew.mockReset();
+  loadShop.mockReset();
+  recentPurchases.mockReset();
+  recentPurchases.mockResolvedValue([]);
+  buyItem.mockReset();
+  rankGate.value = null;
   buzzConfigured.mockReset();
   buzzConfigured.mockReturnValue(true);
   conversionEnabled.mockReset();
   conversionEnabled.mockReturnValue(true);
+  shopEnabled.mockReset();
+  shopEnabled.mockReturnValue(true);
   logToAxiom.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
-describe('gold page', () => {
-  it('loads the status and the balance of the signed-in player', async () => {
+describe('shop page load', () => {
+  it("loads the signed-in player's balance and today's shop for their rank", async () => {
     getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
-    getGoldBalance.mockResolvedValue({ convertible: 5000, frozen: 0 });
+    getGoldBalance.mockResolvedValue({ convertible: 5000 });
+    loadShop.mockResolvedValue({ day: '2026-12-20', cards: [] });
 
-    expect(await load({ locals } as never)).toEqual({
-      status: { rank: 'Knight' },
-      balance: { convertible: 5000, frozen: 0 },
-      conversionOpen: true,
-      recent: [],
+    const data = await load({ locals } as never);
+
+    expect(data).toMatchObject({
+      balance: { convertible: 5000 },
+      shopOpen: true,
+      shop: { day: '2026-12-20' },
     });
-    expect(getGoldBalance).toHaveBeenCalledWith({}, 7);
-    expect(listRecentConversions).toHaveBeenCalledWith({}, 7);
+    expect(loadShop).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ playerId: 7, rank: 'Knight', buzzPacksOpen: true })
+    );
+    expect(getGoldBalance).toHaveBeenCalledWith(expect.anything(), 7);
   });
 
-  it('serialises recent conversions and marks the ones from today', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({});
+  it('lists Buzz packs as closed while the Buzz switch is on, and still shows the shop', async () => {
+    conversionEnabled.mockReturnValue(false);
+    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
     getGoldBalance.mockResolvedValue({});
-    const now = new Date();
-    const old = new Date('2020-01-02T10:00:00Z');
-    listRecentConversions.mockResolvedValue([
-      { id: 2, gold: 500, buzz: 5, status: 'pending', at: now },
-      { id: 1, gold: 2000, buzz: 20, status: 'paid', at: old },
+    loadShop.mockResolvedValue({ cards: [] });
+
+    expect(await load({ locals } as never)).toMatchObject({ shopOpen: true });
+    expect(loadShop).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ buzzPacksOpen: false })
+    );
+  });
+
+  it('serves no stock while the shop is switched off', async () => {
+    shopEnabled.mockReturnValue(false);
+    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
+    getGoldBalance.mockResolvedValue({});
+
+    expect(await load({ locals } as never)).toMatchObject({
+      shopOpen: false,
+      shop: null,
+      recent: [],
+    });
+    expect(loadShop).not.toHaveBeenCalled();
+  });
+
+  it('serialises recent purchases', async () => {
+    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
+    getGoldBalance.mockResolvedValue({});
+    loadShop.mockResolvedValue({ cards: [] });
+    const at = new Date('2026-12-20T10:00:00Z');
+    recentPurchases.mockResolvedValue([
+      { id: 1, gold: 400, status: 'granted', name: 'Seal', kind: 'cosmetic', createdAt: at },
     ]);
 
     const { recent } = (await load({ locals } as never)) as { recent: unknown[] };
 
     expect(recent).toEqual([
-      { id: 2, gold: 500, buzz: 5, status: 'pending', at: now.toISOString(), today: true },
-      { id: 1, gold: 2000, buzz: 20, status: 'paid', at: old.toISOString(), today: false },
+      { id: 1, gold: 400, status: 'granted', name: 'Seal', kind: 'cosmetic', at: at.toISOString() },
     ]);
   });
+});
 
-  it('refuses Convert while conversion is switched off, reserving nothing', async () => {
-    conversionEnabled.mockReturnValue(false);
+describe('buying', () => {
+  it('buys for the signed-in player only, with the price and key the form carried', async () => {
+    buyItem.mockResolvedValue({ status: 'granted', kind: 'cosmetic', gold: 400, purchaseId: 1 });
 
-    expect(await actions.convert({ locals } as never)).toMatchObject({
-      status: 403,
-      data: { message: expect.stringContaining("isn't open yet") },
+    expect(await post(FIELDS)).toMatchObject({
+      ok: true,
+      pending: false,
+      itemId: 'badge-seal',
+      gold: 400,
     });
-    expect(convertGold).not.toHaveBeenCalled();
+    expect(buyItem).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ buzzPacksOpen: true }),
+      expect.objectContaining({
+        playerId: 7,
+        itemId: 'badge-seal',
+        price: 400,
+        requestKey: 'request-0001',
+      })
+    );
   });
 
-  it('tells the page conversion is closed while it is switched off', async () => {
-    conversionEnabled.mockReturnValue(false);
-    getPlayerStatusOrNew.mockResolvedValue({});
-    getGoldBalance.mockResolvedValue({});
+  it('refuses before touching anything while the shop is switched off', async () => {
+    shopEnabled.mockReturnValue(false);
 
-    expect(await load({ locals } as never)).toMatchObject({ conversionOpen: false });
+    expect(await post(FIELDS)).toMatchObject({ status: 403 });
+    expect(buyItem).not.toHaveBeenCalled();
   });
 
-  it('converts for the signed-in player only', async () => {
-    convertGold.mockResolvedValue({ status: 'converted', gold: 6000, buzz: 6, transactionId: 't' });
-
-    expect(await actions.convert({ locals } as never)).toMatchObject({ converted: 6 });
-    expect(convertGold).toHaveBeenCalledWith({}, {}, expect.objectContaining({ playerId: 7 }));
+  it('answers 400 for a form with no item or a price that is not a number', async () => {
+    expect(await post({ ...FIELDS, itemId: '' })).toMatchObject({ status: 400 });
+    expect(await post({ ...FIELDS, price: 'free' })).toMatchObject({ status: 400 });
+    expect(buyItem).not.toHaveBeenCalled();
   });
 
-  it('tells a held player why, with a 409', async () => {
-    convertGold.mockResolvedValue({ status: 'refused', reason: 'held' });
+  it('keeps Buzz packs closed, without asking Buzz, when it is not configured, and says so once', async () => {
+    buzzConfigured.mockReturnValue(false);
+    buyItem.mockResolvedValue({ status: 'refused', reason: 'closed' });
 
-    expect(await actions.convert({ locals } as never)).toMatchObject({
+    expect(await post(FIELDS)).toMatchObject({ status: 403, data: { reason: 'closed' } });
+    expect(buyItem.mock.calls[0][1]).toMatchObject({ buzzPacksOpen: false });
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+  });
+
+  it('says how short the gold is', async () => {
+    buyItem.mockResolvedValue({ status: 'refused', reason: 'insufficient', shortfall: 1200 });
+
+    expect(await post(FIELDS)).toMatchObject({
       status: 409,
-      data: { message: expect.stringContaining('frozen') },
+      data: { message: '1,200 gold short.', shortfall: 1200, reason: 'insufficient' },
     });
   });
 
-  it('tells the player Buzz refused it, with their gold untouched', async () => {
-    convertGold.mockResolvedValue({ status: 'failed', gold: 6000, buzz: 6, forfeited: false });
+  it('tells a held player their gold is kept, with a 403', async () => {
+    buyItem.mockResolvedValue({ status: 'refused', reason: 'held' });
 
-    expect(await actions.convert({ locals } as never)).toMatchObject({
+    expect(await post(FIELDS)).toMatchObject({
+      status: 403,
+      data: { message: expect.stringContaining('kept, not lost') },
+    });
+  });
+
+  it('names the rank that opens a gated item', async () => {
+    rankGate.value = 'Paladin';
+    buyItem.mockResolvedValue({ status: 'refused', reason: 'rank' });
+
+    expect(await post(FIELDS)).toMatchObject({
+      status: 403,
+      data: { message: 'This unlocks at Paladin.' },
+    });
+  });
+
+  it('says a purchase the other side has not confirmed is reserved, and not charged twice', async () => {
+    buyItem.mockResolvedValue({
+      status: 'pending',
+      kind: 'membership',
+      gold: 12000,
+      purchaseId: 3,
+    });
+
+    expect(await post(FIELDS)).toMatchObject({
+      ok: true,
+      pending: true,
+      message: expect.stringContaining('never charge twice'),
+    });
+  });
+
+  it('says a refused delivery leaves the gold untouched, or forfeited by a reset', async () => {
+    buyItem.mockResolvedValueOnce({ status: 'failed', purchaseId: 1, forfeited: false });
+    buyItem.mockResolvedValueOnce({ status: 'failed', purchaseId: 1, forfeited: true });
+
+    expect(await post(FIELDS)).toMatchObject({
       status: 502,
       data: { message: expect.stringContaining('untouched') },
     });
-  });
-
-  it('says so when Buzz refused a conversion made before a career reset', async () => {
-    convertGold.mockResolvedValue({ status: 'failed', gold: 6000, buzz: 6, forfeited: true });
-
-    expect(await actions.convert({ locals } as never)).toMatchObject({
+    expect(await post(FIELDS)).toMatchObject({
       status: 502,
       data: { message: expect.stringContaining('forfeited') },
     });
   });
 
-  it('refuses before reserving any gold when Buzz is not configured, and logs once', async () => {
-    buzzConfigured.mockReturnValue(false);
+  it('answers 500 when the purchase throws', async () => {
+    buyItem.mockRejectedValue(new Error('db down'));
 
-    expect(await actions.convert({ locals } as never)).toMatchObject({ status: 503 });
-    expect(await actions.convert({ locals } as never)).toMatchObject({ status: 503 });
-
-    expect(convertGold).not.toHaveBeenCalled();
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-  });
-
-  it('says a conversion Buzz has not confirmed is on its way', async () => {
-    convertGold.mockResolvedValue({ status: 'pending', gold: 6000, buzz: 6 });
-
-    expect(await actions.convert({ locals } as never)).toMatchObject({ pending: true });
-  });
-
-  it('answers 500 when the conversion throws', async () => {
-    convertGold.mockRejectedValue(new Error('db down'));
-
-    expect(await actions.convert({ locals } as never)).toMatchObject({ status: 500 });
-  });
-});
-
-describe('gold page for a muted player', () => {
-  beforeEach(() => {
-    getStanding.mockResolvedValue({ banned: false, muted: true });
-  });
-
-  it('still loads the record and the balance', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
-    getGoldBalance.mockResolvedValue({ convertible: 5000, frozen: 0 });
-    expect(await load({ locals } as never)).toMatchObject({ balance: { convertible: 5000 } });
-  });
-
-  it('still converts: a mute does not touch gold', async () => {
-    convertGold.mockResolvedValue({ status: 'converted', gold: 6000, buzz: 6, transactionId: 't' });
-    expect(await actions.convert({ locals } as never)).toMatchObject({ converted: 6 });
-    expect(convertGold).toHaveBeenCalled();
+    expect(await post(FIELDS)).toMatchObject({ status: 500 });
   });
 });

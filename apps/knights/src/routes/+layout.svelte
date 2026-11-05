@@ -26,7 +26,7 @@
       player={data.player}
       userId={data.userId}
       civitaiUrl={data.civitaiUrl}
-      conversionOpen={data.conversionOpen}
+      shopOpen={data.shopOpen}
       isPlayer={data.isPlayer}
       {status}
       {streak}

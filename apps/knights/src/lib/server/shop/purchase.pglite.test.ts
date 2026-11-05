@@ -51,8 +51,9 @@ function fakeMainApp({ failFirst = false, reject = null as number | null } = {})
   });
   const refreshCosmetics = vi.fn<MainAppPort['refreshCosmetics']>(async () => undefined);
   const equipCosmetic = vi.fn<MainAppPort['equipCosmetic']>(async () => undefined);
+  const unequipCosmetic = vi.fn<MainAppPort['unequipCosmetic']>(async () => undefined);
   return {
-    port: { grantMembership, refreshCosmetics, equipCosmetic } as MainAppPort,
+    port: { grantMembership, refreshCosmetics, equipCosmetic, unequipCosmetic } as MainAppPort,
     grantMembership,
     refreshCosmetics,
     memberships,

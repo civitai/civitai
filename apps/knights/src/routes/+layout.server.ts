@@ -2,7 +2,7 @@ import { env } from '$env/dynamic/private';
 import { playerBadge } from '$lib/player-badge';
 import { imageUrl } from '$lib/server/image-url';
 import { CONVERSION } from '$lib/server/conversion/config';
-import { conversionEnabled } from '$lib/server/conversion/runtime';
+import { shopEnabled } from '$lib/server/conversion/runtime';
 import { getRecapState } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { ladderRows } from '$lib/server/ladder';
@@ -41,7 +41,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     userId: locals.user?.id ?? null,
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
-    conversionOpen: conversionEnabled(),
+    shopOpen: shopEnabled(),
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),
