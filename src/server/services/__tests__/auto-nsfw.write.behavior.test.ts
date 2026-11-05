@@ -19,17 +19,22 @@ beforeAll(async () => {
     CREATE TABLE "Model" (id int PRIMARY KEY, nsfw bool NOT NULL DEFAULT false,
       "lockedProperties" text[] NOT NULL DEFAULT '{}', meta jsonb, "updatedAt" timestamp(3),
       minor bool NOT NULL DEFAULT false, poi bool NOT NULL DEFAULT false,
-      "sfwOnly" bool NOT NULL DEFAULT false);
+      "sfwOnly" bool NOT NULL DEFAULT false, availability text NOT NULL DEFAULT 'Public');
   `);
   db = { $executeRaw: pgliteRaw(pg).executeRaw };
 });
 
 beforeEach(() => pg.exec(`TRUNCATE "Model"`));
 
-const seed = (row: { locked?: string[]; meta?: unknown; flag?: 'minor' | 'poi' | 'sfwOnly' }) =>
+const seed = (row: {
+  locked?: string[];
+  meta?: unknown;
+  flag?: 'minor' | 'poi' | 'sfwOnly';
+  availability?: 'Public' | 'Private';
+}) =>
   pg.query(
-    `INSERT INTO "Model" (id, "lockedProperties", meta, "updatedAt", minor, poi, "sfwOnly")
-     VALUES ($1, $2, $3, '2026-01-01', $4, $5, $6)`,
+    `INSERT INTO "Model" (id, "lockedProperties", meta, "updatedAt", minor, poi, "sfwOnly", availability)
+     VALUES ($1, $2, $3, '2026-01-01', $4, $5, $6, $7)`,
     [
       ID,
       row.locked ?? [],
@@ -37,6 +42,7 @@ const seed = (row: { locked?: string[]; meta?: unknown; flag?: 'minor' | 'poi' |
       row.flag === 'minor',
       row.flag === 'poi',
       row.flag === 'sfwOnly',
+      row.availability ?? 'Public',
     ]
   );
 
@@ -101,6 +107,40 @@ describe('writeAutoNsfw', () => {
     const m = await read();
     expect(m).toMatchObject({ nsfw: false, lockedProperties: [], bumped: true });
     expect(m.meta).toEqual(metaPatch);
+  });
+
+  it('keeps a Private model SFW and holds the detection as a lead for when it leaves Private', async () => {
+    await seed({ availability: 'Private', meta: { cannotPromote: true } });
+
+    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+
+    const m = await read();
+    expect(m).toMatchObject({ nsfw: false, lockedProperties: [], bumped: true });
+    expect(m.meta).toEqual({
+      cannotPromote: true,
+      ...metaPatch,
+      restrictedNsfwVerdict: {
+        source: 'profanity-filter',
+        at: expect.any(String),
+        restriction: 'sfwOnly',
+      },
+    });
+  });
+
+  it('holds no lead on a Private model that is also minor: the detection only, as before', async () => {
+    await seed({ availability: 'Private', flag: 'minor' });
+
+    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+
+    expect((await read()).meta).toEqual(metaPatch);
+  });
+
+  it('holds no lead on a Private model whose nsfw a moderator already ruled on', async () => {
+    await seed({ availability: 'Private', locked: ['nsfw'] });
+
+    await writeAutoNsfw(db, { id: ID, metaPatch, lock: false });
+
+    expect((await read()).meta).toEqual(metaPatch);
   });
 
   it('repairs a JSON-null meta instead of concatenating onto it', async () => {

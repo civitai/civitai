@@ -1,6 +1,7 @@
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
+import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 /**
@@ -63,9 +64,10 @@ export function evaluateAutoNsfw({
 /**
  * Writes an {@link evaluateAutoNsfw} result: jsonb merges, never a meta read earlier and written
  * back, which would drop whatever a moderator or a scan set since. The lock and its `systemNsfwLock`
- * marker land only where no nsfw lock exists yet and the model is not minor, POI or SFW-only (as
- * `upsertModel`'s own profanity check); otherwise only the detection is recorded. `updatedAt` is
- * bumped: the model's rating changed.
+ * marker land only where no nsfw lock exists yet and the model is not minor, POI, SFW-only or Private
+ * (as `upsertModel`'s own profanity check); otherwise only the detection is recorded, and on a model
+ * only its being Private refused, the verdict is held as a moderator's lead that applies when it
+ * leaves Private. `updatedAt` is bumped: the model's rating changed.
  */
 export async function writeAutoNsfw(
   db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },
@@ -84,11 +86,13 @@ export async function writeAutoNsfw(
             "updatedAt" = now()
         WHERE m.id = ${id}
           AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
-          AND NOT (m.minor OR m.poi OR m."sfwOnly")`
+          AND NOT (m.minor OR m.poi OR m."sfwOnly")
+          AND m.availability <> 'Private'`
     : 0;
-  if (!locked)
-    await db.$executeRaw`
-      UPDATE "Model" m
-      SET meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb, "updatedAt" = now()
-      WHERE m.id = ${id}`;
+  if (locked) return;
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb, "updatedAt" = now()
+    WHERE m.id = ${id}`;
+  if (lock) await holdRestrictedVerdict(db, id, 'profanity-filter', { privateOnly: true });
 }

@@ -1,5 +1,7 @@
 import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 
 // Unit tests for the private-model flow (privateModelFromTraining / publishPrivateModel): it must
@@ -134,6 +136,7 @@ import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { deleteBidsForModel } from '~/server/services/auction.service';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -624,52 +627,93 @@ describe('privateModelFromTraining — stored snapshot', () => {
   });
 });
 
-describe('toggleCannotPromote on a private model', () => {
+describe('toggleCannotPromote', () => {
   const toggle = () => toggleCannotPromote({ id: MODEL_ID, isModerator: true });
-  const mockPrivate = (meta: Record<string, unknown>) =>
-    mockDbWrite.model.findUnique.mockResolvedValue({
-      id: MODEL_ID,
-      availability: Availability.Private,
-      meta,
-    });
+  let pg: PGlite;
 
-  it('reads the stored row from the primary', async () => {
-    mockPrivate({ cannotPromote: true });
-
-    await toggle();
-
-    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
-    expect(mockDbWrite.model.findUnique).toHaveBeenCalled();
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(
+      `CREATE TABLE "Model" (id int PRIMARY KEY, availability text NOT NULL, meta jsonb)`
+    );
+  });
+  afterAll(() => pg.close());
+  beforeEach(async () => {
+    await pg.exec(`TRUNCATE "Model"`);
+    mockDbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
+    // What a read-then-write-back toggle would see and do: the row as it was before a scan's hold.
+    mockDbWrite.model.findUnique.mockImplementation((async () => {
+      const [row] = (
+        await pg.query<{ meta: Record<string, unknown> | null }>(
+          `SELECT id, availability, meta FROM "Model" WHERE id = $1`,
+          [MODEL_ID]
+        )
+      ).rows;
+      if (!row) return null;
+      const { restrictedNsfwVerdict: _lead, ...stale } = row.meta ?? {};
+      return { ...row, meta: stale };
+    }) as never);
+    mockDbWrite.model.update.mockImplementation((async ({ data }: { data: { meta: unknown } }) => {
+      await pg.query(`UPDATE "Model" SET meta = $1 WHERE id = $2`, [
+        JSON.stringify(data.meta),
+        MODEL_ID,
+      ]);
+      return { id: MODEL_ID, meta: data.meta };
+    }) as never);
   });
 
-  it('records a ban for publish while keeping cannotPromote forced on', async () => {
-    mockPrivate({ cannotPromote: true });
+  const seed = (availability: string, meta: Record<string, unknown> | null) =>
+    pg.query(`INSERT INTO "Model" (id, availability, meta) VALUES ($1, $2, $3)`, [
+      MODEL_ID,
+      availability,
+      meta === null ? null : JSON.stringify(meta),
+    ]);
+  const stored = async () =>
+    (await pg.query<{ meta: Record<string, unknown> }>(`SELECT meta FROM "Model"`)).rows[0].meta;
+
+  const lead = { source: 'text-scan', at: '2026-11-01T00:00:00.000Z', restriction: 'sfwOnly' };
+
+  it('keeps a scan hold that landed after the toggle could have read the row', async () => {
+    await seed(Availability.Public, { cannotPromote: false, restrictedNsfwVerdict: lead });
 
     await toggle();
 
-    expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+    expect(await stored()).toEqual({ cannotPromote: true, restrictedNsfwVerdict: lead });
+  });
+
+  it('records a ban for publish on a private model while keeping cannotPromote forced on', async () => {
+    await seed(Availability.Private, { cannotPromote: true, restrictedNsfwVerdict: lead });
+
+    const result = await toggle();
+
+    const meta = { cannotPromote: true, restoreCannotPromote: true, restrictedNsfwVerdict: lead };
+    expect(await stored()).toEqual(meta);
+    expect(result).toEqual({ id: MODEL_ID, meta });
+    expect(deleteBidsForModel).toHaveBeenCalledWith({ modelId: MODEL_ID });
   });
 
   it('drops the recorded ban on an unban while keeping cannotPromote forced on', async () => {
-    mockPrivate({ cannotPromote: true, restoreCannotPromote: true });
+    await seed(Availability.Private, { cannotPromote: true, restoreCannotPromote: true });
 
     await toggle();
 
-    const meta = updateData().meta as Record<string, unknown>;
-    expect(meta.cannotPromote).toBe(true);
-    expect(meta).not.toHaveProperty('restoreCannotPromote');
+    expect(await stored()).toEqual({ cannotPromote: true });
+    expect(deleteBidsForModel).not.toHaveBeenCalled();
   });
 
-  it('still toggles a public model directly', async () => {
-    mockDbWrite.model.findUnique.mockResolvedValue({
-      id: MODEL_ID,
-      availability: Availability.Public,
-      meta: { cannotPromote: false },
-    });
+  it('toggles a public model directly, from a JSON-null meta too', async () => {
+    await seed(Availability.Public, null);
+    await pg.exec(`UPDATE "Model" SET meta = 'null'::jsonb`);
 
     await toggle();
+    expect(await stored()).toEqual({ cannotPromote: true });
 
-    expect(updateData().meta).toEqual({ cannotPromote: true });
+    await toggle();
+    expect(await stored()).toEqual({ cannotPromote: false });
+  });
+
+  it('refuses a model that does not exist', async () => {
+    await expect(toggle()).rejects.toThrow(/No model/);
   });
 });
 
