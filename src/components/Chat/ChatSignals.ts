@@ -92,6 +92,13 @@ export const useChatNewMessageSignal = () => {
       //   in place; it just does not announce itself
       if (!notify) return;
 
+      // - a message in a Request counts, silently, and only the server knows
+      //   whether its author is blocked or banned, so refetch rather than +1
+      if (myMember?.filteredAt) {
+        queryUtils.chat.getUnreadCount.invalidate();
+        return;
+      }
+
       // - increment the unread message count
       queryUtils.chat.getUnreadCount.setData(
         undefined,

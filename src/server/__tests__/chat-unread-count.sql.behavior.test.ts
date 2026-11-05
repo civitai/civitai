@@ -56,9 +56,12 @@ const chat = async (
 };
 
 const badge = async () => {
-  const sql = unreadCountSql(ME);
-  const rows = (await db.query<{ chatId: number; cnt: number }>(sql.text, sql.values)).rows;
-  return rows.reduce((total, row) => total + row.cnt, 0);
+  let total = 0;
+  for (const sql of unreadCountSql(ME)) {
+    const rows = (await db.query<{ chatId: number; cnt: number }>(sql.text, sql.values)).rows;
+    total += rows.reduce((sum, row) => sum + row.cnt, 0);
+  }
+  return total;
 };
 
 describe('the header chat badge', () => {
@@ -153,5 +156,65 @@ describe('the header chat badge', () => {
       [ME, BLOCKED]
     );
     expect(await badge()).toBe(1);
+  });
+});
+
+const message = (chatId: number, from: number, extra = '') =>
+  db.query(
+    `INSERT INTO "ChatMessage" ("chatId", "userId", "createdAt", "deletedAt") VALUES ($1, $2, ${
+      extra || 'now(), NULL'
+    })`,
+    [chatId, from]
+  );
+
+describe.each([
+  ['the inbox', false],
+  ['a Request', true],
+])('in %s, the badge leaves out', (_, filtered) => {
+  const open = () => chat(10, SENDER, { status: 'Invited', filtered });
+
+  it('my own messages', async () => {
+    await open();
+    await message(10, ME);
+    expect(await badge()).toBe(1);
+  });
+
+  it('deleted messages', async () => {
+    await open();
+    await message(10, SENDER, `now(), now()`);
+    expect(await badge()).toBe(1);
+  });
+
+  it('messages from before I cleared the conversation', async () => {
+    await open();
+    await db.exec(`UPDATE "ChatMember" SET "clearedAt" = now() WHERE "userId" = ${ME}`);
+    await message(10, SENDER, `now() + interval '1 minute', NULL`);
+    expect(await badge()).toBe(1);
+  });
+
+  it('a conversation I set to notify on nothing', async () => {
+    await open();
+    await db.exec(`UPDATE "ChatMember" SET "notifyLevel" = 'None' WHERE "userId" = ${ME}`);
+    expect(await badge()).toBe(0);
+  });
+});
+
+describe('system rows (user -1)', () => {
+  it('count in the inbox, as they always have', async () => {
+    await chat(10, SENDER);
+    await message(10, -1);
+    expect(await badge()).toBe(2);
+  });
+
+  it('do not count in a Request: a blocked sender’s link preview must not light the badge', async () => {
+    // Decision: an embed or "added you" note is written as -1 on the sender's
+    // behalf, so the block and ban checks cannot see who caused it.
+    await chat(10, BLOCKED, { status: 'Invited', filtered: true });
+    await message(10, -1);
+    await db.query(
+      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES ($1, $2, 'Block')`,
+      [ME, BLOCKED]
+    );
+    expect(await badge()).toBe(0);
   });
 });

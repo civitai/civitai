@@ -223,11 +223,13 @@ export const getUnreadMessagesForUserHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>(
-      unreadCountSql(ctx.user.id)
+    const parts = await Promise.all(
+      unreadCountSql(ctx.user.id).map((sql) =>
+        dbRead.$queryRaw<{ chatId: number; cnt: number }[]>(sql)
+      )
     );
 
-    return unread;
+    return parts.flat();
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

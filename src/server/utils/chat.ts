@@ -58,8 +58,39 @@ const inboxStatusLiterals = inboxStatuses.map((status) => `'${status}'`).join(',
  * and the reader have a block between them, when its author is banned, or when the
  * reader reported the conversation. A block placed after the request leaves its
  * earlier messages unread, and the badge must not call the reader back to them.
+ * System rows (user -1) do not count in a Request: a link preview or an "added you"
+ * note is written on the sender's behalf, and no block or ban check can see it.
+ *
+ * Two queries, not one: every signed-in client polls this. Folding the request
+ * rules into the inbox query, even as a UNION, grew the plan that big accounts
+ * already JIT-compile and cost them 20-200% in latency. The request query alone
+ * stays under `jit_above_cost`.
  */
-export const unreadCountSql = (userId: number) => Prisma.sql`
+export const unreadCountSql = (userId: number) => [
+  inboxUnreadSql(userId),
+  requestUnreadSql(userId),
+];
+
+const inboxUnreadSql = (userId: number) => Prisma.sql`
+  select memb."chatId"          as "chatId",
+         count(msg.id)::integer as "cnt"
+  from "ChatMember" memb
+         left join "ChatMessage" msg
+                   on msg."chatId" = memb."chatId" and
+                      (msg.id > memb."lastViewedMessageId" or
+                       memb."lastViewedMessageId" is null
+                        ) and
+                      (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt") and
+                      msg."deletedAt" is null
+  where memb."userId" = ${userId}
+    and memb.status in (${Prisma.raw(inboxStatusLiterals)})
+    and memb."notifyLevel" <> 'None'
+    and memb."filteredAt" is null
+    and msg."userId" != ${userId}
+  group by memb."chatId"
+`;
+
+const requestUnreadSql = (userId: number) => Prisma.sql`
   select memb."chatId" as "chatId",
          unread.cnt    as "cnt"
   from "ChatMember" memb
@@ -70,29 +101,25 @@ export const unreadCountSql = (userId: number) => Prisma.sql`
       and msg.id > coalesce(memb."lastViewedMessageId", 0)
       and (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt")
       and msg."deletedAt" is null
-      and msg."userId" != ${userId}
-      and (
-        memb."filteredAt" is null
-        or (
-          not exists (
-            select 1 from "UserEngagement" ue
-            where ue.type = 'Block'
-              and ((ue."userId" = ${userId} and ue."targetUserId" = msg."userId")
-                or (ue."userId" = msg."userId" and ue."targetUserId" = ${userId}))
-          )
-          and not exists (
-            select 1 from "User" author where author.id = msg."userId" and author."bannedAt" is not null
-          )
-          and not exists (
-            select 1 from "ChatReport" cr
-                     join "Report" r on r.id = cr."reportId"
-            where cr."chatId" = memb."chatId" and r."userId" = ${userId}
-          )
-        )
+      and msg."userId" not in (${userId}, -1)
+      and not exists (
+        select 1 from "UserEngagement" ue
+        where ue.type = 'Block'
+          and ((ue."userId" = ${userId} and ue."targetUserId" = msg."userId")
+            or (ue."userId" = msg."userId" and ue."targetUserId" = ${userId}))
+      )
+      and not exists (
+        select 1 from "User" author where author.id = msg."userId" and author."bannedAt" is not null
+      )
+      and not exists (
+        select 1 from "ChatReport" cr
+                 join "Report" r on r.id = cr."reportId"
+        where cr."chatId" = memb."chatId" and r."userId" = ${userId}
       )
     ) unread
   where memb."userId" = ${userId}
     and memb.status in (${Prisma.raw(inboxStatusLiterals)})
     and memb."notifyLevel" <> 'None'
+    and memb."filteredAt" is not null
     and unread.cnt > 0
 `;
