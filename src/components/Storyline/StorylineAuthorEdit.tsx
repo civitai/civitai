@@ -4,12 +4,10 @@ import clsx from 'clsx';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useState } from 'react';
 import { captionCounter } from '~/components/Storyline/editor/storyline-caption.utils';
+import { POST_TITLE_MAX_LENGTH } from '~/server/common/constants';
 import { STORYLINE_CAPTION_MAX_LENGTH } from '~/shared/utils/storyline';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-/** The post editor's limit: the chapter title is the post title. */
-const TITLE_MAX_LENGTH = 255;
 
 const CARD = clsx(
   'flex w-full flex-col gap-2 rounded-2xl p-3 @md:w-[560px] @md:max-w-full',
@@ -192,7 +190,7 @@ function TitleEditor({
         description="The chapter title is the post's title."
         value={value}
         onChange={(event) => setValue(event.currentTarget.value)}
-        maxLength={TITLE_MAX_LENGTH}
+        maxLength={POST_TITLE_MAX_LENGTH}
         autoFocus
         data-mantine-stop-propagation
       />

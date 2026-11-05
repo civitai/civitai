@@ -22,6 +22,12 @@ const mocks = vi.hoisted(() => ({
   updatePost: vi.fn(),
   fail: false,
   notifyError: vi.fn(),
+  // Stable spies: the proxy's default useUtils mints a fresh vi.fn per access, so it can't be asserted.
+  invalidate: {
+    getPath: vi.fn(async () => undefined),
+    getForPosts: vi.fn(async () => undefined),
+    postGet: vi.fn(async () => undefined),
+  },
 }));
 
 function mutation(spy: (vars: unknown) => void) {
@@ -39,10 +45,21 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...(await importOriginal<typeof TrpcMod>()),
-    trpc: makeTrpcProxy({
-      'storyline.setImageCaption': { useMutation: mutation((v) => mocks.setCaption(v)) },
-      'post.update': { useMutation: mutation((v) => mocks.updatePost(v)) },
-    }),
+    trpc: makeTrpcProxy(
+      {
+        'storyline.setImageCaption': { useMutation: mutation((v) => mocks.setCaption(v)) },
+        'post.update': { useMutation: mutation((v) => mocks.updatePost(v)) },
+      },
+      {
+        useUtils: () => ({
+          storyline: {
+            getPath: { invalidate: mocks.invalidate.getPath },
+            getForPosts: { invalidate: mocks.invalidate.getForPosts },
+          },
+          post: { get: { invalidate: mocks.invalidate.postGet } },
+        }),
+      }
+    ),
   };
 });
 vi.mock('~/utils/notifications', async (importOriginal) => ({
@@ -84,6 +101,7 @@ beforeEach(() => {
   mocks.updatePost.mockReset();
   mocks.fail = false;
   mocks.notifyError.mockReset();
+  Object.values(mocks.invalidate).forEach((spy) => spy.mockClear());
 });
 
 const captionBox = () => page.getByRole('textbox', { name: 'Caption (shown in the story)' });
@@ -137,8 +155,9 @@ describe('StorylineStageOverlay: saving', () => {
       imageId: 7,
       content: 'The gate is shut.',
     });
-    // Saved and closed: the controls are back.
+    // Saved and closed: the controls are back, and the reader's path refetches the new caption.
     await expect.element(editCaption()).toBeVisible();
+    expect(mocks.invalidate.getPath).toHaveBeenCalledOnce();
   });
 
   test('the title saves through post.update on the chapter post', async () => {
@@ -152,6 +171,30 @@ describe('StorylineStageOverlay: saving', () => {
 
     expect(mocks.updatePost).toHaveBeenCalledExactlyOnceWith({ id: 41, title: 'The Iron Gate' });
     expect(mocks.setCaption).not.toHaveBeenCalled();
+    // The new title reaches the reader's path, the chapter chips and the post page.
+    await expect.element(editTitle()).toBeVisible();
+    expect(mocks.invalidate.getPath).toHaveBeenCalledOnce();
+    expect(mocks.invalidate.getForPosts).toHaveBeenCalledOnce();
+    expect(mocks.invalidate.postGet).toHaveBeenCalledExactlyOnceWith({ id: 41 });
+  });
+
+  test('saving the title with Enter does not submit the page', async () => {
+    // Without preventDefault the form's native submit reloads the page under the reader.
+    let nativeSubmitBlocked: boolean | undefined;
+    const onSubmit = (event: Event) => {
+      nativeSubmitBlocked = event.defaultPrevented;
+      event.preventDefault();
+    };
+    document.addEventListener('submit', onSubmit);
+    try {
+      renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+      await editTitle().click();
+      await userEvent.type(titleBox(), ' Two{Enter}');
+
+      await expect.poll(() => nativeSubmitBlocked).toBe(true);
+    } finally {
+      document.removeEventListener('submit', onSubmit);
+    }
   });
 
   test('Cancel leaves the caption unsaved', async () => {
@@ -197,6 +240,7 @@ describe('StorylineStageOverlay: caption save branches', () => {
 
     expect(mocks.setCaption).toHaveBeenCalledOnce();
     expect(mocks.notifyError).toHaveBeenCalledOnce();
+    expect(mocks.invalidate.getPath).not.toHaveBeenCalled();
     await expect.element(captionBox()).toHaveValue('They reach the gate. Again.');
   });
 });

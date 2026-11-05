@@ -4,7 +4,13 @@ import {
   POST_BATCH_CHUNK_POSTS,
   POST_BATCH_MAX_POSTS,
 } from '@civitai/shared/post-scheduling';
-import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  POST_IMAGE_LIMIT,
+  POST_TAG_LIMIT,
+  POST_TITLE_MAX_LENGTH,
+} from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
@@ -435,7 +441,7 @@ export const scheduleBatchImageSchema = addPostImageSchema
 export const scheduleBatchPostSchema = z.object({
   /** Stable for one post across every attempt to create it, so a retry is recognised. */
   clientKey: z.string().uuid().optional(),
-  title: z.string().trim().max(255).nullish(),
+  title: z.string().trim().max(POST_TITLE_MAX_LENGTH).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
 });
