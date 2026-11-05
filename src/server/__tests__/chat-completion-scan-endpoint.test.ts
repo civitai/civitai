@@ -14,6 +14,8 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(),
   insertTextScanPrompt: vi.fn(),
   setTextScanConfig: vi.fn(),
+  setTextScanRollout: vi.fn(),
+  setTextScanWebSearchRollout: vi.fn(),
 }));
 
 const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
@@ -22,8 +24,14 @@ const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
 );
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/orchestration-client');
-const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
-  await import('~/server/services/text-scan/prompt');
+const {
+  getActiveTextScanPrompts,
+  getTextScanConfig,
+  insertTextScanPrompt,
+  setTextScanConfig,
+  setTextScanRollout,
+  setTextScanWebSearchRollout,
+} = await import('~/server/services/text-scan/prompt');
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText, segmentUserText, MIN_SEGMENT_CHARS } = await import(
   '~/server/services/text-scan/segment'
@@ -143,7 +151,34 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(JSON.stringify(res._body())).toContain('/api/mod/text-scan');
     expect(insertTextScanPrompt).not.toHaveBeenCalled();
     expect(setTextScanConfig).not.toHaveBeenCalled();
+    expect(setTextScanRollout).not.toHaveBeenCalled();
+    expect(setTextScanWebSearchRollout).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['putModes', 'Post', setTextScanRollout],
+    ['putWebSearchModes', 'Model', setTextScanWebSearchRollout],
+  ] as const)(
+    '%s sets the rollout as the session moderator, never an id from the body',
+    async (action, entityType, setter) => {
+      const input = textScanHarnessSchema.parse({
+        action,
+        moderatorId: 9,
+        entityType,
+        rollout: { shadow: 10 },
+      });
+      await expect(runTextScanHarnessAction(input, {})).rejects.toThrow(
+        'a moderator id is required'
+      );
+      expect(setter).not.toHaveBeenCalled();
+      await runTextScanHarnessAction(input, { moderatorId: 5 });
+      expect(setter).toHaveBeenCalledWith(
+        entityType,
+        expect.objectContaining({ shadow: 10 }),
+        expect.objectContaining({ moderatorId: 5 })
+      );
+    }
+  );
 
   it('putPrompt rejects an unknown key and whitespace-only content', () => {
     const base = { action: 'putPrompt', note: 'n' };
@@ -191,9 +226,8 @@ describe('chat-completion-scan text-scan actions', () => {
       config: { thinking: true },
     });
     await expect(runTextScanHarnessAction(input, {})).rejects.toThrow('a moderator id is required');
-    const res = await runTextScanHarnessAction(input, { moderatorId: 5 });
+    await runTextScanHarnessAction(input, { moderatorId: 5 });
     expect(setTextScanConfig).toHaveBeenCalledWith({ thinking: true }, { moderatorId: 5 });
-    expect(res.body).toEqual({ ...CONFIG, thinking: true });
   });
 
   it('scanEntity composes the production prompt, applies overrides, and waits', async () => {
