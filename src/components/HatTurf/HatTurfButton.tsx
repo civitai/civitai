@@ -148,7 +148,7 @@ export function HatTurfGear({
             setOpen(!open);
           }}
         >
-          <IconSettingsFilled size={11} />
+          <IconSettingsFilled size={12} />
         </button>
       }
     />

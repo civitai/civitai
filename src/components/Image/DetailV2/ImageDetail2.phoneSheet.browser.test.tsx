@@ -258,11 +258,12 @@ describe('image detail on a phone', () => {
     }
   );
 
-  test('the expanded sheet has no Hat Turf badge: the one on the image is the control', async () => {
-    ctx.active = true;
+  test('the Hat Turf badge rides in the strip under the picture, after the actions', async () => {
     renderDetail(0);
     await vi.waitFor(() => expect(sheet()).not.toBeNull());
-    expect(q('hat-controls')).not.toBeNull();
-    expect(sheet()!.querySelector('[data-testid="hat-badge"]')).toBeNull();
+    const badge = sheet()!.querySelector('[data-testid="hat-badge"]');
+    expect(badge).not.toBeNull();
+    const save = [...sheet()!.querySelectorAll('button')].find((b) => b.textContent === 'Save')!;
+    expect(save.compareDocumentPosition(badge!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

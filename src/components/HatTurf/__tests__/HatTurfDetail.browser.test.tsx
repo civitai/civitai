@@ -96,7 +96,10 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
-import { HatTurfDetailControls } from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
@@ -137,6 +140,13 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
     >
       <HatTurfCardProvider>
         <div style={{ width }}>
+          {/* ImageDetail2's action row: Tip is a 36px (`h-9`) badge and the turf badge follows it. */}
+          <div className="flex items-center gap-1" data-testid="action-row">
+            <span className="inline-flex h-9 min-w-9 items-center rounded-full" data-testid="tip">
+              Tip
+            </span>
+            <HatTurfDetailBadge imageId={9} />
+          </div>
           <div style={{ position: 'relative', width, height: 300 }}>
             <img src={LOADABLE_IMAGE_DATA_URI} style={{ width: '100%', height: '100%' }} alt="" />
             <HatTurfDetailLayer imageId={9} />
@@ -589,16 +599,18 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-gear')).not.toBeNull();
   });
 
-  test('the badge sits on the picture’s top-left corner, not in the action row', async () => {
+  test('the badge sits in the action row at Tip’s height, off the picture', async () => {
     render();
-    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
-    expect(q('hat-turf-detail-controls')!.contains(q('hat-turf-detail-badge'))).toBe(false);
-    const picture = document.body.querySelector('img')!.getBoundingClientRect();
+    await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
+    const tip = q('tip')!.getBoundingClientRect();
     const badge = q('hat-turf-detail-badge')!.getBoundingClientRect();
-    expect(badge.left - picture.left).toBeGreaterThanOrEqual(0);
-    expect(badge.left - picture.left).toBeLessThan(16);
-    expect(badge.top - picture.top).toBeGreaterThanOrEqual(0);
-    expect(badge.top - picture.top).toBeLessThan(16);
+    expect(tip.height).toBe(36);
+    expect(badge.height).toBe(tip.height);
+    expect(q('hat-turf-badge')!.getBoundingClientRect().height).toBe(tip.height);
+    const picture = document.body.querySelector('img')!.getBoundingClientRect();
+    expect(badge.bottom <= picture.top || badge.top >= picture.bottom).toBe(true);
+    // The picture's layer draws no badge of its own.
+    expect(document.body.querySelectorAll('[data-testid="hat-turf-detail-badge"]')).toHaveLength(1);
   });
 
   test('the hat button’s gear opens the same panel as the badge', async () => {
@@ -641,6 +653,7 @@ describe('Hat Turf on image detail', () => {
     // in reach of the layer, which must still not draw them.
     render({ joined: false, images: {}, stickers: { 9: h.stickers as never } });
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(q('action-row')!.contains(q('hat-turf-detail-badge'))).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(hats().length).toBe(0);
     click(q('hat-turf-detail-badge'));

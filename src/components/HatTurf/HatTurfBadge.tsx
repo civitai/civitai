@@ -21,14 +21,16 @@ import { useExperimentExposure } from '~/components/Experiments/useExperimentExp
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
-export function HatTurfBadge({ imageId }: { imageId: number }) {
+export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
   // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
   const joined = !!useTurfFeed()?.joined;
   const showHats = useHatTurfStore((state) => state.showHats);
-  return joined && showHats ? <HatTurfBadgeContent imageId={imageId} /> : null;
+  return joined && showHats ? (
+    <HatTurfBadgeContent imageId={imageId} className={className} />
+  ) : null;
 }
 
-function HatTurfBadgeContent({ imageId }: { imageId: number }) {
+function HatTurfBadgeContent({ imageId, className }: { imageId: number; className?: string }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
   const teamColor = useTeamColor();
@@ -115,7 +117,7 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
     return (
       <div
         ref={exposureRef}
-        className={clsx(classes.badge, classes.passive)}
+        className={clsx(classes.badge, classes.passive, className)}
         role="img"
         aria-label={label}
         data-testid="hat-turf-badge"
@@ -139,7 +141,7 @@ function HatTurfBadgeContent({ imageId }: { imageId: number }) {
         <button
           ref={exposureRef}
           type="button"
-          className={classes.badge}
+          className={clsx(classes.badge, className)}
           aria-label={`${label} Show teams`}
           aria-expanded={open}
           data-testid="hat-turf-badge"
