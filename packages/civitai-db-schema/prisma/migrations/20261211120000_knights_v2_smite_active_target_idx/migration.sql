@@ -1,4 +1,5 @@
--- Apply by hand; safe before or after the deploy (the code is correct without it, only slower).
+-- Main-app table ("NewOrderSmite"), so its own file: CONCURRENTLY cannot share a transaction with other DDL.
+-- Apply by hand, any time; safe before or after any deploy (the code is correct without it, only slower).
 -- Every smite read filters on the active ("cleansedAt" IS NULL) smites of a target player: the per-player count
 -- (smites.service.ts), the notify job's `resetPending` and the tick's reset/expiry sweeps. Without it each read scans the whole
 -- table, which keeps every cleansed smite. Partial, so Prisma cannot express it and schema.full.prisma does not list it.

@@ -1,0 +1,309 @@
+-- Idempotent: applied by hand, possibly more than once.
+-- Knights-owned tables only (none exists on main; "Image" must). Apply BEFORE deploying the Knights app, the moderator app
+-- build that manages yes/no reference pairs and the main app build that enqueues rating items; the yes/no import runs after.
+-- Apply after 20261209120000_knights_new_order_player_and_link_review.
+-- CREATE INDEX on the partitioned "KnightsVote" parent propagates to every month.
+
+CREATE TABLE IF NOT EXISTS "KnightsQuestion" (
+  "key" TEXT PRIMARY KEY,
+  "version" INTEGER NOT NULL DEFAULT 1,
+  "kind" TEXT NOT NULL,
+  "prompt" TEXT NOT NULL,
+  "options" JSONB NOT NULL,
+  "minRank" TEXT NOT NULL DEFAULT 'Knight',
+  "votesToResolve" INTEGER NOT NULL DEFAULT 5,
+  "maxVotes" INTEGER NOT NULL DEFAULT 10,
+  "threshold" DOUBLE PRECISION NOT NULL DEFAULT 0.6,
+  "active" BOOLEAN NOT NULL DEFAULT true,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- The stage an item waits at is "minRank" (Knight, Templar, Paladin, then the Inquisitors); no second stage column.
+-- "escalatedAt" is when the item last moved up a stage. "externalId" is the producer's id for a yes/no question; null for
+-- rating items (nulls do not collide).
+CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
+  "id" SERIAL PRIMARY KEY,
+  "questionKey" TEXT NOT NULL REFERENCES "KnightsQuestion"("key") ON DELETE CASCADE ON UPDATE CASCADE,
+  "imageId" INTEGER NOT NULL,
+  "source" TEXT NOT NULL,
+  "minRank" TEXT NOT NULL,
+  "votesNeeded" INTEGER NOT NULL,
+  "priority" INTEGER NOT NULL DEFAULT 2,
+  "status" TEXT NOT NULL DEFAULT 'Open',
+  "expiresAt" TIMESTAMP(3),
+  "isHiddenCheck" BOOLEAN NOT NULL DEFAULT false,
+  "resolvedValue" TEXT,
+  "resolvedAt" TIMESTAMP(3),
+  "resolvedBy" INTEGER,
+  "appliedAt" TIMESTAMP(3),
+  "resolvedFromLevel" INTEGER,
+  "applyAttempts" INTEGER NOT NULL DEFAULT 0,
+  "nextAttemptAt" TIMESTAMP(3),
+  "reason" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "prediction" JSONB,
+  "externalId" TEXT,
+  "prompt" TEXT,
+  "audience" TEXT,
+  "yesEffect" TEXT,
+  "noEffect" TEXT,
+  "meta" JSONB,
+  "voteCount" INTEGER NOT NULL DEFAULT 0,
+  "escalatedAt" TIMESTAMP(3)
+);
+
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_minRank_priority_createdAt_idx"
+  ON "KnightsQueueItem" ("status", "minRank", "priority", "createdAt");
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_expiresAt_idx" ON "KnightsQueueItem" ("status", "expiresAt");
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_appliedAt_idx" ON "KnightsQueueItem" ("status", "appliedAt");
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_imageId_idx" ON "KnightsQueueItem" ("imageId");
+
+-- One open rating item per question and image. Hidden checks are exempt (served apart from the feed), and so is a yes/no
+-- question (one of several that share an axis and an image; unique by externalId instead). Only 'Open' is indexed, so a
+-- later move to Resolved or Inquisitor can never collide with a newer open item.
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsQueueItem_open_question_image_key"
+  ON "KnightsQueueItem" ("questionKey", "imageId")
+  WHERE "status" = 'Open' AND NOT "isHiddenCheck" AND "audience" IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsQueueItem_externalId_key" ON "KnightsQueueItem" ("externalId");
+
+-- The player feed's pick: the next open yes/no question of an axis, those already under way first.
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_yesno_serve_idx"
+  ON "KnightsQueueItem" ("questionKey", "voteCount" DESC, "priority", "id")
+  WHERE "status" = 'Open' AND "audience" = 'players';
+
+-- The sweep's pick: questions that have answers and are still open.
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_yesno_answered_idx"
+  ON "KnightsQueueItem" ("id")
+  WHERE "status" = 'Open' AND "audience" IS NOT NULL AND "voteCount" > 0;
+
+-- The feed's escalated window: open items per stage, oldest escalation first.
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_open_escalated_idx"
+  ON "KnightsQueueItem" ("minRank", "escalatedAt")
+  WHERE "status" = 'Open' AND "escalatedAt" IS NOT NULL;
+
+-- Partitioned by month. A unique key on a partitioned table must include the partition key, so
+-- one vote per (item, player) is enforced by the vote path under the item row lock.
+-- A hidden check is an ordinary KnightsVote with a negative itemId (minus its reference image id); "consequence" and
+-- "noticedAt" record what grading it cost the player and whether the player dismissed the notice. "blockReason" is NULL
+-- unless the vote is a Blocked rating.
+CREATE TABLE IF NOT EXISTS "KnightsVote" (
+  "itemId" INTEGER NOT NULL,
+  "playerId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "questionKey" TEXT NOT NULL,
+  "imageId" INTEGER NOT NULL,
+  "stage" TEXT NOT NULL,
+  "answer" TEXT NOT NULL,
+  "weight" DOUBLE PRECISION NOT NULL,
+  "verdict" TEXT NOT NULL DEFAULT 'pending',
+  "gold" INTEGER,
+  "labelled" BOOLEAN NOT NULL DEFAULT false,
+  "converted" BOOLEAN NOT NULL DEFAULT false,
+  "xp" INTEGER NOT NULL DEFAULT 0,
+  "settledAt" TIMESTAMP(3),
+  "consequence" TEXT,
+  "noticedAt" TIMESTAMP(3),
+  "blockReason" TEXT
+    CHECK ("blockReason" IN ('InappropriateMinors', 'RealisticMinors', 'DepictsRealPerson', 'Bestiality', 'Other')),
+  PRIMARY KEY ("itemId", "playerId", "createdAt")
+) PARTITION BY RANGE ("createdAt");
+
+CREATE INDEX IF NOT EXISTS "KnightsVote_playerId_createdAt_idx" ON "KnightsVote" ("playerId", "createdAt");
+CREATE INDEX IF NOT EXISTS "KnightsVote_itemId_stage_idx" ON "KnightsVote" ("itemId", "stage");
+
+-- Serves "has this player judged this image" (hidden-check pick, one judgment per image and question).
+CREATE INDEX IF NOT EXISTS "KnightsVote_playerId_imageId_idx" ON "KnightsVote" ("playerId", "imageId");
+
+-- Graded votes whose progression is still to be granted: the sweep reads only these.
+CREATE INDEX IF NOT EXISTS "KnightsVote_unsettled_idx" ON "KnightsVote" ("itemId")
+  WHERE "settledAt" IS NULL AND "verdict" <> 'pending';
+
+-- Settled votes the label pass has not picked up yet, in keyset order.
+CREATE INDEX IF NOT EXISTS "KnightsVote_unlabelled_keyset_idx" ON "KnightsVote" ("settledAt", "itemId", "playerId")
+  WHERE "settledAt" IS NOT NULL AND NOT "labelled";
+
+CREATE INDEX IF NOT EXISTS "KnightsVote_player_settled_gold_idx" ON "KnightsVote" ("playerId", "settledAt")
+  WHERE "gold" > 0;
+
+CREATE INDEX IF NOT EXISTS "KnightsVote_unnoticed_consequence_idx" ON "KnightsVote" ("playerId")
+  WHERE "consequence" IS NOT NULL AND "noticedAt" IS NULL;
+
+-- The weekly board groups votes cast in the window by player; `verdict` is carried so the scan skips the table.
+CREATE INDEX IF NOT EXISTS "KnightsVote_createdAt_playerId_idx" ON "KnightsVote" ("createdAt", "playerId")
+  INCLUDE ("verdict") WHERE "settledAt" IS NOT NULL;
+
+-- Current month and the next two; a vote needing a later month creates it.
+DO $$
+DECLARE
+  month_start DATE;
+BEGIN
+  FOR month_start IN
+    SELECT generate_series(date_trunc('month', now())::date, (date_trunc('month', now()) + interval '2 months')::date, interval '1 month')::date
+  LOOP
+    EXECUTE format(
+      'CREATE TABLE IF NOT EXISTS %I PARTITION OF "KnightsVote" FOR VALUES FROM (%L) TO (%L)',
+      'KnightsVote_' || to_char(month_start, 'YYYY_MM'),
+      month_start,
+      (month_start + interval '1 month')::date
+    );
+  END LOOP;
+END $$;
+
+INSERT INTO "KnightsQuestion" ("key", "kind", "prompt", "options")
+VALUES (
+  'knights.image.nsfwLevel',
+  'choice',
+  'How should this image be rated?',
+  '[{"value":"1","label":"PG"},{"value":"2","label":"PG-13"},{"value":"4","label":"R"},{"value":"8","label":"X"},{"value":"16","label":"XXX"},{"value":"32","label":"Blocked"}]'::jsonb
+)
+ON CONFLICT ("key") DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS "KnightsPlayer" (
+  "playerId" INTEGER NOT NULL,
+  "streak" INTEGER NOT NULL DEFAULT 0,
+  "lastWatchDay" DATE,
+  "shields" INTEGER NOT NULL DEFAULT 0,
+  "shieldWeek" DATE NOT NULL,
+  "recapDismissedFor" DATE,
+  -- The NewOrderPlayer.startAt the player has been told about; a later one is a career reset they have not seen yet.
+  "startAtSeen" TIMESTAMP(3),
+  "recapPopupOptOut" BOOLEAN NOT NULL DEFAULT false,
+  CONSTRAINT "KnightsPlayer_pkey" PRIMARY KEY ("playerId")
+);
+
+CREATE TABLE IF NOT EXISTS "KnightsPlayerDay" (
+  "playerId" INTEGER NOT NULL,
+  "day" DATE NOT NULL,
+  "votes" INTEGER NOT NULL DEFAULT 0,
+  "goldRecorded" INTEGER NOT NULL DEFAULT 0,
+  "watchCompletedAt" TIMESTAMP(3),
+  "bonusGold" INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT "KnightsPlayerDay_pkey" PRIMARY KEY ("playerId", "day")
+);
+
+-- The play rail sums today's votes across players; (day, votes) lets that read be an index-only scan.
+CREATE INDEX IF NOT EXISTS "KnightsPlayerDay_day_votes_idx" ON "KnightsPlayerDay" ("day", "votes");
+
+CREATE TABLE IF NOT EXISTS "KnightsNotificationSend" (
+  "playerId" INTEGER NOT NULL,
+  "day" DATE NOT NULL,
+  "kind" TEXT NOT NULL,
+  "sentAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "confirmedAt" TIMESTAMP(3),
+  CONSTRAINT "KnightsNotificationSend_pkey" PRIMARY KEY ("playerId", "day")
+);
+
+CREATE INDEX IF NOT EXISTS "KnightsNotificationSend_playerId_kind_sentAt_idx"
+  ON "KnightsNotificationSend" ("playerId", "kind", "sentAt");
+
+CREATE TABLE IF NOT EXISTS "KnightsGoldConversion" (
+  "id" SERIAL PRIMARY KEY,
+  "playerId" INTEGER NOT NULL,
+  "gold" INTEGER NOT NULL,
+  "buzz" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'pending',
+  "externalTransactionId" TEXT NOT NULL,
+  "buzzTransactionId" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "lastAttemptAt" TIMESTAMP(3),
+  "paidAt" TIMESTAMP(3)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsGoldConversion_externalTransactionId_key" ON "KnightsGoldConversion" ("externalTransactionId");
+CREATE INDEX IF NOT EXISTS "KnightsGoldConversion_playerId_createdAt_idx" ON "KnightsGoldConversion" ("playerId", "createdAt");
+CREATE INDEX IF NOT EXISTS "KnightsGoldConversion_status_createdAt_idx" ON "KnightsGoldConversion" ("status", "createdAt");
+
+-- Reference images feed the Acolyte apprenticeship. Unique across modules on purpose: one known answer per image, in one
+-- pool, never both.
+CREATE TABLE IF NOT EXISTS "KnightsReferenceImage" (
+  "id" SERIAL PRIMARY KEY,
+  "imageId" INTEGER NOT NULL,
+  "questionKey" TEXT NOT NULL DEFAULT 'knights.image.nsfwLevel',
+  "pool" TEXT NOT NULL,
+  "answer" TEXT NOT NULL,
+  "source" TEXT NOT NULL,
+  "explanation" TEXT,
+  "status" TEXT NOT NULL DEFAULT 'active',
+  "modActivityId" INTEGER,
+  "harvestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "answers" INTEGER NOT NULL DEFAULT 0,
+  "failures" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsReferenceImage_imageId_key" ON "KnightsReferenceImage" ("imageId");
+CREATE INDEX IF NOT EXISTS "KnightsReferenceImage_pool_status_source_idx" ON "KnightsReferenceImage" ("pool", "status", "source");
+CREATE INDEX IF NOT EXISTS "KnightsReferenceImage_modActivityId_idx" ON "KnightsReferenceImage" ("modActivityId");
+
+CREATE TABLE IF NOT EXISTS "KnightsHarvestCursor" (
+  "name" TEXT PRIMARY KEY,
+  "lastActivityId" INTEGER NOT NULL DEFAULT 0,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "KnightsYesNoReference" (
+  "id" SERIAL PRIMARY KEY,
+  "imageId" INTEGER NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  "questionKey" TEXT NOT NULL REFERENCES "KnightsQuestion"("key") ON DELETE CASCADE ON UPDATE CASCADE,
+  "answer" BOOLEAN NOT NULL,
+  "explanation" TEXT,
+  "active" BOOLEAN NOT NULL DEFAULT true,
+  "createdBy" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One known answer per image and question.
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsYesNoReference_imageId_questionKey_key"
+  ON "KnightsYesNoReference" ("imageId", "questionKey");
+-- Serving and listing the active pairs of a question.
+CREATE INDEX IF NOT EXISTS "KnightsYesNoReference_active_questionKey_idx"
+  ON "KnightsYesNoReference" ("active", "questionKey");
+
+-- Answers outlive their reference: "imageId" + "questionKey" identify the answer once its reference foreign keys go NULL
+-- (ON DELETE SET NULL). A live row names exactly one reference; once that is deleted both go NULL and the snapshot is what
+-- identifies the answer.
+CREATE TABLE IF NOT EXISTS "KnightsApprenticeAnswer" (
+  "id" SERIAL PRIMARY KEY,
+  "playerId" INTEGER NOT NULL,
+  "referenceId" INTEGER REFERENCES "KnightsReferenceImage"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  "yesNoReferenceId" INTEGER REFERENCES "KnightsYesNoReference"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  "answer" TEXT NOT NULL,
+  "correctAnswer" TEXT NOT NULL,
+  "correct" BOOLEAN NOT NULL,
+  "xp" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "checkpointSeenAt" TIMESTAMP(3),
+  "imageId" INTEGER,
+  "questionKey" TEXT,
+  CONSTRAINT "KnightsApprenticeAnswer_one_reference"
+    CHECK (
+      ("referenceId" IS NULL) <> ("yesNoReferenceId" IS NULL)
+      OR ("imageId" IS NOT NULL AND "questionKey" IS NOT NULL AND "referenceId" IS NULL AND "yesNoReferenceId" IS NULL)
+    )
+);
+
+-- Not expressible in Prisma: a player answers each reference at most once, and the image-and-question rule must survive a
+-- deleted and re-added reference.
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_reference_key"
+  ON "KnightsApprenticeAnswer" ("playerId", "referenceId") WHERE "referenceId" IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_yesno_key"
+  ON "KnightsApprenticeAnswer" ("playerId", "yesNoReferenceId") WHERE "yesNoReferenceId" IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_image_question_key"
+  ON "KnightsApprenticeAnswer" ("playerId", "imageId", "questionKey") WHERE "imageId" IS NOT NULL;
+-- A player's latest answers, newest first.
+CREATE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_playerId_id_idx"
+  ON "KnightsApprenticeAnswer" ("playerId", "id");
+CREATE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_referenceId_idx"
+  ON "KnightsApprenticeAnswer" ("referenceId") WHERE "referenceId" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_yesNoReferenceId_idx"
+  ON "KnightsApprenticeAnswer" ("yesNoReferenceId") WHERE "yesNoReferenceId" IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS "KnightsAcolyteLevelGold" (
+  "playerId" INTEGER NOT NULL,
+  "level" INTEGER NOT NULL,
+  "gold" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "KnightsAcolyteLevelGold_pkey" PRIMARY KEY ("playerId", "level")
+);

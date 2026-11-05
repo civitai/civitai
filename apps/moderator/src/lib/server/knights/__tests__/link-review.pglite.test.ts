@@ -25,7 +25,7 @@ const { blockLinkReview, clearLinkReview } = await import('../link-review.servic
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_knights_payout_block_and_link_review/migration.sql'
+  '../../../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_knights_new_order_player_and_link_review/migration.sql'
 );
 
 const MOD = 7;

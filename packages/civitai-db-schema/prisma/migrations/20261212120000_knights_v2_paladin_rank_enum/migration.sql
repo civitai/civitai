@@ -1,4 +1,5 @@
--- Idempotent: applied by hand, possibly more than once.
+-- Idempotent: applied by hand, possibly more than once. Its own file and the last to apply: a new enum label must ship
+-- after the client that knows it, so it cannot ride with the tables or columns.
 -- Deploy the regenerated Prisma client BEFORE applying this (.claude/rules/database.md, "Adding an enum value"):
 -- Prisma throws on a label it does not know, and the Knights app writes 'Paladin' once a player earns it.
 -- Run the two statements as separate autocommit statements: a new enum label cannot be used in the transaction that adds it.

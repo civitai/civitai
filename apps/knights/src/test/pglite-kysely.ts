@@ -16,27 +16,8 @@ import { parseTimestampAsUtc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
-  '20261210120000_knights_v2_queue',
-  '20261211120000_knights_v2_sources',
-  '20261212120000_knights_v2_trials',
-  '20261213120000_knights_v2_progression',
-  '20261215120000_knights_v2_daily',
-  '20261217120000_knights_v2_notify',
-  '20261218120000_knights_v2_conversion',
-  '20261219120000_knights_v2_smites',
-  '20261221120000_knights_v2_yesno',
-  '20261223120000_knights_v2_drop_gold_clearing',
-  '20261224120000_knights_v2_yesno_reference',
-  '20261225120000_knights_v2_apprenticeship',
-  '20261226120000_knights_v2_drop_trial_tables',
-  '20261227120000_knights_v2_block_reason',
-  '20261228120000_knights_v2_fervor_window',
-  '20261229120000_knights_v2_answer_snapshot',
-  '20261230120000_knights_v2_vote_player_image_idx',
-  '20261231120000_knights_v2_queue_stages',
-  '20270101120000_knights_v2_recap_opt_out',
-  '20270102120000_knights_v2_player_day_day_idx',
-  '20270103120000_knights_v2_acolyte_level_gold',
+  '20261209120000_knights_new_order_player_and_link_review',
+  '20261210120000_knights_v2_tables',
 ].map((name) =>
   fileURLToPath(
     new URL(

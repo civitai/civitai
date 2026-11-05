@@ -1,10 +1,15 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Apply BEFORE deploying: the grant job reads the payout-block columns and the detection job writes the review table.
+-- Main-app tables: "NewOrderPlayer" columns and "NewOrderLinkReview", which the main app (grant job, detection job,
+-- generated Prisma client), the moderator app and the Knights app read and write. Apply BEFORE deploying any of those three,
+-- and before 20261210120000_knights_v2_tables. Applying it ahead of a deploy is harmless: every column is nullable or defaulted.
 ALTER TABLE "NewOrderPlayer"
   ADD COLUMN IF NOT EXISTS "payoutBlockedAt" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "payoutBlockReason" TEXT,
   ADD COLUMN IF NOT EXISTS "payoutBlockedBy" INTEGER,
-  ADD COLUMN IF NOT EXISTS "payoutReleaseFrom" TIMESTAMP(3);
+  ADD COLUMN IF NOT EXISTS "payoutReleaseFrom" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "goldPending" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "goldEarned" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "goldConverted" INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS "NewOrderLinkReview" (
   "id" SERIAL PRIMARY KEY,

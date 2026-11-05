@@ -108,7 +108,7 @@ beforeAll(async () => {
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER
     );`);
   await db.exec(
-    readFileSync(path.join(MIGRATIONS, '20261212120000_knights_v2_trials', 'migration.sql'), 'utf8')
+    readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
   );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });

@@ -80,8 +80,7 @@ beforeAll(async () => {
   await pg.exec(
     `CREATE TABLE "Image" (id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false);`
   );
-  await pg.exec(migration('20261210120000_knights_v2_queue'));
-  await pg.exec(migration('20261211120000_knights_v2_sources'));
+  await pg.exec(migration('20261210120000_knights_v2_tables'));
   db = new Kysely<DB>({ dialect: dialect(pg) });
 });
 

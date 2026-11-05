@@ -87,7 +87,7 @@ describe('toYesNoRows', () => {
 
 const MIGRATION = fileURLToPath(
   new URL(
-    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261221120000_knights_v2_yesno/migration.sql',
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261210120000_knights_v2_tables/migration.sql',
     import.meta.url
   )
 );
@@ -190,13 +190,6 @@ describe('importYesNo', () => {
   });
 
   it('lets several questions about one image share an axis, while rating items still get one open item per image', async () => {
-    const sources = fileURLToPath(
-      new URL(
-        '../../../../../../packages/civitai-db-schema/prisma/migrations/20261211120000_knights_v2_sources/migration.sql',
-        import.meta.url
-      )
-    );
-    await pg.exec(readFileSync(sources, 'utf8'));
     await pg.exec(readFileSync(MIGRATION, 'utf8'));
     try {
       const result = await importYesNo(

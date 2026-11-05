@@ -2,7 +2,7 @@
 
 Both live in the Knights app (`apps/knights`). Smites use the main app's `NewOrderSmite` table and `resetPlayer`, so the original
 game and the new one agree. Values are in `src/lib/server/hidden/config.ts` (set from the environment, see `.env.example`) and
-`src/lib/server/smites/config.ts`. Migration `20261219120000_knights_v2_smites` (applied by hand).
+`src/lib/server/smites/config.ts`. Migration `20261210120000_knights_v2_tables` (applied by hand; the `KnightsVote` consequence columns and `KnightsPlayer.startAtSeen`), plus `20261211120000_knights_v2_smite_active_target_idx` for the active-smite index on `NewOrderSmite`.
 
 ## Hidden checks (`src/lib/server/hidden`)
 
