@@ -85,8 +85,10 @@
     min-height: 100vh;
     min-height: 100dvh;
     overflow: hidden;
-    background: radial-gradient(70% 60% at 72% 30%, #3a2d1288, transparent 70%),
-      linear-gradient(180deg, var(--io-matte), var(--io-bg));
+    /* Background lives here, not on .frame: .frame is max-width-capped, so the photo would stop short of the viewport edges. */
+    background:
+      linear-gradient(to top, #14110df5, #14110de0 50%, #14110d99),
+      url('/images/welcome-cathedral.webp') center / cover no-repeat var(--io-bg);
     padding: 0 64px 48px;
   }
   .frame {
