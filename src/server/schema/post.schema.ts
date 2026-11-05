@@ -103,6 +103,8 @@ export const postRateLimits: RateLimit[] = [
   // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
   // Not overridden because no other rule uses the hour period.
   {
+    id: 'posts.hourly',
+    kind: 'product',
     limit: 2,
     period: CacheTTL.hour,
     userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
@@ -112,12 +114,16 @@ export const postRateLimits: RateLimit[] = [
   // no daily limit at all.
   ...dailyPostTiers.flatMap(({ minScore, limit }): RateLimit[] => [
     {
+      id: 'posts.daily',
+      kind: 'product',
       limit,
       period: CacheTTL.day,
       userReq: minScore > 0 ? (user) => hasReputation(user, minScore) : undefined,
       errorMessage: dailyPostLimitMessage({ minScore, limit, member: false }),
     },
     {
+      id: 'posts.daily',
+      kind: 'product',
       limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
       period: CacheTTL.day,
       userReq: (user) => isPaidMember(user) && hasReputation(user, minScore),
