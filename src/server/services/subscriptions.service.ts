@@ -624,8 +624,9 @@ type ResolvedBuzzMembershipPrice = Awaited<ReturnType<typeof resolveBuzzMembersh
 
 /**
  * Writes the month: the conflict re-check, the subscription row and the badge delivery, in one transaction.
- * With `idempotencyKey` the user row is locked first and a key already on the row answers `already`, before
- * any refusal, so a replay is never refused and never adds a second month.
+ * The user row is locked first, for every caller. With `idempotencyKey` a key already on the row answers
+ * `already`, before any refusal, so a replay is never refused and never adds a second month. The slot's
+ * existing metadata (the stored keys) survives whichever path writes it.
  */
 const commitBuzzMembershipMonth = async ({
   userId,
@@ -644,17 +645,17 @@ const commitBuzzMembershipMonth = async ({
   return dbWrite.$transaction(
     async (tx) => {
       const slot = { userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } };
-      let priorKeys: string[] = [];
-      if (idempotencyKey) {
-        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
-        const prior = await tx.customerSubscription.findUnique({
-          where: slot,
-          select: { metadata: true, currentPeriodEnd: true },
-        });
-        priorKeys = grantKeysOf(prior?.metadata);
-        if (prior && priorKeys.includes(idempotencyKey))
-          return { outcome: 'already' as const, currentPeriodEnd: prior.currentPeriodEnd };
-      }
+      // Every caller takes the user row lock before the conflict check, so a Buzz purchase and a gold
+      // grant for the same user cannot both pass it. A cash subscription writes a different slot and is not
+      // serialised here; `supersedeBuzzMembershipForPaidSubscription` cleans that case up.
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      const prior = await tx.customerSubscription.findUnique({
+        where: slot,
+        select: { metadata: true, currentPeriodEnd: true },
+      });
+      const priorKeys = grantKeysOf(prior?.metadata);
+      if (idempotencyKey && prior && priorKeys.includes(idempotencyKey))
+        return { outcome: 'already' as const, currentPeriodEnd: prior.currentPeriodEnd };
 
       // Re-check inside the transaction: the balance check is a network round trip, so a
       // concurrent purchase could have created a membership in the meantime.
@@ -676,6 +677,13 @@ const commitBuzzMembershipMonth = async ({
       // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
       // conflicting check above already proved this row carries no live benefit.
       const currentPeriodEnd = now.add(1, 'month').toDate();
+      const priorMetadata =
+        prior?.metadata && typeof prior.metadata === 'object' && !Array.isArray(prior.metadata)
+          ? prior.metadata
+          : {};
+      const grantKeys = idempotencyKey
+        ? [...priorKeys, idempotencyKey].slice(-MAX_BUZZ_GRANT_KEYS)
+        : priorKeys;
       const period = {
         productId: price.product.id,
         priceId: price.id,
@@ -687,9 +695,11 @@ const commitBuzzMembershipMonth = async ({
         cancelAt: null,
         canceledAt: null,
         endedAt: null,
-        metadata: idempotencyKey
-          ? { grantKeys: [...priorKeys, idempotencyKey].slice(-MAX_BUZZ_GRANT_KEYS) }
-          : {},
+        // Keep what the slot already holds: a Buzz purchase must not erase the keys a gold grant stored.
+        metadata: {
+          ...priorMetadata,
+          ...(grantKeys.length ? { grantKeys } : {}),
+        },
       };
 
       await tx.customerSubscription.upsert({

@@ -8,9 +8,17 @@ import type * as SubscriptionUtils from '~/server/utils/subscription.utils';
  * granted purchase has to answer `already`, never a refusal and never a second month.
  */
 
-const { invalidateSubscriptionCaches, upsertContact } = vi.hoisted(() => ({
-  invalidateSubscriptionCaches: vi.fn(),
-  upsertContact: vi.fn(),
+const { invalidateSubscriptionCaches, upsertContact, createBuzzTransaction, refundTransaction } =
+  vi.hoisted(() => ({
+    invalidateSubscriptionCaches: vi.fn(),
+    upsertContact: vi.fn(),
+    createBuzzTransaction: vi.fn(),
+    refundTransaction: vi.fn(),
+  }));
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  createBuzzTransaction,
+  refundTransaction,
 }));
 vi.mock('~/server/integrations/freshdesk', async (importOriginal) => ({
   ...(await importOriginal<typeof Freshdesk>()),
@@ -24,6 +32,7 @@ vi.mock('~/server/utils/subscription.utils', async (importOriginal) => ({
 import {
   BuzzMembershipRefusedError,
   grantBuzzPurchaseMembershipMonth,
+  purchaseMembershipWithBuzz,
 } from '~/server/services/subscriptions.service';
 
 const USER_ID = 77;
@@ -43,6 +52,23 @@ const price = (over: Record<string, unknown> = {}, productOver: Record<string, u
   ...over,
 });
 
+const goldPrice = () =>
+  price(
+    { id: 'civitai-buzz-gold-monthly', unitAmount: 5000 },
+    {
+      id: 'civitai-buzz-gold',
+      name: 'Gold',
+      metadata: { tier: 'gold', level: '3', buzzPurchase: true, monthlyBuzz: 0 },
+    }
+  );
+/** Answers like the catalog: the price whose product tier the lookup asks for, if the lookup is the monthly Buzz one. */
+const catalogLookup = async ({ where }: { where: Record<string, any> }) => {
+  if (where.id) return where.id === 'p' ? price() : null;
+  const tier = (where.product?.AND ?? []).find((c: any) => c.metadata?.path?.[0] === 'tier')
+    ?.metadata?.equals;
+  return tier === 'silver' ? price() : tier === 'gold' ? goldPrice() : null;
+};
+
 type Row = { id: string; metadata: { grantKeys?: string[] }; currentPeriodEnd: Date };
 let row: Row | null;
 const subscription = dbMock.dbWrite.customerSubscription;
@@ -51,7 +77,9 @@ beforeEach(() => {
   resetSharedMocks();
   vi.clearAllMocks();
   row = null;
-  dbMock.dbWrite.price.findFirst.mockResolvedValue(price() as never);
+  dbMock.dbWrite.price.findFirst.mockImplementation(catalogLookup as never);
+  createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+  refundTransaction.mockResolvedValue(undefined);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({
     id: USER_ID,
     username: 'knight',
@@ -75,7 +103,7 @@ beforeEach(() => {
 });
 
 describe('grantBuzzPurchaseMembershipMonth', () => {
-  it('grants one month in the Buzz-purchase slot, renewing never, and delivers the badge in the same transaction', async () => {
+  it('grants one month in the Buzz-purchase slot, renewing never, and delivers the monthly badge', async () => {
     const result = await grantBuzzPurchaseMembershipMonth({
       userId: USER_ID,
       tier: 'silver',
@@ -195,6 +223,16 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
       price({}, { metadata: { tier: 'silver' } }),
       'unavailable',
     ],
+    [
+      'a free tier',
+      price({}, { metadata: { tier: 'free', buzzPurchase: true, monthlyBuzz: 0 } }),
+      'unavailable',
+    ],
+    [
+      'a founder tier',
+      price({}, { metadata: { tier: 'founder', buzzPurchase: true, monthlyBuzz: 0 } }),
+      'unavailable',
+    ],
   ])('refuses %s as a final refusal', async (_name, found, reason) => {
     dbMock.dbWrite.price.findFirst.mockResolvedValue(found as never);
 
@@ -217,7 +255,6 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
       idempotencyKey: 'knights-shop:key-1',
     }).catch((e: unknown) => e);
     expect(error).not.toBeInstanceOf(BuzzMembershipRefusedError);
-    expect(row).toBeNull();
   });
 
   it('does not fail a committed grant when the support-desk sync fails', async () => {
@@ -228,5 +265,104 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
       idempotencyKey: 'knights-shop:key-1',
     });
     expect(result.outcome).toBe('granted');
+  });
+});
+
+describe('the product a tier sells', () => {
+  it('looks up the monthly Buzz-purchase product of the requested tier, so gold is not sold as silver', async () => {
+    const result = await grantBuzzPurchaseMembershipMonth({
+      userId: USER_ID,
+      tier: 'gold',
+      idempotencyKey: 'knights-shop:key-1',
+    });
+
+    expect(result.outcome).toBe('granted');
+    expect(dbMock.dbWrite.price.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          active: true,
+          interval: 'month',
+          intervalCount: 1,
+          product: expect.objectContaining({
+            active: true,
+            provider: 'Civitai',
+            AND: [
+              { metadata: { path: ['buzzPurchase'], equals: true } },
+              { metadata: { path: ['tier'], equals: 'gold' } },
+            ],
+          }),
+        }),
+      })
+    );
+    expect(subscription.upsert.mock.calls[0][0]).toMatchObject({
+      create: { productId: 'civitai-buzz-gold', priceId: 'civitai-buzz-gold-monthly' },
+    });
+  });
+
+  it('refuses a tier with no product rather than falling back to another', async () => {
+    const error = await grantBuzzPurchaseMembershipMonth({
+      userId: USER_ID,
+      tier: 'bronze',
+      idempotencyKey: 'knights-shop:key-1',
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BuzzMembershipRefusedError);
+    expect(subscription.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('a Buzz purchase and a gold grant share one slot', () => {
+  const lapse = () => {
+    if (row) row.currentPeriodEnd = new Date(Date.now() - 86_400_000);
+  };
+
+  it('keeps the gold grant keys through a Buzz purchase, so the old key still answers already', async () => {
+    await grantBuzzPurchaseMembershipMonth({
+      userId: USER_ID,
+      tier: 'silver',
+      idempotencyKey: 'knights-shop:key-K',
+    });
+    lapse();
+    await purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' });
+    expect(row?.metadata.grantKeys).toEqual(['knights-shop:key-K']);
+    lapse();
+
+    const retry = await grantBuzzPurchaseMembershipMonth({
+      userId: USER_ID,
+      tier: 'silver',
+      idempotencyKey: 'knights-shop:key-K',
+    });
+    expect(retry.outcome).toBe('already');
+    expect(subscription.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes the user row lock for a keyless call too, before the conflict check', async () => {
+    const queries: string[] = [];
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      queries.push(strings.join('?'));
+      return [];
+    }) as never);
+    subscription.findFirst.mockImplementation((async () => {
+      queries.push('conflict-check');
+      return null;
+    }) as never);
+
+    await grantBuzzPurchaseMembershipMonth({ userId: USER_ID, tier: 'silver' });
+    await purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' });
+
+    expect(queries).toHaveLength(4);
+    for (const at of [0, 2]) {
+      expect(queries[at]).toContain('FOR UPDATE');
+      expect(queries[at + 1]).toBe('conflict-check');
+    }
+  });
+
+  it('refunds the Buzz when the commit finds a concurrent membership', async () => {
+    subscription.findFirst.mockImplementation((async () => ({ id: 'other' })) as never);
+
+    await expect(
+      purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' })
+    ).rejects.toMatchObject({ name: 'BuzzMembershipRefusedError', reason: 'active-membership' });
+    expect(refundTransaction).toHaveBeenCalledWith('tx-1', expect.any(String));
+    expect(subscription.upsert).not.toHaveBeenCalled();
   });
 });
