@@ -1769,12 +1769,12 @@ describe('the Official flag — card + detail DTOs', () => {
 
   it('the single card read carries the flag for ITS listing only', async () => {
     // Answered by id, so a read keyed on anything but this row's id gets the wrong answer.
+    // Queued one call at a time, right before the call that consumes it, so a failing
+    // assertion cannot leave a queued answer behind for a later test.
     const byId = async (id: string) => id === 'apl_card_off';
     vi.mocked(readListingOfficialForRender).mockClear();
-    vi.mocked(readListingOfficialForRender)
-      .mockImplementationOnce(byId)
-      .mockImplementationOnce(byId);
 
+    vi.mocked(readListingOfficialForRender).mockImplementationOnce(byId);
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({
       ...hydratedRow({ id: 'apl_card_off', slug: 'card-off-app' }),
       status: 'approved',
@@ -1783,6 +1783,7 @@ describe('the Official flag — card + detail DTOs', () => {
     expect(official?.id).toBe('apl_card_off');
     expect(official?.isOfficial).toBe(true);
 
+    vi.mocked(readListingOfficialForRender).mockImplementationOnce(byId);
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({
       ...hydratedRow({ id: 'apl_card_plain', slug: 'card-plain-app' }),
       status: 'approved',
