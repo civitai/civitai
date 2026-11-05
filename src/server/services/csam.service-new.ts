@@ -202,7 +202,13 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
   unconfirmedOpens?: UnconfirmedOpen[];
   clearedUnconfirmedOpens?: ClearedUnconfirmedOpen[];
+  /** Why the send holds this report unsent for a moderator to decide; it is never deleted for it. */
+  sendHold?: SendHold;
 };
+
+/** A report the send cannot file: one with no file left to send, or a missing reporter or reported user. */
+type SendHoldCase = 'no-files' | 'missing-user';
+type SendHold = { case: SendHoldCase; reason: string; at: string };
 
 type StoredObject = { key: string; etag: string | null };
 
@@ -646,7 +652,7 @@ async function getInitialReportData(claim: SendClaim) {
   const reportingUser = await getReportingUser(report.reportedById);
   const reportedUser = report.userId ? await getReportedUser(report.userId) : undefined;
   if (!reportingUser || !reportedUser)
-    return await deleteUnderClaim(claim, 'no reporting or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting or reported user');
 
   const userActivity = await snapshotUserActivity(claim);
   if (!userActivity) return;
@@ -916,35 +922,27 @@ const appendId =
   (key: 'cancelledReportIds' | 'possibleDuplicateReportIds', id: number) =>
   (details: CsamReportDetails) => ({ ...details, [key]: [...(details[key] ?? []), id] });
 
-async function deleteUnderClaim(claim: SendClaim, reason: string) {
-  // A CyberTip left open for it is cancelled first. One that may be with NCMEC keeps the row, its
-  // only record here, for a human to decide on.
-  const stored = await cancelStoredCyberTip(claim);
-  if (stored === 'lost') return;
-  const possibleDuplicates = claim.report.details?.possibleDuplicateReportIds ?? [];
-  const unconfirmed = claim.report.details?.unconfirmedOpens ?? [];
-  if (stored === 'held' || possibleDuplicates.length > 0 || unconfirmed.length > 0)
-    return logSendLine(
-      claim,
-      'send-delete-held',
-      {
-        message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
-        ncmecReportId: claim.report.reportId ?? undefined,
-        possibleDuplicateReportIds: possibleDuplicates,
-        unconfirmedOpens: unconfirmed.length,
-      },
-      'error'
-    );
-  const { count } = await dbWrite.csamReport.deleteMany({ where: underClaim(claim) });
-  claim.settled = true;
-  if (count === 0)
-    return logSendLine(
-      claim,
-      'send-delete-refused',
-      { message: `report ${claim.report.id} not deleted (${reason}): claim lost` },
-      'error'
-    );
-  logSendLine(claim, 'send-deleted', { message: reason });
+/**
+ * Keeps a report the send cannot file unsent, marked with why, for a moderator to decide. Any
+ * CyberTip an earlier run left for it stays as it is and is named on the line.
+ */
+async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  const { report } = claim;
+  const possibleDuplicates = report.details?.possibleDuplicateReportIds ?? [];
+  const unconfirmed = report.details?.unconfirmedOpens ?? [];
+  const fields = {
+    message: `report ${report.id} held (${holdCase}): ${reason}`,
+    case: holdCase,
+    hoursPending: hoursSinceFiled(report),
+    ncmecReportId: report.reportId ?? undefined,
+    possibleDuplicateReportIds: possibleDuplicates,
+    unconfirmedOpens: unconfirmed.length,
+  };
+  logSendLine(claim, 'send-held', fields, 'error');
+  logSendLine(claim, 'send-decision-needed', fields, 'error');
+  if (!isProd || report.details?.sendHold?.case === holdCase) return;
+  const sendHold: SendHold = { case: holdCase, reason, at: new Date().toISOString() };
+  await updateUnderClaim(claim, 'send-hold', {}, (details) => ({ ...details, sendHold }));
 }
 
 async function releaseClaim(claim: SendClaim) {
@@ -1027,7 +1025,10 @@ async function cancelStoredCyberTip(
 function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const stored = {
+    case: 'no-files' satisfies SendHoldCase,
+    ncmecReportId: claim.report.reportId ?? undefined,
+  };
   logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
@@ -1869,7 +1870,7 @@ async function reportExternalLink(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
   if (!reportingUser?.email || !report.userId)
-    return await deleteUnderClaim(claim, 'no reporting user email or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting user email or reported user');
 
   const details = report.details as unknown as ExternalCsamReportDetails;
   const userActivity = await getUserIpInfo(report);

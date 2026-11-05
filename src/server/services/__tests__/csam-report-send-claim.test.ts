@@ -358,7 +358,7 @@ describe('the claim', () => {
   });
 });
 
-describe('deleting a report the send finds nothing to send for', () => {
+describe('a report the send cannot file', () => {
   it.each([
     ['Image', { images: [{ id: 601 }] }, { images: [{ id: 601 }, { id: 501 }] }],
     [
@@ -396,34 +396,42 @@ describe('deleting a report the send finds nothing to send for', () => {
     expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
     expect(submitReport).not.toHaveBeenCalled();
     expect(lines('send-no-files')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
+      expect.objectContaining({ type: 'error', reportId: 1, case: 'no-files' }),
     ]);
   });
 
-  it.each([['ExternalLink', { userId: null, details: {} }]])(
-    'deletes a %s report only under the claim',
-    async (type, copy) => {
-      primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
+  it.each([
+    ['Image', 'the reported user is gone', { userId: 404 }],
+    ['Image', 'the report names no reported user', { userId: null }],
+    ['ExternalLink', 'the report names no reported user', { userId: null, details: {} }],
+  ])('keeps a %s report unsent and marked for a decision when %s', async (type, _why, copy) => {
+    primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
+    dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+      where.id === 10
+        ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
+        : where.id === 20
+        ? { id: 20, email: 'user@example.invalid', name: 'User', username: 'user' }
+        : null
+    );
 
-      await processCsamReport(primaryRow);
+    await processCsamReport(primaryRow);
 
-      expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledWith({
+    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+    expect(submitReport).not.toHaveBeenCalled();
+    const held = expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user' });
+    expect(lines('send-held')).toEqual([held]);
+    expect(lines('send-decision-needed')).toEqual([held]);
+    expect(writesWith('details')).toEqual([
+      {
         where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
-      });
-      expect(submitReport).not.toHaveBeenCalled();
-      expect(releases()).toEqual([]);
-    }
-  );
-
-  it('logs the report id when the delete is refused because the claim was lost', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue(null);
-    dbMock.dbWrite.csamReport.deleteMany.mockResolvedValue({ count: 0 });
-
-    await processCsamReport(report);
-
-    expect(lines('send-delete-refused')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
+        data: {
+          details: expect.objectContaining({
+            sendHold: { case: 'missing-user', reason: expect.any(String), at: expect.any(String) },
+          }),
+        },
+      },
     ]);
+    expect(releases()).toHaveLength(1);
   });
 });
 
@@ -532,16 +540,32 @@ describe('a stored CyberTip id NCMEC answers for', () => {
 
 describe('a report that may have a CyberTip at NCMEC', () => {
   it.each([
-    ['cancelled', answering(0)],
-    ['already retracted', answering(5101)],
-  ])('is deleted for having nothing to send once its stored CyberTip is %s', async (_, answer) => {
-    cancelReport.mockResolvedValue(answer);
-    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
+    ['a stored CyberTip', { reportId: 77 }, { ncmecReportId: 77 }],
+    [
+      'a possible duplicate noted',
+      { details: { possibleDuplicateReportIds: [6] } },
+      { possibleDuplicateReportIds: [6] },
+    ],
+  ])(
+    'keeps a report with %s and no reported user, cancelling nothing and naming it on the hold',
+    async (_, held, named) => {
+      primaryRow = { ...report, userId: null, ...held } as unknown as CsamReportProps;
 
-    await processCsamReport(report);
+      await processCsamReport(report);
 
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
-  });
+      expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+      expect(cancelReport).not.toHaveBeenCalled();
+      expect(lines('send-held')).toEqual([
+        expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user', ...named }),
+      ]);
+      expect(releases()).toEqual([
+        {
+          where: { id: 1, sendClaimId: theClaim() },
+          data: { sendClaimId: null, sendClaimedAt: null },
+        },
+      ]);
+    }
+  );
 
   it('names a CyberTip an earlier run left open when the report waits for having no file', async () => {
     primaryRow = {
@@ -556,16 +580,6 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     expect(lines('send-no-files')).toEqual([expect.objectContaining({ ncmecReportId: 77 })]);
   });
 
-  it('is not deleted when its stored CyberTip cannot be cancelled', async () => {
-    cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
-    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
-
-    await processCsamReport(report);
-
-    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-    expect(lines('send-delete-held')).toHaveLength(1);
-  });
-
   it('is kept, waiting, when a generated-image report names no generated-image list', async () => {
     primaryRow = { ...report, type: 'GeneratedImage', details: {} } as unknown as CsamReportProps;
 
@@ -575,39 +589,6 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
     expect(lines('send-no-files')).toEqual([
       expect.objectContaining({ type: 'error', reportId: 1 }),
-    ]);
-  });
-
-  it('has a stored CyberTip cancelled before it is deleted for having nothing to send', async () => {
-    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
-
-    await processCsamReport(report);
-
-    expect(cancelReport).toHaveBeenCalledWith({ id: 77 });
-    expect(order(cancelReport)).toBeLessThan(
-      dbMock.dbWrite.csamReport.deleteMany.mock.invocationCallOrder[0]
-    );
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ['a stored CyberTip NCMEC says is finished', { reportId: 77 }],
-    ['a possible duplicate noted', { details: { possibleDuplicateReportIds: [6] } }],
-  ])('is not deleted when it has %s and nothing to send', async (_, held) => {
-    cancelReport.mockResolvedValue(answering(5102));
-    primaryRow = { ...report, userId: null, ...held } as unknown as CsamReportProps;
-
-    await processCsamReport(report);
-
-    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-    expect(lines('send-delete-held')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
-    ]);
-    expect(releases()).toEqual([
-      {
-        where: { id: 1, sendClaimId: theClaim() },
-        data: { sendClaimId: null, sendClaimedAt: null },
-      },
     ]);
   });
 });
