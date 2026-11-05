@@ -215,6 +215,16 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+/** The hat's body in the sticker editor: press it to drag, focus it for the arrow keys. */
+const hatBody = () =>
+  document.body.querySelector<HTMLElement>('[aria-label="Sticker position: arrow keys to move"]');
+const placeHat = () =>
+  [...document.body.querySelectorAll('button')].find((b) => b.textContent === 'Place hat')!.click();
+const pointerAt = (type: string, x: number, y: number, target: EventTarget) =>
+  target.dispatchEvent(
+    new PointerEvent(type, { bubbles: true, pointerId: 1, buttons: 1, clientX: x, clientY: y })
+  );
+
 describe('Hat Turf button on a feed ImageCard', () => {
   test('the button is a square in the team colour with only the hat, and the gear is already on screen', async () => {
     renderCard();
@@ -279,23 +289,28 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    const draft = q('hat-turf-draft')!;
     const layer = q('hat-turf-layer')!;
     const img = layer.parentElement!.querySelector('img')!;
     await vi.waitFor(() => {
+      const body = hatBody()!;
+      const hat = body.getBoundingClientRect();
       const media = img.getBoundingClientRect();
-      draft.dispatchEvent(
-        new PointerEvent('pointermove', {
-          bubbles: true,
-          buttons: 1,
-          pointerType: 'mouse',
-          clientX: media.left + media.width * 0.25,
-          clientY: media.top + media.height * 0.3,
-        })
+      pointerAt('pointerdown', hat.left + hat.width / 2, hat.top + hat.height / 2, body);
+      pointerAt(
+        'pointermove',
+        media.left + media.width * 0.25,
+        media.top + media.height * 0.3,
+        window
       );
-      expect(parseFloat(q('hat-turf-draft')!.style.left)).toBeCloseTo(25, -1);
+      pointerAt(
+        'pointerup',
+        media.left + media.width * 0.25,
+        media.top + media.height * 0.3,
+        window
+      );
+      expect(parseFloat(body.parentElement!.style.left)).toBeCloseTo(25, -1);
     });
-    (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
+    placeHat();
     expect(h.mutate).toHaveBeenCalledTimes(1);
     const [input, options] = h.mutate.mock.calls[0];
     expect(input).toMatchObject({
@@ -324,11 +339,10 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    const before = q('hat-turf-draft')!.style.left;
-    q('hat-turf-draft')!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
-    );
-    await vi.waitFor(() => expect(q('hat-turf-draft')!.style.left).not.toBe(before));
+    await vi.waitFor(() => expect(hatBody()).not.toBeNull());
+    const before = hatBody()!.parentElement!.style.left;
+    hatBody()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await vi.waitFor(() => expect(hatBody()!.parentElement!.style.left).not.toBe(before));
   });
 
   test('the layer rides the card’s hover zoom and clips to the card', async () => {
@@ -345,7 +359,7 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    (document.body.querySelector('[aria-label="Discard hat"]') as HTMLElement).click();
+    (document.body.querySelector('[aria-label="Remove this sticker"]') as HTMLElement).click();
     await vi.waitFor(() => expect(q('hat-turf-draft')).toBeNull());
     expect(h.mutate).not.toHaveBeenCalled();
   });
@@ -374,7 +388,7 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Top Hat'));
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
+    placeHat();
     expect(h.mutate.mock.calls[0][0].cosmeticId).toBe(12);
   });
 

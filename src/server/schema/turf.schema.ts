@@ -9,8 +9,10 @@ export const turfStickerDataSchema = stickerPlacementDataSchema.pick({
   scale: true,
   rotation: true,
   flip: true,
+  opacity: true,
 });
-export type TurfStickerData = z.infer<typeof turfStickerDataSchema>;
+// Input, not output: a direct caller (a job, a test) may leave opacity to its default.
+export type TurfStickerData = z.input<typeof turfStickerDataSchema>;
 
 const eventName = z.string().min(1).max(64);
 

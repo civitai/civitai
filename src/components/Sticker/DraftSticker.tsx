@@ -160,9 +160,11 @@ export function DraftSticker({
   onDuplicate,
   purchase,
   commit,
+  artwork,
 }: {
   draft: StickerDraft;
-  art: ResolvedSticker;
+  /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
+  art?: ResolvedSticker;
   /** Only decides what is on top. Every draft carries its own controls. */
   selected: boolean;
   dressed: StickerTreatment;
@@ -200,6 +202,8 @@ export function DraftSticker({
    * pricing props are unused and nothing here can charge.
    */
   commit?: ReactNode;
+  /** Drawn instead of `art`, filling the draft's width (a Hat Turf hat's fitted art). */
+  artwork?: ReactNode;
 }) {
   const useStore = useDraftStoreHook();
   const markPurchased = useStore((state) => state.markPurchased);
@@ -689,22 +693,24 @@ export function DraftSticker({
     </Tooltip>
   );
 
-  const artworkImage = (
-    <EdgeImage
-      src={art.url}
-      alt={`:${art.slug}:`}
-      options={{ width: 512, anim: art.animated, optimized: true }}
-      style={{
-        width: '100%',
-        height: 'auto',
-        display: 'block',
-        pointerEvents: 'none',
-        ...dressed.imageStyle?.detail,
-        ...stickerArtworkStyle(draft),
-      }}
-      draggable={false}
-    />
-  );
+  const artworkImage =
+    artwork ??
+    (art && (
+      <EdgeImage
+        src={art.url}
+        alt={`:${art.slug}:`}
+        options={{ width: 512, anim: art.animated, optimized: true }}
+        style={{
+          width: '100%',
+          height: 'auto',
+          display: 'block',
+          pointerEvents: 'none',
+          ...dressed.imageStyle?.detail,
+          ...stickerArtworkStyle(draft),
+        }}
+        draggable={false}
+      />
+    ));
 
   return (
     /**

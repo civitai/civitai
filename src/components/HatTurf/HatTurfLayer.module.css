@@ -19,19 +19,6 @@
   pointer-events: auto;
 }
 
-.draft {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  line-height: 0;
-  border-radius: var(--mantine-radius-sm);
-  outline: 2px dashed var(--mantine-color-white);
-  outline-offset: 4px;
-  cursor: move;
-  touch-action: none;
-  pointer-events: auto;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
-}
-
 .placed {
   position: absolute;
   line-height: 0;
@@ -82,39 +69,6 @@
 .moreButton:disabled {
   opacity: 0.6;
   cursor: progress;
-}
-
-
-.actions {
-  position: absolute;
-  display: flex;
-  gap: 6px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-}
-
-.save,
-.discard {
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--mantine-color-white);
-  border-radius: 50%;
-  color: var(--mantine-color-white);
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.save {
-  width: 34px;
-  height: 34px;
-  background-color: var(--mantine-color-green-6);
-}
-
-.discard {
-  align-self: center;
-  width: 28px;
-  height: 28px;
-  background-color: var(--mantine-color-gray-7);
 }
 
 @keyframes land {

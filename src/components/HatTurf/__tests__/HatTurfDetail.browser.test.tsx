@@ -187,6 +187,16 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+/** The sticker editor's commit on the draft hat (the panel has its own "Place hat"). */
+const placeHatButton = () =>
+  vi.waitFor(() => {
+    const button = [...(q('hat-turf-draft')?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === 'Place hat'
+    );
+    if (!button) throw new Error('no Place hat on the draft');
+    return button;
+  });
+
 describe('Hat Turf on image detail', () => {
   test('not joined: the purple invite shows, Join turns turf on', async () => {
     h.stock = { available: 3, optedIn: false, mode: 'live' };
@@ -261,8 +271,7 @@ describe('Hat Turf on image detail', () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
     click(q('hat-turf-detail-hat'));
-    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    click(document.body.querySelector('[aria-label^="Place hat"]'));
+    click(await placeHatButton());
     expect(h.place).toHaveBeenCalledTimes(1);
     const input = h.place.mock.calls[0][0];
     expect(input).toMatchObject({ imageId: 9, source: 'image-detail', cosmeticId: 11 });
@@ -272,8 +281,7 @@ describe('Hat Turf on image detail', () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
     click(q('hat-turf-detail-hat'));
-    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    click(document.body.querySelector('[aria-label^="Place hat"]'));
+    click(await placeHatButton());
     // The server read (h.stickers) never changes in this test: only the mutation succeeds.
     h.place.mock.calls[0][1].onSuccess();
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
