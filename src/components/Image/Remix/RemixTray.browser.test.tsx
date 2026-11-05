@@ -9,6 +9,7 @@ type Item = { id: string; status: string; tags: string[]; createdAt: string; ste
 
 const h = vi.hoisted(() => ({
   items: [] as Item[],
+  fetches: 0,
   patch: vi.fn<(input: unknown) => Promise<void>>(async () => undefined),
   getWorkflow: vi.fn<(input: { workflowId: string }) => Promise<{ tags: string[] }>>(async () => ({
     tags: [],
@@ -59,7 +60,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                         ['orchestrator', 'queryGeneratedImages'],
                         { input, type: 'infinite' },
                       ],
-                      queryFn: async () => ({ items: h.items, nextCursor: undefined }),
+                      queryFn: async () => {
+                        h.fetches++;
+                        return { items: h.items, nextCursor: undefined };
+                      },
                       initialPageParam: undefined,
                       getNextPageParam: () => undefined,
                       ...options,
@@ -114,6 +118,7 @@ beforeEach(() => {
   queryClient.clear();
   h.signals.clear();
   h.items = [];
+  h.fetches = 0;
 });
 
 describe('RemixTray', () => {
@@ -163,26 +168,27 @@ describe('RemixTray', () => {
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 0 in progress, 1 ready');
   });
 
-  test('a signal for an unseen remix-app workflow adds its run; others are looked up once', async () => {
+  test('a generation signal costs nothing; a remix-app signal for an unseen run adds it once', async () => {
     h.items = [workflow('a', 0, 'succeeded')];
     renderWithProviders(<RemixTray />);
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 0 in progress, 1 ready');
-    const signal = h.signals.get(SignalMessages.TextToImageUpdate)!;
+    const fetchesAtStart = h.fetches;
 
-    // Not a remix workflow: looked up, but nothing joins.
-    h.getWorkflow.mockResolvedValueOnce({ tags: ['gen'] });
-    signal({ $type: 'step', workflowId: 'other-0', status: 'processing' });
-    signal({ $type: 'step', workflowId: 'other-0', status: 'succeeded' });
-    await vi.waitFor(() => expect(h.getWorkflow).toHaveBeenCalledTimes(1));
-
+    // Every generation the viewer runs sends this; the tray must not look any of them up.
+    h.signals.get(SignalMessages.TextToImageUpdate)?.({
+      $type: 'step',
+      workflowId: 'other-0',
+      status: 'processing',
+    });
     const fresh = workflow('z', 0, 'processing');
-    h.getWorkflow.mockResolvedValueOnce({ tags: fresh.tags });
     h.items = [...h.items, fresh];
-    signal({ $type: 'step', workflowId: fresh.id, status: 'processing' });
+    const remixSignal = h.signals.get(SignalMessages.RemixAppUpdate)!;
+    remixSignal({ $type: 'step', workflowId: fresh.id, status: 'processing' });
+    remixSignal({ $type: 'step', workflowId: fresh.id, status: 'processing' });
 
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 1 in progress, 1 ready');
-    expect(h.getWorkflow).toHaveBeenCalledTimes(2);
-    expect(h.getWorkflow).toHaveBeenLastCalledWith({ workflowId: fresh.id });
+    expect(h.fetches).toBe(fetchesAtStart + 1);
+    expect(h.getWorkflow).not.toHaveBeenCalled();
   });
 
   test('a run tagged remix:done leaves the tray', async () => {

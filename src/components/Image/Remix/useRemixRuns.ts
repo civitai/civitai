@@ -18,7 +18,7 @@ import {
   REMIX_SEGMENT_TAG_PREFIX,
 } from '~/shared/remix-apps/tags';
 import { showErrorNotification } from '~/utils/notifications';
-import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
+import { queryClient, trpc } from '~/utils/trpc';
 
 export type RemixRunStatus = 'running' | 'ready' | 'failed';
 
@@ -82,8 +82,8 @@ export function groupRemixRuns(workflows: WorkflowData[]): RemixRun[] {
   return runs;
 }
 
-// Module scope: every mounted tray shares one signal stream, so each id is fetched once.
-const checkedWorkflowIds = new Set<string>();
+// Module scope: every mounted tray shares one signal stream, so each id is refetched for once.
+const signaledWorkflowIds = new Set<string>();
 
 /**
  * The viewer's open remix runs, read from the queue's own query (so its status signals keep them
@@ -99,22 +99,19 @@ export function useRemixRuns({ enabled = true }: { enabled?: boolean } = {}) {
   const inProgress = runs.filter((run) => run.status === 'running').length;
   const ready = runs.length - inProgress;
 
-  // The queue's status signals skip a workflow it has never listed: look an unseen id up once.
-  useSignalConnection(SignalMessages.TextToImageUpdate, (event: { workflowId?: string }) => {
+  // The queue's status signals skip a workflow it has never listed. Only remix-app workflows send
+  // this topic, so an unseen id is a run started elsewhere: refetch the queue once for it.
+  useSignalConnection(SignalMessages.RemixAppUpdate, (event: { workflowId?: string }) => {
     const workflowId = event?.workflowId;
-    if (!enabled || !workflowId || checkedWorkflowIds.has(workflowId)) return;
+    if (!enabled || !workflowId || signaledWorkflowIds.has(workflowId)) return;
     if (data.some((workflow) => workflow.id === workflowId)) return;
-    checkedWorkflowIds.add(workflowId);
-    trpcVanilla.orchestrator.getWorkflow
-      .query({ workflowId })
-      .then((workflow) => {
-        if (!workflow?.tags?.includes(REMIX_APP_TAG)) return;
-        return queryClient.invalidateQueries({
-          queryKey: getQueryKey(trpc.orchestrator.queryGeneratedImages),
-          exact: false,
-        });
+    signaledWorkflowIds.add(workflowId);
+    queryClient
+      .invalidateQueries({
+        queryKey: getQueryKey(trpc.orchestrator.queryGeneratedImages),
+        exact: false,
       })
-      .catch(() => checkedWorkflowIds.delete(workflowId));
+      .catch(() => signaledWorkflowIds.delete(workflowId));
   });
 
   const patch = trpc.orchestrator.patch.useMutation();

@@ -438,7 +438,10 @@ describe('remix app runs', () => {
         'remix-seg:0',
       ])
     );
-    expect(workflow.callbacks?.length).toBeGreaterThan(0);
+    // The queue's topic, and the remix topic the tray listens on instead of every generation's.
+    expect(
+      (workflow.callbacks as { url: string }[]).map(({ url }) => url.split('/').pop())
+    ).toEqual(['orchestrator:text-to-image-update', 'orchestrator:remix-app-update']);
     expect(verifyProvenance(workflow.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID]);
     expect(workflow.metadata?.remixRun).toEqual({ app: 'anime-it', version: 1, answers: [] });
   });
