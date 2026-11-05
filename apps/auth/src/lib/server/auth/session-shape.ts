@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { SessionUser } from '@civitai/auth';
+import { parseMeta, type SessionUser } from '@civitai/auth';
 import { getUserBanDetails, type BanDetailsMeta } from './ban';
 
 // Focused parse of the content-preference fields the session exposes off `User.settings`. The main app
@@ -144,7 +144,10 @@ export function shapeSessionUser({
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
-  const fullMeta = asObject(row.meta) as { banDetails?: BanDetailsMeta } & Record<string, unknown>;
+  const fullMeta = asObject(parseMeta(row.meta)) as { banDetails?: BanDetailsMeta } & Record<
+    string,
+    unknown
+  >;
   const { banDetails: _strippedBanDetails, ...userMeta } = fullMeta;
   const banDetails = getUserBanDetails({ meta: userMeta as { banDetails?: BanDetailsMeta } });
 

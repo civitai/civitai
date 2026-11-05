@@ -4,7 +4,7 @@ export const SYSTEM_ACCOUNT_META = { systemAccount: true } as const;
 
 // Fails closed: any truthy marker counts, including a hand-written `"true"`, and so does `meta`
 // stored as a JSON string rather than an object.
-function parseMeta(meta: unknown): Record<string, unknown> | null {
+export function parseMeta(meta: unknown): Record<string, unknown> | null {
   let value = meta;
   if (typeof value === 'string') {
     try {

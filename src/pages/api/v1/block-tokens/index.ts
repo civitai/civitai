@@ -15,6 +15,7 @@ export const config = {
     bodyParser: { sizeLimit: '8kb' },
   },
 };
+import { isSystemAccountMeta } from '@civitai/auth';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
@@ -1161,7 +1162,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // resolveBlockInstance DB read) so a refused caller can't probe install
   // existence or consume those buckets.
   const appBlocksAvailable = getFeatureFlags({ user: session?.user, req }).appBlocks;
-  if (!appBlocksAvailable) {
+  // System accounts are service identities, not app users.
+  if (!appBlocksAvailable || isSystemAccountMeta(session?.user?.meta)) {
     res.status(403).json({ error: 'Apps are not available to this account' });
     return;
   }
