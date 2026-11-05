@@ -18,8 +18,7 @@
 }
 
 .rowBadge {
-  width: 36px;
-  height: 36px;
+  --dial: 36px;
 }
 
 .badgeEmpty {
