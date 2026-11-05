@@ -105,13 +105,19 @@ describe('AppListingReviews — first 4, then "Show all reviews"', () => {
     expect(showAllButtons(container)).toHaveLength(0);
   });
 
-  test('🔴 4 loaded with a further page still offers the button (more exist on the server)', async () => {
+  test('🔴 4 loaded with a further page offers the button and does not page further', async () => {
     seed(4);
     mocks.hasNextPage = true;
     const { container } = await renderWithProviders(<AppListingReviews appListingId="l1" />);
     await expect.element(page.elementLocator(container).getByText(DETAILS[0])).toBeInTheDocument();
 
     expect(showAllButtons(container)).toHaveLength(1);
+
+    // Exactly a full first screen: collapsed, it must stop here. `InViewLoader` waits 1500ms
+    // before its first load; wait past it.
+    scrollToEnd(container);
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(mocks.fetchNextPage).not.toHaveBeenCalled();
   });
 
   test('🔴 collapsed, it does not page further; after "Show all" the infinite query takes over', async () => {
