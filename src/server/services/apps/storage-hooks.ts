@@ -73,7 +73,7 @@ function describeProblem(p: StorageHookProblem): string {
   const file = p.file === null ? '' : ` ${JSON.stringify(p.file)}`;
   switch (p.reason) {
     case 'not_available':
-      return `${at} is not available yet — permission hooks arrive in a later phase of App Storage; remove hook for now (the collection schema still applies)`;
+      return `${at} is not available yet — permission hooks arrive in a later phase of App Storage; remove hook (the collection schema still applies)`;
     case 'invalid':
       return `${at} is not a valid hook declaration`;
     case 'under_output_dir':

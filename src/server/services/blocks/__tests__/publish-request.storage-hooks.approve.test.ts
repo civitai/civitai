@@ -19,7 +19,7 @@ import type * as FliptClient from '~/server/flipt/client';
 
 const h = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
-  zip: new Uint8Array(),
+  zip: new Uint8Array() as Uint8Array,
   isFlipt: vi.fn(),
   getSessionUserById: vi.fn(),
   tree: new Map<string, string>(),
