@@ -162,7 +162,7 @@ describe('/user/[username], flag on', () => {
   it('is edge-cacheable, tagged as a user page, and sets no cookie', async () => {
     const a = await render(CRAWLER_A);
     expect(a.html).toContain('crawled-creator');
-    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=21600');
+    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
     expect(a.headers['cache-control']).toBe('private, no-store');
     expect(a.headers['cache-tag']).toMatch(/^botcache,botcache-user,build-[\w-]+$/);
     expect(a.headers).not.toHaveProperty('set-cookie');
@@ -171,7 +171,7 @@ describe('/user/[username], flag on', () => {
   it('three crawlers that differ in agent, IP, country and state: byte-identical, no cookie', async () => {
     const [a, b, c] = [await render(CRAWLER_A), await render(CRAWLER_B), await render(CRAWLER_C)];
     for (const other of [b, c]) {
-      expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=21600');
+      expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
       expect(other.headers).not.toHaveProperty('set-cookie');
       expect(other.html).toBe(a.html);
     }

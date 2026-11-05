@@ -130,6 +130,7 @@ vi.mock('~/server/page-data/image-detail', async (importOriginal) => ({
 
 import * as ImagePage from '~/pages/images/[imageId]';
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
+import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import type { RoutePage, Variant } from './bot-cache-render.harness';
 import {
   CRAWLER_A,
@@ -182,10 +183,10 @@ beforeEach(() => {
 const GOOGLEBOT: Variant = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
 
 describe('flag on: an edge-cacheable render is one object for every crawler', () => {
-  it('is edge-cacheable for 6 h, private to browsers, tagged, and sets no cookie', async () => {
+  it('is edge-cacheable for 5 min, private to browsers, tagged, and sets no cookie', async () => {
     const a = await render(CRAWLER_A);
     expect(a.html).toContain('data-testid="bot-cache-page"');
-    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=21600');
+    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
     expect(a.headers['cache-control']).toBe('private, no-store');
     expect(a.headers['cache-tag']).toMatch(/^botcache,botcache-images,build-[\w-]+$/);
     expect(a.headers).not.toHaveProperty('set-cookie');
@@ -198,7 +199,7 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
   ])('byte-identical HTML for %s, and no cookie', async (_, variant) => {
     const a = await render(CRAWLER_A);
     const other = await render(variant);
-    expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=21600');
+    expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
     expect(other.headers).not.toHaveProperty('set-cookie');
     expect(other.html).toBe(a.html);
   });
@@ -214,7 +215,7 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
   it('INSTRUMENT CHECK: another URL does change the bytes', async () => {
     const a = await render(CRAWLER_A);
     const other = await render({ url: '/images/987654321' });
-    expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=21600');
+    expect(other.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
     expect(other.html).not.toBe(a.html);
   });
 });
@@ -290,5 +291,30 @@ describe('a render that must not be stored', () => {
     const headers = res.getHeaders();
     for (const name of ['cloudflare-cdn-cache-control', 'cache-tag'])
       expect(headers, name).not.toHaveProperty(name);
+  });
+});
+
+describe('flag evaluation', () => {
+  const calls = () => vi.mocked(getFeatureFlagsAsync).mock.calls.map(([ctx]) => ctx);
+  const theRequest = expect.objectContaining({ url: '/images/1', method: 'GET' });
+
+  it('a marked request: neither `_app` nor the page hands the evaluation the request', async () => {
+    vi.mocked(getFeatureFlagsAsync).mockClear();
+    const a = await render(CRAWLER_A);
+    expect(a.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
+    expect(calls()).toEqual([
+      { user: undefined, host: 'civitai.com', req: undefined },
+      { user: undefined, host: 'civitai.com', req: undefined },
+    ]);
+  });
+
+  it('INSTRUMENT CHECK: an unmarked request hands both evaluations the request', async () => {
+    setFlag(false);
+    vi.mocked(getFeatureFlagsAsync).mockClear();
+    await render(CRAWLER_A);
+    expect(calls()).toEqual([
+      { user: undefined, host: 'civitai.com', req: theRequest },
+      { user: undefined, req: theRequest },
+    ]);
   });
 });

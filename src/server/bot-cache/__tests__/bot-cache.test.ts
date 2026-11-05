@@ -232,14 +232,14 @@ describe('botCacheResponseRefusal', () => {
 });
 
 describe('applyBotCacheEdgeHeaders', () => {
-  it('edge-cacheable for 6 h, private to browsers, tagged, and drops any cookie', () => {
+  it('edge-cacheable for 5 min, private to browsers, tagged, and drops any cookie', () => {
     const res = fakeResponse(200, {
       'Cache-Control': 'private, no-cache, no-store, max-age=0, must-revalidate',
       'Set-Cookie': ['a=1; Path=/'],
     });
     applyBotCacheEdgeHeaders(res as never, 'images');
     const headers = res.getHeaders();
-    expect(headers['cloudflare-cdn-cache-control']).toBe('public, max-age=21600');
+    expect(headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
     expect(headers['cache-control']).toBe('private, no-store');
     expect(headers['cache-tag']).toMatch(/^botcache,botcache-images,build-[\w-]+$/);
     expect(headers).not.toHaveProperty('set-cookie');

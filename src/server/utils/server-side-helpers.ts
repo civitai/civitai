@@ -233,7 +233,17 @@ export function createServerSideProps<P>({
       };
     }
 
-    const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
+    // A bot-cache candidate (`_app` marked it) is evaluated as in `_app`: the host (part of the
+    // edge's cache key) but not the request, so its region cannot reach a render the edge may store.
+    // 🔴 Never drop `host` too: with no host the domain restrictions are skipped.
+    const botCacheCandidate = !!(context.req as { [BOT_CACHE_REQ_KEY]?: string })[
+      BOT_CACHE_REQ_KEY
+    ];
+    const features = await getFeatureFlagsAsync(
+      botCacheCandidate
+        ? { user: session?.user, host: context.req.headers.host, req: undefined }
+        : { user: session?.user, req: context.req }
+    );
     // This response is private, so it is where the viewer's shell rollout is read: the route cookie
     // follows the flag, and only a request carrying it is ever considered for the shell.
     if (shell) {

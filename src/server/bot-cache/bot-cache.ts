@@ -60,7 +60,7 @@ export type BotCacheRouteName = (typeof BOT_CACHE_ROUTES)[BotCacheRoutePattern];
 /** Set by the edge on a verified crawler's request, to `CF_VERIFIED_BOT_HEADER_SECRET`. */
 export const CF_VERIFIED_BOT_HEADER = 'x-civ-cf-verified-bot';
 
-export const BOT_CACHE_CDN_CACHE_CONTROL = 'public, max-age=21600';
+export const BOT_CACHE_CDN_CACHE_CONTROL = 'public, max-age=300';
 
 /** Why a request is not answered with an edge-cacheable render. See `botCacheRefusal`. */
 export type BotCacheRefusal =
@@ -206,6 +206,10 @@ export function botCacheTag(route: BotCacheRouteName) {
  * cookie leaves, since a stored Set-Cookie would be handed to every crawler. Set only once the page
  * has rendered; `_app` strips these headers on every run (see `SHELL_EDGE_HEADERS`), so a render
  * that throws re-renders `/_error` without them.
+ *
+ * 🔴 The edge must store AND serve these copies only for verified-crawler requests on
+ * civitai.com: a rule that makes these paths cacheable for every request would hand the crawler
+ * render to people, signed-in users and visitors who need the consent banner included.
  */
 export function applyBotCacheEdgeHeaders(res: ServerResponse, route: BotCacheRouteName) {
   applyShellPrivateHeaders(res);
