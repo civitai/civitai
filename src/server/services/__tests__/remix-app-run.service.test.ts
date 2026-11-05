@@ -4,6 +4,7 @@ import type * as ImageVisibility from '~/server/services/image-visibility.servic
 import type * as InputUrls from '~/server/services/generation-input-urls';
 import type * as OrchestrationNew from '~/server/services/orchestrator/orchestration-new.service';
 import type * as RemixProvenance from '~/server/services/orchestrator/remix-provenance';
+import type { RemixImage } from '~/shared/remix-apps/define';
 import type * as SystemApps from '~/shared/remix-apps/system-apps';
 
 /**
@@ -161,7 +162,7 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
     version: 1,
     engine: real.animeIt.engine,
     async run(ctx) {
-      let images = [ctx.source];
+      let images: RemixImage[] = [ctx.source];
       for (let i = 0; i < 20; i++) {
         const result = await ctx.workflow({
           kind: 'image',

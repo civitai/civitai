@@ -369,7 +369,10 @@ describe('remixApp.quote', () => {
     addImage(20);
     h.whatIfFromGraph.mockRejectedValueOnce(new Error('engine down'));
     const { prices } = await quoteRemixApps({ imageId: 20, caller: caller() });
-    expect(prices.filter((p) => 'refusal' in p)).toHaveLength(1);
+    // The orchestrator's own words are logged, never shown.
+    expect(prices.filter((p) => 'refusal' in p)).toEqual([
+      expect.objectContaining({ refusal: 'Price unavailable' }),
+    ]);
     expect(prices.filter((p) => 'cost' in p)).toHaveLength(REMIX_MENU_APPS.length - 1);
   });
 

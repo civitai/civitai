@@ -1,3 +1,4 @@
+import { logToAxiom } from '~/server/logging/client';
 import { createHash } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
@@ -354,7 +355,13 @@ async function quoteBuiltRun(
       { ttl: CacheTTL.sm, lockTTL: 4 }
     );
   } catch (error) {
-    return { refusal: (error as Error).message || PRICE_UNAVAILABLE };
+    logToAxiom({
+      name: 'remix-app-quote',
+      type: 'error',
+      message: (error as Error).message,
+      key,
+    }).catch(() => undefined);
+    return { refusal: PRICE_UNAVAILABLE };
   }
 }
 
