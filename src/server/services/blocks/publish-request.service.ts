@@ -2160,6 +2160,8 @@ export async function recordPendingFromPush(args: {
   appBlockId: string;
   manifest: object;
   version: string;
+  /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
+  pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
@@ -2181,6 +2183,8 @@ export async function recordPendingFromPush(args: {
   // Before the refresh and the supersede below: a refused push changes no pending request.
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTerms(ownerUserId);
+  if (args.pusherUserId != null && args.pusherUserId !== ownerUserId)
+    await assertAcceptedAppDeveloperTerms(args.pusherUserId);
 
   // Already captured this exact (slug, sha) as pending? Refresh + done.
   const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({

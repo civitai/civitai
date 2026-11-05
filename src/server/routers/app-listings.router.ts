@@ -1216,7 +1216,6 @@ export const appListingsRouter = router({
       return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
     }),
 
-  /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
   getDeveloperTermsStatus: appDeveloperProcedure.query(async ({ ctx }) => {
     const { getAppDeveloperTermsStatus } = await import(
       '~/server/services/blocks/app-developer-terms.service'
@@ -1247,6 +1246,7 @@ export const appListingsRouter = router({
       return acceptAppDeveloperTerms({ userId: ctx.user.id, version: input.version });
     }),
 
+  /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
   listMySubmissions: appDeveloperProcedure
     .input(listMySubmissionsSchema)
     .query(async ({ ctx, input }) => {

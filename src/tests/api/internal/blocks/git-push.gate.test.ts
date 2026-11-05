@@ -326,6 +326,16 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("checks the pusher's own acceptance, mapped from the dev-<userId> Forgejo handle", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    await invoke(signedReq(body), makeRes());
+    expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
+  });
+
   it('the new pending push supersedes any older pending request for the slug (one-pending-per-slug)', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);

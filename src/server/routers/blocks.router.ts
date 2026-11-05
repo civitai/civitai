@@ -8815,6 +8815,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // A write credential lets the caller file versions, so the caller (owner or collaborator)
+      // must have accepted, as on submitVersion.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
 
       const slug = block.blockId;
 
@@ -9321,6 +9327,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // Gated like getMyAppRepo although it grants only `read`: the token it returns is the same
+      // push token, and an accepted collaborator already holds `write` from accepting the invite.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
       const slug = block.blockId;
       if (block.status !== 'approved') {
         return {

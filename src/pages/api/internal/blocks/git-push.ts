@@ -9,6 +9,7 @@ import {
   BlockManifestValidator,
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
+import { userIdForForgejoUsername } from '~/server/services/blocks/dev-git-access.service';
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
@@ -409,6 +410,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       appBlockId: appBlock.id,
       manifest: manifest as object,
       version: reviewVersion,
+      pusherUserId: userIdForForgejoUsername(payload.pusher?.login ?? payload.pusher?.username),
     });
   } catch (e) {
     if (e instanceof AppDeveloperTermsNotAcceptedError) {

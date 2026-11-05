@@ -121,6 +121,37 @@ describe('App Developer Terms: publishing is refused server-side until accepted'
     expect(db.pubReqCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('a push by a collaborator who has not accepted is refused although the owner has, changing no pending request', async () => {
+    accepted.add(`${OWNER}:${APP_DEVELOPER_TERMS_VERSION}`);
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    const run = recordPendingFromPush({
+      slug: 'my-app',
+      sha: 'abc1234',
+      appBlockId: 'ab_1',
+      manifest: {},
+      version: '1.0.1',
+      pusherUserId: DEV,
+    });
+    await expect(run).rejects.toThrow('Accept the App Developer Terms');
+    expect(db.pubReqUpdateMany).toHaveBeenCalledTimes(0);
+    expect(db.pubReqCreate).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: the same collaborator push is recorded once the collaborator accepts', async () => {
+    accepted.add(`${OWNER}:${APP_DEVELOPER_TERMS_VERSION}`);
+    accepted.add(`${DEV}:${APP_DEVELOPER_TERMS_VERSION}`);
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    await recordPendingFromPush({
+      slug: 'my-app',
+      sha: 'abc1234',
+      appBlockId: 'ab_1',
+      manifest: {},
+      version: '1.0.1',
+      pusherUserId: DEV,
+    }).catch(() => undefined);
+    expect(db.pubReqCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('tRPC publish paths get a FORBIDDEN the client can show, not a masked 500', async () => {
     const { assertAcceptedAppDeveloperTermsTrpc } = await import('../app-developer-terms.service');
     const err = await assertAcceptedAppDeveloperTermsTrpc(DEV).catch((e: unknown) => e);
