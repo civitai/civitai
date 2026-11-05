@@ -74,6 +74,28 @@ describe('time limit', () => {
     expect(pool.stats().terminated).toBe(terminatedBefore);
   });
 
+  // Regression: CI run 41978094786 answered `cause: 'error'` for a 1 ms loop. The deadline was
+  // armed before the sandbox's own setup (the prelude that removes non-ES globals), and an
+  // interrupt landing there was reported as a setup error instead of a timeout. Many calls at the
+  // smallest budget make that window likely to be hit.
+  it('a 1 ms budget is always a timeout from the interrupt, never another cause', async () => {
+    const causes = new Map<string, number>();
+    for (let i = 0; i < 300; i++) {
+      const { result } = await run('export default function check() { for (;;) {} }', {
+        timeoutMs: 1,
+      });
+      const key = JSON.stringify(result);
+      causes.set(key, (causes.get(key) ?? 0) + 1);
+    }
+    expect(Object.fromEntries(causes)).toEqual({
+      [JSON.stringify({
+        allow: false,
+        cause: 'timeout',
+        detail: 'interrupted at the deadline',
+      })]: 300,
+    });
+  });
+
   it('interrupts a loop at module top level', async () => {
     const { result } = await run(
       'for (;;) {}\nexport default function check() { return { allow: true }; }',
