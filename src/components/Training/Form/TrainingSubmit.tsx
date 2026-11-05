@@ -46,7 +46,10 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
 import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
+import {
+  blockedCustomModels,
+  isClassicTrainerRetired,
+} from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
@@ -1606,6 +1609,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               blockedModels.includes(formBaseModel ?? '') ||
               !!unacknowledgedRun ||
               !status.available ||
+              isClassicTrainerRetired() ||
               !allLabeled ||
               awaitInvalidate ||
               confirmOpen ||
