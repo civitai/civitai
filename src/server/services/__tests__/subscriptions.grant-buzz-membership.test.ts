@@ -69,14 +69,31 @@ const catalogLookup = async ({ where }: { where: Record<string, any> }) => {
   return tier === 'silver' ? price() : tier === 'gold' ? goldPrice() : null;
 };
 
-type Row = { id: string; metadata: { grantKeys?: string[] }; currentPeriodEnd: Date };
+type Row = {
+  id: string;
+  metadata: { grantKeys?: string[]; [flag: string]: unknown };
+  currentPeriodEnd: Date;
+};
 let row: Row | null;
 const subscription = dbMock.dbWrite.customerSubscription;
+// A client apart from `dbWrite`, so a call that should run inside the transaction cannot pass on the outer one.
+let tx: {
+  $queryRaw: ReturnType<typeof vi.fn>;
+  $executeRaw: ReturnType<typeof vi.fn>;
+  customerSubscription: typeof subscription;
+};
 
 beforeEach(() => {
   resetSharedMocks();
   vi.clearAllMocks();
   row = null;
+  tx = {
+    $queryRaw: vi.fn(async () => []),
+    $executeRaw: vi.fn(async () => 0),
+    customerSubscription: subscription,
+  };
+  dbMock.dbWrite.$transaction.mockImplementation((async (run: (client: unknown) => unknown) =>
+    run(tx)) as never);
   dbMock.dbWrite.price.findFirst.mockImplementation(catalogLookup as never);
   createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
   refundTransaction.mockResolvedValue(undefined);
@@ -122,7 +139,8 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
       status: 'active',
       cancelAtPeriodEnd: true,
     });
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(USER_ID);
   });
 
@@ -337,7 +355,7 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
 
   it('takes the user row lock for a keyless call too, before the conflict check', async () => {
     const queries: string[] = [];
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    tx.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
       queries.push(strings.join('?'));
       return [];
     }) as never);
@@ -350,10 +368,44 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
     await purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' });
 
     expect(queries).toHaveLength(4);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     for (const at of [0, 2]) {
       expect(queries[at]).toContain('FOR UPDATE');
       expect(queries[at + 1]).toBe('conflict-check');
     }
+  });
+
+  it('does not refund a purchase that was granted', async () => {
+    await purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' });
+
+    expect(subscription.upsert).toHaveBeenCalledTimes(1);
+    expect(refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('carries only the stored keys into a new month, not other flags on the lapsed row', async () => {
+    row = {
+      id: 'old',
+      metadata: { grantKeys: ['knights-shop:key-0'], renewalEmailSent: true },
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+    };
+    await grantBuzzPurchaseMembershipMonth({
+      userId: USER_ID,
+      tier: 'silver',
+      idempotencyKey: 'knights-shop:key-1',
+    });
+
+    expect(row?.metadata).toEqual({ grantKeys: ['knights-shop:key-0', 'knights-shop:key-1'] });
+  });
+
+  it('leaves a keyless month with no flags from the lapsed row either', async () => {
+    row = {
+      id: 'old',
+      metadata: { renewalEmailSent: true },
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+    };
+    await purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' });
+
+    expect(row?.metadata).toEqual({});
   });
 
   it('refunds the Buzz when the commit finds a concurrent membership', async () => {
@@ -362,6 +414,7 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
     await expect(
       purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' })
     ).rejects.toMatchObject({ name: 'BuzzMembershipRefusedError', reason: 'active-membership' });
+    expect(refundTransaction).toHaveBeenCalledTimes(1);
     expect(refundTransaction).toHaveBeenCalledWith('tx-1', expect.any(String));
     expect(subscription.upsert).not.toHaveBeenCalled();
   });

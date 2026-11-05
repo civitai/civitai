@@ -626,7 +626,7 @@ type ResolvedBuzzMembershipPrice = Awaited<ReturnType<typeof resolveBuzzMembersh
  * Writes the month: the conflict re-check, the subscription row and the badge delivery, in one transaction.
  * The user row is locked first, for every caller. With `idempotencyKey` a key already on the row answers
  * `already`, before any refusal, so a replay is never refused and never adds a second month. The slot's
- * existing metadata (the stored keys) survives whichever path writes it.
+ * stored keys survive whichever path writes it; the rest of its metadata starts over each month.
  */
 const commitBuzzMembershipMonth = async ({
   userId,
@@ -677,10 +677,6 @@ const commitBuzzMembershipMonth = async ({
       // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
       // conflicting check above already proved this row carries no live benefit.
       const currentPeriodEnd = now.add(1, 'month').toDate();
-      const priorMetadata =
-        prior?.metadata && typeof prior.metadata === 'object' && !Array.isArray(prior.metadata)
-          ? prior.metadata
-          : {};
       const grantKeys = idempotencyKey
         ? [...priorKeys, idempotencyKey].slice(-MAX_BUZZ_GRANT_KEYS)
         : priorKeys;
@@ -695,11 +691,9 @@ const commitBuzzMembershipMonth = async ({
         cancelAt: null,
         canceledAt: null,
         endedAt: null,
-        // Keep what the slot already holds: a Buzz purchase must not erase the keys a gold grant stored.
-        metadata: {
-          ...priorMetadata,
-          ...(grantKeys.length ? { grantKeys } : {}),
-        },
+        // Only the keys carry over: a Buzz purchase must not erase the ones a gold grant stored, and any other
+        // per-period flag on the row must not leak into the new month.
+        metadata: grantKeys.length ? { grantKeys } : {},
       };
 
       await tx.customerSubscription.upsert({
