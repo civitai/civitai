@@ -618,6 +618,21 @@ describe('a Private model, which must stay SFW-only', () => {
     await expectHeld();
   });
 
+  it('a new scan verdict on a lifted lead applies at publish', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    await makePrivate();
+    expect(
+      await applySystemModelNsfwFlag({
+        model: scanned({ availability: 'Private' }),
+        source: 'text-scan',
+      })
+    ).toBe('held_restricted');
+    expect((await row()).meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
+    expect(await publish()).toBe(true);
+    await expectApplied();
+  });
+
   it('publishing with no lead changes nothing (control)', async () => {
     await seed({ sfwOnly: true });
     await makePrivate();
@@ -715,6 +730,25 @@ describe("a lead from the owner's flag over the scan's rating", () => {
     }
   );
 
+  it('keeps an earlier declaration and its time, adding the flags the override lists', async () => {
+    const earlier = { at: '2026-10-01T00:00:00.000Z', flags: ['poi'] };
+    await seed({
+      minor: true,
+      locked: ['nsfw', 'minor', 'sfwOnly'],
+      meta: {
+        systemNsfwLock: SYSTEM_LOCK,
+        ownerFlagOverride: override,
+        ownerDeclaredFlags: earlier,
+        ...lead('minor'),
+      },
+    });
+    await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
+    expect((await row()).meta.ownerDeclaredFlags).toEqual({
+      at: earlier.at,
+      flags: ['poi', 'minor'],
+    });
+  });
+
   it.each([
     ['keep', undefined],
     ['dismiss', 'Checked the gallery'],
@@ -744,6 +778,7 @@ describe("a lead from the owner's flag over the scan's rating", () => {
       expect((await rollback()).keptMinor).toBe(1);
       await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling, reason, userId: MODERATOR });
       expect((await row()).meta.ownerDeclaredFlags.flags).toEqual(['minor']);
+      expect((await row()).meta.ownerDeclaredFlags.at).toBe(override.at);
       expect(await rollback()).toMatchObject({ keptMinor: 1, rolledBack: 0 });
     }
   );

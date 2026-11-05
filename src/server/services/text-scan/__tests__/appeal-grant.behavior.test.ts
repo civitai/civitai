@@ -675,6 +675,25 @@ describe('poi', () => {
       grantHash: (await loadGrantTextHash('Model', MODEL_ID, 'poi'))!,
     });
 
+  it('brings a kept scan NSFW verdict back as a pending lead, and leaves nsfw alone', async () => {
+    await seed({ poi: true, scanHash: SCANNED });
+    const kept = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'poi' };
+    await holder.db.query(`UPDATE "Model" SET meta = meta || $2::jsonb WHERE id = $1`, [
+      MODEL_ID,
+      JSON.stringify({ restrictedNsfwVerdictDormant: kept }),
+    ]);
+    expect(await overturn()).toBe(true);
+    const row = (
+      await holder.db.query<{ nsfw: boolean; meta: Record<string, unknown> }>(
+        `SELECT nsfw, meta FROM "Model" WHERE id = $1`,
+        [MODEL_ID]
+      )
+    ).rows[0];
+    expect(row.meta.restrictedNsfwVerdict).toEqual({ ...kept, liftedBy: 'moderator' });
+    expect(row.meta).not.toHaveProperty('restrictedNsfwVerdictDormant');
+    expect(row.nsfw).toBe(false);
+  });
+
   it('stays unflagged when a verdict arrives for the scanned text', async () => {
     await seed({ poi: true, scanHash: SCANNED });
     expect(await overturn()).toBe(true);

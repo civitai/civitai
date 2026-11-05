@@ -129,7 +129,8 @@ export async function applySystemModelNsfwFlag({
 async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boolean) {
   const heldLeadGuard = heldLead
     ? Prisma.sql`AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
-      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')`
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'liftedBy')`
     : Prisma.empty;
   return db.$executeRaw`
     UPDATE "Model" m
@@ -164,14 +165,16 @@ async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boo
  * Records the verdict as a moderator's lead, without touching nsfw, where the rating may not be
  * overridden (`holdsRatingSql`). Guarded on there being no nsfw lock: a moderator's lock is already a
  * ruling. A lead already waiting keeps its time and restriction, so a redelivery does not move it in
- * the queue and an owner who later unticks the flag does not relabel it. True when it wrote.
+ * the queue and an owner who later unticks the flag does not relabel it. On a model no longer minor or
+ * POI the new verdict is not a lifted flag's, so it applies as any held lead. True when it wrote.
  */
 async function holdRestrictedVerdict(db: RawDb, modelId: number, source: string) {
   const held = await db.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
           'restrictedNsfwVerdict', COALESCE(
-            m.meta->'restrictedNsfwVerdict',
+            CASE WHEN m.minor OR m.poi THEN m.meta->'restrictedNsfwVerdict'
+              ELSE (m.meta->'restrictedNsfwVerdict') - 'liftedBy' END,
             jsonb_build_object(
               'source', ${source}::text,
               'at', now(),
@@ -286,6 +289,7 @@ export async function holdLeadAfterFlagLift(
     WHERE m.id = ${modelId}
       AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
       AND NOT (m.minor OR m.poi)
   `;
 }

@@ -1756,6 +1756,20 @@ describe('setModelMinor — lift restore on a real row', () => {
       }
     );
 
+    it('leaves a lead held for SFW-only or Private as it was', async () => {
+      const sfwOnlyLead = { ...verdict, restriction: 'sfwOnly' };
+      await seedFlagged({ minor: true }, { restrictedNsfwVerdict: sfwOnlyLead });
+      await liftMinor();
+      expect(await meta()).toEqual({ restrictedNsfwVerdict: sfwOnlyLead });
+    });
+
+    it('a lift of a flag the model did not carry leaves a waiting lead alone', async () => {
+      await seedFlagged({ minor: true }, { restrictedNsfwVerdict: verdict });
+      await pg.query(`UPDATE "Model" SET minor = false WHERE id = $1`, [MODEL_ID]);
+      await liftPoi();
+      expect(await meta()).toEqual({ restrictedNsfwVerdict: verdict });
+    });
+
     it('keeps the verdict dormant while the other flag still holds the rating', async () => {
       await seedFlagged({ minor: true, poi: true }, { restrictedNsfwVerdictDormant: verdict });
       await liftMinor();
