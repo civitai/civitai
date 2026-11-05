@@ -214,6 +214,7 @@ describe('feedback schema — context bounds', () => {
       ['errorRef', { errorRef: '0123456789abc' }],
       ['workflowId', { workflowId: 'https://attacker.example/x' }],
       ['jobId', { jobId: 'a'.repeat(65) }],
+      ['jobId', { jobId: 'a b' }],
       ['toast.message', { toast: { message: 'x'.repeat(301) } }],
     ])('rejects a malformed %s', (_label, context) => {
       expect(() => parse(context)).toThrow();

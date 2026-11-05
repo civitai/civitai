@@ -68,6 +68,8 @@ describe('showErrorNotification — Report this', () => {
       errorRef: '0123456789ab',
       toast: { title: 'Could not save', message: SERVER_FAULT },
     });
+    // The drawer replaces the toast; a wrong id in `onOpen` would leave it up behind the drawer.
+    await expect.element(page.getByText('Could not save')).not.toBeInTheDocument();
   });
 
   // Validation toasts stay buttonless: a report about "too small" helps nobody. The server-fault

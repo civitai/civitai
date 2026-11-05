@@ -58,7 +58,9 @@ export function ReportProblemButton({
   errorRef = parseErrorRef(message),
   onOpen,
 }: Props) {
-  const queryOptions = { retry: false, staleTime: 5 * 60 * 1000 } as const;
+  // `retryOnMount: false`: a signed-out failure is not cached as data, so without it every new
+  // toast would send the same refused request again.
+  const queryOptions = { retry: false, retryOnMount: false, staleTime: 5 * 60 * 1000 } as const;
   const requested = trpc.feedback.getArea.useQuery(
     { area: ORCHESTRATION_FEEDBACK_AREA },
     { ...queryOptions, enabled: area === ORCHESTRATION_FEEDBACK_AREA }
