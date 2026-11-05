@@ -254,14 +254,28 @@ export async function holdLeadAfterFlagLift(
   liftedBy: NonNullable<RestrictedNsfwVerdict['liftedBy']>
 ) {
   await reviveDormantVerdict(db, modelId);
+  await stampWaitingLeadLiftedBy(
+    db,
+    modelId,
+    liftedBy,
+    Prisma.sql`m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
+      AND NOT (m.minor OR m.poi)`
+  );
+}
+
+async function stampWaitingLeadLiftedBy(
+  db: RawDb,
+  modelId: number,
+  liftedBy: NonNullable<RestrictedNsfwVerdict['liftedBy']>,
+  condition: Prisma.Sql
+) {
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = jsonb_set(m.meta, '{restrictedNsfwVerdict,liftedBy}', to_jsonb(${liftedBy}::text))
     WHERE m.id = ${modelId}
       AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
-      AND m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
-      AND NOT (m.minor OR m.poi)
+      AND ${condition}
   `;
 }
 
@@ -271,14 +285,7 @@ export async function holdLeadAfterFlagLift(
  * nothing else holds the rating now.
  */
 export async function holdLeadAfterSfwOnlyLift(db: RawDb, modelId: number) {
-  await db.$executeRaw`
-    UPDATE "Model" m
-    SET meta = jsonb_set(m.meta, '{restrictedNsfwVerdict,liftedBy}', to_jsonb('moderator'::text))
-    WHERE m.id = ${modelId}
-      AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
-      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
-      AND NOT ${holdsRatingSql}
-  `;
+  await stampWaitingLeadLiftedBy(db, modelId, 'moderator', Prisma.sql`NOT ${holdsRatingSql}`);
 }
 
 /**

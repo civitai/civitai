@@ -42,8 +42,12 @@ vi.mock('~/server/clickhouse/tracker', () => ({
   },
 }));
 
-const { applyHeldRestrictedVerdict, applyHeldVerdictLeavingPrivate, applySystemModelNsfwFlag } =
-  await import('~/server/services/text-scan/actions/model-nsfw');
+const {
+  applyHeldRestrictedVerdict,
+  applyHeldVerdictLeavingPrivate,
+  applySystemModelNsfwFlag,
+  holdLeadAfterSfwOnlyLift,
+} = await import('~/server/services/text-scan/actions/model-nsfw');
 const { resolveRestrictedNsfwVerdict } = await import(
   '~/server/services/text-scan/actions/restricted-nsfw-verdict'
 );
@@ -1007,5 +1011,21 @@ describe('the backfill migration', () => {
     expect((await db.query(`SELECT count(*)::int AS n FROM "Model" WHERE nsfw`)).rows[0]).toEqual({
       n: 7,
     });
+  });
+});
+
+describe("a moderator lifting a model's SFW-only lock", () => {
+  it('leaves the lead the lock held waiting for a ruling, not for the owner to apply', async () => {
+    await seed({ meta: lead('sfwOnly') });
+    await holdLeadAfterSfwOnlyLift(dbMock.dbWrite as never, MODEL);
+    expect((await row()).meta.restrictedNsfwVerdict).toMatchObject({ liftedBy: 'moderator' });
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
+    expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
+  });
+
+  it('leaves the lead alone while a minor flag still holds the rating', async () => {
+    await seed({ minor: true, meta: lead('sfwOnly') });
+    await holdLeadAfterSfwOnlyLift(dbMock.dbWrite as never, MODEL);
+    expect((await row()).meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
   });
 });
