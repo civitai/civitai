@@ -462,8 +462,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
       );
       await vi.waitFor(() => expect(badge()).not.toBeNull());
       const dial = badge()!.firstElementChild as HTMLElement;
-      const shot = await page.screenshot({ element: dial, base64: true, save: false });
-      const base64 = typeof shot === 'string' ? shot : shot.base64;
+      const base64 = await page.screenshot({ element: dial, base64: true, save: false });
       const bitmap = await createImageBitmap(
         await (await fetch(`data:image/png;base64,${base64}`)).blob()
       );
