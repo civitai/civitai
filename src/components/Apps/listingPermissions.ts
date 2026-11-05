@@ -39,19 +39,29 @@ export type ListingPermission = {
 
 /**
  * On-site block scope ids → rows. A scope with no plain title falls back to its description,
- * then to the id, so a new scope is never silently dropped from the disclosure.
+ * then to a humanised form of the id, so a new scope is never silently dropped from the
+ * disclosure and a viewer never reads a raw id.
  */
 export function blockScopePermissions(scopes: string[]): ListingPermission[] {
   return scopes.map((scope) => {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
     return {
       id: scope,
-      title: SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? scope,
+      title: SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? humaniseScopeId(scope),
       detail: SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined,
       sensitive: isSensitiveBlockScope(scope),
       rank: typeof bit === 'number' ? bit : Number.POSITIVE_INFINITY,
     };
   });
+}
+
+/** `apps:storage:shared_write` → "Apps storage shared write". */
+function humaniseScopeId(scope: string): string {
+  const words = scope
+    .split(/[:_-]+/)
+    .filter(Boolean)
+    .join(' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
@@ -123,9 +133,4 @@ export function blockScopeGroups(scopes: string[]): PermissionGroup[] {
     { key: 'other', label: PERMISSION_GROUP_LABELS.other, scopes: other },
   ];
   return groups.filter((g) => g.scopes.length > 0);
-}
-
-/** The labels of the groups `scopes` fall into, in display order. */
-export function blockScopeGroupLabels(scopes: string[]): string[] {
-  return blockScopeGroups(scopes).map((g) => g.label);
 }

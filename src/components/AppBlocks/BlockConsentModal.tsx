@@ -11,7 +11,8 @@ import {
 } from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
 import { useState } from 'react';
-import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
+import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
@@ -172,26 +173,24 @@ export default function BlockConsentModal({
             to:
           </Text>
         </Group>
-        <BlockScopeList
-          scopes={missingScopes}
-          consent={{
-            revokedScopes: [],
-            renderScopeAction: (scope) =>
-              forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
-                <SourcePublishConsentDetail
-                  consumerName={appLabel}
-                  sourceName={sourceName}
-                  available={source !== undefined}
-                  loading={imports.isLoading}
-                />
-              ) : !forSource && scope === APP_STORAGE_IMPORT_SCOPE ? (
-                <StorageImportConsentDetail
-                  consumerName={blockName ?? 'This app'}
-                  imports={imports.data?.imports}
-                  loading={imports.isLoading}
-                />
-              ) : null,
-          }}
+        <ListingPermissionGroups
+          permissions={blockScopePermissions(missingScopes)}
+          renderDetail={(scope) =>
+            forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
+              <SourcePublishConsentDetail
+                consumerName={appLabel}
+                sourceName={sourceName}
+                available={source !== undefined}
+                loading={imports.isLoading}
+              />
+            ) : !forSource && scope === APP_STORAGE_IMPORT_SCOPE ? (
+              <StorageImportConsentDetail
+                consumerName={blockName ?? 'This app'}
+                imports={imports.data?.imports}
+                loading={imports.isLoading}
+              />
+            ) : null
+          }
         />
         {grantsSpend ? (
           <Stack gap="xs" data-testid="block-consent-budget">

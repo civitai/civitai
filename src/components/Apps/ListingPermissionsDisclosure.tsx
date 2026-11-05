@@ -1,10 +1,11 @@
-import { Fragment } from 'react';
+import { Fragment, useId, type ReactNode } from 'react';
 import { Card, Divider, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconCheck, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
   groupListingPermissions,
+  PERMISSION_GROUP_LABELS,
   type ListingPermission,
 } from '~/components/Apps/listingPermissions';
 
@@ -39,7 +40,6 @@ export function ListingPermissionsDisclosure({
   testId: string;
 }) {
   if (permissions.length === 0) return null;
-  const { sensitive, other } = groupListingPermissions(permissions);
 
   return (
     <Card withBorder data-testid={testId}>
@@ -54,45 +54,81 @@ export function ListingPermissionsDisclosure({
           </Tooltip>
         )}
       </Group>
-      <Stack gap="md">
-        {sensitive.length > 0 && (
-          <Stack gap="sm" data-testid="listing-permissions-sensitive-group">
-            <Group gap={6} wrap="nowrap">
-              <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
-              <Text size="sm" fw={600} c="orange">
-                Sensitive permissions ({sensitive.length})
-              </Text>
-            </Group>
-            {sensitive.map((p, i) => (
-              <Fragment key={p.id}>
-                {i > 0 && <Divider />}
-                <PermissionRow permission={p} />
-              </Fragment>
-            ))}
-          </Stack>
-        )}
-        {other.length > 0 && (
-          <Stack gap="sm" data-testid="listing-permissions-other-group">
-            {/* Only named when there is a sensitive group to tell it apart from. */}
-            {sensitive.length > 0 && (
-              <Text size="sm" fw={600}>
-                Other permissions ({other.length})
-              </Text>
-            )}
-            {other.map((p, i) => (
-              <Fragment key={p.id}>
-                {i > 0 && <Divider />}
-                <PermissionRow permission={p} />
-              </Fragment>
-            ))}
-          </Stack>
-        )}
-      </Stack>
+      <ListingPermissionGroups permissions={permissions} />
     </Card>
   );
 }
 
-function PermissionRow({ permission }: { permission: ListingPermission }) {
+/**
+ * The grouped rows alone, for an end-user surface with its own heading (the launch consent
+ * prompt, the app details modal). `renderDetail` adds a caller's per-permission content under a
+ * row, keyed by the permission's id.
+ */
+export function ListingPermissionGroups({
+  permissions,
+  renderDetail,
+}: {
+  permissions: ListingPermission[];
+  renderDetail?: (id: string) => ReactNode;
+}) {
+  const groupId = useId();
+  const { sensitive, other } = groupListingPermissions(permissions);
+  const labelled = sensitive.length > 0 && other.length > 0;
+  return (
+    <Stack gap="md">
+      {sensitive.length > 0 && (
+        <Stack
+          gap="sm"
+          data-testid="listing-permissions-sensitive-group"
+          role={labelled ? 'group' : undefined}
+          aria-labelledby={labelled ? `${groupId}-sensitive` : undefined}
+        >
+          <Group gap={6} wrap="nowrap">
+            <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
+            <Text id={`${groupId}-sensitive`} size="sm" fw={600} c="orange">
+              {PERMISSION_GROUP_LABELS.sensitive} ({sensitive.length})
+            </Text>
+          </Group>
+          {sensitive.map((p, i) => (
+            <Fragment key={p.id}>
+              {i > 0 && <Divider />}
+              <PermissionRow permission={p} extra={renderDetail?.(p.id)} />
+            </Fragment>
+          ))}
+        </Stack>
+      )}
+      {other.length > 0 && (
+        <Stack
+          gap="sm"
+          data-testid="listing-permissions-other-group"
+          role={labelled ? 'group' : undefined}
+          aria-labelledby={labelled ? `${groupId}-other` : undefined}
+        >
+          {/* Only named when there is a sensitive group to tell it apart from. */}
+          {labelled && (
+            <Text id={`${groupId}-other`} size="sm" fw={600}>
+              {PERMISSION_GROUP_LABELS.other} ({other.length})
+            </Text>
+          )}
+          {other.map((p, i) => (
+            <Fragment key={p.id}>
+              {i > 0 && <Divider />}
+              <PermissionRow permission={p} extra={renderDetail?.(p.id)} />
+            </Fragment>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+function PermissionRow({
+  permission,
+  extra,
+}: {
+  permission: ListingPermission;
+  extra?: ReactNode;
+}) {
   const { id, title, detail, sensitive } = permission;
   return (
     <Group gap="sm" wrap="nowrap" align="flex-start" data-permission-row={id}>
@@ -117,6 +153,7 @@ function PermissionRow({ permission }: { permission: ListingPermission }) {
             {detail}
           </Text>
         )}
+        {extra}
       </Stack>
     </Group>
   );

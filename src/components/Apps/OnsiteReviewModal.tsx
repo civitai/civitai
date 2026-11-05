@@ -37,7 +37,7 @@ import {
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
-import { groupBlockScopes } from '~/components/Apps/listingPermissions';
+import { groupBlockScopes, PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import type { ReviewSubmitterChip, ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 import {
@@ -1555,7 +1555,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 <Group gap={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitiveScopes.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitiveScopes.length})
                   </Text>
                   <Tooltip
                     multiline
@@ -1575,7 +1575,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
             <Group gap={6}>
               <IconKey size={14} />
               <Text size="sm" fw={600}>
-                Permissions ({normalScopes.length})
+                {PERMISSION_GROUP_LABELS.other} ({normalScopes.length})
               </Text>
               <Tooltip
                 multiline

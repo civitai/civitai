@@ -18,7 +18,8 @@ import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
-import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
+import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
 import { trpc } from '~/utils/trpc';
@@ -253,7 +254,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
                 This app does not request any permissions.
               </Text>
             ) : (
-              <BlockScopeList scopes={scopes} />
+              <ListingPermissionGroups permissions={blockScopePermissions(scopes)} />
             )}
           </Stack>
         )}

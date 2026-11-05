@@ -9,16 +9,14 @@ import {
 } from '~/server/services/blocks/scope-descriptions.constants';
 
 /**
- * The OPT-IN consent layer — supplied by the two permissions surfaces and the launch consent
- * prompt (`BlockConsentModal`, which passes no revoked scopes and renders its per-scope consent
- * detail, never a revoke control).
+ * The OPT-IN consent layer — supplied by the two permissions surfaces only.
  *
- * 🔴 IT IS OPTIONAL SO THE OTHER CALL SITES CANNOT ACQUIRE A REVOKE CONTROL. `AppSettingsModal`,
- * `AppDetailsModal` and `AppListingDetailBody` render this same component from different scope
- * sets (see the component docstring) and none is a place a viewer withdraws consent from — the
- * listing body is a PUBLIC pre-launch disclosure about an app the reader may not even have
- * installed. Omitting the prop keeps `BlockScopeList.browser.test.tsx`'s exact `children` count
- * of 2 per scope true for them.
+ * 🔴 IT IS OPTIONAL SO THE OTHER TWO CALL SITES CANNOT ACQUIRE A REVOKE CONTROL. `AppSettingsModal`
+ * and `AppListingDetailBody` render this same component from different scope sets (see the
+ * component docstring) and neither is a place a viewer withdraws consent from — the listing body
+ * is a PUBLIC pre-launch disclosure about an app the reader may not even have installed. Omitting
+ * the prop keeps `BlockScopeList.browser.test.tsx`'s exact `children` count of 2 per scope true
+ * for them.
  *
  * 🔴 AND IT CARRIES NO DECISION — ONLY DATA AND A RENDER PROP. This component does not know what
  * a revoke is, which scopes are withdrawable, or what the server said; it strikes through the ids
@@ -57,6 +55,10 @@ export type BlockScopeListConsent = {
  * an app's permissions read the same on every surface: sensitive first, then the rest (unknown
  * scopes included, last). Group headings appear only when both groups are non-empty.
  *
+ * It shows scope IDS, so it is for the surfaces where the id is the point (settings, the
+ * permissions drawer and activity page, the moderator listing preview). The launch consent prompt
+ * and the app details modal show plain titles only, through `ListingPermissionGroups`.
+ *
  * 🔴 THIS COMPONENT IS PRESENTATION ONLY AND MAKES NO CLAIM ABOUT WHICH SET IT IS HANDED.
  * STILL TRUE AFTER THE PER-SCOPE REVOKE CONTROL: the optional `consent` prop (see
  * `BlockScopeListConsent` above) supplies DATA and a RENDER PROP, so the consent affordance is
@@ -74,9 +76,6 @@ export type BlockScopeListConsent = {
  *     `approved_scopes`, with no intersection, deliberately — it is a PUBLIC pre-launch
  *     disclosure and over-disclosing the stale approval is the safe direction there. The
  *     reasoning lives at `src/server/services/blocks/app-listing.service.ts`; do not "align" it.
- *     `src/components/Apps/AppDetailsModal.tsx` passes the same public `getAppDetail` scopes.
- *   - `src/components/AppBlocks/BlockConsentModal.tsx` passes the consent-gated scopes the viewer
- *     has not granted yet (`missingScopes`).
  *
  * So the set is the CALLER'S choice and each caller documents its own. A docstring here that
  * promised they agree would read as coverage while providing none.

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  blockScopeGroupLabels,
   blockScopeGroups,
   blockScopePermissions,
   connectScopePermissions,
@@ -68,6 +67,7 @@ describe('groupListingPermissions — off-site connect scopes', () => {
 });
 
 describe('blockScopeGroups — the groups every block-scope renderer draws', () => {
+  // INVARIANT GUARD: grouping splits on `sensitive`, so no scope can miss a group; this pins it.
   it('puts every described scope in exactly one group, sensitive or "Other"', () => {
     const all = Object.keys(SCOPE_DESCRIPTIONS);
     expect(all.length, 'SCOPE_DESCRIPTIONS is empty — this checks nothing').toBeGreaterThan(5);
@@ -90,19 +90,5 @@ describe('blockScopeGroups — the groups every block-scope renderer draws', () 
         scopes: ['models:read:self', 'zz:not-a-real:scope'],
       },
     ]);
-  });
-});
-
-describe('blockScopeGroupLabels — the ordered group labels for a set of scopes', () => {
-  it('sensitive first, only the groups that have a scope', () => {
-    expect(blockScopeGroupLabels(['models:read:self', 'ai:write:budgeted'])).toEqual([
-      'Sensitive permissions',
-      'Other permissions',
-    ]);
-    expect(blockScopeGroupLabels(['models:read:self', 'zz:not-a-real:scope'])).toEqual([
-      'Other permissions',
-    ]);
-    expect(blockScopeGroupLabels(['social:tip:self'])).toEqual(['Sensitive permissions']);
-    expect(blockScopeGroupLabels([])).toEqual([]);
   });
 });
