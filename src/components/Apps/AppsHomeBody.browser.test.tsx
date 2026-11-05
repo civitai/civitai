@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
   /** Re-render every mounted `listMyApps` reader (a refetch landing). */
   listeners: new Set<() => void>(),
+  /** Bumped per test, so a server model left over from an earlier test cannot publish. */
+  modelId: 0,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -77,10 +79,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       },
       {
         // A STABLE spy (the proxy's default mints a fresh one per read, so it can never be
-        // asserted on); it defers to `mocks.invalidate` so each test can swap the behaviour.
-        useUtils: () => ({
-          appListings: { listMyApps: { invalidate: () => mocks.invalidate() } },
-        }),
+        // asserted on). Read at RENDER time, so a refetch an unmounting test still owes lands
+        // on that test's spy, never on the next test's.
+        useUtils: () => {
+          const invalidate = mocks.invalidate;
+          return { appListings: { listMyApps: { invalidate: () => invalidate() } } };
+        },
       }
     ),
   };
@@ -180,6 +184,7 @@ beforeEach(() => {
   }));
   mocks.unhide = vi.fn(async (input: { slug: string }) => ({ slug: input.slug }));
   mocks.invalidate = vi.fn(async () => undefined);
+  mocks.modelId++;
   mocks.listAvailableItems = [];
   mocks.listAvailableInputs = [];
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
@@ -687,7 +692,9 @@ describe('Remove from My apps', () => {
     const CAP = 2;
     function serveFromServer(rows: MyAppRow[]) {
       const hidden: Record<string, string> = {};
+      const id = ++mocks.modelId;
       const publish = () => {
+        if (mocks.modelId !== id) return;
         const visible = rows.filter((r) => !(r.slug in hidden));
         mocks.myApps = {
           data: served(visible.slice(0, CAP), { ...hidden }, rows.length - visible.length),
