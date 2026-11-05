@@ -177,12 +177,68 @@ async function fetchEdge(
   return { response, body: response.body, declared };
 }
 
+const STORED_READ_ATTEMPTS = 3;
+const STORED_READ_RETRY_DELAY_MS = 250;
+
+// Not a timeout: that has already waited the whole read window.
+const SOCKET_FAILURE_CODES = new Set(['ECONNRESET', 'EPIPE', 'ETIMEDOUT']);
+const isSocketFailure = (e: unknown) =>
+  SOCKET_FAILURE_CODES.has((e as { code?: unknown } | undefined)?.code as string);
+
+type Reserve = (bytes: number) => Promise<() => void>;
+const noReservation = () => undefined;
+
+/** `undefined` when no object is stored under the key. */
+async function readStoredObject(
+  { s3, bucket }: ImageBackend,
+  image: ImageInput,
+  reserve: Reserve | undefined
+): Promise<OriginalImageRead | undefined> {
+  let response;
+  try {
+    response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
+      abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (isMissingObject(e)) return undefined;
+    throw e;
+  }
+
+  const body = response.Body;
+  if (!body) throw new Error('original image response has no body');
+  if ((response.ContentLength ?? 0) > MAX_ORIGINAL_IMAGE_BYTES) {
+    destroyBody(body);
+    return missing(OVER_CAP);
+  }
+  let release: () => void = noReservation;
+  try {
+    if (reserve) release = await reserve(response.ContentLength ?? UNKNOWN_SIZE);
+    const bytes = await body.transformToByteArray();
+    // A view, not a copy: the object is held once.
+    const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return {
+      source: 'original',
+      data,
+      contentType: pickContentType(response.ContentType, image.mimeType),
+      sha256: createHash('sha256').update(data).digest('hex'),
+      release,
+    };
+  } catch (e) {
+    // An unread body holds its socket until the read timeout.
+    destroyBody(body);
+    release();
+    throw e;
+  }
+}
+
 /**
  * The stored object under `Image.url`. Only a missing object falls back to the edge copy, so a
- * transient storage error cannot quietly downgrade evidence to an edge copy; it throws and the
- * caller retries.
+ * transient storage error cannot quietly downgrade evidence to an edge copy. A socket failure is
+ * retried with a fresh request, never a resume, up to `STORED_READ_ATTEMPTS`; any other error
+ * throws and the caller retries.
  *
  * `reserve` takes the object's size before its body is read, so a caller can bound bytes held at once.
+ * The whole object is read before it is returned, so a failed attempt hands the caller no bytes.
  */
 export async function readOriginalImage(
   image: ImageInput,
@@ -190,48 +246,29 @@ export async function readOriginalImage(
     reserve,
     backend,
     fetchImpl = fetch,
-  }: ReadOptions & { reserve?: (bytes: number) => Promise<() => void> } = {}
+    onRetry,
+  }: ReadOptions & {
+    reserve?: Reserve;
+    /** Called before each retry with the attempt that failed. */
+    onRetry?: (failedAttempt: number) => void;
+  } = {}
 ): Promise<OriginalImageRead> {
-  const noReservation = () => undefined;
   const passthrough = isEdgeUrlPassthrough(image.url);
 
   if (!passthrough) {
-    const { s3, bucket } = backend ?? (await getImageUploadBackend());
-    let response;
-    try {
-      response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
-        abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
-      });
-    } catch (e) {
-      if (!isMissingObject(e)) throw e;
-    }
-
-    if (response) {
-      const body = response.Body;
-      if (!body) throw new Error('original image response has no body');
-      if ((response.ContentLength ?? 0) > MAX_ORIGINAL_IMAGE_BYTES) {
-        destroyBody(body);
-        return missing(OVER_CAP);
-      }
-      let release: () => void = noReservation;
+    const storage = backend ?? (await getImageUploadBackend());
+    for (let attempt = 1; ; attempt++) {
+      let stored: OriginalImageRead | undefined;
       try {
-        if (reserve) release = await reserve(response.ContentLength ?? UNKNOWN_SIZE);
-        const bytes = await body.transformToByteArray();
-        // A view, not a copy: the object is held once.
-        const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        return {
-          source: 'original',
-          data,
-          contentType: pickContentType(response.ContentType, image.mimeType),
-          sha256: createHash('sha256').update(data).digest('hex'),
-          release,
-        };
+        stored = await readStoredObject(storage, image, reserve);
       } catch (e) {
-        // An unread body holds its socket until the read timeout.
-        destroyBody(body);
-        release();
-        throw e;
+        if (attempt >= STORED_READ_ATTEMPTS || !isSocketFailure(e)) throw e;
+        onRetry?.(attempt);
+        await new Promise((resolve) => setTimeout(resolve, STORED_READ_RETRY_DELAY_MS * attempt));
+        continue;
       }
+      if (stored) return stored;
+      break;
     }
   }
 

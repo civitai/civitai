@@ -253,6 +253,7 @@ import {
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
 import { createHash } from 'crypto';
+import { Readable } from 'stream';
 import JSZip from 'jszip';
 import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -1666,8 +1667,10 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
       errorCode: 'ECONNRESET',
       fullUrl: false,
       retried: true,
+      attempts: 3,
       type: 'error',
     });
+    expect(getObjectKeys.filter((key) => key === 'key-eight')).toHaveLength(3);
     expect(failed).toMatchObject({
       reportId: report.id,
       stored: ['base'],
@@ -1676,6 +1679,63 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     const text = JSON.stringify([read, failed]);
     expect(text).not.toContain('key-eight');
     expect(text).not.toContain('eight.jpeg');
+  });
+
+  it('re-reads a stored object whose body resets partway, and archives it whole, once', async () => {
+    const seven = Buffer.from('stored original bytes, long enough to reset partway through');
+    const readBody = async (resetAfter?: number) => {
+      const body = new Readable({ read: () => undefined });
+      if (resetAfter === undefined) {
+        body.push(seven);
+        body.push(null);
+      } else {
+        body.push(seven.subarray(0, resetAfter));
+        setImmediate(() =>
+          body.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }))
+        );
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) chunks.push(chunk as Buffer);
+      return new Uint8Array(Buffer.concat(chunks));
+    };
+    const base = mockGetObject;
+    let sevenReads = 0;
+    mockGetObject = async (key) => {
+      if (key !== 'key-seven') return base(key);
+      sevenReads += 1;
+      const resetAfter = sevenReads === 1 ? 12 : undefined;
+      return {
+        Body: { transformToByteArray: () => readBody(resetAfter), destroy: () => undefined },
+        ContentType: 'image/webp',
+        ContentLength: seven.length,
+      };
+    };
+
+    const zip = await archivedZip();
+
+    expect(getObjectKeys.filter((key) => key === 'key-seven')).toHaveLength(2);
+    expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+    const archived = await zip.file('7.webp')!.async('nodebuffer');
+    expect(sha256(archived)).toBe(sha256(seven));
+    // JSZip keeps one of two same-named entries, so count what the central directory holds.
+    const storage = {
+      send: async () => ({
+        Body: { transformToByteArray: async () => new Uint8Array(uploads.get('images.zip')!) },
+      }),
+    };
+    expect(await readZipEntryCount(storage as never, 'bucket', 'images.zip')).toBe(3);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    expect(manifest.images[0]).toMatchObject({
+      imageId: 7,
+      source: 'original',
+      sha256: sha256(seven),
+      bytes: seven.length,
+    });
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    expect(lines.find((p) => p.subType === 'archive-image-read')).toBeUndefined();
+    const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
+    expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
+    expect(JSON.stringify(retried)).not.toContain('key-seven');
   });
 });
 

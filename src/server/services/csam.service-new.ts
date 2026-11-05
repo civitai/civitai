@@ -2928,8 +2928,14 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
           let original: OriginalImageRead;
+          let attempts = 1;
           try {
-            original = await readOriginalImage(image, { reserve: budget.reserve });
+            original = await readOriginalImage(image, {
+              reserve: budget.reserve,
+              onRetry: (failedAttempt) => {
+                attempts = failedAttempt + 1;
+              },
+            });
           } catch (e) {
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
@@ -2945,9 +2951,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
               ...errorClass(e),
               fullUrl: isEdgeUrlPassthrough(image.url),
               retried,
+              attempts,
             });
             if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
+          }
+          if (attempts > 1) {
+            logToAxiom({
+              name: 'csam-report',
+              type: 'info',
+              subType: 'archive-image-read-retried',
+              message: `report ${report.id}: image ${image.id} read on attempt ${attempts}`,
+              reportId: report.id,
+              imageId: image.id,
+              attempts,
+            });
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });

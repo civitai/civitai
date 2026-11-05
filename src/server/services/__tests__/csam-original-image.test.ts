@@ -83,11 +83,13 @@ describe('readOriginalImage', () => {
     ['a server error', storageError('InternalError', 500)],
     ['throttling', storageError('SlowDown', 503)],
   ])('throws on %s instead of downgrading to an edge copy', async (_, send) => {
-    const { backend } = backendReturning(send);
+    const { s3, backend } = backendReturning(send);
     const fetchImpl = edgeResponding(200, Buffer.from('x'));
 
     await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow();
     expect(fetchImpl).not.toHaveBeenCalled();
+    // Only a socket failure is retried.
+    expect(s3.send).toHaveBeenCalledTimes(1);
   });
 
   it('reports missing when the edge has no copy, and never stores an edge error body', async () => {
