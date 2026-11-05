@@ -135,4 +135,19 @@ describe('ImageCard creator pill', () => {
       document.documentElement.removeAttribute('data-mantine-color-scheme');
     }
   });
+
+  test('hideCreator drops the name row but keeps the card footer', async () => {
+    renderWithProviders(
+      <IntersectionObserverProvider>
+        <div style={{ width: 336 }}>
+          <ImageCard data={imageData([])} hideCreator />
+        </div>
+      </IntersectionObserverProvider>
+    );
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('[class*="footer"]')).not.toBeNull();
+    });
+    expect(document.body.querySelector('[class*="creatorPill"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('someone');
+  });
 });
