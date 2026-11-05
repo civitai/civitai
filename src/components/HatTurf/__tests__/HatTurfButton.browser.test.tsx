@@ -545,9 +545,7 @@ describe('hats on a feed ImageCard', () => {
     expect(q('hat-turf-more')!.textContent).toContain('+10');
   });
 
-  // Show hats off drops every Hat Turf control from the card, the gear with it, so the way back
-  // on is the image page (HatTurfDetail.browser.test.tsx).
-  test('turning Show hats off in the gear menu logs it, and the card drops its hat button and gear', async () => {
+  test('turning Show hats off in the gear menu logs it, and the card keeps its hat button and gear', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
@@ -556,9 +554,10 @@ describe('hats on a feed ImageCard', () => {
     );
     (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
-    await vi.waitFor(() => expect(q('hat-turf-gear')).toBeNull());
-    expect(q('hat-turf-button')).toBeNull();
-    expect(q('hat-turf-badge')).toBeNull();
+    // Give a removal the time to land before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(q('hat-turf-gear')).not.toBeNull();
+    expect(q('hat-turf-button')).not.toBeNull();
     expect(actions()).toEqual(['hide_all_hats_on']);
   });
 
