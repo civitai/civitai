@@ -3009,10 +3009,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     const givenUp = hoursSinceSent >= CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS;
 
     // Orchestrator URLs are a host we do not control, and a stamp ends archiving for good: any URL
-    // that gives no media (an error status, a cut-off body, an error page) fails the pass for a day
-    // of hourly retries, then is recorded unreadable, as `archiveImages` does a full URL.
+    // that gives no media (an error status, a cut-off body, an error page) fails the hourly pass until
+    // CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS, then is recorded unreadable, as `archiveImages` does a full URL.
     const readBlob = async (url: string) => {
-      // Kept out of this function's log line: a fetch error can quote the presigned URL.
+      // Never log the error: a fetch error can quote the presigned URL.
       const blob = await fetchBlob(url, undefined, { requireOk: true }).catch((e: unknown) => {
         if (!givenUp) throw e;
         return null;
