@@ -164,10 +164,10 @@ describe('MasonryColumnsVirtual landscape span', () => {
   test('no two cards overlap', async () => {
     await renderAtViewport(<Gallery data={mixed(24)} />, { width: 1440, height: 900 });
     await ready(24);
-    const all = cards().map((c) => ({ id: c.dataset.id, r: rect(c) }));
+    const all = cards().map((c) => ({ id: Number(c.dataset.id), r: rect(c) }));
     for (const a of all)
       for (const b of all) {
-        if (a.id >= b.id!) continue;
+        if (a.id >= b.id) continue;
         const apart =
           a.r.right <= b.r.left + 0.5 ||
           b.r.right <= a.r.left + 0.5 ||
