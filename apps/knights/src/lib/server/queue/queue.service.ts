@@ -2,7 +2,11 @@ import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kyse
 import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
-import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import {
+  KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_STAGE_TTL_HOURS,
+  type KnightsEscalationReason,
+} from '@civitai/shared/new-order';
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
@@ -322,7 +326,7 @@ async function escalate(
       .execute();
     return 'escalated';
   }
-  await toInquisitor(trx, item.id, now);
+  await toInquisitor(trx, item.id, now, 'no-consensus');
   return 'inquisitor';
 }
 
@@ -343,10 +347,21 @@ async function regradeVotes(
     .execute();
 }
 
-async function toInquisitor(trx: Executor, itemId: number, now: Date) {
+async function toInquisitor(
+  trx: Executor,
+  itemId: number,
+  now: Date,
+  escalationReason: KnightsEscalationReason
+) {
   await trx
     .updateTable('KnightsQueueItem')
-    .set({ status: 'Inquisitor', minRank: 'Inquisitor', expiresAt: null, updatedAt: utc(now) })
+    .set({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason,
+      expiresAt: null,
+      updatedAt: utc(now),
+    })
     .where('id', '=', itemId)
     .execute();
 }
@@ -481,7 +496,7 @@ export async function castVote(
         if (writesBack) {
           const winner = Number(decision.value);
           if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
-            await toInquisitor(trx, item.id, now);
+            await toInquisitor(trx, item.id, now, isBlockedLevel(winner) ? 'blocked' : 'pushed-down');
             return { result: { status: 'inquisitor' }, xp: [voted] };
           }
         }

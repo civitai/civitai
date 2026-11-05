@@ -5091,6 +5091,7 @@ export interface KnightsQueueItem {
   applyAttempts: number;
   nextAttemptAt: Date | null;
   reason: string | null;
+  escalationReason: string | null;
   prediction: JsonValue | null;
   externalId: string | null;
   prompt: string | null;

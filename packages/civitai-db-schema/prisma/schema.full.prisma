@@ -8060,6 +8060,7 @@ model KnightsQueueItem {
   applyAttempts     Int             @default(0) // write-back tries so far; the cap hands the item to the Inquisitors
   nextAttemptAt     DateTime? // the next write-back try is not due before this; also the lease of a running try
   reason            String? // why an item left the normal path: blocked | moderator-ruled | missing | level-moved | attempts-exhausted
+  escalationReason  String? // why an item went to the Inquisitors: blocked | pushed-down | no-consensus
   prediction        Json? // the producing model's expected answer; not served to players
   /// Yes/no items only (question kind `bool`): the producer's id for the question, unique across items.
   externalId        String?         @unique

@@ -216,6 +216,7 @@ describe('stage consensus and escalation', () => {
       status: 'Inquisitor',
       minRank: 'Inquisitor',
       questionKey: Q,
+      escalationReason: 'no-consensus',
     });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);

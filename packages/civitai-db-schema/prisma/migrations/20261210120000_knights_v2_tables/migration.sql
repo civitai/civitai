@@ -10,6 +10,7 @@ DO $$
 DECLARE
   final_columns TEXT[][] := ARRAY[
     ['KnightsQueueItem', 'escalatedAt'], ['KnightsQueueItem', 'audience'], ['KnightsQueueItem', 'voteCount'],
+    ['KnightsQueueItem', 'escalationReason'],
     ['KnightsVote', 'consequence'], ['KnightsVote', 'noticedAt'], ['KnightsVote', 'blockReason'],
     ['KnightsPlayer', 'startAtSeen'], ['KnightsPlayer', 'recapPopupOptOut'], ['KnightsNotificationSend', 'kind']
   ];
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "applyAttempts" INTEGER NOT NULL DEFAULT 0,
   "nextAttemptAt" TIMESTAMP(3),
   "reason" TEXT,
+  "escalationReason" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "prediction" JSONB,

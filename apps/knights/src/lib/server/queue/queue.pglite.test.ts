@@ -462,6 +462,7 @@ describe('resolution', () => {
       status: 'Inquisitor',
       minRank: 'Inquisitor',
       questionKey: Q,
+      escalationReason: 'no-consensus',
     });
     expect((await itemRow(id)).expiresAt).toBeNull();
     expect(applyConsensus).not.toHaveBeenCalled();
@@ -478,6 +479,7 @@ describe('resolution', () => {
       status: 'Inquisitor',
       resolvedValue: null,
       questionKey: Q,
+      escalationReason: 'pushed-down',
     });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -501,6 +503,7 @@ describe('resolution', () => {
       status: 'Inquisitor',
       resolvedValue: null,
       questionKey: Q,
+      escalationReason: 'blocked',
     });
     expect(applyConsensus).not.toHaveBeenCalled();
   });
@@ -662,6 +665,7 @@ describe('writing a settled rating back', () => {
     expect(await itemRow(id)).toMatchObject({
       status: 'Inquisitor',
       reason: 'attempts-exhausted',
+      escalationReason: null,
       resolvedValue: null,
       appliedAt: null,
     });
@@ -975,7 +979,9 @@ describe('escalateExpired', () => {
     expect(await itemRow(stalePaladin)).toMatchObject({
       status: 'Inquisitor',
       minRank: 'Inquisitor',
+      escalationReason: 'no-consensus',
     });
+    expect((await itemRow(stale)).escalationReason).toBeNull();
     expect(await itemRow(fresh)).toMatchObject({ status: 'Open', minRank: 'Knight' });
     expect(
       (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM "KnightsQueueItem"`)).rows[0].n
