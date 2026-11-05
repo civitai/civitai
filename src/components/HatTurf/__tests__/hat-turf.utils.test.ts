@@ -169,6 +169,14 @@ describe('turf pushes', () => {
     });
     expect(read({ canvas: [128, 160] })).not.toHaveProperty('art');
   });
+  it("keeps each pushed sticker's placement time, so the reveal plays in placement order", () => {
+    const sticker = { id: '1', userId: 3, team: 'blue', cosmeticId: 11, data: {} };
+    const read = (createdAt: unknown) =>
+      readTurfPush({ event: 'e', imageId: 4, counts, stickers: [{ ...sticker, createdAt }] }, 'e')
+        ?.stickers?.[0];
+    expect(read('2026-11-05T03:00:00.000Z')?.createdAt).toBe('2026-11-05T03:00:00.000Z');
+    expect(read('not a date')).not.toHaveProperty('createdAt');
+  });
   it('refuses a malformed push instead of drawing from it', () => {
     expect(readTurfPush({ event: 'e', imageId: 'x', counts }, 'e')).toBeNull();
     expect(readTurfPush({ event: 'e', imageId: 4, counts: { shown: 1 } }, 'e')).toBeNull();

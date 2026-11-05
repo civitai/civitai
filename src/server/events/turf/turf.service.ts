@@ -805,6 +805,8 @@ export type FeedSticker = {
   cosmeticId: number;
   data: Prisma.JsonValue;
   art: TurfHatArt | null;
+  // When it was placed, so a push reveals in placement order as a read does.
+  createdAt: Date;
 };
 
 /**
@@ -842,6 +844,7 @@ export function pickFeedStickers(
       cosmeticId: row.cosmeticId,
       data: row.data,
       art: row.art,
+      createdAt: row.createdAt,
     }));
 }
 
