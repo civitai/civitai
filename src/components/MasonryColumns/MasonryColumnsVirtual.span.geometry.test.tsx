@@ -407,6 +407,7 @@ describe('MasonryColumnsVirtual landscape span', () => {
       // The first short sits at lookahead position 5.
       const feed = gapFeed(2, 4);
       const cols = await columnsFor(feed, 3, SPAN);
+      expect(hasSpan(cols)).toBe(true);
       expect(blankRoom(cols)).toBeLessThanOrEqual(MASONRY_MIN_FILL_ROOM);
     });
 
