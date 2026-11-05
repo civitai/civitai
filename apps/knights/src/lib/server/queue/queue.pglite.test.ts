@@ -457,7 +457,11 @@ describe('resolution', () => {
     const answers = ['1', '2', '4', '8'];
     for (let i = 0; i < 4; i++) await vote(20 + i, id, answers[i]);
 
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', minRank: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      questionKey: Q,
+    });
     expect((await itemRow(id)).expiresAt).toBeNull();
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -469,7 +473,11 @@ describe('resolution', () => {
     const id = await item(10);
     for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
 
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      resolvedValue: null,
+      questionKey: Q,
+    });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
   });
@@ -488,7 +496,11 @@ describe('resolution', () => {
     const id = await item(10);
     for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
 
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      resolvedValue: null,
+      questionKey: Q,
+    });
     expect(applyConsensus).not.toHaveBeenCalled();
   });
 

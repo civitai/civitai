@@ -211,7 +211,11 @@ describe('stage consensus and escalation', () => {
     const id = await item(10, { minRank: 'Paladin' });
 
     expect(await voteAll(1, id, ['4', '8', '4', '8'])).toBe('inquisitor');
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', minRank: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      questionKey: Q,
+    });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
   });
