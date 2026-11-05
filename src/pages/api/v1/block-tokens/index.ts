@@ -1149,9 +1149,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
   // feature flag, evaluated for THIS caller (possibly anon), and system accounts
   // are refused whatever the flag says. Today the flag is `availability: ['mod']`,
-  // so anon/non-mod callers fail the flag and are refused. When the flag is later widened (preview/GA → `['user']`/`['public']`
-  // via Flipt or the registry), anon/non-mod callers start passing here and the
-  // anon-scope stripping below keeps the issued token safe (no money/self scope).
+  // so anon/non-mod callers fail the flag and are refused. When the flag is later
+  // widened (preview/GA → `['user']`/`['public']` via Flipt or the registry),
+  // anon/non-mod callers start passing here and the anon-scope stripping below
+  // keeps the issued token safe (no money/self scope).
   //
   // Block tokens are the linchpin — the entire block-token runtime (workflow
   // submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable only with
