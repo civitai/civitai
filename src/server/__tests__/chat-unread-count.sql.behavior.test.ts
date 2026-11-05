@@ -29,7 +29,9 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL DEFAULT now(), "deletedAt" timestamp(3)
     );
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
-    CREATE TABLE "Report" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Report" (
+      id int PRIMARY KEY, "userId" int NOT NULL, "alsoReportedBy" int[] NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "ChatReport" ("chatId" int, "reportId" int);
   `);
 });
@@ -146,6 +148,15 @@ describe('the header chat badge', () => {
       INSERT INTO "ChatReport" ("chatId", "reportId") VALUES (10, 100), (11, 101);
     `);
     expect(await badge()).toBe(1);
+  });
+
+  it('leaves out a Request I reported second, folded into an earlier report', async () => {
+    await chat(10, SENDER, { status: 'Invited', filtered: true });
+    await db.exec(`
+      INSERT INTO "Report" (id, "userId", "alsoReportedBy") VALUES (100, ${BLOCKER}, '{${ME}}');
+      INSERT INTO "ChatReport" ("chatId", "reportId") VALUES (10, 100);
+    `);
+    expect(await badge()).toBe(0);
   });
 
   it('keeps inbox semantics: a blocked author in an accepted chat still counts', async () => {

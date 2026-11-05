@@ -61,10 +61,8 @@ const inboxStatusLiterals = inboxStatuses.map((status) => `'${status}'`).join(',
  * System rows (user -1) do not count in a Request: a link preview or an "added you"
  * note is written on the sender's behalf, and no block or ban check can see it.
  *
- * Two queries, not one: every signed-in client polls this. Folding the request
- * rules into the inbox query, even as a UNION, grew the plan that big accounts
- * already JIT-compile and cost them 20-200% in latency. The request query alone
- * stays under `jit_above_cost`.
+ * Two queries, not one: every signed-in client polls this, and folding the
+ * request rules into the inbox query (even as a UNION) slows every poll.
  */
 export const unreadCountSql = (userId: number) => [
   inboxUnreadSql(userId),
@@ -114,7 +112,8 @@ const requestUnreadSql = (userId: number) => Prisma.sql`
       and not exists (
         select 1 from "ChatReport" cr
                  join "Report" r on r.id = cr."reportId"
-        where cr."chatId" = memb."chatId" and r."userId" = ${userId}
+        where cr."chatId" = memb."chatId"
+          and (r."userId" = ${userId} or ${userId} = any(r."alsoReportedBy"))
       )
     ) unread
   where memb."userId" = ${userId}
