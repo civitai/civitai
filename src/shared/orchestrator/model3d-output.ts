@@ -24,3 +24,25 @@ export function isFbxOnlyDelivered(steps: Model3DStepLike[]) {
       )
   );
 }
+
+type Model3DFileLike = { format: string; variant: string | null; isPrimary: boolean };
+
+/** Whether the inline viewer can show a saved Model3D file. Armature-only meshes have no visible geometry. */
+export function isViewableModel3DFile(file: Model3DFileLike) {
+  return isGlbFormat(file.format) && !(file.variant ?? 'primary').endsWith('-armature');
+}
+
+/**
+ * The file a single-file preview should mount: the primary when it's viewable, else the first viewable
+ * file (an FBX-primary model can still ship a GLB variant). With nothing viewable it returns the
+ * primary, so the viewer shows its download fallback.
+ */
+export function pickModel3DPreviewFile<T extends Model3DFileLike>(files: T[]): T | null {
+  return (
+    files.find((f) => f.isPrimary && isViewableModel3DFile(f)) ??
+    files.find(isViewableModel3DFile) ??
+    files.find((f) => f.isPrimary) ??
+    files[0] ??
+    null
+  );
+}
