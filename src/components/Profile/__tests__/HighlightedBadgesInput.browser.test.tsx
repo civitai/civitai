@@ -8,9 +8,9 @@ import { HighlightedBadgesInput } from '~/components/Profile/HighlightedBadgesIn
  * the numbers on the visible tiles stay 1, 2, 3.
  */
 const badges = [
-  { id: 1, name: 'One' },
-  { id: 2, name: 'Two' },
-  { id: 3, name: 'Three' },
+  { id: 1, name: 'One', data: { url: 'one.png' } },
+  { id: 2, name: 'Two', data: { url: 'two.png' } },
+  { id: 3, name: 'Three', data: { url: 'three.png' } },
 ];
 
 describe('HighlightedBadgesInput', () => {
@@ -73,5 +73,17 @@ describe('HighlightedBadgesInput', () => {
     );
     await page.getByRole('button', { name: 'Placer' }).click();
     expect(onChange).toHaveBeenCalledWith([]);
+  });
+
+  test('a badge with no image gets no tile', async () => {
+    await renderWithProviders(
+      <HighlightedBadgesInput
+        badges={[...siblings, { id: 13, name: 'Imageless', data: null }]}
+        value={[]}
+        onChange={vi.fn()}
+      />
+    );
+    expect(page.getByRole('button', { name: 'Imageless' }).elements()).toHaveLength(0);
+    expect(page.getByRole('button').elements()).toHaveLength(2);
   });
 });

@@ -10,8 +10,9 @@ type BadgeItem = { id: number; name?: string | null; data?: { url?: string | nul
 function groupBadgesByImage(badges: BadgeItem[]) {
   const groups = new Map<string, { badge: BadgeItem; ids: number[] }>();
   for (const badge of badges) {
-    // A badge with no image has nothing to share, so it stays its own tile.
-    const key = getBadgeImageUrl({ data: badge.data }) || `id:${badge.id}`;
+    // Badges without an image have no tile to show.
+    const key = getBadgeImageUrl({ data: badge.data });
+    if (!key) continue;
     const group = groups.get(key);
     if (group) group.ids.push(badge.id);
     else groups.set(key, { badge, ids: [badge.id] });
