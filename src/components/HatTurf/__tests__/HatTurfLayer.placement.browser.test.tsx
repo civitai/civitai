@@ -327,8 +327,11 @@ describe('a hat is placed with the sticker editor', () => {
     expect((await saved()).rotation).toBeCloseTo(90, 0);
   });
 
-  test('flip and the default opacity are saved with the pose', async () => {
+  // Decided: hats stay opaque, so the hat toolbar has no opacity control.
+  test('flip is saved with the pose, and the hat is opaque with no opacity control', async () => {
     renderPicture('contain', [400, 300]);
+    await editorPart(BODY);
+    expect(document.body.querySelector('[aria-label="Set this sticker\'s opacity"]')).toBeNull();
     (await editorPart('[aria-label="Flip this sticker"]')).click();
     await vi.waitFor(() =>
       expect(document.body.querySelector('[aria-label="Unflip this sticker"]')).not.toBeNull()

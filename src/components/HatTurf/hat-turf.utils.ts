@@ -110,7 +110,7 @@ export type HatPose = ReturnType<typeof normalizeStickerPlacement>;
  */
 export function readHatPose(data: unknown): HatPose | null {
   if (!data || typeof data !== 'object') return null;
-  const { x, y, scale, rotation, flip, opacity } = data as Record<string, unknown>;
+  const { x, y, scale, rotation, flip } = data as Record<string, unknown>;
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const nx = num(x);
   const ny = num(y);
@@ -121,7 +121,8 @@ export function readHatPose(data: unknown): HatPose | null {
     scale: num(scale) ?? STICKER_PLACEMENT_DEFAULT_SCALE,
     rotation: num(rotation) ?? 0,
     flip: flip === true,
-    opacity: num(opacity) ?? undefined,
+    // Hats are always opaque, whatever a row says.
+    opacity: 1,
   });
 }
 

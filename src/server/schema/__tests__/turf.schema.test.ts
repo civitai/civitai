@@ -9,18 +9,16 @@ const place = (data: Record<string, unknown>) =>
 const pose = { x: 0.3, y: 0.7, scale: 0.21, rotation: -40, flip: true };
 
 describe('a hat is placed with the whole sticker pose', () => {
-  it('keeps every field the sticker editor sends, opacity included', () => {
-    const parsed = place({ ...pose, opacity: 0.6 });
-    expect(parsed.success && parsed.data.data).toEqual({ ...pose, opacity: 0.6 });
+  it('keeps every field the sticker editor sends', () => {
+    const parsed = place({ ...pose, opacity: 1 });
+    expect(parsed.success && parsed.data.data).toEqual({ ...pose, opacity: 1 });
+    expect(place(pose).success).toBe(true);
   });
 
-  it('defaults opacity for a client from before hats had it', () => {
-    const parsed = place(pose);
-    expect(parsed.success && parsed.data.data.opacity).toBe(1);
-  });
-
-  it('refuses an opacity under the sticker floor, as a sticker does', () => {
-    expect(place({ ...pose, opacity: STICKER_PLACEMENT_MIN_OPACITY / 2 }).success).toBe(false);
+  // Decided: hats stay opaque. Do not widen this back to a sticker's opacity range.
+  it('refuses a see-through hat', () => {
+    expect(place({ ...pose, opacity: 0.6 }).success).toBe(false);
+    expect(place({ ...pose, opacity: STICKER_PLACEMENT_MIN_OPACITY }).success).toBe(false);
   });
 
   // A free hat on anyone's picture gets a sticker's default ceiling, not the creator-raisable maximum.

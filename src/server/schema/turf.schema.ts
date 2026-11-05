@@ -9,13 +9,14 @@ import {
 export const HAT_MAX_SCALE = STICKER_PLACEMENT_DEFAULT_MAX_SCALE;
 
 // Where a hat sticker sits on the image: a regular sticker's pose, without its comment.
+// Hats are always opaque (a product decision), so only full opacity is accepted.
 export const turfStickerDataSchema = stickerPlacementDataSchema
-  .pick({ x: true, y: true, rotation: true, flip: true, opacity: true })
+  .pick({ x: true, y: true, rotation: true, flip: true })
   .extend({
     scale: z.number().finite().min(STICKER_PLACEMENT_MIN_SCALE).max(HAT_MAX_SCALE),
+    opacity: z.literal(1).optional(),
   });
-// Input, not output: a direct caller (a job, a test) may leave opacity to its default.
-export type TurfStickerData = z.input<typeof turfStickerDataSchema>;
+export type TurfStickerData = z.infer<typeof turfStickerDataSchema>;
 
 const eventName = z.string().min(1).max(64);
 

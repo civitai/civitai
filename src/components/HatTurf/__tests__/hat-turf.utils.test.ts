@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  STICKER_PLACEMENT_DEFAULT_SCALE,
-  STICKER_PLACEMENT_MIN_OPACITY,
-} from '~/shared/utils/sticker-placement';
+import { STICKER_PLACEMENT_DEFAULT_SCALE } from '~/shared/utils/sticker-placement';
 import { eventTurfTopic } from '~/server/events/turf/turf-map';
 import {
   teamStandings,
@@ -93,11 +90,8 @@ describe('readHatPose', () => {
       opacity: 1,
     });
   });
-  it('keeps a stored opacity, clamped to the sticker floor', () => {
-    expect(readHatPose({ x: 0.5, y: 0.5, opacity: 0.6 })?.opacity).toBe(0.6);
-    expect(readHatPose({ x: 0.5, y: 0.5, opacity: 0 })?.opacity).toBe(
-      STICKER_PLACEMENT_MIN_OPACITY
-    );
+  it('draws a hat opaque whatever opacity its row stored', () => {
+    expect(readHatPose({ x: 0.5, y: 0.5, opacity: 0.6 })?.opacity).toBe(1);
   });
   it('defaults size, turn, flip and opacity when absent', () => {
     expect(readHatPose({ x: 0.5, y: 0.5 })).toEqual({

@@ -161,6 +161,7 @@ export function DraftSticker({
   purchase,
   commit,
   artwork,
+  opaque,
 }: {
   draft: StickerDraft;
   /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
@@ -204,6 +205,8 @@ export function DraftSticker({
   commit?: ReactNode;
   /** Drawn instead of `art`, filling the draft's width (a Hat Turf hat's fitted art). */
   artwork?: ReactNode;
+  /** No opacity control: the draft stays fully opaque (a Hat Turf hat). */
+  opaque?: boolean;
 }) {
   const useStore = useDraftStoreHook();
   const markPurchased = useStore((state) => state.markPurchased);
@@ -861,7 +864,7 @@ export function DraftSticker({
         >
           {duplicateControl}
           {flipControl}
-          {opacityControl}
+          {!opaque && opacityControl}
           {removeControl}
         </div>
 

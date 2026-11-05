@@ -80,8 +80,8 @@ type HatDraftProps = {
 };
 
 /**
- * The hat being placed, on the sticker editor: drag, corner resize, rotate knob, flip, opacity,
- * remove and arrow keys, all from `DraftSticker`. Its own draft store, so it never joins the
+ * The hat being placed, on the sticker editor: drag, corner resize, rotate knob, flip, remove
+ * and arrow keys, all from `DraftSticker`. Its own draft store, so it never joins the
  * sticker tray's session; only the commit is a hat's.
  */
 function HatDraft(props: HatDraftProps) {
@@ -138,7 +138,7 @@ function HatDraftSticker({
   }, [draft, onDiscard]);
 
   if (!draft) return null;
-  const { x, y, scale, rotation, flip, opacity } = draft;
+  const { x, y, scale, rotation, flip } = draft;
   return (
     <DraftSticker
       draft={draft}
@@ -151,13 +151,14 @@ function HatDraftSticker({
       ownerShare={undefined}
       ownerUsername={null}
       onGesture={onGesture}
+      opaque
       commit={
         <Button
           size="sm"
           radius="xl"
           loading={saving}
           disabled={!width}
-          onClick={() => onSave({ x, y, scale, rotation, flip, opacity })}
+          onClick={() => onSave({ x, y, scale, rotation, flip, opacity: 1 })}
         >
           Place hat
         </Button>
@@ -322,7 +323,7 @@ function HatTurfLayerContent({
   const save = (pose: HatPose) => {
     if (!cosmeticId) return;
     place.mutate(
-      { event: feed.event, imageId, cosmeticId, source, data: pose },
+      { event: feed.event, imageId, cosmeticId, source, data: { ...pose, opacity: 1 } },
       {
         onSuccess: () => {
           setDraft(null);
@@ -348,7 +349,6 @@ function HatTurfLayerContent({
     <span
       style={{
         display: 'block',
-        opacity: pose.opacity,
         transform: `rotate(${pose.rotation}deg) scaleX(${pose.flip ? -1 : 1})`,
       }}
     >
