@@ -45,6 +45,10 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
+  // When set, the answer to the rail's query WITHOUT a category (the popular top-up).
+  relatedPopularItems: null as unknown[] | null,
+  // When true, every enabled `listAvailable` query is still pending (no data yet).
+  relatedPending: false,
   // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
   // `{ app, ownerId }`, because the owner is now half the contract (#4048).
   recorded: [] as unknown[],
@@ -131,10 +135,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     appListings: {
       listAvailable: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => ({
-          data: opts?.enabled === false ? undefined : { items: mocks.relatedItems },
-          isLoading: false,
-        }),
+        useQuery: (input: { category?: string } | undefined, opts?: { enabled?: boolean }) => {
+          const pending = opts?.enabled === false || mocks.relatedPending;
+          const items =
+            mocks.relatedPopularItems && input?.category === undefined
+              ? mocks.relatedPopularItems
+              : mocks.relatedItems;
+          return { data: pending ? undefined : { items }, isLoading: false, isPending: pending };
+        },
       },
       // Consumed by the REAL `ReviewListingModal` / `ReportListingModal`, which the
       // `⋮` menu opens. They are NOT mocked away — the menu → modal wiring is the
@@ -301,6 +309,8 @@ beforeEach(async () => {
   mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
   mocks.currentUser = null;
   mocks.relatedItems = [];
+  mocks.relatedPopularItems = null;
+  mocks.relatedPending = false;
   mocks.recorded = [];
   mocks.creator = null;
   mocks.reportMutate.mockClear();
@@ -341,6 +351,9 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // file and from any constant an assertion names, so a chip that hardcoded a value
     // could not accidentally match it.
     installCount: 4213,
+    // The play count the store card shows. 2718 is distinct from 4213 and from every other
+    // number here, so a chip or row reading installs instead shows the wrong number.
+    openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
@@ -725,7 +738,7 @@ describe('AppListingDetailBody', () => {
     const chips = Array.from(container.querySelectorAll('[data-listing-stat]'));
     expect(chips).toHaveLength(2);
     expect(chips.map((c) => c.getAttribute('data-listing-stat')).sort()).toEqual([
-      'installs',
+      'plays',
       'recommend',
     ]);
     for (const chip of chips) {
@@ -734,9 +747,10 @@ describe('AppListingDetailBody', () => {
     expect(
       container.querySelector('[data-listing-stat="recommend"]')?.getAttribute('aria-label')
     ).toBe('317 recommendations');
-    expect(
-      container.querySelector('[data-listing-stat="installs"]')?.getAttribute('aria-label')
-    ).toBe('4,213 installs');
+    // 🔴 PLAYS, from `openCount` — the number the store card shows — not installs.
+    expect(container.querySelector('[data-listing-stat="plays"]')?.getAttribute('aria-label')).toBe(
+      '2,718 plays'
+    );
   });
 
   // ── Meta line ──────────────────────────────────────────────────────────────
@@ -908,7 +922,34 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays', 'updated']);
+  });
+
+  test('🔴 the Details PLAYS row shows the card\'s play count, labelled "Plays"', async () => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="plays"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toBe('Plays2,718');
+    // The install count is not shown under any label.
+    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.textContent).not.toContain('4,213');
+  });
+
+  test('every Details row carries its own leading icon', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ contentRating: 'pg' })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-listing-detail-row]'));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const key = row.getAttribute('data-listing-detail-row');
+      expect(
+        row.querySelector(`svg[data-listing-detail-icon="${key}"]`),
+        String(key)
+      ).not.toBeNull();
+    }
   });
 
   test('🔴 the Details CATEGORY row links to the store filtered to that category', async () => {
@@ -977,7 +1018,7 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'reviews', 'plays', 'updated']);
   });
 
   // ── the SOURCE row (public source-repository link) ─────────────────────────
@@ -1019,7 +1060,7 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays', 'updated']);
   });
 
   test('the SOURCE row survives the read-only PREVIEW posture (the mod must see what approving publishes)', async () => {
@@ -1032,7 +1073,7 @@ describe('AppListingDetailBody', () => {
     expect(row.textContent).toContain('codeberg.org/o/r');
     // The preview-omitted rows really are omitted here — so this is a claim about the
     // SOURCE row specifically, not about `preview` being ignored.
-    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.querySelector('[data-listing-detail-row="plays"]')).toBeNull();
     expect(container.querySelector('[data-listing-detail-row="updated"]')).toBeNull();
   });
 
@@ -2570,6 +2611,64 @@ describe('AppListingDetailBody — page order and the related-rail link', () => 
       );
     }
   );
+
+  /**
+   * 🔴 The link names what it lands on: its text is the rail's FIRST rendered heading. An app
+   * alone in its category gets only the "Popular apps" group (other categories' apps), so a
+   * link reading "More in <category>" would send the reader to exactly the mismatch the
+   * rail's own headings fix.
+   */
+  const railFirstHeading = (container: Element) =>
+    container.querySelector('[data-testid="apps-related-rail"] h4')?.textContent;
+
+  test.each([
+    {
+      name: 'a category with other apps',
+      category: 'games',
+      same: [relatedCard('l2', 'Sibling One')],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'More in Games →',
+    },
+    {
+      name: 'an app alone in its category',
+      category: 'games',
+      same: [],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'Popular apps →',
+    },
+    {
+      name: 'no category',
+      category: null,
+      same: [],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'Popular apps →',
+    },
+  ])('🔴 $name: the Details link reads "$label", the rail\'s first heading', async (c) => {
+    mocks.relatedItems = c.same;
+    mocks.relatedPopularItems = c.popular;
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: c.category })} />
+    );
+    await expect.element(within.getByText('Popular One').first()).toBeInTheDocument();
+    const link = within.getByTestId('apps-listing-details-related-link');
+    await expect.element(link).toHaveTextContent(c.label);
+    expect(link.element().textContent).toBe(c.label);
+    expect(`${railFirstHeading(container)} →`).toBe(c.label);
+    // Still the same-page jump onto the element that holds the rail.
+    const href = link.element().getAttribute('href') ?? '';
+    const target = container.querySelector(`[id="${href.slice(1)}"]`);
+    expect(target?.querySelector('[data-testid="apps-related-rail"]')).not.toBeNull();
+  });
+
+  test('while the rail is loading the link reads a neutral "Related apps →"', async () => {
+    mocks.relatedPending = true;
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} />
+    );
+    const link = within.getByTestId('apps-listing-details-related-link');
+    await expect.element(link).toBeInTheDocument();
+    expect(link.element().textContent).toBe('Related apps →');
+  });
 
   test('🔴 preview renders no related-rail link — with its live positive control', async () => {
     const live = await renderScoped(<AppListingDetailBody detail={base({})} />);

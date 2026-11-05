@@ -44,8 +44,14 @@ export type ListingKindFilter = z.infer<typeof listingKindFilterSchema>;
  *     (up / (up+down)) DESC; a few-review 100%-recommend app can't outrank a
  *     many-review 90% app, and 0-review apps sit mid-pack at the global mean
  *     recommend rate (mirrors the AppBlock `rating` sort, on a proportion
- *     instead of a 1..5 average). Ties fall back to install_count then id.
- *   - `popular`  — install_count DESC (from the AppListingMetric rollup).
+ *     instead of a 1..5 average). Ties fall back to the `popular` key (plays, or
+ *     installs for an off-site app), then install_count, then id — most apps have
+ *     no reviews yet, so this tie-break is what orders most of the store.
+ *   - `popular`  — plays (open_count) DESC, then install_count DESC, then id (from
+ *     the AppListingMetric rollup). Plays, because that is the count the store card
+ *     shows; installs read ~0 for nearly every listing. An off-site listing has no
+ *     play count, so it ranks by installs in the plays position (see
+ *     `listingPopularSortKey`).
  *   - `newest`   — created_at DESC.
  *   - `name`     — name ASC (case-insensitive).
  */
@@ -257,12 +263,10 @@ export type ListingCard = {
    * so neither identifies a user, neither reveals WHO opened or installed the app or
    * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
    *
-   *   1. A NEW PUBLIC FACT, not added precision. `installCount` is already publicly
-   *      OBSERVABLE: the store's `popular` sort is `install_count DESC`, so the full
-   *      ordering of every approved listing by it is derivable from the public list
-   *      endpoint already, and surfacing the number only sharpens it. NO sort exposes
-   *      `open_count` (`listingSortSchema` = top-rated | popular | newest | name), so
-   *      this number is a genuinely new fact about the catalog.
+   *   1. A NEW PUBLIC FACT when it shipped, not added precision. At the time no sort
+   *      exposed `open_count`, so this number was a genuinely new fact about the
+   *      catalog. (Since then the store's `popular` sort ranks by `open_count` first —
+   *      see `listAppListingsSchema` — so the ordering is public through the sort too.)
    *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
    *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
    *      — a public, anon-capable REST list returning up to 50 cards per page — so an
@@ -311,6 +315,16 @@ export type ListingCard = {
    * than needing a backfill.
    */
   openCount: number | null;
+  /**
+   * Last time the listing row changed (`app_listings.updated_at`), ISO-8601 — the card's
+   * "Updated 3 days ago" line. The same public value `ListingDetail.updatedAt` already
+   * carries for every approved listing, so this adds no fact.
+   *
+   * OPTIONAL because not every card producer has a listing row: the moderator preview
+   * card is built from a publish request, which has no `updated_at`, and leaves it out
+   * rather than stand in another date. The card renders no date when it is absent.
+   */
+  updatedAt?: string;
   /**
    * The listing's RESTRICTED audience as THIS VIEWER may know it, for the store badge
    * ("Testers only" / "Moderators only" / "Unlisted") — or `null`, which renders nothing.
@@ -470,17 +484,25 @@ export type ListingDetail = {
   /**
    * Install count from the `AppListingMetric` rollup (`install_count`).
    *
-   * 🔴 ALLOWLIST JUSTIFICATION. Already publicly OBSERVABLE, not merely public: the
-   * store's `popular` sort is `install_count DESC` (see `listAppListingsSchema`), so the
-   * full ordering of every approved listing by this number is already derivable from the
-   * public list endpoint. Surfacing the number itself adds precision, not a new fact. It
-   * is an aggregate over the whole install base — it identifies no user. Direct analogue
-   * of the model page's public download-count stat chip.
+   * 🔴 ALLOWLIST JUSTIFICATION. It is an aggregate over the whole install base — it
+   * identifies no user — and it is the store's `popular` sort tie-break (see
+   * `listAppListingsSchema`). The detail page shows it as "Installs" for an OFF-SITE
+   * listing, which has no play count; an on-site listing shows PLAYS
+   * ({@link ListingDetail.openCount}) instead — see `listingUsageStat`.
    *
    * `0` when the metric row is absent (a listing nobody has installed yet), matching how
    * the ranking SQL reads it (`COALESCE(m.install_count, 0)`).
    */
   installCount: number;
+  /**
+   * Play count — the SAME value as {@link ListingCard.openCount}, from the same
+   * `cardOpenCount` projection: a number for an on-site listing, `null` for an off-site
+   * one (unmeasurable). The detail page shows this, labelled "Plays", so the page and the
+   * store card never show two different usage numbers for one app.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION: already public on every store card, so this adds no fact.
+   */
+  openCount: number | null;
   /**
    * PUBLIC SOURCE-REPOSITORY link ("this app is open source"), or null.
    *
