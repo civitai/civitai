@@ -311,3 +311,75 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     expect(select).not.toHaveProperty('sourceRepoUrl');
   });
 });
+
+// ---------------------------------------------------------------------------
+// BROWSING LEVEL — the detail page is served only to a viewer whose browsing level
+// includes the listing's content rating (`(ratingBit & level) != 0`), on top of the host
+// gate. A missing level reads as PG only.
+// ---------------------------------------------------------------------------
+
+describe("getListingDetail — the viewer's browsing level", () => {
+  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16.
+  const PG_ONLY = 1;
+  const PG_PG13 = 3;
+  const PG_PG13_R = 7;
+  const EVERY_LEVEL = 31;
+
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  const detailFor = async (
+    contentRating: string,
+    opts: { redCapable: boolean; viewerBrowsingLevel?: number | null }
+  ) => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteRow({ contentRating }),
+      status: 'approved',
+    });
+    return getListingDetail({ slug: 'ext-app' }, { scope: 'full', ...opts });
+  };
+
+  it('🔴 a PG-only viewer on a red-capable host gets NOT_FOUND for an R app', async () => {
+    expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: PG_ONLY })).toBeNull();
+  });
+
+  it('an R-enabled viewer on a red-capable host is served the R app', async () => {
+    const detail = await detailFor('r', { redCapable: true, viewerBrowsingLevel: PG_PG13_R });
+    expect(detail?.id).toBe('apl_2');
+  });
+
+  it('a non-red host still hides an R app from a viewer with every level enabled', async () => {
+    expect(
+      await detailFor('r', { redCapable: false, viewerBrowsingLevel: EVERY_LEVEL })
+    ).toBeNull();
+  });
+
+  it('🔴 a PG-only viewer does not get a PG-13 app, on either host', async () => {
+    for (const redCapable of [false, true]) {
+      expect(await detailFor('pg13', { redCapable, viewerBrowsingLevel: PG_ONLY })).toBeNull();
+    }
+  });
+
+  it('a viewer with PG-13 enabled is served the PG-13 app', async () => {
+    const detail = await detailFor('pg13', { redCapable: false, viewerBrowsingLevel: PG_PG13 });
+    expect(detail?.id).toBe('apl_2');
+  });
+
+  it('🔴 a missing browsing level is treated as PG only', async () => {
+    expect(await detailFor('pg13', { redCapable: true })).toBeNull();
+    expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: null })).toBeNull();
+    // Control: the same missing level is still served a PG app.
+    expect((await detailFor('pg', { redCapable: true }))?.id).toBe('apl_2');
+  });
+
+  it('🔴 the level is matched bit by bit, not as a ceiling: an R-only viewer gets no PG app', async () => {
+    const R_ONLY = 4;
+    expect(await detailFor('pg', { redCapable: true, viewerBrowsingLevel: R_ONLY })).toBeNull();
+    expect((await detailFor('r', { redCapable: true, viewerBrowsingLevel: R_ONLY }))?.id).toBe(
+      'apl_2'
+    );
+  });
+});

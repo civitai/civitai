@@ -937,3 +937,80 @@ describe('an off-site parent with a link template', () => {
     await expect(setTemplate(OFFSITE, template)).rejects.toThrow(/link_template_check/);
   });
 });
+
+/**
+ * The store grid follows the viewer's browsing level: a listing (and a sub-listing) is on the
+ * page only when its content rating's level bit is in the viewer's browsing level, on top of the
+ * host gate. Executed, so `AND` vs `OR` and the arm each predicate lands on are both observable.
+ *
+ * Every case keeps a listing that MUST still show, so an empty page cannot pass.
+ */
+describe("store catalog — the viewer's browsing level, executed", () => {
+  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16.
+  const PG_ONLY = 1;
+  const PG_PG13 = 3;
+  const PG_R = 5;
+  const PG_PG13_R = 7;
+  const EVERY_LEVEL = 31;
+  const rate = (id: string, rating: string) =>
+    holder.db.exec(`UPDATE app_listings SET content_rating = '${rating}' WHERE id = '${id}'`);
+
+  it('🔴 a PG-only viewer on a red-capable host does not get an R app', async () => {
+    await rate(OTHER, 'r');
+    const items = await page({ redCapable: true, viewerBrowsingLevel: PG_ONLY });
+    expect(ids(items)).toContain(PARENT);
+    expect(ids(items)).not.toContain(OTHER);
+  });
+
+  it('an R-enabled viewer on a red-capable host gets the R app', async () => {
+    await rate(OTHER, 'r');
+    const items = await page({ redCapable: true, viewerBrowsingLevel: PG_PG13_R });
+    expect(ids(items)).toEqual(expect.arrayContaining([PARENT, OTHER]));
+  });
+
+  it('a non-red host still hides an R app from a viewer with every level enabled', async () => {
+    await rate(OTHER, 'r');
+    const items = await page({ redCapable: false, viewerBrowsingLevel: EVERY_LEVEL });
+    expect(ids(items)).toContain(PARENT);
+    expect(ids(items)).not.toContain(OTHER);
+  });
+
+  it('🔴 a PG-only viewer does not get a PG-13 app; a PG-13 viewer does', async () => {
+    await rate(OTHER, 'pg13');
+    const pgOnly = await page({ redCapable: false, viewerBrowsingLevel: PG_ONLY });
+    expect(ids(pgOnly)).toContain(PARENT);
+    expect(ids(pgOnly)).not.toContain(OTHER);
+    expect(ids(await page({ redCapable: false, viewerBrowsingLevel: PG_PG13 }))).toContain(OTHER);
+  });
+
+  it('🔴 a missing browsing level is treated as PG only', async () => {
+    await rate(OTHER, 'pg13');
+    await rate(OFFSITE, 'r');
+    for (const viewerBrowsingLevel of [undefined, null, 0]) {
+      const items = await page({ redCapable: true, viewerBrowsingLevel });
+      expect(ids(items)).toContain(PARENT);
+      expect(ids(items)).not.toContain(OTHER);
+      expect(ids(items)).not.toContain(OFFSITE);
+    }
+  });
+
+  it('🔴 the level is matched bit by bit, not as a ceiling: an R-only viewer gets no PG app', async () => {
+    await rate(OTHER, 'r');
+    const items = await page({ redCapable: true, viewerBrowsingLevel: 4 });
+    expect(ids(items)).toContain(OTHER);
+    expect(ids(items)).not.toContain(PARENT);
+  });
+
+  it('🔴 applies the browsing level to the sub-listing itself', async () => {
+    await holder.db.exec(
+      `UPDATE app_sub_listings SET content_rating = 'r' WHERE id = '${CHILD_A}'`
+    );
+    expect(childIds(await page({ redCapable: true, viewerBrowsingLevel: PG_ONLY }))).toEqual([
+      CHILD_B,
+    ]);
+    expect(childIds(await page({ redCapable: true, viewerBrowsingLevel: PG_R })).sort()).toEqual([
+      CHILD_A,
+      CHILD_B,
+    ]);
+  });
+});

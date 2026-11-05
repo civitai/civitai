@@ -204,6 +204,19 @@ describe('with the migration applied', () => {
     expect(red.items.map((f) => f.id)).toContain('apl_fork_x4_0404');
   });
 
+  it('🔴 a mature fork is not listed to a PG-only viewer, even on a red-capable host', async () => {
+    const page = await listListingForks(db, {
+      parentListingId: PARENT,
+      limit: 10,
+      scope: 'full',
+      floor: 'public',
+      redCapable: true,
+      viewerBrowsingLevel: 1, // PG only
+    });
+    expect(page.totalCount).toBe(3);
+    expect(page.items.map((f) => f.id)).not.toContain('apl_fork_x4_0404');
+  });
+
   it('an external-only store scope sees no on-site forks', async () => {
     await expect(
       listListingForks(db, {

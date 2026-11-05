@@ -385,6 +385,24 @@ describe('exclusions', () => {
     ).toHaveLength(1);
   });
 
+  it("🔴 follows the viewer's browsing level, as the store detail page does", () => {
+    const redHost = { ...BASE_OPTS, redCapable: true };
+    // PG only (1): an R app is dropped even on a red-capable host.
+    expect(
+      buildMyApps(LIVE_GRANT, [delta({ contentRating: 'r' })], {
+        ...redHost,
+        viewerBrowsingLevel: 1,
+      } as BuildMyAppsOptions)
+    ).toEqual([]);
+    // PG + PG-13 + R (7): kept.
+    expect(
+      buildMyApps(LIVE_GRANT, [delta({ contentRating: 'r' })], {
+        ...redHost,
+        viewerBrowsingLevel: 7,
+      } as BuildMyAppsOptions)
+    ).toHaveLength(1);
+  });
+
   it('an off-site-only scope drops page apps and keeps off-site ones; a dark scope drops all', () => {
     const signals: MyAppsSignals = {
       ...LIVE_GRANT,
