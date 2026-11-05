@@ -40,6 +40,8 @@
   const cta = $derived(
     card.state === 'owned'
       ? 'Owned'
+      : card.state === 'member'
+      ? 'You are a member'
       : card.state === 'rank'
       ? `Unlocks at ${card.minRank}`
       : card.state === 'sold-out'

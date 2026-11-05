@@ -17,8 +17,7 @@ export class MainAppRejectedError extends Error {
 export type MembershipGrant = {
   userId: number;
   tier: string;
-  months: number;
-  /** Idempotency key: the main app grants one membership per key. */
+  /** Idempotency key: the main app grants one membership month per key. */
   key: string;
 };
 

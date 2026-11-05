@@ -6,7 +6,7 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer, setGold } from '../../../test/seed';
 import { getGoldBalance } from '../conversion/balance';
 import { BuzzRejectedError, type BuzzGrant, type BuzzPort } from '../conversion/buzz';
-import { retryPendingConversions } from '../conversion/convert';
+import { markConversionPaid, retryPendingConversions } from '../conversion/convert';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { buyItem, retryPendingPurchases, type BuyDeps } from './purchase';
 import { stockFor } from './rotation';
@@ -38,13 +38,13 @@ function fakeBuzz({ failFirst = false, reject = false } = {}) {
   return { port: { grantYellow } as BuzzPort, grantYellow, paid };
 }
 
-function fakeMainApp({ failFirst = false, reject = null as number | null } = {}) {
-  const memberships = new Map<string, { userId: number; tier: string; months: number }>();
+function fakeMainApp({ failFirst = false, down = false, reject = null as number | null } = {}) {
+  const memberships = new Map<string, { userId: number; tier: string }>();
   let calls = 0;
   const grantMembership = vi.fn<MainAppPort['grantMembership']>(async (grant) => {
     calls++;
     if (reject) throw new MainAppRejectedError(reject, 'queue-full');
-    if (failFirst && calls === 1) throw new Error('main app down');
+    if (down || (failFirst && calls === 1)) throw new Error('main app down');
     const known = memberships.has(grant.key);
     memberships.set(grant.key, grant);
     return { outcome: known ? 'already' : 'granted' };
@@ -136,7 +136,7 @@ afterAll(async () => {
 beforeEach(async () => {
   dealsToday.count = 0;
   await pg.exec(
-    `TRUNCATE "KnightsShopPurchase","KnightsShopItem","KnightsGoldConversion","UserCosmetic","Cosmetic","NewOrderPlayer","User" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsShopPurchase","KnightsShopItem","KnightsGoldConversion","UserCosmetic","Cosmetic","NewOrderPlayer","User","CustomerSubscription","Product" RESTART IDENTITY CASCADE`
   );
   await pg.exec(ITEMS);
   await seedPlayer(pg, 1, 'Knight');
@@ -251,7 +251,7 @@ describe('spending gold', () => {
     expect(await player()).toMatchObject({ goldConverted: 1000 });
   });
 
-  it('charges once when the same request arrives twice at the same moment', async () => {
+  it('charges once when the same request is sent twice back to back (the harness runs the two transactions in turn)', async () => {
     const results = await Promise.all([
       buy('badge-seal', { key: 'twin-request' }),
       buy('badge-seal', { key: 'twin-request' }),
@@ -262,13 +262,91 @@ describe('spending gold', () => {
     expect(await player()).toMatchObject({ goldConverted: 400 });
   });
 
-  it('lets only one of two simultaneous purchases spend gold that covers one', async () => {
+  it("lets only one of two purchases spend gold that covers one: the second reads the first one's spend (the harness runs them in turn; the row lock itself needs a real Postgres)", async () => {
     await setGold(pg, 1, { earned: 1000 });
     const results = await Promise.all([buy('buzz-50'), buy('buzz-50')]);
 
     expect(results.map((r) => r.status).sort()).toEqual(['granted', 'refused']);
     expect(await player()).toMatchObject({ goldConverted: 1000 });
     expect(await purchases()).toHaveLength(1);
+  });
+
+  it('answers a replay of a charged purchase after the player is held, and again once the item is gone', async () => {
+    const first = await buy('badge-seal', { key: 'replay-after-hold' });
+    await pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId"=1`);
+    await pg.query(`UPDATE "KnightsShopItem" SET "active" = false WHERE "id" = 'badge-seal'`);
+
+    const again = await buy('badge-seal', { key: 'replay-after-hold', price: 1 });
+
+    expect(again).toMatchObject({
+      status: 'granted',
+      replayed: true,
+      purchaseId: (first as { purchaseId: number }).purchaseId,
+    });
+    expect(await buy('halo')).toEqual({ status: 'refused', reason: 'held' });
+  });
+
+  it("keeps a held player's pending membership pending on a replay, without asking the main app", async () => {
+    await buy('member-silver', {
+      key: 'held-pending',
+      deps: defaultDeps({ mainApp: fakeMainApp({ down: true }).port }),
+    });
+    await pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId"=1`);
+    const mainApp = fakeMainApp();
+
+    const replay = await buy('member-silver', {
+      key: 'held-pending',
+      deps: defaultDeps({ mainApp: mainApp.port }),
+    });
+
+    expect(replay).toMatchObject({ status: 'pending', replayed: true });
+    expect(mainApp.grantMembership).not.toHaveBeenCalled();
+  });
+
+  it('reports a replayed failed purchase as forfeited only when its gold was forfeited', async () => {
+    const down = fakeMainApp({ down: true });
+    await buy('member-silver', { key: 'forfeit-me', deps: defaultDeps({ mainApp: down.port }) });
+    await buy('badge-seal', { key: 'release-me' });
+    await pg.query(
+      `UPDATE "NewOrderPlayer" SET "goldEarned" = "goldConverted", "startAt" = clock_timestamp() + interval '1 second' WHERE "userId"=1`
+    );
+    await retryPendingPurchases(db, fakeMainApp({ reject: 409 }).port, {
+      now: new Date(NOW.getTime() + 5 * 60_000),
+    });
+
+    expect(await buy('member-silver', { key: 'forfeit-me' })).toMatchObject({
+      status: 'failed',
+      forfeited: true,
+    });
+  });
+
+  it('reports a replayed failed purchase whose gold went back as not forfeited', async () => {
+    const first = await buy('member-silver', {
+      key: 'released',
+      deps: defaultDeps({ mainApp: fakeMainApp({ reject: 409 }).port }),
+    });
+    expect(first).toMatchObject({ status: 'failed', forfeited: false });
+
+    expect(await buy('member-silver', { key: 'released' })).toMatchObject({
+      status: 'failed',
+      forfeited: false,
+    });
+  });
+
+  it('reports a replayed failed Buzz pack as forfeited when a reset took its gold', async () => {
+    const buzz = fakeBuzz({ failFirst: true });
+    await buy('buzz-50', { key: 'pack-forfeit', deps: defaultDeps({ buzz: buzz.port }) });
+    await pg.query(
+      `UPDATE "NewOrderPlayer" SET "goldEarned" = "goldConverted", "startAt" = clock_timestamp() + interval '1 second' WHERE "userId"=1`
+    );
+    await retryPendingConversions(db, fakeBuzz({ reject: true }).port, {
+      now: new Date(NOW.getTime() + 5 * 60_000),
+    });
+
+    expect(await buy('buzz-50', { key: 'pack-forfeit' })).toMatchObject({
+      status: 'failed',
+      forfeited: true,
+    });
   });
 
   it('refuses a held player and leaves the gold alone', async () => {
@@ -342,6 +420,66 @@ describe('spending gold', () => {
   });
 });
 
+describe('what the balance says after a purchase', () => {
+  it('counts a granted cosmetic and a granted membership as spent, and a granted Buzz pack as converted', async () => {
+    await buy('badge-seal');
+    await buy('member-silver');
+    await buy('buzz-50');
+
+    expect(await getGoldBalance(db, 1)).toMatchObject({
+      converted: 1000,
+      spent: 12_400,
+      onItsWay: 0,
+      convertible: 20_000 - 1000 - 12_400,
+    });
+  });
+
+  it('counts a membership the main app has not confirmed as on its way, not spent', async () => {
+    await buy('member-silver', {
+      deps: defaultDeps({ mainApp: fakeMainApp({ down: true }).port }),
+    });
+
+    expect(await getGoldBalance(db, 1)).toMatchObject({
+      converted: 0,
+      spent: 0,
+      onItsWay: 12_000,
+    });
+  });
+});
+
+describe('a Buzz pack that is paid', () => {
+  it('is granted in the same transaction as its conversion, so a failure between the two leaves both pending', async () => {
+    const buzz = fakeBuzz();
+    await pg.exec(`
+      CREATE FUNCTION refuse_grant() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'grant failed'; END $$;
+      CREATE TRIGGER refuse_grant BEFORE UPDATE OF "status" ON "KnightsShopPurchase"
+        FOR EACH ROW WHEN (NEW."status" = 'granted') EXECUTE FUNCTION refuse_grant();`);
+    try {
+      await expect(buy('buzz-50', { deps: defaultDeps({ buzz: buzz.port }) })).rejects.toThrow();
+      expect((await pg.query(`SELECT "status" FROM "KnightsGoldConversion"`)).rows).toEqual([
+        { status: 'pending' },
+      ]);
+    } finally {
+      await pg.exec(
+        `DROP TRIGGER refuse_grant ON "KnightsShopPurchase"; DROP FUNCTION refuse_grant();`
+      );
+    }
+
+    await retryPendingConversions(db, buzz.port, { now: new Date(NOW.getTime() + 5 * 60_000) });
+    expect((await purchases())[0].status).toBe('granted');
+    expect(buzz.paid.size).toBe(1);
+  });
+
+  it('is granted when its conversion is marked paid, wherever that happens', async () => {
+    await buy('buzz-50', { deps: defaultDeps({ buzz: fakeBuzz({ failFirst: true }).port }) });
+    const [purchase] = await purchases();
+
+    await markConversionPaid(db, purchase.conversionId as number, 'tx-elsewhere', NOW);
+
+    expect((await purchases())[0].status).toBe('granted');
+  });
+});
+
 describe('cosmetics', () => {
   it('grants a badge keyed by the purchase and refreshes the main app caches', async () => {
     const mainApp = fakeMainApp();
@@ -403,10 +541,10 @@ describe('a membership month', () => {
 
     expect(result).toMatchObject({ status: 'granted' });
     const [purchase] = await purchases();
+    expect(mainApp.grantMembership).toHaveBeenCalledTimes(1);
     expect(mainApp.grantMembership).toHaveBeenCalledWith({
       userId: 1,
       tier: 'silver',
-      months: 1,
       key: purchase.externalKey,
     });
     expect(await player()).toMatchObject({ goldConverted: 12_000 });
@@ -433,6 +571,72 @@ describe('a membership month', () => {
     expect(mainApp.grantMembership.mock.calls[0][0].key).toBe(
       mainApp.grantMembership.mock.calls[1][0].key
     );
+  });
+
+  it('is refused up front, with the gold untouched, when the player already has a membership', async () => {
+    await pg.exec(`
+      INSERT INTO "Product" ("id","metadata") VALUES ('p-bronze', '{"tier":"bronze"}');
+      INSERT INTO "CustomerSubscription" ("id","userId","productId","status","currentPeriodEnd")
+        VALUES ('s1', 1, 'p-bronze', 'active', '2027-01-20');`);
+    const mainApp = fakeMainApp();
+
+    const result = await buy('member-silver', { deps: defaultDeps({ mainApp: mainApp.port }) });
+
+    expect(result).toEqual({ status: 'refused', reason: 'has-membership' });
+    expect(mainApp.grantMembership).not.toHaveBeenCalled();
+    expect(await player()).toMatchObject({ goldConverted: 0 });
+    expect(await purchases()).toHaveLength(0);
+  });
+
+  it('is not held back by a membership that has ended or been cancelled', async () => {
+    await pg.exec(`
+      INSERT INTO "Product" ("id","metadata") VALUES ('p-bronze', '{"tier":"bronze"}');
+      INSERT INTO "CustomerSubscription" ("id","userId","productId","status","currentPeriodEnd") VALUES
+        ('s1', 1, 'p-bronze', 'active', '2026-11-20'),
+        ('s2', 1, 'p-bronze', 'canceled', '2027-01-20');`);
+
+    expect(await buy('member-silver')).toMatchObject({ status: 'granted' });
+  });
+
+  it('replays the original answer for the same key even after the membership is active', async () => {
+    const mainApp = fakeMainApp();
+    const first = await buy('member-silver', {
+      key: 'member-replay',
+      deps: defaultDeps({ mainApp: mainApp.port }),
+    });
+    await pg.exec(`
+      INSERT INTO "Product" ("id","metadata") VALUES ('p-silver', '{"tier":"silver"}');
+      INSERT INTO "CustomerSubscription" ("id","userId","productId","status","currentPeriodEnd")
+        VALUES ('s1', 1, 'p-silver', 'active', '2027-01-20');`);
+
+    const again = await buy('member-silver', { key: 'member-replay' });
+
+    expect(again).toMatchObject({
+      status: 'granted',
+      replayed: true,
+      purchaseId: (first as { purchaseId: number }).purchaseId,
+    });
+    expect(mainApp.grantMembership).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a replayed pending membership as a replay', async () => {
+    const down = fakeMainApp({ down: true });
+    await buy('member-silver', {
+      key: 'pending-replay',
+      deps: defaultDeps({ mainApp: down.port }),
+    });
+
+    const again = await buy('member-silver', {
+      key: 'pending-replay',
+      deps: defaultDeps({ mainApp: down.port }),
+    });
+
+    expect(again).toMatchObject({ status: 'pending', replayed: true });
+  });
+
+  it('is sold one month at a time: an item that says otherwise is not on sale', async () => {
+    await pg.query(`UPDATE "KnightsShopItem" SET "months" = 3 WHERE "id" = 'member-silver'`);
+    expect(await buy('member-silver')).toEqual({ status: 'refused', reason: 'unknown-item' });
   });
 
   it('gives the gold back when the main app refuses it for good', async () => {

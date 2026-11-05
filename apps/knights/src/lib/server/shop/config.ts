@@ -4,9 +4,6 @@ export const DEALS_PER_DAY = 2;
 /** Percent off a deal's list price. */
 export const DEAL_PERCENT = 20;
 
-/** The main app grants membership in 30-day chunks (`grantReferralSubscription`). */
-export const MEMBERSHIP_DAYS_PER_MONTH = 30;
-
 /** The longest one request to the main app may take. */
 export const MAIN_APP_TIMEOUT_MS = 8_000;
 

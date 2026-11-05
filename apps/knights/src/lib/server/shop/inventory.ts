@@ -15,7 +15,7 @@ export type InventoryItem = {
   imageKey: string | null;
 };
 
-export type MembershipStatus = { tier: string; endsAt: Date; queuedDays: number } | null;
+export type MembershipStatus = { tier: string; endsAt: Date } | null;
 
 const RANK_BADGE_IDS = Object.values(RANK_BADGE_COSMETICS);
 
@@ -81,35 +81,38 @@ export async function listInventory(db: Kysely<DB>, playerId: number): Promise<I
   );
 }
 
-/** The player's running referral-queue membership, which is where shop months land; null when none is active. */
+const LIVE_MEMBERSHIP = ['canceled', 'incomplete_expired'];
+
+/** The same test the main app's membership grant applies: a row that is not cancelled and has not run out blocks another month. */
+const liveMembershipRows = (db: Kysely<DB>, playerId: number, now: Date) =>
+  db
+    .selectFrom('CustomerSubscription as cs')
+    .innerJoin('Product as p', 'p.id', 'cs.productId')
+    .where('cs.userId', '=', playerId)
+    .where('cs.status', 'not in', LIVE_MEMBERSHIP)
+    .where('cs.currentPeriodEnd', '>', now);
+
+/** The player's longest-running live membership, bought with gold, Buzz or cash; null when there is none. */
 export async function membershipOf(
   db: Kysely<DB>,
   playerId: number,
   now: Date
 ): Promise<MembershipStatus> {
-  const row = await db
-    .selectFrom('CustomerSubscription as cs')
-    .innerJoin('Product as p', 'p.id', 'cs.productId')
-    .select([
-      'cs.currentPeriodEnd',
-      'cs.metadata',
-      sql<string | null>`p."metadata" ->> 'tier'`.as('tier'),
-    ])
-    .where('cs.userId', '=', playerId)
-    .where('cs.buzzType', '=', 'referral')
-    .where('cs.status', '=', 'active')
-    .where('cs.currentPeriodEnd', '>', now)
+  const row = await liveMembershipRows(db, playerId, now)
+    .select(['cs.currentPeriodEnd', sql<string | null>`p."metadata" ->> 'tier'`.as('tier')])
+    .orderBy('cs.currentPeriodEnd', 'desc')
     .executeTakeFirst();
-  if (!row?.tier) return null;
-  const queue = (row.metadata as { referralQueue?: { durationDays?: number }[] } | null)
-    ?.referralQueue;
-  const queuedDays = Array.isArray(queue)
-    ? queue.reduce(
-        (n, entry) => n + (typeof entry.durationDays === 'number' ? entry.durationDays : 0),
-        0
-      )
-    : 0;
-  return { tier: row.tier, endsAt: row.currentPeriodEnd, queuedDays };
+  return row?.tier ? { tier: row.tier, endsAt: row.currentPeriodEnd } : null;
+}
+
+/** Whether the main app would refuse another membership month; it stays the authority, this only spares the player a round trip. */
+export async function hasActiveMembership(
+  db: Kysely<DB>,
+  playerId: number,
+  now: Date
+): Promise<boolean> {
+  const row = await liveMembershipRows(db, playerId, now).select('cs.id').executeTakeFirst();
+  return row !== undefined;
 }
 
 /** The last purchases, for the shop's "Recent" list. */

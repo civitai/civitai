@@ -18,6 +18,10 @@ export type ShopItem = {
   sortOrder: number;
 };
 
+/** The main app sells a membership one month at a time, so an item that says otherwise is not on sale. */
+export const isSellable = (item: Pick<ShopItem, 'kind' | 'months'>) =>
+  item.kind !== 'membership' || item.months === 1;
+
 export type StockEntry = { item: ShopItem; price: number; deal: boolean };
 
 /** `YYYY-MM-DD` of the UTC day `now` falls in. */

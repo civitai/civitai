@@ -28,6 +28,8 @@ export function refusalText(
       return 'You already have unlimited uses of this sticker.';
     case 'insufficient':
       return `${count(shortfall ?? 0)} gold short.`;
+    case 'has-membership':
+      return 'You already have a membership. You can buy a month once it has ended.';
     case 'bad-key':
       return 'That purchase could not be started. Try again.';
   }
@@ -45,6 +47,7 @@ export const REFUSAL_STATUS: Record<Refusal, number> = {
   owned: 409,
   unlimited: 409,
   insufficient: 409,
+  'has-membership': 409,
   'bad-key': 400,
 };
 
@@ -93,7 +96,7 @@ export const cardBlurb = (card: CardLike) =>
     : card.kind === 'membership'
     ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(
         card.months
-      )}. Stacks after any membership you already have.`
+      )}. Perks only, no monthly Buzz. Only if you have no active membership.`
     : card.cosmeticType === 'Sticker'
     ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
     : cosmeticTypeLabel(card.cosmeticType));

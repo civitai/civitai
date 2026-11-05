@@ -1,6 +1,6 @@
 # Knights of New Order: the gold shop
 
-Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/gold` (shop) and `routes/gold/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantMembershipMonths` in `src/server/services/referral.service.ts`. Prices are placeholders until the price sheet is signed off; they live in data.
+Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/gold` (shop) and `routes/gold/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembershipMonth` in `src/server/services/subscriptions.service.ts`. Prices are placeholders until the price sheet is signed off; they live in data.
 
 ## Data and deploy
 
@@ -15,11 +15,13 @@ Migration `20270104120000_knights_v2_shop` (by hand, additive: two tables). Orde
 
 ## Spending gold (`purchase.ts`, `buyItem`)
 
-One transaction locks the `NewOrderPlayer` row (the same lock conversion and a career reset take), then in order: refuses no player or a hold (payout block or banned), replays an existing `requestKey`, checks the item is active and in today's stock, that the price the buyer saw is today's price, the Buzz kill switch (Buzz packs only), the rank gate, the deal limit and ownership, then `spendable = max(0, goldEarned - goldConverted)` against the price, and writes the purchase and adds the price to `goldConverted`. Delivery follows:
+One transaction locks the `NewOrderPlayer` row (the same lock conversion and a career reset take), then in order: refuses no player, replays an existing `requestKey` (so a retry of a charged purchase gets its own answer even after the player is held, the item is retired or the price changed), refuses a hold (payout block or banned), checks the item is active and in today's stock, that the price the buyer saw is today's price, the Buzz kill switch (Buzz packs only), the rank gate, the deal limit, ownership and (membership only) an active membership, then `spendable = max(0, goldEarned - goldConverted)` against the price, and writes the purchase and adds the price to `goldConverted`. Delivery follows:
 
 - **Cosmetic**: the `UserCosmetic` row (`claimKey` = `externalKey`) is inserted in that same transaction, so a cosmetic is granted exactly when the gold is spent. Everything except a Sticker is bought once (also refused when the player already holds it from elsewhere). A Sticker is a row per purchase with `remaining` = the cosmetic's `data.uses`, so a repeat purchase adds uses; a sticker with no `uses` is unlimited and is not sold again. After commit Knights asks the main app to refresh the cosmetic caches (best effort: a failure is logged and the caches expire on their own).
 - **Buzz pack**: a `KnightsGoldConversion` row is written in the same transaction and `settleConversion` runs the existing grant, with the conversion's key. An unknown outcome stays pending and `retryPendingConversions` (the tick) pays it once; a definitive Buzz rejection fails the conversion and its purchase and releases the gold. Marking the conversion paid or failed also marks its purchase.
-- **Membership**: the main app is asked (`main-app.ts`, `POST /api/mod/knights/shop/membership`) with the purchase's `externalKey`. A 2xx is granted; a 4xx other than 408/429 is final (queue full, tier not configured) and releases the gold; anything else leaves it pending and `retryPendingPurchases` (the tick, not behind the Buzz switch) sends the same key.
+- **Membership**: the main app is asked (`main-app.ts`, `POST /api/mod/knights/shop/membership` with `{ userId, tier, key }`) with the purchase's `externalKey`. A 2xx is granted; a 409 is final (active membership, product not available or not monthly) and releases the gold; anything else leaves it pending and `retryPendingPurchases` (the tick, not behind the Buzz switch) sends the same key.
+
+A replay answers from the ledger: a failed purchase reports `forfeited` as it was when it failed (kept in the purchase's `grant`), a pending one reports `replayed: true`, and a held player's pending purchase stays reserved, as the tick leaves it.
 
 Releasing gold is `releaseReservation` (`conversion/convert.ts`): gold reserved at or before a career reset's `startAt` was forfeited by the reset, so a late refusal does not give it back (the player is told); otherwise `goldConverted` drops by the price.
 
@@ -29,15 +31,15 @@ There is no new column. `goldConverted` already means "earned gold that is no lo
 
 ## Membership months (main app)
 
-`grantMembershipMonths({ userId, tier, months, key })` reuses the referral queue, the closest existing mechanism that is not a Stripe/Paddle subscription: `grantReferralSubscription` on the user's `CustomerSubscription` with `buzzType = 'referral'`, in 30-day chunks per month. The key is remembered in that row's metadata (`grantKeys`, the last 100) under the row lock, so a replay answers `already` and grants nothing. The grant mints no Buzz (the referral products carry `monthlyBuzz = 0`) and delivers the tier's monthly cosmetics in its own transaction.
+The shop sells the same thing as paying for a membership with Buzz on the main site: one perks-only month. `grantBuzzPurchaseMembershipMonth({ userId, tier, idempotencyKey })` in `subscriptions.service.ts` is the grant half of `purchaseMembershipWithBuzz` (which debits Buzz and then runs the same `commitBuzzMembershipMonth`):
 
-Stacking:
+- **What it grants**: an upsert of the `CustomerSubscription` in the `buzzPurchase` slot (`BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE`) with `cancelAtPeriodEnd` true and `currentPeriodEnd` one month on, the tier's monthly badge (`deliverMonthlyCosmetics`, in the same transaction), then the subscription cache bust and the Freshdesk tier sync (a Freshdesk failure is swallowed: the grant is already committed). No monthly Buzz. `/user/membership` shows it like a Buzz-purchased membership, with the tier and end date.
+- **Which product**: the active Civitai product with `buzzPurchase: true` and the item's `tier`, on its monthly 1-interval price. The catalog item carries only the tier, so it needs no price id and works the same in every environment.
+- **Rules**: one month at a time, and only when the user holds no live membership of any kind (any `CustomerSubscription` that is not canceled and has not run out). Otherwise the grant is refused.
+- **Idempotency**: the key is stored in the slot row's metadata (`grantKeys`, the last 20, kept across a repeat buyer's upserts). The key is looked up first, before the product and before any refusal, and again under the user-row lock inside the transaction, so a retry after a successful grant answers `already` (the cache bust is repeated) and a replay never gets a refusal or a second month, even when the member has since let the month lapse and bought another.
+- **Refusals and retries**: `BuzzMembershipRefusedError` (`active-membership`, `unavailable`, `not-monthly`) is the endpoint's 409, after which Knights releases the gold. Everything else is a 5xx and stays pending for the tick.
 
-- **With a paid subscription**: no interaction. The referral grant is its own row (`userId_buzzType`), the paid one is untouched, and the user's effective tier is the highest of their subscriptions (as for any referral perk).
-- **With earlier shop or referral time**: pooled in the referral queue, highest tier first, each chunk keeping its own tier and length. Buying Gold after Silver runs Gold now and Silver after it. The queue holds at most `referrals.maxQueuedDays` (365) days; a purchase past that is refused for good (409 `queue-full`) and the gold is released.
-- **Replays and retries**: one purchase is one key, however many times Knights sends it.
-
-The inventory reads the active referral subscription for the tier and end date, plus the days queued after it.
+Knights refuses up front too: the shop card reads "You are a member" and `buyItem` refuses `has-membership` before reserving gold, using the same live-membership test (`hasActiveMembership`). The endpoint stays the authority. A membership item whose `months` is not 1 is not sold. The inventory shows the longest-running live membership's tier and end date.
 
 ## Equipping
 
@@ -53,4 +55,6 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 
 ## Tests
 
-`shop/purchase.pglite.test.ts` (concurrency, replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership retry, rejection and forfeiture), `shop/rotation.test.ts`, `shop/seed-items.pglite.test.ts`, `shop/main-app.test.ts`, `routes/gold/load.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` and `grantMembershipMonths` in `src/server/services/__tests__/referral.service.test.ts`.
+`shop/purchase.pglite.test.ts` (replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership rules, retry, rejection and forfeiture, balance fields), `shop/catalog.pglite.test.ts`, `shop/rotation.test.ts`, `shop/seed-items.pglite.test.ts`, `shop/main-app.test.ts`, `routes/gold/load.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` (the real `WebhookEndpoint`), `src/server/services/__tests__/subscriptions.grant-buzz-membership.test.ts` and `buzz-membership-badge.behavior.test.ts`.
+
+The two simultaneous-purchase tests run on one PGlite connection that takes the transactions in turn, so they prove the second purchase reads the first one's spend, not the row lock itself; that needs a real Postgres and is not covered.

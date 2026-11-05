@@ -27,7 +27,6 @@ export const load: PageServerLoad = async ({ locals }) => {
       ? {
           tier: membership.tier,
           endsAt: membership.endsAt.toISOString(),
-          queuedDays: membership.queuedDays,
         }
       : null,
     now: new Date().toISOString(),

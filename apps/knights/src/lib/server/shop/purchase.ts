@@ -4,13 +4,14 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { BuzzPort } from '../conversion/buzz';
 import { spendableOf } from '../conversion/balance';
-import { releaseReservation, settleConversion } from '../conversion/convert';
+import { markForfeited, releaseReservation, settleConversion } from '../conversion/convert';
 import { heldSql } from '../conversion/held';
 import { rankIndex } from '../ranks';
 import { PENDING_PURCHASE_RETRY_AFTER_MS } from './config';
 import { holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
-import { stockFor, utcDay, type ShopItem } from './rotation';
+import { hasActiveMembership } from './inventory';
+import { isSellable, stockFor, utcDay, type ShopItem } from './rotation';
 
 type Purchase = Selectable<DB['KnightsShopPurchase']>;
 type Log = (event: Record<string, unknown>) => unknown;
@@ -45,6 +46,7 @@ export type Refusal =
   | 'owned'
   | 'unlimited'
   | 'insufficient'
+  | 'has-membership'
   | 'bad-key';
 
 export type BuyResult =
@@ -62,7 +64,7 @@ export type BuyResult =
 
 type Reserved =
   | { refused: BuyResult & { status: 'refused' } }
-  | { purchase: Purchase; replayed: boolean };
+  | { purchase: Purchase; replayed: boolean; held: boolean };
 
 const refuse = (
   reason: Refusal,
@@ -92,16 +94,20 @@ export async function buyItem(
       .forUpdate()
       .executeTakeFirst();
     if (!player) return refuse('no-player');
-    if (player.held) return refuse('held');
 
+    // Before every refusal: a retry of a purchase that was charged gets its own answer, whatever the player or shop became since.
     const replay = await trx
       .selectFrom('KnightsShopPurchase')
       .selectAll()
       .where('playerId', '=', playerId)
       .where('requestKey', '=', requestKey)
       .executeTakeFirst();
-    if (replay)
-      return replay.itemId === itemId ? { purchase: replay, replayed: true } : refuse('bad-key');
+    if (replay) {
+      return replay.itemId === itemId
+        ? { purchase: replay, replayed: true, held: Boolean(player.held) }
+        : refuse('bad-key');
+    }
+    if (player.held) return refuse('held');
 
     const items = await trx
       .selectFrom('KnightsShopItem')
@@ -109,7 +115,7 @@ export async function buyItem(
       .where('active', '=', true)
       .execute();
     const day = utcDay(now);
-    const catalog: ShopItem[] = items;
+    const catalog: ShopItem[] = items.filter(isSellable);
     const item = catalog.find((entry) => entry.id === itemId);
     if (!item) return refuse('unknown-item');
     const entry = stockFor(catalog, day).stock.find((s) => s.item.id === itemId);
@@ -147,6 +153,10 @@ export async function buyItem(
       const blocked = holdingBlocksPurchase(cosmetic.type, owned);
       if (blocked) return refuse(blocked);
       if (cosmetic.type === 'Sticker') uses = stickerUses(cosmetic.data);
+    }
+
+    if (item.kind === 'membership' && (await hasActiveMembership(trx, playerId, now))) {
+      return refuse('has-membership');
     }
 
     const spendable = spendableOf(player);
@@ -213,12 +223,12 @@ export async function buyItem(
         })
         .execute();
     }
-    return { purchase, replayed: false };
+    return { purchase, replayed: false, held: false };
   });
 
   if ('refused' in reserved) return reserved.refused;
-  const { purchase, replayed } = reserved;
-  return deliver(db, deps, purchase, { replayed, now });
+  const { purchase, replayed, held } = reserved;
+  return deliver(db, deps, purchase, { replayed, held, now });
 }
 
 /** Moves a reserved purchase toward delivered, and says where it stands. Safe to repeat: every downstream call carries the purchase's key. */
@@ -226,7 +236,7 @@ async function deliver(
   db: Kysely<DB>,
   deps: BuyDeps,
   purchase: Purchase,
-  { replayed, now }: { replayed: boolean; now: Date }
+  { replayed, held, now }: { replayed: boolean; held: boolean; now: Date }
 ): Promise<BuyResult> {
   const base = {
     purchaseId: purchase.id,
@@ -234,7 +244,7 @@ async function deliver(
     kind: purchase.kind,
     gold: purchase.gold,
   };
-  const grant = purchase.grant as { buzz?: number };
+  const grant = purchase.grant as { buzz?: number; forfeited?: boolean };
   if (purchase.status === 'granted') {
     if (!replayed && purchase.kind === 'cosmetic') {
       await deps.mainApp.refreshCosmetics(purchase.playerId).catch((error) =>
@@ -248,11 +258,13 @@ async function deliver(
     }
     return { status: 'granted', ...base };
   }
-  if (purchase.status === 'failed')
-    return { status: 'failed', purchaseId: purchase.id, forfeited: false };
+  if (purchase.status === 'failed') {
+    return { status: 'failed', purchaseId: purchase.id, forfeited: grant.forfeited === true };
+  }
 
+  // Like the tick, a replay leaves a held player's unconfirmed purchase reserved, and so does the Buzz kill switch.
+  if (replayed && held) return { status: 'pending', ...base, buzz: grant.buzz };
   if (purchase.kind === 'buzz_pack') {
-    // A replay while the Buzz kill switch is on stays reserved; the tick leaves it alone too.
     if (!deps.buzzPacksOpen) return { status: 'pending', ...base, buzz: grant.buzz };
     const conversion = await db
       .selectFrom('KnightsGoldConversion')
@@ -266,22 +278,22 @@ async function deliver(
     }
     return { status: 'pending', ...base, buzz: grant.buzz };
   }
-  return settleMembership(db, deps.mainApp, purchase, { now, log: deps.log });
+  return settleMembership(db, deps.mainApp, purchase, { now, replayed, log: deps.log });
 }
 
 async function settleMembership(
   db: Kysely<DB>,
   mainApp: MainAppPort,
   purchase: Purchase,
-  { now, log }: { now: Date; log?: Log }
+  { now, replayed = false, log }: { now: Date; replayed?: boolean; log?: Log }
 ): Promise<BuyResult> {
   const base = {
     purchaseId: purchase.id,
-    replayed: false,
+    replayed,
     kind: purchase.kind,
     gold: purchase.gold,
   };
-  const { tier, months } = purchase.grant as { tier: string; months: number };
+  const { tier } = purchase.grant as { tier: string };
   await db
     .updateTable('KnightsShopPurchase')
     .set({ lastAttemptAt: utc(now), attempts: sql<number>`"attempts" + 1` })
@@ -291,7 +303,6 @@ async function settleMembership(
     await mainApp.grantMembership({
       userId: purchase.playerId,
       tier,
-      months,
       key: purchase.externalKey,
     });
   } catch (error) {
@@ -338,11 +349,13 @@ async function failPurchase(db: Kysely<DB>, purchase: Purchase): Promise<boolean
       .where('status', '=', 'pending')
       .executeTakeFirst();
     if (Number(failed.numUpdatedRows) === 0) return false;
-    return releaseReservation(trx, {
+    const forfeited = await releaseReservation(trx, {
       playerId: purchase.playerId,
       gold: purchase.gold,
       reservedAt: purchase.createdAt,
     });
+    if (forfeited) await markForfeited(trx, purchase.id);
+    return forfeited;
   });
 }
 

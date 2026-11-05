@@ -85,7 +85,7 @@
       : card.kind === 'cosmetic'
       ? `${card.name} is yours. Equip it from your inventory.`
       : card.kind === 'membership'
-      ? 'Membership time added to your Civitai account.'
+      ? 'One month of membership perks added to your Civitai account.'
       : `${count(card.buzz ?? 0)} Buzz sent to your Civitai wallet.`;
     if (!reducedMotion() && from !== to) floater = { amount: from - to, key: Date.now() };
     skipped = false;
@@ -217,7 +217,7 @@
     <div class="duo">
       {#if memberships.length > 0}
         <section>
-          <div class="section-head"><h2 class="eyebrow">Membership</h2><p class="refresh">Stacks after what you already have</p></div>
+          <div class="section-head"><h2 class="eyebrow">Membership</h2><p class="refresh">One month, perks only, if you have no membership</p></div>
           <div class="stack">
             {#each memberships as card, i (card.id)}
               <ShopCard

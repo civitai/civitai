@@ -85,7 +85,7 @@
       <div>
         <h2>{tierName(data.membership.tier)} membership · Active</h2>
         <p>
-          Ends {formatDate(data.membership.endsAt)}{#if data.membership.queuedDays > 0} · {count(data.membership.queuedDays)} more days queued after it{/if}
+          Ends {formatDate(data.membership.endsAt)}
         </p>
       </div>
       <p class="days">{daysLeft} {daysLeft === 1 ? 'day' : 'days'} left</p>
@@ -141,7 +141,7 @@
       </ul>
     {/if}
   {:else if !data.membership}
-    <p class="empty">No membership time yet. <a href="/gold">Visit the shop</a>.</p>
+    <p class="empty">No membership yet. <a href="/gold">Visit the shop</a>.</p>
   {/if}
 </div>
 

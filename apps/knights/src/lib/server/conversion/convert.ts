@@ -129,6 +129,15 @@ export async function releaseReservation(
   return forfeited;
 }
 
+/** A failed shop purchase says whether its gold was forfeited, so a replay of it reports the same thing. */
+export async function markForfeited(trx: Transaction<DB>, purchaseId: number) {
+  await trx
+    .updateTable('KnightsShopPurchase')
+    .set({ grant: sql<never>`"grant" || '{"forfeited": true}'::jsonb` })
+    .where('id', '=', purchaseId)
+    .execute();
+}
+
 /** See `releaseReservation` for what a career reset forfeits. */
 async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
@@ -145,17 +154,20 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<b
       .where('status', '=', 'pending')
       .executeTakeFirst();
     if (Number(failed.numUpdatedRows) === 0) return false;
-    await trx
+    const purchase = await trx
       .updateTable('KnightsShopPurchase')
       .set({ status: 'failed' })
       .where('conversionId', '=', conversion.id)
       .where('status', '=', 'pending')
-      .execute();
-    return releaseReservation(trx, {
+      .returning('id')
+      .executeTakeFirst();
+    const forfeited = await releaseReservation(trx, {
       playerId: conversion.playerId,
       gold: conversion.gold,
       reservedAt: conversion.createdAt,
     });
+    if (forfeited && purchase) await markForfeited(trx, purchase.id);
+    return forfeited;
   });
 }
 

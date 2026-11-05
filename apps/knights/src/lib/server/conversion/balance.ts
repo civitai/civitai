@@ -26,7 +26,7 @@ type Row = {
   goldEarned: number;
   goldConverted: number;
   goldReserved: number;
-  goldSpent?: number;
+  goldSpent: number;
 };
 
 /** What a player can spend or convert right now (before the hold check): earned gold not yet converted, reserved or spent. */
@@ -48,8 +48,8 @@ export function balanceOf(row: Row, held: boolean): GoldBalance {
     convertible,
     frozen: held ? unconverted : 0,
     onItsWay: row.goldReserved,
-    converted: row.goldConverted - row.goldReserved - (row.goldSpent ?? 0),
-    spent: row.goldSpent ?? 0,
+    converted: row.goldConverted - row.goldReserved - row.goldSpent,
+    spent: row.goldSpent,
     held,
     goldPerBuzz: CONVERSION.goldPerBuzz,
     minBuzz: CONVERSION.minBuzz,
@@ -76,7 +76,7 @@ export async function getGoldBalance(db: Kysely<DB>, playerId: number): Promise<
     .where('p.userId', '=', playerId)
     .executeTakeFirst();
   return balanceOf(
-    row ?? { goldPending: 0, goldEarned: 0, goldConverted: 0, goldReserved: 0 },
+    row ?? { goldPending: 0, goldEarned: 0, goldConverted: 0, goldReserved: 0, goldSpent: 0 },
     Boolean(row?.held)
   );
 }

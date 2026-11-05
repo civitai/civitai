@@ -2,10 +2,11 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { rankIndex } from '../ranks';
 import { cosmeticImageKey, holdingBlocksPurchase, stickerUses } from './cosmetics';
-import { msUntilNextDay, stockFor, utcDay, type ShopItem } from './rotation';
+import { hasActiveMembership } from './inventory';
+import { isSellable, msUntilNextDay, stockFor, utcDay, type ShopItem } from './rotation';
 
 /** Why a card cannot be bought right now; `available` means it can (affordability is the player's gold, checked at the press). */
-export type CardState = 'available' | 'owned' | 'rank' | 'sold-out' | 'closed';
+export type CardState = 'available' | 'owned' | 'member' | 'rank' | 'sold-out' | 'closed';
 
 export type ShopCard = {
   id: string;
@@ -46,15 +47,14 @@ export async function loadShop(
   }: { playerId: number; rank: string; now: Date; buzzPacksOpen: boolean }
 ): Promise<ShopView> {
   const day = utcDay(now);
-  const items: ShopItem[] = await db
-    .selectFrom('KnightsShopItem')
-    .selectAll()
-    .where('active', '=', true)
-    .execute();
+  const items: ShopItem[] = (
+    await db.selectFrom('KnightsShopItem').selectAll().where('active', '=', true).execute()
+  ).filter(isSellable);
   const { stock } = stockFor(items, day);
 
   const cosmeticIds = stock.flatMap(({ item }) => (item.cosmeticId ? [item.cosmeticId] : []));
-  const [cosmetics, owned, dealsTaken] = await Promise.all([
+  const sellsMembership = stock.some(({ item }) => item.kind === 'membership');
+  const [cosmetics, owned, dealsTaken, hasMembership] = await Promise.all([
     cosmeticIds.length
       ? db
           .selectFrom('Cosmetic')
@@ -77,6 +77,7 @@ export async function loadShop(
       .where(sql<boolean>`"dealDay" = ${day}::date`)
       .where('status', '<>', 'failed')
       .execute(),
+    sellsMembership ? hasActiveMembership(db, playerId, now) : false,
   ]);
   const taken = new Set(dealsTaken.map((row) => row.itemId));
 
@@ -93,6 +94,7 @@ export async function loadShop(
     else if (item.minRank && rankIndex(rank) < rankIndex(item.minRank)) state = 'rank';
     else if (deal && taken.has(item.id)) state = 'sold-out';
     else if (cosmetic && holdingBlocksPurchase(cosmetic.type, held)) state = 'owned';
+    else if (item.kind === 'membership' && hasMembership) state = 'member';
     return [
       {
         id: item.id,

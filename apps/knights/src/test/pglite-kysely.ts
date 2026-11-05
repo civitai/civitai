@@ -104,6 +104,18 @@ CREATE TABLE "User" (
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false
 );
+CREATE TABLE "Product" (
+  "id" TEXT PRIMARY KEY,
+  "metadata" JSONB NOT NULL DEFAULT '{}'
+);
+CREATE TABLE "CustomerSubscription" (
+  "id" TEXT PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "productId" TEXT NOT NULL REFERENCES "Product"("id"),
+  "buzzType" TEXT NOT NULL DEFAULT 'yellow',
+  "status" TEXT NOT NULL,
+  "currentPeriodEnd" TIMESTAMP(3) NOT NULL
+);
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
