@@ -6,6 +6,7 @@ import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/Ser
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
+import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -54,60 +55,63 @@ export function ServicesSection({
             ? openDealsOnOffering(openDeals, offering.id, allOpenDealsLoaded)
             : undefined;
           return (
-            <ServiceOfferingCard
-              key={offering.id}
-              offering={offering}
-              footer={
-                <Group justify="space-between" mt="sm">
-                  {offering.slotsOpen != null && (
-                    <Badge color={full ? 'gray' : 'green'} variant="light" radius="sm">
-                      {full
-                        ? 'Fully booked'
-                        : `${offering.slotsOpen} slot${offering.slotsOpen === 1 ? '' : 's'} open`}
-                    </Badge>
-                  )}
-                  {isOwner && (
-                    <Group gap={4} ml="auto">
-                      <Button component={NextLink} href={manageHref} size="xs" variant="default">
-                        Manage
-                      </Button>
-                      {openDeal && (
-                        <Button
-                          component={NextLink}
-                          href={openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref}
-                          size="xs"
-                          color="yellow"
-                        >
-                          {openDeal.label}
+            <ServiceCardAnchor key={offering.id} offeringId={offering.id}>
+              <ServiceOfferingCard
+                offering={offering}
+                footer={
+                  <Group justify="space-between" mt="sm">
+                    {offering.slotsOpen != null && (
+                      <Badge color={full ? 'gray' : 'green'} variant="light" radius="sm">
+                        {full
+                          ? 'Fully booked'
+                          : `${offering.slotsOpen} slot${offering.slotsOpen === 1 ? '' : 's'} open`}
+                      </Badge>
+                    )}
+                    {isOwner && (
+                      <Group gap={4} ml="auto">
+                        <Button component={NextLink} href={manageHref} size="xs" variant="default">
+                          Manage
                         </Button>
-                      )}
-                    </Group>
-                  )}
-                  {!isOwner && (
-                    <Group gap={4} ml="auto">
-                      <ReportServiceButton offeringId={offering.id} />
-                      {shopPublished && (
-                        <LoginRedirect reason="perform-action">
+                        {openDeal && (
                           <Button
-                            color="yellow"
-                            size="xs"
-                            disabled={full}
-                            onClick={() =>
-                              dialogStore.trigger({
-                                component: ServiceRequestModal,
-                                props: { offering, sellerUsername: username },
-                              })
+                            component={NextLink}
+                            href={
+                              openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref
                             }
+                            size="xs"
+                            color="yellow"
                           >
-                            Request
+                            {openDeal.label}
                           </Button>
-                        </LoginRedirect>
-                      )}
-                    </Group>
-                  )}
-                </Group>
-              }
-            />
+                        )}
+                      </Group>
+                    )}
+                    {!isOwner && (
+                      <Group gap={4} ml="auto">
+                        <ReportServiceButton offeringId={offering.id} />
+                        {shopPublished && (
+                          <LoginRedirect reason="perform-action">
+                            <Button
+                              color="yellow"
+                              size="xs"
+                              disabled={full}
+                              onClick={() =>
+                                dialogStore.trigger({
+                                  component: ServiceRequestModal,
+                                  props: { offering, sellerUsername: username },
+                                })
+                              }
+                            >
+                              Request
+                            </Button>
+                          </LoginRedirect>
+                        )}
+                      </Group>
+                    )}
+                  </Group>
+                }
+              />
+            </ServiceCardAnchor>
           );
         })}
       </div>

@@ -287,7 +287,7 @@ const SCAN_COPY = (n: number) => Buffer.from(`scan-copy-${n}`);
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
