@@ -112,6 +112,17 @@ describe('it reads as action needed', () => {
   });
 });
 
+test('🟢 tells the host when the flash has played, so a remount does not replay it', async () => {
+  const onHighlightPlayed = vi.fn();
+  renderNotice({ highlight: true, onHighlightPlayed });
+  await expect.element(page.getByTestId('block-consent-notice')).toBeInTheDocument();
+  expect(onHighlightPlayed).not.toHaveBeenCalled();
+  // The component tier has no Tailwind, so no animation actually runs; dispatch the
+  // event the browser fires when it ends.
+  notice().dispatchEvent(new AnimationEvent('animationend', { bubbles: true }));
+  await vi.waitFor(() => expect(onHighlightPlayed).toHaveBeenCalledTimes(1));
+});
+
 describe('the buttons', () => {
   test('🔴 "Allow…" is the primary button, opens the modal (onReview), and is named by its visible word', async () => {
     const { onReview, onDismiss } = renderNotice({ missingScopes: ['social:tip:self'] });

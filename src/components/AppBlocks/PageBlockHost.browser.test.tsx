@@ -2130,6 +2130,35 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     }
   });
 
+  test('🔴 ONE revival per mount: dismissed again, later refusals do NOT bring it back', async () => {
+    // An app can send this request whenever it likes, with no user gesture, so an
+    // uncapped revival would make the notice impossible to get rid of.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={['ai:write:budgeted', REACT]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull()); // first revival
+      await dismissNotice();
+      for (let i = 2; i <= 3; i++) {
+        postFromBlock('SET_ENTITY_REACTION', { ...reactionRequest, requestId: `react-${i}` });
+        // Positive control: each later refusal still reached the app.
+        await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(i));
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('CONTROL — the same refusal for a permission the viewer CANNOT grant here leaves it dismissed', async () => {
     // `social:react:self` is not in the missing set, so consent cannot add it: the
     // block is still refused (positive control below), but the notice must not come
