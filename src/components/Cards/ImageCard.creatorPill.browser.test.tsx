@@ -136,7 +136,7 @@ describe('ImageCard creator pill', () => {
     }
   });
 
-  test('hideCreator drops the name row but keeps the card footer', async () => {
+  test('hideCreator drops the name row but keeps the reaction and tip row', async () => {
     renderWithProviders(
       <IntersectionObserverProvider>
         <div style={{ width: 336 }}>
@@ -145,7 +145,7 @@ describe('ImageCard creator pill', () => {
       </IntersectionObserverProvider>
     );
     await vi.waitFor(() => {
-      expect(document.body.querySelector('[class*="footer"]')).not.toBeNull();
+      expect(document.body.querySelector('[class*="tipRow"]')).not.toBeNull();
     });
     expect(document.body.querySelector('[class*="creatorPill"]')).toBeNull();
     expect(document.body.textContent).not.toContain('someone');
