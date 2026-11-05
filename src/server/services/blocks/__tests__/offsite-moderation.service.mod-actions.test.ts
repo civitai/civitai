@@ -646,6 +646,23 @@ describe('relistListing', () => {
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('relist');
   });
 
+  it("refused while the listing's owner has not accepted the App Developer Terms; nothing flips", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertListingOwnerAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' })
+    );
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    await expect(
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' });
+    expect(terms.assertListingOwnerAcceptedAppDeveloperTerms).toHaveBeenCalledWith(APP_ID);
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
   it('OFF-SITE relist does NOT touch app_blocks', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
     await relistListing({

@@ -50,7 +50,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
-    appListing: { findFirst: dbMocks.appListingFindFirst },
+    appListing: { findFirst: dbMocks.appListingFindFirst, findUnique: async () => null },
     appListingPublishRequest: { findFirst: dbMocks.listingReqFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },

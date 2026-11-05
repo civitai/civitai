@@ -104,6 +104,25 @@ import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-run
  *   - Rate limit per submitter (Phase 6).
  */
 
+/**
+ * Whose terms acceptance an app's publish needs: the listing's canonical owner, resolved as the
+ * listing gates resolve it.
+ */
+async function resolveAppTermsOwner(appBlockId: string, blockOwnerUserId: number | undefined) {
+  const { dbRead } = await import('~/server/db/client');
+  const listing = await dbRead.appListing.findUnique({
+    where: { appBlockId },
+    select: { kind: true, userId: true },
+  });
+  if (!listing) return blockOwnerUserId;
+  const { resolveCanonicalListingOwner } = await import('./app-access.service');
+  return resolveCanonicalListingOwner({
+    kind: listing.kind,
+    blockOwnerUserId,
+    listingUserId: listing.userId,
+  });
+}
+
 export type FileMeta = {
   path: string;
   sha256: string;
@@ -1139,7 +1158,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       throw new Error(appOwnedByAnotherUser(slug));
   }
   // An editor ships in the owner's name, so the owner must have accepted too.
-  const ownerUserId = existingApp?.app?.userId;
+  const ownerUserId = existingApp
+    ? await resolveAppTermsOwner(existingApp.id, existingApp.app?.userId)
+    : undefined;
   if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
@@ -2967,7 +2988,11 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   const isFirstVersion = !existingAppBlock;
 
   // A request filed before the owner accepted must not go live.
-  const termsOwnerUserId = existingAppBlock?.app?.userId ?? request.submittedByUserId;
+  // A first version has no app yet, so its submitter is the owner.
+  const termsOwnerUserId =
+    (existingAppBlock &&
+      (await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId))) ??
+    request.submittedByUserId;
   {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(termsOwnerUserId)))

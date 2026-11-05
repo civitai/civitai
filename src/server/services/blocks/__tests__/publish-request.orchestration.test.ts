@@ -546,6 +546,31 @@ describe('submitVersion', () => {
     }
   });
 
+  it("checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    // An off-site listing backed by a block: its owner is the listing column (8), which a
+    // transfer moves while the block's OauthClient (7) stays put.
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
   it.each(['pending', 'declined'])(
     '🔴 refuses a collaborator whose seat is %s, as any non-owner',
     async (status) => {
@@ -2072,6 +2097,53 @@ describe('approveRequest', () => {
       expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
       expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
       expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("approve checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it('a first version, with no app yet, checks the submitter; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms)
+      .mockClear()
+      .mockImplementation(async (userId) => userId !== 42);
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(42);
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
     } finally {
       vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
     }

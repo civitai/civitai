@@ -191,6 +191,19 @@ describe('App Developer Terms: the listing owner, for an editor or a moderator a
       assertListingOwnerAcceptedAppDeveloperTerms('apl_1', DEV)
     ).resolves.toBeUndefined();
   });
+
+  it('is skipped when the owner is the acting user, whose own acceptance the caller checks', async () => {
+    listingOwner.id = DEV;
+    const { assertListingOwnerAcceptedAppDeveloperTerms } = await import(
+      '../app-developer-terms.service'
+    );
+    await expect(
+      assertListingOwnerAcceptedAppDeveloperTerms('apl_1', DEV)
+    ).resolves.toBeUndefined();
+    await expect(assertListingOwnerAcceptedAppDeveloperTerms('apl_1')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
 });
 
 describe('App Developer Terms text is pinned to its version', () => {
