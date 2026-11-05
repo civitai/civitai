@@ -23,7 +23,9 @@ const COLLAPSED_REVIEW_COUNT = 4;
  */
 export function AppListingReviews({ appListingId }: { appListingId: string }) {
   const currentUser = useCurrentUser();
-  const [expanded, setExpanded] = useState(false);
+  // Keyed by listing so a client-side navigation to another app (body stays mounted) starts collapsed.
+  const [expandedFor, setExpandedFor] = useState<string | null>(null);
+  const expanded = expandedFor === appListingId;
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.appListings.listReviews.useInfiniteQuery(
       { appListingId },
@@ -64,7 +66,7 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
       ))}
       {!expanded && hasHidden && (
         <Group justify="center">
-          <Button variant="light" onClick={() => setExpanded(true)}>
+          <Button variant="light" onClick={() => setExpandedFor(appListingId)}>
             Show all reviews
           </Button>
         </Group>
