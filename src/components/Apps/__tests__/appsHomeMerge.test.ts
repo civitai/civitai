@@ -367,6 +367,13 @@ describe('homeEmptyKind — why an empty home is empty', () => {
     expect(homeEmptyKind(args)).toBe('all-removed');
   });
 
+  it('🔴 the server dropped every app (removedCount > 0, nothing served) → all-removed', () => {
+    const args = { server: [], recents: [], canOpenPage: true, hidden: { 'pixel-forge': T_HIDE } };
+    expect(homeEmptyKind({ ...args, removedCount: 3 })).toBe('all-removed');
+    // Control: the same empty payload without the count is "no apps".
+    expect(homeEmptyKind({ ...args, removedCount: 0 })).toBe('no-apps');
+  });
+
   it('nothing at all → no-apps, with or without stale hides', () => {
     expect(homeEmptyKind({ server: [], recents: [], canOpenPage: true })).toBe('no-apps');
     expect(

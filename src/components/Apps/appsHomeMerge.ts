@@ -38,9 +38,10 @@ import { isHiddenFromHome, latestUseMs } from '~/shared/utils/my-apps-hidden';
  * server, recents-only or both — goes through the ONE predicate, `isHiddenFromHome`, with
  * the later of the server row's `lastUsedAt` and the recents entry's `openedAt`: an app
  * removed and not used since stays off the grid; using it again brings it back. The server
- * does not pre-filter, so a hidden app that this browser has since opened still renders from
- * its fresh server row. Hidden tiles are skipped BEFORE they claim a slug, so nothing else
- * shifts.
+ * has already dropped rows hidden by their OWN `lastUsedAt` (before its row cap), so here the
+ * rule mostly matters for recents-only tiles and for this page's optimistic removes. An app
+ * the server dropped but this browser has since opened renders from its recents entry.
+ * Hidden tiles are skipped BEFORE they claim a slug, so nothing else shifts.
  *
  * ── LAUNCH ORIGIN ──────────────────────────────────────────────────────────────
  * An in-site run href gets `?from=home` (`withHomeLaunchOrigin`) so the run chrome's way out
@@ -177,11 +178,17 @@ export function mergeHomeApps(args: {
 /**
  * Why an EMPTY home is empty — call it only when `mergeHomeApps` returned nothing.
  * `'all-removed'`: the viewer has apps, and every one is off the grid only because of their own
- * "Remove from My apps" hides (the same merge with no hides is non-empty), so "No apps yet"
- * would be false. `'no-apps'`: nothing to show even with every hide ignored.
+ * "Remove from My apps" hides — the server dropped some (`removedCount`), or the same merge
+ * with no hides is non-empty — so "No apps yet" would be false. `'no-apps'`: nothing to show
+ * even with every hide ignored.
  */
 export function homeEmptyKind(
-  args: Parameters<typeof mergeHomeApps>[0]
+  args: Parameters<typeof mergeHomeApps>[0] & {
+    /** `listMyApps`' count of rows its hides dropped. */
+    removedCount?: number;
+  }
 ): 'no-apps' | 'all-removed' {
-  return mergeHomeApps({ ...args, hidden: {} }).length > 0 ? 'all-removed' : 'no-apps';
+  const { removedCount = 0, ...merge } = args;
+  if (removedCount > 0) return 'all-removed';
+  return mergeHomeApps({ ...merge, hidden: {} }).length > 0 ? 'all-removed' : 'no-apps';
 }

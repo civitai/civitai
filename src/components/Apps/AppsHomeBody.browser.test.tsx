@@ -126,7 +126,11 @@ function launch(name: string): HTMLAnchorElement {
 }
 
 /** The `listMyApps` payload: the derived apps plus the viewer's hides. */
-const served = (apps: MyAppRow[], hidden: Record<string, string> = {}) => ({ apps, hidden });
+const served = (apps: MyAppRow[], hidden: Record<string, string> = {}, removedCount = 0) => ({
+  apps,
+  hidden,
+  removedCount,
+});
 
 beforeEach(() => {
   mocks.myApps = { data: served([PAGE_APP, OFFSITE_APP]), isLoading: false, isError: false };
@@ -428,6 +432,19 @@ describe('the empty state after removing everything', () => {
       '/apps/store'
     );
   });
+
+  test('🔴 the server already dropped every app (no rows, removedCount 1) → still "removed", not "No apps yet"', async () => {
+    mocks.myApps = {
+      data: served([], { 'pixel-forge': '2020-01-05T00:00:00.000Z' }, 1),
+      isLoading: false,
+      isError: false,
+    };
+    renderWithProviders(<AppsHomeBody />);
+    await expect
+      .element(page.getByRole('heading', { name: "You've removed all your apps from this page" }))
+      .toBeVisible();
+    expect(page.getByRole('heading', { name: 'No apps yet' }).elements()).toHaveLength(0);
+  });
 });
 
 describe('Remove from My apps', () => {
@@ -464,6 +481,33 @@ describe('Remove from My apps', () => {
     expect(mocks.unhide).toHaveBeenCalledTimes(1);
     expect(mocks.unhide.mock.calls[0][0]).toEqual({ slug: 'pixel-forge' });
     expect(page.getByTestId('apps-home-removed').elements()).toHaveLength(0);
+  });
+
+  test('🔴 Undo restores the tile at once even after the refetch dropped its row', async () => {
+    // The real server stops sending a hidden row: model the hide's refetch landing before
+    // Undo, and an unhide that never settles, so only the kept row can bring the tile back.
+    mocks.hide = vi.fn(async (input: { slug: string }) => {
+      const hiddenAt = new Date().toISOString();
+      mocks.myApps = {
+        data: served([OFFSITE_APP], { [input.slug]: hiddenAt }, 1),
+        isLoading: false,
+        isError: false,
+      };
+      return { slug: input.slug, hiddenAt };
+    });
+    mocks.unhide = vi.fn(() => new Promise(() => undefined));
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+    await removeViaMenu('Pixel Forge');
+    await expect.poll(() => mocks.hide.mock.calls.length).toBe(1);
+    await expect.poll(() => page.getByTestId('apps-home-tile').elements().length).toBe(1);
+    await userEvent.click(page.getByTestId('apps-home-undo'));
+    await expect.poll(() => page.getByTestId('apps-home-tile').elements().length).toBe(2);
+    // Back in its old place, ahead of the off-site app.
+    const tiles = page.getByTestId('apps-home-tile').elements();
+    expect(tiles[0].textContent).toContain('Pixel Forge');
+    expect(tiles[1].textContent).toContain('Prompt Lab');
+    expect(mocks.unhide.mock.calls[0][0]).toEqual({ slug: 'pixel-forge' });
   });
 
   test('🔴 the status region is mounted while idle, so the removal is announced into it', async () => {

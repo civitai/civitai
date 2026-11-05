@@ -38,6 +38,7 @@ import {
   type RecentApp,
 } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { MyAppRow } from '~/server/services/blocks/my-apps.logic';
 import { activityTabQuery, isActivityTabVisible } from '~/components/Apps/appsActivityTabs';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -51,14 +52,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * `/apps` — the signed-in viewer's app HOME ("My apps"): a launcher grid of the apps they
- * have, drawn like a phone home screen (a large rounded icon, a one-line name under it). The
- * list is the server-derived apps (`appListings.listMyApps`) merged with this browser's
- * "Recently opened" store for the current account (`mergeHomeApps`, which owns the order,
- * the dedupe and the "Remove from My apps" rule). The store is `/apps/store`.
- *
- * The page (`pages/apps/index.tsx`) owns the gate: it renders this body only for a
- * signed-in viewer the store admits, so nothing here re-checks store access.
+ * `/apps` — the signed-in viewer's "My apps" launcher grid (`listMyApps` merged with this
+ * browser's recents by `mergeHomeApps`). The page owns the store-access gate; this body does
+ * not re-check it.
  */
 
 /**
@@ -67,12 +63,10 @@ import { trpc } from '~/utils/trpc';
  * can push the grid wider than its container (no horizontal scroll at 390px).
  */
 export const APPS_HOME_GRID_COLS = { base: 4, xs: 5, sm: 6, md: 7, lg: 8 } as const;
-/** Skeleton tiles shown while the list loads. */
 const APPS_HOME_SKELETON_TILES = 8;
 export const APPS_HOME_ICON_PX = 60;
-/** The rounded-square app icon's corner radius (≈ 22% of the side, like a launcher icon). */
+/** ≈ 22% of the icon side, like a launcher icon. */
 const APPS_HOME_ICON_RADIUS = 14;
-/** How long the "Removed … Undo" bar stays up. */
 const APPS_HOME_UNDO_MS = 8000;
 
 /** The deep link to the viewer's permissions for their apps. */
@@ -384,6 +378,10 @@ export function AppsHomeBody() {
   const [removed, setRemoved] = useState<{ slug: string; name: string } | null>(null);
   // An Undo waits for its own hide to settle, so the two writes reach the server in order.
   const pendingHides = useRef(new Map<string, Promise<unknown>>());
+  // The server row (and its index) of each app removed on this page. The server drops a
+  // hidden row from `listMyApps`, so once the hide's refetch lands the row is gone; an Undo
+  // puts this copy back at once instead of waiting for the unhide's refetch.
+  const removedRows = useRef(new Map<string, { row: MyAppRow; index: number }>());
 
   /** Drop `slug`'s override, but only if it still holds the value this action set. */
   function dropOverride(slug: string, expected: string | null) {
@@ -396,6 +394,9 @@ export function AppsHomeBody() {
   }
 
   async function handleRemove(app: AppsHomeTileModel) {
+    const served = myApps.data?.apps ?? [];
+    const index = served.findIndex((r) => r.slug === app.slug);
+    if (index >= 0) removedRows.current.set(app.slug, { row: served[index], index });
     const optimistic = new Date().toISOString();
     setOverrides((prev) => ({ ...prev, [app.slug]: optimistic }));
     setRemoved({ slug: app.slug, name: app.name });
@@ -488,15 +489,20 @@ export function AppsHomeBody() {
     return merged;
   }, [serverHidden, overrides]);
 
+  // The served rows plus any undone removal the server has not re-sent yet, at its old place.
+  const serverApps = useMemo(() => {
+    const apps = [...(myApps.data?.apps ?? [])];
+    for (const [slug, value] of Object.entries(overrides)) {
+      const kept = value === null ? removedRows.current.get(slug) : undefined;
+      if (!kept || apps.some((r) => r.listingId === kept.row.listingId)) continue;
+      apps.splice(Math.min(kept.index, apps.length), 0, kept.row);
+    }
+    return apps;
+  }, [myApps.data?.apps, overrides]);
+
   const tiles = useMemo(
-    () =>
-      mergeHomeApps({
-        server: myApps.data?.apps ?? [],
-        recents,
-        canOpenPage,
-        hidden,
-      }),
-    [myApps.data?.apps, recents, canOpenPage, hidden]
+    () => mergeHomeApps({ server: serverApps, recents, canOpenPage, hidden }),
+    [serverApps, recents, canOpenPage, hidden]
   );
 
   return (
@@ -562,10 +568,11 @@ export function AppsHomeBody() {
         myApps.isError ? null : (
           <EmptyState
             kind={homeEmptyKind({
-              server: myApps.data?.apps ?? [],
+              server: serverApps,
               recents,
               canOpenPage,
               hidden,
+              removedCount: myApps.data?.removedCount,
             })}
           />
         )

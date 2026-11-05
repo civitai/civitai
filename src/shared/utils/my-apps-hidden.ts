@@ -1,37 +1,27 @@
 /**
- * "Remove from My apps" — the viewer's explicit hides on the `/apps` home, and THE rule that
- * decides whether a hidden app is shown again. Pure and React-free, shared by the client
- * merge (`mergeHomeApps`) and the server writer (`my-apps-hidden.service.ts`).
- *
- * Membership of the home stays IMPLICIT (grants, purchases, recent use, OAuth consent, and
- * this browser's recently-opened list). A hide does not delete any of that; it records WHEN
- * the viewer removed the app, per listing slug, in `User.settings.hiddenApps`
- * (`{ [slug]: ISO datetime }`). An app is hidden while it has not been used since:
+ * "Remove from My apps" — THE rule for whether a hidden app is shown on the `/apps` home.
+ * Hides live in `User.settings.hiddenApps` (`{ [slug]: ISO hiddenAt }`), and
  *
  *     shown  ⇔  lastUsed > hiddenAt
  *
- * where `lastUsed` is the later of the server row's `lastUsedAt` and this browser's
- * recently-opened `openedAt` for the app. Using the app again — opening it in-site, a new
- * grant, purchase or scope invocation — therefore brings it back without a separate "unhide".
+ * so using an app again brings it back with no separate "unhide". The server applies it to
+ * each row's `lastUsedAt` before the My apps row cap (`buildMyApps`), so a removed app takes
+ * no slot; the client merge (`mergeHomeApps`) applies it again with this browser's
+ * recently-opened `openedAt` folded in. Opening a page app's run route clears its hide
+ * server-side (`openingClearsHide`), so a reopened app comes back with its server row.
  *
- * Keyed by SLUG, not listing id: the slug is the one handle every tile has (a recents-only
- * tile has no listing id — an on-site recents entry's `id` is the AppBlock id), and it is
- * already the merge's join key. A renamed slug orphans its entry, which fails OPEN (the app
- * shows again); the cap below bounds orphans.
+ * Keyed by SLUG, not listing id: a recents-only tile has no listing id, and the slug is the
+ * merge's join key. A renamed slug orphans its entry, which fails OPEN (the app shows again).
  *
- * CROSS-DEVICE: opening a page app's run route (`/apps/run/<slug>`) while it is hidden CLEARS
- * the hide server-side (`openingClearsHide` below), so every device shows it again — not
- * only the browser whose recently-opened `openedAt` moved. An app that never invokes a scope
- * moves nothing else server-side, so without this a hide made on one device outlived a
- * reopen on another.
- *
- * KNOWN LIMITATIONS (by design, not solved here):
- *  - an off-site OAuth app's server `lastUsedAt` is its CONSENT time and it has no run route,
- *    so a hidden off-site app returns on other devices only on re-consent; on THIS browser it
- *    also returns when opened from a tracked in-site path (the store's "Visit" or a home tile,
- *    which record a recently-opened entry);
- *  - `hiddenAt` is server time and `openedAt` is this browser's clock, so a client clock
- *    running behind the server can keep a just-reopened app hidden until its next use.
+ * KNOWN LIMITATIONS:
+ *  - when the run page's clear does not happen (its read fails open to "not hidden", or the
+ *    write fails), the server keeps dropping the row: the app still shows, as a recents-only
+ *    tile in the browser that opened it, and elsewhere only after its next server-side use;
+ *  - an off-site app's server `lastUsedAt` is its OAuth CONSENT time and it has no run route,
+ *    so a hidden off-site app returns on other devices only on re-consent (in the browser
+ *    that opened it from the store or a tile, as a recents-only tile);
+ *  - `hiddenAt` is server time and `openedAt` this browser's clock, so a client clock behind
+ *    the server can keep a just-reopened app hidden until its next use.
  */
 
 /** The settings key the hides live under. */

@@ -6,6 +6,7 @@ import type {
   AppListingVisibility,
   ListingAudienceFloor,
 } from '~/shared/utils/app-listing-visibility';
+import { isHiddenFromHome, type HiddenApps } from '~/shared/utils/my-apps-hidden';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
 /**
@@ -27,6 +28,11 @@ import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope
  * (`storeVisibleListingRowGate`, the predicate the detail page uses), so a delisted,
  * unpublished, moderation-removed, restricted, undeployed or off-host-mature listing never
  * appears, and neither does an on-site listing for a viewer whose scope is off-site only.
+ *
+ * "Remove from My apps" hides are applied HERE, before the row cap, with the shared predicate
+ * (`isHiddenFromHome`) against the row's `lastUsedAt` — so a removed app never takes one of
+ * the capped slots and the next app past the cutoff shows instead. See `my-apps-hidden.ts`
+ * for why that is safe for an app the viewer has since reopened.
  */
 
 /** How far back a scope invocation still counts as "uses this app". */
@@ -86,7 +92,20 @@ export type BuildMyAppsOptions = {
   canOpenPage: boolean;
   /** Invocations before this instant do not count. */
   recentSince: Date;
+  /** The viewer's "Remove from My apps" hides (slug → ISO time). Absent → nothing hidden. */
+  hidden?: Readonly<HiddenApps>;
   limit?: number;
+};
+
+export type MyAppsHome = {
+  /** The rows to render: hides applied, then capped. */
+  apps: MyAppRow[];
+  /**
+   * How many rows the viewer has that a hide kept off `apps` (counted before the cap). The
+   * client needs it for the empty state: with every app removed, `apps` is empty, and "No apps
+   * yet" would be false.
+   */
+  removedCount: number;
 };
 
 /** True when `a` is a later instant than `b`; a null never wins, and anything beats null. */
@@ -119,7 +138,7 @@ export function buildMyApps(
   signals: MyAppsSignals,
   candidates: ReadonlyArray<MyAppsListingCandidate>,
   opts: BuildMyAppsOptions
-): MyAppRow[] {
+): MyAppsHome {
   // App Block id → most recent use, over the three page-app sources.
   const pageUse = new Map<string, Date | null>();
   for (const g of signals.grants)
@@ -182,5 +201,16 @@ export function buildMyApps(
     if (!existing || isLater(row.lastUsedAt, existing.lastUsedAt)) byListing.set(card.id, row);
   }
 
-  return [...byListing.values()].sort(compareMyApps).slice(0, opts.limit ?? MY_APPS_MAX_ROWS);
+  const hidden = opts.hidden ?? {};
+  const shown: MyAppRow[] = [];
+  let removedCount = 0;
+  for (const row of [...byListing.values()].sort(compareMyApps)) {
+    // Own-property lookup: a slug like `constructor` must not read Object.prototype.
+    const hiddenAt = Object.prototype.hasOwnProperty.call(hidden, row.slug)
+      ? hidden[row.slug]
+      : undefined;
+    if (isHiddenFromHome(hiddenAt, row.lastUsedAt?.getTime() ?? null)) removedCount++;
+    else shown.push(row);
+  }
+  return { apps: shown.slice(0, opts.limit ?? MY_APPS_MAX_ROWS), removedCount };
 }

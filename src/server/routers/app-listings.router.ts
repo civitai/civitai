@@ -2066,10 +2066,10 @@ export const appListingsRouter = router({
    * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
    * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
    *
-   * Returns the derived `apps` AND the viewer's "Remove from My apps" `hidden` map
-   * (slug → ISO time). The server does NOT filter hidden apps out: whether one shows again
-   * depends on this browser's recently-opened time too, so the client merge applies the one
-   * rule (`isHiddenFromHome`) to both sources (`mergeHomeApps`).
+   * Returns the derived `apps`, the viewer's "Remove from My apps" `hidden` map (slug → ISO
+   * time) and `removedCount`. Hidden apps are filtered out BEFORE the row cap, so they do not
+   * take slots; the client merge still applies the same rule (`isHiddenFromHome`) to this
+   * browser's recently-opened entries (`mergeHomeApps`).
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)
@@ -2085,22 +2085,15 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
       }
-      const [{ listMyApps }, { getMyHiddenApps }] = await Promise.all([
-        import('~/server/services/blocks/my-apps.service'),
-        import('~/server/services/blocks/my-apps-hidden.service'),
-      ]);
-      const [apps, hidden] = await Promise.all([
-        listMyApps({
-          userId: ctx.user.id,
-          scope,
-          floor,
-          redCapable: isRedCapableRequest(ctx),
-          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-          canOpenPage: !!ctx.features?.appBlocksPages,
-        }),
-        getMyHiddenApps(ctx.user.id),
-      ]);
-      return { apps, hidden };
+      const { listMyApps } = await import('~/server/services/blocks/my-apps.service');
+      return listMyApps({
+        userId: ctx.user.id,
+        scope,
+        floor,
+        redCapable: isRedCapableRequest(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        canOpenPage: !!ctx.features?.appBlocksPages,
+      });
     }),
 
   /**

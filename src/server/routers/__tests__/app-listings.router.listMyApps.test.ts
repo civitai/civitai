@@ -77,9 +77,11 @@ beforeEach(() => {
       opts?.user?.isModerator ? 'full' : 'none'
   );
   mockListMyApps.mockReset();
-  mockListMyApps.mockImplementation(async (args: { userId: number }) => [
-    { listingId: `apl_for_${args.userId}` },
-  ]);
+  mockListMyApps.mockImplementation(async (args: { userId: number }) => ({
+    apps: [{ listingId: `apl_for_${args.userId}` }],
+    removedCount: args.userId,
+    hidden: { [`hidden-for-${args.userId}`]: '2026-10-10T11:22:33.000Z' },
+  }));
   mockHidden.mockReset();
   mockHidden.mockImplementation(async (userId: number) => ({
     [`hidden-for-${userId}`]: '2026-10-10T11:22:33.000Z',
@@ -122,16 +124,20 @@ describe('appListings.listMyApps', () => {
   it('reads the CALLER — two users, each gets their own rows', async () => {
     const a = await appListingsRouter.createCaller(fakeCtx(modUser) as never).listMyApps();
     const b = await appListingsRouter.createCaller(fakeCtx(otherMod) as never).listMyApps();
-    // The apps AND the caller's own hides, each read for the caller.
+    // The service's payload for the caller, passed through whole (the hides are read inside
+    // the service, keyed on the same userId — `my-apps.service.test.ts`).
     expect(a).toEqual({
       apps: [{ listingId: 'apl_for_41' }],
+      removedCount: 41,
       hidden: { 'hidden-for-41': '2026-10-10T11:22:33.000Z' },
     });
     expect(b).toEqual({
       apps: [{ listingId: 'apl_for_73' }],
+      removedCount: 73,
       hidden: { 'hidden-for-73': '2026-10-10T11:22:33.000Z' },
     });
-    expect(mockHidden.mock.calls.map(([id]) => id)).toEqual([41, 73]);
+    // One hides read per request, inside the service — not a second one here.
+    expect(mockHidden).not.toHaveBeenCalled();
     expect(mockListMyApps.mock.calls.map(([args]) => (args as { userId: number }).userId)).toEqual([
       41, 73,
     ]);
