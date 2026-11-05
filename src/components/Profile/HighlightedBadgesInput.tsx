@@ -37,7 +37,6 @@ export function HighlightedBadgesInput({
   onChange: (ids: number[]) => void;
   variant?: 'highlight' | 'hide';
 }) {
-  // Badges that share an image are one tile, so a pin on any of them can be removed from it.
   const tiles = groupBadgesByImage(badges);
   const toggle = (groupIds: number[]) =>
     onChange(
@@ -46,7 +45,7 @@ export function HighlightedBadgesInput({
         : [...value, groupIds[0]]
     );
 
-  if (!badges.length)
+  if (!tiles.length)
     return (
       <Text size="xs" c="dimmed">
         You don&apos;t have any badges yet.

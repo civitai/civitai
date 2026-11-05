@@ -24,7 +24,6 @@ describe('HighlightedBadgesInput', () => {
     await expect.element(page.getByRole('button', { name: 'Two' })).toHaveTextContent('3');
   });
 
-  // Placer (10) and Maker (11) share an image, so the picker offers one tile for the pair.
   const siblings = [
     { id: 10, name: 'Placer', data: { url: 'sticker.png' } },
     { id: 11, name: 'Maker', data: { url: 'sticker.png' } },
@@ -85,5 +84,16 @@ describe('HighlightedBadgesInput', () => {
     );
     expect(page.getByRole('button', { name: 'Imageless' }).elements()).toHaveLength(0);
     expect(page.getByRole('button').elements()).toHaveLength(2);
+  });
+
+  test('owning only image-less badges shows the empty message', async () => {
+    await renderWithProviders(
+      <HighlightedBadgesInput
+        badges={[{ id: 13, name: 'Imageless', data: null }]}
+        value={[]}
+        onChange={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText("You don't have any badges yet.")).toBeVisible();
   });
 });
