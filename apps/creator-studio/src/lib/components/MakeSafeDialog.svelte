@@ -9,9 +9,6 @@
   import { modelUrl } from '$lib/model-url';
   import type { CreatorModel } from '$lib/server/models';
 
-  // The main app's draft limit: one draft per model, at most this many an hour.
-  const MAX_PER_RUN = 20;
-
   type Draft = {
     sfwName: string;
     sfwDescription: string;
@@ -20,15 +17,19 @@
   };
   type Card =
     | { state: 'skipped'; reason: string; dispute?: boolean }
-    | { state: 'waiting' | 'drafting' | 'saving' | 'saved' }
+    | { state: 'waiting' | 'drafting' | 'saving' }
     | { state: 'ready'; draft: Draft; accepted: boolean }
+    | { state: 'saved'; listedOnCom: boolean }
     | { state: 'failed'; reason: string; draft?: Draft };
 
   let open = $state(false);
-  // A snapshot: the page's data reloads after a save, and the run must keep reviewing what it started.
-  let models = $state<CreatorModel[]>([]);
+  // A snapshot: the page reloads after a save, and the run keeps reviewing what it started with.
+  let models = $state.raw<CreatorModel[]>([]);
+  let offPage = $state(0);
   let cards = $state<Record<number, Card>>({});
-  let running = $state(false);
+  let drafting = $state(false);
+  let saving = $state(false);
+  let controller: AbortController | null = null;
 
   function initialCard(model: CreatorModel): Card {
     if (model.lockedMature)
@@ -37,16 +38,22 @@
         reason: 'A moderator locked this model as mature, so it cannot be made safe.',
         dispute: true,
       };
-    if (model.hasComFace) return { state: 'skipped', reason: 'Already has a civitai.com version.' };
-    if (!model.nsfw) return { state: 'skipped', reason: 'Already shown on civitai.com.' };
+    if (!model.nsfw)
+      return {
+        state: 'skipped',
+        reason:
+          'Not marked mature: where it is listed follows its images, not a civitai.com version.',
+      };
+    if (model.onCom) return { state: 'skipped', reason: 'Already listed on civitai.com.' };
     return { state: 'waiting' };
   }
 
-  async function post(body: Record<string, unknown>) {
+  async function post(body: Record<string, unknown>, signal: AbortSignal | null = null) {
     const res = await fetch('/models/make-safe', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok)
@@ -56,39 +63,67 @@
     return data;
   }
 
-  async function draftAll() {
-    running = true;
-    let budget = MAX_PER_RUN;
-    for (const model of models) {
-      if (!open) break;
-      if (cards[model.id]?.state !== 'waiting') continue;
-      if (budget-- <= 0) {
-        cards[model.id] = {
-          state: 'skipped',
-          reason: `Only ${MAX_PER_RUN} models can be drafted an hour. Run it again later.`,
-        };
-        continue;
+  async function draftOne(model: CreatorModel, signal: AbortSignal) {
+    cards[model.id] = { state: 'drafting' };
+    try {
+      const draft = (await post({ action: 'draft', modelId: model.id }, signal)) as Draft;
+      cards[model.id] = { state: 'ready', draft, accepted: false };
+      return true;
+    } catch (e) {
+      if (signal.aborted) {
+        cards[model.id] = { state: 'waiting' };
+        return false;
       }
-      cards[model.id] = { state: 'drafting' };
-      try {
-        const draft = (await post({ action: 'draft', modelId: model.id })) as Draft;
-        cards[model.id] = { state: 'ready', draft, accepted: false };
-      } catch (e) {
-        const err = e as Error & { status?: number };
-        cards[model.id] = { state: 'failed', reason: err.message };
-        // The hourly limit is spent: drafting the rest would only fail the same way.
-        if (err.status === 429) budget = 0;
+      const err = e as Error & { status?: number };
+      cards[model.id] = { state: 'failed', reason: err.message };
+      // The hourly draft limit is spent: the rest would only fail the same way.
+      if (err.status === 429) {
+        for (const other of models)
+          if (cards[other.id]?.state === 'waiting')
+            cards[other.id] = { state: 'failed', reason: err.message };
+        return false;
       }
+      return true;
     }
-    running = false;
   }
 
-  export function start(selection: CreatorModel[]) {
-    if (running) return;
+  async function draftWaiting() {
+    controller = new AbortController();
+    const { signal } = controller;
+    drafting = true;
+    for (const model of models) {
+      if (signal.aborted) break;
+      if (cards[model.id]?.state !== 'waiting') continue;
+      if (!(await draftOne(model, signal))) break;
+    }
+    drafting = false;
+  }
+
+  /** Opens the review for these models; `skipped` counts selected models it could not include. */
+  export function start(selection: CreatorModel[], skipped = 0) {
+    controller?.abort();
     models = selection;
+    offPage = skipped;
     cards = Object.fromEntries(selection.map((model) => [model.id, initialCard(model)]));
     open = true;
-    draftAll();
+    draftWaiting();
+  }
+
+  function retry(model: CreatorModel) {
+    const card = cards[model.id];
+    if (card.state !== 'failed') return;
+    if (card.draft) cards[model.id] = { state: 'ready', draft: card.draft, accepted: true };
+    else {
+      cards[model.id] = { state: 'waiting' };
+      if (!drafting) draftWaiting();
+    }
+  }
+
+  function setOpen(next: boolean) {
+    // Saves are not cancelled mid-way: closing would hide which ones landed.
+    if (!next && saving) return;
+    if (!next) controller?.abort();
+    open = next;
   }
 
   const accepted = $derived(
@@ -97,9 +132,10 @@
       return card?.state === 'ready' && card.accepted;
     })
   );
+  const anyDraftable = $derived(models.some((model) => cards[model.id]?.state !== 'skipped'));
 
   async function saveAccepted() {
-    running = true;
+    saving = true;
     let saved = 0;
     for (const model of accepted) {
       const card = cards[model.id];
@@ -107,20 +143,20 @@
       const { draft } = card;
       cards[model.id] = { state: 'saving' };
       try {
-        await post({
+        const result = (await post({
           action: 'save',
           modelId: model.id,
           sfwName: draft.sfwName,
           sfwDescription: draft.sfwDescription || null,
           sfwCoverImageId: draft.sfwCoverImageId,
-        });
-        cards[model.id] = { state: 'saved' };
+        })) as { listedOnCom: boolean };
+        cards[model.id] = { state: 'saved', listedOnCom: result.listedOnCom };
         saved++;
       } catch (e) {
         cards[model.id] = { state: 'failed', reason: (e as Error).message, draft };
       }
     }
-    running = false;
+    saving = false;
     if (saved) await invalidateAll();
   }
 
@@ -131,15 +167,28 @@
       .trim();
 </script>
 
-<Dialog.Root bind:open>
+<Dialog.Root bind:open={() => open, setOpen}>
   <Dialog.Content class="max-h-[85vh] max-w-2xl overflow-y-auto" interactOutsideBehavior="ignore">
     <Dialog.Header>
       <Dialog.Title>Make safe for civitai.com</Dialog.Title>
       <Dialog.Description>
         Each model gets a civitai.com title, description and cover, drafted from its listing. Its
-        civitai.red listing doesn't change. Review each one and tick the ones to keep.
+        civitai.red listing doesn't change. Tick the ones to keep, then save them.
       </Dialog.Description>
     </Dialog.Header>
+
+    {#if offPage > 0}
+      <p class="text-sm text-dark-2">
+        {offPage} selected {offPage === 1 ? 'version is' : 'versions are'} on other pages and not included.
+        Open those pages to make their models safe.
+      </p>
+    {/if}
+
+    {#if models.length === 0}
+      <p class="text-sm text-dark-2">None of the selected models are on this page.</p>
+    {:else if !anyDraftable}
+      <p class="text-sm text-dark-2">None of the selected models need a civitai.com version.</p>
+    {/if}
 
     <ul class="flex flex-col gap-3">
       {#each models as model (model.id)}
@@ -152,16 +201,16 @@
               rel="noopener noreferrer"
               class="min-w-0 flex-1 truncate font-medium text-white hover:underline">{model.name}</a
             >
-            {#if card?.state === 'drafting' || card?.state === 'saving'}
-              <Spinner class="size-4 text-dark-2" />
-              <span class="text-xs text-dark-2"
-                >{card.state === 'drafting' ? 'Drafting…' : 'Saving…'}</span
-              >
-            {:else if card?.state === 'waiting'}
-              <span class="text-xs text-dark-2">Waiting</span>
-            {:else if card?.state === 'saved'}
-              <span class="text-xs text-green-5">Saved</span>
-            {/if}
+            <span class="flex items-center gap-1.5 text-xs text-dark-2" aria-live="polite">
+              {#if card?.state === 'drafting' || card?.state === 'saving'}
+                <Spinner class="size-4" />
+                {card.state === 'drafting' ? 'Drafting…' : 'Saving…'}
+              {:else if card?.state === 'waiting'}
+                Waiting
+              {:else if card?.state === 'saved'}
+                <span class="text-green-5">Saved</span>
+              {/if}
+            </span>
           </div>
 
           {#if card?.state === 'skipped'}
@@ -176,8 +225,18 @@
                 >
               {/if}
             </p>
+          {:else if card?.state === 'saved' && !card.listedOnCom}
+            <p class="mt-1 text-sm text-dark-2">
+              Saved, but not on civitai.com yet: its cover doesn't count until that image is
+              published and reviewed. Pick another cover in the model editor if it stays off.
+            </p>
           {:else if card?.state === 'failed'}
-            <p class="mt-1 text-sm text-red-4">{card.reason}</p>
+            <div class="mt-1 flex items-center gap-2">
+              <p class="flex-1 text-sm text-red-4">{card.reason}</p>
+              <Button variant="outline" size="sm" disabled={saving} onclick={() => retry(model)}>
+                Try again
+              </Button>
+            </div>
           {:else if card?.state === 'ready'}
             {@const id = `accept-${model.id}`}
             <div class="mt-2 flex gap-3">
@@ -199,7 +258,7 @@
             <div class="mt-2 flex items-center gap-2">
               <Checkbox
                 {id}
-                disabled={running}
+                disabled={saving}
                 bind:checked={
                   () => card.accepted, (v) => (cards[model.id] = { ...card, accepted: !!v })
                 }
@@ -212,9 +271,9 @@
     </ul>
 
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => (open = false)}>Close</Button>
-      <Button disabled={running || accepted.length === 0} onclick={saveAccepted}>
-        Done{accepted.length ? ` (save ${accepted.length})` : ''}
+      <Button variant="outline" disabled={saving} onclick={() => setOpen(false)}>Close</Button>
+      <Button disabled={saving || accepted.length === 0} onclick={saveAccepted}>
+        {accepted.length ? `Save ${accepted.length}` : 'Save'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

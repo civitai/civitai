@@ -776,7 +776,12 @@
     {exportHref}
     onAction={(a) => (bulkAction = a)}
     onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
-    onMakeSafe={() => makeSafe?.start(makeSafeModels)}
+    onMakeSafe={() =>
+      makeSafe?.start(
+        makeSafeModels,
+        selected.size -
+          view.models.flatMap((m) => m.versions).filter((v) => selected.has(v.id)).length
+      )}
     salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
       for (const id of view.matchingVersionIds) selected.add(id);

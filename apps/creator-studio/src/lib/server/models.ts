@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { sfwBrowsingLevelsFlag } from '@civitai/shared';
 import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
 import {
@@ -78,8 +79,8 @@ export type CreatorModel = {
   nsfwLevel: number;
   /** Flagged as depicting a real person — a new price on it is refused (licensingFeeBlockedFor). */
   poi: boolean;
-  /** Has its own civitai.com title and cover. */
-  hasComFace: boolean;
+  /** Its rating has a PG or PG-13 bit, which is what lists it on civitai.com. */
+  onCom: boolean;
   /** A moderator locked it as mature, so it cannot get a civitai.com face. */
   lockedMature: boolean;
   versions: CreatorModelVersion[];
@@ -294,18 +295,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select([
-        'id',
-        'name',
-        'type',
-        'status',
-        'nsfw',
-        'nsfwLevel',
-        'poi',
-        'sfwName',
-        'sfwCoverImageId',
-        'lockedProperties',
-      ])
+      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi', 'lockedProperties'])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -462,7 +452,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       nsfw: !!m.nsfw,
       nsfwLevel: Number(m.nsfwLevel ?? 0),
       poi: !!m.poi,
-      hasComFace: m.sfwName != null && m.sfwCoverImageId != null,
+      onCom: (Number(m.nsfwLevel ?? 0) & sfwBrowsingLevelsFlag) !== 0,
       lockedMature: !!m.nsfw && (m.lockedProperties ?? []).includes('nsfw'),
       versions: byModel.get(m.id) ?? [],
     })),

@@ -25,7 +25,8 @@ export const POST: RequestHandler = async ({ request }) => {
   const result = await callMainApp<unknown>('/api/v1/models/com-face', sessionCookies(request), {
     method: 'POST',
     body: parsed.data,
-    timeoutMs: 90_000,
+    // A draft can run the intent check, two chat completions and two text checks in series.
+    timeoutMs: 150_000,
   });
   if (!result.ok) return json({ error: result.error }, { status: result.status });
   return json(result.data);

@@ -1,24 +1,23 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { createContext } from '~/server/createContext';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { appRouter } from '~/server/routers';
-import { modelUpsertSchema } from '~/server/schema/model.schema';
-import { upsertModel } from '~/server/services/model.service';
 import { createCallerFactory } from '~/server/trpc';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
-import { dbRead } from '~/server/db/client';
+import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SessionUser } from '~/types/session';
 
 const createCaller = createCallerFactory(appRouter);
 
-const faceFields = modelUpsertSchema.pick({ sfwName: true, sfwDescription: true });
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('draft'), modelId: z.number().int().positive() }),
-  faceFields.extend({
+  z.object({
     action: z.literal('save'),
     modelId: z.number().int().positive(),
     sfwName: z.string().trim().min(1),
+    sfwDescription: z.string().nullish(),
     sfwCoverImageId: z.number().int().positive(),
   }),
 ]);
@@ -28,8 +27,8 @@ const isSafeImage = (nsfwLevel: number) =>
 
 /**
  * Creator Studio's bulk "make it safe": the model editor's "Draft a civitai.com version" flow for one
- * model at a time. `draft` runs the editor's own draft procedure (its rate limit and gates included)
- * and picks the first PG/PG-13 image as the cover; `save` stores the face through `upsertModel`.
+ * model at a time, through the editor's own procedures so their rate limit, account gates and
+ * checks apply. `draft` also picks the first PG/PG-13 image as the cover.
  */
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
@@ -47,7 +46,12 @@ export default AuthedEndpoint(
         type: true,
         uploadType: true,
         status: true,
+        checkpointType: true,
+        availability: true,
         nsfw: true,
+        poi: true,
+        minor: true,
+        sfwOnly: true,
         lockedProperties: true,
         deletedAt: true,
       },
@@ -56,52 +60,65 @@ export default AuthedEndpoint(
     if (model.userId !== user.id)
       return res.status(403).json({ error: 'You do not own this model' });
     if (model.nsfw && model.lockedProperties.includes('nsfw'))
-      return res
-        .status(409)
-        .json({
-          error:
-            'A moderator has locked this model as mature, so it cannot get a civitai.com version. You can dispute the lock from the model page.',
-          code: 'locked',
-        });
+      return res.status(409).json({
+        error:
+          'A moderator has locked this model as mature, so it cannot get a civitai.com version. You can dispute the lock from the model page.',
+        code: 'locked',
+      });
 
     try {
+      const ctx = await createContext({ req, res });
+      // Creator Studio calls server to server, with no Origin or Referer. A JSON body is what rules
+      // out a cross-site form post, the case the origin check exists for.
+      const caller = createCaller({
+        ...ctx,
+        acceptableOrigin: ctx.acceptableOrigin || isJsonRequest(req),
+      });
+
       if (input.action === 'draft') {
-        const caller = createCaller(await createContext({ req, res }));
         const candidates = await caller.model.getCoverCandidates({ id: model.id });
         const cover = candidates.find((image) => isSafeImage(image.nsfwLevel));
         if (!cover)
-          return res
-            .status(422)
-            .json({
-              error:
-                'This model has no PG or PG-13 image to use as a civitai.com cover. Add one first.',
-              code: 'no-cover',
-            });
+          return res.status(422).json({
+            error:
+              'This model has no PG or PG-13 image to use as a civitai.com cover. Add one first.',
+            code: 'no-cover',
+          });
         const draft = await caller.model.draftSfwFace({
           name: model.name,
           description: model.description,
           modelId: model.id,
         });
-        return res.status(200).json({
-          ...draft,
-          sfwCoverImageId: cover.id,
-          coverUrl: cover.url,
-          coverType: cover.type,
-        });
+        return res.status(200).json({ ...draft, sfwCoverImageId: cover.id, coverUrl: cover.url });
       }
 
-      await upsertModel({
+      // The editor's save, with every flag the upsert schema would otherwise default passed back as
+      // stored: an omitted `minor` or `sfwOnly` parses as false.
+      await caller.model.upsert({
         id: model.id,
-        userId: user.id,
         name: model.name,
         type: model.type,
         uploadType: model.uploadType,
         status: model.status,
+        checkpointType: model.checkpointType,
+        availability: model.availability,
+        nsfw: model.nsfw,
+        poi: model.poi,
+        minor: model.minor,
+        sfwOnly: model.sfwOnly,
         sfwName: input.sfwName,
         sfwDescription: input.sfwDescription ?? null,
         sfwCoverImageId: input.sfwCoverImageId,
       });
-      return res.status(200).json({ ok: true });
+      // The face lists the model on .com only once its cover counts toward the model's level, which
+      // the save recomputes after its own write; the primary, as a replica can lag that.
+      const after = await dbWrite.model.findUnique({
+        where: { id: model.id },
+        select: { nsfwLevel: true },
+      });
+      return res
+        .status(200)
+        .json({ listedOnCom: ((after?.nsfwLevel ?? 0) & sfwBrowsingLevelsFlag) !== 0 });
     } catch (error) {
       return handleEndpointError(res, error);
     }

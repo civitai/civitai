@@ -3,12 +3,12 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import '~/__tests__/mocks/env.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { user, mockUpsertModel, caller } = vi.hoisted(() => ({
+const { user, caller, callerContexts } = vi.hoisted(() => ({
   user: { id: 7, isModerator: false },
-  mockUpsertModel: vi.fn(),
   caller: {
-    model: { getCoverCandidates: vi.fn(), draftSfwFace: vi.fn() },
+    model: { getCoverCandidates: vi.fn(), draftSfwFace: vi.fn(), upsert: vi.fn() },
   },
+  callerContexts: [] as Record<string, unknown>[],
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -18,15 +18,16 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
     (req: unknown, res: unknown) =>
       handler(req, res, user),
 }));
-vi.mock('~/server/services/model.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  upsertModel: mockUpsertModel,
+vi.mock('~/server/createContext', () => ({
+  createContext: vi.fn(async () => ({ acceptableOrigin: false })),
 }));
-vi.mock('~/server/createContext', () => ({ createContext: vi.fn(async () => ({})) }));
 vi.mock('~/server/routers', () => ({ appRouter: {} }));
 vi.mock('~/server/trpc', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  createCallerFactory: () => () => caller,
+  createCallerFactory: () => (ctx: Record<string, unknown>) => {
+    callerContexts.push(ctx);
+    return caller;
+  },
 }));
 
 import handler from '~/pages/api/v1/models/com-face';
@@ -39,7 +40,12 @@ const stored = {
   type: 'LORA',
   uploadType: 'Created',
   status: 'Published',
+  checkpointType: null,
+  availability: 'Public',
   nsfw: true,
+  poi: false,
+  minor: false,
+  sfwOnly: false,
   lockedProperties: [] as string[],
   deletedAt: null,
 };
@@ -58,7 +64,12 @@ async function call(body: unknown) {
     },
   };
   await handler(
-    { method: 'POST', query: {}, headers: {}, body } as unknown as NextApiRequest,
+    {
+      method: 'POST',
+      query: {},
+      headers: { 'content-type': 'application/json' },
+      body,
+    } as unknown as NextApiRequest,
     res as unknown as NextApiResponse
   );
   return { statusCode, body: payload as Record<string, unknown> };
@@ -67,7 +78,9 @@ async function call(body: unknown) {
 describe('POST /api/v1/models/com-face', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    callerContexts.length = 0;
     dbMock.dbRead.model.findUnique.mockResolvedValue(stored);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ nsfwLevel: 2 | 8 });
   });
 
   it("refuses another creator's model", async () => {
@@ -86,7 +99,7 @@ describe('POST /api/v1/models/com-face', () => {
     const save = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
     expect(save.statusCode).toBe(409);
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
-    expect(mockUpsertModel).not.toHaveBeenCalled();
+    expect(caller.model.upsert).not.toHaveBeenCalled();
   });
 
   it('picks the first PG/PG-13 image as the cover and drafts through the editor procedure', async () => {
@@ -113,7 +126,11 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  it('saves only the face, passing the stored required fields back unchanged', async () => {
+  // Decision: the save goes through the editor's own procedure (account gates, token scope, audit),
+  // and passes every flag the upsert schema would default back as stored: an omitted `minor` or
+  // `sfwOnly` parses as false and would clear it.
+  it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({ ...stored, minor: true, nsfw: false });
     const res = await call({
       action: 'save',
       modelId: 11,
@@ -122,16 +139,31 @@ describe('POST /api/v1/models/com-face', () => {
       sfwCoverImageId: 2,
     });
     expect(res.statusCode).toBe(200);
-    expect(mockUpsertModel).toHaveBeenCalledWith({
-      id: 11,
-      userId: 7,
-      name: 'Red Title',
-      type: 'LORA',
-      uploadType: 'Created',
-      status: 'Published',
-      sfwName: 'Safe',
-      sfwDescription: '<p>ok</p>',
-      sfwCoverImageId: 2,
-    });
+    expect(res.body).toEqual({ listedOnCom: true });
+    expect(caller.model.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 11,
+        name: 'Red Title',
+        nsfw: false,
+        minor: true,
+        sfwOnly: false,
+        poi: false,
+        availability: 'Public',
+        sfwName: 'Safe',
+        sfwCoverImageId: 2,
+      })
+    );
+  });
+
+  it('reports a saved face whose cover does not list the model on .com', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ nsfwLevel: 8 });
+    const res = await call({ action: 'save', modelId: 11, sfwName: 'Safe', sfwCoverImageId: 2 });
+    expect(res.body).toEqual({ listedOnCom: false });
+  });
+
+  it('accepts a JSON server-to-server call that has no Origin', async () => {
+    caller.model.getCoverCandidates.mockResolvedValue([]);
+    await call({ action: 'draft', modelId: 11 });
+    expect(callerContexts[0]).toMatchObject({ acceptableOrigin: true });
   });
 });
