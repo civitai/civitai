@@ -408,7 +408,7 @@
   };
 
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
-  let watching = $derived(data.mode === 'queue' && watchInProgress(data.daily));
+  let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
     const action = leaveAction({ inProgress: watching, type, toPath: to?.url.pathname ?? null });
