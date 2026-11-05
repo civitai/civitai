@@ -23,21 +23,41 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: 
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
 import '~/__tests__/mocks/db.mock';
+import { TokenScope } from '@civitai/auth/token-scope';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { InvalidCursorError } from '~/server/services/creator-engagement.service';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import handler from '~/pages/api/v1/creator/engagement';
 
 const CALLER = 101;
 
-async function call(query: Record<string, string>, signedIn = true) {
+type Credential = {
+  apiKeyType: string;
+  subject: { type: 'apiKey' | 'oauth'; id: number | string };
+  tokenScope: number;
+};
+// What getServerAuthSession puts on req.context for a bearer token.
+const FULL_KEY: Credential = {
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.Full,
+};
+
+async function call(
+  query: Record<string, string>,
+  credential: Credential | 'session' | 'anonymous' = FULL_KEY
+) {
   vi.mocked(getServerAuthSession).mockResolvedValue(
-    (signedIn ? { user: { id: CALLER } } : null) as never
+    (credential === 'anonymous' ? null : { user: { id: CALLER } }) as never
   );
-  const { req, res } = createRealApiPair({
+  const bearer = typeof credential === 'object';
+  const { req, res, header } = createRealApiPair({
     url: '/api/v1/creator/engagement',
     query,
-    headers: signedIn ? { authorization: 'Bearer test' } : {},
+    headers: bearer ? { authorization: 'Bearer test' } : {},
   });
+  if (bearer) (req as unknown as { context: unknown }).context = { apiKeyId: 1, ...credential };
   let body: Record<string, unknown> | undefined;
   const json = res.json.bind(res);
   res.json = ((b: unknown) => {
@@ -45,7 +65,7 @@ async function call(query: Record<string, string>, signedIn = true) {
     return json(b);
   }) as typeof res.json;
   await (handler as (req: unknown, res: unknown) => Promise<void>)(req, res);
-  return { statusCode: res.statusCode, body };
+  return { statusCode: res.statusCode, body, header };
 }
 
 describe('GET /api/v1/creator/engagement', () => {
@@ -78,8 +98,47 @@ describe('GET /api/v1/creator/engagement', () => {
 
   it('answers 429 once the caller is over the window', async () => {
     mockWindow.mockResolvedValue({ allowed: false, retryAfterSeconds: 12 });
-    const { statusCode } = await call({});
+    const { statusCode, header } = await call({});
     expect(statusCode).toBe(429);
+    expect(header('Retry-After')).toBe('12');
+    expect(mockGetEngagement).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 for a cursor the service rejects', async () => {
+    mockGetEngagement.mockRejectedValue(new InvalidCursorError());
+    const { statusCode, body } = await call({ cursor: 'forged' });
+    expect(statusCode).toBe(400);
+    expect(body).toEqual({ error: 'Invalid cursor' });
+  });
+
+  it('answers 401 without a session or token', async () => {
+    const { statusCode } = await call({}, 'anonymous');
+    expect(statusCode).toBe(401);
+    expect(mockGetEngagement).not.toHaveBeenCalled();
+  });
+
+  it('serves a signed-in browser session', async () => {
+    expect((await call({}, 'session')).statusCode).toBe(200);
+  });
+
+  it.each([
+    [
+      'an OAuth token with an unrelated scope',
+      {
+        apiKeyType: ApiKeyType.Access,
+        subject: { type: 'oauth', id: 'client' },
+        tokenScope: TokenScope.MediaRead,
+      },
+    ],
+    [
+      'a personal key without full scope',
+      { ...FULL_KEY, tokenScope: TokenScope.UserRead | TokenScope.MediaRead },
+    ],
+  ] as const)('refuses %s with 403 before reading anything', async (_label, credential) => {
+    const { statusCode } = await call({}, credential as Credential);
+    expect(statusCode).toBe(403);
+    expect(mockFlags).not.toHaveBeenCalled();
+    expect(mockWindow).not.toHaveBeenCalled();
     expect(mockGetEngagement).not.toHaveBeenCalled();
   });
 });

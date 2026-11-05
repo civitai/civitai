@@ -12,6 +12,7 @@ import {
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { SessionUser } from '~/types/session';
 
@@ -29,6 +30,9 @@ export default AuthedEndpoint(async function handler(
   res: NextApiResponse,
   user: SessionUser
 ) {
+  // No read scope maps to engagement and tipped Buzz yet, so only a session or a full-access key.
+  if (!requireFullScopeSession(req, res)) return;
+
   // A 404 rather than a 403, so a caller outside the cohort cannot tell the route exists.
   if (!(await getFeatureFlagsAsync({ user, req })).creatorEngagementApi)
     return res.status(404).json({ error: 'Not Found' });

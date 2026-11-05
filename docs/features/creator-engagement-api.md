@@ -11,9 +11,11 @@ held until the flag opens).
 
 ## Request
 
-- **Auth:** `AuthedEndpoint`, so an API key (`Authorization: Bearer …`) or a session cookie. There is
-  no `userId` or `username` parameter: the owner is always the authenticated user, and any such
-  parameter is ignored.
+- **Auth:** a signed-in session, or a full-access personal API key (`Authorization: Bearer …`), via
+  `requireFullScopeSession`. Any other bearer credential, such as an OAuth token or a key with a
+  narrower scope, gets `403` before the flag or rate limit is checked: no read scope maps to
+  engagement counts or tipped Buzz yet. There is no `userId` or `username` parameter: the owner is
+  always the authenticated user, and any such parameter is ignored.
 - **Flag:** `creatorEngagementApi` (`availability: ['mod']`, Flipt key `creator-engagement-api`).
   When it is off for the caller the route answers `404 { error: 'Not Found' }` rather than 403, so a
   signed-in caller outside the cohort learns nothing about the route. An unauthenticated request
@@ -130,12 +132,12 @@ bounded candidate set:
 
 1. **Images:** the caller's up to 1,000 images with the most net reactions from other people in the
    last 30 days, from ClickHouse `reactions` (filtered on `ownerId`, the reactor `userId`, and a
-   30-day `time` bound; the table is partitioned by month and sorted on time first). If ClickHouse is
-   unavailable, the caller's 500 newest listed images instead, and `metadata.imageCandidates` says
-   `newest`.
+   30-day `time` bound). This list is cached per owner for 5 minutes and shared by the all, image
+   and video rankings, so one scan serves all three. If ClickHouse is unavailable, the caller's 500
+   newest listed images instead, and `metadata.imageCandidates` says `newest`.
 2. **Models:** the caller's 500 newest listed models.
-3. Each candidate's exact 30-day score is computed in Postgres (the same queries as the page
-   counters), the list is sorted and cached for 5 minutes.
+3. Each candidate's exact 30-day score is computed in Postgres (the page-counter queries, bounded
+   to rows from the last 30 days), the list is sorted and cached for 5 minutes per owner and type.
 
 So an image whose only recent engagement is comments or collects, with no reaction, is not ranked,
 and neither is a model older than the creator's 500 newest. Each id from ClickHouse, the cache or a
@@ -172,7 +174,8 @@ ClickHouse reads were measured once each against production for the owner with t
 
 `ownerId` is not in the `reactions` sort key, so the candidate read prunes on `time` only: it reads
 every reaction from the last 30 days, and its cost scales with site-wide activity rather than with
-the owner's catalogue. It runs only when an owner's ranking cache is rebuilt.
+the owner's catalogue. It runs at most once per owner per 5-minute candidate cache, whatever the
+`type`.
 
 ## Tests
 

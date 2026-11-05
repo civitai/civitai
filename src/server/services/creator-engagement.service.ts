@@ -183,11 +183,16 @@ const emptyReactions = (): ReactionCounts => ({ total: 0, like: 0, heart: 0, lau
 const emptyReviews = (): ReviewCounts => ({ total: 0, thumbsUp: 0, thumbsDown: 0 });
 type Triple<T> = { d7: T; d30: T; allTime: T };
 
+// The ranking reads only d30, so it passes `since` to skip older rows; `allTime` is then d30 too.
+const sinceSql = (column: string, since: Date | undefined, cast = ts) =>
+  since ? sql`AND ${sql.ref(column)} >= ${cast(since)}` : sql``;
+
 async function imageReactionCounts(
   userId: number,
   ids: number[],
   w: Windows,
-  excluded: number[]
+  excluded: number[],
+  since?: Date
 ): Promise<Map<number, Triple<ReactionCounts>>> {
   const out = new Map<number, Triple<ReactionCounts>>();
   if (!ids.length) return out;
@@ -201,6 +206,7 @@ async function imageReactionCounts(
       AND r."userId" <> ${userId}
       AND r."userId" <> ALL(${intArray(excluded)})
       AND r.reaction::text IN (${sql.join(IMAGE_REACTIONS.map((x) => sql`${x}`))})
+      ${sinceSql('r.createdAt', since)}
     GROUP BY 1, 2
   `.execute(kyselyRead);
   for (const row of rows) {
@@ -227,7 +233,8 @@ async function modelReviewCounts(
   userId: number,
   ids: number[],
   w: Windows,
-  excluded: number[]
+  excluded: number[],
+  since?: Date
 ): Promise<Map<number, Triple<ReviewCounts>>> {
   const out = new Map<number, Triple<ReviewCounts>>();
   if (!ids.length) return out;
@@ -252,6 +259,7 @@ async function modelReviewCounts(
       AND r."userId" <> ${userId}
       AND r."userId" <> ALL(${intArray(excluded)})
       AND NOT r.exclude AND NOT r."tosViolation"
+      ${sinceSql('r.createdAt', since)}
     GROUP BY 1
   `.execute(kyselyRead);
   const block = (up: Num, down: Num): ReviewCounts => ({
@@ -278,7 +286,8 @@ async function commentCounts(
   userId: number,
   entityType: 'image' | 'model',
   ids: number[],
-  w: Windows
+  w: Windows,
+  since?: Date
 ): Promise<Map<number, Windowed>> {
   if (!ids.length) return new Map();
   const { rows } = await sql<{ id: number; d7: Num; d30: Num; all: Num }>`
@@ -291,6 +300,7 @@ async function commentCounts(
       AND c."entityId" = ANY(${intArray(ids)})
       AND c."userId" <> ${userId}
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND NOT c.hidden
+      ${sinceSql('c.createdAt', since, tstz)}
     GROUP BY 1
   `.execute(kyselyRead);
   return toTriples(rows);
@@ -300,7 +310,8 @@ async function collectCounts(
   userId: number,
   column: 'imageId' | 'modelId',
   ids: number[],
-  w: Windows
+  w: Windows,
+  since?: Date
 ): Promise<Map<number, Windowed>> {
   if (!ids.length) return new Map();
   const col = sql.ref(`ci.${column}`);
@@ -313,6 +324,7 @@ async function collectCounts(
     WHERE ${col} = ANY(${intArray(ids)})
       AND ci.status = 'ACCEPTED'
       AND ci."addedById" IS DISTINCT FROM ${userId}
+      ${sinceSql('ci.createdAt', since)}
     GROUP BY 1
   `.execute(kyselyRead);
   return toTriples(rows);
@@ -602,12 +614,33 @@ type Ranking = { entries: RankedEntry[]; imageCandidates?: 'reactions-30d' | 'ne
 const compareRanked = (a: RankedEntry, b: RankedEntry) =>
   b.v - a.v || KIND_ORDER[a.k] - KIND_ORDER[b.k] || b.id - a.id;
 
-/** `reactions` sorts on time first, not `ownerId`, so the 30-day window bounds the read. */
+/**
+ * `reactions` sorts on time first, not `ownerId`, so this reads every reaction of the last 30 days.
+ * Cached per owner, not per ranking type, so the image, video and all rankings share one scan.
+ */
 async function reactedImageIds(userId: number, w: Windows, excluded: number[]) {
-  if (!clickhouse) return undefined;
+  const ch = clickhouse;
+  if (!ch) return undefined;
+  const key =
+    `${REDIS_KEYS.CACHES.CREATOR_ENGAGEMENT_CANDIDATES}:${userId}` as RedisKeyTemplateCache;
   try {
-    const excludedSql = excluded.length ? `AND userId NOT IN (${excluded.join(',')})` : '';
-    const rows = await clickhouse.$query<{ id: number }>(`
+    return await fetchThroughCache(key, () => scanReactedImageIds(ch, userId, w, excluded), {
+      ttl: RANKING_TTL,
+    });
+  } catch (error) {
+    reportClickhouseFailure('ranking', error);
+    return undefined;
+  }
+}
+
+async function scanReactedImageIds(
+  ch: NonNullable<typeof clickhouse>,
+  userId: number,
+  w: Windows,
+  excluded: number[]
+) {
+  const excludedSql = excluded.length ? `AND userId NOT IN (${excluded.join(',')})` : '';
+  const rows = await ch.$query<{ id: number }>(`
       SELECT entityId AS id, sum(if(type = 'Image_Create', 1, -1)) AS net
       FROM reactions
       WHERE ownerId = ${Number(userId)} AND userId != ${Number(userId)} ${excludedSql}
@@ -618,11 +651,7 @@ async function reactedImageIds(userId: number, w: Windows, excluded: number[]) {
       ORDER BY net DESC, entityId DESC
       LIMIT ${RANKING_IMAGE_CANDIDATES}
     `);
-    return rows.map((r) => Number(r.id));
-  } catch (error) {
-    reportClickhouseFailure('ranking', error);
-    return undefined;
-  }
+  return rows.map((r) => Number(r.id));
 }
 
 async function newestVisibleImageIds(userId: number, types: string[], take: number) {
@@ -648,9 +677,9 @@ async function buildRanking(userId: number, type: EngagementItemType | undefined
     const rows = await loadImages(userId, ids, types);
     const kept = rows.map((r) => r.id);
     const [reactions, comments, collects] = await Promise.all([
-      imageReactionCounts(userId, kept, w, excluded),
-      commentCounts(userId, 'image', kept, w),
-      collectCounts(userId, 'imageId', kept, w),
+      imageReactionCounts(userId, kept, w, excluded, w.d30),
+      commentCounts(userId, 'image', kept, w, w.d30),
+      collectCounts(userId, 'imageId', kept, w, w.d30),
     ]);
     for (const id of kept)
       entries.push({
@@ -666,9 +695,9 @@ async function buildRanking(userId: number, type: EngagementItemType | undefined
   if (includesModels(type)) {
     const ids = await newestVisibleModelIds(userId);
     const [reviews, comments, collects] = await Promise.all([
-      modelReviewCounts(userId, ids, w, excluded),
-      commentCounts(userId, 'model', ids, w),
-      collectCounts(userId, 'modelId', ids, w),
+      modelReviewCounts(userId, ids, w, excluded, w.d30),
+      commentCounts(userId, 'model', ids, w, w.d30),
+      collectCounts(userId, 'modelId', ids, w, w.d30),
     ]);
     for (const id of ids)
       entries.push({

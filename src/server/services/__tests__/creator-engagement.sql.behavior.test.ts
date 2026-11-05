@@ -17,6 +17,7 @@ const holder = vi.hoisted(() => ({
   kysely: null as unknown,
   clickhouse: undefined as undefined | { $query: (...args: unknown[]) => Promise<unknown[]> },
   excluded: [] as number[],
+  cache: new Map<string, unknown>(),
 }));
 vi.mock('~/server/db/kyselyDb', () => ({
   get kyselyRead() {
@@ -33,7 +34,11 @@ vi.mock('~/server/services/metric-excluded-users.service', () => ({
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  fetchThroughCache: (_key: string, fetch: () => Promise<unknown>) => fetch(),
+  // A per-test cache with the real one's contract: a failed fetch is not stored.
+  fetchThroughCache: async (key: string, fetch: () => Promise<unknown>) => {
+    if (!holder.cache.has(key)) holder.cache.set(key, await fetch());
+    return holder.cache.get(key);
+  },
 }));
 
 const { getCreatorEngagement, NEWEST_SCAN_BUDGET } = await import(
@@ -179,6 +184,7 @@ afterAll(async () => {
 beforeEach(() => {
   holder.clickhouse = undefined;
   holder.excluded = [];
+  holder.cache.clear();
 });
 
 const query = (q: Partial<Query>): Query => ({
@@ -244,6 +250,16 @@ describe('sort=newest', () => {
     expect(res.items[0].allTime).not.toHaveProperty('views');
   });
 
+  it('puts each ClickHouse view window in its own block, and zero for an image with no row', async () => {
+    // ClickHouse sums as UInt64, which arrives as a string.
+    holder.clickhouse = { $query: async () => [{ id: 12, d7: '5', d30: '40', all: '300' }] };
+    const res = await getCreatorEngagement(query({ type: 'image' }));
+    const busy = res.items.find((i) => i.id === 12)!;
+    expect([busy.d7.views, busy.d30.views, busy.allTime.views]).toEqual([5, 40, 300]);
+    const quiet = res.items.find((i) => i.id === 11)!;
+    expect([quiet.d7.views, quiet.d30.views, quiet.allTime.views]).toEqual([0, 0, 0]);
+  });
+
   it('maps model reviews to thumbs and reads versions and downloads', async () => {
     const res = await getCreatorEngagement(query({ type: 'model' }));
     expect(res.items).toHaveLength(1);
@@ -294,6 +310,24 @@ describe('sort=engagement', () => {
     // 12: 4 reactions + 2 comments + 1 collect; 30: 2 reviews + 1 comment; 11: 1 reaction.
     expect(res.items.map((i) => `${i.type}:${i.id}`)).toEqual(['image:12', 'model:30', 'image:11']);
     expect(res.metadata.imageCandidates).toBe('reactions-30d');
+  });
+
+  it('scans reactions once per creator for the all, image and video rankings', async () => {
+    let scans = 0;
+    holder.clickhouse = {
+      // The candidate scan is a plain string; the views read is a tagged template.
+      $query: async (sqlOrStrings: unknown) => {
+        if (typeof sqlOrStrings !== 'string') return [];
+        scans++;
+        return [{ id: 13 }, { id: 11 }, { id: 12 }];
+      },
+    };
+    const ids = async (type?: Query['type']) =>
+      (await getCreatorEngagement(query({ sort: 'engagement', type }))).items.map((i) => i.id);
+    expect(await ids()).toEqual([12, 30, 11]);
+    expect(await ids('image')).toEqual([12, 11]);
+    expect(await ids('video')).toEqual([]);
+    expect(scans).toBe(1);
   });
 
   it('falls back to the newest images when ClickHouse is unavailable', async () => {
