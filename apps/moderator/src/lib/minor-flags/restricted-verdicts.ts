@@ -1,3 +1,5 @@
+import type { ComFace } from '$lib/com-face';
+
 export type Restriction = 'minor' | 'poi' | 'sfwOnly';
 export const RESTRICTED_VERDICT_RULINGS = ['keep', 'dismiss', 'rateNsfw'] as const;
 export type RestrictedVerdictRuling = (typeof RESTRICTED_VERDICT_RULINGS)[number];
@@ -32,6 +34,8 @@ export type RestrictedVerdictRow = {
   scanReason: string | null;
   /** XGuard forensics, when that path raised it. */
   forensics: { labels?: { label: string; score: number }[]; matchedTerms?: string[] } | null;
+  /** The model's civitai.com face, null when it has none. */
+  comFace: ComFace | null;
 };
 
 export const RULING_LABEL: Record<RestrictedVerdictRuling, string> = {

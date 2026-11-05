@@ -3,6 +3,7 @@
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
@@ -107,6 +108,9 @@
             >
               {open === row.modelId ? 'Close' : 'Rule'}
             </Button>
+          </div>
+          <div class="mt-2">
+            <ComFaceCard face={row.comFace} bare />
           </div>
           {#if open === row.modelId}
             <div class="mt-2 flex flex-col gap-2">

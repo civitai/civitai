@@ -9,13 +9,20 @@
 
   /** A model's civitai.com face beside its .red one. Read-only: the cover is unblurred, as every
    *  other tile in these queues is. */
-  let { face }: { face: ComFace | null } = $props();
+  let {
+    face,
+    bare = false,
+  }: {
+    face: ComFace | null;
+    /** For a list row: no card around it, a smaller cover. */
+    bare?: boolean;
+  } = $props();
 
   const cover = $derived(face?.cover ?? null);
   const comSafe = $derived(cover ? isComSafeLevel(cover.nsfwLevel) : true);
 </script>
 
-<TriageCard dense title="civitai.com face">
+{#snippet body()}
   {#if face}
     <div class="flex gap-3">
       {#if cover}
@@ -26,7 +33,8 @@
           rel="noreferrer"
           aria-label="Open the civitai.com cover"
           class={cn(
-            'relative block aspect-[4/5] w-24 shrink-0 overflow-hidden rounded-lg border bg-dark-6',
+            'relative block aspect-[4/5] shrink-0 overflow-hidden rounded-lg border bg-dark-6',
+            bare ? 'w-16' : 'w-24',
             comSafe ? 'border-dark-4' : 'border-red-500'
           )}
         >
@@ -68,4 +76,13 @@
   {:else}
     <p class="m-0 text-dark-2">No .com face</p>
   {/if}
-</TriageCard>
+{/snippet}
+
+{#if bare}
+  <div class="text-[13px]">
+    <p class="m-0 mb-1.5 text-[11px] font-semibold tracking-[0.5px] text-dark-2">civitai.com face</p>
+    {@render body()}
+  </div>
+{:else}
+  <TriageCard dense title="civitai.com face">{@render body()}</TriageCard>
+{/if}
