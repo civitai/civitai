@@ -33,7 +33,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           }),
         },
       },
-      { useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: vi.fn(async () => {}) } } }) }
+      {
+        useUtils: () => ({
+          blocks: { listMyScopeGrants: { invalidate: vi.fn(() => Promise.resolve()) } },
+        }),
+      }
     ),
   };
 });
