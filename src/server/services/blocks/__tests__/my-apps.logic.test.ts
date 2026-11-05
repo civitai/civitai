@@ -385,20 +385,14 @@ describe('exclusions', () => {
     ).toHaveLength(1);
   });
 
-  it("🔴 follows the viewer's browsing level, as the store detail page does", () => {
-    const redHost = { ...BASE_OPTS, redCapable: true };
-    // PG only (1): an R app is dropped even on a red-capable host.
+  // My apps is the viewer's own launcher: it is not narrowed by their browsing level (only the
+  // store's public surfaces are). An extra option is ignored, which is the point.
+  it('an R app the viewer has stays in My apps whatever their browsing level', () => {
     expect(
       buildMyApps(LIVE_GRANT, [delta({ contentRating: 'r' })], {
-        ...redHost,
+        ...BASE_OPTS,
+        redCapable: true,
         viewerBrowsingLevel: 1,
-      } as BuildMyAppsOptions)
-    ).toEqual([]);
-    // PG + PG-13 + R (7): kept.
-    expect(
-      buildMyApps(LIVE_GRANT, [delta({ contentRating: 'r' })], {
-        ...redHost,
-        viewerBrowsingLevel: 7,
       } as BuildMyAppsOptions)
     ).toHaveLength(1);
   });

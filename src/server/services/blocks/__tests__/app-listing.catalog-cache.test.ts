@@ -517,52 +517,44 @@ describe('/apps catalog cache — the key separates viewers', () => {
 
 describe("/apps catalog cache — the viewer's browsing level", () => {
   // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16, Blocked=32.
-  const PG_ONLY = 1;
-  const PG_PG13_R = 7;
+  const red = { scope: 'full', redCapable: true } as const;
 
   /**
-   * 🔴 The browsing level decides which ROWS the cached statement returns, so two viewers with
-   * different levels must never share an entry — and, like `scope` and `redCapable`, it must be
-   * separated in the LITERAL key, not only inside the 32-bit statement hash.
+   * 🔴 Whether R and X are allowed decides which ROWS the cached statement returns, so two
+   * viewers who differ there must never share an entry — and, like `scope` and `redCapable`,
+   * they must be separated in the LITERAL key, not only inside the 32-bit statement hash.
    */
-  it('🔴 two browsing levels can never share a cache entry, by the hash-independent prefix', async () => {
-    for (const redCapable of [true, false]) {
-      const pgOnly = await prefixFor({
-        scope: 'full',
-        redCapable,
-        viewerBrowsingLevel: PG_ONLY,
-      });
-      const rEnabled = await prefixFor({
-        scope: 'full',
-        redCapable,
-        viewerBrowsingLevel: PG_PG13_R,
-      });
-      expect(rEnabled, 'the browsing level is not a literal segment of the cache key').not.toBe(
-        pgOnly
-      );
+  it('🔴 R allowed vs not, and X allowed vs not, never share an entry (hash-independent prefix)', async () => {
+    const pgOnly = await prefixFor({ ...red, viewerBrowsingLevel: 1 });
+    const withR = await prefixFor({ ...red, viewerBrowsingLevel: 7 });
+    const withRX = await prefixFor({ ...red, viewerBrowsingLevel: 13 });
+    const withX = await prefixFor({ ...red, viewerBrowsingLevel: 10 });
+    expect(new Set([pgOnly, withR, withRX, withX]).size).toBe(4);
+  });
+
+  it('levels that differ only in PG / PG-13 / XXX / Blocked share one entry', async () => {
+    const pgOnly = await keyFor({ ...red, viewerBrowsingLevel: 1 });
+    for (const level of [undefined, null, 0, 2, 3, 16, 1 | 32]) {
+      expect(await keyFor({ ...red, viewerBrowsingLevel: level }), `level ${level}`).toBe(pgOnly);
+    }
+    const withR = await keyFor({ ...red, viewerBrowsingLevel: 7 });
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 4 })).toBe(withR);
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 5 | 16 })).toBe(withR);
+  });
+
+  it('off a red-capable host the level changes nothing: every level shares one entry', async () => {
+    const sfw = { scope: 'full', redCapable: false } as const;
+    const base = await keyFor({ ...sfw, viewerBrowsingLevel: 1 });
+    for (const level of [undefined, 7, 13, 31]) {
+      expect(await keyFor({ ...sfw, viewerBrowsingLevel: level }), `level ${level}`).toBe(base);
     }
   });
 
-  it('a missing level shares the PG-only entry (it IS PG only), and Blocked is not an axis', async () => {
-    const pgOnly = await keyFor({ scope: 'full', redCapable: true, viewerBrowsingLevel: PG_ONLY });
-    expect(await keyFor({ scope: 'full', redCapable: true })).toBe(pgOnly);
-    expect(await keyFor({ scope: 'full', redCapable: true, viewerBrowsingLevel: null })).toBe(
-      pgOnly
-    );
-    expect(await keyFor({ scope: 'full', redCapable: true, viewerBrowsingLevel: 0 })).toBe(pgOnly);
-    expect(
-      await keyFor({ scope: 'full', redCapable: true, viewerBrowsingLevel: PG_ONLY | 32 })
-    ).toBe(pgOnly);
-  });
-
-  it('the level adds a bounded number of key prefixes, whatever number the caller sends', async () => {
+  it('the level adds at most four key prefixes (R allowed × X allowed), whatever is sent', async () => {
     const prefixes = new Set<string>();
-    for (const viewerBrowsingLevel of [...Array(64).keys(), 1 << 20, -1, 2 ** 31 - 1]) {
-      prefixes.add(await prefixFor({ scope: 'full', redCapable: true, viewerBrowsingLevel }));
+    for (const viewerBrowsingLevel of [...Array(64).keys(), 1 << 20, 2 ** 31 - 1]) {
+      prefixes.add(await prefixFor({ ...red, viewerBrowsingLevel }));
     }
-    // Positive control: the level does move the prefix at all.
-    expect(prefixes.size).toBeGreaterThan(1);
-    // At most one prefix per non-empty subset of the five selectable levels.
-    expect(prefixes.size).toBeLessThanOrEqual(31);
+    expect(prefixes.size).toBe(4);
   });
 });

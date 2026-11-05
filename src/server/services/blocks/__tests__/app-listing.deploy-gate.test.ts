@@ -313,16 +313,16 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
 });
 
 // ---------------------------------------------------------------------------
-// BROWSING LEVEL — the detail page is served only to a viewer whose browsing level
-// includes the listing's content rating (`(ratingBit & level) != 0`), on top of the host
-// gate. A missing level reads as PG only.
+// BROWSING LEVEL — an R or X app's detail page is served only on a red-capable host AND to a
+// viewer whose browsing level includes that rating's bit. G / PG / PG-13 apps are not gated by
+// the level (their images are filtered per viewer elsewhere). A missing level reads as PG.
 // ---------------------------------------------------------------------------
 
-describe("getListingDetail — the viewer's browsing level", () => {
-  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16.
+describe("getListingDetail — R/X apps follow the viewer's browsing level", () => {
+  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16. Fixture levels are pairwise distinct.
   const PG_ONLY = 1;
-  const PG_PG13 = 3;
   const PG_PG13_R = 7;
+  const PG_X = 9;
   const EVERY_LEVEL = 31;
 
   beforeEach(() => {
@@ -351,35 +351,33 @@ describe("getListingDetail — the viewer's browsing level", () => {
     expect(detail?.id).toBe('apl_2');
   });
 
+  it('🔴 X needs X: an R-enabled viewer gets no X app; an X-enabled one does, and no R app', async () => {
+    expect(await detailFor('x', { redCapable: true, viewerBrowsingLevel: PG_PG13_R })).toBeNull();
+    expect((await detailFor('x', { redCapable: true, viewerBrowsingLevel: PG_X }))?.id).toBe(
+      'apl_2'
+    );
+    expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: PG_X })).toBeNull();
+  });
+
   it('a non-red host still hides an R app from a viewer with every level enabled', async () => {
     expect(
       await detailFor('r', { redCapable: false, viewerBrowsingLevel: EVERY_LEVEL })
     ).toBeNull();
   });
 
-  it('🔴 a PG-only viewer does not get a PG-13 app, on either host', async () => {
-    for (const redCapable of [false, true]) {
-      expect(await detailFor('pg13', { redCapable, viewerBrowsingLevel: PG_ONLY })).toBeNull();
-    }
-  });
-
-  it('a viewer with PG-13 enabled is served the PG-13 app', async () => {
-    const detail = await detailFor('pg13', { redCapable: false, viewerBrowsingLevel: PG_PG13 });
-    expect(detail?.id).toBe('apl_2');
-  });
-
-  it('🔴 a missing browsing level is treated as PG only', async () => {
-    expect(await detailFor('pg13', { redCapable: true })).toBeNull();
+  it('🔴 a missing browsing level reads as PG: no R app on a red-capable host', async () => {
+    expect(await detailFor('r', { redCapable: true })).toBeNull();
     expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: null })).toBeNull();
-    // Control: the same missing level is still served a PG app.
-    expect((await detailFor('pg', { redCapable: true }))?.id).toBe('apl_2');
   });
 
-  it('🔴 the level is matched bit by bit, not as a ceiling: an R-only viewer gets no PG app', async () => {
-    const R_ONLY = 4;
-    expect(await detailFor('pg', { redCapable: true, viewerBrowsingLevel: R_ONLY })).toBeNull();
-    expect((await detailFor('r', { redCapable: true, viewerBrowsingLevel: R_ONLY }))?.id).toBe(
-      'apl_2'
-    );
+  it('a PG-13 app is still served to a PG-only or signed-out viewer, on either host', async () => {
+    for (const redCapable of [false, true]) {
+      for (const viewerBrowsingLevel of [PG_ONLY, undefined]) {
+        expect(
+          (await detailFor('pg13', { redCapable, viewerBrowsingLevel }))?.id,
+          `red=${redCapable} level=${viewerBrowsingLevel}`
+        ).toBe('apl_2');
+      }
+    }
   });
 });
