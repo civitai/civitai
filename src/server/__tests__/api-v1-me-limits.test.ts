@@ -58,17 +58,23 @@ beforeEach(() => getUsageLimits.mockClear());
 
 describe('GET /api/v1/me/limits', () => {
   it.each([
-    ['a cookie session', {}],
-    ['a full-access key', token(TokenScope.Full)],
-    ['a UserRead key', token(TokenScope.UserRead)],
-    ['a MediaWrite key', token(TokenScope.MediaWrite)],
-    ['a key with both', token(TokenScope.UserRead | TokenScope.MediaWrite)],
-  ])('serves %s, privately and uncached', async (_label, context) => {
+    ['a cookie session, as Full', {}, TokenScope.Full],
+    ['a full-access key', token(TokenScope.Full), TokenScope.Full],
+    ['a UserRead key', token(TokenScope.UserRead), TokenScope.UserRead],
+    ['a MediaWrite key', token(TokenScope.MediaWrite), TokenScope.MediaWrite],
+    [
+      'a key with both',
+      token(TokenScope.UserRead | TokenScope.MediaWrite),
+      TokenScope.UserRead | TokenScope.MediaWrite,
+    ],
+  ])('serves %s, privately and uncached', async (_label, context, tokenScope) => {
     const res = await call({ context });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ limits: [] });
     expect(res.headers['cache-control']).toBe('private, no-store');
-    expect(getUsageLimits).toHaveBeenCalledWith(expect.objectContaining({ user: USER }));
+    expect(getUsageLimits).toHaveBeenCalledWith(
+      expect.objectContaining({ user: USER, tokenScope })
+    );
   });
 
   it('refuses a key with neither scope, before reading anything', async () => {

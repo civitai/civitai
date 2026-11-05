@@ -211,6 +211,13 @@ describe('runEnforceTokenScope — anyOfScopes admits a token with any one liste
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('records Full for a Full OAuth token when no listed scope matched', async () => {
+    const { next, call } = run(OAUTH_CTX, { anyOfScopes: [] });
+    await call();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(mockEmit.mock.calls[0][0]).toMatchObject({ scopeBit: TokenScope.Full, statusCode: 200 });
+  });
+
   it('passes a Full token and a session request', async () => {
     const full = run(OAUTH_CTX, { anyOfScopes: ANY_OF });
     await full.call();

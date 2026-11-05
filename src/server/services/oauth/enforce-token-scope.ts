@@ -121,8 +121,8 @@ export function runEnforceTokenScope<T>(opts: {
   }
 
   // The scope this call exercises — the declared requiredScope, the first anyOfScopes bit the
-  // token carries, or Full for an unannotated endpoint (which implicitly requires Full). Also
-  // the value the external-OAuth scope-usage audit records below.
+  // token carries, or Full for an unannotated endpoint (which implicitly requires Full).
+  // `undefined` when no anyOfScopes bit matched; the audit below then records Full.
   const requiredScope = meta?.anyOfScopes
     ? matchedScope(ctx.tokenScope, meta.anyOfScopes)
     : meta?.requiredScope ?? TokenScope.Full;

@@ -18,8 +18,7 @@ function parseIds(value: string | string[] | undefined) {
 
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
-    // AuthedEndpoint checks no scope. Same rule as `user.getUsageLimits`' `anyOfScopes`: a cookie
-    // session and a full-scope key pass, a scoped token needs one of the scopes.
+    // AuthedEndpoint checks no scope; mirror the anyOfScopes rule on user.getUsageLimits.
     const { tokenScope } = getRequestCredential(req);
     if (
       tokenScope !== TokenScope.Full &&
