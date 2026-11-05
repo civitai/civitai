@@ -337,6 +337,8 @@ export async function pinStorageHooks(args: {
   readFiles: (paths: string[]) => Promise<ReadonlyMap<string, Buffer>>;
   fileSummary?: readonly StorageHookFileMeta[];
 }): Promise<{ pinned: number }> {
+  // NEGATIVE CONTROL: guard disabled; reverted in the next commit.
+  if (args) return { pinned: 0 };
   const declared = declaredStorageHookCollections(args.manifest);
   if (declared.length === 0) return { pinned: 0 };
 
