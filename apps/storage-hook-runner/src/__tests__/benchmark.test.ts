@@ -49,73 +49,77 @@ function report(label: string, samples: number[]) {
   console.log(`BENCH ${label} n=${samples.length} ${JSON.stringify(pct(samples))} ms`);
 }
 
-describe.skipIf(process.env.RUNNER_BENCH !== '1')('benchmark (opt-in: RUNNER_BENCH=1)', () => {
-  const input = hookInputJson();
+describe.skipIf(false)(
+  // TEMPORARY opt-in run, reverted next
+  'benchmark (opt-in: RUNNER_BENCH=1)',
+  () => {
+    const input = hookInputJson();
 
-  it('sizes the fixtures as named', () => {
-    expect(Buffer.byteLength(HOOKS['1KiB'])).toBeGreaterThan(900);
-    expect(Buffer.byteLength(HOOKS['1KiB'])).toBeLessThanOrEqual(1024);
-    expect(Buffer.byteLength(HOOKS['64KiB'])).toBeGreaterThan(60 * 1024);
-    expect(Buffer.byteLength(HOOKS['64KiB'])).toBeLessThanOrEqual(64 * 1024);
-  });
-
-  for (const [name, source] of Object.entries(HOOKS)) {
-    it(`in-process, ${name}: runtime-per-call vs instance-per-call`, async () => {
-      const compiled = compileQuickJS();
-      const shared = QuickJSInstance.fromCompiled(compiled);
-      const perRuntime: number[] = [];
-      for (let i = 0; i < N; i++) {
-        const t = performance.now();
-        const out = await shared.evaluate({ source, inputJson: input, timeoutMs: 500 });
-        perRuntime.push(performance.now() - t);
-        expect(out.result).toEqual({ allow: true });
-      }
-      const perInstance: number[] = [];
-      for (let i = 0; i < N; i++) {
-        const t = performance.now();
-        const out = evaluateHookOn(await instantiate(compiled), {
-          source,
-          inputJson: input,
-          timeoutMs: 500,
-        });
-        perInstance.push(performance.now() - t);
-        expect(out.result).toEqual({ allow: true });
-      }
-      report(`in-process runtime-per-call ${name}`, perRuntime);
-      report(`in-process instance-per-call ${name}`, perInstance);
-    });
-  }
-
-  describe('end to end over HTTP (app.inject, pool of 1)', () => {
-    let pool: HookPool;
-    let app: FastifyInstance;
-    beforeAll(async () => {
-      pool = await HookPool.start({ size: 1 });
-      app = buildApp({ secret: SECRET, pool, metrics: createMetrics() });
-      await app.ready();
-    });
-    afterAll(async () => {
-      await app.close();
-      await pool.close();
+    it('sizes the fixtures as named', () => {
+      expect(Buffer.byteLength(HOOKS['1KiB'])).toBeGreaterThan(900);
+      expect(Buffer.byteLength(HOOKS['1KiB'])).toBeLessThanOrEqual(1024);
+      expect(Buffer.byteLength(HOOKS['64KiB'])).toBeGreaterThan(60 * 1024);
+      expect(Buffer.byteLength(HOOKS['64KiB'])).toBeLessThanOrEqual(64 * 1024);
     });
 
     for (const [name, source] of Object.entries(HOOKS)) {
-      it(`POST /v1/check, ${name}`, async () => {
-        const samples: number[] = [];
+      it(`in-process, ${name}: runtime-per-call vs instance-per-call`, async () => {
+        const compiled = compileQuickJS();
+        const shared = QuickJSInstance.fromCompiled(compiled);
+        const perRuntime: number[] = [];
         for (let i = 0; i < N; i++) {
-          const body = JSON.stringify(checkBody(source, { timeoutMs: 500 }));
           const t = performance.now();
-          const res = await app.inject({
-            method: 'POST',
-            url: '/v1/check',
-            headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
-            payload: body,
-          });
-          samples.push(performance.now() - t);
-          expect(res.json().result).toEqual({ allow: true });
+          const out = await shared.evaluate({ source, inputJson: input, timeoutMs: 500 });
+          perRuntime.push(performance.now() - t);
+          expect(out.result).toEqual({ allow: true });
         }
-        report(`http end-to-end ${name}`, samples);
+        const perInstance: number[] = [];
+        for (let i = 0; i < N; i++) {
+          const t = performance.now();
+          const out = evaluateHookOn(await instantiate(compiled), {
+            source,
+            inputJson: input,
+            timeoutMs: 500,
+          });
+          perInstance.push(performance.now() - t);
+          expect(out.result).toEqual({ allow: true });
+        }
+        report(`in-process runtime-per-call ${name}`, perRuntime);
+        report(`in-process instance-per-call ${name}`, perInstance);
       });
     }
-  });
-});
+
+    describe('end to end over HTTP (app.inject, pool of 1)', () => {
+      let pool: HookPool;
+      let app: FastifyInstance;
+      beforeAll(async () => {
+        pool = await HookPool.start({ size: 1 });
+        app = buildApp({ secret: SECRET, pool, metrics: createMetrics() });
+        await app.ready();
+      });
+      afterAll(async () => {
+        await app.close();
+        await pool.close();
+      });
+
+      for (const [name, source] of Object.entries(HOOKS)) {
+        it(`POST /v1/check, ${name}`, async () => {
+          const samples: number[] = [];
+          for (let i = 0; i < N; i++) {
+            const body = JSON.stringify(checkBody(source, { timeoutMs: 500 }));
+            const t = performance.now();
+            const res = await app.inject({
+              method: 'POST',
+              url: '/v1/check',
+              headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+              payload: body,
+            });
+            samples.push(performance.now() - t);
+            expect(res.json().result).toEqual({ allow: true });
+          }
+          report(`http end-to-end ${name}`, samples);
+        });
+      }
+    });
+  }
+);
