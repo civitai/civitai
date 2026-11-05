@@ -1034,8 +1034,11 @@ export const WATCH_CREDIT_OK_KEY = 'nowpayments:watch-payment-ids-credit-ok';
 const readPaymentIdList = async (key: string): Promise<number[]> =>
   (await readPaymentIdListOrNull(key)) ?? [];
 
-/** null when the list could not be read, so a caller that rewrites it never overwrites it with []. */
-const readPaymentIdListOrNull = async (key: string): Promise<number[] | null> => {
+/** null when the list could not be read, which a caller must not take for an empty list. */
+const readPaymentIdListOrNull = async (
+  key: string,
+  normalize: (entry: unknown) => unknown = (entry) => entry
+): Promise<number[] | null> => {
   let value: unknown;
   try {
     value = await dbKV.get<unknown>(key, []);
@@ -1052,7 +1055,9 @@ const readPaymentIdListOrNull = async (key: string): Promise<number[] | null> =>
     await log({ message: 'Watch list is not an array; ignored', key });
     return null;
   }
-  const ids = value.filter((v): v is number => Number.isSafeInteger(v) && (v as number) > 0);
+  const ids = value
+    .map(normalize)
+    .filter((v): v is number => Number.isSafeInteger(v) && (v as number) > 0);
   if (ids.length !== value.length)
     await log({ message: 'Watch list has entries that are not payment ids; skipped', key });
   return [...new Set(ids)];
@@ -1137,8 +1142,14 @@ const LEDGER_CHECK_CAP = 2000;
 const LEDGER_CHECK_SETTLE_MINUTES = 10;
 /** Bounded so a Buzz outage cannot hold the job past its lock. */
 const LEDGER_READ_OPTIONS = { retries: 1, timeoutMs: 10_000 };
+/** Lookups stop here, inside the job's 30 min lock; the rest wait for the next run. */
+const LEDGER_CHECK_BUDGET_MS = 20 * 60 * 1000;
 
-type LedgerState = 'present' | 'missing' | 'lookup_failed';
+type LedgerState = 'present' | 'missing' | 'lookup_failed' | 'not_checked';
+
+/** Support may type an id as a string, as the digest prints it. */
+const ledgerListEntry = (entry: unknown) =>
+  typeof entry === 'string' && /^\d+$/.test(entry.trim()) ? Number(entry) : entry;
 
 /** Read only. A Buzz or NowPayments error is lookup_failed, never missing. */
 const ledgerState = async (paymentId: number): Promise<LedgerState> => {
@@ -1190,7 +1201,7 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
     user: { select: { username: true } },
   };
   const [listed, inWindow, windowTotal] = await Promise.all([
-    readPaymentIdListOrNull(WATCH_LEDGER_MISSING_KEY),
+    readPaymentIdListOrNull(WATCH_LEDGER_MISSING_KEY, ledgerListEntry),
     dbRead.cryptoDeposit.findMany({
       where: windowWhere,
       select,
@@ -1225,10 +1236,14 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
       paymentIds: notCredited,
     });
 
+  const deadline = Date.now() + LEDGER_CHECK_BUDGET_MS;
   const checked = await mapWithConcurrency(
     [...rows.keys()].filter((id) => markedCredited(rows.get(id) ?? null)),
     RECONCILE_FETCH_CONCURRENCY,
-    async (paymentId) => ({ paymentId, state: await ledgerState(paymentId) })
+    async (paymentId) => ({
+      paymentId,
+      state: Date.now() < deadline ? await ledgerState(paymentId) : ('not_checked' as const),
+    })
   );
 
   const wasListed = new Set(allListed);
@@ -1242,26 +1257,25 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
       paymentIds: resolved,
     });
 
-  // A failed lookup is listed too, so a row is not lost when it leaves the window unchecked.
+  // Unresolved rows are listed too, so none is lost when it leaves the window unchecked.
   const add = checked.filter((c) => c.state !== 'present').map((c) => c.paymentId);
   const drop = new Set([...resolved, ...notCredited]);
-  if (listed === null) {
-    await log({ message: 'Ledger watch list unreadable; not rewritten', missing: add });
-  } else if (drop.size || add.some((id) => !wasListed.has(id))) {
-    try {
-      // Re-read just before writing: keeps ids support added during the run, and entries as written.
-      const current = await dbKV.get<unknown>(WATCH_LEDGER_MISSING_KEY, []);
-      if (!Array.isArray(current)) throw new Error('not an array');
-      const next = current.filter((entry) => !drop.has(entry as number));
-      for (const id of add) if (!next.includes(id)) next.push(id);
+  try {
+    // Re-read just before writing, so ids support added during the run are kept. A list that
+    // cannot be read (an error, or not an array) is never rewritten.
+    const current = await dbKV.get<unknown>(WATCH_LEDGER_MISSING_KEY, []);
+    if (!Array.isArray(current)) throw new Error('not an array');
+    const next = [
+      ...new Set([...current.map(ledgerListEntry), ...add].filter((e) => !drop.has(e as number))),
+    ];
+    if (JSON.stringify(next) !== JSON.stringify(current))
       await dbKV.set(WATCH_LEDGER_MISSING_KEY, next);
-    } catch (e) {
-      await log({
-        message: 'Ledger watch list not saved',
-        missing: add,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
+  } catch (e) {
+    await log({
+      message: 'Ledger watch list not saved',
+      missing: add,
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 
   return {
@@ -1278,7 +1292,11 @@ const checkCreditedDepositsInLedger = async (): Promise<LedgerCheckReport> => {
         };
       }),
     lookupFailed: checked.filter((c) => c.state === 'lookup_failed').length,
-    notChecked: Math.max(0, windowTotal - inWindow.length) + unchecked.length,
+    failedIds: checked.filter((c) => c.state === 'lookup_failed').map((c) => String(c.paymentId)),
+    notChecked:
+      Math.max(0, windowTotal - inWindow.length) +
+      unchecked.filter((id) => !rows.has(id)).length +
+      checked.filter((c) => c.state === 'not_checked').length,
   };
 };
 
@@ -1339,7 +1357,7 @@ export const watchOpenDeposits = async () => {
     async (e): Promise<LedgerCheckReport> => {
       const error = e instanceof Error ? e.message : String(e);
       await log({ message: 'Ledger check for credited deposits failed', error });
-      return { missing: [], lookupFailed: 0, notChecked: 0, error };
+      return { missing: [], lookupFailed: 0, failedIds: [], notChecked: 0, error };
     }
   );
 

@@ -12,7 +12,9 @@ export const watchOpenNowpaymentsJob = createJob(
     const { digest, listed, ledger, ...result } = await watchOpenDeposits();
 
     let digestSent = 0;
-    if (digest.length || listed.length || ledger.missing.length) {
+    // A ledger check that failed is news too: its zero counts are not a clean bill.
+    const ledgerNews = ledger.missing.length > 0 || ledger.lookupFailed > 0 || !!ledger.error;
+    if (digest.length || listed.length || ledgerNews) {
       try {
         await openCryptoDepositDigestEmail.send({
           to: DIGEST_TO,

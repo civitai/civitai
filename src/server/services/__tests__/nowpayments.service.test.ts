@@ -1729,6 +1729,7 @@ describe('watchOpenDeposits', () => {
           },
         ],
         lookupFailed: 0,
+        failedIds: [],
         notChecked: 0,
       });
       expect(ledgerLookups()).toContain('np-deposit-7001');
@@ -1741,7 +1742,7 @@ describe('watchOpenDeposits', () => {
 
       const result = await watchCredited([creditedRow(7002, 2)]);
 
-      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, notChecked: 0 });
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, failedIds: [], notChecked: 0 });
       expect(mockKvSet).not.toHaveBeenCalled();
     });
 
@@ -1759,7 +1760,12 @@ describe('watchOpenDeposits', () => {
 
       const result = await watchCredited([creditedRow(7004, 2)]);
 
-      expect(result.ledger).toEqual({ missing: [], lookupFailed: 1, notChecked: 0 });
+      expect(result.ledger).toEqual({
+        missing: [],
+        lookupFailed: 1,
+        failedIds: ['7004'],
+        notChecked: 0,
+      });
       // Listed, so it is checked again after it leaves the window.
       expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [7004]);
       expectNoCreditOrDepositWrite();
@@ -1778,7 +1784,7 @@ describe('watchOpenDeposits', () => {
 
       const result = await watchOpenDeposits();
 
-      expect(result.ledger).toEqual({ missing: [], lookupFailed: 1, notChecked: 0 });
+      expect(result.ledger).toMatchObject({ missing: [], lookupFailed: 1, failedIds: ['7005'] });
     });
 
     it('reports a deposit with no payin hash as missing after one ledger lookup', async () => {
@@ -1851,11 +1857,11 @@ describe('watchOpenDeposits', () => {
 
       const result = await watchCredited([creditedRow(7030, 24 * 13), creditedRow(7031, 24 * 13)]);
 
-      expect(result.ledger).toEqual({ missing: [], lookupFailed: 1, notChecked: 0 });
+      expect(result.ledger).toMatchObject({ missing: [], lookupFailed: 1, failedIds: ['7031'] });
       expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [7031]);
     });
 
-    it('keeps ids support added during the run, and entries written as strings', async () => {
+    it('keeps ids support added during the run, and checks ids written as strings', async () => {
       let stored: unknown = [7060, '7061'];
       mockKvGet.mockImplementation(async (key: string, d?: unknown) =>
         key === 'nowpayments:watch-ledger-missing' ? stored : d
@@ -1867,11 +1873,12 @@ describe('watchOpenDeposits', () => {
 
       await watchCredited([creditedRow(7060, 24 * 13), creditedRow(7063, 2)]);
 
-      expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [
-        '7061',
-        7062,
-        7063,
-      ]);
+      // '7061' is checked as 7061 and stored as a number from now on.
+      expect(ledgerLookups()).toContain('np-deposit-7061');
+      expect(mockKvSet).toHaveBeenCalledWith(
+        'nowpayments:watch-ledger-missing',
+        [7061, 7062, 7063]
+      );
     });
 
     it('drops a listed id whose row is no longer marked credited, without looking it up', async () => {
@@ -1897,6 +1904,7 @@ describe('watchOpenDeposits', () => {
       expect(result.ledger).toEqual({
         missing: [],
         lookupFailed: 0,
+        failedIds: [],
         notChecked: 0,
         error: 'db down',
       });
@@ -1923,7 +1931,7 @@ describe('watchOpenDeposits', () => {
 
       const result = await watchCredited([]);
 
-      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, notChecked: 1 });
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, failedIds: [], notChecked: 1 });
       expect(ledgerLookups()).toHaveLength(2000);
       expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [11000]);
     });
@@ -1938,6 +1946,32 @@ describe('watchOpenDeposits', () => {
       expect(mockGetTransactionByExternalId).toHaveBeenCalledTimes(2);
     });
 
+    it('stops looking up at its time budget and keeps the rest listed', async () => {
+      const start = Date.now();
+      let now = start;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        now = start + 21 * 60 * 1000; // the first lookups take 21 minutes
+        return { externalTransactionId: id };
+      });
+      try {
+        const result = await watchCredited(
+          Array.from({ length: 10 }, (_, i) => creditedRow(7080 + i, 1 + i / 100))
+        );
+
+        // The five already in flight finish; the other five wait for the next run.
+        expect(ledgerLookups()).toHaveLength(5);
+        expect(result.ledger.notChecked).toBe(5);
+        expect(mockKvSet).toHaveBeenCalledWith(
+          'nowpayments:watch-ledger-missing',
+          [7085, 7086, 7087, 7088, 7089]
+        );
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
     it('checks the newest 2000 rows in the window and counts the rest not checked', async () => {
       ledgerHas(...Array.from({ length: 2001 }, (_, i) => `np-deposit-${8000 + i}`));
 
@@ -1946,7 +1980,7 @@ describe('watchOpenDeposits', () => {
         Array.from({ length: 2001 }, (_, i) => creditedRow(8000 + i, 1 + i / 100))
       );
 
-      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, notChecked: 1 });
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, failedIds: [], notChecked: 1 });
       expect(ledgerLookups()).toHaveLength(2000);
       expect(ledgerLookups()).not.toContain('np-deposit-10000');
     });

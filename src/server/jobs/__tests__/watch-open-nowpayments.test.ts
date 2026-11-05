@@ -22,7 +22,7 @@ vi.mock('~/server/jobs/job', () => ({
 import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
 
 const counts = { open: 1, oldestOpenDays: 4, held: 0, finishedUncredited: 0 };
-const noLedgerMisses = { missing: [], lookupFailed: 0, notChecked: 0 };
+const noLedgerMisses = { missing: [], lookupFailed: 0, failedIds: [], notChecked: 0 };
 const item = {
   paymentId: '1000000001',
   userId: 1,
@@ -111,6 +111,7 @@ describe('watch-open-nowpayments job', () => {
         },
       ],
       lookupFailed: 0,
+      failedIds: [],
       notChecked: 0,
     };
     watchOpenDeposits.mockResolvedValueOnce({
@@ -129,6 +130,25 @@ describe('watch-open-nowpayments job', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', creditedNotInLedger: 1 })
     );
+  });
+
+  it.each([
+    ['a ledger lookup failed', { ...noLedgerMisses, lookupFailed: 1, failedIds: ['1000000004'] }],
+    ['the ledger check did not run', { ...noLedgerMisses, error: 'db down' }],
+  ])('mails the digest when %s, though nothing is missing', async (_, ledger) => {
+    watchOpenDeposits.mockResolvedValueOnce({
+      checked: 0,
+      closed: 0,
+      lookupFailed: 0,
+      counts: { ...counts, open: 0, oldestOpenDays: 0 },
+      digest: [],
+      listed: [],
+      ledger,
+    });
+
+    await run();
+
+    expect(sendDigest).toHaveBeenCalledWith(expect.objectContaining({ ledger }));
   });
 
   it('finishes and logs the error when the digest cannot be sent', async () => {
