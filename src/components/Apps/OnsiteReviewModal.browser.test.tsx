@@ -783,6 +783,38 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
     await expect.element(page.getByText('models:read:self')).toBeInTheDocument();
   });
 
+  // The moderator sees the same order as the store listing will show the viewer.
+  test("each group is in the store listing's order, and an unknown scope is not dropped", async () => {
+    const unknown = 'zz:not-a-real:scope';
+    const input = [
+      'models:read:self',
+      unknown,
+      'apps:storage:shared:write',
+      'user:read:self',
+      'ai:write:budgeted',
+    ];
+    const mixed = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-order',
+      slug: 'order-block',
+      manifest: { ...ONSITE_PENDING.manifest, scopes: input },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: mixed, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByText('Sensitive permissions (2)')).toBeInTheDocument();
+    const order = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="apps-review-scope-row"]')
+    ).map((row) => row.dataset.scope);
+    expect(order).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:shared:write',
+      'user:read:self',
+      'models:read:self',
+      unknown,
+    ]);
+  });
+
   test('a manifest with ONLY normal scopes renders NO "Sensitive permissions" header', async () => {
     const normalOnly = {
       ...ONSITE_PENDING,

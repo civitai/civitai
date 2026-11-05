@@ -2,6 +2,10 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import {
+  blockScopePermissions,
+  groupListingPermissions,
+} from '~/components/Apps/listingPermissions';
 import type * as TrpcMod from '~/utils/trpc';
 import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
 
@@ -195,6 +199,37 @@ describe('AppDetailsModal', () => {
       page.getByText("Read the viewer's username and account status", { exact: false })
     ).toBeInTheDocument();
     await expect.element(page.getByText('ai:write:budgeted', { exact: false })).toBeInTheDocument();
+  });
+
+  // The details modal shows the same groups and order as the store listing. Input order differs
+  // from the grouped order at every position, so a flat render cannot pass.
+  test('open → lists the scopes grouped and ordered like the store listing, dropping none', async () => {
+    const unknown = 'zz:not-a-real:scope';
+    const input = [
+      'models:read:self',
+      unknown,
+      'apps:storage:shared:write',
+      'user:read:self',
+      'ai:write:budgeted',
+    ];
+    resolveDetail(makeDetail({ scopes: input }));
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    await expect.element(page.getByText(unknown)).toBeInTheDocument();
+
+    const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
+    for (const scope of input) expect(text, scope).toContain(scope);
+    const shown = [...input].sort((a, b) => text.indexOf(a) - text.indexOf(b));
+    expect(shown).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:shared:write',
+      'user:read:self',
+      'models:read:self',
+      unknown,
+    ]);
+    const grouped = groupListingPermissions(blockScopePermissions(input));
+    expect(shown).toEqual([...grouped.sensitive, ...grouped.other].map((p) => p.id));
+    expect(text).toContain('Sensitive permissions (2)');
+    expect(text).toContain('Other permissions (3)');
   });
 
   test('open + no scopes (RESOLVED empty) → graceful "does not request any permissions"', async () => {

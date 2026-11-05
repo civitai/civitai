@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { BlockScopeList } from './BlockScopeList';
+import { blockScopePermissions, groupListingPermissions } from './listingPermissions';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 
@@ -124,5 +125,90 @@ describe('BlockScopeList — the id owns a line, the description owns the next o
       'ai:write:budgeted'
     );
     expect(badgeRow.querySelector('[data-testid="sensitive-scope-badge"]')).not.toBeNull();
+  });
+});
+
+/**
+ * Every caller (settings modal, permissions drawer, /apps/activity, the listing preview) shows an
+ * app's scopes through this component, so it must group and order them exactly like the store
+ * listing's `groupListingPermissions`. The fixture's input order differs from the grouped order at
+ * every position, so a flat render in input order cannot pass.
+ */
+describe('BlockScopeList — grouped and ordered like the store listing', () => {
+  const UNKNOWN = 'zz:not-a-real:scope';
+  const INPUT = [
+    'models:read:self',
+    UNKNOWN,
+    'apps:storage:shared:write',
+    'user:read:self',
+    'ai:write:budgeted',
+  ];
+  const SENSITIVE = ['ai:write:budgeted', 'apps:storage:shared:write'];
+  const OTHER = ['user:read:self', 'models:read:self', UNKNOWN];
+
+  const renderedIds = () =>
+    Array.from(document.querySelectorAll('[data-testid="block-scope-id"]')).map(
+      (el) => el.textContent
+    );
+
+  test('renders sensitive first, each group in OAuth-bit order, and drops no scope', async () => {
+    renderWithProviders(<BlockScopeList scopes={INPUT} />);
+    await expect.element(page.getByText(UNKNOWN)).toBeInTheDocument();
+
+    expect(renderedIds()).toEqual([...SENSITIVE, ...OTHER]);
+    // The same answer as the store listing's rule for the same input.
+    const grouped = groupListingPermissions(blockScopePermissions(INPUT));
+    expect(renderedIds()).toEqual([...grouped.sensitive, ...grouped.other].map((p) => p.id));
+  });
+
+  test('each scope sits under its own group heading, the unknown one under "Other"', async () => {
+    renderWithProviders(<BlockScopeList scopes={INPUT} />);
+    await expect.element(page.getByText(UNKNOWN)).toBeInTheDocument();
+
+    const groupOf = (scope: string) => {
+      const badge = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
+      ).find((el) => el.textContent === scope);
+      return badge?.closest<HTMLElement>('[role="group"]') ?? null;
+    };
+    const sensitiveGroup = groupOf(SENSITIVE[0]);
+    const otherGroup = groupOf(OTHER[0]);
+    expect(sensitiveGroup, 'the sensitive scopes are not in a group').not.toBeNull();
+    expect(otherGroup, 'the other scopes are not in a group').not.toBeNull();
+    expect(sensitiveGroup).not.toBe(otherGroup);
+    for (const s of SENSITIVE) expect(groupOf(s), s).toBe(sensitiveGroup);
+    for (const s of OTHER) expect(groupOf(s), s).toBe(otherGroup);
+
+    // The group's accessible name is its visible heading.
+    const nameOf = (group: HTMLElement) =>
+      document.getElementById(group.getAttribute('aria-labelledby') ?? '')?.textContent;
+    expect(nameOf(sensitiveGroup!)).toBe('Sensitive permissions (2)');
+    expect(nameOf(otherGroup!)).toBe('Other permissions (3)');
+  });
+
+  // INVARIANT GUARD (green before and after the grouping change): regrouping must not detach a
+  // caller's per-scope control from its row or drop it.
+  test("the caller's per-scope action renders once, in its own scope's row", async () => {
+    renderWithProviders(
+      <BlockScopeList
+        scopes={INPUT}
+        consent={{
+          revokedScopes: [],
+          renderScopeAction: (scope) => <span data-testid="fixture-action" data-scope={scope} />,
+        }}
+      />
+    );
+    await expect.element(page.getByText(UNKNOWN)).toBeInTheDocument();
+
+    expect(page.getByTestId('fixture-action').elements()).toHaveLength(INPUT.length);
+    for (const badge of Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
+    )) {
+      // badge → its id row → the scope's own row
+      const row = badge.parentElement?.parentElement;
+      const actions = row?.querySelectorAll<HTMLElement>('[data-testid="fixture-action"]') ?? [];
+      expect(actions, `${badge.textContent}'s row`).toHaveLength(1);
+      expect(actions[0].dataset.scope).toBe(badge.textContent);
+    }
   });
 });
