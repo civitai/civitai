@@ -111,6 +111,14 @@ function AskStep({
   return (
     <div className="flex flex-col gap-3">
       <Text fw={600}>{ask.prompt}</Text>
+      {ask.kind === 'choice' && ask.image && (
+        <EdgeMedia2
+          src={ask.image.url}
+          type="image"
+          alt=""
+          className="mx-auto max-h-72 w-auto rounded-md object-contain"
+        />
+      )}
       {ask.kind === 'choice' && (
         <div className="flex flex-wrap gap-2">
           {ask.options.map((option) => (

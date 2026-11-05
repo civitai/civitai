@@ -261,8 +261,32 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
       return [...images, foreign];
     },
   });
+  /** A choice about its one take, then one about a url no workflow of the run made. */
+  const aboutTake = defineRemixApp({
+    slug: 'about-take',
+    name: 'About take',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      const options = [{ value: 'ok', label: 'OK' }];
+      await ctx.ask({ kind: 'choice', prompt: 'This one?', options, image: images[0] });
+      await ctx.ask({ kind: 'choice', prompt: 'That one?', options, image: foreign });
+      return images;
+    },
+  });
   const apps = new Map(
-    [pickThenEdit, endless, asksFirst, thenChoose, smuggles].map((app) => [app.slug, app])
+    [pickThenEdit, endless, asksFirst, thenChoose, smuggles, aboutTake].map((app) => [
+      app.slug,
+      app,
+    ])
   );
   return {
     ...real,
@@ -438,7 +462,10 @@ describe('remix app runs', () => {
         'remix-seg:0',
       ])
     );
-    expect(workflow.callbacks?.length).toBeGreaterThan(0);
+    // The queue's topic, and the remix topic the tray listens on instead of every generation's.
+    expect(
+      (workflow.callbacks as { url: string }[]).map(({ url }) => url.split('/').pop())
+    ).toEqual(['orchestrator:text-to-image-update', 'orchestrator:remix-app-update']);
     expect(verifyProvenance(workflow.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID]);
     expect(workflow.metadata?.remixRun).toEqual({ app: 'anime-it', version: 1, answers: [] });
   });
@@ -702,6 +729,55 @@ describe('remix app runs', () => {
     });
   });
 
+  describe("a choice's image goes through the viewer gate", () => {
+    const hidesMature = () => caller({ user: { ...caller().user, showNsfw: false } });
+    /** The run at its first choice, its one take rated `level` (absent = not rated yet). */
+    async function atChoice(nonce: string, viewer: RemixAppCaller, level?: string) {
+      addImage(SOURCE_ID);
+      const { runId } = await startRemixRun({
+        slug: 'about-take',
+        imageId: SOURCE_ID,
+        nonce,
+        quote: 30,
+        caller: viewer,
+      });
+      finish(submits()[0].id, [blob('take')], level ? { [blob('take')]: level } : {});
+      const state = await advanceRemixRun({ runId, caller: viewer });
+      return { runId, state };
+    }
+
+    it('is shown when the viewer may see it', async () => {
+      const { state } = await atChoice('nonce-choice-shown', caller({ isGreenDomain: true }), 'pg');
+      expect(state).toMatchObject({ status: 'ask', ask: { image: { url: blob('take') } } });
+    });
+
+    it.each([
+      ['mature, on green', caller({ isGreenDomain: true }), 'x'],
+      ['mature, for a viewer who hides mature content', hidesMature(), 'x'],
+      ['not rated yet, for a viewer who hides mature content', hidesMature(), undefined],
+    ])('is left off when it is %s, and the choice is still asked', async (_, viewer, level) => {
+      const { state } = await atChoice(
+        `nonce-choice-${level}-${viewer.isGreenDomain}`,
+        viewer,
+        level
+      );
+      expect(state).toMatchObject({ status: 'ask', ask: { kind: 'choice', prompt: 'This one?' } });
+      expect(JSON.stringify(state)).not.toContain(blob('take'));
+    });
+
+    it('is left off when the run did not make it, for any viewer', async () => {
+      const viewer = caller();
+      const { runId, state } = await atChoice('nonce-choice-foreign', viewer, 'pg');
+      // POSITIVE CONTROL: this viewer is shown the run's own take.
+      expect(state).toMatchObject({ ask: { image: { url: blob('take') } } });
+
+      const next = await advanceRemixRun({ runId, answers: ['ok'], caller: viewer });
+
+      expect(next).toMatchObject({ status: 'ask', ask: { prompt: 'That one?' } });
+      expect(next).not.toHaveProperty('ask.image');
+    });
+  });
+
   it.each([
     ['who shows mature content off green', () => caller()],
     ['on green', () => caller({ isGreenDomain: true })],
@@ -911,7 +987,11 @@ describe('Pick of four', () => {
   it('prices each option from a whatIf on the workflow it leads to, and keeping as free', async () => {
     const { state } = await atFinish('nonce-p4-prices');
 
-    expect(state).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
+    // Finish it shows the picked take.
+    expect(state).toMatchObject({
+      status: 'ask',
+      ask: { kind: 'choice', image: { url: takes[2] } },
+    });
     expect(state).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
     // The priced body is the upscaler run on the picked take. Graph values nested under `input`
     // would validate as an empty form and price the default model instead, silently.
