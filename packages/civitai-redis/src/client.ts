@@ -2892,6 +2892,9 @@ export const REDIS_SYS_KEYS = {
     // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
     LOCK: 'membership-extend:lock',
   },
+  HEADLESS_POST: {
+    IDEMPOTENCY: 'headless-post:idempotency',
+  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
     SEND_LOCK: 'message-as-civitai:send-lock',

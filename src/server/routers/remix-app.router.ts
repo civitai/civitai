@@ -9,9 +9,11 @@ import {
 } from '~/server/services/remix-app.service';
 import {
   advanceRemixRun,
+  postRemixResult,
   REMIX_RUN_ID,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
+import { POST_CREATE_RATE_LIMIT_KEY, postRateLimits } from '~/server/schema/post.schema';
 import type { Context } from '~/server/createContext';
 import { rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
@@ -32,6 +34,12 @@ const runStepRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
 const nonce = z.string().min(8).max(64);
 const quote = z.number().int().nonnegative();
+const gallery = z.object({
+  hostImageId: imageId,
+  method: z.enum(['free', 'team', 'paid']),
+  expectedPrice: z.number().int().min(0).optional(),
+});
+
 const answer = z.union([z.string().max(1000), z.number().int().nonnegative()]);
 
 function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
@@ -94,5 +102,19 @@ export const remixAppRouter = router({
     )
     .mutation(async ({ ctx, input }) =>
       advanceRemixRun({ ...input, caller: await getCaller(ctx) })
+    ),
+  /** Posts a finished run, published; `gallery` also submits it to the source's Remix gallery. */
+  post: guardedProcedure
+    .use(isFlagProtected('remixApps'))
+    // `post.create`'s own limit, shared with it: this makes a post just as that does.
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(z.object({ workflowId: z.string().min(1).max(64), gallery: gallery.optional() }))
+    .mutation(async ({ ctx, input }) =>
+      postRemixResult({
+        ...input,
+        caller: await getCaller(ctx),
+        ctx,
+      })
     ),
 });

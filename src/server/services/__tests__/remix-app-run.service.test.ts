@@ -34,6 +34,8 @@ const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
   queryWorkflows: vi.fn(),
   assertInputs: vi.fn(async () => undefined),
+  headlessPost: vi.fn(),
+  patchTags: vi.fn(),
 }));
 
 vi.mock('@civitai/orchestration-client', async () => ({
@@ -47,6 +49,13 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: h.submitWorkflow,
   queryWorkflows: h.queryWorkflows,
   deleteWorkflow: vi.fn(async () => undefined),
+  getWorkflow: vi.fn(async ({ path }: { path: { workflowId: string } }) =>
+    h.workflows.find((w) => w.id === path.workflowId)
+  ),
+  patchWorkflowTags: h.patchTags,
+}));
+vi.mock('~/server/services/headless-post.service', () => ({
+  createHeadlessPost: h.headlessPost,
 }));
 vi.mock('~/server/orchestrator/orchestrator-identity-metrics', () => ({
   observeConsumerMismatch: vi.fn(),
@@ -212,6 +221,7 @@ import { verifyProvenance } from '~/server/services/orchestrator/remix-provenanc
 import {
   advanceRemixRun,
   MAX_RUN_SEGMENTS,
+  postRemixResult,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
@@ -316,6 +326,8 @@ beforeEach(() => {
   h.queryWorkflows.mockImplementation(async ({ tags }: { tags: string[] }) => ({
     items: h.workflows.filter((w) => tags.every((tag) => w.tags.includes(tag))),
   }));
+  h.headlessPost.mockResolvedValue({ postId: 500, imageIds: [1], deduped: false });
+  h.patchTags.mockResolvedValue(undefined);
 });
 
 describe('remix app runs', () => {
@@ -603,6 +615,92 @@ describe('remix app runs', () => {
       viewer.user = { ...viewer.user, showNsfw: false };
       expect(urls(await finishedRun('nonce-0018', viewer))).toEqual([blob('pg')]);
     });
+  });
+});
+
+describe('posting a finished run', () => {
+  /** A finished Anime it run whose one output is `url`. */
+  async function finishedAnime(nonce: string, url: string, level?: string) {
+    addImage(SOURCE_ID);
+    const { workflowId } = (await startRemixRun({
+      slug: 'anime-it',
+      imageId: SOURCE_ID,
+      nonce,
+      quote: 30,
+      caller: caller(),
+    })) as { workflowId: string };
+    finish(workflowId, [url], level ? { [url]: level } : {});
+    return workflowId;
+  }
+  const post = (workflowId: string, over: Partial<Parameters<typeof postRemixResult>[0]> = {}) =>
+    postRemixResult({ workflowId, caller: caller(), ctx: {} as never, ...over });
+
+  it("posts the workflow's own outputs, published, once per workflow, and takes the run off the tray", async () => {
+    const workflowId = await finishedAnime('nonce-post-1', blob('out'));
+
+    await post(workflowId);
+
+    expect(h.headlessPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [expect.objectContaining({ workflowId, url: blob('out') })],
+        publish: true,
+        idempotencyKey: `remix:${workflowId}`,
+      })
+    );
+    expect(h.patchTags).toHaveBeenCalledWith(
+      expect.objectContaining({ input: [{ workflowId, tag: 'remix:done', op: 'add' }] })
+    );
+  });
+
+  it('refuses while an output is unrated for a viewer who hides mature content', async () => {
+    const workflowId = await finishedAnime('nonce-post-2', blob('unrated'));
+    const viewer = caller();
+    viewer.user = { ...viewer.user, showNsfw: false };
+
+    await expect(post(workflowId, { caller: viewer })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+    expect(h.headlessPost).not.toHaveBeenCalled();
+    expect(h.patchTags).not.toHaveBeenCalled();
+  });
+
+  it('leaves a mature output out on green', async () => {
+    const workflowId = await finishedAnime('nonce-post-3', blob('x'), 'x');
+
+    await expect(post(workflowId, { caller: caller({ isGreenDomain: true }) })).rejects.toThrow(
+      'Nothing from this remix can be posted.'
+    );
+    expect(h.headlessPost).not.toHaveBeenCalled();
+  });
+
+  it("submits to the source's gallery only, and still posts when asked for another", async () => {
+    const workflowId = await finishedAnime('nonce-post-4', blob('out'));
+    const ownGallery = { hostImageId: SOURCE_ID, method: 'free' as const };
+
+    await post(workflowId, { gallery: ownGallery });
+    expect(h.headlessPost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ remixGallery: ownGallery })
+    );
+
+    const other = await post(workflowId, { gallery: { hostImageId: 999, method: 'free' } });
+    expect(h.headlessPost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ remixGallery: undefined })
+    );
+    expect(other).toMatchObject({ postId: 500, gallery: { submitted: false } });
+  });
+
+  it('does not post a workflow that is not a remix', async () => {
+    h.workflows.push({
+      id: 'plain',
+      status: 'succeeded',
+      tags: ['gen'],
+      createdAt: new Date().toISOString(),
+      steps: [{ output: { images: [{ url: blob('plain') }] } }],
+      cost: { total: 0 },
+    });
+
+    await expect(post('plain')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.headlessPost).not.toHaveBeenCalled();
   });
 });
 
