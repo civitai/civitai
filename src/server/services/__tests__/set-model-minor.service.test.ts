@@ -124,6 +124,7 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/utils/cache-helpers', () => ({
   bustFetchThroughCache: vi.fn(),
   fetchThroughCache: vi.fn(),
+  queryCache: vi.fn(),
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
@@ -1768,6 +1769,74 @@ describe('setModelMinor — lift restore on a real row', () => {
       await pg.query(`UPDATE "Model" SET minor = false WHERE id = $1`, [MODEL_ID]);
       await liftPoi();
       expect(await meta()).toEqual({ restrictedNsfwVerdict: verdict });
+    });
+
+    // The rollback and the revert write the row again after the lift; the lead must survive them.
+    describe('through the real hash rollback and revert', () => {
+      let saved: unknown[];
+      beforeEach(() => {
+        const c = client(pg);
+        saved = [
+          mockDbWrite.$executeRaw.getMockImplementation(),
+          mockDbWrite.$queryRaw.getMockImplementation(),
+          mockDbRead.$queryRaw.getMockImplementation(),
+          mockDbWrite.model.findUnique.getMockImplementation(),
+        ];
+        mockDbWrite.$executeRaw.mockImplementation(c.$executeRaw as never);
+        mockDbWrite.$queryRaw.mockImplementation(c.$queryRaw as never);
+        mockDbRead.$queryRaw.mockImplementation(c.$queryRaw as never);
+        mockDbWrite.model.findUnique.mockImplementation(c.model.findUnique as never);
+      });
+      afterEach(() => {
+        mockDbWrite.$executeRaw.mockImplementation(saved[0] as never);
+        mockDbWrite.$queryRaw.mockImplementation(saved[1] as never);
+        mockDbRead.$queryRaw.mockImplementation(saved[2] as never);
+        mockDbWrite.model.findUnique.mockImplementation(saved[3] as never);
+      });
+      const snapshot = {
+        at: '2020-01-01T00:00:00.000Z',
+        source: 'auto',
+        prevNsfw: false,
+        prevSfwOnly: false,
+        prevGalleryLevel: null,
+        prevLockedProperties: [],
+      };
+
+      it('the minor-hash rollback revives a kept verdict as a pending lead', async () => {
+        await seedFlagged(
+          { minor: true },
+          {
+            minorFlagSnapshot: { ...snapshot, prevMinor: false },
+            restrictedNsfwVerdictDormant: verdict,
+          }
+        );
+        const { rollbackMinorHashAutoFlags } = await import('~/server/services/minor-hash.service');
+        expect(
+          await rollbackMinorHashAutoFlags({ dryRun: false, limit: 1, modelIds: [MODEL_ID] })
+        ).toMatchObject({ rolledBack: 1, failed: 0 });
+        expect(await row()).toMatchObject({ minor: false, nsfw: false });
+        expect(await meta()).toMatchObject({
+          restrictedNsfwVerdict: { ...verdict, liftedBy: 'hashRevert' },
+        });
+        expect(await meta()).not.toHaveProperty('restrictedNsfwVerdictDormant');
+      });
+
+      it('the POI-hash revert revives a kept verdict as a pending lead', async () => {
+        const poiVerdict = { ...verdict, restriction: 'poi' };
+        await seedFlagged(
+          { poi: true },
+          { poiFlagSnapshot: snapshot, restrictedNsfwVerdictDormant: poiVerdict }
+        );
+        const { revertPoiHashAutoFlag } = await import('~/server/services/poi-hash.service');
+        expect(await revertPoiHashAutoFlag({ modelId: MODEL_ID, userId: MODERATOR_ID })).toEqual(
+          expect.objectContaining({ reverted: 1 })
+        );
+        expect(await row()).toMatchObject({ poi: false, nsfw: false });
+        expect(await meta()).toMatchObject({
+          restrictedNsfwVerdict: { ...poiVerdict, liftedBy: 'hashRevert' },
+        });
+        expect(await meta()).not.toHaveProperty('restrictedNsfwVerdictDormant');
+      });
     });
 
     it('keeps the verdict dormant while the other flag still holds the rating', async () => {
