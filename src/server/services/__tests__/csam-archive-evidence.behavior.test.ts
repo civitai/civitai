@@ -539,7 +539,18 @@ describe('the check', () => {
       await addReport('GeneratedImage', { archivedAt: null }),
       await addReport('GeneratedImage', {
         archivedAt: null,
-        details: { generatedImages: [{ blobs: [{ id: 'b1' }, { id: 'b2', url: '' }] }] },
+        details: {
+          generatedImages: [
+            { blobs: [{ id: 'b1' }, { id: 'b2', url: '' }, { id: 'b5', url: null }] },
+          ],
+        },
+      }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [{ blobs: [{ id: 'b4', url: 'https://example.com/b4' }] }],
+        },
       }),
       await addReport('GeneratedImage', {
         archivedAt: null,
@@ -554,7 +565,7 @@ describe('the check', () => {
 
     const { counts } = await run();
 
-    expect(counts.unsupported).toBe(2);
+    expect(counts.unsupported).toBe(3);
     expect(counts.stale).toBe(1);
   });
 

@@ -30,7 +30,7 @@ type ArchiveObjectRow = {
 type CheckFailure = Exclude<CsamArchiveIncompleteReason, 'skipped' | 'stale' | 'unsupported'>;
 
 // Mirrors the `unsupported` filter in getCsamsToArchive: generator evidence, and a generated-image
-// report naming no URL. Both stay unarchived, and their users' image-retention hold stays, until a
+// report naming no URL. Both stay unarchived, so their users' image-retention hold cannot lift until a
 // dedicated archiver for them stamps `archivedAt`.
 const UNSUPPORTED_SQL = Prisma.sql`(
   COALESCE(details -> 'generatorEvidence' ->> 'version' = ${String(
@@ -38,7 +38,7 @@ const UNSUPPORTED_SQL = Prisma.sql`(
   )}, false)
   OR (
     type::text = 'GeneratedImage'
-    AND NOT COALESCE(jsonb_path_exists(details, '$.generatedImages[*].blobs[*].url ? (@ != "")'), false)
+    AND NOT COALESCE(jsonb_path_exists(details, '$.generatedImages[*].blobs[*].url ? (@ != "" && @ != null)'), false)
   )
 )`;
 
