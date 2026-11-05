@@ -7,8 +7,6 @@ import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import type { SessionUser } from '~/types/session';
-import { setEnv } from '~/__tests__/mocks/env.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
@@ -19,16 +17,9 @@ const h = vi.hoisted(() => {
   return {
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
-    embed: vi.fn(),
   };
 });
 
-vi.mock('~/server/services/orchestrator/client', () => ({
-  internalOrchestratorClient: { post: h.embed },
-}));
-vi.stubGlobal('fetch', async () =>
-  Response.json({ result: { config: { metadata: { modelRevision: 'r1', profile: 'p1' } } } })
-);
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   registerCounter: () => ({ inc: vi.fn() }),
@@ -127,9 +118,6 @@ function visibleOnly(visible: Set<number>) {
 }
 
 beforeEach(() => {
-  setEnv({ QDRANT_URL: 'http://qdrant.test' });
-  // A text query whose vector is already cached, so no embedding call is made.
-  redisMock.redis.packed.get.mockResolvedValue([0.1, 0.2]);
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));
 });
@@ -252,71 +240,6 @@ describe('a stale index cannot surface a hidden image', () => {
   });
 });
 
-describe('query embedding', () => {
-  const vector = Array.from({ length: 256 }, (_, i) => i / 256);
-
-  beforeEach(() => {
-    redisMock.redis.packed.get.mockResolvedValue(null);
-    redisMock.redis.packed.set.mockClear();
-    h.embed.mockReset();
-    h.fakeGetAllImages = visibleOnly(new Set([5]));
-  });
-
-  it('embeds the normalised text through the recipe and caches the vector', async () => {
-    h.embed.mockResolvedValue({
-      data: {
-        model: 'wemm-2b',
-        modelRevision: 'r1',
-        profile: 'p1',
-        dimensions: 256,
-        embedding: vector,
-      },
-    });
-    const { source, calls } = rankedSource([5]);
-    const { items } = await searchSemanticImages({
-      input: input({ imageId: undefined, query: '  a red   fox ' }),
-      user: VIEWER,
-      candidateSource: source,
-    });
-
-    expect(h.embed.mock.calls[0][0].body).toEqual({
-      model: 'wemm-2b',
-      dimensions: 256,
-      precision: 'float32',
-      text: 'a red fox',
-    });
-    expect(calls[0].query).toEqual(vector);
-    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
-      expect.stringContaining(':wemm-2b:256:r1:p1:'),
-      vector,
-      expect.anything()
-    );
-    expect(items.map((x) => x.id)).toEqual([5]);
-  });
-
-  it('refuses a vector from a different profile than the index', async () => {
-    h.embed.mockResolvedValue({
-      data: {
-        model: 'wemm-2b',
-        modelRevision: 'r1',
-        profile: 'p2',
-        dimensions: 256,
-        embedding: vector,
-      },
-    });
-    const { source, calls } = rankedSource([5]);
-    await expect(
-      searchSemanticImages({
-        input: input({ imageId: undefined, query: 'fox' }),
-        user: VIEWER,
-        candidateSource: source,
-      })
-    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
-    expect(calls).toEqual([]);
-    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-  });
-});
-
 describe('tags that cannot be browsed', () => {
   it('returns an empty page when every chosen tag is one', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([5]));
@@ -409,7 +332,7 @@ describe('filters', () => {
       user: VIEWER,
       candidateSource: source,
     });
-    expect(calls[0].filter.must).toContainEqual({ key: 'userId', match: { any: [31, 32] } });
+    expect(calls[0].filter.userIds).toEqual([31, 32]);
   });
 
   it('returns nothing, without asking the index, when no chosen user exists', async () => {
@@ -431,20 +354,21 @@ describe('filters', () => {
       user: VIEWER,
       candidateSource: source,
     });
-    expect(calls[0].filter.must).toContainEqual({
-      key: 'sortAt',
-      range: { gte: '2026-01-01T00:00:00.000Z', lte: undefined },
-    });
+    expect(calls[0].filter.postedAfter).toBe('2026-01-01T00:00:00.000Z');
   });
 
   it('never proposes NSFW images on a base model that forbids NSFW', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({ input: textQuery(), candidateSource: source });
-    const restricted = calls[0].filter.must_not.find((c) => 'must' in c) as
-      | { must: { key: string; match: { any: unknown[] } }[] }
-      | undefined;
-    expect(restricted?.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
-    expect(restricted?.must[1].match.any.length).toBeGreaterThan(0);
+    const restricted = calls[0].filter.restrictedBaseModels;
+    expect(restricted?.nsfwLevels.length).toBeGreaterThan(0);
+    expect(restricted?.baseModels.length).toBeGreaterThan(0);
+  });
+
+  it("sends the viewer's browsing level, never an empty one", async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
+    expect(calls[0].filter.nsfwLevels.length).toBeGreaterThan(0);
   });
 });
 
@@ -453,7 +377,7 @@ describe('collectPage', () => {
     const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
     const page = await collectPage({
       candidates: (offset, limit) =>
-        source({ query: 1, filter: { must: [], must_not: [] }, offset, limit }),
+        source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit }),
       hydrate: async () => [],
       offset: 0,
       limit: 10,
@@ -466,7 +390,7 @@ describe('collectPage', () => {
   it('stops paging at the candidate offset cap', async () => {
     const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
     const candidates = (offset: number, limit: number) =>
-      source({ query: 1, filter: { must: [], must_not: [] }, offset, limit });
+      source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit });
     const hydrate = async (ids: number[]) => ids.map((id) => ({ id })) as never;
 
     const last = await collectPage({

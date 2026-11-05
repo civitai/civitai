@@ -156,6 +156,7 @@
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/orchestration-client": "0.2.0",
     "@civitai/sdk": "^0.24.0",
+    "@civitai/search": "workspace:*",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^1.23.1",

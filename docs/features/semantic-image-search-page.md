@@ -13,21 +13,23 @@ test surface for now, shown only to those with the `semanticImageSearch` feature
 - The page's `getServerSideProps` and both procedures (`semanticImageSearch.search`, `.feedback`)
   check the same flag. Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
   60 for signed-in users); feedback requires a signed-in user.
-- Env: `QDRANT_URL`, `QDRANT_API_KEY`. A read-only key is enough. When the variables are unset,
-  the procedure fails with a clear error.
+- Env: `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_TOKEN`, pointing at the search service
+  (`apps/search`, see its README). When the URL is unset, the procedure fails with a clear error.
 
 ## How a search runs
 
-Code: `src/server/services/semantic-image-search.service.ts`.
+Code: `src/server/services/semantic-image-search.service.ts` decides the viewer's filters and
+hydrates; the search service (`apps/search`) embeds the query and asks Qdrant, and returns ranked
+ids only.
 
-1. **Query vector.** The text is trimmed and its whitespace collapsed. Case is kept. It is embedded
-   with `wemm-2b` at 256 dimensions through the orchestrator's synchronous `multimodalEmbedding`
-   recipe, using the system orchestrator client. The vector is cached in Redis for 7 days, keyed on
-   model, dimensions, the index's model revision and profile, and a hash of the text. A response
-   whose model revision or profile differs from the one recorded on the collection is refused.
+1. **Query vector** (in the service). The text is trimmed and its whitespace collapsed. Case is
+   kept. It is embedded with `wemm-2b` at 256 dimensions through the orchestrator's synchronous
+   `multimodalEmbedding` recipe. The vector is cached in Redis for 7 days, keyed on model,
+   dimensions, the index's model revision and profile, and a hash of the text. A response whose
+   model revision or profile differs from the one recorded on the collection is refused.
    "More like this" queries by point id and makes no embedding call.
-2. **Candidates.** One Qdrant query runs on the `images_semantic` alias (`rescore`,
-   `oversampling: 2`). It filters on:
+2. **Candidates.** The service runs one Qdrant query on the `images_semantic` alias (`rescore`,
+   `oversampling: 2`). The site sends these filters as typed values:
    - the viewer's browsing level (`nsfwLevel`)
    - the chosen tags: every chosen tag must be present
    - excluded tags

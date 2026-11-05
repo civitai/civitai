@@ -210,6 +210,7 @@ export default defineNextConfig(
       '@civitai/moderation',
       '@civitai/mod-utils',
       '@civitai/app-assistant',
+      '@civitai/search',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
