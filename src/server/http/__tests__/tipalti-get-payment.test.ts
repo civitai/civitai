@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('~/env/server', () => ({ env: {} }));
 
+import type { TipaltiCaller as TipaltiCallerInstance } from '~/server/http/tipalti/tipalti.caller';
+
 const { TipaltiCaller } = await import('~/server/http/tipalti/tipalti.caller');
 
 const callerAnswering = (status: number, body?: unknown) => {
-  const caller = Object.create(TipaltiCaller.prototype) as InstanceType<typeof TipaltiCaller>;
+  const caller = Object.create(TipaltiCaller.prototype) as TipaltiCallerInstance;
   caller.getRaw = vi.fn(async () => new Response(body ? JSON.stringify(body) : null, { status }));
   return caller;
 };
