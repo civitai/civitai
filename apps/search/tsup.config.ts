@@ -11,4 +11,9 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   noExternal: [/^@civitai\//],
+  // @civitai/redis brings CommonJS deps (redis, msgpackr) into the bundle, and they require Node
+  // builtins, which esbuild's ESM output cannot do without a `require`.
+  banner: {
+    js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
+  },
 });

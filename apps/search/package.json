@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/server.js",
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
+    "dev": "tsup --watch --onSuccess \"node --env-file-if-exists=.env dist/server.js\"",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -22,7 +22,6 @@
   "devDependencies": {
     "@types/node": "^20.19.9",
     "tsup": "^8.5.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.9.2",
     "vitest": "^4.1.11"
   }
