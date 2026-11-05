@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import { nudge, prEvent } from '../../.claude/hooks/pr-review-nudge.logic.mjs';
 
@@ -128,23 +130,77 @@ describe('the nudge text', () => {
   });
 });
 
+/**
+ * The hook spawned as a process, in a sandbox it cannot see past: PATH holds only a fake `gh` and,
+ * when the case wants one, a fake `hq`; HOME is a fresh directory. The fake `gh` answers the head
+ * repo the case names, so no case reaches the network.
+ *
+ * The nudge is for authors who use HQ, on PRs whose head is in this repo: a fork's PR and a session
+ * without a signed-in `hq` get nothing.
+ */
 describe('the hook answers when it is run as a process', () => {
   const hook = resolve(__dirname, '../../.claude/hooks/pr-review-nudge.mjs');
-  const run = (input: string) =>
-    spawnSync(process.execPath, [hook], { input, encoding: 'utf8', timeout: 30_000 });
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
-  it('adds the nudge as PostToolUse context after a create', () => {
-    const r = run(
-      JSON.stringify({
-        tool_name: 'Bash',
-        tool_input: { command: 'gh pr create --fill' },
-        tool_response: created(7801),
-      })
-    );
+  type Sandbox = {
+    hq?: boolean;
+    config?: string;
+    hqToken?: string;
+    head?: string;
+    ghFails?: boolean;
+  };
+  const sandbox = ({ hq = true, config, hqToken, head = 'civitai/civitai', ghFails }: Sandbox) => {
+    const root = mkdtempSync(join(tmpdir(), 'pr-review-nudge-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    const home = join(root, 'home');
+    mkdirSync(bin);
+    mkdirSync(home);
+    const gh = ghFails ? 'echo "HTTP 404" >&2; exit 1' : `echo '${head}'`;
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh\n${gh}\n`, { mode: 0o755 });
+    if (hq) writeFileSync(join(bin, 'hq'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    if (config !== undefined) {
+      mkdirSync(join(home, '.config', 'hq'), { recursive: true });
+      writeFileSync(join(home, '.config', 'hq', 'config.toml'), config);
+    }
+    const env: Record<string, string> = { PATH: bin, HOME: home };
+    if (hqToken !== undefined) env.HQ_TOKEN = hqToken;
+    return env;
+  };
+  const SIGNED_IN = 'url = "https://hq.civitai.com"\ntoken = "hq_test_token"\n';
+
+  const run = (input: string, env: Record<string, string>, timeout = 30_000) =>
+    spawnSync(process.execPath, [hook], { input, encoding: 'utf8', timeout, env });
+  const createInput = (command = 'gh pr create --fill') =>
+    JSON.stringify({ tool_name: 'Bash', tool_input: { command }, tool_response: created(7801) });
+
+  it('adds the nudge after a create when hq is signed in and the head is in this repo', () => {
+    const r = run(createInput(), sandbox({ config: SIGNED_IN }));
     expect(r.status).toBe(0);
     const out = JSON.parse(r.stdout).hookSpecificOutput;
     expect(out.hookEventName).toBe('PostToolUse');
     expect(out.additionalContext).toBe(text({ action: 'create', pr: 7801, draft: false }));
+  });
+
+  it('counts an HQ_TOKEN in the environment as signed in', () => {
+    const r = run(createInput(), sandbox({ hqToken: 'hq_test_token' }));
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toBe(
+      text({ action: 'create', pr: 7801, draft: false })
+    );
+  });
+
+  it.each<[string, Sandbox]>([
+    ['the PR comes from a fork', { config: SIGNED_IN, head: 'someone/civitai' }],
+    ['the head repo cannot be read', { config: SIGNED_IN, ghFails: true }],
+    ['hq is not installed', { hq: false, config: SIGNED_IN }],
+    ['hq is installed but not signed in', { config: 'url = "https://hq.civitai.com"\n' }],
+    ['hq has an empty token', { config: 'token = ""\n', hqToken: '' }],
+  ])('says nothing and exits 0 when %s', (_label, box) => {
+    const r = run(createInput(), sandbox(box));
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('');
   });
 
   it.each([
@@ -155,8 +211,20 @@ describe('the hook answers when it is run as a process', () => {
     ['input that is not JSON', '{not json'],
     ['no input', ''],
   ])('says nothing and exits 0 for %s', (_label, input) => {
-    const r = run(input);
+    const r = run(input, sandbox({ config: SIGNED_IN }));
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
+  });
+
+  // The matcher runs on EVERY Bash call, so its cost must grow linearly with the command. A
+  // backtracking pattern took 210 ms at 24 `--flag` tokens and doubled with each one, so 40 would
+  // hold the session for hours. Spawned with a timeout: a hung matcher kills the child, not the suite.
+  it.each([
+    ['a long flag run with no pr subcommand', `gh${' --flag'.repeat(40)} x`],
+    ['a long flag run before pr create', `gh${' --flag'.repeat(40)} pr create --fill`],
+  ])('answers at once for %s', (_label, command) => {
+    const r = run(createInput(command), sandbox({ config: SIGNED_IN }), 5_000);
+    expect(r.signal).toBeNull();
+    expect(r.status).toBe(0);
   });
 });
