@@ -20,28 +20,50 @@ vi.mock('~/server/services/non-commercial-publish.service', async (importOrigina
 
 const { publishModelById, publishPrivateModel } = await import('~/server/services/model.service');
 const { publishModelVersionById } = await import('~/server/services/model-version.service');
+const { restoreModelRemovedWithOwner } = await import(
+  '~/server/services/model-removed-with-owner.service'
+);
 const { failedScanPublishMessage } = await import('~/server/utils/failed-scan');
 
 const FAILED = 7;
 const CLEAN = 8;
+const OTHER_MODEL_FAILED = 9;
+const versions = [
+  { id: FAILED, modelId: 1, status: 'Published' },
+  { id: CLEAN, modelId: 1, status: 'Draft' },
+  { id: OTHER_MODEL_FAILED, modelId: 2, status: 'Published' },
+];
 const files = [
   { modelVersionId: FAILED, pickleScanResult: 'Success', virusScanResult: 'Danger' },
   { modelVersionId: CLEAN, pickleScanResult: 'Error', virusScanResult: 'Success' },
+  { modelVersionId: OTHER_MODEL_FAILED, pickleScanResult: 'Danger', virusScanResult: 'Success' },
 ];
 
+type IdFilter = number | { in: number[] };
+type VersionWhere = { id?: IdFilter; modelId?: number; status?: { in: string[] } };
 type CountWhere = {
-  modelVersion: { id: number | { in: number[] } };
+  modelVersion: VersionWhere;
   OR: Array<{ pickleScanResult?: string; virusScanResult?: string }>;
 };
+const matchesId = (filter: IdFilter | undefined, id: number) =>
+  filter === undefined || (typeof filter === 'number' ? filter === id : filter.in.includes(id));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Applies every filter it is given, so a lost scope or scan condition shows up as a wrong count.
   dbMock.dbWrite.modelFile.count.mockImplementation((async ({ where }: { where: CountWhere }) => {
-    const scope = where.modelVersion.id;
-    const ids = typeof scope === 'number' ? [scope] : scope.in;
+    const scope = where.modelVersion;
+    const inScope = versions
+      .filter(
+        (v) =>
+          matchesId(scope.id, v.id) &&
+          (scope.modelId === undefined || scope.modelId === v.modelId) &&
+          (!scope.status || scope.status.in.includes(v.status))
+      )
+      .map((v) => v.id);
     return files.filter(
       (f) =>
-        ids.includes(f.modelVersionId) &&
+        inScope.includes(f.modelVersionId) &&
         where.OR.some(
           (c) =>
             (c.pickleScanResult && c.pickleScanResult === f.pickleScanResult) ||
@@ -98,6 +120,12 @@ describe('publishing a version with a file that failed its scan', () => {
     );
   });
 
+  it('is refused by publishModelById republishing the live versions, scoped to its model', async () => {
+    expect(await failure(publishModelById({ id: 1 }))).toBe(failedScanPublishMessage);
+    // Model 3 has no versions; model 2's failed file is not its concern.
+    expect(await failure(publishModelById({ id: 3 }))).not.toBe(failedScanPublishMessage);
+  });
+
   it('is refused by publishPrivateModel', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue({
       id: 1,
@@ -114,5 +142,22 @@ describe('publishing a version with a file that failed its scan', () => {
     expect(
       await failure(publishPrivateModel({ modelId: 1, publishVersions: true, isModerator: true }))
     ).toBe(failedScanPublishMessage);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([version(CLEAN)] as never);
+    expect(
+      await failure(publishPrivateModel({ modelId: 1, publishVersions: true, isModerator: true }))
+    ).not.toBe(failedScanPublishMessage);
+  });
+
+  it('is refused by a moderator restoring a model a content wipe kept', async () => {
+    const restore = (taken: { id: number; status: string }[]) => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue({
+        meta: { removedWithOwner: true, versionsUnpublishedByRemoval: taken },
+      } as never);
+      return failure(restoreModelRemovedWithOwner(1));
+    };
+
+    expect(await restore([{ id: FAILED, status: 'Published' }])).toBe(failedScanPublishMessage);
+    // Restored as a draft, it is not made public.
+    expect(await restore([{ id: FAILED, status: 'Draft' }])).not.toBe(failedScanPublishMessage);
   });
 });

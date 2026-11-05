@@ -1,7 +1,11 @@
--- GenerationCoverage: a version with any model file whose scan failed (pickle or virus result
--- 'Danger') is not covered under either rule. The body is 20260923140000's with one more column in
--- the files pass and one more line in the outer filter; columns and their order are unchanged, so
+-- GenerationCoverage: a version with any model file whose pickle or virus scan result is 'Danger' or
+-- 'Error' is not covered under either rule. The body is 20260923140000's with one more column in the
+-- files pass and one more line in the outer filter; columns and their order are unchanged, so
 -- CREATE OR REPLACE applies in place.
+--
+-- Error is excluded here although publish and download refuse only Danger: a scanner that errored
+-- vouched for nothing, and generation loads the file without a person choosing to. Pending is NOT
+-- excluded: it holds files not scanned yet, and trained models' result files.
 --
 -- Version-level, not per-file: the generator may pick any file of a covered version.
 --
@@ -10,7 +14,7 @@
 --        SELECT DISTINCT gc."modelId", gc."modelVersionId"
 --        FROM "GenerationCoverage" gc
 --        JOIN "ModelFile" mf ON mf."modelVersionId" = gc."modelVersionId"
---        WHERE mf."pickleScanResult" = 'Danger' OR mf."virusScanResult" = 'Danger';
+--        WHERE mf."pickleScanResult" IN ('Danger', 'Error') OR mf."virusScanResult" IN ('Danger', 'Error');
 --   1. Dry run: this file inside BEGIN; ... ROLLBACK;
 --   2. Apply.
 --   3. Re-run the step-0 query: it must return no rows. (The schema drift check does not cover views.)
@@ -18,7 +22,7 @@
 --      20260817200000_generation_coverage_require_rentcivit prescribes: resourceDataCache,
 --      the orchestrator model cache (bustMvCache covers it per version), dataForModelsCache, and
 --      re-queue the models into the models search index.
--- Files that fail later are busted by the scan webhook.
+-- Files whose scan fails or errors later are busted by the scan webhook.
 
 CREATE OR REPLACE VIEW "GenerationCoverage" AS
 SELECT "modelId", "modelVersionId", covered, "coveredNext"
@@ -71,7 +75,7 @@ FROM (
       COALESCE(bool_or(ok_live), false) AS live_file,
       COALESCE(bool_or(ok_next), false) AS next_file,
       COALESCE(bool_or(is_safetensor), false) AS safetensor,
-      COALESCE(bool_or(failed_scan), false) AS failed_scan
+      COALESCE(bool_or(scan_excluded), false) AS scan_excluded
     FROM (
       SELECT
         (
@@ -99,19 +103,19 @@ FROM (
           AND mf.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
           AND mf.metadata ->> 'format'::text = 'SafeTensor'
         ) AS is_safetensor,
-        -- Matches hasFailedScan (src/server/utils/failed-scan.ts): Error and Pending are not failures.
+        -- Matches excludedFromCoverage (src/server/utils/failed-scan.ts).
         (
-          mf."pickleScanResult" = 'Danger'::"ScanResultCode"
-          OR mf."virusScanResult" = 'Danger'::"ScanResultCode"
-        ) AS failed_scan
+          mf."pickleScanResult" = ANY (ARRAY['Danger'::"ScanResultCode", 'Error'::"ScanResultCode"])
+          OR mf."virusScanResult" = ANY (ARRAY['Danger'::"ScanResultCode", 'Error'::"ScanResultCode"])
+        ) AS scan_excluded
       FROM "ModelFile" mf
       WHERE mf."modelVersionId" = mv.id
     ) files
   ) f ON TRUE
 
   -- Both rules carry these, so they are stated once: a moderated model is not covered under either,
-  -- and neither is a version with any file that failed its scan, whatever arm would cover it.
+  -- and neither is a version with any file whose scan failed or errored, whatever arm would cover it.
   WHERE m.mode IS NULL
-    AND NOT f.failed_scan
+    AND NOT f.scan_excluded
 ) rules
 WHERE covered OR "coveredNext";

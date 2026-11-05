@@ -3,8 +3,8 @@ import { dbWrite } from '~/server/db/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 
-// `Error` (the scanner broke) and `Pending` are deliberately not failures: only a finding is.
-// The GenerationCoverage view states the same rule in SQL.
+// `Error` (the scanner broke) and `Pending` are deliberately not failures for publish and download:
+// only a finding is.
 export function hasFailedScan(file: {
   pickleScanResult?: ScanResultCode | null;
   virusScanResult?: ScanResultCode | null;
@@ -12,6 +12,21 @@ export function hasFailedScan(file: {
   return (
     file.pickleScanResult === ScanResultCode.Danger ||
     file.virusScanResult === ScanResultCode.Danger
+  );
+}
+
+/**
+ * GenerationCoverage's file test, stricter than hasFailedScan: a scanner Error also uncovers the
+ * version. The migration that defines the view states the same rule in SQL.
+ */
+export function excludedFromCoverage(file: {
+  pickleScanResult?: ScanResultCode | null;
+  virusScanResult?: ScanResultCode | null;
+}) {
+  return (
+    hasFailedScan(file) ||
+    file.pickleScanResult === ScanResultCode.Error ||
+    file.virusScanResult === ScanResultCode.Error
   );
 }
 

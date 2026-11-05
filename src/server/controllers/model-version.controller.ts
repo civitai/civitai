@@ -91,6 +91,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -1503,6 +1504,7 @@ export async function publishPrivateModelVersionHandler({
     }
   }
 
+  await assertNoFailedScanFiles({ id: version.id });
   const modelVersion = await updateModelVersionById({
     id: version.id,
     data: {

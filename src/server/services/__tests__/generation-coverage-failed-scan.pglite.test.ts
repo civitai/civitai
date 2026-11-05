@@ -5,7 +5,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * The GenerationCoverage view in force (the last migration that defines it) run against real rows:
- * a version with a file that failed its scan is not covered, under any arm. Ids are invented.
+ * a version with a file whose scan found danger or errored is not covered, under any arm. Pending is
+ * deliberately left covered: it holds unscanned files and trained models' results. Ids are invented.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -71,13 +72,16 @@ const PICKLE_ERROR = 4;
 const ECOSYSTEM_DANGER = 5;
 const TRAINED_DANGER = 6;
 const DANGER_BESIDE_CLEAN = 7;
+const VIRUS_ERROR = 8;
+const PENDING = 9;
+const TRAINED_PENDING = 10;
 
 let db: PGlite;
 
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
-  for (const id of [1, 2, 3, 4, 5, 6, 7]) {
+  for (let id = 1; id <= 10; id++) {
     await db.query(`INSERT INTO "Model" (id) VALUES ($1)`, [id]);
     await db.query(`INSERT INTO "ModelVersion" (id, "modelId") VALUES ($1, $1)`, [id]);
   }
@@ -96,6 +100,9 @@ beforeAll(async () => {
   await file(TRAINED_DANGER, 'Danger', 'Success', '{"trainingResults":{}}');
   await file(DANGER_BESIDE_CLEAN, 'Success');
   await file(DANGER_BESIDE_CLEAN, 'Danger');
+  await file(VIRUS_ERROR, 'Success', 'Error');
+  await file(PENDING, 'Pending', 'Pending');
+  await file(TRAINED_PENDING, 'Pending', 'Pending', '{"trainingResults":{}}');
 
   await db.exec(currentViewSql());
 });
@@ -105,10 +112,10 @@ afterAll(async () => {
 });
 
 describe('GenerationCoverage and failed scans', () => {
-  it('covers only versions with no failed file; a scanner Error is not a failure', async () => {
+  it('covers no version with a Danger or Error file; Pending, trained results included, stays covered', async () => {
     const { rows } = await db.query<{ modelVersionId: number }>(
       `SELECT "modelVersionId" FROM "GenerationCoverage" WHERE covered OR "coveredNext" ORDER BY 1`
     );
-    expect(rows.map((r) => r.modelVersionId)).toEqual([CLEAN, PICKLE_ERROR]);
+    expect(rows.map((r) => r.modelVersionId)).toEqual([CLEAN, PENDING, TRAINED_PENDING]);
   });
 });

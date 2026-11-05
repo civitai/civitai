@@ -7094,6 +7094,10 @@ export const privateModelFromTraining = async ({
   // its own moderator action.
   if (constants.modPublishOnlyStatuses.includes(model.status))
     throw throwAuthorizationError('You are not authorized to publish this model');
+  await assertNoFailedScanFiles({
+    modelId: id,
+    status: { notIn: constants.modPublishOnlyStatuses },
+  });
 
   enforceLockedProperties({
     data,

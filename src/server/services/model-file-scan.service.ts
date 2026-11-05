@@ -39,10 +39,9 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
 import {
   addLinkedComponent,
-  resolveUnpublishScope,
   unpublishModelVersionById,
 } from '~/server/services/model-version.service';
-import { hasFailedScan } from '~/server/utils/failed-scan';
+import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 
@@ -245,6 +244,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: { pickleScanResult: true, virusScanResult: true },
   });
   const failedScan = ranScan && hasFailedScan(written);
+  const uncovered = ranScan && excludedFromCoverage(written);
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
@@ -422,10 +422,6 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     await dataForModelsCache.refresh(modelId);
   }
 
-  // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
-  // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
-  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
-  // already written, and a throw would make the orchestrator redeliver the whole workflow.
   if (failedScan) {
     await unpublishForFailedScan(modelVersionId).catch((e) =>
       logToAxiom(
@@ -440,11 +436,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     );
   }
 
-  // A failed scan of any file type uncovers the version, so it busts too.
-  if (failedScan || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
+  // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
+  // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
+  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
+  // already written, and a throw would make the orchestrator redeliver the whole workflow.
+  // A failed or errored scan of any file type uncovers the version, so it busts too.
+  if (uncovered || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
       bustOrchestratorModelCache(modelVersionId),
+      uncovered && file.modelVersion && bustScannedFileAirs(modelVersionId, file.modelVersion),
     ]).catch((e) =>
       logToAxiom(
         {
@@ -456,6 +457,28 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         'webhooks'
       ).catch(() => undefined)
     );
+}
+
+// Version busts never reach the file-pinned AIRs, and the exclusion covers every file of the version.
+async function bustScannedFileAirs(
+  modelVersionId: number,
+  version: { modelId: number; baseModel: string; model: { type: ModelType } }
+) {
+  const files = await dbWrite.modelFile.findMany({
+    where: { modelVersionId },
+    select: { id: true },
+  });
+  await Promise.all(
+    files.map(({ id }) =>
+      bustOrchestratorScannedFileCache({
+        fileId: id,
+        modelVersionId,
+        modelId: version.modelId,
+        modelType: version.model.type,
+        baseModel: version.baseModel,
+      })
+    )
+  );
 }
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
@@ -951,20 +974,21 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 // -----------------------------------------------------------------------------
 
 export async function unpublishForFailedScan(modelVersionId: number) {
+  const live: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
   const version = await dbWrite.modelVersion.findUnique({
     where: { id: modelVersionId },
-    select: { status: true, meta: true },
+    select: { status: true, meta: true, modelId: true },
   });
-  if (
-    !version ||
-    (version.status !== ModelStatus.Published && version.status !== ModelStatus.Scheduled)
-  )
-    return;
+  if (!version || !live.includes(version.status)) return;
 
+  // Not resolveUnpublishScope: it never cascades from a Scheduled version, and a Scheduled model
+  // left with no live version stays Scheduled for good.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: { modelId: version.modelId, status: { in: live }, id: { not: modelVersionId } },
+  });
   const reason = 'failed-scan';
-  const scope = await resolveUnpublishScope(modelVersionId);
-  if (scope.kind === 'model') {
-    await unpublishModelById({ id: scope.modelId, reason, userId: -1, isModerator: true });
+  if (!liveSiblings) {
+    await unpublishModelById({ id: version.modelId, reason, userId: -1, isModerator: true });
   } else {
     await unpublishModelVersionById({
       id: modelVersionId,
