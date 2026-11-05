@@ -133,8 +133,10 @@ import type { Tracker } from '~/server/clickhouse/client';
 import {
   MINOR_LOCKED_PROPERTIES,
   restoreOwnerFlagOverride,
+  SFW_ONLY_LOCKED_PROPERTIES,
   setModelMinor,
   setModelPoi,
+  setModelSfwOnly,
 } from '~/server/services/model.service';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -1859,6 +1861,104 @@ describe('setModelMinor — lift restore on a real row', () => {
           restrictedNsfwVerdict: { ...poiVerdict, liftedBy: 'hashRevert' },
         });
         expect(await meta()).not.toHaveProperty('restrictedNsfwVerdictDormant');
+      });
+    });
+
+    // A Keep rules the scan's rating out. A re-tick after the scan applied snapshotted that rating as
+    // the one to restore, so a later lift must not bring it back.
+    it("a lift after a Keep does not restore the scan's rating a re-tick snapshotted", async () => {
+      const appliedAt = '2026-11-04T01:00:00.000Z';
+      await pg.query(
+        `UPDATE "Model" SET minor = false, nsfw = true, "sfwOnly" = false,
+           "lockedProperties" = '{nsfw}', meta = $2 WHERE id = $1`,
+        [
+          MODEL_ID,
+          JSON.stringify({
+            systemNsfwLock: { source: 'text-scan', at: appliedAt },
+            restrictedNsfwVerdict: {
+              ...verdict,
+              restriction: 'sfwOnly',
+              applied: {
+                at: appliedAt,
+                prior: { nsfw: false, sfwOnly: true, lockedProperties: [], systemNsfwLock: null },
+              },
+            },
+          }),
+        ]
+      );
+      await flag();
+      expect(await row()).toMatchObject({ minor: true, nsfw: false });
+      const { resolveRestrictedNsfwVerdict } = await import(
+        '~/server/services/text-scan/actions/restricted-nsfw-verdict'
+      );
+      // The ruling logs inside its transaction: through it, or PGlite's one connection waits on itself.
+      mockTrackModActivity.mockImplementationOnce(
+        async (userId: number, { activity }: Record<string, unknown>, tx: unknown) => {
+          await (tx as ReturnType<typeof client>).$executeRaw`
+            INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+            VALUES (${userId}, ${activity}, 'model', ${MODEL_ID}, now() - interval '1 second')`;
+        }
+      );
+      await resolveRestrictedNsfwVerdict({
+        modelId: MODEL_ID,
+        ruling: 'keep',
+        userId: MODERATOR_ID,
+      });
+
+      await liftMinor();
+
+      expect(await row()).toMatchObject({ minor: false, nsfw: false });
+      expect((await row()).lockedProperties).not.toContain('nsfw');
+    });
+
+    // A moderator's SFW-only lock held the lead. Lifting it is not a ruling on the rating.
+    describe('setModelSfwOnly(false) on a lead the lock held', () => {
+      let saved: unknown[];
+      beforeEach(async () => {
+        const c = client(pg);
+        saved = [
+          mockDbWrite.$executeRaw.getMockImplementation(),
+          mockDbWrite.model.findUnique.getMockImplementation(),
+        ];
+        mockDbWrite.$executeRaw.mockImplementation(c.$executeRaw as never);
+        mockDbWrite.model.findUnique.mockImplementation(c.model.findUnique as never);
+        await pg.query(
+          `UPDATE "Model" SET nsfw = false, "sfwOnly" = true, "lockedProperties" = $2, meta = $3
+           WHERE id = $1`,
+          [
+            MODEL_ID,
+            SFW_ONLY_LOCKED_PROPERTIES,
+            JSON.stringify({ restrictedNsfwVerdict: { ...verdict, restriction: 'sfwOnly' } }),
+          ]
+        );
+      });
+      afterEach(() => {
+        mockDbWrite.$executeRaw.mockImplementation(saved[0] as never);
+        mockDbWrite.model.findUnique.mockImplementation(saved[1] as never);
+      });
+      const unset = (isModerator: boolean) =>
+        setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID, isModerator });
+
+      it('a moderator leaves it pending, marked as their lift, and no later save applies it', async () => {
+        await unset(true);
+
+        expect(await meta()).toMatchObject({
+          restrictedNsfwVerdict: { ...verdict, restriction: 'sfwOnly', liftedBy: 'moderator' },
+        });
+        expect((await row()).nsfw).toBe(false);
+        const { applyHeldRestrictedVerdict } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        expect(await applyHeldRestrictedVerdict(MODEL_ID)).toBeNull();
+        expect((await row()).nsfw).toBe(false);
+      });
+
+      it('the owner applies it', async () => {
+        await unset(false);
+
+        expect(await row()).toMatchObject({ nsfw: true, sfwOnly: false });
+        expect((await meta()).restrictedNsfwVerdict).toMatchObject({ applied: expect.any(Object) });
+        expect((await meta()).restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
       });
     });
 

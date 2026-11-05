@@ -39,6 +39,7 @@ type Row = {
   rulings: RestrictedNsfwVerdictRulingRecord[] | null;
   ownerFlagOverride: ModelMeta['ownerFlagOverride'] | null;
   ownerDeclaredFlags: ModelMeta['ownerDeclaredFlags'] | null;
+  minorFlagSnapshot: ModelMeta['minorFlagSnapshot'] | null;
 };
 
 /** A model the owner once declared minor counts as minor here even after they untick it: for the
@@ -74,7 +75,8 @@ export async function resolveRestrictedNsfwVerdict({
         m.meta->'systemNsfwLock' AS "systemNsfwLock",
         m.meta->'restrictedNsfwVerdictRulings' AS rulings,
         m.meta->'ownerFlagOverride' AS "ownerFlagOverride",
-        m.meta->'ownerDeclaredFlags' AS "ownerDeclaredFlags"
+        m.meta->'ownerDeclaredFlags' AS "ownerDeclaredFlags",
+        m.meta->'minorFlagSnapshot' AS "minorFlagSnapshot"
       FROM "Model" m
       WHERE m.id = ${modelId} AND jsonb_typeof(m.meta) = 'object'
       FOR UPDATE OF m
@@ -183,6 +185,19 @@ export async function resolveRestrictedNsfwVerdict({
             },
           }
         : {};
+    // A minor flag set after the scan applied snapshotted the scan's rating as the one its lift
+    // restores. A Keep has ruled that rating out, so the snapshot no longer describes it.
+    const snapshot = row.minorFlagSnapshot;
+    const supersedesSnapshot =
+      ruling === 'keep' &&
+      !!verdict.applied &&
+      !!snapshot?.at &&
+      !snapshot.supersededAt &&
+      Date.parse(snapshot.at) >= Date.parse(verdict.applied.at);
+    const superseded: Pick<ModelMeta, 'minorFlagSnapshot'> =
+      supersedesSnapshot && snapshot
+        ? { minorFlagSnapshot: { ...snapshot, supersededAt: new Date().toISOString() } }
+        : {};
     // Guarded on the lead still being there: the row lock makes a second ruling wait, then fail here.
     const written = await tx.$executeRaw`
       UPDATE "Model" m
@@ -193,6 +208,7 @@ export async function resolveRestrictedNsfwVerdict({
             || jsonb_build_object('restrictedNsfwVerdictRulings', ${JSON.stringify(rulings)}::jsonb)
             || ${JSON.stringify(dormant ? { restrictedNsfwVerdictDormant: dormant } : {})}::jsonb
             || ${JSON.stringify(declared)}::jsonb
+            || ${JSON.stringify(superseded)}::jsonb
       WHERE m.id = ${modelId} AND m.meta ? 'restrictedNsfwVerdict'
     `;
     if (!written) throw throwBadRequestError('This lead was ruled on meanwhile; reload.');
