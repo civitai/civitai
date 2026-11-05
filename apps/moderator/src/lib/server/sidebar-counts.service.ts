@@ -38,6 +38,7 @@ import {
 import { ticketSnapshot } from './tickets/snapshot';
 import { peekTicketCounts } from './tickets/view-counts';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
+import { getRestrictedVerdictCount } from './restricted-nsfw-verdicts';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -175,8 +176,19 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // Auto-flagged's own total, in models: the badge equals the queue's "of N". The hash branch scans
     // "Model" (no index serves its predicate), so it is bounded; a failure drops only this badge.
     bounded(() => getFlaggedCount()),
-    // Needs review's held detections, in models (`Model_textScanRedetected_idx`).
-    withLastGood('held-detections', getHeldDetectionModelCount, 3_000),
+    // Needs review's held detections, in models (`Model_textScanRedetected_idx`), plus its
+    // restricted-verdict leads (`Model_restrictedNsfwVerdict_idx`). A model with both counts twice.
+    withLastGood(
+      'held-detections',
+      async () => {
+        const [held, leads] = await Promise.all([
+          getHeldDetectionModelCount(),
+          getRestrictedVerdictCount(),
+        ]);
+        return held + leads;
+      },
+      3_000
+    ),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
     bounded(countPendingScamRestrictions),

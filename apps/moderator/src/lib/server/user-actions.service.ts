@@ -258,6 +258,7 @@ export type ModEndpoint =
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
+  | 'model/resolve-restricted-nsfw-verdict'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
   | 'minor-flag/resolve-appeal'
