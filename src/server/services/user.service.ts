@@ -1872,11 +1872,13 @@ export const removeAllContent = async ({
       DELETE FROM "CommentV2" c2
       WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
     await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id}`;
-    // CommentV3 first, as every write on these comments locks it, before the cascade reaches CommentV2.
+    // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
+    // reaches CommentV2.
     await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" IN (${owned(
-        'Article'
-      )})`;
+      DELETE FROM "CommentTopic"
+      WHERE ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
+        AND (("entityType" = 'article' AND "entityId" IN (${owned('Article')}))
+          OR ("entityType" = 'post' AND "entityId" IN (${owned('Post')})))`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     const formerOwnerHeld = heldModelIdsSql(
