@@ -2397,8 +2397,8 @@ export const submitEntry = async ({
 };
 
 /**
- * The pairs this judge voted on, and the pairs they are not served again: those, plus those their
- * votes decide. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
+ * `voted`: pairs this judge voted on. `decided`: voted plus pairs their votes settle, which are not
+ * served again. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
  */
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
@@ -2833,9 +2833,8 @@ export function countUnjudgedRemainingPairs(entryCount: number, maxVotesPerEntry
  *
  * The total is the most pairs they can reach by voting (fixed by the entries they see, so a vote
  * that caps an entry doesn't move it), less the pairs their votes settled, and never less than
- * judged plus `remainingPairs`. That floor matters: settled pairs are not limited by the per-entry
- * vote cap, so judged plus settled can pass the reachable count while pairs are still served, and
- * without it the footer read "0 to go" and kept serving.
+ * judged plus `remainingPairs`: settled pairs ignore the per-entry vote cap, so judged plus settled
+ * can pass the reachable count while pairs are still served.
  */
 export function countJudgingProgress({
   entryIds,

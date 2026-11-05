@@ -186,9 +186,8 @@ describe('countJudgingProgress', () => {
   });
 
   it('keeps pairs to go while pairs are still served, however many votes settled', () => {
-    // 14 votes down a chain of 15 settle 105 pairs, more than the 99 a judge can reach by voting
-    // in 20 entries, while 16-20 are still unjudged. Counting settled pairs as judged read
-    // "105 of 105, 0 to go" here and kept serving.
+    // 14 votes down a chain of 15 settle 105 pairs, more than the 99 reachable by voting in 20
+    // entries, while 16-20 are still unjudged.
     const p = progress(20, 15);
     expect(p.judgedPairs).toBe(14);
     expect(p.remainingPairs).toBeGreaterThan(0);
