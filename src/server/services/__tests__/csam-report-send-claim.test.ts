@@ -547,20 +547,31 @@ describe('a report that may have a CyberTip at NCMEC', () => {
       { possibleDuplicateReportIds: [6] },
     ],
   ])(
-    'keeps a report with %s and no reported user, cancelling nothing and naming it on the hold',
+    'keeps a report with %s and no reported user over two runs, opening and cancelling nothing',
     async (_, held, named) => {
       primaryRow = { ...report, userId: null, ...held } as unknown as CsamReportProps;
 
       await processCsamReport(report);
+      await processCsamReport(report);
 
       expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
       expect(cancelReport).not.toHaveBeenCalled();
-      expect(lines('send-held')).toEqual([
-        expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user', ...named }),
-      ]);
+      const hold = expect.objectContaining({
+        type: 'error',
+        reportId: 1,
+        case: 'missing-user',
+        ...named,
+      });
+      expect(lines('send-held')).toEqual([hold, hold]);
+      // Each run releases its claim, so the next run takes the report up again.
       expect(releases()).toEqual([
         {
-          where: { id: 1, sendClaimId: theClaim() },
+          where: { id: 1, sendClaimId: claimWrites()[0].data.sendClaimId },
+          data: { sendClaimId: null, sendClaimedAt: null },
+        },
+        {
+          where: { id: 1, sendClaimId: expect.any(String) },
           data: { sendClaimId: null, sendClaimedAt: null },
         },
       ]);
