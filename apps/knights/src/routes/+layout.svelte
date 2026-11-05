@@ -37,6 +37,7 @@
       civitaiUrl={data.civitaiUrl}
       shopOpen={data.shopOpen}
       isPlayer={data.isPlayer}
+      feedbackOpen={data.feedbackOpen}
       {status}
       {streak}
       recapUnseen={data.recapUnseen}

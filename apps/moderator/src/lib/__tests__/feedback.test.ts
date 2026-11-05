@@ -9,6 +9,7 @@ import {
   feedbackAttachmentCount,
   feedbackAttachmentItems,
   handledByLabel,
+  feedbackPathLinksToCivitai,
   reconstructFeedbackUrl,
   splitContext,
 } from '$lib/feedback';
@@ -20,6 +21,13 @@ import {
  */
 
 const HOUR = 60 * 60 * 1000;
+
+describe('feedbackPathLinksToCivitai', () => {
+  it("is false for Knights, whose paths live on its own origin, and true for the site's areas", () => {
+    expect(feedbackPathLinksToCivitai('knights')).toBe(false);
+    expect(feedbackPathLinksToCivitai('site-bug-report')).toBe(true);
+  });
+});
 
 describe('reconstructFeedbackUrl', () => {
   it('omits every value that equals the store default, so the link is the one the reporter had', () => {
@@ -123,6 +131,7 @@ describe('feedbackAreaOptions', () => {
       'apps-marketplace',
       'apps-platform',
       'bitdex-image-feed',
+      'knights',
       'semantic-image-search',
       'site-bug-report',
     ]);

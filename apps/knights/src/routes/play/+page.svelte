@@ -69,9 +69,16 @@
   let dialogOpen = $derived(guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
+  // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
+  const headerDialogOpen = () =>
+    !!document.querySelector(
+      '[role="dialog"][aria-modal="true"]:not([aria-labelledby="block-reason-title"])'
+    );
+
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
   // otherwise press it). Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
+    if (headerDialogOpen()) return;
     if (choosingReason) {
       const reason = answerForKey([...BLOCK_REASONS], event.key);
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);

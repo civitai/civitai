@@ -10,7 +10,7 @@ vi.mock('@civitai/flipt/context', () => ({
   buildFliptContext: (user: { id: number }) => ({ userId: String(user.id) }),
 }));
 
-const { accessFor, accessibleIds, KNIGHTS_APP_FLAG } = await import('./access');
+const { accessFor, accessibleIds, isFlagOn, KNIGHTS_APP_FLAG } = await import('./access');
 
 const user = (isModerator = false) => ({ id: 7, isModerator } as never);
 
@@ -43,6 +43,17 @@ describe('accessFor', () => {
     flipt.ensureInitialized.mockRejectedValue(new Error('flipt unreachable'));
     expect(await accessFor(user())).toBe('closed');
     expect(await accessFor(user(true))).toBe('allow');
+  });
+});
+
+describe('isFlagOn', () => {
+  it('evaluates the flag it is given, not the app flag, and fails closed when Flipt is down', async () => {
+    flipt.isEnabledSync.mockReturnValue(true);
+    expect(await isFlagOn({ id: 7 }, 'feedback-area-knights')).toBe(true);
+    expect(flipt.isEnabledSync).toHaveBeenCalledWith('feedback-area-knights', '7', { userId: '7' });
+
+    flipt.ensureInitialized.mockRejectedValue(new Error('down'));
+    expect(await isFlagOn({ id: 7 }, 'feedback-area-knights')).toBe(false);
   });
 });
 
