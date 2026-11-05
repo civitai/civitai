@@ -6,7 +6,6 @@ export class MainAppRejectedError extends Error {
   constructor(
     readonly status: number,
     readonly reason: string,
-    /** The main app's own wording of the refusal, fit to show a player. */
     readonly detail = ''
   ) {
     super(`The main app refused the request: ${status} ${reason}`);
@@ -23,7 +22,6 @@ export type MembershipGrant = {
 
 export type MainAppPort = {
   grantMembership(grant: MembershipGrant): Promise<{ outcome: 'granted' | 'already' }>;
-  /** Busts the main app's cosmetic caches after Knights inserted a `UserCosmetic`. */
   refreshCosmetics(userId: number): Promise<void>;
   /** Equips through the main app's own `equipCosmetic`, so its rules, caches and worn-cosmetic queue run. */
   equipCosmetic(userId: number, cosmeticId: number): Promise<void>;

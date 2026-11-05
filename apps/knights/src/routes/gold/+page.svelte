@@ -11,7 +11,6 @@
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
-  /** The whole purchase sequence of the design (M9): skippable at any point. */
   const SEQUENCE_MS = 720;
 
   let { data }: { data: PageData } = $props();
@@ -100,7 +99,6 @@
       floater = null;
       stopSequence = () => {};
     };
-    // Any click or key press jumps to the end state: the count lands, the stamp and the floater go.
     function skip() {
       skipped = true;
       finish();

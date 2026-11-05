@@ -23,10 +23,8 @@
     variant: 'deal' | 'pack' | 'row';
     /** Position in the grid: only the first few cards animate in. */
     index?: number;
-    /** The player pressed Buy without the gold for it: shake, and say how short (gold). */
     shortBy?: number;
     shakeKey?: number;
-    /** Just bought: the OWNED seal stamps on. */
     stamped?: boolean;
     sheen?: boolean;
     clock?: string;

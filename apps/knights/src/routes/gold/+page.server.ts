@@ -19,7 +19,6 @@ import type { Actions, PageServerLoad } from './$types';
 
 const CLOSED_TEXT = "The shop isn't open yet. Your gold keeps accruing.";
 
-/** Buzz packs need the kill switch off and a Buzz service to talk to. */
 const buzzPacksOpen = () => conversionEnabled() && buzzConfigured();
 
 export const load: PageServerLoad = async ({ locals }) => {

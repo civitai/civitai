@@ -24,7 +24,6 @@ export const isSellable = (item: Pick<ShopItem, 'kind' | 'months'>) =>
 
 export type StockEntry = { item: ShopItem; price: number; deal: boolean };
 
-/** `YYYY-MM-DD` of the UTC day `now` falls in. */
 export const utcDay = (now: Date) => now.toISOString().slice(0, 10);
 
 export const msUntilNextDay = (now: Date) => {
@@ -48,10 +47,7 @@ const byHash = (salt: string) => (a: ShopItem, b: ShopItem) =>
 export const dealPrice = (price: number) =>
   Math.max(1, Math.floor((price * (100 - DEAL_PERCENT)) / 100));
 
-/**
- * What is on sale on one UTC day. Fixed items (not `rotating`) are always in stock; of the rotating ones a seeded
- * pick of `ROTATION_SIZE` is. Deals are a seeded pick from that stock. Pure: the same catalog and day give the same answer.
- */
+/** Pure: the same catalog and day give the same stock and deals. */
 export function stockFor(
   items: ShopItem[],
   day: string

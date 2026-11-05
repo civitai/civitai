@@ -1,10 +1,7 @@
-/** Rotating items on sale at once, and deals per day. Prices are data (`KnightsShopItem`); these two shape the day. */
 export const ROTATION_SIZE = 4;
 export const DEALS_PER_DAY = 2;
-/** Percent off a deal's list price. */
 export const DEAL_PERCENT = 20;
 
-/** The longest one request to the main app may take. */
 export const MAIN_APP_TIMEOUT_MS = 8_000;
 
 export const PENDING_PURCHASE_RETRY_AFTER_MS = 60_000;

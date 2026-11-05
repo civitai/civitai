@@ -5,7 +5,7 @@ import { cosmeticImageKey, holdingBlocksPurchase, stickerUses } from './cosmetic
 import { hasActiveMembership } from './inventory';
 import { isSellable, msUntilNextDay, stockFor, utcDay, type ShopItem } from './rotation';
 
-/** Why a card cannot be bought right now; `available` means it can (affordability is the player's gold, checked at the press). */
+/** Affordability is not a state: the player's gold is checked at the press. */
 export type CardState = 'available' | 'owned' | 'member' | 'rank' | 'sold-out' | 'closed';
 
 export type ShopCard = {
@@ -13,7 +13,6 @@ export type ShopCard = {
   kind: 'buzz_pack' | 'cosmetic' | 'membership';
   name: string;
   description: string;
-  /** What the player pays today (the deal price on a deal). */
   price: number;
   listPrice: number;
   deal: boolean;
@@ -23,10 +22,9 @@ export type ShopCard = {
   minRank: string | null;
   state: CardState;
   cosmeticType: string | null;
-  /** Uses a sticker purchase adds; null for everything else and for an unlimited sticker. */
+  /** Null for anything but a limited sticker. */
   uses: number | null;
   imageKey: string | null;
-  /** Sticker only: the player already holds it, so more of it adds uses. */
   heldUses: number | null;
 };
 
@@ -36,7 +34,6 @@ export type ShopView = {
   cards: ShopCard[];
 };
 
-/** The shop as one player sees it today: the day's stock and deals, each card with what stops the player buying it. */
 export async function loadShop(
   db: Kysely<DB>,
   {

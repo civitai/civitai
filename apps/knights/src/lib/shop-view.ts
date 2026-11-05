@@ -65,7 +65,6 @@ const COSMETIC_TYPE = {
   CardDecoration: 'Card decoration',
   Sticker: 'Sticker',
 } as const;
-/** A cosmetic type as the player reads it. */
 export const cosmeticTypeLabel = (type: string | null) =>
   type && type in COSMETIC_TYPE
     ? COSMETIC_TYPE[type as keyof typeof COSMETIC_TYPE]
@@ -101,7 +100,6 @@ export const cardBlurb = (card: CardLike) =>
     ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
     : cosmeticTypeLabel(card.cosmeticType));
 
-/** The icon name for a card or an owned cosmetic. */
 export const cosmeticIcon = (
   kind: string | null,
   type: string | null

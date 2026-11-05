@@ -8,9 +8,8 @@ export type InventoryItem = {
   name: string;
   type: string;
   equipped: boolean;
-  /** Sticker uses left across every purchase; null for anything that is not a consumable. */
+  /** Null: not a consumable, or an unlimited sticker. */
   uses: number | null;
-  /** Where it came from: bought in the shop, or a rank reward. */
   origin: 'shop' | 'rank';
   imageKey: string | null;
 };
@@ -92,7 +91,6 @@ const liveMembershipRows = (db: Kysely<DB>, playerId: number, now: Date) =>
     .where('cs.status', 'not in', LIVE_MEMBERSHIP)
     .where('cs.currentPeriodEnd', '>', now);
 
-/** The player's longest-running live membership, bought with gold, Buzz or cash; null when there is none. */
 export async function membershipOf(
   db: Kysely<DB>,
   playerId: number,
@@ -105,7 +103,7 @@ export async function membershipOf(
   return row?.tier ? { tier: row.tier, endsAt: row.currentPeriodEnd } : null;
 }
 
-/** Whether the main app would refuse another membership month; it stays the authority, this only spares the player a round trip. */
+/** The main app stays the authority; this only spares the player a round trip. */
 export async function hasActiveMembership(
   db: Kysely<DB>,
   playerId: number,
@@ -115,7 +113,6 @@ export async function hasActiveMembership(
   return row !== undefined;
 }
 
-/** The last purchases, for the shop's "Recent" list. */
 export async function recentPurchases(db: Kysely<DB>, playerId: number, limit = 8) {
   return db
     .selectFrom('KnightsShopPurchase as s')

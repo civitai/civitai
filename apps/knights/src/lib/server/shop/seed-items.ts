@@ -53,7 +53,6 @@ export const FIXED_ITEMS: SeedItem[] = [
 
 export type CosmeticRow = { id: number; name: string; type: string };
 
-/** Rotating cosmetics from rows that already exist in the database: badges, a nameplate, decorations (rank-gated) and stickers. */
 export function cosmeticItems(rows: CosmeticRow[]): SeedItem[] {
   const of = (type: string) => rows.filter((row) => row.type === type);
   const make = (
@@ -89,7 +88,7 @@ const lit = (value: string | number | undefined) =>
     ? String(Math.trunc(value))
     : quote(value);
 
-/** One idempotent INSERT: an existing id (a price someone edited) is left alone. */
+/** `ON CONFLICT DO NOTHING`: a price someone edited survives a re-seed. */
 export function seedSql(items: SeedItem[]): string {
   if (items.length === 0) return '';
   const rows = items.map(
@@ -114,7 +113,6 @@ export function seedSql(items: SeedItem[]): string {
   )}\nON CONFLICT ("id") DO NOTHING;`;
 }
 
-/** Picks a few of each cosmetic type so the dev shop has something to rotate. */
 export function pickCosmetics(rows: CosmeticRow[]): CosmeticRow[] {
   const take = (type: string, n: number) => rows.filter((row) => row.type === type).slice(0, n);
   return [
