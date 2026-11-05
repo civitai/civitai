@@ -195,10 +195,12 @@ async function advance({
   if (outcome.status === 'done') {
     const workflowId = segments[segments.length - 1]?.workflow.id as string;
     // The run reads every blob so the next segment can use it; what it shows follows the viewer.
-    const hideMature = caller.isGreenDomain || !caller.user.showNsfw;
-    const outputs = hideMature
-      ? outcome.outputs.filter((image) => !isMature(levels.get(image.url)))
-      : outcome.outputs;
+    if (!caller.isGreenDomain && caller.user.showNsfw)
+      return { status: 'done', runId, workflowId, outputs: outcome.outputs };
+    // Fails closed: an output not rated yet keeps the run running until the scan lands.
+    const unrated = outcome.outputs.some(({ url }) => levels.has(url) && levels.get(url) == null);
+    if (unrated) return { status: 'running', runId, workflowId };
+    const outputs = outcome.outputs.filter(({ url }) => !isMature(levels.get(url)));
     return { status: 'done', runId, workflowId, outputs };
   }
   if (outcome.effect.type === 'ask') return { status: 'ask', runId, ask: outcome.effect.spec };

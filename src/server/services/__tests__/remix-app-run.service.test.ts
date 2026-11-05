@@ -521,10 +521,10 @@ describe('remix app runs', () => {
     async function finishedRun(nonce: string, viewer: RemixAppCaller) {
       const runId = await runToPick(nonce, viewer);
       await advanceRemixRun({ runId, answers: [0], quote: 30, caller: viewer });
-      finish(submits()[1].id, [blob('pg'), blob('x')], { [blob('x')]: 'x' });
+      finish(submits()[1].id, [blob('pg'), blob('x')], { [blob('pg')]: 'pg', [blob('x')]: 'x' });
       return advanceRemixRun({ runId, caller: viewer });
     }
-    const urls = (state: Awaited<ReturnType<typeof finishedRun>>) =>
+    const urls = (state: Awaited<ReturnType<typeof advanceRemixRun>>) =>
       state.status === 'done' ? state.outputs.map((o) => o.url) : state;
 
     it('are shown to a viewer who shows mature content off green', async () => {
@@ -534,6 +534,32 @@ describe('remix app runs', () => {
     it('are hidden on green', async () => {
       const green = caller({ isGreenDomain: true });
       expect(urls(await finishedRun('nonce-0017', green))).toEqual([blob('pg')]);
+    });
+
+    it.each([
+      ['on green', caller({ isGreenDomain: true })],
+      [
+        'from a viewer who hides mature content',
+        caller({ user: { ...caller().user, showNsfw: false } }),
+      ],
+    ])('wait for a rating %s', async (_, viewer) => {
+      const runId = await runToPick(`nonce-unrated-${viewer.isGreenDomain}`, viewer);
+      await advanceRemixRun({ runId, answers: [0], quote: 30, caller: viewer });
+      finish(submits()[1].id, [blob('pg'), blob('unrated')], { [blob('pg')]: 'pg' });
+      expect(await advanceRemixRun({ runId, caller: viewer })).toMatchObject({ status: 'running' });
+
+      submits()[1].steps[0].output!.images[1].nsfwLevel = 'pg13';
+      expect(urls(await advanceRemixRun({ runId, caller: viewer }))).toEqual([
+        blob('pg'),
+        blob('unrated'),
+      ]);
+    });
+
+    it('show an unrated output to a viewer who shows mature content', async () => {
+      const runId = await runToPick('nonce-unrated-shown');
+      await advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() });
+      finish(submits()[1].id, [blob('unrated')]);
+      expect(urls(await advanceRemixRun({ runId, caller: caller() }))).toEqual([blob('unrated')]);
     });
 
     it('are hidden from a viewer who hides mature content', async () => {
