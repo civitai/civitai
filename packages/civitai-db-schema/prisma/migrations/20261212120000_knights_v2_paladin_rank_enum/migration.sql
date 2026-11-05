@@ -1,11 +1,10 @@
 -- Idempotent: applied by hand, possibly more than once. Its own file and the last to apply: a new enum label must ship
 -- after the client that knows it, so it cannot ride with the tables or columns.
--- Deploy the regenerated Prisma client BEFORE applying this (.claude/rules/database.md, "Adding an enum value"):
--- Prisma throws on a label it does not know, and the Knights app writes 'Paladin' once a player earns it.
+-- Deploy the regenerated Prisma client first: Prisma throws on a label it does not know.
 -- Run the two statements as separate autocommit statements: a new enum label cannot be used in the transaction that adds it.
 ALTER TYPE "NewOrderRankType" ADD VALUE IF NOT EXISTS 'Paladin';
 
--- "NewOrderPlayer"."rankType" references this table, so a Paladin needs its row. Modelled on the Templar row.
+-- "NewOrderPlayer"."rankType" references this table, so Paladin needs a row (copied from Templar).
 INSERT INTO "NewOrderRank" ("type", "name", "minExp", "iconUrl", "updatedAt")
 SELECT 'Paladin', 'Paladin', "minExp", "iconUrl", CURRENT_TIMESTAMP
 FROM "NewOrderRank"

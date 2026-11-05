@@ -2,7 +2,6 @@
 -- Knights-owned tables only (none exists on main; "Image" must). Apply BEFORE deploying the Knights app, the moderator app
 -- build that manages yes/no reference pairs and the main app build that enqueues rating items; the yes/no import runs after.
 -- Apply after 20261209120000_knights_new_order_player_and_link_review.
--- CREATE INDEX on the partitioned "KnightsVote" parent propagates to every month.
 
 CREATE TABLE IF NOT EXISTS "KnightsQuestion" (
   "key" TEXT PRIMARY KEY,
@@ -18,9 +17,8 @@ CREATE TABLE IF NOT EXISTS "KnightsQuestion" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- The stage an item waits at is "minRank" (Knight, Templar, Paladin, then the Inquisitors); no second stage column.
--- "escalatedAt" is when the item last moved up a stage. "externalId" is the producer's id for a yes/no question; null for
--- rating items (nulls do not collide).
+-- "minRank" is the stage the item waits at (Knight, Templar, Paladin, then the Inquisitors); "escalatedAt" is when it last
+-- moved up. "externalId" is the producer's id for a yes/no question, null for rating items.
 CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "id" SERIAL PRIMARY KEY,
   "questionKey" TEXT NOT NULL REFERENCES "KnightsQuestion"("key") ON DELETE CASCADE ON UPDATE CASCADE,
@@ -60,24 +58,20 @@ CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_appliedAt_idx" ON "KnightsQu
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_imageId_idx" ON "KnightsQueueItem" ("imageId");
 
 -- One open rating item per question and image. Hidden checks are exempt (served apart from the feed), and so is a yes/no
--- question (one of several that share an axis and an image; unique by externalId instead). Only 'Open' is indexed, so a
--- later move to Resolved or Inquisitor can never collide with a newer open item.
+-- question (one of several that share an axis and an image; unique by externalId instead).
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsQueueItem_open_question_image_key"
   ON "KnightsQueueItem" ("questionKey", "imageId")
   WHERE "status" = 'Open' AND NOT "isHiddenCheck" AND "audience" IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsQueueItem_externalId_key" ON "KnightsQueueItem" ("externalId");
 
--- The player feed's pick: the next open yes/no question of an axis, those already under way first.
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_yesno_serve_idx"
   ON "KnightsQueueItem" ("questionKey", "voteCount" DESC, "priority", "id")
   WHERE "status" = 'Open' AND "audience" = 'players';
 
--- The sweep's pick: questions that have answers and are still open.
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_yesno_answered_idx"
   ON "KnightsQueueItem" ("id")
   WHERE "status" = 'Open' AND "audience" IS NOT NULL AND "voteCount" > 0;
 
--- The feed's escalated window: open items per stage, oldest escalation first.
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_open_escalated_idx"
   ON "KnightsQueueItem" ("minRank", "escalatedAt")
   WHERE "status" = 'Open' AND "escalatedAt" IS NOT NULL;
@@ -112,14 +106,11 @@ CREATE TABLE IF NOT EXISTS "KnightsVote" (
 CREATE INDEX IF NOT EXISTS "KnightsVote_playerId_createdAt_idx" ON "KnightsVote" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsVote_itemId_stage_idx" ON "KnightsVote" ("itemId", "stage");
 
--- Serves "has this player judged this image" (hidden-check pick, one judgment per image and question).
 CREATE INDEX IF NOT EXISTS "KnightsVote_playerId_imageId_idx" ON "KnightsVote" ("playerId", "imageId");
 
--- Graded votes whose progression is still to be granted: the sweep reads only these.
 CREATE INDEX IF NOT EXISTS "KnightsVote_unsettled_idx" ON "KnightsVote" ("itemId")
   WHERE "settledAt" IS NULL AND "verdict" <> 'pending';
 
--- Settled votes the label pass has not picked up yet, in keyset order.
 CREATE INDEX IF NOT EXISTS "KnightsVote_unlabelled_keyset_idx" ON "KnightsVote" ("settledAt", "itemId", "playerId")
   WHERE "settledAt" IS NOT NULL AND NOT "labelled";
 
@@ -133,7 +124,6 @@ CREATE INDEX IF NOT EXISTS "KnightsVote_unnoticed_consequence_idx" ON "KnightsVo
 CREATE INDEX IF NOT EXISTS "KnightsVote_createdAt_playerId_idx" ON "KnightsVote" ("createdAt", "playerId")
   INCLUDE ("verdict") WHERE "settledAt" IS NOT NULL;
 
--- Current month and the next two; a vote needing a later month creates it.
 DO $$
 DECLARE
   month_start DATE;
@@ -254,16 +244,13 @@ CREATE TABLE IF NOT EXISTS "KnightsYesNoReference" (
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- One known answer per image and question.
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsYesNoReference_imageId_questionKey_key"
   ON "KnightsYesNoReference" ("imageId", "questionKey");
--- Serving and listing the active pairs of a question.
 CREATE INDEX IF NOT EXISTS "KnightsYesNoReference_active_questionKey_idx"
   ON "KnightsYesNoReference" ("active", "questionKey");
 
--- Answers outlive their reference: "imageId" + "questionKey" identify the answer once its reference foreign keys go NULL
--- (ON DELETE SET NULL). A live row names exactly one reference; once that is deleted both go NULL and the snapshot is what
--- identifies the answer.
+-- Answers outlive their reference: the "imageId"/"questionKey" snapshot identifies the answer once both reference FKs go
+-- NULL (ON DELETE SET NULL).
 CREATE TABLE IF NOT EXISTS "KnightsApprenticeAnswer" (
   "id" SERIAL PRIMARY KEY,
   "playerId" INTEGER NOT NULL,
@@ -284,8 +271,8 @@ CREATE TABLE IF NOT EXISTS "KnightsApprenticeAnswer" (
     )
 );
 
--- Not expressible in Prisma: a player answers each reference at most once, and the image-and-question rule must survive a
--- deleted and re-added reference.
+-- Partial, so not expressible in Prisma. The (player, image, question) key keeps the no-repeat rule across a deleted and
+-- re-added reference.
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_reference_key"
   ON "KnightsApprenticeAnswer" ("playerId", "referenceId") WHERE "referenceId" IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsApprenticeAnswer_player_yesno_key"

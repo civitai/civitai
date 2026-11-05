@@ -1,7 +1,5 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Main-app tables: "NewOrderPlayer" columns and "NewOrderLinkReview", which the main app (grant job, detection job,
--- generated Prisma client), the moderator app and the Knights app read and write. Apply BEFORE deploying any of those three,
--- and before 20261210120000_knights_v2_tables. Applying it ahead of a deploy is harmless: every column is nullable or defaulted.
+-- Main-app tables, read and written by the main app, the moderator app and Knights. Apply BEFORE deploying any of them.
 ALTER TABLE "NewOrderPlayer"
   ADD COLUMN IF NOT EXISTS "payoutBlockedAt" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "payoutBlockReason" TEXT,
