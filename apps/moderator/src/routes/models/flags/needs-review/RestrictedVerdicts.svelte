@@ -9,7 +9,11 @@
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import type { Restriction, RestrictedVerdictRow } from '$lib/minor-flags/restricted-verdicts';
+  import {
+    LIFTED_NOTE,
+    type Restriction,
+    type RestrictedVerdictRow,
+  } from '$lib/minor-flags/restricted-verdicts';
 
   let {
     rows,
@@ -22,7 +26,6 @@
     poi: 'real person',
     sfwOnly: 'SFW only',
   };
-  // Where a dismissed lead went; free text covers the rest.
   const DISMISS_REASONS = [
     'Escalated in Auto-flagged',
     'Escalated to CSAM tools',
@@ -87,12 +90,12 @@
               {RESTRICTION_LABEL[row.restriction]}
             </MetaChip>
             {#if !row.comFace}<MetaChip>No .com face</MetaChip>{/if}
-            {#if row.isPrivate}
+            {#if row.isPrivate && !row.liftedBy}
               <MetaChip>private: applies when published</MetaChip>
             {/if}
             {#if row.unticked}
               <MetaChip tone="amber">
-                held as {RESTRICTION_LABEL[row.restriction]}; owner has since unticked it
+                held as {RESTRICTION_LABEL[row.restriction]}; {LIFTED_NOTE[row.liftedBy ?? 'owner']}
               </MetaChip>
             {/if}
             {#if row.autoApplied}

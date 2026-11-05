@@ -19,6 +19,10 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
+// In the ring's 48-unit viewBox.
+const RING_STROKE = 4;
+const DISC_RADIUS = 14;
+
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
   // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
@@ -77,34 +81,43 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const face = (
     <>
       <span className={classes.dial}>
+        {/* The disc is in the ring's SVG: as a CSS box it snapped to the pixel grid on its own and,
+            at a fractional x, painted up to a pixel off the ring's centre. */}
         <svg viewBox="0 0 48 48" className={classes.ring} aria-hidden="true">
-          <circle className={classes.track} cx="24" cy="24" r={RING_RADIUS} />
-          {arcs.map((arc) => (
-            <circle
-              key={arc.team}
-              className={classes.arc}
-              data-team={arc.team}
-              cx="24"
-              cy="24"
-              r={RING_RADIUS}
-              stroke={colorOf(arc.team)}
-              strokeDasharray={`${arc.length} ${RING_LENGTH - arc.length}`}
-              strokeDashoffset={-arc.offset}
-            />
-          ))}
+          <g transform="rotate(-90 24 24)">
+            <circle className={classes.track} cx="24" cy="24" r={RING_RADIUS} />
+            {arcs.map((arc) => (
+              <circle
+                key={arc.team}
+                className={classes.arc}
+                data-team={arc.team}
+                cx="24"
+                cy="24"
+                r={RING_RADIUS}
+                stroke={colorOf(arc.team)}
+                strokeDasharray={`${arc.length} ${RING_LENGTH - arc.length}`}
+                strokeDashoffset={-arc.offset}
+              />
+            ))}
+          </g>
+          <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
+          <circle
+            className={clsx(classes.discFill, !discColor && classes.neutral)}
+            cx="24"
+            cy="24"
+            r={DISC_RADIUS}
+            fill={discColor}
+            data-testid="hat-turf-disc-fill"
+          />
         </svg>
-        <span
-          className={clsx(classes.disc, !discColor && classes.neutral)}
-          style={discColor ? { backgroundColor: discColor } : undefined}
-          data-testid="hat-turf-disc"
-        >
+        <span className={classes.disc} data-testid="hat-turf-disc">
           {countInside ? countEl : <HatIcon className={classes.hat} />}
         </span>
       </span>
       {countBeside && countEl}
       {summary.hatted && (
         <span className={classes.lock} data-testid="hat-turf-badge-lock">
-          <IconLock size={12} stroke={2.5} />
+          <IconLock stroke={2.5} />
         </span>
       )}
     </>

@@ -115,7 +115,15 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOri
   ...(await importOriginal<typeof AppealTextHash>()),
   settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
 }));
-const { mockApplyHeldVerdict, mockLeavingPrivate, mockFinishApply } = vi.hoisted(() => ({
+const {
+  mockApplyHeldVerdict,
+  mockLeavingPrivate,
+  mockFinishApply,
+  mockDropLiftedBy,
+  mockHoldLead,
+} = vi.hoisted(() => ({
+  mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
+  mockHoldLead: vi.fn(async (..._args: unknown[]) => undefined),
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
@@ -125,6 +133,8 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal)
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
+  dropLiftedBy: mockDropLiftedBy,
+  holdLeadAfterFlagLift: mockHoldLead,
 }));
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -1038,7 +1048,7 @@ describe('a held scan verdict', () => {
       mockStored({ [flag]: true });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, [flag]: false });
       expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
-      expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+      expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: true });
     }
   );
 
@@ -1048,7 +1058,7 @@ describe('a held scan verdict', () => {
     });
     await upsert({ id: MODEL_ID, userId: OWNER_ID });
     expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
-    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: false });
   });
 
   it('is not retried once applied', async () => {
@@ -1120,5 +1130,78 @@ describe('a held scan verdict on a model leaving Private', () => {
     mockStored({ availability: Availability.Private, sfwOnly: true });
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
     expect(mockLeavingPrivate).not.toHaveBeenCalled();
+  });
+});
+
+describe('ownerDeclaredFlags is server-owned', () => {
+  const STORED = { ownerDeclaredFlags: { at: '2026-11-01T00:00:00.000Z', flags: ['minor'] } };
+
+  it('cannot be added by an owner save', async () => {
+    mockStored({ meta: null });
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { ownerDeclaredFlags: { at: 'x', flags: ['minor'] }, hideBuzz: true } as never,
+    });
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+
+  it('cannot be cleared or changed by an owner or a moderator save', async () => {
+    for (const isModerator of [false, true]) {
+      vi.clearAllMocks();
+      mockStored({ meta: STORED });
+      await upsert({
+        id: MODEL_ID,
+        userId: isModerator ? MODERATOR_ID : OWNER_ID,
+        isModerator,
+        meta: { ownerDeclaredFlags: { at: 'x', flags: [] }, hideBuzz: true } as never,
+      });
+      expect(updateData().meta).toEqual({ ...STORED, hideBuzz: true });
+    }
+  });
+});
+
+describe('who lifted a held lead, on a save', () => {
+  const lifted = {
+    restrictedNsfwVerdict: {
+      source: 'text-scan',
+      at: 'x',
+      restriction: 'minor',
+      liftedBy: 'moderator',
+    },
+  };
+
+  it.each(['minor', 'poi'] as const)(
+    'a save that keeps %s forgets the earlier lift',
+    async (flag) => {
+      mockStored({ [flag]: true, sfwOnly: true, meta: lifted });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, [flag]: true });
+      expect(mockDropLiftedBy.mock.calls.map((c) => c.slice(1))).toEqual([
+        [MODEL_ID, { flagged: true }],
+      ]);
+    }
+  );
+
+  it('leaves the lead alone when no lift is recorded (control)', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true });
+    expect(mockDropLiftedBy).not.toHaveBeenCalled();
+  });
+
+  it.each(['minor', 'poi'] as const)(
+    'a moderator untick of %s is a moderator lift: the lead waits, never applied by the save',
+    async (flag) => {
+      mockStored({ [flag]: true, sfwOnly: true });
+      await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, [flag]: false });
+      expect(mockHoldLead.mock.calls.map((c) => c.slice(1))).toEqual([[MODEL_ID, 'moderator']]);
+      expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: false });
+    }
+  );
+
+  it("the owner's untick is the owner's (control)", async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: false });
+    expect(mockHoldLead).not.toHaveBeenCalled();
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: true });
   });
 });

@@ -267,6 +267,18 @@ describe('Hat Turf on image detail', () => {
     await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
   });
 
+  test('the hat button is a full circle', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    const button = q('hat-turf-detail-hat')!;
+    const b = button.getBoundingClientRect();
+    expect(b.width).toBe(30);
+    expect(b.height).toBe(30);
+    // A rounded square still takes a tap 2px in from its corner; a circle does not.
+    expect(document.elementFromPoint(b.left + 2, b.bottom - 2)?.closest('button')).not.toBe(button);
+    expect(document.elementFromPoint(b.left + 15, b.top + 15)?.closest('button')).toBe(button);
+  });
+
   test('one press drops the active hat as a draft; the check places it from image-detail', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
@@ -441,6 +453,9 @@ describe('Hat Turf on image detail', () => {
     const opacities = new Set([...hats()].map((hat) => getComputedStyle(hat).opacity));
     expect(opacities.size).toBe(1);
     expect(Number([...opacities][0])).toBeLessThan(1);
+    // Faded, not greyed: every team's hat still shows its colour.
+    for (const hat of hats())
+      expect(getComputedStyle(hat).filter).not.toMatch(/grayscale|saturate/);
     // The badge's lock says it; the picture carries no "would take it" pill any more.
     expect(q('hat-turf-badge-lock')).not.toBeNull();
     expect(document.body.textContent).not.toMatch(/would take it/);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 
 /**
  * A moderator's availability toggle is one of the writes that takes a model out of Private, so a
@@ -10,7 +11,8 @@ const { mockLeavingPrivate, mockFinishApply } = vi.hoisted(() => ({
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
 }));
-vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
+vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
 }));
