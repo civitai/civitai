@@ -787,6 +787,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
+        retainedHidden: result.retainedHidden ?? 0,
         requested: commentIds.length + commentV2Ids.length,
       };
     }

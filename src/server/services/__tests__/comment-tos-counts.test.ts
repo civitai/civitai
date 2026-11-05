@@ -53,7 +53,8 @@ describe('bulkSetCommentV2TosViolation', () => {
   });
 });
 
-// A comment already hidden for ToS still has its reports actioned, but its author is not told again.
+// A comment already hidden may be one its author deleted, kept for a hold: its reports are still
+// actioned, but its author must not hear about a comment they removed.
 it('bulkSetCommentV2TosViolation actions an already-hidden comment without telling its author', async () => {
   const { createNotification } = await import('~/server/services/notification.service');
   vi.mocked(createNotification).mockClear();
@@ -72,6 +73,7 @@ it('bulkSetCommentV2TosViolation actions an already-hidden comment without telli
   );
 });
 
+// The legacy twin: an author's own delete keeps a legacy comment hidden for a hold the same way.
 it('bulkSetCommentTosViolation actions and rewards an already-hidden comment without telling its author', async () => {
   const { createNotification } = await import('~/server/services/notification.service');
   const { reportAcceptedReward } = await import('~/server/rewards');

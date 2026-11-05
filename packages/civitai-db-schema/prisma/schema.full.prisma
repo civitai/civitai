@@ -5071,7 +5071,7 @@ model Comment {
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
   pinnedAt     DateTime?
-  /// No longer set; only the reverse copy reads it. Kept until a migration drops it.
+  /// Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
   removedByAuthor Boolean @default(false)
 
   comments  Comment[]         @relation("ParentComments")
@@ -5400,7 +5400,7 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
-  // No longer set; only the reverse copy reads it. Kept until a migration drops it.
+  // Deleted by its author while a legal hold kept it: a ToS restore must not republish it.
   removedByAuthor Boolean @default(false)
 
   reactions CommentV3Reaction[]

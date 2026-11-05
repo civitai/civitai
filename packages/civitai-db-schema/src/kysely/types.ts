@@ -2625,7 +2625,7 @@ export type Comment = {
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
   /**
-   * No longer set; only the reverse copy reads it. Kept until a migration drops it.
+   * Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
    */
   removedByAuthor: Generated<boolean>;
 };

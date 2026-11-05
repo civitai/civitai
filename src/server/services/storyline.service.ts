@@ -35,6 +35,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import {
   accountHoldSql,
   holdMarkerViewExists,
@@ -1124,7 +1125,11 @@ export async function updateStoryline({
   return updated;
 }
 
-/** Every author of a comment on storyline `id`'s threads or CommentV3 topic; recorded in the held copy only. */
+/**
+ * Every author of a comment the delete of storyline `id` reaches: its thread and every thread below
+ * it, and its CommentV3 topic. The `commentId` arm reaches threads the cascade does not delete, so
+ * it can only keep more than needed.
+ */
 function storylineCommentersSql(id: number) {
   return Prisma.sql`WITH RECURSIVE below AS (
       SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
@@ -1179,6 +1184,9 @@ function deleteStorylineStatement(
           WHERE c."storylineId" = ${id} AND ${ownerHeldSql(Prisma.raw('c."userId"'))}
         ) AS author_held,
         EXISTS (
+          SELECT 1 FROM commenters a WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
+        ) AS commenter_held,
+        EXISTS (
           SELECT 1 FROM pending p WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
         ) AS pending_author_held,
         EXISTS (
@@ -1188,12 +1196,13 @@ function deleteStorylineStatement(
     ),
     keep AS MATERIALIZED (
       SELECT (
-          reported OR owner_held OR author_held OR pending_author_held OR tombstoned
+          reported OR owner_held OR author_held OR commenter_held OR pending_author_held OR tombstoned
         ) IS NOT FALSE AS keep,
         array_remove(ARRAY[
           CASE WHEN reported THEN 'open-report' END,
           CASE WHEN owner_held THEN 'owner' END,
           CASE WHEN author_held THEN 'chapter-author' END,
+          CASE WHEN commenter_held THEN 'commenter' END,
           CASE WHEN pending_author_held THEN 'pending-author' END,
           CASE WHEN tombstoned THEN 'tombstone' END
         ], NULL) AS reasons
@@ -1261,7 +1270,8 @@ function deleteStorylineStatement(
     answered_reports AS (
       UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
       WHERE ${asModerator} AND r.id IN (SELECT id FROM open_reports)
-    )
+    ),
+    ${detachHeldThreadsCte({ storylineId: Prisma.sql`SELECT ${id}::int` }, markerView)}
     DELETE FROM "Storyline" WHERE id = ${id}
   `;
 }
@@ -1299,7 +1309,7 @@ export async function deleteStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Read outside the transaction: what `accountHoldSql` needs.
+  // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
   const markerView = await holdMarkerViewExists();
   let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {
