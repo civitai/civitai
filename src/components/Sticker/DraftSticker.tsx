@@ -65,6 +65,13 @@ const NOTE_WIDTH = 220;
 
 const HIDDEN = { visibility: 'hidden' } as const;
 
+const ARROW_STEPS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+
 /** Clear air between the sticker and the chrome, on whichever side it lands. */
 const BUY_BUTTON_GAP = 8;
 
@@ -745,6 +752,17 @@ export function DraftSticker({
           touchAction: 'none',
         }}
         onPointerDown={begin('move')}
+        // The keyboard path to the same move: arrows nudge, Shift for a bigger step.
+        tabIndex={0}
+        aria-label="Sticker position: arrow keys to move"
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 0.05 : 0.01;
+          const delta = ARROW_STEPS[event.key];
+          if (!delta) return;
+          event.preventDefault();
+          // The store clamps to the image.
+          move(draft.id, { x: draft.x + delta[0] * step, y: draft.y + delta[1] * step });
+        }}
       >
         {/* The rotated wrapper's own transform makes it a stacking context, so a
             negative z-index here stays behind the sticker without reaching

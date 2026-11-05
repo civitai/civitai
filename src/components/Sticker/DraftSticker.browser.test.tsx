@@ -1,6 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as CosmeticShopUtil from '~/components/CosmeticShop/cosmetic-shop.util';
@@ -994,5 +994,23 @@ describe('a host-supplied commit replaces every way to pay', () => {
     }
     expect(page.getByRole('radio').elements()).toHaveLength(0);
     expect(placed).toHaveLength(0);
+  });
+});
+
+describe('the keyboard moves a draft like a drag does', () => {
+  test.each([
+    ['{ArrowRight}', 0.01, 0],
+    ['{Shift>}{ArrowUp}{/Shift}', 0, -0.05],
+  ])('%s nudges the stored draft', async (keys, dx, dy) => {
+    useStickerPlacementDraftStore.setState({ drafts: [draft] });
+    await renderDraft(null);
+    const body = page.getByLabelText('Sticker position: arrow keys to move');
+
+    (body.element() as HTMLElement).focus();
+    await userEvent.keyboard(keys);
+
+    const [moved] = useStickerPlacementDraftStore.getState().drafts;
+    expect(moved.x).toBeCloseTo(draft.x + dx, 10);
+    expect(moved.y).toBeCloseTo(draft.y + dy, 10);
   });
 });
