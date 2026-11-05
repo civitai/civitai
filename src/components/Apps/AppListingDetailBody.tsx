@@ -22,12 +22,15 @@ import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
+  IconCategory,
   IconClock,
-  IconDownload,
+  IconCode,
   IconEyeOff,
   IconFlask,
   IconInfoCircle,
+  IconPlayerPlay,
   IconPlugConnected,
+  IconShield,
   IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -45,7 +48,10 @@ import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appList
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { ListingPermissionsDisclosure } from '~/components/Apps/ListingPermissionsDisclosure';
 import { blockScopePermissions } from '~/components/Apps/listingPermissions';
-import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import {
+  buildListingDetailRows,
+  type ListingDetailRow,
+} from '~/components/Apps/appListingDetailRows';
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
@@ -302,7 +308,7 @@ function HeroCover({
 
 /**
  * Header STAT CHIPS — the model page's `IconBadge` + `StatHoverCard` row, over the two
- * public aggregates a listing has: recommendations and installs.
+ * public aggregates a listing shows: recommendations and plays.
  *
  * 🔴 Each chip carries `data-listing-stat="<key>"` AND an `aria-label`. The attribute
  * is what the a11y test asserts on: a chip's visible text is a bare number, which any
@@ -334,7 +340,7 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
 
   const glyph: Record<ListingStatChip['key'], ReactNode> = {
     recommend: <IconThumbUp size={18} />,
-    installs: <IconDownload size={18} />,
+    plays: <IconPlayerPlay size={18} />,
   };
 
   return (
@@ -762,6 +768,32 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
  * `ModelVersionDetails.module.scss`, not copied: two copies of a border colour is
  * exactly how two surfaces stop matching.
  */
+/**
+ * One leading glyph per Details row, dimmed like the model page's details icons. A
+ * `Record` over the row-key union, so a new row key fails to typecheck until it has one.
+ */
+const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
+  kind: IconApps,
+  category: IconCategory,
+  rating: IconShield,
+  source: IconCode,
+  reviews: IconThumbUp,
+  plays: IconPlayerPlay,
+  updated: IconClock,
+};
+
+function DetailRowIcon({ rowKey }: { rowKey: ListingDetailRow['key'] }) {
+  const RowIcon = DETAIL_ROW_ICONS[rowKey];
+  return (
+    <RowIcon
+      size={16}
+      style={{ opacity: 0.5, flexShrink: 0 }}
+      aria-hidden
+      data-listing-detail-icon={rowKey}
+    />
+  );
+}
+
 function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
   const rows = buildListingDetailRows(detail, { preview, formatDate: (iso) => formatDate(iso) });
   return (
@@ -790,7 +822,10 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 className={detailClasses.detailRow}
                 data-listing-detail-row={row.key}
               >
-                <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                <Group gap={6} wrap="nowrap">
+                  <DetailRowIcon rowKey={row.key} />
+                  <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                </Group>
                 {row.href ? (
                   // 🔴 `rel="noopener noreferrer"` is NOT optional on a `target="_blank"`
                   // link to a third-party page. Without `noopener` the opened tab holds a
@@ -902,7 +937,7 @@ export interface AppListingDetailBodyProps {
    *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
-   *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
+   *   - the header STAT CHIPS (recommendations + plays are usage aggregates a
    *     shadow listing structurally does not have — zeros there would read as facts
    *     about the app rather than about the posture),
    *   - the `⋮` overflow MENU and everything in it (owner edit, review, report, and

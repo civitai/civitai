@@ -16,7 +16,12 @@
  *   3. TOP UP WITH POPULAR when the category is thin — several categories hold
  *      only one or two approved listings today, and a rail that renders a single
  *      card reads as broken. Top-ups skip anything already picked.
- *   4. CAP at `limit` (default `RELATED_LISTINGS_LIMIT`).
+ *   4. CAP at `limit` (default `RELATED_LISTINGS_LIMIT`) across both groups.
+ *
+ * 🔴 THE TWO GROUPS ARE KEPT APART, each under its own heading. The top-up is
+ * popular apps from ANY category, so rendering it under "More in <category>" put
+ * other categories' apps under a heading that names this one. The same-category
+ * group keeps that heading; the top-up renders under {@link POPULAR_RAIL_HEADING}.
  *
  * NO new tRPC procedure and NO server schema change: both inputs come from the
  * EXISTING `appListings.listAvailable` (category filter + sort), which the store
@@ -29,36 +34,70 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 /** Rail cap — one row at the store's widest breakpoint, no "load more". */
 export const RELATED_LISTINGS_LIMIT = 6;
 
-export function selectRelatedListings(opts: {
+/** Heading of the top-up group: popular apps from any category. */
+export const POPULAR_RAIL_HEADING = 'Popular apps';
+
+/** One headed group of the rail. */
+export type RelatedRailSection = {
+  /** `category` = same-category apps; `popular` = the any-category top-up. */
+  key: 'category' | 'popular';
+  heading: string;
+  items: ListingCard[];
+};
+
+/**
+ * The rail's groups, in render order, with empty groups dropped.
+ *
+ * The same-category group is headed by {@link relatedRailHeading}; the top-up is headed
+ * {@link POPULAR_RAIL_HEADING}, so no app from another category ever renders under a
+ * heading that names this one. A listing with no category gets only the popular group.
+ */
+export function relatedRailSections(opts: {
   /** The listing being viewed — excluded from the result by id. */
   selfId: string;
+  /** The viewed listing's category, for the same-category group's heading. */
+  category: string | null | undefined;
   /** `listAvailable({ category, sort: 'popular' })` items. Empty when the
    *  listing has no category (the query is not fired). */
   sameCategory?: ListingCard[];
   /** `listAvailable({ sort: 'popular' })` items, used only to top up. */
   popular?: ListingCard[];
   limit?: number;
-}): ListingCard[] {
+}): RelatedRailSection[] {
   const limit = opts.limit ?? RELATED_LISTINGS_LIMIT;
   if (limit <= 0) return [];
 
-  const picked: ListingCard[] = [];
+  let picked = 0;
   const seen = new Set<string>([opts.selfId]);
 
-  // One helper for both passes so the self-exclusion + de-dup can't be applied
-  // to one list and forgotten on the other.
+  // One helper for both groups so the self-exclusion, the de-dup and the shared cap can't
+  // be applied to one list and forgotten on the other.
   const take = (items: ListingCard[] | undefined) => {
+    const out: ListingCard[] = [];
     for (const item of items ?? []) {
-      if (picked.length >= limit) return;
+      if (picked >= limit) break;
       if (!item || seen.has(item.id)) continue;
       seen.add(item.id);
-      picked.push(item);
+      out.push(item);
+      picked++;
     }
+    return out;
   };
 
-  take(opts.sameCategory);
-  take(opts.popular);
-  return picked;
+  const sections: RelatedRailSection[] = [];
+  const sameCategory = opts.category ? take(opts.sameCategory) : [];
+  if (sameCategory.length > 0) {
+    sections.push({
+      key: 'category',
+      heading: relatedRailHeading(opts.category),
+      items: sameCategory,
+    });
+  }
+  const popular = take(opts.popular);
+  if (popular.length > 0) {
+    sections.push({ key: 'popular', heading: POPULAR_RAIL_HEADING, items: popular });
+  }
+  return sections;
 }
 
 /**
@@ -67,7 +106,7 @@ export function selectRelatedListings(opts: {
  * ONLY when it would actually add something (a thin category), not on every
  * detail page view.
  *
- * Mirrors `selectRelatedListings`' self-exclusion, so "5 items, one of which is
+ * Mirrors `relatedRailSections`' self-exclusion, so "5 items, one of which is
  * me" correctly counts as 4.
  */
 export function needsPopularTopUp(opts: {
@@ -114,7 +153,7 @@ export function isRelatedRailLoading(opts: {
 }
 
 /**
- * The rail's HEADING — and its `aria-label`, which is the same string.
+ * The same-category group's HEADING — also the rail's heading while it loads or is empty.
  *
  * 🔴 Lives here, not inline in the component, for this module's stated reason:
  * an expression that renders a user-facing string is testable in the node project once
@@ -125,8 +164,7 @@ export function isRelatedRailLoading(opts: {
  * Null/unknown handling is the rail's own, and deliberately asymmetric with the
  * chip surfaces: a listing with NO category gets the generic "More apps" rather
  * than a heading with a hole in it, while an UNKNOWN category still names itself
- * (via the shared helper's raw fallback), because the rail beneath it really is
- * filtered by that value.
+ * (via the shared helper's raw fallback).
  */
 export function relatedRailHeading(category: string | null | undefined): string {
   if (!category) return 'More apps';

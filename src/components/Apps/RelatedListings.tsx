@@ -1,13 +1,14 @@
 import { Anchor, Center, Grid, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import { IconLayoutGrid } from '@tabler/icons-react';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import {
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
   relatedRailHeading,
-  selectRelatedListings,
+  relatedRailSections,
 } from '~/components/Apps/related-listings';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -29,8 +30,10 @@ import { trpc } from '~/utils/trpc';
  *      (`needsPopularTopUp`), because several categories hold one or two
  *      approved listings today and a one-card rail reads as broken. When the
  *      listing has no category at all, (2) is the only query.
- * Selection (exclude-self, category-then-top-up, cap) lives in the PURE
- * `relatedListings.ts` module so the blocking `unit` gate covers it.
+ * Selection (exclude-self, category-then-top-up, cap) and the headings live in the
+ * PURE `related-listings.ts` module so the blocking `unit` gate covers them. The
+ * top-up renders as its own "Popular apps" group: it is drawn from every category,
+ * so it never sits under the "More in <category>" heading.
  *
  * The "Browse all apps" link is rendered UNCONDITIONALLY — including while the
  * queries load and when the rail resolves to nothing — so the detail page always
@@ -78,15 +81,13 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     { enabled: canSeeStore && wantTopUp }
   );
 
-  const items = selectRelatedListings({
+  const sections = relatedRailSections({
     selfId: listingId,
+    category: categoryFilter ?? null,
     sameCategory,
     popular: onlyListingCards(popularQuery.data?.items ?? []),
   });
 
-  // 🔴 From the PURE module, so the blocking `unit` gate covers the one string on
-  // this surface that a reader actually sees the category in.
-  const heading = relatedRailHeading(category);
   const loading = isRelatedRailLoading({
     hasCategoryFilter: !!categoryFilter,
     categoryPending: categoryQuery.isPending,
@@ -94,30 +95,50 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     popularPending: popularQuery.isPending,
   });
 
-  return (
-    <Stack gap="xs" component="section" aria-label={heading} data-testid="apps-related-rail">
-      <Group justify="space-between" align="center">
-        <Title order={4}>{heading}</Title>
-        {/* Persistent store link — always rendered, even with an empty rail. */}
-        <Anchor component={Link} href={APPS_STORE_HREF} size="sm" data-testid="apps-browse-all">
-          <Group gap={4}>
-            <IconLayoutGrid size={14} />
-            Browse all apps
-          </Group>
-        </Anchor>
-      </Group>
+  // Persistent store link — always rendered, even with an empty rail. It sits beside the
+  // FIRST heading on screen, whichever group that is.
+  const headerRow = (heading: string) => (
+    <Group justify="space-between" align="center">
+      <Title order={4}>{heading}</Title>
+      <Anchor component={Link} href={APPS_STORE_HREF} size="sm" data-testid="apps-browse-all">
+        <Group gap={4}>
+          <IconLayoutGrid size={14} />
+          Browse all apps
+        </Group>
+      </Anchor>
+    </Group>
+  );
 
-      {loading ? (
-        <Center py="md">
-          <Loader size="sm" />
-        </Center>
-      ) : items.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          No other apps to show yet.
-        </Text>
-      ) : (
+  let body: ReactNode;
+  if (loading || sections.length === 0) {
+    body = (
+      <>
+        {/* 🔴 From the PURE module, so the blocking `unit` gate covers the one string on
+            this surface that a reader actually sees the category in. */}
+        {headerRow(relatedRailHeading(category))}
+        {loading ? (
+          <Center py="md">
+            <Loader size="sm" />
+          </Center>
+        ) : (
+          <Text size="sm" c="dimmed">
+            No other apps to show yet.
+          </Text>
+        )}
+      </>
+    );
+  } else {
+    body = sections.map((section, i) => (
+      <Stack
+        key={section.key}
+        gap="xs"
+        component="section"
+        aria-label={section.heading}
+        data-testid={`apps-related-section-${section.key}`}
+      >
+        {i === 0 ? headerRow(section.heading) : <Title order={4}>{section.heading}</Title>}
         <Grid gutter="md">
-          {items.map((card) => (
+          {section.items.map((card) => (
             <Grid.Col
               key={card.id}
               span={{ base: 12, sm: 6, md: 4, lg: 4 }}
@@ -127,7 +148,13 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
             </Grid.Col>
           ))}
         </Grid>
-      )}
+      </Stack>
+    ));
+  }
+
+  return (
+    <Stack gap="lg" component="section" aria-label="Related apps" data-testid="apps-related-rail">
+      {body}
     </Stack>
   );
 }

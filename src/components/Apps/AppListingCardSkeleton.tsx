@@ -37,7 +37,8 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  *
  * 🔴 AND A THIRD: CONTENT VARIANCE, WHICH RUNS IN ONE DIRECTION ONLY. The skeleton
  * reserves the cover, a header row (the icon pulled up over the cover's bottom edge, one
- * title line and the Open button, both centred on the icon's centre) and a bottom-pinned
+ * title line and the Open button, both centred on the icon's centre), the one-line meta
+ * line (category · updated date, which the card always renders) and a bottom-pinned
  * footer (a divider, then the reviews/plays line on the left and the creator on the
  * right). Three axes move a real card off that, all of them UPWARD:
  *   · a conditional tagline (`line-clamp-3`)      → card TALLER
@@ -91,11 +92,10 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * RATHER THAN QUIETLY EDITED. It read "EXACTLY 16 times: 8 cells
  * (`APP_LISTING_SKELETON_SSR_COLUMNS` x `APP_LISTING_SKELETON_ROWS`) x the two meta
  * lines each", against a measurement of `expected 16 to be +0`. There is ONE
- * `MetaLineSkeleton` per cell now (the creator line was deleted with the card's
- * author chip and the rollup line moved below the action row), so the same
- * arithmetic gives 8 x 1 = 8. Nobody has re-run the mutation to observe an
- * `expected 8 to be +0` — the browser tiers do not run on the machine this change
- * was made on — so treat 8 as arithmetic and 16 as the historical measurement.
+ * `MetaLineSkeleton` per cell after the creator line was deleted with the card's
+ * author chip (8 x 1 = 8), and two again since the meta line was added (8 x 2 = 16).
+ * Nobody has re-run the mutation to observe the current count — the browser tiers do
+ * not run on the machine these changes were made on — so treat it as arithmetic.
  * What is NOT derived and does not need re-measuring is the guard itself: the
  * assertion is `toBe(0)`, which is independent of how many instances there are.
  *
@@ -222,6 +222,8 @@ export function AppListingCardSkeleton() {
             data-testid="apps-listing-skeleton-actions"
           />
         </Group>
+        {/* THE META LINE — one `xs` line, as the card's always-rendered category/updated line. */}
+        <MetaLineSkeleton size="xs" widthPct={45} data-testid="apps-listing-skeleton-meta" />
         {/* THE FOOTER — bottom-pinned like the card's: a divider, then the reviews/plays line
             on the left and the creator on the right, at the card's footer height. It is
             reserved unconditionally (the rollup half always renders on a card, and the play

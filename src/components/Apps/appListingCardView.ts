@@ -154,8 +154,19 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  */
 export function getPlayCountLabel(openCount: number | null): string | null {
   // Both arms are absence-on-screen; they are NOT the same fact. See above.
-  if (openCount == null || openCount === 0) return null;
+  if (!hasShownPlayCount(openCount)) return null;
   return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
+}
+
+/**
+ * Does a listing show a play count at all? The ONE rule for every surface that shows plays
+ * (the store card here, the detail page's "Plays" row and stat chip), so they cannot
+ * disagree about the same listing: `null` (off-site, unmeasurable) and `0` show nothing.
+ * A `typeof` test rather than `!= null`, because some `ListingDetail`-shaped producers
+ * reach the detail builders through a cast and can carry `undefined`.
+ */
+export function hasShownPlayCount(openCount: number | null | undefined): openCount is number {
+  return typeof openCount === 'number' && openCount > 0;
 }
 
 /**
