@@ -18,8 +18,11 @@
  *
  * The PR number comes from what gh PRINTED, never from the command: `gh pr create` prints the new
  * PR's URL, and `gh pr ready` prints `Pull request civitai/civitai#<n> is marked as "ready for
- * review"` (on stderr). A command that names the PR but did not open or ready it (it failed, or
- * it is quoted in an echo or a commit message) prints neither, so it fires nothing.
+ * review"` (on stderr). Two of gh's other answers name a PR too, and are excluded by their own
+ * words because nothing just happened: a create refused with `a pull request for branch "…" into
+ * branch "…" already exists:` and the existing PR's URL, and a ready that says the PR `is already
+ * "ready for review"`. A gh command quoted in an echo or a commit message is not a gh segment
+ * (`ghPrMatch`), so it fires nothing whatever was printed.
  */
 
 import { spawnSync } from 'child_process';
@@ -30,30 +33,79 @@ const REPO = 'civitai/civitai';
 const GH_TIMEOUT_MS = 10_000;
 
 /**
- * `'create'` or `'ready'` when a segment of the command runs `gh … pr create|ready`, else null.
- *
- * A token scan, not a regex: it runs on every Bash call, and the pattern it replaced backtracked
- * exponentially on a run of `--flag` tokens. Each segment (split on `; & | ( newline`) may start
- * with `VAR=value` assignments, then `gh`, then flags (a flag without `=` may take one value, as in
- * `-R civitai/civitai`), then `pr` and the subcommand. A segment that does not START with gh (an
- * echo, a commit message) is not running it.
+ * The command split as a shell would split it, as an array of segments, each an array of words:
+ * quotes ('…', "…" with backslash escapes) keep a word whole, and an unquoted `; & | ( )` or newline
+ * ends a segment. One pass, linear in the command's length: this runs on every Bash call, and the
+ * regex it replaced backtracked exponentially on a run of `--flag` tokens. Not a full shell parser:
+ * expansions, `$(…)` and heredocs are read as plain words.
  */
-export function ghPrSubcommand(command) {
-  for (const segment of (command || '').split(/[;&|\n(]/)) {
-    const tokens = segment.trim().split(/\s+/);
+export function shellSegments(command) {
+  const segments = [];
+  let words = [];
+  let word = '';
+  let inWord = false;
+  let quote = '';
+  const endWord = () => {
+    if (inWord) words.push(word);
+    word = '';
+    inWord = false;
+  };
+  const endSegment = () => {
+    endWord();
+    if (words.length) segments.push(words);
+    words = [];
+  };
+  const text = command || '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote === "'") {
+      if (c === "'") quote = '';
+      else word += c;
+    } else if (quote === '"') {
+      if (c === '"') quote = '';
+      else if (c === '\\' && i + 1 < text.length) word += text[++i];
+      else word += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      inWord = true;
+    } else if (c === '\\' && i + 1 < text.length) {
+      word += text[++i];
+      inWord = true;
+    } else if (';&|()\n'.includes(c)) {
+      endSegment();
+    } else if (/\s/.test(c)) {
+      endWord();
+    } else {
+      word += c;
+      inWord = true;
+    }
+  }
+  endSegment();
+  return segments;
+}
+
+/**
+ * `{ sub: 'create' | 'ready', args: <the words after it> }` when a segment of the command runs
+ * `gh … pr create|ready`, else null. A segment may start with `VAR=value` assignments, then `gh`,
+ * then flags (a flag without `=` may take one value, as in `-R civitai/civitai`), then `pr` and the
+ * subcommand. A segment that does not START with gh (an echo, a commit message, `[ -d x ]`) is not
+ * running it.
+ */
+export function ghPrMatch(command) {
+  for (const words of shellSegments(command)) {
     let i = 0;
-    while (i < tokens.length && /^\w+=/.test(tokens[i])) i++;
-    if (tokens[i] !== 'gh') continue;
+    while (i < words.length && /^\w+=/.test(words[i])) i++;
+    if (words[i] !== 'gh') continue;
     let valueAllowed = false;
-    for (i += 1; i < tokens.length; i++) {
-      const token = tokens[i];
-      if (token === 'pr') {
-        const sub = tokens[i + 1];
-        if (sub === 'create' || sub === 'ready') return sub;
+    for (i += 1; i < words.length; i++) {
+      const word = words[i];
+      if (word === 'pr') {
+        const sub = words[i + 1];
+        if (sub === 'create' || sub === 'ready') return { sub, args: words.slice(i + 2) };
         break;
       }
-      if (token.startsWith('-')) {
-        valueAllowed = !token.includes('=');
+      if (word.startsWith('-')) {
+        valueAllowed = !word.includes('=');
       } else if (valueAllowed) {
         valueAllowed = false;
       } else {
@@ -64,23 +116,45 @@ export function ghPrSubcommand(command) {
   return null;
 }
 
+/** `'create'` or `'ready'` (`ghPrMatch`'s subcommand), else null. */
+export function ghPrSubcommand(command) {
+  return ghPrMatch(command)?.sub ?? null;
+}
+
+/**
+ * Whether the create's own words ask for a draft (`-d`, `--draft`, `--draft=true`). Read from the
+ * matched segment only, as whole words: gh prints its "Creating draft pull request" line only to a
+ * terminal, so a tool call's output cannot say.
+ */
+function asksForDraft(args) {
+  return args.some((w) => w === '-d' || w === '--draft' || w === '--draft=true');
+}
+
 // The PR as gh prints it. The owner/name must be EXACTLY civitai/civitai: a fork, or another repo
 // whose name starts with "civitai", is a different repo.
 const CREATED_URL =
   /https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)(?![0-9])/g;
-// Only gh's two success lines. Its other lines name the PR too: "is closed. Only draft pull
-// requests can be marked …" (it failed) and "is converted to \"draft\"" (`--undo`).
+// Only gh's success line. Its other lines name the PR too: "is already \"ready for review\"" (nothing
+// changed), "is closed. Only draft pull requests can be marked …" (it failed) and "is converted to
+// \"draft\"" (`--undo`).
 const READY_REF =
-  /(?<![A-Za-z0-9._/-])([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)#([1-9][0-9]*) is (?:marked as|already) "ready for review"/g;
+  /(?<![A-Za-z0-9._/-])([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)#([1-9][0-9]*) is marked as "ready for review"/g;
+// gh's refusal when the branch already has an open PR (pkg/cmd/pr/create/create.go); it prints that
+// PR's URL after it.
+const ALREADY_EXISTS = /a pull request for branch "[^"\n]*" into branch "[^"\n]*" already exists:/;
 
-/** The text a Bash tool call printed, whatever shape the runtime gives `tool_response`. */
-export function printed(toolResponse) {
-  if (toolResponse == null) return '';
+/**
+ * The text a Bash tool call printed, whatever shape the runtime gives `tool_response`: every string
+ * in it, at any depth (`stdout`, `stderr`, a `content` array of text parts…), one per line. Never a
+ * JSON encoding of it, which would escape the quotes gh's ready line is matched by.
+ */
+export function printed(toolResponse, depth = 0) {
   if (typeof toolResponse === 'string') return toolResponse;
-  const parts = [toolResponse.stdout, toolResponse.output, toolResponse.stderr].filter(
-    (v) => typeof v === 'string'
-  );
-  return parts.length ? parts.join('\n') : JSON.stringify(toolResponse);
+  if (toolResponse == null || typeof toolResponse !== 'object' || depth > 8) return '';
+  return Object.values(toolResponse)
+    .map((v) => printed(v, depth + 1))
+    .filter(Boolean)
+    .join('\n');
 }
 
 function onlyRepoPr(re, text) {
@@ -97,12 +171,14 @@ function onlyRepoPr(re, text) {
  * exactly one civitai/civitai PR, else null.
  */
 export function prEvent(command, toolResponse) {
-  const action = ghPrSubcommand(command);
-  if (!action) return null;
+  const match = ghPrMatch(command);
+  if (!match) return null;
+  const action = match.sub;
   const out = printed(toolResponse);
+  if (action === 'create' && ALREADY_EXISTS.test(out)) return null;
   const pr = onlyRepoPr(action === 'create' ? CREATED_URL : READY_REF, out);
   if (pr === null) return null;
-  const draft = action === 'create' && /(?:^|\s)(?:--draft|-d)(?=\s|$)/.test(command);
+  const draft = action === 'create' && asksForDraft(match.args);
   return { action, pr, draft };
 }
 
