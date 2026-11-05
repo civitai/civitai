@@ -10,6 +10,11 @@
   position: absolute;
 }
 
+/* With Show hats off, the hats a placement revealed leave again. `.placed` carries the transition. */
+.fading .placed {
+  opacity: 0 !important; /* beats .dim and .muted */
+}
+
 /* Above the hats, so they never take its taps. */
 .corner {
   position: absolute;
@@ -84,5 +89,9 @@
 @media (prefers-reduced-motion: reduce) {
   .landed {
     animation: none;
+  }
+
+  .placed {
+    transition: none;
   }
 }

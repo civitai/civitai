@@ -561,6 +561,73 @@ describe('hats on a feed ImageCard', () => {
     expect(actions()).toEqual(['hide_all_hats_on']);
   });
 
+  describe('Show hats off, and the reveal', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const t0 = Date.parse('2026-11-01T00:00:00Z');
+    // Newest first, as the reads return them: 3 went on a day after 2, which went an hour after 1.
+    const timed = () => [
+      { ...sticker(3, 'pink'), createdAt: new Date(t0 + DAY + 3_600_000) },
+      { ...sticker(2, 'pink'), createdAt: new Date(t0 + 3_600_000) },
+      { ...sticker(1, 'blue'), createdAt: new Date(t0) },
+    ];
+    const delayOf = (hat: HTMLElement) => {
+      const wrap = hat.querySelector<HTMLElement>('[class*="appear"]');
+      return wrap ? parseFloat(wrap.style.getPropertyValue('--sticker-delay')) : null;
+    };
+    const ids = () => hats().map((el) => el.dataset.team);
+
+    test('hats on screen at load play no reveal; turning Show hats on plays it', async () => {
+      renderCard({ images: { 77: summary() }, stickers: { 77: timed() } });
+      await vi.waitFor(() => expect(hats().length).toBe(3));
+      expect(hats().map(delayOf)).toEqual([null, null, null]);
+
+      useHatTurfStore.setState({ showHats: false });
+      await vi.waitFor(() => expect(hats().length).toBe(0));
+      useHatTurfStore.setState({ showHats: true });
+      await vi.waitFor(() => expect(hats().length).toBe(3));
+      expect(
+        hats()
+          .map(delayOf)
+          .every((d) => d !== null)
+      ).toBe(true);
+    });
+
+    test('with Show hats off, the hat button reveals every hat, oldest first, within 1.5s', async () => {
+      useHatTurfStore.setState({ showHats: false });
+      renderCard({ images: { 77: summary() }, stickers: { 77: timed() } });
+      await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(hats()).toHaveLength(0);
+
+      await press();
+      await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
+      await vi.waitFor(() => expect(hats()).toHaveLength(3));
+      expect(ids()).toEqual(['pink', 'pink', 'blue']);
+      const [d3, d2, d1] = hats().map(delayOf) as number[];
+      expect(d1).toBe(0);
+      expect(d2).toBeGreaterThan(d1);
+      // A day's gap runs longer than an hour's, and the whole reveal stays inside 1.5s.
+      expect(d3 - d2).toBeGreaterThan(d2 - d1);
+      expect(d3).toBeLessThanOrEqual(1500);
+    });
+
+    test('when placing ends with Show hats off, the hats stay about 2s, then go', async () => {
+      useHatTurfStore.setState({ showHats: false });
+      renderCard({ images: { 77: summary() }, stickers: { 77: timed() } });
+      await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+      await press();
+      await vi.waitFor(() => expect(hats()).toHaveLength(3));
+
+      (document.body.querySelector('[aria-label="Remove this sticker"]') as HTMLElement).click();
+      await vi.waitFor(() => expect(q('hat-turf-draft')).toBeNull());
+      const ended = performance.now();
+      // Read at once, not awaited: the linger ends by itself.
+      expect(hats()).toHaveLength(3);
+      await vi.waitFor(() => expect(hats()).toHaveLength(0), { timeout: 5000 });
+      expect(performance.now() - ended).toBeGreaterThanOrEqual(2000);
+    });
+  });
+
   test('tells the provider the card is on screen, and stops when it leaves', async () => {
     const stop = vi.fn();
     const watch = vi.fn(() => stop);
