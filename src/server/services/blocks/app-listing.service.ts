@@ -10,7 +10,6 @@ import {
   storeVisibleListingRowGate,
   type MatureRatingsAllowed,
 } from '~/server/services/blocks/app-listing-store-gate';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import type {
@@ -1913,19 +1912,19 @@ export async function getStoreVisibleListingSummary(
     scope?: StoreVisibilityScope;
     floor?: ListingAudienceFloor;
     /**
-     * The viewer's browsing level, for r/x listings. OMITTED means the host gate only — the
-     * pre-existing behaviour, kept for the fork flows (starting a fork, and the forks list's
-     * parent check), which are not narrowed by the level. The public detail page's "Forked
-     * from …" line passes the viewer's level.
+     * The viewer's browsing level, for r/x listings. REQUIRED (nullable; `null`/`undefined` read
+     * as PG) so no caller gets a silent "host gate only" default. Every caller is a public
+     * surface — the detail page's "Forked from …" line, the fork list's parent check, starting a
+     * fork — and passes the viewer's own level.
      */
-    viewerBrowsingLevel?: number | null;
+    viewerBrowsingLevel: number | null | undefined;
   }
 ): Promise<{ id: string; slug: string; name: string } | null> {
   const gated = await loadStoreVisibleListingRow(input, {
     redCapable: opts.redCapable,
     scope: opts.scope,
     floor: opts.floor ?? 'public',
-    browsingLevel: 'viewerBrowsingLevel' in opts ? opts.viewerBrowsingLevel : allBrowsingLevelsFlag,
+    browsingLevel: opts.viewerBrowsingLevel,
   });
   if (!gated) return null;
   return { id: gated.row.id, slug: gated.row.slug, name: gated.row.name };

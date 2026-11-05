@@ -2236,12 +2236,14 @@ export const appListingsRouter = router({
       const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
       if (scope === 'none') return null;
       const redCapable = isRedCapableRequest(ctx);
+      // An R/X parent or fork is visible only to a viewer whose browsing level includes it.
+      const viewerBrowsingLevel = getRequestBrowsingLevel(ctx);
       const { getStoreVisibleListingSummary } = await import(
         '~/server/services/blocks/app-listing.service'
       );
       const parent = await getStoreVisibleListingSummary(
         { id: input.listingId },
-        { redCapable, scope, floor }
+        { redCapable, scope, floor, viewerBrowsingLevel }
       );
       if (!parent) return null;
       const [{ listListingForks }, { dbRead }] = await Promise.all([
@@ -2255,6 +2257,7 @@ export const appListingsRouter = router({
         scope,
         floor,
         redCapable,
+        viewerBrowsingLevel,
       });
     }),
 
@@ -2276,6 +2279,9 @@ export const appListingsRouter = router({
         listingId: input.listingId,
         scope,
         redCapable: isRedCapableRequest(ctx),
+        // Any signed-in viewer may fork a publicly visible listing, so "visible" includes their
+        // own browsing level for an R/X parent.
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
         req: ctx.req,
       });
     }),

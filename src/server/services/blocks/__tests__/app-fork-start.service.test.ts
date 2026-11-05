@@ -310,6 +310,7 @@ const start = (over: Partial<Parameters<typeof startAppFork>[0]> = {}) =>
     listingId: PARENT_LISTING,
     scope: 'full',
     redCapable: false,
+    viewerBrowsingLevel: undefined,
     ...over,
   });
 
@@ -357,7 +358,7 @@ describe('startAppFork — refusals (exact errors)', () => {
     // Everything else about this parent would pass: the visibility check is the only refusal.
     m.summary.mockResolvedValue(null);
     await expect(
-      start({ scope: 'full', redCapable: true, viewerBrowsingLevel: 13 } as never)
+      start({ scope: 'full', redCapable: true, viewerBrowsingLevel: 13 })
     ).rejects.toMatchObject({
       code: 'NOT_FOUND',
       message: FORK_PARENT_UNAVAILABLE_MESSAGE,
