@@ -496,8 +496,8 @@ describe('Hat Turf on image detail', () => {
     const canvas = [128, 160];
     const bounds = [24, 40, 104, 150];
     h.stickers = [
-      { ...sticker(1, 'blue', 0.3, 0.3), art: { url: 'fitted-art', canvas, bounds } },
-      { ...sticker(2, 'blue', 0.6, 0.6), art: { url: 'unfitted-art' } },
+      { ...sticker(1, 'blue', 0.3, 0.3), art: { url: 'cap-art', canvas, bounds } },
+      { ...sticker(2, 'blue', 0.6, 0.6), art: { url: 'beanie-art' } },
     ];
     render({}, 900);
     await vi.waitFor(() => expect(hats().length).toBe(2));
@@ -508,7 +508,7 @@ describe('Hat Turf on image detail', () => {
       return [box.getBoundingClientRect(), box.querySelector('img')!.getBoundingClientRect()];
     };
 
-    const [square, img] = rects('fitted-art');
+    const [square, img] = rects('cap-art');
     const [cw, ch] = canvas;
     const [l, t, r, b] = bounds;
     const visible = {
@@ -524,7 +524,7 @@ describe('Hat Turf on image detail', () => {
     const side = Math.sqrt((visible.right - visible.left) * (visible.bottom - visible.top));
     expect(side / square.width).toBeCloseTo(0.62, 2);
 
-    const [plainSquare, plainImg] = rects('unfitted-art');
+    const [plainSquare, plainImg] = rects('beanie-art');
     expect(plainImg.width / plainSquare.width).toBeCloseTo(0.8, 2);
     expect(plainImg.height / plainSquare.height).toBeCloseTo(1, 2);
     expect((plainImg.left - plainSquare.left) / plainSquare.width).toBeCloseTo(0.1, 2);
