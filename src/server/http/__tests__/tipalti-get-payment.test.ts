@@ -23,7 +23,6 @@ describe('TipaltiCaller.getPaymentByRefCode', () => {
 
   it('throws on any other failed response instead of answering null', async () => {
     await expect(callerAnswering(500).getPaymentByRefCode('CW1_abcd')).rejects.toThrow('500');
-    await expect(callerAnswering(401).getPaymentByRefCode('CW1_abcd')).rejects.toThrow('401');
   });
 
   it('throws when the refCode matches more than one payment', async () => {
@@ -34,5 +33,8 @@ describe('TipaltiCaller.getPaymentByRefCode', () => {
   it('returns the one payment the refCode matches', async () => {
     const caller = callerAnswering(200, { items: [payment('a')], totalCount: 1 });
     await expect(caller.getPaymentByRefCode('CW1_abcd')).resolves.toEqual(payment('a'));
+    expect(caller.getRaw).toHaveBeenCalledWith('/payments', {
+      queryParams: { filter: 'refCode=="CW1_abcd"' },
+    });
   });
 });

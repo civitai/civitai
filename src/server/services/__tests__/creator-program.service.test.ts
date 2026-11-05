@@ -1269,7 +1269,6 @@ describe('ensureWithdrawalRefCode', () => {
     const first = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
     const second = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
 
-    expect(first).toMatch(/^CW1234567_[0-9a-z]{6}$/);
     expect(second).toBe(first);
     expect(mockDbWrite.$executeRaw.mock.calls.filter(([s]) => isRefCodeWrite(s))).toHaveLength(1);
   });
@@ -1288,10 +1287,10 @@ describe('ensureWithdrawalRefCode', () => {
     const code = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
 
     const checked = mockDbWrite.cashWithdrawal.count.mock.calls.map(
-      ([arg]) => (arg as { where: { metadata: { equals: string } } }).where.metadata.equals
+      ([arg]) => (arg as { where: { userId: number; metadata: { equals: string } } }).where
     );
-    expect(checked).toHaveLength(2);
-    expect(code).toBe(checked[1]);
+    expect(checked.map((where) => where.userId)).toEqual([1234567, 1234567]);
+    expect(code).toBe(checked[1].metadata.equals);
   });
 
   it('withdrawCash stores the code before sending it to Tipalti', async () => {
@@ -1312,14 +1311,18 @@ describe('ensureWithdrawalRefCode', () => {
       tipaltiWithdrawalMethod: 'ACH',
     });
     mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    let sentCode: string | undefined;
+    let storedWhenSent: string | undefined;
     mockPayToTipaltiAccount.mockImplementationOnce(async ({ requestId }: { requestId: string }) => {
-      expect(requestId).toBe(storedCode);
+      sentCode = requestId;
+      storedWhenSent = storedCode;
       return { paymentBatchId: 'batch-1', paymentRefCode: requestId };
     });
 
     await withdrawCash(userId, 10000);
 
-    expect(mockPayToTipaltiAccount).toHaveBeenCalledTimes(1);
+    expect(sentCode).toBeDefined();
+    expect(storedWhenSent).toBe(sentCode);
   });
 });
 

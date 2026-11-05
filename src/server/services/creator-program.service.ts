@@ -849,15 +849,23 @@ export async function ensureWithdrawalRefCode(withdrawalId: string, userId: numb
  * embedded. Refuses (throws) when more than one row matches, rather than guessing.
  */
 export async function findCashWithdrawalByRefCode(refCode: string) {
-  const { userId, idPart } = parseRefCodeToWithdrawalId(refCode);
-  // FailedFee rows copy their parent's metadata, refCode included; they are never the payment.
-  const scope = { userId, status: { not: CashWithdrawalStatus.FailedFee } };
+  // Only the userId is needed for the exact match, so legacy codes the strict parser rejects
+  // (e.g. `CW<uid>:<id>`) still match the code stored for them.
+  const userId = Number(/^CW(\d+)/.exec(refCode)?.[1]);
+  if (!userId) throw new Error(`Invalid withdrawal ref code: ${refCode}`);
+  // FailedFee rows copy their parent's metadata, refCode included, and Reclaimed rows are
+  // moderator adjustments; neither was ever sent to Tipalti, and both refund if updated.
+  const scope = {
+    userId,
+    status: { notIn: [CashWithdrawalStatus.FailedFee, CashWithdrawalStatus.Reclaimed] },
+  };
 
   let candidates = await dbWrite.cashWithdrawal.findMany({
     where: { ...scope, metadata: { path: ['paymentRefCode'], equals: refCode } },
   });
 
   if (!candidates.length) {
+    const { idPart } = parseRefCodeToWithdrawalId(refCode);
     // A row that stored a different code was sent under that code, so it cannot be this payment.
     candidates = (
       await dbWrite.cashWithdrawal.findMany({ where: { ...scope, id: { startsWith: idPart } } })

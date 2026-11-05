@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 
@@ -30,11 +30,16 @@ type Row = { id: string; userId: number; status: string; metadata: Record<string
 let rows: Row[] = [];
 
 // A small in-memory stand-in for the CashWithdrawal table, covering the where shapes the
-// webhook uses: userId, id.startsWith, status.not and a metadata JSON path equals.
+// webhook uses. It throws on any other key, so a query it cannot interpret fails loudly
+// instead of matching everything.
+const KNOWN_KEYS = new Set(['userId', 'id', 'status', 'metadata']);
 const matches = (row: Row, where: Record<string, any>) => {
+  const unknown = Object.keys(where).filter((key) => !KNOWN_KEYS.has(key));
+  if (unknown.length) throw new Error(`fake cashWithdrawal cannot filter on ${unknown}`);
   if (where.userId !== undefined && row.userId !== where.userId) return false;
   if (where.id?.startsWith !== undefined && !row.id.startsWith(where.id.startsWith)) return false;
   if (where.status?.not !== undefined && row.status === where.status.not) return false;
+  if (where.status?.notIn !== undefined && where.status.notIn.includes(row.status)) return false;
   if (where.metadata?.path) {
     const value = where.metadata.path.reduce((acc: any, key: string) => acc?.[key], row.metadata);
     if (value !== where.metadata.equals) return false;
@@ -73,6 +78,11 @@ const run = async (eventData: Record<string, unknown>, type = 'paymentCompleted'
   return res;
 };
 
+const refusals = () =>
+  loggingMock.logToAxiom.mock.calls
+    .map(([entry]) => entry as { name?: string; candidateIds?: string[] })
+    .filter((entry) => entry.name === 'tipalti-refcode-ambiguous');
+
 const updatedIds = () =>
   updateCashWithdrawal.mock.calls.map(
     (call) => (call as unknown as [{ withdrawalId: string }])[0].withdrawalId
@@ -83,6 +93,7 @@ beforeEach(() => {
   validateWebhookEvent.mockReset().mockReturnValue({ isValid: true });
   setEnv({ TIPALTI_WEBTOKEN_SECRET: 'secret' });
   rows = [];
+  // findFirst is what main used; kept so this file reproduces the wrong-row update against it.
   dbMock.dbWrite.cashWithdrawal.findFirst.mockImplementation(
     async ({ where }: { where: Record<string, any> }) => rows.find((r) => matches(r, where)) ?? null
   );
@@ -114,6 +125,7 @@ describe('tipalti webhook: cash withdrawal refCode matching', () => {
 
     expect(updatedIds()).toEqual([]);
     expect(res._status()).toBe(400);
+    expect(refusals().map((r) => r.candidateIds)).toEqual([['cm7o3qaaaa0000', 'cm7o3qbbbb0000']]);
   });
 
   it('updates the withdrawal whose stored refCode is the one Tipalti sent', async () => {
@@ -160,5 +172,50 @@ describe('tipalti webhook: cash withdrawal refCode matching', () => {
     const res = await run({ refCode: legacyCode, paymentStatus: 'Paid' });
     expect(updatedIds()).toEqual([]);
     expect(res._status()).toBe(400);
+    expect(refusals()).toHaveLength(1);
+  });
+
+  it('never falls back to a row that stored a different code', async () => {
+    rows = [
+      {
+        id: 'cm7o3qaaaa0000',
+        userId,
+        status: 'InternalValue',
+        metadata: { paymentRefCode: `CW${userId}_zz9zz` },
+      },
+    ];
+
+    const res = await run({ refCode: legacyCode, paymentStatus: 'Paid' });
+
+    expect(updatedIds()).toEqual([]);
+    expect(res._status()).toBe(400);
+    expect(refusals()).toEqual([]);
+  });
+
+  it('never refunds a Reclaimed moderator adjustment through the fallback', async () => {
+    rows = [
+      { id: 'cm7o3qaaaa0000', userId, status: 'Reclaimed', metadata: { modUserId: 1 } },
+      { id: 'cm7o3qbbbb0000', userId, status: 'InternalValue', metadata: {} },
+    ];
+
+    await run({ refCode: legacyCode, paymentStatus: 'Canceled' }, 'paymentCanceled');
+
+    expect(updatedIds()).toEqual(['cm7o3qbbbb0000']);
+  });
+
+  it('matches a stored legacy code the strict parser rejects', async () => {
+    const colonCode = `CW${userId}:cm7o3q`;
+    rows = [
+      {
+        id: 'cm7o3qaaaa0000',
+        userId,
+        status: 'InternalValue',
+        metadata: { paymentRefCode: colonCode },
+      },
+    ];
+
+    await run({ refCode: colonCode, paymentStatus: 'Paid' });
+
+    expect(updatedIds()).toEqual(['cm7o3qaaaa0000']);
   });
 });
