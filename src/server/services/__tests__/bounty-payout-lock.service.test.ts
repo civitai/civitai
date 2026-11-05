@@ -172,6 +172,7 @@ const snapshotRows = (): Rows =>
 /** `locked.rows` is what the transaction saw once it held the row lock, to roll back to. */
 function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
   return {
+    // The comment-thread detach ahead of a delete; nothing here has threads.
     $executeRaw: async () => 0,
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');

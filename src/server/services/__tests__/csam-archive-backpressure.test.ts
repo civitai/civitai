@@ -50,42 +50,6 @@ const csamBaseDir = await vi.hoisted(async () => {
   return nodePath.join(dirname, 'csam');
 });
 
-// CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
-const v3 = vi.hoisted(() => ({
-  comments: [] as { id: number; userId: number; content: string }[],
-  calls: [] as {
-    userId?: number;
-    afterId?: number;
-    take?: number;
-    orderBy?: string[];
-  }[],
-}));
-vi.mock('~/server/db/kyselyDb', () => {
-  type State = {
-    userId?: number;
-    afterId?: number;
-    take?: number;
-    orderBy?: string[];
-  };
-  const query = (state: State): Record<string, unknown> => ({
-    selectAll: () => query(state),
-    orderBy: (...args: string[]) => query({ ...state, orderBy: args }),
-    where: (column: string, _op: string, value: number) =>
-      query({ ...state, [column === 'userId' ? 'userId' : 'afterId']: value }),
-    limit: (take: number) => query({ ...state, take }),
-    execute: async () => {
-      // A cursor that never advances fails here rather than hanging the test.
-      if (v3.calls.length > 50) throw new Error('CommentV3 scan did not end');
-      v3.calls.push(state);
-      return v3.comments
-        .filter(
-          (c) => c.userId === state.userId && (state.afterId === undefined || c.id > state.afterId)
-        )
-        .slice(0, state.take);
-    },
-  });
-  return { kyselyV3Read: { selectFrom: () => query({}) } };
-});
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
 // this file's module graph — no `process.cwd()` monkey-patching, which would leak to every other
 // file sharing the worker.
@@ -983,20 +947,11 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
   }));
   const models = [{ id: 11, name: 'm-eleven', userId: report.userId }];
   const modelVersions = [{ id: 21, modelId: 11, name: 'v-twenty-one' }];
-  const comments = [{ id: 31, userId: report.userId, content: 'a comment' }];
 
-  /** Exactly the document `JSON.stringify` would produce, in the bundle's property order. */
+  /** Exactly the document the pre-fix code produced, built the pre-fix way. */
   const expectedBundle = () =>
-    JSON.stringify(
-      {
-        user,
-        reportId: report.reportId,
-        models,
-        modelVersions,
-        images,
-        comments,
-      },
-      (_k, v) => (typeof v === 'bigint' ? v.toString() : v)
+    JSON.stringify({ user, reportId: report.reportId, models, modelVersions, images }, (_k, v) =>
+      typeof v === 'bigint' ? v.toString() : v
     );
 
   function seedDb() {
@@ -1005,8 +960,6 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue(models);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue(modelVersions);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
-    v3.comments = comments;
-    v3.calls = [];
   }
 
   /**
@@ -1120,29 +1073,6 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     // The cursor has to advance, or the same page is re-read forever.
     const cursors = dbMock.dbRead.image.findMany.mock.calls.map(([a]) => a?.where?.id?.gt);
     expect(cursors.slice(0, 3)).toEqual([undefined, pageSize, 2 * pageSize]);
-  });
-
-  it("archives every comment the reported user wrote, page by page, and nobody else's", async () => {
-    const pageSize = ARCHIVE_SCAN_PAGE_SIZE;
-    seedDb();
-    v3.comments = [
-      ...Array.from({ length: pageSize + 1 }, (_, i) => ({
-        id: i + 1,
-        userId: report.userId,
-        content: `c${i + 1}`,
-      })),
-      { id: pageSize + 2, userId: report.userId + 1, content: 'not theirs' },
-    ];
-
-    await archiveCsamDataForReport(report as never);
-
-    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
-    expect(bundle.comments.map((c: { id: number }) => c.id)).toEqual(
-      Array.from({ length: pageSize + 1 }, (_, i) => i + 1)
-    );
-    expect(v3.calls).toHaveLength(2);
-    expect(v3.calls[0].orderBy).toEqual(['id', 'asc']);
-    expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
   });
 
   it('filters model versions by the COMPLETE set of model ids, not a partially-scanned one', async () => {

@@ -44,7 +44,8 @@ const deleteAs = async (row: { userId: number; tosViolation: boolean } | null) =
 
 beforeEach(() => vi.clearAllMocks());
 
-// A comment hidden for ToS answers its author exactly as one that is gone.
+// An author's own delete keeps a comment for a hold by hiding it for ToS: to them it must answer
+// exactly as a comment that is gone.
 describe("the comment owner gate on an author's own comment", () => {
   it('refuses one hidden for ToS exactly as one that is gone', async () => {
     const gone = await deleteAs(null);

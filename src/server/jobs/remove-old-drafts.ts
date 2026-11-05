@@ -4,6 +4,11 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  modelThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { modelDataHeldSql } from '~/server/services/legal-hold.service';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
@@ -240,7 +245,9 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
           SELECT m.id FROM "Model" m
           WHERE m.id = ANY(${deletable})
             AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+            AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         ),
+        ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT id FROM doomed`), true)},
         ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m
         WHERE m.id IN (SELECT id FROM doomed)

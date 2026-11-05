@@ -73,8 +73,11 @@
       // A short count means some ids did not take, and the endpoints report how many rather than which.
       // Marking all of them would fabricate the difference: on a delete, rows that still exist vanish;
       // on a ToS op, comments that were never flagged wear the badge. Mark nothing, say so, reload.
+      const kept = typeof data?.retainedHidden === 'number' ? data.retainedHidden : 0;
       if (affected < acted.length) {
-        partial = `${affected} of ${acted.length} went through — reload to see which.`;
+        partial = kept
+          ? `${affected} of ${acted.length} deleted, ${kept} kept hidden for review — reload to see which.`
+          : `${affected} of ${acted.length} went through — reload to see which.`;
         return;
       }
       partial = null;
