@@ -22,7 +22,10 @@ type FakeWorkflow = {
   allowMatureContent?: boolean;
   externalId?: string;
   createdAt: string;
-  steps: { output?: { images: { url: string; available?: boolean; nsfwLevel?: string }[] } }[];
+  steps: {
+    $type?: string;
+    output?: Record<string, { url: string; available?: boolean; nsfwLevel?: string }[]>;
+  }[];
   cost: { total: number };
 };
 
@@ -347,15 +350,16 @@ const submits = () => h.workflows;
 const whatIfs = () =>
   h.submitWorkflow.mock.calls.filter(([args]) => (args as { query?: object }).query);
 
+/** Lands a workflow's outputs in the shape the orchestrator returns for its graph. */
 function finish(workflowId: string, urls: string[], nsfwLevel: Record<string, string> = {}) {
   const workflow = h.workflows.find((w) => w.id === workflowId)!;
   workflow.status = 'succeeded';
+  const blobs = urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] }));
   workflow.steps = [
-    {
-      output: {
-        images: urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] })),
-      },
-    },
+    // img2img:upscale runs as a comfy step, whose output is `blobs`, not `images`.
+    workflow.tags.includes('img2img:upscale')
+      ? { $type: 'comfy', output: { blobs: blobs.map((b) => ({ ...b, type: 'image' })) } }
+      : { $type: 'imageGen', output: { images: blobs } },
   ];
 }
 
@@ -613,7 +617,9 @@ describe('remix app runs', () => {
 
   it('a step with no usable output ends the run as failed', async () => {
     const runId = await runToPick('nonce-0012');
-    submits()[0].steps = [{ output: { images: [{ url: blob('gone'), available: false }] } }];
+    submits()[0].steps = [
+      { $type: 'imageGen', output: { images: [{ url: blob('gone'), available: false }] } },
+    ];
     await expect(
       advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() })
     ).resolves.toMatchObject({ status: 'failed', reason: 'This step has no usable output.' });
@@ -888,7 +894,7 @@ describe('posting a finished run', () => {
       status: 'succeeded',
       tags: ['gen'],
       createdAt: new Date().toISOString(),
-      steps: [{ output: { images: [{ url: blob('plain') }] } }],
+      steps: [{ $type: 'imageGen', output: { images: [{ url: blob('plain') }] } }],
       cost: { total: 0 },
     });
 
@@ -1021,6 +1027,50 @@ describe('Pick of four', () => {
     expect(verifyProvenance(second.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID]);
     expect(verifyProvenance(second.metadata?.provenance, USER_ID)).toEqual(
       verifyProvenance(first.metadata?.provenance, USER_ID)
+    );
+  });
+
+  it('ends an upscaled pick done and postable, from the comfy step the upscale graph returns', async () => {
+    const { runId } = await atFinish('nonce-p4-upscaled');
+    await advanceRemixRun({
+      runId,
+      answers: [2, 'upscale'],
+      quote: h.upscalePrice,
+      caller: caller(),
+    });
+    const upscale = submits()[1];
+    const upscaled = blob('upscaled');
+    upscale.status = 'succeeded';
+    // As the orchestrator returns img2img:upscale: one comfy step, its image under `blobs`.
+    upscale.steps = [
+      {
+        $type: 'comfy',
+        name: '0',
+        status: 'succeeded',
+        output: {
+          blobs: [
+            {
+              type: 'image',
+              id: 'upscaled.jpeg',
+              available: true,
+              url: upscaled,
+              nsfwLevel: 'pg',
+              width: 2048,
+              height: 2048,
+            },
+          ],
+        },
+      } as (typeof upscale.steps)[number],
+    ];
+
+    const state = await advanceRemixRun({ runId, caller: caller() });
+
+    expect(state).toMatchObject({ status: 'done', outputs: [{ url: upscaled }] });
+    await postRemixResult({ runId, caller: caller(), ctx: {} as never });
+    expect(h.headlessPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [expect.objectContaining({ workflowId: upscale.id, url: upscaled })],
+      })
     );
   });
 

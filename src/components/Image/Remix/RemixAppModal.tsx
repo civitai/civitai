@@ -271,6 +271,11 @@ export function RemixAppModalContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase.kind, trackedFinished, retryTick]);
 
+  /** A tap that submitted a step collapses into the tray, which holds the run until it needs you. */
+  function toTray(state: RemixRunState) {
+    if (state.status === 'running') onClose();
+  }
+
   function runOffer(cost: number) {
     if (imageId == null) return;
     const input = { slug: app.slug, imageId, nonce };
@@ -282,6 +287,7 @@ export function RemixAppModalContent({
           onSuccess: (state) => {
             started();
             apply(state);
+            toTray(state);
           },
           onError,
         }
@@ -291,6 +297,7 @@ export function RemixAppModalContent({
         onSuccess: ({ workflowId }) => {
           started();
           setPhase({ kind: 'running', workflowId: workflowId as string });
+          onClose();
         },
         onError,
       });
@@ -305,8 +312,11 @@ export function RemixAppModalContent({
       { runId: phase.runId, answers, quote },
       {
         onSuccess: (state) => {
-          if (quote) refetchQueue();
           apply(state, answers);
+          if (quote) {
+            refetchQueue();
+            toTray(state);
+          }
         },
         onError,
       }
@@ -322,6 +332,7 @@ export function RemixAppModalContent({
         onSuccess: (state) => {
           refetchQueue();
           apply(state, answers);
+          toTray(state);
         },
         onError,
       }
@@ -391,8 +402,8 @@ export function RemixAppModalContent({
       {phase.kind === 'offer' && (
         <div className="flex flex-col gap-3">
           <Text size="sm">
-            Runs {app.name} on this image and adds the result to your queue. You can close this
-            while it runs.
+            Runs {app.name} on this image and adds the result to your queue. It runs in the tray, so
+            you can keep browsing.
           </Text>
           {offer.refusal && (
             <Text size="sm" c="dimmed">

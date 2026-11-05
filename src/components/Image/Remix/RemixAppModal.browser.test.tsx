@@ -132,7 +132,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 
 import { getQueryKey } from '@trpc/react-query';
+import { useState } from 'react';
 import { RemixAppModalContent } from '~/components/Image/Remix/RemixAppModal';
+import { RemixTray } from '~/components/Image/Remix/RemixTray';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
 import { queryClient, trpc } from '~/utils/trpc';
 
@@ -160,6 +162,7 @@ async function setStatus(id: string, status: string) {
 
 const runButton = () => page.getByRole('button', { name: /^Run/ });
 const onClose = vi.fn();
+const closeToTray = () => page.getByRole('button', { name: 'Close to tray' });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -188,6 +191,9 @@ async function finishedRun() {
     <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
   );
   await runButton().click();
+  // Run closed it to the tray; from here it plays as the modal reopened from there.
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  onClose.mockClear();
   await setStatus('wf-0', 'succeeded');
   await expect.element(page.getByTestId('remix-result-line')).toBeVisible();
   return screen;
@@ -212,6 +218,31 @@ describe('RemixAppModal', () => {
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     expect(h.start.mock.calls[0][0]).toMatchObject({ slug: 'anime-it', imageId: 5, quote: 25 });
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
+  });
+
+  test('Run collapses the modal into the tray, which shows the run in progress', async () => {
+    function ModalOverTray() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          {open && (
+            <RemixAppModalContent app={animeIt} imageId={5} onClose={() => setOpen(false)} />
+          )}
+          <RemixTray />
+        </>
+      );
+    }
+    await renderWithProviders(<ModalOverTray />);
+    // POSITIVE CONTROL: before Run, the modal is up and the tray has nothing to show.
+    await expect.element(closeToTray()).toBeVisible();
+    expect(document.querySelector('[data-testid="remix-tray-in-progress"]')).toBeNull();
+
+    await runButton().click();
+
+    await expect.element(page.getByTestId('remix-tray-in-progress')).toHaveTextContent('1');
+    // The modal is gone, not left showing its running step.
+    await expect.element(closeToTray()).not.toBeInTheDocument();
+    expect(h.start).toHaveBeenCalledTimes(1);
   });
 
   test('a team remix is held while it is quoting, and its run sends no team', async () => {
@@ -366,11 +397,13 @@ describe('RemixAppModal', () => {
     await page.getByRole('button', { name: 'Cool' }).click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
     expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['cool'] });
+    // A free answer stays in the modal to show the next step's price.
+    expect(onClose).not.toHaveBeenCalled();
 
     await page.getByRole('button', { name: /^Continue/ }).click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(3));
     expect(h.advance.mock.calls[2][0]).toEqual({ runId: RUN, answers: ['cool'], quote: 30 });
-    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   test('a pick leaves out a take the viewer may not see, and the rest keep their index', async () => {
@@ -437,7 +470,7 @@ describe('RemixAppModal', () => {
     await upscale.click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
     expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['upscale'], quote: 12 });
-    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   test('⋯ Dismiss adds remix:dismissed to the run and closes', async () => {

@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { NsfwLevel, Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
-import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  bustQueriedWorkflowsCache,
+  normalizeStepOutput,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import {
   submitPresetImageGen,
   whatIfPresetImageGen,
@@ -154,25 +157,22 @@ function runSourceId(segments: Segment[]) {
 
 type RunImage = RemixImage & { nsfwLevel?: NsfwLevel };
 
+/** Read through the generator queue's normalizer: an upscale is a comfy step that returns `blobs`, not `images`. */
 function outputImages(workflow: Workflow): RunImage[] {
-  return (workflow.steps ?? []).flatMap((step) => {
-    const images = ((step as { output?: { images?: unknown[] } }).output?.images ?? []) as {
-      url?: string | null;
-      width?: number | null;
-      height?: number | null;
-      available?: boolean | null;
-      blockedReason?: string | null;
-      nsfwLevel?: NsfwLevel;
-    }[];
-    return images
-      .filter((image) => image.url && image.available !== false && !image.blockedReason)
-      .map(({ url, width, height, nsfwLevel }) => ({
-        url: url as string,
-        width: width ?? undefined,
-        height: height ?? undefined,
-        nsfwLevel,
-      }));
-  });
+  return (workflow.steps ?? [])
+    .flatMap((step) => normalizeStepOutput(step as Parameters<typeof normalizeStepOutput>[0]))
+    .flatMap((blob) =>
+      blob.type === 'image' && blob.url && blob.available !== false && !blob.blockedReason
+        ? [
+            {
+              url: blob.url,
+              width: blob.width ?? undefined,
+              height: blob.height ?? undefined,
+              nsfwLevel: blob.nsfwLevel,
+            },
+          ]
+        : []
+    );
 }
 
 type Gate = 'shown' | 'hidden' | 'unrated';
