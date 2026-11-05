@@ -307,9 +307,19 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
-  { path: '/knights-of-new-order', label: 'Knights of New Order Review' },
-  { path: '/knights-of-new-order/inquisitor', label: 'Knights of New Order Inquisitor Queue' },
-  { path: '/knights-of-new-order/trials', label: 'Knights of New Order Trials' },
+  // /knights-of-new-order must keep this path: existing stored grants are keyed on it.
+  {
+    label: 'Knights of New Order',
+    children: [
+      {
+        path: '/knights-of-new-order/inquisitor',
+        label: 'Inquisitor',
+        countKey: 'knightsInquisitor',
+      },
+      { path: '/knights-of-new-order/trials', label: 'Trials' },
+      { path: '/knights-of-new-order', label: 'Linked accounts', countKey: 'knightsLinkReviews' },
+    ],
+  },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];

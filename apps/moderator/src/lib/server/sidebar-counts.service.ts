@@ -35,6 +35,8 @@ import {
   type MinorQueueCounts,
 } from './minor-hash.service';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
+import { countInquisitorQueue } from './knights/inquisitor.service';
+import { countPendingLinkReviews } from './knights/link-review.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -130,6 +132,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     csamTextHolds,
     siteAppeals,
     evidenceHoldsEnding,
+    knightsInquisitor,
+    knightsLinkReviews,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -181,6 +185,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
+    bounded(countInquisitorQueue),
+    bounded(countPendingLinkReviews),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -195,6 +201,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
     stuckIngestion,
     ingestionErrors,
+    knightsInquisitor,
+    knightsLinkReviews,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);

@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import {
   castVote,
@@ -15,7 +16,7 @@ import {
   type QueueDeps,
 } from './queue.service';
 
-const Q = 'knights.image.nsfwLevel';
+const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
 const getFeed: typeof serveFeed = (db, userId, options = {}) =>
   serveFeed(db, userId, { random: () => 0.99, ...options });
@@ -457,7 +458,11 @@ describe('resolution', () => {
     const answers = ['1', '2', '4', '8'];
     for (let i = 0; i < 4; i++) await vote(20 + i, id, answers[i]);
 
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', minRank: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      questionKey: Q,
+    });
     expect((await itemRow(id)).expiresAt).toBeNull();
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -469,7 +474,11 @@ describe('resolution', () => {
     const id = await item(10);
     for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
 
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      resolvedValue: null,
+      questionKey: Q,
+    });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
   });
@@ -488,7 +497,11 @@ describe('resolution', () => {
     const id = await item(10);
     for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
 
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      resolvedValue: null,
+      questionKey: Q,
+    });
     expect(applyConsensus).not.toHaveBeenCalled();
   });
 
