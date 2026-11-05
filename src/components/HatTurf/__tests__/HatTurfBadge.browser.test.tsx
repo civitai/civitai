@@ -219,19 +219,16 @@ describe('Hat Turf badge on a feed ImageCard', () => {
   };
   const centre = (r: DOMRect) => [r.left + r.width / 2, r.top + r.height / 2];
 
-  test('the count sits centred over a hat drawn in a darker shade of the disc', async () => {
+  test('one digit sits centred in the disc, with no hat behind it', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { count, disc } = parts();
+    expect(disc.contains(count)).toBe(true);
     const [cx, cy] = centre(count!.getBoundingClientRect());
     const [dx, dy] = centre(disc.getBoundingClientRect());
     expect(Math.abs(cx - dx)).toBeLessThanOrEqual(1.5);
     expect(Math.abs(cy - dy)).toBeLessThanOrEqual(2);
-    expect(getComputedStyle(count!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
-    const hat = disc.querySelector('svg')!;
-    const hatColor = getComputedStyle(hat).color;
-    expect(hatColor).not.toBe('rgb(255, 255, 255)');
-    expect(hatColor).not.toBe(getComputedStyle(disc).backgroundColor);
+    expect(disc.querySelector('svg')).toBeNull();
   });
 
   test('no dot on the ring, even where the viewer’s own team has an arc', async () => {
@@ -252,11 +249,11 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(count!.textContent).toBe('6');
     expect(getComputedStyle(disc).backgroundColor).toBe(arc('pink'));
     expect(el.getAttribute('aria-label')).toContain('A pink hat protects this image');
-    // The lock takes the bottom-right corner.
+    // The lock sits beside the dial, in the badge's chip.
     const lock = el.querySelector('[data-testid="hat-turf-badge-lock"]')!.getBoundingClientRect();
-    const box = el.getBoundingClientRect();
-    expect(lock.right).toBeGreaterThan(box.right - 4);
-    expect(lock.bottom).toBeGreaterThan(box.bottom - 4);
+    expect(disc.contains(el.querySelector('[data-testid="hat-turf-badge-lock"]'))).toBe(false);
+    expect(lock.left).toBeGreaterThanOrEqual(disc.getBoundingClientRect().right);
+    expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
   });
 
   test('an unprotected image fills the disc with the leader', async () => {
@@ -387,16 +384,25 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(badge()!.querySelector('[data-testid="hat-turf-count"]')).toBeNull();
   });
 
-  test('large counts still fit the disc', async () => {
+  test.each([
+    [42, '42'],
+    [1240, '1.2k'],
+  ])('%s: the count moves beside the dial and the hat takes the disc', async (lead, shown) => {
     renderCard({
-      feed: feedWith({ 1: standing({ counted: { blue: 1240, pink: 980 }, leader: 'blue' }) }),
+      feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
     });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const count = badge()!.querySelector('[data-testid="hat-turf-count"]') as HTMLElement;
-    const disc = count.parentElement!;
-    expect(count.getBoundingClientRect().width).toBeLessThanOrEqual(
-      disc.getBoundingClientRect().width
+    const { el, count, disc } = parts();
+    expect(count!.textContent).toBe(shown);
+    expect(disc.contains(count)).toBe(false);
+    expect(count!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      disc.getBoundingClientRect().right
     );
+    expect(disc.querySelector('svg')).not.toBeNull();
+    expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    // Still inside a phone card.
+    const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+    expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
   });
 
   test('the count pops when it changes after being seen, not when it first arrives', async () => {
