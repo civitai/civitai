@@ -3763,6 +3763,32 @@ function rulesOnNsfw(
   return lockChanged || (next.nsfw !== undefined && next.nsfw !== stored?.nsfw);
 }
 
+/**
+ * A moderator's untick of a text-scan POI flag drops the nsfw/sfwOnly locks that flag added, as the
+ * appeal grant does: the form sends back the locks it loaded, which would otherwise outlive the flag.
+ * A lock on a value the save leaves restrictive (SFW-only, or nsfw on) is the moderator's and stays.
+ */
+function withoutPoiFlagLocks(
+  stored: ContentFlags & { lockedProperties: string[]; meta: ModelMeta | null },
+  after: ContentFlags,
+  locks: string[]
+) {
+  const prevLocks = stored.meta?.textScanFlags?.poi?.prev?.lockedProperties;
+  if (!stored.poi || after.poi || after.minor || !prevLocks) return locks;
+  const reasserted = (prop: string) => (prop === 'sfwOnly' ? after.sfwOnly : after.nsfw);
+  return locks.filter(
+    (prop) =>
+      !SFW_ONLY_LOCKED_PROPERTIES.includes(prop) ||
+      !stored.lockedProperties.includes(prop) ||
+      prevLocks.includes(prop) ||
+      reasserted(prop)
+  );
+}
+
+function liftsSfwOnlyLock(stored: string[] | null | undefined, next: string[] | undefined) {
+  return next !== undefined && (stored ?? []).includes('sfwOnly') && !next.includes('sfwOnly');
+}
+
 function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
   const { [SYSTEM_NSFW_LOCK_META_KEY]: _marker, ...rest } = meta;
   return rest;
@@ -4264,6 +4290,8 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
+        if (isModerator && locked && flags && data.lockedProperties)
+          data.lockedProperties = withoutPoiFlagLocks(locked, flags, data.lockedProperties);
         if (isModerator && rulesOnNsfw(locked, data)) {
           mergedMeta = withoutSystemNsfwLock(mergedMeta);
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
@@ -4439,6 +4467,8 @@ export const upsertModel = async (
           await heldVerdict.dropLiftedBy(tx, updated.id, { flagged: true });
         else if (isModerator && (locked?.minor || locked?.poi) && !updated.minor && !updated.poi)
           await heldVerdict.holdLeadAfterFlagLift(tx, updated.id, 'moderator');
+        if (isModerator && liftsSfwOnlyLock(locked?.lockedProperties, data.lockedProperties))
+          await heldVerdict.holdLeadAfterSfwOnlyLift(tx, updated.id);
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
           data.availability &&
