@@ -7,7 +7,7 @@ import { spendableOf } from '../conversion/balance';
 import { markForfeited, releaseReservation, settleConversion } from '../conversion/convert';
 import { heldSql } from '../conversion/held';
 import { rankIndex } from '../ranks';
-import { PENDING_PURCHASE_RETRY_AFTER_MS } from './config';
+import { PENDING_PURCHASE_ALERT_ATTEMPTS, PENDING_PURCHASE_RETRY_AFTER_MS } from './config';
 import { holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { hasActiveMembership } from './inventory';
@@ -294,11 +294,12 @@ async function settleMembership(
     gold: purchase.gold,
   };
   const { tier } = purchase.grant as { tier: string };
-  await db
+  const { attempts } = await db
     .updateTable('KnightsShopPurchase')
     .set({ lastAttemptAt: utc(now), attempts: sql<number>`"attempts" + 1` })
     .where('id', '=', purchase.id)
-    .execute();
+    .returning('attempts')
+    .executeTakeFirstOrThrow();
   try {
     await mainApp.grantMembership({
       userId: purchase.playerId,
@@ -316,11 +317,16 @@ async function settleMembership(
       });
       return { status: 'failed', purchaseId: purchase.id, forfeited };
     }
+    const stuck =
+      attempts >= PENDING_PURCHASE_ALERT_ATTEMPTS &&
+      attempts % PENDING_PURCHASE_ALERT_ATTEMPTS === 0;
     await log?.({
-      type: 'warning',
-      name: 'knights-shop-membership-unconfirmed',
-      details: { purchaseId: purchase.id, error: String(error) },
-      message: 'The main app did not confirm a membership purchase; it will be retried',
+      type: stuck ? 'error' : 'warning',
+      name: stuck ? 'knights-shop-membership-stuck' : 'knights-shop-membership-unconfirmed',
+      details: { purchaseId: purchase.id, attempts, error: String(error) },
+      message: stuck
+        ? 'A membership purchase is still unconfirmed after many tries; its gold stays reserved because the grant may have happened'
+        : 'The main app did not confirm a membership purchase; it will be retried',
     });
     return { status: 'pending', ...base };
   }

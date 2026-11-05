@@ -662,6 +662,37 @@ describe('a membership month', () => {
     expect(await player()).toMatchObject({ goldEarned: 0, goldConverted: 0 });
   });
 
+  it('raises an error after many unconfirmed tries but keeps the gold reserved', async () => {
+    await buy('member-silver', {
+      deps: defaultDeps({ mainApp: fakeMainApp({ down: true }).port }),
+    });
+    const log = vi.fn();
+    const retry = (attempts: number) =>
+      pg
+        .query(`UPDATE "KnightsShopPurchase" SET "attempts" = $1, "lastAttemptAt" = NULL`, [
+          attempts,
+        ])
+        .then(() =>
+          retryPendingPurchases(db, fakeMainApp({ down: true }).port, {
+            now: new Date(NOW.getTime() + 5 * 60_000),
+            log,
+          })
+        );
+
+    await retry(5);
+    expect(log.mock.calls.map(([event]) => event.name)).toEqual([
+      'knights-shop-membership-unconfirmed',
+    ]);
+
+    log.mockClear();
+    await retry(29);
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'knights-shop-membership-stuck' })
+    );
+    expect((await purchases())[0].status).toBe('pending');
+    expect(await player()).toMatchObject({ goldConverted: 12000 });
+  });
+
   it("leaves a held player's pending purchase alone until the hold clears", async () => {
     const mainApp = fakeMainApp({ failFirst: true });
     await buy('member-silver', { deps: defaultDeps({ mainApp: mainApp.port }) });

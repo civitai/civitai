@@ -1,13 +1,9 @@
 import { env } from '$env/dynamic/private';
 import { MAIN_APP_TIMEOUT_MS } from './config';
 
-/** The main app answered 409: it refused this request for good, and a retry would be refused again. */
+/** The main app answered a 4xx other than 408 and 429: it refused this request for good, and a retry would be refused again. */
 export class MainAppRejectedError extends Error {
-  constructor(
-    readonly status: number,
-    readonly reason: string,
-    readonly detail = ''
-  ) {
+  constructor(readonly status: number, readonly reason: string, readonly detail = '') {
     super(`The main app refused the request: ${status} ${reason}`);
     this.name = 'MainAppRejectedError';
   }
@@ -30,6 +26,9 @@ export type MainAppPort = {
 
 const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
+/** 408 and 429 say "try later", not "no". */
+const TRANSIENT_CLIENT_ERRORS = new Set([408, 429]);
+
 type Fetch = typeof fetch;
 
 export function mainAppPort(
@@ -45,9 +44,8 @@ export function mainAppPort(
     });
     const answer = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) {
-      // Only a 409 is the endpoint's own final answer. Any other status (a 401 from a mismatched token, a 404 from a deploy
-      // that went out of order) says nothing about whether an earlier try was granted, so it stays retryable.
-      if (res.status === 409) {
+      // A 5xx or a timeout says nothing about whether an earlier try was granted, so it stays retryable.
+      if (res.status >= 400 && res.status < 500 && !TRANSIENT_CLIENT_ERRORS.has(res.status)) {
         throw new MainAppRejectedError(
           res.status,
           String(answer?.reason ?? ''),

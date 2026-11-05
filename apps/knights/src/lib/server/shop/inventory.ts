@@ -14,7 +14,8 @@ export type InventoryItem = {
   imageKey: string | null;
 };
 
-export type MembershipStatus = { tier: string; endsAt: Date } | null;
+/** `tier` is null when the live subscription's product names none: the membership still blocks another month. */
+export type MembershipStatus = { tier: string | null; endsAt: Date } | null;
 
 const RANK_BADGE_IDS = Object.values(RANK_BADGE_COSMETICS);
 
@@ -100,7 +101,7 @@ export async function membershipOf(
     .select(['cs.currentPeriodEnd', sql<string | null>`p."metadata" ->> 'tier'`.as('tier')])
     .orderBy('cs.currentPeriodEnd', 'desc')
     .executeTakeFirst();
-  return row?.tier ? { tier: row.tier, endsAt: row.currentPeriodEnd } : null;
+  return row ? { tier: row.tier, endsAt: row.currentPeriodEnd } : null;
 }
 
 /** The main app stays the authority; this only spares the player a round trip. */
@@ -109,8 +110,7 @@ export async function hasActiveMembership(
   playerId: number,
   now: Date
 ): Promise<boolean> {
-  const row = await liveMembershipRows(db, playerId, now).select('cs.id').executeTakeFirst();
-  return row !== undefined;
+  return (await membershipOf(db, playerId, now)) !== null;
 }
 
 export async function recentPurchases(db: Kysely<DB>, playerId: number, limit = 8) {

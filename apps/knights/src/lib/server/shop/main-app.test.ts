@@ -18,7 +18,7 @@ describe('the main app port', () => {
     expect(JSON.parse(String(init.body))).toEqual(grant);
   });
 
-  it('treats a 4xx as a refusal for good, carrying the reason and the wording', async () => {
+  it('treats a 409 as a refusal for good, carrying the reason and the wording', async () => {
     const error = await port(answer(409, { error: 'queue is full', reason: 'queue-full' }) as never)
       .grantMembership(grant)
       .catch((e) => e);
@@ -31,17 +31,23 @@ describe('the main app port', () => {
     ]);
   });
 
-  it.each([400, 401, 404, 408, 429, 500, 502])(
-    'treats a %s as unknown, to retry',
-    async (status) => {
-      const error = await port(answer(status, {}) as never)
-        .grantMembership(grant)
-        .catch((e) => e);
+  it.each([400, 401, 404, 422])('treats a %s as a refusal for good', async (status) => {
+    const error = await port(answer(status, {}) as never)
+      .grantMembership(grant)
+      .catch((e) => e);
 
-      expect(error).toBeInstanceOf(Error);
-      expect(error).not.toBeInstanceOf(MainAppRejectedError);
-    }
-  );
+    expect(error).toBeInstanceOf(MainAppRejectedError);
+    expect(error.status).toBe(status);
+  });
+
+  it.each([408, 429, 500, 502])('treats a %s as unknown, to retry', async (status) => {
+    const error = await port(answer(status, {}) as never)
+      .grantMembership(grant)
+      .catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(MainAppRejectedError);
+  });
 
   it('refuses an outcome it does not know instead of calling the grant done', async () => {
     await expect(
