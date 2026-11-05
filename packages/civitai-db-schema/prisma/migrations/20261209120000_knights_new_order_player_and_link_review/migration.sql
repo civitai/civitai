@@ -1,10 +1,14 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Apply BEFORE deploying: the grant job reads the payout-block columns and the detection job writes the review table.
+-- Main-app tables, read and written by the main app, the moderator app and Knights. Apply BEFORE deploying any of them; deploy the main app no later than Knights
+-- (a reset on the previous main app does not zero "goldEarned").
 ALTER TABLE "NewOrderPlayer"
   ADD COLUMN IF NOT EXISTS "payoutBlockedAt" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "payoutBlockReason" TEXT,
   ADD COLUMN IF NOT EXISTS "payoutBlockedBy" INTEGER,
-  ADD COLUMN IF NOT EXISTS "payoutReleaseFrom" TIMESTAMP(3);
+  ADD COLUMN IF NOT EXISTS "payoutReleaseFrom" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "goldPending" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "goldEarned" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "goldConverted" INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS "NewOrderLinkReview" (
   "id" SERIAL PRIMARY KEY,

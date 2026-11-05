@@ -259,7 +259,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ServiceOffering.sellerAffirmation`: `20261202120000_service_offering_seller_affirmation`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
-    //   the four `NewOrderPlayer.payout*` columns: `20261209120000_knights_payout_block_and_link_review`
+    //   the four `NewOrderPlayer.payout*` columns: `20261209120000_knights_new_order_player_and_link_review`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',

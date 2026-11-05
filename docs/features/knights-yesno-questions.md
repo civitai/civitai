@@ -3,8 +3,8 @@
 Plain yes or no questions about one image, answered by Knights and above beside the rating votes. They exist to collect human
 answers for a decision model. They are first-class votes: an answer is graded against the majority exactly as a rating vote is graded
 against its consensus. Nothing is written back to the image, and a yes/no answer never issues a smite (only hidden checks do).
-Code is in `apps/knights/src/lib/server/yesno`; migration `20261221120000_knights_v2_yesno` (applied by hand, after
-`20261211120000_knights_v2_sources` because it rebuilds that migration's open-item index, and before the app build and the import).
+Code is in `apps/knights/src/lib/server/yesno`; migration `20261210120000_knights_v2_tables` (applied by hand, before the app build and the import; it creates the
+open-item index with the `"audience" IS NULL` predicate that exempts yes/no questions).
 
 ## Storage
 

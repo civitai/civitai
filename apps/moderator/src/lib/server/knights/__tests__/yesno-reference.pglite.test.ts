@@ -77,15 +77,9 @@ beforeAll(async () => {
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER
     );`);
-  for (const name of [
-    '20261210120000_knights_v2_queue',
-    '20261212120000_knights_v2_trials',
-    '20261224120000_knights_v2_yesno_reference',
-    '20261225120000_knights_v2_apprenticeship',
-    '20261229120000_knights_v2_answer_snapshot',
-  ]) {
-    await db.exec(readFileSync(path.join(MIGRATIONS, name, 'migration.sql'), 'utf8'));
-  }
+  await db.exec(
+    readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
+  );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 

@@ -91,9 +91,7 @@ beforeAll(async () => {
     "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
     "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
   );`);
-  await db.exec(migration('20261210120000_knights_v2_queue'));
-  await db.exec(migration('20261211120000_knights_v2_sources'));
-  await db.exec(migration('20261227120000_knights_v2_block_reason'));
+  await db.exec(migration('20261210120000_knights_v2_tables'));
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
