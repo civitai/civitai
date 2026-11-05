@@ -20,6 +20,7 @@ import type {
   VIEW_TYPES,
 } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
+import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import type { ReportEntity } from '~/shared/utils/report-helpers';
 import dayjs from '~/shared/utils/dayjs';
@@ -228,6 +229,17 @@ export type CommentType =
   | 'Review'
   | 'Bounty'
   | 'BountyEntry';
+/**
+ * The `comments.type` a new top-level comment on each CommentV3 entity type is tracked as; a reply is
+ * `Comment`, and an entity type without an entry is not tracked.
+ */
+export const commentTrackTypes: Partial<Record<CommentEntityType, CommentType>> = {
+  post: 'Post',
+  image: 'Image',
+  review: 'Review',
+  bounty: 'Bounty',
+  bountyEntry: 'BountyEntry',
+};
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags' | 'Delete';
 export type ImageActivityType =

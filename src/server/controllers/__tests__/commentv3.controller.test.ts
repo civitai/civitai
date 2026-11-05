@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CommentV2Controller from '~/server/controllers/commentv2.controller';
 import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as ReadService from '~/server/services/commentv3/read.service';
+import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type * as UserService from '~/server/services/user.service';
 
@@ -25,11 +25,17 @@ vi.mock('~/server/services/commentv3/read.service', async (importOriginal) => ({
   ...read,
 }));
 
-const gate = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('~/server/controllers/commentv2.controller', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentV2Controller>()),
-  assertCommentEntityVisible: gate,
-}));
+const gate = vi.hoisted(() => vi.fn(async (_entity: unknown, _ctx: unknown) => undefined));
+vi.mock('~/server/services/commentv3/surfaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof Surfaces>();
+  return {
+    ...actual,
+    commentSurface: (entityType: string) => ({
+      ...actual.commentSurface(entityType),
+      assertVisible: (entityId: number, ctx: unknown) => gate({ entityType, entityId }, ctx),
+    }),
+  };
+});
 
 const prefs = vi.hoisted(() => ({
   hidden: [] as number[],
@@ -112,10 +118,7 @@ describe('getReplies and getThread take the entity from the stored comment', () 
       ctx: ctxFor({ id: 2 }),
       input: { parentId: 5, sort: 'Oldest' } as never,
     });
-    expect(gate).toHaveBeenCalledWith(
-      { entityType: 'image', entityId: 7, path: '5' },
-      expect.anything()
-    );
+    expect(gate).toHaveBeenCalledWith({ entityType: 'image', entityId: 7 }, expect.anything());
   });
 
   it('is not found when the comment does not exist, or the read finds nothing to show', async () => {

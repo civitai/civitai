@@ -7,11 +7,7 @@ import {
   isFliptSync,
 } from '~/server/flipt/client';
 import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
-import {
-  applyShellPrivateHeaders,
-  SHELL_CDN_CACHE_CONTROL_HEADER,
-  shellBuildId,
-} from '~/server/shell/shell-response';
+import { applyShellPrivateHeaders } from '~/server/shell/shell-response';
 import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
 import { getRegion, isRegionBlocked, isRegionRestricted } from '~/server/utils/region-blocking';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
@@ -21,48 +17,36 @@ import {
   BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
   BOT_CACHE_REQ_KEY,
 } from '~/shared/constants/bot-cache.constants';
+import type {
+  BotCacheRouteName,
+  BotCacheRoutePattern,
+} from '~/server/bot-cache/bot-cache-routes';
+import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
 
 /**
- * Bot HTML edge cache: whether a verified crawler's full page render may be stored by the edge and
- * served to other crawlers. The render is the anonymous one, made viewer-independent by `_app`
- * (no region, a per-URL seed, no `verifiedBot`), so only request facts that are part of the
- * edge's cache key, or that the edge rule also requires, may decide it.
+ * Bot HTML cache: whether a verified crawler's full page render may be stored by the origin cache
+ * (`~/server/bot-cache/bot-cache-origin`) and served to other crawlers. The render is the anonymous
+ * one, made viewer-independent by `_app` (no region, a per-URL seed, no `verifiedBot`), so only
+ * request facts that are part of the cache key, or that this predicate requires of every request
+ * it serves, may decide it.
+ *
+ * The response carries no edge-cache directive: the edge cannot scope a cache to verified
+ * crawlers, and a shared copy of this render served to people would skip their consent banner.
  *
  * Green (civitai.com) only: on a mature-capable host a verified bot's render carries content an
  * anonymous viewer does not get, so it cannot be shared.
  */
 
-export const BOT_CACHE_ROUTES = {
-  '/models/[id]/[[...slug]]': 'models',
-  '/images/[imageId]': 'images',
-  '/posts/[postId]/[[...postSlug]]': 'posts',
-  '/articles/[id]/[[...slug]]': 'articles',
-  // The profile and its public tabs. Not `manage-categories` (owner only) or `shop/manage`.
-  '/user/[username]': 'user',
-  '/user/[username]/[list]': 'user',
-  '/user/[username]/3d-models': 'user',
-  '/user/[username]/achievements': 'user',
-  '/user/[username]/articles': 'user',
-  '/user/[username]/collections': 'user',
-  '/user/[username]/comics': 'user',
-  '/user/[username]/images': 'user',
-  '/user/[username]/models': 'user',
-  '/user/[username]/posts': 'user',
-  '/user/[username]/shop': 'user',
-  '/user/[username]/sticker-book': 'user',
-  '/user/[username]/storylines': 'user',
-  '/user/[username]/videos': 'user',
-} as const;
-
-export type BotCacheRoutePattern = keyof typeof BOT_CACHE_ROUTES;
-export type BotCacheRouteName = (typeof BOT_CACHE_ROUTES)[BotCacheRoutePattern];
+export { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
+export type {
+  BotCacheRouteName,
+  BotCacheRoutePattern,
+} from '~/server/bot-cache/bot-cache-routes';
 
 /** Set by the edge on a verified crawler's request, to `CF_VERIFIED_BOT_HEADER_SECRET`. */
 export const CF_VERIFIED_BOT_HEADER = 'x-civ-cf-verified-bot';
 
-export const BOT_CACHE_CDN_CACHE_CONTROL = 'public, max-age=300';
-
-/** Why a request is not answered with an edge-cacheable render. See `botCacheRefusal`. */
+/** Why a request is not answered with a cacheable render. See `botCacheRefusal`. */
 export type BotCacheRefusal =
   | 'method'
   | 'route'
@@ -103,6 +87,7 @@ function isGreenOnlyHost(host: string | undefined) {
 
 function carriesTokenParam(req: BotCacheRequest) {
   const queryString = (req.url ?? '').split('?')[1];
+  // `has`, not the shared helper alone: that treats an empty `?token=` as absent; this refuses it.
   if (queryString && new URLSearchParams(queryString).has('token')) return true;
   return requestCarriesQueryToken(req as never);
 }
@@ -112,7 +97,7 @@ function headerValue(raw: string | string[] | undefined) {
 }
 
 /**
- * The first reason `req` must not get an edge-cacheable render, or `null` when it may. `pathname`
+ * The first reason `req` must not get a cacheable render, or `null` when it may. `pathname`
  * is the page pattern Next rendered (`ctx.pathname`). `degraded`: the settings bootstrap failed, so
  * the render is not the one a healthy request gets and must not be stored.
  */
@@ -166,7 +151,7 @@ export function botCacheSeed(url: string | undefined): number {
   return hash;
 }
 
-/** Why a rendered response does not get the edge-cache headers. See `botCacheResponseRefusal`. */
+/** Why a rendered response may not be cached. See `botCacheResponseRefusal`. */
 export type BotCacheResponseRefusal = 'not-eligible' | 'prefetch-failed' | 'status';
 
 type MarkedRequest = {
@@ -175,8 +160,8 @@ type MarkedRequest = {
 };
 
 /**
- * After the page rendered (`_document.getInitialProps`): `null` when the response gets the edge-cache
- * headers. Needs `_app`'s mark for THIS page pattern — a `notFound` or a throw re-renders as `/404`
+ * After the page rendered (`_document.getInitialProps`): `null` when the response may be cached.
+ * Needs `_app`'s mark for THIS page pattern — a `notFound` or a throw re-renders as `/404`
  * or `/_error`, which never matches — no failed prefetch (the page would be stored without its
  * data), and a 200.
  */
@@ -194,25 +179,10 @@ export function botCacheResponseRefusal(
 }
 
 /**
- * Tags a future purge could target: every bot-cached page, one route's, or one build's. No purge
- * exists yet.
+ * A cacheable render is private to browsers and other caches (`private, no-store`) and sets no
+ * cookie, since a stored Set-Cookie would be handed to every crawler. No edge-cache directive: see
+ * the note at the top of this file.
  */
-export function botCacheTag(route: BotCacheRouteName) {
-  return `botcache,botcache-${route},build-${shellBuildId()}`;
-}
-
-/**
- * Edge-cacheable for the edge only: browsers and other caches still get `private, no-store`, and no
- * cookie leaves, since a stored Set-Cookie would be handed to every crawler. Set only once the page
- * has rendered; `_app` strips these headers on every run (see `SHELL_EDGE_HEADERS`), so a render
- * that throws re-renders `/_error` without them.
- *
- * 🔴 The edge must store AND serve these copies only for verified-crawler requests on
- * civitai.com: a rule that makes these paths cacheable for every request would hand the crawler
- * render to people, signed-in users and visitors who need the consent banner included.
- */
-export function applyBotCacheEdgeHeaders(res: ServerResponse, route: BotCacheRouteName) {
+export function applyBotCachePrivateHeaders(res: ServerResponse) {
   applyShellPrivateHeaders(res);
-  res.setHeader(SHELL_CDN_CACHE_CONTROL_HEADER, BOT_CACHE_CDN_CACHE_CONTROL);
-  res.setHeader('Cache-Tag', botCacheTag(route));
 }

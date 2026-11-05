@@ -156,16 +156,30 @@ export const LISTING_BAYES_PRIOR = 10;
 // 1 * SCALE = 1_000_000 → 7 digits; pad to 9 for headroom (matches AppBlock).
 const BAYES_SCORE_SCALE = 1_000_000;
 const BAYES_SCORE_PAD = 9;
-const INSTALL_PAD = 20; // matches the `popular` sort's install-count padding
+// Count padding for the `popular` key (and the `top-rated` tie-break that reuses it).
+// 20 digits covers any non-negative 64-bit count.
+const COUNT_PAD = 20;
 
 /** Neutral fallback recommend rate when the store has no reviews yet (dark/empty). */
 const DEFAULT_RECOMMEND_MEAN = 0.5;
 
 // ---------------------------------------------------------------------------
-// Keyset cursor (opaque base64url of `sortKey␟id[␟mean]`). Mirrors block-registry.
+// Keyset cursor (opaque base64url of `version␟sortKey␟id[␟mean]`). Mirrors block-registry.
 // ---------------------------------------------------------------------------
 
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
+
+/**
+ * The sort-key ENCODING version a cursor was minted under. The cursor carries the RAW
+ * sort key, and comparing it against a key of a different shape (another width or
+ * component order) positions the page wrongly: rows are skipped or repeated. Bump this
+ * whenever any `listingSortKeyExpr` / `subListingSortKeyExpr` key changes shape.
+ *
+ * A cursor of any other version — including the un-versioned cursors minted before this
+ * field existed — decodes as "no cursor" and pages from the start, which is the safe
+ * outcome while two versions serve the store side by side during a rollout.
+ */
+export const LISTING_CURSOR_VERSION = 'v2';
 
 /**
  * Encode a keyset cursor. The `top-rated` sort PINS the global recommend mean
@@ -174,11 +188,9 @@ const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
  * mid-pagination and the keyset boundary would silently skip/duplicate a row.
  */
 export function encodeListingCursor(sortKey: string, id: string, pinnedMean?: number): string {
-  const body =
-    pinnedMean == null
-      ? `${sortKey}${CURSOR_SEPARATOR}${id}`
-      : `${sortKey}${CURSOR_SEPARATOR}${id}${CURSOR_SEPARATOR}${pinnedMean}`;
-  return Buffer.from(body, 'utf8').toString('base64url');
+  const fields = [LISTING_CURSOR_VERSION, sortKey, id];
+  if (pinnedMean != null) fields.push(String(pinnedMean));
+  return Buffer.from(fields.join(CURSOR_SEPARATOR), 'utf8').toString('base64url');
 }
 
 export function decodeListingCursor(cursor: string | undefined): {
@@ -188,12 +200,17 @@ export function decodeListingCursor(cursor: string | undefined): {
 } {
   const empty = { cursorSortKey: null, cursorId: null, cursorMean: null };
   if (!cursor) return empty;
-  let decoded: string;
+  let raw: string;
   try {
-    decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    raw = Buffer.from(cursor, 'base64url').toString('utf8');
   } catch {
     return empty; // malformed → treat as first page (fail-open to a safe default)
   }
+  // Another encoding version (or none) → first page, never a comparison against a key of
+  // a different shape. See `LISTING_CURSOR_VERSION`.
+  const versionPrefix = `${LISTING_CURSOR_VERSION}${CURSOR_SEPARATOR}`;
+  if (!raw.startsWith(versionPrefix)) return empty;
+  const decoded = raw.slice(versionPrefix.length);
   const sep1 = decoded.indexOf(CURSOR_SEPARATOR);
   if (sep1 < 0) return empty;
   const sep2 = decoded.indexOf(CURSOR_SEPARATOR, sep1 + 1);
@@ -319,18 +336,14 @@ export const listingHydrateSelect = {
   icon: { select: listingMediaImageSelect },
   cover: { select: listingMediaImageSelect },
   user: { select: { id: true, username: true, image: true } },
-  // Projected into the DETAIL DTO only (the header's "Updated: <date>" meta line).
-  // Harmless extra column for the card projection, which doesn't surface it.
+  // The detail header's "Updated: <date>" meta line and the store card's "Updated …" line.
   updatedAt: true,
-  // `installCount` feeds the detail header's install stat chip. It is the SAME
-  // column the public `popular` sort already orders every approved listing by
-  // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
-  // already — see the DTO field's allowlist justification.
-  // `openCount` feeds the store CARD's play-count stat. Selected here (the shared
-  // card+detail select) but projected onto the CARD only — see `cardOpenCount` and
-  // the DTO field's allowlist justification. It is an aggregate over the whole
-  // audience; the column is `Int NOT NULL DEFAULT 0`, so the null-vs-zero decision
-  // is made in the projection, never here.
+  // `installCount` is projected onto the DETAIL DTO (public REST consumers read it); it
+  // is the public `popular` sort's tie-break (`listingPopularSortKey`).
+  // `openCount` feeds the play count on the store CARD and on the DETAIL page, through
+  // `cardOpenCount` on both, and is the `popular` sort's primary key. It is an
+  // aggregate over the whole audience; the column is `Int NOT NULL DEFAULT 0`, so the
+  // null-vs-zero decision is made in the projection, never here.
   metric: {
     select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true, openCount: true },
   },
@@ -614,6 +627,9 @@ export function projectListingCard(
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
     // Number for on-site, `null` for off-site — see `cardOpenCount`.
     openCount: cardOpenCount(row),
+    // The card's "Updated …" line. Guarded like the detail rail's date row: the date is
+    // decoration, so a row without one renders no date rather than failing the grid.
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : undefined,
     restrictedAudience,
     kindData: cardKindData(row),
   };
@@ -885,6 +901,8 @@ export function projectListingDetail(
     // `COALESCE(install_count, 0)` in projection form: a listing with no metric row
     // has had no installs, exactly as the ranking SQL reads it.
     installCount: row.metric?.installCount ?? 0,
+    // The card's play count, from the same projection, so the page and the card agree.
+    openCount: cardOpenCount(row),
     // Public source-repo link — resolved by the caller through the manual-apply guard,
     // never selected on `row`. See this function's docstring. Normalised at every write
     // (`validateRepositoryUrl`), so what reaches the wire is always
@@ -1025,7 +1043,10 @@ export function projectListingDetail(
  *   score = (C*m + up) / (C + up + down)
  *     C = prior (LISTING_BAYES_PRIOR), m = global recommend mean, up/down =
  *     thumbsUp/Down from the AppListingMetric rollup (0 when absent).
- *   0-review apps → score = m (mid-pack). Ties break on install_count then id.
+ *   0-review apps → score = m (mid-pack). Ties break on the `popular` key (plays, or
+ *   installs for an off-site app, then installs — {@link listingPopularSortKey}), then
+ *   on id. Most apps have no reviews yet, so without the plays tie-break nearly the whole
+ *   store tied and fell through to id.
  */
 export function listingBayesianSortKey(globalMean: number): Prisma.Sql {
   const score = Prisma.sql`(
@@ -1038,7 +1059,34 @@ export function listingBayesianSortKey(globalMean: number): Prisma.Sql {
   // trap the AppBlock rating sort hit; see block-registry.service.)
   return Prisma.sql`(
     lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}::int, '0')
-    || lpad(COALESCE(m.install_count, 0)::text, ${INSTALL_PAD}::int, '0')
+    || ${listingPopularSortKey()}
+  )`;
+}
+
+/**
+ * The `popular` sort key, as one zero-padded sortable TEXT:
+ *
+ *   lpad(usage, 20) || lpad(installs, 20)    (then `al.id`, from the keyset tuple)
+ *   usage = plays (`open_count`) for an ON-SITE listing, installs for any other kind
+ *
+ * Plays, because plays are what the store card shows and what most apps accumulate;
+ * installs read ~0 for nearly every listing, so an installs-first key ranked by id.
+ *
+ * 🔴 AN OFF-SITE LISTING HAS NO PLAY COUNT, NOT ZERO PLAYS — its `open_count` column is
+ * the `NOT NULL DEFAULT 0`, and `cardOpenCount` projects it as `null`. Ranking it on that
+ * 0 would pin every off-site app below every played on-site app, so its usage falls back
+ * to installs instead. The kind test is the same positive `= 'onsite'` `cardOpenCount`
+ * uses, so the sort and the card agree on which listings have a play count.
+ *
+ * Reused IDENTICALLY in SELECT (AS sort_key) + the keyset WHERE (so the cursor pages on
+ * this exact key), as the `top-rated` tie-break, and for sub-listings through their parent
+ * (`al` is the parent there). Fixed width, well inside `LISTING_CURSOR_MAX`.
+ */
+export function listingPopularSortKey(): Prisma.Sql {
+  return Prisma.sql`(
+    lpad((CASE WHEN al.kind = 'onsite' THEN COALESCE(m.open_count, 0)
+               ELSE COALESCE(m.install_count, 0) END)::text, ${COUNT_PAD}::int, '0')
+    || lpad(COALESCE(m.install_count, 0)::text, ${COUNT_PAD}::int, '0')
   )`;
 }
 
@@ -1051,10 +1099,7 @@ export function listingSortKeyExpr(
     case 'top-rated':
       return { expr: listingBayesianSortKey(globalMean), descending: true };
     case 'popular':
-      return {
-        expr: Prisma.sql`lpad(COALESCE(m.install_count, 0)::text, ${INSTALL_PAD}::int, '0')`,
-        descending: true,
-      };
+      return { expr: listingPopularSortKey(), descending: true };
     case 'newest':
       return {
         expr: Prisma.sql`to_char(al.created_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`,
@@ -1580,8 +1625,8 @@ export async function listAvailableListings(
   // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
   // a card's mutable projection fields are never served from two different ages.
   //
-  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable`, the sub-listing
-  // state and the mature state (`mature`) are literal segments of the redis key, deliberately outside the 32-bit
+  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable` and the sub-listing
+  // state are literal segments of the redis key, deliberately outside the 32-bit
   // `hashifyObject` of the statement. See {@link catalogPageCache}.
   //
   // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
@@ -2092,10 +2137,7 @@ export async function getListingHiddenByBrowsingLevel(
     floor: opts.floor ?? 'public',
     browsingLevel: allBrowsingLevelsFlag,
   });
-  // `!opts.redCapable` is an INVARIANT GUARD, not a live branch: off a red-capable host the loader
-  // above already drops every r/x row (the site gate is not lifted by `allBrowsingLevelsFlag`),
-  // so a row reaching here is non-mature and `ratingHiddenByBrowsingLevel` would answer null
-  // anyway. Kept so this function can never report "hidden by level" for a site-gated app.
+  // Never report hidden-by-level for a site-gated app.
   if (!gated || !opts.redCapable) return null;
   const hidden = ratingHiddenByBrowsingLevel(gated.row.contentRating, opts.viewerBrowsingLevel);
   return hidden ? { contentRating: hidden } : null;
