@@ -26,8 +26,12 @@ export type MainAppPort = {
 
 const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
-/** 408 and 429 say "try later", not "no". */
-const TRANSIENT_CLIENT_ERRORS = new Set([408, 429]);
+/**
+ * Only answers the endpoint itself gives are final: a 409 comes after its replay check, and a 400 or 422 refuses the
+ * same body every time. A 401, 403 or 404 is answered before the endpoint runs (token, edge, route), so it says
+ * nothing about an earlier try that may have granted the month, and stays retryable.
+ */
+const FINAL_STATUSES = new Set([400, 409, 422]);
 
 type Fetch = typeof fetch;
 
@@ -44,8 +48,7 @@ export function mainAppPort(
     });
     const answer = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) {
-      // A 5xx or a timeout says nothing about whether an earlier try was granted, so it stays retryable.
-      if (res.status >= 400 && res.status < 500 && !TRANSIENT_CLIENT_ERRORS.has(res.status)) {
+      if (FINAL_STATUSES.has(res.status)) {
         throw new MainAppRejectedError(
           res.status,
           String(answer?.reason ?? ''),

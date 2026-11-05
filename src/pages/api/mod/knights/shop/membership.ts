@@ -14,8 +14,8 @@ const schema = z.object({
 
 // Grants one perks-only membership month for gold the Knights shop already reserved, once per `key` (the Knights
 // purchase key): a replay is a 200 { outcome: 'already' } whatever the user's membership has become since (the slot keeps its last 20 keys, through Buzz purchases too). A 409 is
-// final (active membership, product not available or not monthly) and Knights releases the gold; anything else is
-// retryable with the same key. Rules: `grantBuzzPurchaseMembershipMonth`.
+// final (active membership, product not available or not monthly), as is a 400 for a body this endpoint never accepts,
+// and Knights releases the gold; anything else is retryable with the same key. Rules: `grantBuzzPurchaseMembershipMonth`.
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
