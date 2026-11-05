@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
 import type * as UserHubService from '~/server/services/user-hub.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
@@ -52,6 +53,12 @@ vi.mock('~/server/db/pgDb', () => ({
   pgDbReadLong: emptyPool,
   pgDbWrite: emptyPool,
 }));
+// The replica's user-id-by-username read (a Kysely statement).
+const { getUserIdByUsername } = vi.hoisted(() => ({ getUserIdByUsername: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getUserIdByUsername,
+}));
 vi.mock('~/server/services/new-creators.service', () => ({
   getNewCreatorUserIds: vi.fn(async () => newCreatorIds()),
 }));
@@ -96,7 +103,6 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 
 import { getAllImagesIndex } from '../image.service';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
-import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const request = () =>
   ({
@@ -151,7 +157,7 @@ describe('getAllImagesIndex with feed-service-primary', () => {
 
   it('scopes the feed to the creator a profile page names by username', async () => {
     primaryOn.mockReturnValue(true);
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+    getUserIdByUsername.mockResolvedValue({ id: 7 });
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({
       ...request(),

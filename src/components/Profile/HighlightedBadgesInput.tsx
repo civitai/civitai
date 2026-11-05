@@ -3,6 +3,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 import type { KeyboardEvent } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { keepOwnedBadgeIds } from '~/shared/utils/badge-visibility';
 
 type BadgeItem = { id: number; name?: string | null; data?: { url?: string | null } | null };
 
@@ -34,17 +35,23 @@ export function HighlightedBadgesInput({
     );
 
   const accent = variant === 'hide' ? 'red' : 'yellow';
+  // Number only the pins that have a tile, so a stale id can't leave a gap.
+  const shownValue = keepOwnedBadgeIds(
+    value,
+    badges.map((b) => b.id)
+  );
 
   return (
     <Group gap="xs">
       {badges.map((badge) => {
-        const order = value.indexOf(badge.id);
+        const order = shownValue.indexOf(badge.id);
         const selected = order >= 0;
         const url = badge.data?.url;
         return (
           <Tooltip key={badge.id} label={badge.name ?? 'Badge'} withArrow>
             <Box
               role="button"
+              aria-label={badge.name ?? 'Badge'}
               tabIndex={0}
               onClick={() => toggle(badge.id)}
               onKeyDown={(e: KeyboardEvent) => {
