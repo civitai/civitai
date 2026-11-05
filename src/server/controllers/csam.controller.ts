@@ -36,6 +36,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   const { userId, imageIds = [], details, type, reportedById, supplementalOf } = input;
   let denyFailed = false;
   let denyBookkeepingFailed = false;
+  let strikesReviewFailed = false;
   if (supplementalOf) await createSupplementalCsamReport({ ...input, supplementalOf });
   else await createCsamReport(input);
 
@@ -105,19 +106,30 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       }
     }
   } else if (type === 'GeneratedImage') {
-    // The orchestrator no longer serves this route. A 404 leaves nothing to review, and must not
-    // stop the account removal below.
-    await reviewConsumerStrikes({
-      consumerId: `civitai-${userId}`,
-      moderatorId: reportedById,
-    }).catch((e: unknown) => {
-      if (!(e instanceof FlaggedConsumerFetchError) || e.status !== 404) throw e;
-      logToAxiom({
-        name: 'csam-report',
-        type: 'info',
-        message: 'strikes review not found at the orchestrator; nothing to review',
-      }).catch(() => undefined);
-    });
+    // Isolated like the training deny: the report row is committed, so no strikes-review failure may
+    // stop the account removal below. A 404 is the retired route, which leaves nothing to review.
+    try {
+      await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
+    } catch (e) {
+      if (e instanceof FlaggedConsumerFetchError && e.status === 404) {
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          message: 'strikes review not found at the orchestrator; nothing to review',
+        }).catch(() => undefined);
+      } else {
+        strikesReviewFailed = true;
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          important: true,
+          message: 'strikes review failed; report filed and account still removed',
+          userId,
+          reportedById,
+          error: (e as Error)?.message,
+        }).catch(() => undefined);
+      }
+    }
   }
 
   // A supplemental report follows one that removed the account for this; one restored or banned for
@@ -131,7 +143,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   if (type === 'Image' && imageIds.length) await releaseReviewFlagsToReportHold(imageIds);
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
-  return { denyFailed, denyBookkeepingFailed };
+  return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };
 }
 
 export async function createExternalCsamReportHandler({
