@@ -11169,6 +11169,34 @@ model ServiceDealFile {
   @@index([dealId, round, kind])
 }
 
+/// A deal file its uploader deleted while it was evidence: an image in it was still being scanned or
+/// was rejected, or the uploader is named on a CsamReport. The ServiceDealFile row is gone, so no
+/// list, download or deal gate sees it; this keeps its objects and what moderators need to find
+/// them. No foreign keys, so it never blocks deleting the deal or the user. Nothing purges it.
+model ServiceDealFileHeld {
+  id          Int                 @id @default(autoincrement())
+  /// The deleted ServiceDealFile's id; its retained entries keep `dealId` and are listed in `entryIds`.
+  fileId      Int                 @unique
+  dealId      Int
+  uploaderId  Int
+  kind        ServiceDealFileKind
+  round       Int
+  fileName    String
+  mimeType    String
+  size        Int
+  s3Key       String
+  deliveryKey String?
+  /// A preview's own scan copy, kept with it.
+  imageId     Int?
+  entryIds    Int[]
+  /// retained-scan | csam-report
+  reason      String
+  heldAt      DateTime            @default(now())
+
+  @@index([dealId])
+  @@index([uploaderId])
+}
+
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
 /// are judged by the malware scan alone. `scanKey` is recorded before the hidden copy's Image row
 /// exists, so a retry after a crash reuses the object.

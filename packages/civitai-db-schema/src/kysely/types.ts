@@ -5420,6 +5420,32 @@ export type ServiceDealFileEntry = {
   failReason: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type ServiceDealFileHeld = {
+  id: Generated<number>;
+  /**
+   * The deleted ServiceDealFile's id; its retained entries keep `dealId` and are listed in `entryIds`.
+   */
+  fileId: number;
+  dealId: number;
+  uploaderId: number;
+  kind: ServiceDealFileKind;
+  round: number;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  s3Key: string;
+  deliveryKey: string | null;
+  /**
+   * A preview's own scan copy, kept with it.
+   */
+  imageId: number | null;
+  entryIds: number[];
+  /**
+   * retained-scan | csam-report
+   */
+  reason: string;
+  heldAt: Generated<Timestamp>;
+};
 export type ServiceDealTransaction = {
   id: Generated<number>;
   dealId: number;
@@ -6808,6 +6834,7 @@ export type DB = {
   ServiceDealEvent: ServiceDealEvent;
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
+  ServiceDealFileHeld: ServiceDealFileHeld;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

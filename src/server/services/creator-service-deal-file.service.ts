@@ -449,6 +449,7 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
         AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
       FOR UPDATE OF e`;
+    const held = await holdAsEvidence(tx, fileId);
     await tx.$executeRaw`
       DELETE FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int
@@ -466,8 +467,15 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
       WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND ${scope}
       RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId", f."scanKey"`;
     if (!file) throw throwNotFoundError('File not found');
-    return { ...file, copies };
+    return { ...file, copies, held };
   });
+
+  if (removed.copies.length) {
+    const { deleteImageById } = await import('~/server/services/image.service');
+    for (const { imageId } of removed.copies)
+      await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
+  }
+  if (removed.held) return { id: removed.id };
 
   // The row is the source of truth; an object left behind is unreachable and harmless.
   const bucket = await getBucket();
@@ -478,12 +486,43 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     const { deleteImageById } = await import('~/server/services/image.service');
     await deleteImageById({ id: removed.imageId, updatePost: false }).catch(() => null);
   }
-  if (removed.copies.length) {
-    const { deleteImageById } = await import('~/server/services/image.service');
-    for (const { imageId } of removed.copies)
-      await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
-  }
   return { id: removed.id };
+}
+
+/**
+ * Called under the deal lock, before the file row goes. A file is evidence when an image in it is
+ * still being scanned or was rejected (its copy is kept, see `deleteEntryScanCopies`), or when its
+ * uploader is named on a CsamReport of any status. Its row then moves to `ServiceDealFileHeld` and
+ * its objects are kept: the original holds the container, names and bytes a scan copy does not.
+ */
+async function holdAsEvidence(tx: Prisma.TransactionClient, fileId: number) {
+  const inserted = await tx.$executeRaw`
+    WITH f AS (
+      SELECT f.*,
+        CASE WHEN f."kind"::text = 'Attachment' THEN d."buyerId" ELSE d."sellerId" END AS "uploaderId",
+        COALESCE((
+          SELECT array_agg(e."id" ORDER BY e."id") FROM "ServiceDealFileEntry" e
+          WHERE e."fileId" = f."id" AND e."imageId" IS NOT NULL
+            AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
+        ), '{}') AS "entryIds",
+        (f."imageId" IS NOT NULL AND f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus") AS "ownCopy"
+      FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
+      WHERE f."id" = ${fileId}::int
+    ), judged AS (
+      SELECT f.*,
+        CASE
+          WHEN EXISTS (SELECT 1 FROM "CsamReport" r WHERE r."userId" = f."uploaderId") THEN 'csam-report'
+          WHEN cardinality(f."entryIds") > 0 OR f."ownCopy" THEN 'retained-scan'
+        END AS "reason"
+      FROM f
+    )
+    INSERT INTO "ServiceDealFileHeld"
+      ("fileId", "dealId", "uploaderId", "kind", "round", "fileName", "mimeType", "size", "s3Key",
+       "deliveryKey", "imageId", "entryIds", "reason")
+    SELECT "id", "dealId", "uploaderId", "kind", "round", "fileName", "mimeType", "size", "s3Key",
+      "deliveryKey", CASE WHEN "ownCopy" THEN "imageId" END, "entryIds", "reason"
+    FROM judged WHERE "reason" IS NOT NULL`;
+  return inserted > 0;
 }
 
 /**

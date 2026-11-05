@@ -159,7 +159,8 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
-  '20261224120100_service_deal_file_attachment',
+  '20261224120100_service_deal_file_held',
+  '20261224120200_service_deal_file_attachment',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -277,6 +278,7 @@ beforeAll(async () => {
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
@@ -321,7 +323,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "ServiceDealFileHeld", "CsamReport" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -582,6 +584,116 @@ describe('the scan an attachment goes through', () => {
     await scanned([fileId], { malware: 'Failed' });
     expect((await fileRow(fileId)).scanStatus).toBe('Failed');
     expect((await dealStatus(dealId)).status).toBe('Delivered');
+  });
+});
+
+const heldRows = (fileId: number) =>
+  q<{ reason: string; s3Key: string; uploaderId: number; kind: string; entryIds: number[] }>(
+    `SELECT reason, "s3Key", "uploaderId", kind::text, "entryIds" FROM "ServiceDealFileHeld" WHERE "fileId" = $1`,
+    [fileId]
+  );
+const deletedKeys = () => s3.deleteObject.mock.calls.map((call) => call[1]);
+
+/** A zip whose one image was rated above the deal's level. */
+async function rejectedZip(dealId: number, upload: typeof attach) {
+  await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 2`);
+  const fileId = await upload(dealId, 'dataset.zip', buildZip([{ name: 'a.png', data: IMAGE_A }]));
+  await unpack.unpackFinals();
+  await verdict('Scanned', '', 4);
+  await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed', "repackedAt" = now()`);
+  await settle();
+  expect((await fileRow(fileId)).scanStatus).toBe('Failed');
+  return fileId;
+}
+
+describe('removing a file that is evidence', () => {
+  it("keeps the original of a rejected attachment the buyer removes, out of everyone's reach", async () => {
+    const dealId = await accepted();
+    const fileId = await rejectedZip(dealId, attach);
+    const { s3Key } = await fileRow(fileId);
+    const [entry] = await entries(fileId);
+    s3.deleteObject.mockClear();
+
+    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+
+    expect(await heldRows(fileId)).toEqual([
+      {
+        reason: 'retained-scan',
+        s3Key,
+        uploaderId: BUYER,
+        kind: 'Attachment',
+        entryIds: [entry.id],
+      },
+    ]);
+    expect(deletedKeys()).not.toContain(s3Key);
+    expect(await fileRow(fileId)).toBeUndefined();
+    expect(await list(dealId, BUYER)).toEqual([]);
+    expect(await list(dealId, SELLER)).toEqual([]);
+    expect(await download(fileId, BUYER)).toBeNull();
+  });
+
+  it('keeps the original of a rejected Final the seller removes', async () => {
+    const dealId = await accepted();
+    const fileId = await rejectedZip(dealId, (id, name, content) => final(id, name, content));
+    const { s3Key } = await fileRow(fileId);
+    s3.deleteObject.mockClear();
+
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+
+    expect(await heldRows(fileId)).toMatchObject([
+      { reason: 'retained-scan', s3Key, uploaderId: SELLER, kind: 'Final' },
+    ]);
+    expect(deletedKeys()).not.toContain(s3Key);
+  });
+
+  it('keeps a file whose images are still being scanned', async () => {
+    const dealId = await accepted();
+    const fileId = await attach(
+      dealId,
+      'dataset.zip',
+      buildZip([{ name: 'a.png', data: IMAGE_A }])
+    );
+    await unpack.unpackFinals();
+    const { s3Key } = await fileRow(fileId);
+    s3.deleteObject.mockClear();
+
+    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+
+    expect(await heldRows(fileId)).toMatchObject([{ reason: 'retained-scan', s3Key }]);
+    expect(deletedKeys()).not.toContain(s3Key);
+  });
+
+  it('keeps any file of an uploader named on a CsamReport', async () => {
+    const dealId = await accepted();
+    const fileId = await attach(dealId, 'notes.txt', TEXT);
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
+    const { s3Key } = await fileRow(fileId);
+    s3.deleteObject.mockClear();
+
+    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+
+    expect(await heldRows(fileId)).toMatchObject([{ reason: 'csam-report', s3Key }]);
+    expect(deletedKeys()).not.toContain(s3Key);
+  });
+
+  it('still deletes a file whose images all passed, and one with no images', async () => {
+    const dealId = await accepted();
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [SELLER]);
+    const zipId = await attach(dealId, 'dataset.zip', buildZip([{ name: 'a.png', data: IMAGE_A }]));
+    const textId = await attach(dealId, 'notes.txt', TEXT);
+    await unpack.unpackFinals();
+    await verdict('Scanned');
+    await scanned([zipId, textId]);
+    expect((await fileRow(zipId)).scanStatus).toBe('Passed');
+    const keys = [(await fileRow(zipId)).s3Key, (await fileRow(textId)).s3Key];
+    s3.deleteObject.mockClear();
+
+    await files.deleteServiceDealAttachment({ fileId: zipId, userId: BUYER });
+    await files.deleteServiceDealAttachment({ fileId: textId, userId: BUYER });
+
+    expect(await heldRows(zipId)).toEqual([]);
+    expect(await heldRows(textId)).toEqual([]);
+    expect(deletedKeys()).toEqual(expect.arrayContaining(keys));
   });
 });
 
