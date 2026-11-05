@@ -3043,10 +3043,32 @@ export async function setModelSfwOnly({
         };
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
+    // A moderator's lift is not a ruling on the rating: a lead the lock held waits for one.
+    if (!sfwOnly && isModerator !== false) {
+      const { holdLeadAfterSfwOnlyLift } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      await holdLeadAfterSfwOnlyLift(tx, id);
+    }
     return { before, data, result };
   }, lockedWriteOptions);
 
   await preventReplicationLag('model', id);
+  // The owner's own untick applies a lead the lock held, as their save does.
+  if (!sfwOnly && isModerator === false) {
+    const { applyHeldRestrictedVerdict } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await applyHeldRestrictedVerdict(id, { ownerCleared: true }).catch((error: Error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'held restricted nsfw verdict not applied',
+        modelId: id,
+        error: error.message,
+      }).catch(() => null)
+    );
+  }
   const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
   await trackModActivity(userId, {
     entityType: 'model',
@@ -7168,18 +7190,26 @@ export const privateModelFromTraining = async ({
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
-    const reverted = await leavePrivateWithHeldVerdict(id, (tx) =>
-      tx.model.updateMany({
-        where: { id, ...keepDowned },
-        data: { status: ModelStatus.Draft, availability: Availability.Public },
-      })
-    ).then(
+    let revertWriteFailed = false;
+    const reverted = await leavePrivateWithHeldVerdict(id, async (tx) => {
+      try {
+        return await tx.model.updateMany({
+          where: { id, ...keepDowned },
+          data: { status: ModelStatus.Draft, availability: Availability.Public },
+        });
+      } catch (writeError) {
+        revertWriteFailed = true;
+        throw writeError;
+      }
+    }).then(
       () => true,
       (revertError: Error) =>
         logToAxiom({
           name: 'private-model-from-training',
           type: 'error',
-          message: 'revert left the model Private: held scan verdict not applied',
+          message: revertWriteFailed
+            ? 'revert write failed: the model stayed Private'
+            : 'revert left the model Private: held scan verdict not applied',
           modelId: id,
           error: revertError.message,
         })

@@ -298,6 +298,22 @@ export async function holdLeadAfterFlagLift(
 }
 
 /**
+ * After a moderator lifts a model's SFW-only lock, in its transaction: a waiting lead records the lift,
+ * so it waits for a moderator's ruling rather than applying on the owner's next save. Only where
+ * nothing else holds the rating now.
+ */
+export async function holdLeadAfterSfwOnlyLift(db: RawDb, modelId: number) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = jsonb_set(m.meta, '{restrictedNsfwVerdict,liftedBy}', to_jsonb('moderator'::text))
+    WHERE m.id = ${modelId}
+      AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND NOT ${holdsRatingSql}
+  `;
+}
+
+/**
  * Forgets who lifted the flag on a waiting lead: a flag set again (`flagged`) or the owner's own untick
  * makes that lift history, so the lead takes the ordinary owner path and its note names the last lift.
  */

@@ -133,6 +133,7 @@ import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -377,6 +378,24 @@ describe('privateModelFromTraining — a held scan verdict', () => {
       expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
     );
     expect(mockFinishApply).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the revert write', 'revert write failed: the model stayed Private'],
+    ['the held-verdict apply', 'revert left the model Private: held scan verdict not applied'],
+  ])('logs a failure of %s as its own', async (failing, message) => {
+    mockStored({});
+    mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
+    if (failing === 'the revert write')
+      mockDbWrite.model.updateMany.mockRejectedValueOnce(new Error('revert failed'));
+    else mockLeavingPrivate.mockRejectedValueOnce(new Error('apply failed'));
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow();
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { name?: string; message?: string })
+      .filter((entry) => entry.name === 'private-model-from-training');
+    expect(logged.map((entry) => entry.message)).toEqual([message]);
   });
 });
 
