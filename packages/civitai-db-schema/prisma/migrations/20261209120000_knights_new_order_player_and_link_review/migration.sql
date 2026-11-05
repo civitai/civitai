@@ -1,5 +1,6 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Main-app tables, read and written by the main app, the moderator app and Knights. Apply BEFORE deploying any of them.
+-- Main-app tables, read and written by the main app, the moderator app and Knights. Apply BEFORE deploying any of them; deploy the main app no later than Knights
+-- (a reset on the previous main app does not zero "goldEarned").
 ALTER TABLE "NewOrderPlayer"
   ADD COLUMN IF NOT EXISTS "payoutBlockedAt" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "payoutBlockReason" TEXT,
