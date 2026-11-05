@@ -585,6 +585,8 @@ export const getModelHandler = async ({
       hasSfwFace: hasCompleteSfwFace(model),
       sfwName: isOwner ? model.sfwName : null,
       sfwDescription: isOwner ? model.sfwDescription : null,
+      // The listing re-check took the model off .com; the editor tells the owner.
+      comFaceRemoved: !!isOwner && !!(model.meta as ModelMeta | null)?.comFaceRemoved,
       user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,

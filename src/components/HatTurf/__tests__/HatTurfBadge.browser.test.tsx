@@ -104,9 +104,12 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import { resetExperimentExposuresForTests } from '~/components/Experiments/useExperimentExposure';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import detailClasses from '~/components/HatTurf/detail/HatTurfDetailControls.module.css';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
+import { page } from 'vitest/browser';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const PHONE_CARD = 171; // a 2-up grid on a 390px phone
@@ -196,10 +199,9 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(el.querySelectorAll('circle[data-team]').length).toBe(4);
     expect(el.querySelector('[data-testid="hat-turf-count"]')!.textContent).toBe('6');
     // The disc is filled with the leader's colour, not white.
-    const disc = el.querySelector('[data-testid="hat-turf-count"]')!.parentElement as HTMLElement;
-    const bg = getComputedStyle(disc).backgroundColor;
-    expect(bg).not.toBe('rgb(255, 255, 255)');
-    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+    const fill = getComputedStyle(el.querySelector('[data-testid="hat-turf-disc-fill"]')!).fill;
+    expect(fill).not.toBe('rgb(255, 255, 255)');
+    expect(fill).not.toBe('none');
     expect(el.getAttribute('aria-label')).toContain('blue leads with 6');
     // The badge sits inside the card, top left, and stays inside it.
     const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
@@ -215,23 +217,22 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     const disc = el.querySelector('[data-testid="hat-turf-disc"]') as HTMLElement;
     const arc = (team: string) =>
       getComputedStyle(el.querySelector(`circle[data-team="${team}"]`) as SVGElement).stroke;
-    return { el, count, disc, arc };
+    const discFill = () =>
+      getComputedStyle(el.querySelector('[data-testid="hat-turf-disc-fill"]') as SVGElement).fill;
+    return { el, count, disc, arc, discFill };
   };
   const centre = (r: DOMRect) => [r.left + r.width / 2, r.top + r.height / 2];
 
-  test('the count sits centred over a hat drawn in a darker shade of the disc', async () => {
+  test('one digit sits centred in the disc, with no hat behind it', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { count, disc } = parts();
+    expect(disc.contains(count)).toBe(true);
     const [cx, cy] = centre(count!.getBoundingClientRect());
     const [dx, dy] = centre(disc.getBoundingClientRect());
     expect(Math.abs(cx - dx)).toBeLessThanOrEqual(1.5);
     expect(Math.abs(cy - dy)).toBeLessThanOrEqual(2);
-    expect(getComputedStyle(count!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
-    const hat = disc.querySelector('svg')!;
-    const hatColor = getComputedStyle(hat).color;
-    expect(hatColor).not.toBe('rgb(255, 255, 255)');
-    expect(hatColor).not.toBe(getComputedStyle(disc).backgroundColor);
+    expect(disc.querySelector('svg')).toBeNull();
   });
 
   test('no dot on the ring, even where the viewer’s own team has an arc', async () => {
@@ -247,23 +248,23 @@ describe('Hat Turf badge on a feed ImageCard', () => {
       feed: feedWith({ 1: standing({ hatted: true, hattedTeam: 'pink' }) }, 'blue'),
     });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const { el, disc, arc, count } = parts();
+    const { el, disc, arc, count, discFill } = parts();
     expect(el.dataset.leader).toBe('blue');
     expect(count!.textContent).toBe('6');
-    expect(getComputedStyle(disc).backgroundColor).toBe(arc('pink'));
+    expect(discFill()).toBe(arc('pink'));
     expect(el.getAttribute('aria-label')).toContain('A pink hat protects this image');
-    // The lock takes the bottom-right corner.
+    // The lock sits beside the dial, in the badge's chip.
     const lock = el.querySelector('[data-testid="hat-turf-badge-lock"]')!.getBoundingClientRect();
-    const box = el.getBoundingClientRect();
-    expect(lock.right).toBeGreaterThan(box.right - 4);
-    expect(lock.bottom).toBeGreaterThan(box.bottom - 4);
+    expect(disc.contains(el.querySelector('[data-testid="hat-turf-badge-lock"]'))).toBe(false);
+    expect(lock.left).toBeGreaterThanOrEqual(disc.getBoundingClientRect().right);
+    expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
   });
 
   test('an unprotected image fills the disc with the leader', async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const { disc, arc } = parts();
-    expect(getComputedStyle(disc).backgroundColor).toBe(arc('blue'));
+    const { arc, discFill } = parts();
+    expect(discFill()).toBe(arc('blue'));
   });
 
   test('control arm: tapping the badge opens the card, not the standings', async () => {
@@ -387,17 +388,107 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(badge()!.querySelector('[data-testid="hat-turf-count"]')).toBeNull();
   });
 
-  test('large counts still fit the disc', async () => {
+  test('9, the largest count that stays inside the disc', async () => {
     renderCard({
-      feed: feedWith({ 1: standing({ counted: { blue: 1240, pink: 980 }, leader: 'blue' }) }),
+      feed: feedWith({ 1: standing({ counted: { blue: 9, pink: 4 }, leader: 'blue' }) }),
     });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const count = badge()!.querySelector('[data-testid="hat-turf-count"]') as HTMLElement;
-    const disc = count.parentElement!;
-    expect(count.getBoundingClientRect().width).toBeLessThanOrEqual(
-      disc.getBoundingClientRect().width
-    );
+    const { count, disc } = parts();
+    expect(count!.textContent).toBe('9');
+    expect(disc.contains(count)).toBe(true);
   });
+
+  test.each([
+    [10, '10'],
+    [42, '42'],
+    [1240, '1.2k'],
+  ])('%s: the count moves beside the dial and the hat takes the disc', async (lead, shown) => {
+    renderCard({
+      feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
+    });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const { el, count, disc } = parts();
+    expect(count!.textContent).toBe(shown);
+    expect(disc.contains(count)).toBe(false);
+    expect(count!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      disc.getBoundingClientRect().right
+    );
+    expect(disc.querySelector('svg')).not.toBeNull();
+    expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    // Still inside a phone card.
+    const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+    expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
+  });
+
+  test('the detail action row draws the dial at its 36px', async () => {
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={feedWith({ 1: standing() })}>
+        <HatTurfBadge imageId={1} className={detailClasses.rowBadge} />
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const ring = badge()!.querySelector('svg')!.getBoundingClientRect();
+    expect(ring.width).toBe(36);
+    expect(badge()!.getBoundingClientRect().height).toBe(36);
+  });
+
+  // Rows place the badge at fractional x (centred content, odd gaps), and the disc was painted a
+  // pixel left of its ring there. Measured on pixels: layout boxes were centred all along.
+  test.each(
+    [0, 0.25, 0.5, 0.75].flatMap((offset) => [
+      { surface: 'feed', className: undefined, offset },
+      { surface: 'detail row', className: detailClasses.rowBadge, offset },
+    ])
+  )(
+    'the $surface disc is painted at the centre of its ring at x+$offset px',
+    async ({ className, offset }) => {
+      document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+      renderWithProviders(
+        <TurfSummaryContext.Provider
+          value={feedWith({
+            1: standing({
+              counted: { blue: 6 },
+              shown: { blue: 6 },
+              hatted: true,
+              hattedTeam: 'pink',
+            }),
+          })}
+        >
+          <div style={{ paddingLeft: 10 + offset, paddingTop: 10, width: 80, background: '#000' }}>
+            <HatTurfBadge imageId={1} className={className} />
+          </div>
+        </TurfSummaryContext.Provider>
+      );
+      await vi.waitFor(() => expect(badge()).not.toBeNull());
+      const dial = badge()!.firstElementChild as HTMLElement;
+      const base64 = await page.screenshot({ element: dial, base64: true, save: false });
+      const bitmap = await createImageBitmap(
+        await (await fetch(`data:image/png;base64,${base64}`)).blob()
+      );
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bitmap, 0, 0);
+      const { data, width, height } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+      // Horizontal centroid of each colour, weighted by how strongly a pixel is that colour.
+      let blueW = 0,
+        blueX = 0,
+        pinkW = 0,
+        pinkX = 0;
+      for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+          const blue = Math.max(0, b - r);
+          const pink = Math.max(0, r - g - 40);
+          blueW += blue;
+          blueX += blue * x;
+          pinkW += pink;
+          pinkX += pink * x;
+        }
+      expect(Math.abs(blueX / blueW - pinkX / pinkW)).toBeLessThanOrEqual(0.25);
+    }
+  );
 
   test('the count pops when it changes after being seen, not when it first arrives', async () => {
     const tree = (counted: Record<string, number>) => (

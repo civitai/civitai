@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { mintPurchaseKey } from '~/utils/purchase-key';
 import {
@@ -278,227 +279,242 @@ const ENDED = {
   paidDraftIds: [] as string[],
 };
 
-export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set, get) => ({
-  drafts: [],
-  packKeys: {},
-  paidDraftIds: [],
-  selectedDraftId: null,
-  targetImageId: null,
-  trayOpen: false,
-  previewing: false,
-  surface: null,
-  tray: null,
-  interaction: null,
-  interactionPointerId: null,
+const createDraftStore = () =>
+  create<StickerPlacementDraftStore>((set, get) => ({
+    drafts: [],
+    packKeys: {},
+    paidDraftIds: [],
+    selectedDraftId: null,
+    targetImageId: null,
+    trayOpen: false,
+    previewing: false,
+    surface: null,
+    tray: null,
+    interaction: null,
+    interactionPointerId: null,
 
-  // Reopening on the image you are already placing on keeps the drafts — that is
-  // the way back to the panel after putting it away, so taking them would punish
-  // using it.
-  //
-  // A different image is a different session, and starting one DISCARDS whatever
-  // was arranged on the previous image. That is the intended behaviour, decided
-  // by Justin rather than fallen into: moving on to the next image means giving
-  // up the stickers you were applying to the last one. Note it is the *new
-  // session* that discards them, not the navigation — the drafts survive
-  // off-screen, so returning to the image before starting somewhere else brings
-  // them and the panel back. Do not add a confirmation here without asking;
-  // this looked like a silent-data-loss bug in review and is not one.
-  //
-  // Neither branch writes `interaction`. It mirrors whether the layer holds a
-  // live gesture and only the layer may write it — the different-image branch
-  // goes through ENDED, which nulls `targetImageId` and so unmounts the layer,
-  // whose cleanup clears it. The same-image branch leaves the layer mounted, so
-  // clearing here said "nothing is being dragged" while a finger still was:
-  // press `+` with a second finger mid-drag and the tray would then allow a
-  // pickup the layer refused to arm, leaving a sticker on the image that
-  // followed nothing.
-  open: (imageId) =>
-    set((state) =>
-      state.targetImageId === imageId
-        ? { targetImageId: imageId, trayOpen: true, previewing: false }
-        : { ...ENDED, targetImageId: imageId, trayOpen: true }
-    ),
-
-  close: () => set(ENDED),
-
-  // A session with neither a panel nor a draft has nothing left to show, and
-  // leaving `targetImageId` set would keep this image in placement mode — still
-  // revealing pending placements, still holding the surface — with nothing on
-  // screen to say so or to end it.
-  closeTray: () => set((state) => (state.drafts.length ? { trayOpen: false } : ENDED)),
-
-  cancelDraft: (id) =>
-    set((state) => {
-      const target = id ?? state.selectedDraftId;
-      const drafts = state.drafts.filter((draft) => draft.id !== target);
-      if (drafts.length === state.drafts.length) return state;
-      if (!drafts.length && !state.trayOpen) return ENDED;
-      if (!drafts.length) return { drafts, selectedDraftId: null, previewing: false };
-
-      return {
-        drafts,
-        // Selection follows the removal rather than emptying: the controls have
-        // to land on something while any draft is left, or the remaining ones
-        // are unreachable and there is no way to remove the next.
-        selectedDraftId:
-          state.selectedDraftId === target
-            ? drafts[drafts.length - 1]?.id ?? null
-            : state.selectedDraftId,
-        // `interaction` is deliberately NOT cleared here. It mirrors whether the
-        // layer holds a live gesture, and only the layer may write it — the tray
-        // reads it to decide whether a pickup is allowed. Clearing it from here
-        // said "no drag in progress" while a finger was still dragging something
-        // else, which let a pickup through that the layer then refused to arm:
-        // the new sticker landed on the image and never followed the pointer.
-        // Removing a draft mid-drag is harmless without this — `move` already
-        // ignores an id that is gone, and the gesture ends on its own pointerup.
-      };
-    }),
-
-  select: (id) => set({ selectedDraftId: id }),
-
-  setPreviewing: (previewing) =>
-    set((state) => ({ previewing: previewing && state.drafts.length > 0 })),
-
-  setInteraction: (interaction, pointerId) =>
-    set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),
-  setSurface: (element) => set({ surface: element }),
-  setTray: (element) => set({ tray: element }),
-
-  markPurchased: (cosmeticId, draftId) =>
-    set((state) => ({
-      drafts: state.drafts.map((draft) =>
-        draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
-          ? { ...draft, purchase: undefined }
-          : draft
+    // Reopening on the image you are already placing on keeps the drafts — that is
+    // the way back to the panel after putting it away, so taking them would punish
+    // using it.
+    //
+    // A different image is a different session, and starting one DISCARDS whatever
+    // was arranged on the previous image. That is the intended behaviour, decided
+    // by Justin rather than fallen into: moving on to the next image means giving
+    // up the stickers you were applying to the last one. Note it is the *new
+    // session* that discards them, not the navigation — the drafts survive
+    // off-screen, so returning to the image before starting somewhere else brings
+    // them and the panel back. Do not add a confirmation here without asking;
+    // this looked like a silent-data-loss bug in review and is not one.
+    //
+    // Neither branch writes `interaction`. It mirrors whether the layer holds a
+    // live gesture and only the layer may write it — the different-image branch
+    // goes through ENDED, which nulls `targetImageId` and so unmounts the layer,
+    // whose cleanup clears it. The same-image branch leaves the layer mounted, so
+    // clearing here said "nothing is being dragged" while a finger still was:
+    // press `+` with a second finger mid-drag and the tray would then allow a
+    // pickup the layer refused to arm, leaving a sticker on the image that
+    // followed nothing.
+    open: (imageId) =>
+      set((state) =>
+        state.targetImageId === imageId
+          ? { targetImageId: imageId, trayOpen: true, previewing: false }
+          : { ...ENDED, targetImageId: imageId, trayOpen: true }
       ),
-    })),
 
-  begin: (cosmeticId, at, maxScale, purchase) =>
-    set((state) => {
-      if (state.targetImageId == null) return state;
+    close: () => set(ENDED),
 
-      const draft: StickerDraft = {
-        ...(purchase ? { purchase } : {}),
-        id: nextDraftId(),
-        imageId: state.targetImageId,
-        cosmeticId,
-        x: at?.x ?? 0.5,
-        y: at?.y ?? 0.5,
-        // The creator's ceiling, not just the global one. A creator below the
-        // 18% default is a third of the slider's range, and their space refused
-        // the very first gesture with no hint why.
-        scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
-        rotation: 0,
-        flip: false,
-        opacity: STICKER_PLACEMENT_DEFAULT_OPACITY,
-      };
+    // A session with neither a panel nor a draft has nothing left to show, and
+    // leaving `targetImageId` set would keep this image in placement mode — still
+    // revealing pending placements, still holding the surface — with nothing on
+    // screen to say so or to end it.
+    closeTray: () => set((state) => (state.drafts.length ? { trayOpen: false } : ENDED)),
 
-      // Appended and selected: the one just dragged out is the one being placed,
-      // and the drag that created it is already in flight against it.
-      return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
-    }),
+    cancelDraft: (id) =>
+      set((state) => {
+        const target = id ?? state.selectedDraftId;
+        const drafts = state.drafts.filter((draft) => draft.id !== target);
+        if (drafts.length === state.drafts.length) return state;
+        if (!drafts.length && !state.trayOpen) return ENDED;
+        if (!drafts.length) return { drafts, selectedDraftId: null, previewing: false };
 
-  packPurchaseKey: (cosmeticId) => {
-    const existing = get().packKeys[cosmeticId];
-    if (existing) return existing;
+        return {
+          drafts,
+          // Selection follows the removal rather than emptying: the controls have
+          // to land on something while any draft is left, or the remaining ones
+          // are unreachable and there is no way to remove the next.
+          selectedDraftId:
+            state.selectedDraftId === target
+              ? drafts[drafts.length - 1]?.id ?? null
+              : state.selectedDraftId,
+          // `interaction` is deliberately NOT cleared here. It mirrors whether the
+          // layer holds a live gesture, and only the layer may write it — the tray
+          // reads it to decide whether a pickup is allowed. Clearing it from here
+          // said "no drag in progress" while a finger was still dragging something
+          // else, which let a pickup through that the layer then refused to arm:
+          // the new sticker landed on the image and never followed the pointer.
+          // Removing a draft mid-drag is harmless without this — `move` already
+          // ignores an id that is gone, and the gesture ends on its own pointerup.
+        };
+      }),
 
-    const key = mintPurchaseKey();
-    set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
-    return key;
-  },
+    select: (id) => set({ selectedDraftId: id }),
 
-  markPaidForUse: (draftId) =>
-    set((state) =>
-      state.paidDraftIds.includes(draftId)
-        ? state
-        : { paidDraftIds: [...state.paidDraftIds, draftId] }
-    ),
+    setPreviewing: (previewing) =>
+      set((state) => ({ previewing: previewing && state.drafts.length > 0 })),
 
-  clearPackPurchaseKey: (cosmeticId) =>
-    set((state) => {
-      const { [cosmeticId]: _gone, ...rest } = state.packKeys;
-      return { packKeys: rest };
-    }),
+    setInteraction: (interaction, pointerId) =>
+      set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),
+    setSurface: (element) => set({ surface: element }),
+    setTray: (element) => set({ tray: element }),
 
-  duplicateDraft: (id, purchase) => {
-    const source = get().drafts.find((draft) => draft.id === id);
-    if (!source) return null;
-
-    // The id is minted here rather than inside the updater so it can be handed
-    // back: an alt-drag has to continue against the COPY, and the caller cannot
-    // ask "which one is new" from outside without racing its own update.
-    const copyId = nextDraftId();
-
-    set((state) => {
-      const copy: StickerDraft = {
-        ...source,
-        // One mechanism, not two: the caller's answer wins outright, including
-        // when the answer is "nothing to buy". `markPurchased` already writes an
-        // undefined `purchase` elsewhere in this store, so an own key holding
-        // undefined is the shape the rest of the code already reads.
-        purchase,
-        id: copyId,
-        // Offset so the copy is visibly its own sticker rather than an exact
-        // overlap the placer has to discover by dragging the top one off.
-        //
-        // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
-        // at exactly the case the nudge exists for: duplicate a sticker in the
-        // corner and the copy landed at the same point, so the button looked
-        // like it had done nothing. Nudging inward keeps the copy visible and
-        // on the image, which is also what the server requires of the position.
-        x: nudge(source.x),
-        y: nudge(source.y),
-      };
-
-      // Appended and selected, the same as a fresh pickup: the copy is the one
-      // being positioned now, and the handles belong to it.
-      return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
-    });
-
-    return copyId;
-  },
-
-  move: (id, next) =>
-    set((state) => {
-      const index = state.drafts.findIndex((draft) => draft.id === id);
-      if (index < 0) return state;
-
-      const current = state.drafts[index];
-      const moved: StickerDraft = {
-        ...current,
-        ...next,
-        x: clamp(next.x ?? current.x, 0, 1),
-        y: clamp(next.y ?? current.y, 0, 1),
-        scale: clamp(
-          next.scale ?? current.scale,
-          STICKER_PLACEMENT_MIN_SCALE,
-          STICKER_PLACEMENT_MAX_SCALE
+    markPurchased: (cosmeticId, draftId) =>
+      set((state) => ({
+        drafts: state.drafts.map((draft) =>
+          draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
+            ? { ...draft, purchase: undefined }
+            : draft
         ),
-        rotation: clamp(
-          next.rotation ?? current.rotation,
-          -STICKER_PLACEMENT_MAX_ROTATION,
-          STICKER_PLACEMENT_MAX_ROTATION
-        ),
-        // Clamped like the rest, though nothing here can overshoot: the slider is
-        // bounded and the flip is a toggle. It matters because the server refuses
-        // rather than clamps below the floor, so a draft that got there some other
-        // way would be refused at the purchase — after the Buzz confirmation.
-        opacity: clamp(
-          next.opacity ?? current.opacity,
-          STICKER_PLACEMENT_MIN_OPACITY,
-          STICKER_PLACEMENT_MAX_OPACITY
-        ),
-      };
+      })),
 
-      // Replaced in place rather than moved to the end: order is what the drafts
-      // are drawn in, and reordering on move would make a sticker jump over its
-      // neighbours mid-drag.
-      const drafts = [...state.drafts];
-      drafts[index] = moved;
-      return { drafts };
-    }),
-}));
+    begin: (cosmeticId, at, maxScale, purchase) =>
+      set((state) => {
+        if (state.targetImageId == null) return state;
+
+        const draft: StickerDraft = {
+          ...(purchase ? { purchase } : {}),
+          id: nextDraftId(),
+          imageId: state.targetImageId,
+          cosmeticId,
+          x: at?.x ?? 0.5,
+          y: at?.y ?? 0.5,
+          // The creator's ceiling, not just the global one. A creator below the
+          // 18% default is a third of the slider's range, and their space refused
+          // the very first gesture with no hint why.
+          scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
+          rotation: 0,
+          flip: false,
+          opacity: STICKER_PLACEMENT_DEFAULT_OPACITY,
+        };
+
+        // Appended and selected: the one just dragged out is the one being placed,
+        // and the drag that created it is already in flight against it.
+        return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
+      }),
+
+    packPurchaseKey: (cosmeticId) => {
+      const existing = get().packKeys[cosmeticId];
+      if (existing) return existing;
+
+      const key = mintPurchaseKey();
+      set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
+      return key;
+    },
+
+    markPaidForUse: (draftId) =>
+      set((state) =>
+        state.paidDraftIds.includes(draftId)
+          ? state
+          : { paidDraftIds: [...state.paidDraftIds, draftId] }
+      ),
+
+    clearPackPurchaseKey: (cosmeticId) =>
+      set((state) => {
+        const { [cosmeticId]: _gone, ...rest } = state.packKeys;
+        return { packKeys: rest };
+      }),
+
+    duplicateDraft: (id, purchase) => {
+      const source = get().drafts.find((draft) => draft.id === id);
+      if (!source) return null;
+
+      // The id is minted here rather than inside the updater so it can be handed
+      // back: an alt-drag has to continue against the COPY, and the caller cannot
+      // ask "which one is new" from outside without racing its own update.
+      const copyId = nextDraftId();
+
+      set((state) => {
+        const copy: StickerDraft = {
+          ...source,
+          // One mechanism, not two: the caller's answer wins outright, including
+          // when the answer is "nothing to buy". `markPurchased` already writes an
+          // undefined `purchase` elsewhere in this store, so an own key holding
+          // undefined is the shape the rest of the code already reads.
+          purchase,
+          id: copyId,
+          // Offset so the copy is visibly its own sticker rather than an exact
+          // overlap the placer has to discover by dragging the top one off.
+          //
+          // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
+          // at exactly the case the nudge exists for: duplicate a sticker in the
+          // corner and the copy landed at the same point, so the button looked
+          // like it had done nothing. Nudging inward keeps the copy visible and
+          // on the image, which is also what the server requires of the position.
+          x: nudge(source.x),
+          y: nudge(source.y),
+        };
+
+        // Appended and selected, the same as a fresh pickup: the copy is the one
+        // being positioned now, and the handles belong to it.
+        return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
+      });
+
+      return copyId;
+    },
+
+    move: (id, next) =>
+      set((state) => {
+        const index = state.drafts.findIndex((draft) => draft.id === id);
+        if (index < 0) return state;
+
+        const current = state.drafts[index];
+        const moved: StickerDraft = {
+          ...current,
+          ...next,
+          x: clamp(next.x ?? current.x, 0, 1),
+          y: clamp(next.y ?? current.y, 0, 1),
+          scale: clamp(
+            next.scale ?? current.scale,
+            STICKER_PLACEMENT_MIN_SCALE,
+            STICKER_PLACEMENT_MAX_SCALE
+          ),
+          rotation: clamp(
+            next.rotation ?? current.rotation,
+            -STICKER_PLACEMENT_MAX_ROTATION,
+            STICKER_PLACEMENT_MAX_ROTATION
+          ),
+          // Clamped like the rest, though nothing here can overshoot: the slider is
+          // bounded and the flip is a toggle. It matters because the server refuses
+          // rather than clamps below the floor, so a draft that got there some other
+          // way would be refused at the purchase — after the Buzz confirmation.
+          opacity: clamp(
+            next.opacity ?? current.opacity,
+            STICKER_PLACEMENT_MIN_OPACITY,
+            STICKER_PLACEMENT_MAX_OPACITY
+          ),
+        };
+
+        // Replaced in place rather than moved to the end: order is what the drafts
+        // are drawn in, and reordering on move would make a sticker jump over its
+        // neighbours mid-drag.
+        const drafts = [...state.drafts];
+        drafts[index] = moved;
+        return { drafts };
+      }),
+  }));
+
+export const useStickerPlacementDraftStore = createDraftStore();
+export type DraftStoreHook = typeof useStickerPlacementDraftStore;
+
+/**
+ * A second, private draft store for a host whose drafts are not stickers for sale
+ * (Hat Turf hats). Sharing the global one would put a hat into the sticker tray's
+ * session and the sticker layer would render it with a buy button.
+ */
+export const createStickerPlacementDraftStore = createDraftStore;
+
+/** Which store `DraftSticker` and `useDraftGestures` read. The sticker one unless a host provides its own. */
+export const DraftStoreContext = createContext<DraftStoreHook>(useStickerPlacementDraftStore);
+export const useDraftStoreHook = () => useContext(DraftStoreContext);
 
 /** The one carrying the handles and the buy button, if any. */
 export const selectedDraft = (state: { drafts: StickerDraft[]; selectedDraftId: string | null }) =>
@@ -511,8 +527,12 @@ export const selectedDraft = (state: { drafts: StickerDraft[]; selectedDraftId: 
  * the carousel, and a stale rect silently offsets every later drag in a way that
  * reads as the sticker lagging the cursor.
  */
-export function pointerToSurfaceFraction(clientX: number, clientY: number) {
-  const surface = useStickerPlacementDraftStore.getState().surface;
+export function pointerToSurfaceFraction(
+  clientX: number,
+  clientY: number,
+  store: DraftStoreHook = useStickerPlacementDraftStore
+) {
+  const surface = store.getState().surface;
   const bounds = surface?.getBoundingClientRect();
   if (!bounds?.width || !bounds.height) return null;
 

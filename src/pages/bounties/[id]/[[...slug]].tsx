@@ -381,7 +381,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                 <Stack gap={4}>
                   {bounty.description && (
                     <ContentClamp maxHeight={200}>
-                      <RenderHtml html={bounty.description} />
+                      <RenderHtml html={bounty.description} withMentions />
                     </ContentClamp>
                   )}
                 </Stack>

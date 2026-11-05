@@ -218,7 +218,8 @@ export async function setTextScanCsamMode(
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|csam))$/;
+export const TEXT_SCAN_PROMPT_KEY =
+  /^(base|label:(nsfw|poi|minor|scam|csam|model-com-face-intent))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(

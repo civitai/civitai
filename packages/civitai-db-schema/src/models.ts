@@ -2926,6 +2926,12 @@ export interface AppUserScopeGrant {
   buzzBudgetPerDay: number | null;
 }
 
+export interface AppDeveloperTermsAcceptance {
+  userId: number;
+  version: string;
+  acceptedAt: Date;
+}
+
 export interface AppDevForgejoIdentity {
   userId: number;
   user?: User;

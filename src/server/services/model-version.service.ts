@@ -10,7 +10,6 @@ import {
   ownerHeld,
 } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import dayjs from '~/shared/utils/dayjs';
@@ -154,6 +153,7 @@ import {
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
+import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -731,6 +731,11 @@ export const upsertModelVersion = async ({
     isModerator,
     surface: 'modelVersion',
   });
+  // Trigger words are part of the listing the .com face re-check reads (queued after commit).
+  const trainedWordsChanged =
+    data.trainedWords !== undefined &&
+    [...new Set(data.trainedWords)].sort().join('\n') !==
+      [...new Set(storedText?.trainedWords ?? [])].sort().join('\n');
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -1000,6 +1005,8 @@ export const upsertModelVersion = async ({
       },
       { maxWait: 10000, timeout: 30000 }
     );
+    // First after commit, so a later step that throws cannot drop it.
+    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
@@ -1244,6 +1251,8 @@ export const upsertModelVersion = async ({
       },
       { maxWait: 10000, timeout: 30000 }
     );
+    // First after commit, so a later step that throws cannot drop it.
+    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     const keptGate = await writeModelVersionGateAndGoal(
@@ -1624,8 +1633,7 @@ export const deleteVersionById = async ({
     const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
     const outcome = await deleteUnlessHeld(
       tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: reviews }, true)},
-        ${keepHeldReviewsCte(reviews, true)}
+        WITH ${keepHeldReviewsCte(reviews, true)}
         DELETE FROM "ModelVersion" mv
         USING "Model" m
         WHERE mv.id = ${id}
@@ -3895,8 +3903,7 @@ export const mergeVersions = async ({
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: supersededByTarget }, true)},
-        ${keepHeldReviewsCte(supersededByTarget, true)}
+        WITH ${keepHeldReviewsCte(supersededByTarget, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
       `);
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
@@ -3904,8 +3911,7 @@ export const mergeVersions = async ({
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: supersededBySource }, true)},
-        ${keepHeldReviewsCte(supersededBySource, true)}
+        WITH ${keepHeldReviewsCte(supersededBySource, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
       `);
       await tx.resourceReview.updateMany({

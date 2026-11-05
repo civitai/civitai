@@ -1,4 +1,3 @@
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { keepHeldReviewsCte } from '~/server/services/held-review.service';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
@@ -445,14 +444,13 @@ export const upsertResourceReview = async ({
 };
 
 /**
- * Deletes the reviews `reviews` selects, copying a held author's into "HeldResourceReview" and
- * detaching held threads in the same statement. Returns the deleted rows.
+ * Deletes the reviews `reviews` selects, copying a held author's into "HeldResourceReview" in the
+ * same statement. Returns the deleted rows.
  */
 async function deleteReviews(reviews: Prisma.Sql) {
   const markerView = await holdMarkerViewExists();
   return dbWrite.$queryRaw<ResourceReview[]>`
-    WITH ${detachHeldThreadsCte({ reviewId: reviews }, markerView)},
-    ${keepHeldReviewsCte(reviews, markerView)}
+    WITH ${keepHeldReviewsCte(reviews, markerView)}
     DELETE FROM "ResourceReview" WHERE id IN (${reviews})
     RETURNING id, "modelId", "modelVersionId", rating, recommended, details, "userId", "createdAt",
       "updatedAt", exclude, nsfw, "tosViolation", metadata`;

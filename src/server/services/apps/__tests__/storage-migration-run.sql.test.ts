@@ -5,6 +5,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as FliptClientModule from '~/server/flipt/client';
+
+/** App block ids the operator hold flag resolves ON for (entityId = the app block id). */
+const { heldApps, mockIsFlipt } = vi.hoisted(() => ({
+  heldApps: new Set<string>(),
+  mockIsFlipt: vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>(),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
+  isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+    mockIsFlipt(flag, entityId, context),
+}));
 
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({
@@ -19,6 +31,7 @@ const {
   reserveStorageMigrationRuns,
   resumeStorageMigrationRuns,
   runStorageMigrationsForRequest,
+  startStorageMigrationsOnApprove,
 } = await import('~/server/services/apps/storage-migration-run.service');
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -79,6 +92,7 @@ async function insertRun(r: {
   attempts?: number;
   token?: string | null;
   heartbeatMinutesAgo?: number | null;
+  app?: string;
 }) {
   await db.query(
     `INSERT INTO app_storage_migration_runs
@@ -88,7 +102,7 @@ async function insertRun(r: {
     [
       r.request,
       r.collection,
-      APP,
+      r.app ?? APP,
       r.status,
       r.attempts ?? 0,
       r.token ?? null,
@@ -118,6 +132,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  heldApps.clear();
+  // Only the hold flag, for exactly the held app block ids, with no context: a wrong flag key or a
+  // wrong entity id reads as not held.
+  mockIsFlipt.mockImplementation(
+    async (flag, entityId, context) =>
+      flag === 'app-blocks-storage-migration-hold' &&
+      context === undefined &&
+      entityId !== undefined &&
+      heldApps.has(entityId)
+  );
   await db.exec(`DELETE FROM app_storage_migration_runs; DELETE FROM app_block_publish_requests;`);
   const pg = pgliteRaw(db);
   dbMock.dbWrite.$queryRaw.mockImplementation(pg.queryRaw as never);
@@ -234,7 +258,7 @@ describe('claim and save on a real database', () => {
       manifest: RUN_MANIFEST,
       status: 'pending',
     });
-    await runStorageMigrationsForRequest('pubreq_R', ['cards']);
+    await runStorageMigrationsForRequest('pubreq_R', ['cards'], APP);
     const [row] = await rows();
     expect([row.status, row.attempts]).toEqual(['pending', 2]);
     expect(row.claim_token).not.toBe('lost-runner');
@@ -249,7 +273,7 @@ describe('claim and save on a real database', () => {
       token: 'live-runner',
       heartbeatMinutesAgo: 1,
     });
-    await runStorageMigrationsForRequest('pubreq_R', ['cards']);
+    await runStorageMigrationsForRequest('pubreq_R', ['cards'], APP);
     const [row] = await rows();
     expect([row.status, row.attempts, row.claim_token]).toEqual(['running', 0, 'live-runner']);
     expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
@@ -265,7 +289,7 @@ describe('claim and save on a real database', () => {
       );
       return { slug: SLUG, manifest: RUN_MANIFEST, status: 'pending' };
     }) as never);
-    await runStorageMigrationsForRequest('pubreq_R', ['cards']);
+    await runStorageMigrationsForRequest('pubreq_R', ['cards'], APP);
     const [row] = await rows();
     expect([row.status, row.claim_token]).toEqual(['running', 'other-runner']);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -296,7 +320,11 @@ describe('the cap cleanup on a real database', () => {
       attempts: 5,
       heartbeatMinutesAgo: 1,
     });
-    expect(await resumeStorageMigrationRuns()).toEqual({ advanced: 0, tableMissing: false });
+    expect(await resumeStorageMigrationRuns()).toEqual({
+      advanced: 0,
+      held: 0,
+      tableMissing: false,
+    });
     expect((await rows()).map((r) => [r.publish_request_id, r.status])).toEqual([
       ['pubreq_F', 'running'],
       ['pubreq_P', 'failed'],
@@ -328,5 +356,206 @@ describe('closeStorageMigrationRunsForRequest on a real database', () => {
       ['pubreq_X', 'notes', 'completed'],
       ['pubreq_Y', 'cards', 'pending'],
     ]);
+  });
+});
+
+describe('the operator hold (app-blocks-storage-migration-hold) on a real database', () => {
+  const PLAN_CARDS = new Map([['cards', [{ op: 'remove' as const, path: '/legacy' }]]]);
+
+  it('🔴 a held run is never claimed by the job: it stays pending with its attempts, the cap cleanup leaves it, and the next run after the hold is lifted claims it', async () => {
+    await insertRequest('pubreq_H', RUN_MANIFEST);
+    // One attempt below the cap: a hold must neither add one nor let the cleanup fail it.
+    await insertRun({
+      request: 'pubreq_H',
+      collection: 'cards',
+      status: 'pending',
+      attempts: 4,
+      heartbeatMinutesAgo: 30,
+    });
+    heldApps.add(APP);
+    const first = await resumeStorageMigrationRuns();
+    const second = await resumeStorageMigrationRuns();
+    expect(await rows()).toEqual([
+      {
+        publish_request_id: 'pubreq_H',
+        collection: 'cards',
+        status: 'pending',
+        attempts: 4,
+        claim_token: null,
+      },
+    ]);
+    // Touched, so the job's least-recently-touched-first sweep rotates it behind other apps' runs.
+    const touched = await db.query<{ touched: boolean }>(
+      `SELECT heartbeat_at > now() - make_interval(mins => 1) AS touched FROM app_storage_migration_runs`
+    );
+    expect(touched.rows).toEqual([{ touched: true }]);
+    expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
+    expect([first, second]).toEqual([
+      { advanced: 0, held: 1, tableMissing: false },
+      { advanced: 0, held: 1, tableMissing: false },
+    ]);
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-storage-migration-hold', APP, undefined);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-storage-migration-run',
+        type: 'info',
+        publishRequestId: 'pubreq_H',
+        appBlockId: APP,
+        held: true,
+      }),
+      'app-blocks'
+    );
+
+    // Lifted: the next job run claims it. The request reads as pending, so the claimed run waits
+    // (one claim, one save, no page) — enough to show it was taken.
+    heldApps.clear();
+    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: SLUG,
+      manifest: RUN_MANIFEST,
+      status: 'pending',
+    });
+    expect(await resumeStorageMigrationRuns()).toEqual({
+      advanced: 1,
+      held: 0,
+      tableMissing: false,
+    });
+    const [row] = await rows();
+    expect(typeof row.claim_token).toBe('string');
+    expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 approve of a held app: the start at approve does not claim the reserved run, and a conflicting approve is refused while it is held', async () => {
+    await insertRequest('pubreq_A', RUN_MANIFEST);
+    await insertRequest('pubreq_B', RUN_MANIFEST, 'pending');
+    heldApps.add(APP);
+    await reserveStorageMigrationRuns({
+      appBlockId: APP,
+      publishRequestId: 'pubreq_A',
+      manifest: RUN_MANIFEST,
+      plans: PLAN_CARDS,
+    });
+    await startStorageMigrationsOnApprove({
+      publishRequestId: 'pubreq_A',
+      appBlockId: APP,
+      plans: PLAN_CARDS,
+    });
+    // The start runs in the background; it is done once it has logged the hold.
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ publishRequestId: 'pubreq_A', held: true }),
+        'app-blocks'
+      )
+    );
+    await resumeStorageMigrationRuns();
+    expect(await rows()).toEqual([
+      {
+        publish_request_id: 'pubreq_A',
+        collection: 'cards',
+        status: 'pending',
+        attempts: 0,
+        claim_token: null,
+      },
+    ]);
+    await expect(
+      reserveStorageMigrationRuns({
+        appBlockId: APP,
+        publishRequestId: 'pubreq_B',
+        manifest: RUN_MANIFEST,
+        plans: PLAN_CARDS,
+      })
+    ).rejects.toThrow(
+      'Cannot approve: this version changes the storage of collection cards, and an earlier storage migration of that collection (publish request pubreq_A, collection cards) is held by an operator switch and does not run while held. Approve again once an operator has released the hold and the migration has finished.'
+    );
+    expect((await rows()).map((r) => r.publish_request_id)).toEqual(['pubreq_A']);
+  });
+
+  it('🔴 a held run left running by a dead runner goes back to pending: claim cleared, cursor and counts kept, no attempt added', async () => {
+    await insertRequest('pubreq_D', RUN_MANIFEST);
+    await insertRun({
+      request: 'pubreq_D',
+      collection: 'cards',
+      status: 'running',
+      attempts: 2,
+      token: 'dead-runner',
+      heartbeatMinutesAgo: 30,
+    });
+    await db.query(
+      `UPDATE app_storage_migration_runs SET cursor = '{"scopeUid":7,"key":"k-41"}'::jsonb, scanned = 41`
+    );
+    heldApps.add(APP);
+    expect(await resumeStorageMigrationRuns()).toEqual({
+      advanced: 0,
+      held: 1,
+      tableMissing: false,
+    });
+    expect(await rows()).toEqual([
+      {
+        publish_request_id: 'pubreq_D',
+        collection: 'cards',
+        status: 'pending',
+        attempts: 2,
+        claim_token: null,
+      },
+    ]);
+    const kept = await db.query<Record<string, unknown>>(
+      `SELECT cursor, scanned, heartbeat_at > now() - make_interval(mins => 1) AS touched
+       FROM app_storage_migration_runs`
+    );
+    expect(kept.rows).toEqual([
+      { cursor: { scopeUid: 7, key: 'k-41' }, scanned: 41, touched: true },
+    ]);
+    expect(dbMock.dbWrite.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('a held run with a LIVE runner (fresh heartbeat) is left alone: its claim is never clobbered', async () => {
+    await insertRequest('pubreq_L', RUN_MANIFEST);
+    await insertRun({
+      request: 'pubreq_L',
+      collection: 'cards',
+      status: 'running',
+      attempts: 1,
+      token: 'live-runner',
+      heartbeatMinutesAgo: 1,
+    });
+    heldApps.add(APP);
+    await runStorageMigrationsForRequest('pubreq_L', ['cards'], APP);
+    const [row] = await rows();
+    expect([row.status, row.attempts, row.claim_token]).toEqual(['running', 1, 'live-runner']);
+  });
+
+  it("🔴 rotation: with a batch of one, the run after a held stale one is another app's run", async () => {
+    const OTHER = 'apb_SQL2';
+    await db.query(`INSERT INTO app_blocks (id) VALUES ($1) ON CONFLICT DO NOTHING`, [OTHER]);
+    await insertRequest('pubreq_H', RUN_MANIFEST);
+    await insertRequest('pubreq_O', RUN_MANIFEST);
+    // The held run is the least recently touched, so the sweep picks it first.
+    await insertRun({
+      request: 'pubreq_H',
+      collection: 'cards',
+      status: 'running',
+      token: 'dead-runner',
+      heartbeatMinutesAgo: 30,
+    });
+    await insertRun({
+      request: 'pubreq_O',
+      collection: 'cards',
+      status: 'pending',
+      heartbeatMinutesAgo: 20,
+      app: OTHER,
+    });
+    heldApps.add(APP);
+    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: SLUG,
+      manifest: RUN_MANIFEST,
+      status: 'pending',
+    });
+    const first = await resumeStorageMigrationRuns({ limit: 1 });
+    const second = await resumeStorageMigrationRuns({ limit: 1 });
+    expect([first, second]).toEqual([
+      { advanced: 0, held: 1, tableMissing: false },
+      { advanced: 1, held: 0, tableMissing: false },
+    ]);
+    const other = (await rows()).find((r) => r.publish_request_id === 'pubreq_O');
+    expect(typeof other?.claim_token).toBe('string');
   });
 });

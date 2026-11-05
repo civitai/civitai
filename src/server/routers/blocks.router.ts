@@ -8815,6 +8815,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // A write credential lets the caller file versions, so the caller (owner or collaborator)
+      // must have accepted, as on submitVersion.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
 
       const slug = block.blockId;
 
@@ -9077,6 +9083,13 @@ export const blocksRouter = router({
           message: 'Account is not eligible to edit apps',
         });
       }
+      // The owner too: the commit below files its review request in the owner's name, which
+      // refuses after the commit has landed if the owner has not accepted.
+      const { assertAcceptedAppDeveloperTermsTrpc, assertOwnerAcceptedAppDeveloperTerms } =
+        await import('~/server/services/blocks/app-developer-terms.service');
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
+      if (block.app.userId !== ctx.user!.id)
+        await assertOwnerAcceptedAppDeveloperTerms(block.app.userId);
       // The canonical Forgejo repo only exists once the first version is
       // ZIP-approved (approveRequest pre-creates civitai-apps/<slug>); until
       // then there's nothing to commit to.
@@ -9314,6 +9327,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // Gated like getMyAppRepo although it grants only `read`: the token it returns is the same
+      // push token, and an accepted collaborator already holds `write` from accepting the invite.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
       const slug = block.blockId;
       if (block.status !== 'approved') {
         return {

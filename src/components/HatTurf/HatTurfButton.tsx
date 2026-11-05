@@ -15,9 +15,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showInfoNotification } from '~/utils/notifications';
 import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
 
-/** Hidden when signed out or the image can't take a hat. */
+/** Hidden when signed out or the image can't take a hat. Show hats off keeps it: the game stays. */
 export function HatTurfButton({ imageId }: { imageId: number }) {
-  return useTurfFeed() ? <HatTurfButtonContent imageId={imageId} /> : null;
+  const feed = useTurfFeed();
+  return feed ? <HatTurfButtonContent imageId={imageId} /> : null;
 }
 
 function HatTurfButtonContent({ imageId }: { imageId: number }) {
@@ -145,7 +146,7 @@ export function HatTurfGear({
             setOpen(!open);
           }}
         >
-          <IconSettingsFilled size={11} />
+          <IconSettingsFilled size={12} />
         </button>
       }
     />

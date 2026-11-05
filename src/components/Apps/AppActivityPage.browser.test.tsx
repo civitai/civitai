@@ -378,7 +378,7 @@ const selectedPageTab = () => pageTabs().find((el) => el.getAttribute('aria-sele
 
 /** Anchors to `/apps` OUTSIDE the sub-nav — i.e. the page's own marketplace links. */
 const bodyMarketplaceLinks = () =>
-  Array.from(document.querySelectorAll('a[href="/apps"]')).filter((el) => !el.closest('nav'));
+  Array.from(document.querySelectorAll('a[href="/apps/store"]')).filter((el) => !el.closest('nav'));
 
 beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };

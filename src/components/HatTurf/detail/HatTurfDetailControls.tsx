@@ -54,7 +54,10 @@ function HatButton({ imageId }: { imageId: number }) {
   if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
-  const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
+  // Only someone who never joined is invited unprompted; a leaver rejoins from the button. Owner-off
+  // users are refused on Join, so they are not invited either.
+  const showInvite =
+    inviteOpen ?? (!!stock && !joined && !stock.left && !stock.ownerOff && !snoozed);
   const empty = joined && stock?.available === 0 && !placed;
 
   const press = () => {
@@ -148,7 +151,7 @@ function HatButton({ imageId }: { imageId: number }) {
   );
 }
 
-/** The feed's badge, on the picture's top-left corner; a tap opens the Hat Turf panel. */
+/** The feed's badge, in the picture's action row after Tip; a tap opens the Hat Turf panel. */
 export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
@@ -176,7 +179,7 @@ export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
           onClick={() => setOpen(!open)}
         >
           {summary ? (
-            <HatTurfBadge imageId={imageId} />
+            <HatTurfBadge imageId={imageId} className={classes.rowBadge} />
           ) : (
             <span className={classes.badgeEmpty}>
               <HatIcon size={18} />

@@ -224,6 +224,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
+  // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
+  // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
+  // the approve gate. Turning it off lets the job's next run take them. EVALUATED PER APP like the
+  // two above (entityId = the app block id, NO context): hold specific apps with an ENTITY_ID
+  // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
+  // `storage-migration-run.service.ts`.
+  APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',

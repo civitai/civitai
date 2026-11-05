@@ -319,6 +319,20 @@ describe('POST /api/v1/block-tokens', () => {
     expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
   });
 
+  it('system account: refused with the same 403 as the flag gate, before any install lookup or mint', async () => {
+    // A moderator passes the appBlocks flag, so only the system-account check can refuse here.
+    mockSession.value = {
+      user: { id: 77, bannedAt: null, isModerator: true, meta: { systemAccount: true } },
+    } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(403);
+    expect((res._body as { error: string }).error).toBe('Apps are not available to this account');
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
   it('M1: banned user is rejected at issuance', async () => {
     // Mod (passes the Phase-2 mint-gate) but banned → rejected at the ban check.
     mockSession.value = { user: { id: 99, bannedAt: new Date(), isModerator: true } } as never;

@@ -61,6 +61,7 @@ describe('stripMinorHashMeta', () => {
       prevSfwOnly: false,
       prevLockedProperties: ['nsfw'],
     },
+    ownerDeclaredFlags: { at: '2026-07-30T00:00:00.000Z', flags: ['minor'] },
   };
 
   it('removes all three minor-hash keys', () => {
@@ -70,8 +71,9 @@ describe('stripMinorHashMeta', () => {
     expect(result).not.toHaveProperty('minorHashCleared');
   });
 
-  it('removes the owner-flag override record', () => {
+  it('removes the owner-flag override record and the owner-declared flags', () => {
     expect(stripMinorHashMeta(full)).not.toHaveProperty('ownerFlagOverride');
+    expect(stripMinorHashMeta(full)).not.toHaveProperty('ownerDeclaredFlags');
   });
 
   it('leaves every other key untouched — including profanityMatches', () => {
@@ -96,6 +98,24 @@ describe('stripMinorHashMeta', () => {
   it('hides which system check locked the rating', () => {
     expect(
       stripMinorHashMeta({ systemNsfwLock: { source: 'text-scan', at: '2026-09-05T00:00:00Z' } })
+    ).toEqual({});
+  });
+
+  it('hides a restricted-verdict lead and its rulings from every client', () => {
+    expect(
+      stripMinorHashMeta({
+        restrictedNsfwVerdict: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00Z',
+          restriction: 'minor',
+        },
+        restrictedNsfwVerdictRulings: [],
+        restrictedNsfwVerdictDormant: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00Z',
+          restriction: 'minor',
+        },
+      })
     ).toEqual({});
   });
 

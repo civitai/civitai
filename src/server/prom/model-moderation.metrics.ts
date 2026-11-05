@@ -43,7 +43,7 @@ import { registerCounterWithLabels } from '@civitai/telemetry/client';
  */
 export const modelTextModerationOutcomeCounter = registerCounterWithLabels({
   name: 'model_text_moderation_outcome_total',
-  help: 'Model text-moderation callbacks that reached the apply stage, by what the adapter did (applied, skipped_locked, repaired, declined_race)',
+  help: 'Model text-moderation callbacks that reached the apply stage, by what the adapter did (applied, skipped_locked, repaired, declined_race, held_restricted)',
   labelNames: ['outcome'] as const,
 });
 
@@ -51,7 +51,9 @@ export type ModelTextModerationOutcome =
   | 'applied'
   | 'skipped_locked'
   | 'repaired'
-  | 'declined_race';
+  | 'declined_race'
+  /** The model is minor, POI or SFW-only: the verdict waits for a moderator, nsfw untouched. */
+  | 'held_restricted';
 
 /** Never let a metrics failure take down a moderation callback. */
 export function recordModelTextModerationOutcome(outcome: ModelTextModerationOutcome) {

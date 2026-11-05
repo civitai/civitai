@@ -258,11 +258,24 @@ describe('image detail on a phone', () => {
     }
   );
 
-  test('the expanded sheet has no Hat Turf badge: the one on the image is the control', async () => {
+  test('the Hat Turf badge rides in the strip under the picture, after the actions', async () => {
+    renderDetail(0);
+    await vi.waitFor(() => expect(sheet()).not.toBeNull());
+    const badge = sheet()!.querySelector('[data-testid="hat-badge"]');
+    expect(badge).not.toBeNull();
+    const save = [...sheet()!.querySelectorAll('button')].find((b) => b.textContent === 'Save')!;
+    expect(save.compareDocumentPosition(badge!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // The desktop toolbar's copy stays in the DOM, hidden by a container query.
+  test('an expanded sheet shows the Hat Turf badge once, in the strip', async () => {
     ctx.active = true;
     renderDetail(0);
     await vi.waitFor(() => expect(sheet()).not.toBeNull());
-    expect(q('hat-controls')).not.toBeNull();
-    expect(sheet()!.querySelector('[data-testid="hat-badge"]')).toBeNull();
+    const shown = [...document.body.querySelectorAll('[data-testid="hat-badge"]')].filter((el) =>
+      el.checkVisibility()
+    );
+    expect(shown).toHaveLength(1);
+    expect(sheet()!.contains(shown[0])).toBe(true);
   });
 });

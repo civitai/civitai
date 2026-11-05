@@ -288,8 +288,8 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
     takenDownAt,
   });
   beforeEach(() => {
-    // Serves both lookups on the comment: not detached, and in crucible 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, crucibleId: 17 }] as never);
+    // The comment is in crucible 17's thread.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ crucibleId: 17 }] as never);
   });
 
   it('is refused once the crucible is taken down', async () => {
@@ -330,8 +330,8 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
 describe('toggleReactionHandler — a comment on a storyline', () => {
   beforeEach(() => {
-    // Serves both lookups on the comment: not detached, and in storyline 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, storylineId: 17 }] as never);
+    // The comment is in storyline 17's thread.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ storylineId: 17 }] as never);
   });
 
   it('is refused once the storyline is taken down', async () => {

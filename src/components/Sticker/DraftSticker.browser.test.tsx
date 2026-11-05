@@ -1,5 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import type { ReactNode } from 'react';
+import { page, userEvent } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as CosmeticShopUtil from '~/components/CosmeticShop/cosmetic-shop.util';
@@ -84,6 +85,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   return {
     ...actual,
+    // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- spreads the real client, so an unlisted procedure is the real hook, not undefined
     trpc: {
       ...actual.trpc,
       useUtils: () => ({ cosmetic: { getStickerBalances: { invalidate: vi.fn() } } }),
@@ -128,7 +130,12 @@ const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
  */
 const renderDraft = async (
   freeOffer: { instant: boolean } | null,
-  { ownerShare, maxScale, scale }: { ownerShare?: number; maxScale?: number; scale?: number } = {}
+  {
+    ownerShare,
+    maxScale,
+    scale,
+    commit,
+  }: { ownerShare?: number; maxScale?: number; scale?: number; commit?: ReactNode } = {}
 ) => {
   renderWithProviders(
     // Positioned absolutely inside the media box in the app; a plain relative
@@ -147,6 +154,7 @@ const renderDraft = async (
         ownerShare={ownerShare}
         ownerUsername="creator"
         onGesture={() => true}
+        commit={commit}
       />
     </div>
   );
@@ -970,5 +978,40 @@ describe('previewing without the controls', () => {
 
     useStickerPlacementDraftStore.setState({ previewing: false });
     await expect.element(slider).toBeVisible();
+  });
+});
+
+describe('a host-supplied commit replaces every way to pay', () => {
+  test('shows the commit and none of the buy, note or payout controls', async () => {
+    await renderDraft({ instant: true }, { ownerShare: 0.7, commit: <button>Place hat</button> });
+
+    await expect.element(page.getByRole('button', { name: 'Place hat' })).toBeInTheDocument();
+    // The sticker editing bar stays: a hat is moved, flipped and removed like a sticker.
+    await expect
+      .element(page.getByRole('button', { name: 'Flip this sticker' }))
+      .toBeInTheDocument();
+    for (const name of ['Place free', 'Place', 'Add a note']) {
+      expect(page.getByRole('button', { name, exact: true }).elements()).toHaveLength(0);
+    }
+    expect(page.getByRole('radio').elements()).toHaveLength(0);
+    expect(placed).toHaveLength(0);
+  });
+});
+
+describe('the keyboard moves a draft like a drag does', () => {
+  test.each([
+    ['{ArrowRight}', 0.01, 0],
+    ['{Shift>}{ArrowUp}{/Shift}', 0, -0.05],
+  ])('%s nudges the stored draft', async (keys, dx, dy) => {
+    useStickerPlacementDraftStore.setState({ drafts: [draft] });
+    await renderDraft(null);
+    const body = page.getByLabelText('Sticker position: arrow keys to move');
+
+    (body.element() as HTMLElement).focus();
+    await userEvent.keyboard(keys);
+
+    const [moved] = useStickerPlacementDraftStore.getState().drafts;
+    expect(moved.x).toBeCloseTo(draft.x + dx, 10);
+    expect(moved.y).toBeCloseTo(draft.y + dy, 10);
   });
 });
