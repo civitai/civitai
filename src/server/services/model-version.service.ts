@@ -10,6 +10,7 @@ import {
   ownerHeld,
 } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import dayjs from '~/shared/utils/dayjs';
@@ -1624,7 +1625,8 @@ export const deleteVersionById = async ({
     const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
     const outcome = await deleteUnlessHeld(
       tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(reviews, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: reviews }, true)},
+        ${keepHeldReviewsCte(reviews, true)}
         DELETE FROM "ModelVersion" mv
         USING "Model" m
         WHERE mv.id = ${id}
@@ -3894,7 +3896,8 @@ export const mergeVersions = async ({
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededByTarget, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: supersededByTarget }, true)},
+        ${keepHeldReviewsCte(supersededByTarget, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
       `);
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
@@ -3902,7 +3905,8 @@ export const mergeVersions = async ({
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededBySource, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: supersededBySource }, true)},
+        ${keepHeldReviewsCte(supersededBySource, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
       `);
       await tx.resourceReview.updateMany({

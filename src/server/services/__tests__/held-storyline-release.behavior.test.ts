@@ -10,8 +10,8 @@ import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
 
 /**
  * The daily purge of a deleted storyline's copy (`deleteStoryline`): kept for a year after the
- * delete, and after that while its owner, any chapter author or any draft author is held, or a report
- * on it is open, read at run time. A held commenter keeps nothing: comments are not held.
+ * delete, and after that while its owner, any chapter author or any commenter is held, or a report on
+ * it is open, read at run time.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -102,6 +102,7 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
   for (const [who, userId] of [
     ['its owner', OWNER],
     ['a chapter author', AUTHOR],
+    ['a commenter', COMMENTER],
     ["a draft's author", DRAFTER],
   ] as const)
     it(`keeps it all while ${who} is held, and releases it once they are not`, async () => {
@@ -112,12 +113,6 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
       await purgeReleasedHeldCopies();
       expect(await left()).toEqual(none);
     });
-
-  it('releases it while a commenter is held', async () => {
-    await hold(COMMENTER);
-    await purgeReleasedHeldCopies();
-    expect(await left()).toEqual(none);
-  });
 
   it('keeps it while a report linked to the copy is open', async () => {
     await db.exec(`

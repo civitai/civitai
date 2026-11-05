@@ -568,11 +568,18 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
       (`CommentV3Report` keys on `commentId`, so `findReportToFoldInto` has a case like
       `User`'s). `CommentV3` follows `CommentV2`'s rollout until given its own. Built 2026-10-29,
       awaiting the stage B deploy
-- [x] No legal holds on comments (decided 2026-11-04, Briant, on the CSAM reviewer's word): every
-      comment delete is a plain delete and an entity's delete takes its comments with it, on every
-      table. A reported user's comments are kept as evidence in the CSAM report archive instead
-      (`userContentSections` in `csam.service-new.ts`). The `removedByAuthor` columns stay until a
-      migration drops them
+- [ ] Legal holds on CommentV3 follow the CommentV2 rules (decided 2026-10-30): deletes keep a held
+      comment as a ToS violation, marked `removedByAuthor` when its author removed it
+      (`20261217120000_comment_v3_removed_by_author`, to apply before the deploy); a ToS restore
+      leaves those hidden; an article with a held author's CommentV3-only comment is kept (delete
+      refused, a wipe takes it down as a violation), in the main app and in the moderator app's
+      article delete (`article-moderation.ts`, with SQL copies in `delete-hold-sql.ts` kept
+      identical by `moderator-delete-hold-parity.test.ts`). Built for article 2026-10-30, awaiting
+      the stage B deploy
+- [ ] Per surface, at its write flip: the parent's delete refuses, and the account wipe keeps the
+      parent, while a held author has a live CommentV3-only comment under it, as
+      `heldCommentV3OnArticleSql` does for articles (generalise it by `entityType` rather than
+      copying it), including any moderator-app delete of that parent
 - [ ] Clavata path, so `CommentV3` is moderated exactly as `CommentV2` is (decided 2026-10-30):
       `EntityType` value `CommentV3` + `trg_moderation_commentv3`, firing only on direct writes
       (`20261211120000_comment_v3_moderation_trigger`, applied in prod 2026-10-30 in the same
@@ -760,7 +767,7 @@ With the old tables (before the drops below):
       `threadAncestorsCte`, and the `v3Comment` fallback becomes the only path);
       `user.service.ts` account wipe (`commentV2Reaction.deleteMany`, the CommentV2 delete) and
       ban (its CommentV2 update, `setUserCommentsV3Tos` and `v3SurfaceCommentIds`);
-      `comment.service.ts` bulk delete's `v3Ids` split and `deleteCommentsV2`;
+      `comment.service.ts` bulk delete's `v3Ids` split and `deleteCommentsV2UnlessHeld`;
       `v3WriteCommentIds` and the v3 split in `bulkSetCommentV2TosViolation` /
       `bulkClearCommentV2TosViolation`; `scam-cleanup.service.ts` CommentV2 arms and
       `setV3SurfaceHidden`; `reaction.service.ts` `isV3WriteComment` and the CommentV2 toggle arm
@@ -770,8 +777,10 @@ With the old tables (before the drops below):
       `events/points/hooks.ts` `onCommentCreated`'s `threadId` arm; `hasV3SurfaceTwinSql` and its
       exclusions (ban, wipe, scam cleanup, block-hide); the `CommentTopic` delete ahead of the
       article in `article.service.ts` `deleteArticleById`, in the account wipe and in the moderator
-      app's `deleteArticle` (the entity cascade covers it); the reverse copy's `removedByAuthor`
-      carry, with the columns
+      app's `deleteArticle` (the entity cascade covers it), and the thread detach in all three; `heldCommentV3OnArticleSql`
+      (`commentv3/moderation.service.ts`, and its moderator-app copy) loses its `CommentV2` twin
+      clause and stays as the refusal; `bulkClearCommentV3TosViolation` loses its `CommentV2` `metadata.removedByAuthor`
+      check, and `deleteCommentsV3UnlessHeld` its `CommentV2` mark
 - [ ] Text-scan: `comment.profile.ts` and `comment-v2.profile.ts`, the `Comment`/`CommentV2` cases in
       `csam-hold-decision.ts` and the Clavata cutover set, `scam.adapter.ts`'s
       `CommentV3: 'commentsV2'` cleanup kind, and `mode.ts`'s fallback from `CommentV3` to the
@@ -804,8 +813,8 @@ With the old tables (before the drops below):
       `commentv3/__tests__/scam-cleanup.sql.behavior` (drop the v2 cases and the mirror migrations,
       keep the v3-only hide and restore cases),
       `comment-v3-parity-verdict`, `jobs/__tests__/comment-v3-parity`; the refusal and routing cases
-      in `commentsv2.threadMute.service.test.ts`; the v2 arms of `bulk-delete-comments.behavior.test.ts`
-      and `remove-all-content-legal-hold.behavior.test.ts`; and the mirror schema `comment-v3-fixture.ts`
+      in `commentsv2.threadMute.service.test.ts`; the v2 arms of the bulk-delete and
+      remove-all-content legal-hold behaviour tests; and the mirror schema `comment-v3-fixture.ts`
       loads
 
 ### Database teardown

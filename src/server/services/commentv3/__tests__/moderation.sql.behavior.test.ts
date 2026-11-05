@@ -18,8 +18,12 @@ const { reward, notify } = vi.hoisted(() => ({
 vi.mock('~/server/rewards', () => ({ reportAcceptedReward: { apply: reward } }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: notify }));
 
-const { bulkClearCommentV3TosViolation, bulkSetCommentV3TosViolation, setUserCommentsV3Tos } =
-  await import('~/server/services/commentv3/moderation.service');
+const {
+  bulkClearCommentV3TosViolation,
+  bulkSetCommentV3TosViolation,
+  deleteCommentsV3UnlessHeld,
+  setUserCommentsV3Tos,
+} = await import('~/server/services/commentv3/moderation.service');
 const { bulkSetCommentV2TosViolation } = await import('~/server/services/commentsv2.service');
 
 let pg: PGlite;
@@ -39,6 +43,15 @@ beforeAll(async () => {
   await pg.exec(migration('20261120120000_comment_v3_mirror'));
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20261217120000_comment_v3_removed_by_author'));
+  // What the hold legs read; no marker table, so the marker leg holds nobody.
+  await pg.exec(`
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
+      details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
+    );
+    ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "needsReview" text,
+      ADD COLUMN "blockedFor" text;
+  `);
 
   const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     Array.isArray(first)
@@ -67,7 +80,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await pg.exec(`
     DELETE FROM "CommentV3Report"; DELETE FROM "CommentV2Report"; DELETE FROM "CommentV2";
-    DELETE FROM "CommentV3"; DELETE FROM "Thread"; DELETE FROM "CommentTopic";
+    DELETE FROM "CommentV3"; DELETE FROM "Thread"; DELETE FROM "CommentTopic"; DELETE FROM "CsamReport";
     UPDATE "Report" SET "userId" = NULL, reason = NULL, status = NULL;
     INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1);
     INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content) VALUES (41, 'article', 1, 5, 'v3 only');
@@ -150,6 +163,7 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toEqual({
       count: 2,
       reopenedReports: 3,
+      retainedHidden: 0,
       failed: 0,
     });
     expect(await tos()).toMatchObject({ 41: false, 42: false });
@@ -157,6 +171,48 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(await status()).toEqual({ 1: 'Pending', 2: 'Pending', 3: 'Pending', 4: 'Pending' });
     // Every actioned ToS report on them reopens (5 too); one for another reason stays actioned.
     expect(await statusOf(5, 6)).toEqual({ 5: 'Pending', 6: 'Actioned' });
+  });
+
+  it('keeps a comment hidden when its author is held, and reopens nothing for it', async () => {
+    await bulkSetCommentV3TosViolation({ ids: [41, 42], actor: { id: 1 } });
+    await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (5)`);
+    expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toEqual({
+      count: 1,
+      reopenedReports: 1,
+      retainedHidden: 1,
+      failed: 0,
+    });
+    expect(await tos()).toMatchObject({ 41: true, 42: false });
+    expect(await status()).toMatchObject({ 1: 'Actioned', 4: 'Pending' });
+  });
+
+  it('keeps a comment hidden when a held author replied below it', async () => {
+    await pg.exec(`
+      INSERT INTO "User" VALUES (12) ON CONFLICT DO NOTHING;
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content)
+      VALUES (43, 'article', 1, 41, 12, 'reply');
+      INSERT INTO "CsamReport" ("userId") VALUES (12);
+    `);
+    await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
+    expect(await bulkClearCommentV3TosViolation({ ids: [41] })).toMatchObject({
+      count: 0,
+      retainedHidden: 1,
+    });
+    expect(await tos()).toMatchObject({ 41: true });
+  });
+
+  // Restoring one would republish a comment its author deleted.
+  it('leaves hidden a comment its author deleted while a hold kept it, in either table', async () => {
+    await bulkSetCommentV3TosViolation({ ids: [41, 42], actor: { id: 1 } });
+    await pg.exec(`
+      UPDATE "CommentV3" SET "removedByAuthor" = true WHERE id = 41;
+      UPDATE "CommentV2" SET metadata = '{"removedByAuthor": true}' WHERE id = 42;
+    `);
+    expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toMatchObject({
+      count: 0,
+      retainedHidden: 0,
+    });
+    expect(await tos()).toMatchObject({ 41: true, 42: true });
   });
 
   it('sets and clears the flag in a transaction, so the row lock covers the CommentV2 sync', async () => {
@@ -209,15 +265,40 @@ describe('removing CommentV3 comments as ToS violations', () => {
     ).toBe(false);
   });
 
-  it('keeps every comment hidden when the restore fails, and counts them failed', async () => {
+  it('keeps every comment hidden when the hold cannot be read, and counts a failure apart', async () => {
     await bulkSetCommentV3TosViolation({ ids: [41, 42], actor: { id: 1 } });
+    dbMock.dbWrite.$transaction.mockRejectedValueOnce(
+      new Error('relation "EvidenceHeldUser" does not exist')
+    );
+    expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toEqual({
+      count: 0,
+      reopenedReports: 0,
+      retainedHidden: 2,
+      failed: 0,
+    });
     dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('deadlock detected'));
     expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toEqual({
       count: 0,
       reopenedReports: 0,
+      retainedHidden: 0,
       failed: 2,
     });
     expect(await tos()).toMatchObject({ 41: true, 42: true });
+  });
+
+  // Only an author's own removal is marked: a moderator's may still be restored.
+  it('marks a held comment kept on its author’s delete, in both tables, and not on a moderator’s', async () => {
+    await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (6)`);
+    await deleteCommentsV3UnlessHeld(dbMock.dbWrite as never, [42], false);
+    const marks = async () =>
+      rows<{ v3: boolean; v2: string | null }>(`
+        SELECT v."removedByAuthor" AS v3, c.metadata ->> 'removedByAuthor' AS v2
+        FROM "CommentV3" v JOIN "CommentV2" c ON c.id = v.id WHERE v.id = 42`);
+    expect(await marks()).toEqual([{ v3: false, v2: null }]);
+    expect(await tos()).toMatchObject({ 42: true });
+
+    await deleteCommentsV3UnlessHeld(dbMock.dbWrite as never, [42], false, { byAuthor: true });
+    expect(await marks()).toEqual([{ v3: true, v2: 'true' }]);
   });
 
   it('is what the CommentV2 removal does with an id on a surface that writes CommentV3', async () => {

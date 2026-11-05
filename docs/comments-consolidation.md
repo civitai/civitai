@@ -37,8 +37,8 @@ changed after the 2026-08-25 merged design is listed under _Changes since 2026-0
    Prisma delegate for them. Old-table code keeps whatever client it has until Phase 6.
    **Amended 2026-10-30 (Briant): the write path is raw SQL over a `SqlRunner`**
    (`commentv3/write.service.ts`, with `prismaRunner(tx)` adapting a Prisma transaction). Each v3
-   write commits with Prisma-only work (the sticker charge, the old-table delete, the
-   `CommentV2` row kept in step), and a Kysely transaction runs on
+   write commits with Prisma-only work (the sticker charge, the old-table delete and its
+   `accountHoldSql` hold check, the `CommentV2` row kept in step), and a Kysely transaction runs on
    its own connection, so it cannot join them. Reads stay on Kysely.
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
@@ -58,7 +58,8 @@ section that holds the detail.
   without it. Comic chapters and model comments write through the same v3 path
   (`docs/plans/comments-v3-article-flip.md`).
 - **2026-10-30 — v3 writes are raw SQL, not Kysely** (decision 8, amended). Porting the old writes
-  to Kysely instead was rejected: the old code is deleted in Phase 6.
+  to Kysely instead was rejected: the old code is deleted in Phase 6, and the hold check is shared
+  with other surfaces.
 - **2026-10-22 — the cross-surface readers read CommentV3.** Amendments on the way: the challenge
   and resource-review counts (were `Thread.commentCount`), the collection judged check and the
   metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
