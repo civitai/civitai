@@ -79,16 +79,16 @@ function arrange({
   db.keyValue.findMany.mockResolvedValue(waiting.map((value) => ({ key: KEY, value })) as never);
 }
 
-const coverCleared = () =>
-  db.$executeRaw.mock.calls.some(
-    (call) =>
-      Array.isArray(call[0]) &&
-      (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
-  );
+/** The removal UPDATE, as the Prisma.Sql object the service hands `$executeRaw`. */
+const removalWrite = () =>
+  db.$executeRaw.mock.calls
+    .map((call) => call[0] as unknown as { sql?: string; values?: unknown[] })
+    .find((sql) => sql.sql?.includes('"sfwCoverImageId" = NULL'));
+const coverCleared = () => removalWrite() !== undefined;
 const marker = () => {
-  const arg = db.$executeRaw.mock.calls[0]
-    .slice(1)
-    .find((value) => typeof value === 'string' && value.includes('sfwCoverImageId'));
+  const arg = removalWrite()?.values?.find(
+    (value) => typeof value === 'string' && value.includes('sfwCoverImageId')
+  );
   return JSON.parse(String(arg));
 };
 const savedRetry = () =>
@@ -120,7 +120,7 @@ describe('the .com face listing re-check', () => {
 
     expect(counts.removed).toBe(1);
     expect(coverCleared()).toBe(true);
-    const sql = (db.$executeRaw.mock.calls[0][0] as unknown as string[]).join('?');
+    const sql = removalWrite()?.sql;
     expect(sql).not.toMatch(/"sfwName"\s*=|"sfwDescription"\s*=/);
     expect(marker()).toMatchObject({ sfwCoverImageId: COVER_ID, reason: 'detected' });
     expect(db.modActivity.create).toHaveBeenCalledWith({
@@ -309,8 +309,7 @@ describe('the .com face listing re-check', () => {
 
     const counts = await processComFaceRechecks(NOW);
 
-    const sql = (db.$executeRaw.mock.calls[0][0] as unknown as string[]).join('?');
-    expect(sql).toMatch(/AND "sfwCoverImageId" = \?/);
+    expect(removalWrite()?.sql).toMatch(/AND "sfwCoverImageId" = \?/);
     expect(counts.skipped).toBe(1);
     expect(db.modActivity.create).not.toHaveBeenCalled();
     expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
@@ -518,15 +517,7 @@ describe('queueing a re-check when the queue is unavailable', () => {
     await queueComFaceRecheck(MODEL_ID);
 
     expect(coverCleared()).toBe(true);
-    const removal = db.$executeRaw.mock.calls.find(
-      (call) =>
-        Array.isArray(call[0]) &&
-        (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
-    );
-    const removalMarker = removal
-      ?.slice(1)
-      .find((value) => typeof value === 'string' && value.includes('sfwCoverImageId'));
-    expect(JSON.parse(String(removalMarker)).reason).toBe('recheck-unverified');
+    expect(marker().reason).toBe('recheck-unverified');
     expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
   });
 });

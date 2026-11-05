@@ -123,6 +123,23 @@ async function removeUnverified(modelId: number) {
   return removeComFace(modelId, model.sfwCoverImageId, 'recheck-unverified');
 }
 
+/** Clears the .com cover and records the marker, only while the cover is still the one read: a cover
+ *  picked since then went through the save gate. */
+export const comFaceRemovalSql = (
+  modelId: number,
+  coverId: number,
+  marker: NonNullable<ModelMeta['comFaceRemoved']>
+) => {
+  const meta = asJsonbObjectSql('meta');
+  const markerJson = JSON.stringify(marker);
+  return Prisma.sql`
+    UPDATE "Model"
+    SET "sfwCoverImageId" = NULL,
+        meta = ${meta} || jsonb_build_object('comFaceRemoved', ${markerJson}::jsonb)
+    WHERE id = ${modelId} AND "sfwCoverImageId" = ${coverId}
+  `;
+};
+
 async function removeComFace(modelId: number, coverId: number, reason: ComFaceRemovedReason) {
   const marker: NonNullable<ModelMeta['comFaceRemoved']> = {
     at: new Date().toISOString(),
@@ -130,15 +147,7 @@ async function removeComFace(modelId: number, coverId: number, reason: ComFaceRe
     reason,
   };
   const removed = await dbWrite.$transaction(async (tx) => {
-    // Conditional on the cover read above: a cover picked since then went through the save gate.
-    const updated = await tx.$executeRaw`
-      UPDATE "Model"
-      SET "sfwCoverImageId" = NULL,
-          meta = ${asJsonbObjectSql(
-            'meta'
-          )} || jsonb_build_object('comFaceRemoved', ${JSON.stringify(marker)}::jsonb)
-      WHERE id = ${modelId} AND "sfwCoverImageId" = ${coverId}
-    `;
+    const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
     if (updated)
       await tx.modActivity.create({
         data: {
