@@ -138,6 +138,7 @@ import type {
   OutboxEntity,
   StorylineStatus,
   StorylineWhoCanContinue,
+  StorylineFollowScope,
   ServiceOfferingStatus,
   ServicePreviewKind,
   ServiceBuzzType,
@@ -427,6 +428,11 @@ export type AppCollaborator = {
   last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
+};
+export type AppDeveloperTermsAcceptance = {
+  user_id: number;
+  version: string;
+  accepted_at: Generated<Timestamp>;
 };
 export type AppDevForgejoIdentity = {
   user_id: number;
@@ -5698,6 +5704,12 @@ export type StorylineEarlyAccessSignup = {
   storylineId: number | null;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineFollow = {
+  storylineId: number;
+  userId: number;
+  scope: Generated<StorylineFollowScope>;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylinePendingChapter = {
   postId: number;
   storylineId: number;
@@ -6459,6 +6471,7 @@ export type DB = {
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_developer_terms_acceptances: AppDeveloperTermsAcceptance;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;
@@ -6810,6 +6823,7 @@ export type DB = {
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylineFollow: StorylineFollow;
   StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;

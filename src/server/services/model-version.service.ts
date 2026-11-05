@@ -153,6 +153,7 @@ import {
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
+import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -276,7 +277,6 @@ export const getDefaultModelVersion = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  // One Kysely statement, on the client the `getKyselyWithoutLag('model', …)` lag decision picks.
   const db = await getKyselyWithoutLag('model', modelId);
   const result = await readDefaultModelVersionsViaKysely(db, { modelId, modelVersionId });
 
@@ -731,6 +731,11 @@ export const upsertModelVersion = async ({
     isModerator,
     surface: 'modelVersion',
   });
+  // Trigger words are part of the listing the .com face re-check reads (queued after commit).
+  const trainedWordsChanged =
+    data.trainedWords !== undefined &&
+    [...new Set(data.trainedWords)].sort().join('\n') !==
+      [...new Set(storedText?.trainedWords ?? [])].sort().join('\n');
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -1000,6 +1005,8 @@ export const upsertModelVersion = async ({
       },
       { maxWait: 10000, timeout: 30000 }
     );
+    // First after commit, so a later step that throws cannot drop it.
+    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
@@ -1244,6 +1251,8 @@ export const upsertModelVersion = async ({
       },
       { maxWait: 10000, timeout: 30000 }
     );
+    // First after commit, so a later step that throws cannot drop it.
+    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     const keptGate = await writeModelVersionGateAndGoal(

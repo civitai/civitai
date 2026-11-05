@@ -4,11 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readDismissedAnnouncementIdsViaKysely,
-  readDismissedAnnouncementIdsViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readDismissedAnnouncementIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import {
   activeAnnouncementWhere,
   announcementWindowOverlapsWhere,
@@ -338,18 +334,15 @@ export async function getDismissedAnnouncementIds({
   userId: number;
   domain?: DomainColor;
 }) {
-  const now = new Date();
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-    return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
-      userId,
-      now,
-      domain,
-    });
-  return readDismissedAnnouncementIdsViaPrisma(dbRead, { userId, now, domain });
+  return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
+    userId,
+    now: new Date(),
+    domain,
+  });
 }
 
-// The live-window predicates live in a leaf module so the kysely-hot-reads-5 Prisma reader and its
-// parity suite use them without importing this service; re-exported so every caller is unchanged.
+// The live-window predicates live in a leaf module (announcement-window.ts); re-exported so every
+// caller is unchanged.
 export { activeAnnouncementWhere, announcementWindowOverlapsWhere };
 
 /**

@@ -9,10 +9,11 @@ import {
 } from '~/server/services/remix-app.service';
 import {
   advanceRemixRun,
-  listRemixRuns,
+  postRemixResult,
   REMIX_RUN_ID,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
+import { POST_CREATE_RATE_LIMIT_KEY, postRateLimits } from '~/server/schema/post.schema';
 import type { Context } from '~/server/createContext';
 import { rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
@@ -30,11 +31,25 @@ const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 const teamQuoteRateLimit = rateLimit({ limit: 120, period: CacheTTL.xs });
 /** start and advance each price the next workflow with a what-if before they submit it. */
 const runStepRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
-/** Each call reads up to 100 of the viewer's workflows from the orchestrator. */
-const runsRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
 const nonce = z.string().min(8).max(64);
 const quote = z.number().int().nonnegative();
+const gallery = z
+  .object({
+    hostImageId: imageId,
+    method: z.enum(['free', 'team', 'paid']),
+    expectedPrice: z.number().int().min(0).optional(),
+  })
+  // The gallery service reads a missing price as consent to the owner's current one.
+  .superRefine((input, ctx) => {
+    if (input.method === 'paid' && input.expectedPrice == null)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expectedPrice'],
+        message: 'A paid submission has to carry the price it was shown',
+      });
+  });
+
 const answer = z.union([z.string().max(1000), z.number().int().nonnegative()]);
 
 function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
@@ -98,8 +113,24 @@ export const remixAppRouter = router({
     .mutation(async ({ ctx, input }) =>
       advanceRemixRun({ ...input, caller: await getCaller(ctx) })
     ),
-  runs: remixAppProcedure
-    .use(runsRateLimit)
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(async ({ ctx }) => listRemixRuns({ caller: await getCaller(ctx) })),
+  /** Posts a finished run, published; `gallery` also submits it to the source's Remix gallery. */
+  post: guardedProcedure
+    .use(isFlagProtected('remixApps'))
+    // `post.create`'s own limit, shared with it: this makes a post just as that does.
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(
+      z.union([
+        // A runtime run posts what the app returned, read by replaying the run.
+        z.object({ runId: z.string().regex(REMIX_RUN_ID), gallery: gallery.optional() }),
+        z.object({ workflowId: z.string().min(1).max(64), gallery: gallery.optional() }),
+      ])
+    )
+    .mutation(async ({ ctx, input }) =>
+      postRemixResult({
+        ...input,
+        caller: await getCaller(ctx),
+        ctx,
+      })
+    ),
 });

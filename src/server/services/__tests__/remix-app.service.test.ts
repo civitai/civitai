@@ -185,6 +185,19 @@ describe('remixApp.run → graph input', () => {
     expect(args.allowMatureContent).toBeUndefined();
   });
 
+  it('tags a one-shot run as a one-segment run, so the tray lists it', async () => {
+    addImage(1);
+    await runRemixApp({ slug: 'make-it-real', imageId: 1, nonce: 'nonce-0001', caller: caller() });
+    await runRemixApp({ slug: 'make-it-real', imageId: 1, nonce: 'nonce-0002', caller: caller() });
+
+    const [first, second] = submitted().map((args) => args.tags);
+    expect(first).toEqual(expect.arrayContaining(['remix-app', 'remix-seg:0']));
+    const runOf = (tags: string[]) => tags.find((tag) => /^remix-run:r[0-9a-f]{20}$/.test(tag));
+    expect(runOf(first)).toBeDefined();
+    // One tap, one run: another tap is another row in the tray.
+    expect(runOf(second)).not.toBe(runOf(first));
+  });
+
   it('charges the domain currency and returns what the submit cost, at the tier it ran', async () => {
     addImage(3);
     addImage(4, { nsfwLevel: MATURE });

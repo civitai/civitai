@@ -128,5 +128,6 @@ export * from './app-token';
 export {
   allowsModeratorWriteKeys,
   isSystemAccountMeta,
+  parseMeta,
   SYSTEM_ACCOUNT_META,
 } from './system-account'; // User.meta marker for API-key-only accounts (hub refuses sign-in, no onboarding bonus)

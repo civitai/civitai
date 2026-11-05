@@ -2507,3 +2507,82 @@ describe('AppListingDetailBody — the restricted-visibility badge', () => {
     ).toHaveLength(0);
   });
 });
+
+const { LISTING_REVIEWS_ANCHOR_ID } = await import('~/components/Apps/listingKindLabels');
+
+/**
+ * Below the two-column body the page reads Reviews → Comments → the "More in <category>" rail.
+ * The rail sits after two unbounded threads, so the Details panel carries a same-page link to it;
+ * the link test checks BOTH ends (the href's target is a rendered element holding the rail), so a
+ * rename on either side fails it.
+ */
+describe('AppListingDetailBody — page order and the related-rail link', () => {
+  const follows = (a: Element, b: Element) =>
+    !a.contains(b) && !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  test('🔴 the reviews section precedes the comments, which precede the related rail', async () => {
+    mocks.relatedItems = [relatedCard('l2', 'Sibling One')];
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-related-rail')).toBeInTheDocument();
+
+    const reviews = container.querySelector(`[id="${LISTING_REVIEWS_ANCHOR_ID}"]`);
+    const comments = container.querySelector('[data-testid="mock-comments"]');
+    const rail = container.querySelector('[data-testid="apps-related-rail"]');
+    expect(reviews, 'reviews section').not.toBeNull();
+    expect(comments, 'comments').not.toBeNull();
+    expect(rail, 'related rail').not.toBeNull();
+    expect(reviews!.contains(container.querySelector('[data-testid="mock-reviews"]'))).toBe(true);
+
+    expect(follows(reviews!, comments!), 'comments come after reviews').toBe(true);
+    expect(follows(comments!, rail!), 'the related rail comes after comments').toBe(true);
+  });
+
+  test.each([
+    ['games', 'More in Games →'],
+    [null, 'More apps →'],
+  ] as const)(
+    '🔴 category=%s: the Details link "%s" jumps to an id the rendered rail carries',
+    async (category, label) => {
+      const { container, within } = await renderScoped(
+        <AppListingDetailBody detail={base({ category })} />
+      );
+      const link = within.getByTestId('apps-listing-details-related-link');
+      await expect.element(link).toBeInTheDocument();
+      const anchor = link.element() as HTMLAnchorElement;
+
+      expect(anchor.textContent).toBe(label);
+      const details = container.querySelector('[data-testid="apps-listing-details-accordion"]');
+      expect(details!.contains(anchor), 'the link lives in the Details panel').toBe(true);
+      // Same-page jump: no new tab.
+      expect(anchor.getAttribute('target')).toBeNull();
+
+      const href = anchor.getAttribute('href') ?? '';
+      expect(href).toMatch(/^#./);
+      const target = container.querySelector(`[id="${href.slice(1)}"]`);
+      expect(target, `${href} must land on a rendered element`).not.toBeNull();
+      const rail = container.querySelector('[data-testid="apps-related-rail"]');
+      expect(rail).not.toBeNull();
+      expect(target === rail || target!.contains(rail), 'the target holds the related rail').toBe(
+        true
+      );
+    }
+  );
+
+  test('🔴 preview renders no related-rail link — with its live positive control', async () => {
+    const live = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect
+      .element(live.within.getByTestId('apps-listing-details-related-link'))
+      .toBeInTheDocument();
+
+    const prev = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
+    await expect
+      .element(prev.within.getByTestId('apps-listing-details-accordion'))
+      .toBeInTheDocument();
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-details-related-link"]')
+    ).toHaveLength(0);
+    for (const testid of ['mock-reviews', 'mock-comments', 'apps-related-rail']) {
+      expect(prev.container.querySelectorAll(`[data-testid="${testid}"]`), testid).toHaveLength(0);
+    }
+  });
+});

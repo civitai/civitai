@@ -15,6 +15,7 @@ export const config = {
     bodyParser: { sizeLimit: '8kb' },
   },
 };
+import { isSystemAccountMeta } from '@civitai/auth';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
@@ -27,6 +28,7 @@ import {
   getRequestDomainColor,
   isHostForColor,
   isMatureContentRating,
+  ratingAllowedOnHost,
 } from '~/server/utils/server-domain';
 import {
   allBrowsingLevelsFlag,
@@ -34,6 +36,7 @@ import {
   effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { ratingHiddenByBrowsingLevel } from '~/server/services/blocks/app-listing-store-gate';
 import {
   resolvePerCallBuzzBudget,
   isAppStorageScope,
@@ -104,9 +107,31 @@ function resolveEffectiveBrowsingLevel(args: {
   maxBrowsingLevel: number;
 }): number {
   const { req, sessionUser, maxBrowsingLevel } = args;
+  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerOwnBrowsingLevel(req, sessionUser));
+}
+
+/** The viewer's own browsing level for this request (`getServerBrowsingLevel`; PG when absent). */
+function viewerOwnBrowsingLevel(req: NextApiRequest, sessionUser: SessionUser | undefined) {
   const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
-  const viewerBrowsingLevel = getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
-  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerBrowsingLevel);
+  return getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
+}
+
+/**
+ * 🔴 An r/x app is minted a token only for a viewer whose browsing level includes that rating —
+ * the store's one rule (`ratingHiddenByBrowsingLevel`), so a direct mint cannot run an app the run
+ * page shows as hidden or a model slot omits. Same 403 shape as the host refusal. Call only after
+ * the host gate; `isMatureContentRating` first so a non-mature app never reaches the rule.
+ */
+function hiddenByViewerBrowsingLevel(
+  contentRating: unknown,
+  req: NextApiRequest,
+  sessionUser: SessionUser | undefined
+): boolean {
+  return (
+    typeof contentRating === 'string' &&
+    isMatureContentRating(contentRating) &&
+    ratingHiddenByBrowsingLevel(contentRating, viewerOwnBrowsingLevel(req, sessionUser)) != null
+  );
 }
 
 /**
@@ -1011,6 +1036,20 @@ async function tryPrivateRunMint(args: {
 
   const app = access.block;
 
+  // The SITE gate first, exactly as the private-run PAGE applies it (`ratingAllowedOnHost`): an r/x
+  // app gets no token off a red-capable host, whatever the viewer's level. Same refusal as the
+  // public path's host check.
+  if (!ratingAllowedOnHost(app.contentRating, req.headers.host ?? '')) {
+    res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return 'handled';
+  }
+  // …then the viewer's browsing level, as the page applies it (owners and moderators are not
+  // exempt): an r/x app outside it gets no token.
+  if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
+    return 'handled';
+  }
+
   // 🔴 NO SOFT-DELETE / BAN RE-READ HERE — `resolvePrivateRunAccess` owns it, against
   // the PRIMARY, and refuses `viewer-ineligible`. This branch used to perform its own
   // copy (the fourth in this file), which is what created the asymmetry review found:
@@ -1146,12 +1185,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
-  // feature flag, evaluated for THIS caller (possibly anon). Today the flag is
-  // `availability: ['mod']`, so this is behaviour-identical to the previous
-  // hardcoded `isModerator` check — anon/non-mod callers fail the flag and are
-  // refused. When the flag is later widened (preview/GA → `['user']`/`['public']`
-  // via Flipt or the registry), anon/non-mod callers start passing here and the
-  // anon-scope stripping below keeps the issued token safe (no money/self scope).
+  // feature flag, evaluated for THIS caller (possibly anon), and system accounts
+  // are refused whatever the flag says. Today the flag is `availability: ['mod']`,
+  // so anon/non-mod callers fail the flag and are refused. When the flag is later
+  // widened (preview/GA → `['user']`/`['public']` via Flipt or the registry),
+  // anon/non-mod callers start passing here and the anon-scope stripping below
+  // keeps the issued token safe (no money/self scope).
   //
   // Block tokens are the linchpin — the entire block-token runtime (workflow
   // submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable only with
@@ -1161,7 +1200,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // resolveBlockInstance DB read) so a refused caller can't probe install
   // existence or consume those buckets.
   const appBlocksAvailable = getFeatureFlags({ user: session?.user, req }).appBlocks;
-  if (!appBlocksAvailable) {
+  if (!appBlocksAvailable || isSystemAccountMeta(session?.user?.meta)) {
     res.status(403).json({ error: 'Apps are not available to this account' });
     return;
   }
@@ -1682,6 +1721,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     !redCapableHost
   ) {
     res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return;
+  }
+  // …and on .red, only for a viewer whose browsing level includes it (page AND model-slot mints).
+  if (hiddenByViewerBrowsingLevel(appContentRating, req, session?.user)) {
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
     return;
   }
 

@@ -1,13 +1,11 @@
-import { Button, Paper, Stack, Text } from '@mantine/core';
+import { Button, Stack, Text } from '@mantine/core';
 import { IconArrowRight, IconShoppingBag } from '@tabler/icons-react';
 import React, { useState } from 'react';
+import type { ComponentProps } from 'react';
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
-import {
-  serviceTermsLine,
-  useQueryShopServices,
-} from '~/components/CreatorShop/Services/creator-service.util';
-import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
+import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import { storefrontSectionId, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -65,34 +63,44 @@ export const ShopRow = ({
   );
 };
 
+// Same grid and column math as ShopRow, one row, so a service card sits level with the
+// cosmetic cards. The button goes to the storefront Services section, where Request lives.
 export const ServicesRow = ({
   offerings,
   href,
 }: {
-  offerings: Pick<ServiceOffering, 'id' | 'title' | 'deliveryDays' | 'revisionsIncluded'>[];
+  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & { id: number })[];
   href: string;
-}) => (
-  <Stack gap="xs">
-    {offerings.map((offering) => (
-      <Paper
-        key={offering.id}
-        component={Link}
-        href={href}
-        withBorder
-        radius="md"
-        p="sm"
-        style={{ color: 'inherit', textDecoration: 'none' }}
-      >
-        <Text fw={600} lineClamp={1}>
-          {offering.title}
-        </Text>
-        <Text size="sm" c="dimmed">
-          {serviceTermsLine(offering)}
-        </Text>
-      </Paper>
-    ))}
-  </Stack>
-);
+}) => {
+  const [columns, setColumns] = useState(1);
+  const gridRef = useResizeObserver<HTMLDivElement>((entry) => {
+    setColumns(getShopRowColumns(entry.contentRect.width));
+  });
+
+  return (
+    <div
+      ref={gridRef}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        marginTop: -8,
+      }}
+    >
+      {offerings.slice(0, columns).map((offering) => (
+        <div key={offering.id} style={{ margin: 8 }}>
+          <ServiceOfferingCard
+            offering={offering}
+            footer={
+              <Button component={Link} href={href} color="yellow" size="xs" mt="sm" fullWidth>
+                View service
+              </Button>
+            }
+          />
+        </div>
+      ))}
+    </div>
+  );
+};
 
 // Profile-overview section that showcases the creator's featured shop items so
 // visitors can jump straight into their shop. Renders one row: featured items first,

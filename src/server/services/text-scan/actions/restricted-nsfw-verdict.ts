@@ -3,6 +3,7 @@ import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type {
+  ModelMeta,
   RestrictedNsfwVerdict,
   RestrictedNsfwVerdictRulingRecord,
 } from '~/server/schema/model.schema';
@@ -11,6 +12,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { uniq } from 'lodash-es';
 
 export const RESTRICTED_NSFW_VERDICT_RULINGS = [
   'keep',
@@ -35,6 +37,9 @@ type Row = {
   verdict: RestrictedNsfwVerdict | null;
   systemNsfwLock: RestrictedNsfwVerdictRulingRecord['prior']['systemNsfwLock'];
   rulings: RestrictedNsfwVerdictRulingRecord[] | null;
+  ownerFlagOverride: ModelMeta['ownerFlagOverride'] | null;
+  ownerDeclaredFlags: ModelMeta['ownerDeclaredFlags'] | null;
+  minorFlagSnapshot: ModelMeta['minorFlagSnapshot'] | null;
 };
 
 /** A model the owner once declared minor counts as minor here even after they untick it: for the
@@ -68,7 +73,10 @@ export async function resolveRestrictedNsfwVerdict({
       SELECT m."userId", m.nsfw, m.minor, m.poi, m."sfwOnly", m.availability, m."lockedProperties",
         m.meta->'restrictedNsfwVerdict' AS verdict,
         m.meta->'systemNsfwLock' AS "systemNsfwLock",
-        m.meta->'restrictedNsfwVerdictRulings' AS rulings
+        m.meta->'restrictedNsfwVerdictRulings' AS rulings,
+        m.meta->'ownerFlagOverride' AS "ownerFlagOverride",
+        m.meta->'ownerDeclaredFlags' AS "ownerDeclaredFlags",
+        m.meta->'minorFlagSnapshot' AS "minorFlagSnapshot"
       FROM "Model" m
       WHERE m.id = ${modelId} AND jsonb_typeof(m.meta) = 'object'
       FOR UPDATE OF m
@@ -163,6 +171,33 @@ export async function resolveRestrictedNsfwVerdict({
       // Dismiss has ruled on that rating, so a later lift must not bring it back.
       ...(ruling === 'rateNsfw' ? [] : ['ownerFlagOverride']),
     ];
+    // The override goes, but the minor-hash rollback still has to know the owner declared the flag.
+    const dropsOverride = ruling !== 'rateNsfw' && !!row.ownerFlagOverride;
+    const declared: Pick<ModelMeta, 'ownerDeclaredFlags'> =
+      dropsOverride && row.ownerFlagOverride
+        ? {
+            ownerDeclaredFlags: {
+              at: row.ownerDeclaredFlags?.at ?? row.ownerFlagOverride.at,
+              flags: uniq([
+                ...(row.ownerDeclaredFlags?.flags ?? []),
+                ...row.ownerFlagOverride.flags,
+              ]),
+            },
+          }
+        : {};
+    // A minor flag set after the scan applied snapshotted the scan's rating as the one its lift
+    // restores. A Keep has ruled that rating out, so the snapshot no longer describes it.
+    const snapshot = row.minorFlagSnapshot;
+    const supersedesSnapshot =
+      ruling === 'keep' &&
+      !!verdict.applied &&
+      !!snapshot?.at &&
+      !snapshot.supersededAt &&
+      Date.parse(snapshot.at) >= Date.parse(verdict.applied.at);
+    const superseded: Pick<ModelMeta, 'minorFlagSnapshot'> =
+      supersedesSnapshot && snapshot
+        ? { minorFlagSnapshot: { ...snapshot, supersededAt: new Date().toISOString() } }
+        : {};
     // Guarded on the lead still being there: the row lock makes a second ruling wait, then fail here.
     const written = await tx.$executeRaw`
       UPDATE "Model" m
@@ -172,6 +207,8 @@ export async function resolveRestrictedNsfwVerdict({
           meta = (m.meta - ${dropped}::text[])
             || jsonb_build_object('restrictedNsfwVerdictRulings', ${JSON.stringify(rulings)}::jsonb)
             || ${JSON.stringify(dormant ? { restrictedNsfwVerdictDormant: dormant } : {})}::jsonb
+            || ${JSON.stringify(declared)}::jsonb
+            || ${JSON.stringify(superseded)}::jsonb
       WHERE m.id = ${modelId} AND m.meta ? 'restrictedNsfwVerdict'
     `;
     if (!written) throw throwBadRequestError('This lead was ruled on meanwhile; reload.');

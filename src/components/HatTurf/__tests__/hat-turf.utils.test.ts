@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { STICKER_PLACEMENT_DEFAULT_SCALE } from '~/shared/utils/sticker-placement';
 import { eventTurfTopic } from '~/server/events/turf/turf-map';
 import {
   teamStandings,
-  HAT_DEFAULT_SCALE,
   RING_LENGTH,
   applyTurfPush,
   hatTone,
@@ -87,15 +87,20 @@ describe('readHatPose', () => {
       scale: 0.4,
       rotation: 10,
       flip: true,
+      opacity: 1,
     });
   });
-  it('defaults size, turn and flip when absent', () => {
+  it('draws a hat opaque whatever opacity its row stored', () => {
+    expect(readHatPose({ x: 0.5, y: 0.5, opacity: 0.6 })?.opacity).toBe(1);
+  });
+  it('defaults size, turn, flip and opacity when absent', () => {
     expect(readHatPose({ x: 0.5, y: 0.5 })).toEqual({
       x: 0.5,
       y: 0.5,
-      scale: HAT_DEFAULT_SCALE,
+      scale: STICKER_PLACEMENT_DEFAULT_SCALE,
       rotation: 0,
       flip: false,
+      opacity: 1,
     });
   });
   it('is null for anything that cannot be placed', () => {
@@ -163,6 +168,14 @@ describe('turf pushes', () => {
       bounds: null,
     });
     expect(read({ canvas: [128, 160] })).not.toHaveProperty('art');
+  });
+  it("keeps each pushed sticker's placement time, so the reveal plays in placement order", () => {
+    const sticker = { id: '1', userId: 3, team: 'blue', cosmeticId: 11, data: {} };
+    const read = (createdAt: unknown) =>
+      readTurfPush({ event: 'e', imageId: 4, counts, stickers: [{ ...sticker, createdAt }] }, 'e')
+        ?.stickers?.[0];
+    expect(read('2026-11-05T03:00:00.000Z')?.createdAt).toBe('2026-11-05T03:00:00.000Z');
+    expect(read('not a date')).not.toHaveProperty('createdAt');
   });
   it('refuses a malformed push instead of drawing from it', () => {
     expect(readTurfPush({ event: 'e', imageId: 'x', counts }, 'e')).toBeNull();

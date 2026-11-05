@@ -20,6 +20,8 @@ import {
   SHELL_REQ_KEY,
 } from '~/shared/constants/shell.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
+import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
+import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -547,11 +549,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     [SHELL_REQ_KEY]?: string;
     [SHELL_RENDERED_REQ_KEY]?: string;
     [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+    [BOT_CACHE_REQ_KEY]?: BotCacheRouteName;
   };
   // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
   // which must then carry no edge-cache header a shell attempt may have left.
   renderRequest[SHELL_REQ_KEY] = shellRender?.route;
   renderRequest[SHELL_RENDERED_REQ_KEY] = undefined;
+  renderRequest[BOT_CACHE_REQ_KEY] = undefined;
   if (!shellRender) {
     const { res } = appContext.ctx;
     for (const name of SHELL_EDGE_HEADERS) {
@@ -700,12 +704,27 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     navBanners,
     siteAlerts,
   } = settingsBootstrap;
+
+  // Bot HTML edge cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the edge
+  // may store and serve to other crawlers, so nothing below may vary it per request. `_document`
+  // adds the edge headers only once the page rendered.
+  let botCache: { route: BotCacheRouteName; seed: number } | undefined;
+  if (typeof window === 'undefined') {
+    const { resolveBotCacheRoute, botCacheSeed } = await import('~/server/bot-cache/bot-cache');
+    const route = resolveBotCacheRoute(request, appContext.ctx.pathname, {
+      degraded: settingsDegraded,
+    });
+    if (route) botCache = { route, seed: botCacheSeed(request.url) };
+  }
+  renderRequest[BOT_CACHE_REQ_KEY] = botCache?.route;
+
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,
-    req: request,
+    // Without the request, region cannot reach a cacheable render's flags.
+    req: botCache ? undefined : request,
   });
 
   const domain = getRequestDomainColor(request);
@@ -835,15 +854,17 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       navBannersDismissed,
       siteAlerts,
       following,
-      seed: Date.now(),
+      seed: botCache ? botCache.seed : Date.now(),
       hasAuthCookie,
       sessionCookie,
-      region,
+      // No region: it is the requester's, and it decides the consent banner.
+      region: botCache ? undefined : region,
       domain,
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
-      verifiedBot,
+      // Which crawler asked is not part of the edge's cache key.
+      verifiedBot: botCache ? null : verifiedBot,
     },
     ...appProps,
   };

@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
+import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
 
 import {
   addListingScreenshotSchema,
@@ -1206,6 +1208,36 @@ export const appListingsRouter = router({
       return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
     }),
 
+  getDeveloperTermsStatus: appDeveloperProcedure.query(async ({ ctx }) => {
+    const { getAppDeveloperTermsStatus } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getAppDeveloperTermsStatus(ctx.user.id);
+  }),
+
+  getDeveloperRateCard: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.features?.appDeveloperRateCard) throw new TRPCError({ code: 'NOT_FOUND' });
+    const { getDeveloperRateCard } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getDeveloperRateCard();
+  }),
+
+  acceptDeveloperTerms: appDeveloperProcedure
+    .input(z.object({ version: z.string().min(1).max(32) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.version !== APP_DEVELOPER_TERMS_VERSION) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'The App Developer Terms changed. Reload the page and accept the new version.',
+        });
+      }
+      const { acceptAppDeveloperTerms } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      return acceptAppDeveloperTerms({ userId: ctx.user.id, version: input.version });
+    }),
+
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
   listMySubmissions: appDeveloperProcedure
     .input(listMySubmissionsSchema)
@@ -2236,12 +2268,14 @@ export const appListingsRouter = router({
       const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
       if (scope === 'none') return null;
       const redCapable = isRedCapableRequest(ctx);
+      // An R/X parent or fork is visible only to a viewer whose browsing level includes it.
+      const viewerBrowsingLevel = getRequestBrowsingLevel(ctx);
       const { getStoreVisibleListingSummary } = await import(
         '~/server/services/blocks/app-listing.service'
       );
       const parent = await getStoreVisibleListingSummary(
         { id: input.listingId },
-        { redCapable, scope, floor }
+        { redCapable, scope, floor, viewerBrowsingLevel }
       );
       if (!parent) return null;
       const [{ listListingForks }, { dbRead }] = await Promise.all([
@@ -2255,6 +2289,7 @@ export const appListingsRouter = router({
         scope,
         floor,
         redCapable,
+        viewerBrowsingLevel,
       });
     }),
 
@@ -2276,6 +2311,9 @@ export const appListingsRouter = router({
         listingId: input.listingId,
         scope,
         redCapable: isRedCapableRequest(ctx),
+        // Any signed-in viewer may fork a publicly visible listing, so "visible" includes their
+        // own browsing level for an R/X parent.
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
         req: ctx.req,
       });
     }),
@@ -2321,6 +2359,36 @@ export const appListingsRouter = router({
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  /**
+   * Why `getAppDetail` 404'd, when the ONLY reason is the viewer's browsing level: an R/X app
+   * whose rating their level leaves out. Returns `{ contentRating }` (nothing else of the app) so
+   * the detail page can show a hidden state that explains it; `null` otherwise, and the page
+   * shows its ordinary NotFound. Same gates and rate limit as `getAppDetail`.
+   */
+  getAppHiddenState: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') return null;
+      const { getListingHiddenByBrowsingLevel } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingHiddenByBrowsingLevel(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
     }),
 
   getAppCard: publicProcedure

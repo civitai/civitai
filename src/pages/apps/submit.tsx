@@ -3,6 +3,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppDeveloperTermsCheckbox } from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { AppsSubmitEditView } from '~/components/Apps/AppsSubmitEditView';
@@ -86,7 +87,10 @@ export default function SubmitAppPage() {
         }
       >
         {mode === null ? (
-          <SubmitModeSelector onSelect={setMode} />
+          <Stack gap="md">
+            <AppDeveloperTermsCheckbox />
+            <SubmitModeSelector onSelect={setMode} />
+          </Stack>
         ) : (
           <Stack gap="md">
             <UnstyledButton
@@ -102,7 +106,14 @@ export default function SubmitAppPage() {
               </Group>
             </UnstyledButton>
 
-            {mode === 'external' ? <ExternalSubmitForm /> : <CliSubmitCta />}
+            {mode === 'external' ? (
+              <ExternalSubmitForm />
+            ) : (
+              <>
+                <AppDeveloperTermsCheckbox />
+                <CliSubmitCta />
+              </>
+            )}
           </Stack>
         )}
       </AppsPageLayout>

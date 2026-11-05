@@ -4,7 +4,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * start, advance and runs each reach the orchestrator on every call. The REAL `rateLimit` runs
+ * start and advance each reach the orchestrator on every call. The REAL `rateLimit` runs
  * here: `~/env/other` says this is not a test (it skips itself in tests), the caller is not a
  * moderator (it skips them), and redis holds the recorded attempts.
  */
@@ -12,14 +12,12 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const h = vi.hoisted(() => ({
   startRemixRun: vi.fn(async () => ({ status: 'running' })),
   advanceRemixRun: vi.fn(async () => ({ status: 'running' })),
-  listRemixRuns: vi.fn(async () => []),
 }));
 
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   startRemixRun: h.startRemixRun,
   advanceRemixRun: h.advanceRemixRun,
-  listRemixRuns: h.listRemixRuns,
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
@@ -65,7 +63,6 @@ const procedures = [
     call: () => caller().advance({ runId: `r${'0'.repeat(20)}` }),
     service: h.advanceRemixRun,
   },
-  { name: 'runs', call: () => caller().runs(), service: h.listRemixRuns },
 ];
 
 beforeEach(() => {

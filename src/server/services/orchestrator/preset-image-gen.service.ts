@@ -234,7 +234,7 @@ export type PresetEngine = Pick<
 > &
   Partial<Pick<PresetModelConfig, 'resolution'>>;
 
-type PresetGenArgs = {
+type PresetInputArgs = {
   prompt?: string;
   aspectRatio: string;
   quantity?: number;
@@ -242,15 +242,42 @@ type PresetGenArgs = {
   modelConfig: PresetEngine;
   /** Override the resource version (e.g. a model's img2img variant). */
   versionIdOverride?: number;
+};
+
+/** A graph input the caller composed itself, for a workflow other than the preset generation. */
+type ComposedInputArgs = { graphInput: Record<string, unknown> };
+
+type GraphInputArgs = PresetInputArgs | ComposedInputArgs;
+
+type PresetCallerArgs = {
   user: SessionUser;
   token: string;
   /** Buzz account types to spend from. Callers resolve these per their context. */
   currencies: BuzzSpendType[];
   /** Feature flags for gate enforcement; omit for non-request contexts (jobs). */
   flags?: Partial<FeatureAccess>;
-  /** Workflow tags, e.g. `['comics']` / `['iterate']` (+ `'green'`). */
-  tags: string[];
 };
+
+type PresetGenArgs = GraphInputArgs &
+  PresetCallerArgs & {
+    /** Workflow tags, e.g. `['comics']` / `['iterate']` (+ `'green'`). */
+    tags: string[];
+  };
+
+function graphInputOf(args: GraphInputArgs, forWhatIf: boolean) {
+  if ('graphInput' in args) return args.graphInput;
+  const { prompt, aspectRatio, quantity = 1, images, modelConfig, versionIdOverride } = args;
+  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
+  return buildPresetGraphInput({
+    prompt,
+    aspectRatio,
+    quantity,
+    images: forWhatIf && !cappedImages?.length ? null : cappedImages,
+    ecosystem: modelConfig.ecosystem,
+    versionId: versionIdOverride ?? modelConfig.versionId,
+    resolution: modelConfig.resolution,
+  });
+}
 
 /**
  * Submit a preset image generation through the generation graph.
@@ -262,47 +289,33 @@ type PresetGenArgs = {
  *
  * Returns the formatted generation response; callers consume `.id`.
  */
-export async function submitPresetImageGen({
-  prompt,
-  aspectRatio,
-  quantity = 1,
-  images,
-  modelConfig,
-  versionIdOverride,
-  user,
-  token,
-  currencies,
-  flags,
-  tags,
-  isGreen,
-  allowMatureContent,
-  track,
-  remixOfId,
-  externalId,
-  sourceProvenance,
-  remixRun,
-}: PresetGenArgs & {
-  isGreen?: boolean;
-  allowMatureContent?: boolean;
-  track?: any; // Tracker class from createContext
-  remixOfId?: number;
-  /** The orchestrator dedupes on (user, externalId), so a repeated submit returns one workflow. */
-  externalId?: string;
-  sourceProvenance?: string[];
-  remixRun?: Record<string, unknown>;
-}) {
-  const versionId = versionIdOverride ?? modelConfig.versionId;
-  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
-
-  const input = buildPresetGraphInput({
-    prompt,
-    aspectRatio,
-    quantity,
-    images: cappedImages,
-    ecosystem: modelConfig.ecosystem,
-    versionId,
-    resolution: modelConfig.resolution,
-  });
+export async function submitPresetImageGen(
+  args: PresetGenArgs & {
+    isGreen?: boolean;
+    allowMatureContent?: boolean;
+    track?: any; // Tracker class from createContext
+    remixOfId?: number;
+    /** The orchestrator dedupes on (user, externalId), so a repeated submit returns one workflow. */
+    externalId?: string;
+    sourceProvenance?: string[];
+    remixRun?: Record<string, unknown>;
+  }
+) {
+  const {
+    user,
+    token,
+    currencies,
+    flags,
+    tags,
+    isGreen,
+    allowMatureContent,
+    track,
+    remixOfId,
+    externalId,
+    sourceProvenance,
+    remixRun,
+  } = args;
+  const input = graphInputOf(args, false);
 
   const { externalCtx } = await buildGenerationContext(
     user.tier ?? 'free',
@@ -339,30 +352,11 @@ export async function submitPresetImageGen({
  * Prompt is intentionally omittable — `whatIfFromGraph` supplies a
  * `cost-estimation` placeholder so validation passes without a real prompt.
  */
-export async function whatIfPresetImageGen({
-  prompt,
-  aspectRatio,
-  quantity = 1,
-  images,
-  modelConfig,
-  versionIdOverride,
-  user,
-  token,
-  currencies,
-  flags,
-}: Omit<PresetGenArgs, 'tags'>): Promise<{ cost: number; ready: boolean }> {
-  const versionId = versionIdOverride ?? modelConfig.versionId;
-  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
-
-  const input = buildPresetGraphInput({
-    prompt,
-    aspectRatio,
-    quantity,
-    images: cappedImages && cappedImages.length > 0 ? cappedImages : null,
-    ecosystem: modelConfig.ecosystem,
-    versionId,
-    resolution: modelConfig.resolution,
-  });
+export async function whatIfPresetImageGen(
+  args: GraphInputArgs & PresetCallerArgs
+): Promise<{ cost: number; ready: boolean }> {
+  const { user, token, currencies, flags } = args;
+  const input = graphInputOf(args, true);
 
   const { externalCtx } = await buildGenerationContext(
     user.tier ?? 'free',

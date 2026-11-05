@@ -266,6 +266,8 @@ export type StorylineStatus = "Ongoing" | "Complete";
 
 export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
 
+export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
+
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
@@ -713,6 +715,7 @@ export interface User {
   comicChapterReads?: ComicChapterRead[];
   storylines?: Storyline[];
   storylineCollaborations?: StorylineCollaborator[];
+  storylineFollows?: StorylineFollow[];
   storylineEarlyAccess?: StorylineEarlyAccessSignup | null;
   storylineBranchChoices?: StorylineBranchChoice[];
   storylineCreateClicks?: StorylineCreateClick[];
@@ -2924,6 +2927,12 @@ export interface AppUserScopeGrant {
   revokedScopes: string[];
   revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
+}
+
+export interface AppDeveloperTermsAcceptance {
+  userId: number;
+  version: string;
+  acceptedAt: Date;
 }
 
 export interface AppDevForgejoIdentity {
@@ -6724,6 +6733,7 @@ export interface Storyline {
   chapters?: StorylineChapter[];
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
+  followers?: StorylineFollow[];
   reports?: StorylineReport[];
   coverUploads?: StorylineCoverUpload[];
   thread?: Thread | null;
@@ -6804,6 +6814,15 @@ export interface StorylineCollaborator {
   user?: User;
   createdAt: Date;
   acceptedAt: Date | null;
+}
+
+export interface StorylineFollow {
+  storylineId: number;
+  storyline?: Storyline;
+  userId: number;
+  user?: User;
+  scope: StorylineFollowScope;
+  createdAt: Date;
 }
 
 export interface StorylineBranchChoice {

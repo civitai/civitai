@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActionIcon, Button } from '@mantine/core';
+import { Button } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
@@ -11,7 +11,6 @@ import { DEFAULT_SPOT, HatTurfPanelPopover } from '~/components/HatTurf/HatTurfP
 import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import classes from '~/components/HatTurf/detail/HatTurfDetailControls.module.css';
-import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showInfoNotification } from '~/utils/notifications';
@@ -28,41 +27,11 @@ const COVER_HATS = [
 /** The hat button for the picture on screen. Nothing when Hat Turf is off or the picture is a contest entry. */
 export function HatTurfDetailControls({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
-  const showHats = useHatTurfStore((state) => state.showHats);
   return feed && !feed.hidden?.[imageId] ? (
     <div className={classes.group} data-testid="hat-turf-detail-controls">
-      {showHats ? <HatButton imageId={imageId} /> : <HatsHiddenButton imageId={imageId} />}
+      <HatButton imageId={imageId} />
     </div>
   ) : null;
-}
-
-/** With hats switched off, every card and picture drops Hat Turf; this is where they come back. */
-function HatsHiddenButton({ imageId }: { imageId: number }) {
-  const placed = usePlacedHere(imageId);
-  const [open, setOpen] = useState(false);
-  return (
-    <HatTurfPanelPopover
-      imageId={imageId}
-      surface="image-detail"
-      placed={placed}
-      opened={open}
-      onOpenChange={setOpen}
-      target={
-        <ActionIcon
-          variant="default"
-          size={30}
-          radius="md"
-          className={classes.hidden}
-          data-testid="hat-turf-detail-hidden"
-          aria-label="Hats are hidden. Hat Turf settings"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-        >
-          <HatIcon size={17} />
-        </ActionIcon>
-      }
-    />
-  );
 }
 
 function HatButton({ imageId }: { imageId: number }) {
@@ -85,7 +54,10 @@ function HatButton({ imageId }: { imageId: number }) {
   if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
-  const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
+  // Only someone who never joined is invited unprompted; a leaver rejoins from the button. Owner-off
+  // users are refused on Join, so they are not invited either.
+  const showInvite =
+    inviteOpen ?? (!!stock && !joined && !stock.left && !stock.ownerOff && !snoozed);
   const empty = joined && stock?.available === 0 && !placed;
 
   const press = () => {
@@ -186,10 +158,9 @@ export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const user = useCurrentUser();
   const placed = usePlacedHere(imageId);
   const [open, setOpen] = useState(false);
-  const showHats = useHatTurfStore((state) => state.showHats);
   // A signed-out viewer keeps the badge: its card is their only invite (sign in, then join). A
   // signed-in viewer who has not joined is invited by the hat button instead.
-  if (!feed || !showHats || feed.hidden?.[imageId] || (user && !feed.joined)) return null;
+  if (!feed || feed.hidden?.[imageId] || (user && !feed.joined)) return null;
 
   return (
     <HatTurfPanelPopover
