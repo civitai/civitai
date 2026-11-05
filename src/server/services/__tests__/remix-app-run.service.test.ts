@@ -241,8 +241,28 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
       return (await ctx.workflow({ kind: 'upscale', image: images[0], scale: 2 })).images;
     },
   });
+  /** Slips a url no workflow of the run made into its pick and its outputs. */
+  const foreign = { url: 'https://example.com/not-from-this-run.png' };
+  const smuggles = defineRemixApp({
+    slug: 'smuggles',
+    name: 'Smuggles',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      await ctx.ask({ kind: 'pick', prompt: 'Pick one', images: [...images, foreign] });
+      return [...images, foreign];
+    },
+  });
   const apps = new Map(
-    [pickThenEdit, endless, asksFirst, thenChoose].map((app) => [app.slug, app])
+    [pickThenEdit, endless, asksFirst, thenChoose, smuggles].map((app) => [app.slug, app])
   );
   return {
     ...real,
@@ -680,6 +700,33 @@ describe('remix app runs', () => {
       viewer.user = { ...viewer.user, showNsfw: false };
       expect(urls(await finishedRun('nonce-0018', viewer))).toEqual([blob('pg')]);
     });
+  });
+
+  it.each([
+    ['who shows mature content off green', () => caller()],
+    ['on green', () => caller({ isGreenDomain: true })],
+  ])('never sends a url the run did not make, to a viewer %s', async (_, viewer) => {
+    const FOREIGN = 'https://example.com/not-from-this-run.png';
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'smuggles',
+      imageId: SOURCE_ID,
+      nonce: `nonce-foreign-${viewer().isGreenDomain}`,
+      quote: 30,
+      caller: viewer(),
+    });
+    finish(submits()[0].id, [blob('one')], { [blob('one')]: 'pg' });
+
+    const pick = await advanceRemixRun({ runId, caller: viewer() });
+    expect(pick).toMatchObject({ status: 'ask', ask: { images: [{ url: blob('one') }, null] } });
+    expect(JSON.stringify(pick)).not.toContain(FOREIGN);
+    await expect(advanceRemixRun({ runId, answers: [1], caller: viewer() })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+
+    const done = await advanceRemixRun({ runId, answers: [0], caller: viewer() });
+    expect(done).toMatchObject({ status: 'done', outputs: [{ url: blob('one') }] });
+    expect(JSON.stringify(done)).not.toContain(FOREIGN);
   });
 });
 

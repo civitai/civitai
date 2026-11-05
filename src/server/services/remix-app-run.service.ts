@@ -183,6 +183,8 @@ function gateOf(
   levels: Map<string, NsfwLevel | undefined>,
   caller: RemixAppCaller
 ): Gate {
+  // A url this run never generated has no rating to go on, for any viewer.
+  if (!levels.has(url)) return 'hidden';
   if (!caller.isGreenDomain && caller.user.showNsfw) return 'shown';
   // Fails closed: a rating not landed yet is neither shown nor hidden.
   if (levels.has(url) && levels.get(url) == null) return 'unrated';
