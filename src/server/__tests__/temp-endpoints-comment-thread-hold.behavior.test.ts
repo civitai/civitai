@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 
 /**
  * Two one-off admin endpoints delete posts and images, which cascades into their comment threads.
@@ -24,7 +25,8 @@ vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 const { mockLeavingPrivate } = vi.hoisted(() => ({
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
 }));
-vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
+vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: vi.fn(async () => undefined),
 }));

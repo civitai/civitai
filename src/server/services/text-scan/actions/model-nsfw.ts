@@ -4,7 +4,7 @@ import { Tracker } from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
-import type { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta, RestrictedNsfwVerdict } from '~/server/schema/model.schema';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -220,7 +220,7 @@ export async function applyHeldRestrictedVerdict(
     (stored?.restrictedNsfwVerdictDormant && (await reviveDormantVerdict(dbWrite, modelId))
       ? stored.restrictedNsfwVerdictDormant
       : undefined);
-  if (!lead || lead.applied) return null;
+  if (!lead || lead.applied || lead.liftedBy) return null;
   if (model.availability === 'Private') return 'held_restricted';
   return applySystemModelNsfwFlag({ model, source: lead.source, heldLead: true });
 }
@@ -238,6 +238,7 @@ export async function applyHeldVerdictLeavingPrivate(db: RawDb, modelId: number)
     WHERE m.id = ${modelId}
       AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'liftedBy')
   `;
   if (!lead) return false;
   if (!(await flipRow(db, modelId, lead.source ?? 'text-scan', true))) return false;
@@ -266,6 +267,27 @@ export async function finishHeldVerdictApply(modelId: number) {
         error: error.message,
       }).catch(() => null);
     });
+}
+
+/**
+ * After a lift other than the owner's save, in its transaction: a kept verdict comes back as a held
+ * lead, and a held lead records who lifted the flag. Neither applies, here or on a later save or
+ * publish: lifting minor or POI is not a ruling on the rating, so the lead waits for a moderator.
+ */
+export async function holdLeadAfterFlagLift(
+  db: RawDb,
+  modelId: number,
+  liftedBy: NonNullable<RestrictedNsfwVerdict['liftedBy']>
+) {
+  await reviveDormantVerdict(db, modelId);
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = jsonb_set(m.meta, '{restrictedNsfwVerdict,liftedBy}', to_jsonb(${liftedBy}::text))
+    WHERE m.id = ${modelId}
+      AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND NOT (m.minor OR m.poi)
+  `;
 }
 
 /** Moves a dormant verdict back to a held lead, in the queue again. Guarded on the model being

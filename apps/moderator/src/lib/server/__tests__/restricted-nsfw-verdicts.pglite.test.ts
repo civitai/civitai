@@ -154,6 +154,24 @@ describe('restricted-verdict leads', () => {
     });
   });
 
+  it('says who cleared the flag when it was not the owner', async () => {
+    await model(1, { meta: lead('minor', '2026-11-01T00:00:00Z') });
+    const lifted = (liftedBy: string) => ({
+      restrictedNsfwVerdict: {
+        ...lead('poi', '2026-11-02T00:00:00Z').restrictedNsfwVerdict,
+        liftedBy,
+      },
+    });
+    await model(2, { meta: lifted('moderator') });
+    await model(3, { meta: lifted('hashRevert') });
+    const rows = await getRestrictedVerdicts();
+    expect(Object.fromEntries(rows.map((r) => [r.modelId, r.liftedBy]))).toEqual({
+      1: null,
+      2: 'moderator',
+      3: 'hashRevert',
+    });
+  });
+
   it('marks a Private model, whose rating applies when it is published', async () => {
     await model(1, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-01T00:00:00Z') });
     await model(2, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-02T00:00:00Z') });

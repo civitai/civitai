@@ -2894,6 +2894,7 @@ export async function setModelMinor({
       }).catch(() => null);
   }
 
+  const heldVerdict = minor ? null : await import('~/server/services/text-scan/actions/model-nsfw');
   const { before, data, result, snapshotError } = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
 
@@ -2940,6 +2941,12 @@ export async function setModelMinor({
         };
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
+    if (heldVerdict && before.minor)
+      await heldVerdict.holdLeadAfterFlagLift(
+        tx,
+        id,
+        activity === 'rollbackMinorAutoHash' ? 'hashRevert' : 'moderator'
+      );
     return { before, data, result, snapshotError };
   }, lockedWriteOptions);
   if (snapshotError)
@@ -3201,6 +3208,7 @@ export async function setModelPoi({
   const stampedAhead = !poi && flagged.poi && !fromAppeal && !onlyIf;
   if (stampedAhead) await stampLift();
 
+  const heldVerdict = poi ? null : await import('~/server/services/text-scan/actions/model-nsfw');
   const written = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
     if (onlyIf && !onlyIf(before)) return null;
@@ -3243,6 +3251,12 @@ export async function setModelPoi({
     if (poi && !before.poi && activity === 'setPoiAutoHash') await capturePoiFlagSnapshot(tx, id);
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
+    if (heldVerdict && before.poi)
+      await heldVerdict.holdLeadAfterFlagLift(
+        tx,
+        id,
+        activity === 'revertPoiAutoHash' ? 'hashRevert' : 'moderator'
+      );
     return { before, data, result };
   }, lockedWriteOptions);
   if (!written) return null;
@@ -4361,7 +4375,6 @@ export const upsertModel = async (
             tx,
           });
 
-        // A scan verdict held while the model was Private applies as a moderator takes it out.
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
           data.availability &&
@@ -7369,7 +7382,6 @@ export const publishPrivateModel = async (
       },
       select: { id: true },
     });
-    // A scan verdict held while the model was Private applies as it leaves Private.
     heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, modelId);
 
     if (publishVersions) {

@@ -133,6 +133,7 @@ import {
   MINOR_LOCKED_PROPERTIES,
   restoreOwnerFlagOverride,
   setModelMinor,
+  setModelPoi,
 } from '~/server/services/model.service';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -1693,4 +1694,72 @@ describe('setModelMinor — lift restore on a real row', () => {
       });
     }
   );
+
+  describe('a scan verdict on the flag being lifted', () => {
+    const verdict = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'minor' };
+    const seedFlagged = async (flags: { minor?: boolean; poi?: boolean }, meta: object) =>
+      pg.query(
+        `UPDATE "Model" SET minor = $2, poi = $3, nsfw = false, "sfwOnly" = true,
+           "lockedProperties" = $4, meta = $5 WHERE id = $1`,
+        [
+          MODEL_ID,
+          !!flags.minor,
+          !!flags.poi,
+          [...(flags.minor ? MINOR_LOCKED_PROPERTIES : []), ...(flags.poi ? ['poi'] : [])],
+          JSON.stringify(meta),
+        ]
+      );
+    const meta = async () => (await row()).meta as Record<string, unknown>;
+    const liftMinor = (activity?: 'rollbackMinorAutoHash') =>
+      setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, activity });
+    const liftPoi = (activity?: 'revertPoiAutoHash') => {
+      mockDbWrite.model.findUnique.mockResolvedValueOnce({ poi: true } as never);
+      return setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, activity });
+    };
+    const paths = [
+      ['setModelMinor(false)', { minor: true }, () => liftMinor(), 'moderator'],
+      [
+        'the minor-hash rollback',
+        { minor: true },
+        () => liftMinor('rollbackMinorAutoHash'),
+        'hashRevert',
+      ],
+      ['setModelPoi(false)', { poi: true }, () => liftPoi(), 'moderator'],
+      ['the POI-hash revert', { poi: true }, () => liftPoi('revertPoiAutoHash'), 'hashRevert'],
+    ] as const;
+
+    it.each(paths)(
+      '%s revives a kept verdict as a pending lead and leaves nsfw alone',
+      async (_, flags, lift, liftedBy) => {
+        await seedFlagged(flags, { restrictedNsfwVerdictDormant: verdict });
+        await lift();
+        expect(await meta()).toMatchObject({ restrictedNsfwVerdict: { ...verdict, liftedBy } });
+        expect(await meta()).not.toHaveProperty('restrictedNsfwVerdictDormant');
+        expect((await row()).nsfw).toBe(false);
+        expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(paths)('%s writes no lead where no verdict was kept', async (_, flags, lift) => {
+      await seedFlagged(flags, {});
+      await lift();
+      expect(await meta()).not.toHaveProperty('restrictedNsfwVerdict');
+    });
+
+    it.each(paths)(
+      '%s leaves a held lead waiting, with who lifted the flag',
+      async (_, flags, lift, liftedBy) => {
+        await seedFlagged(flags, { restrictedNsfwVerdict: verdict });
+        await lift();
+        expect(await meta()).toMatchObject({ restrictedNsfwVerdict: { ...verdict, liftedBy } });
+        expect((await row()).nsfw).toBe(false);
+      }
+    );
+
+    it('keeps the verdict dormant while the other flag still holds the rating', async () => {
+      await seedFlagged({ minor: true, poi: true }, { restrictedNsfwVerdictDormant: verdict });
+      await liftMinor();
+      expect(await meta()).toEqual({ restrictedNsfwVerdictDormant: verdict });
+    });
+  });
 });
