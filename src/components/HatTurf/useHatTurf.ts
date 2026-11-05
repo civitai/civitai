@@ -19,6 +19,7 @@ export function useHatStock() {
         available: data.available,
         optedIn: data.optedIn,
         left: data.left,
+        ownerOff: data.ownerOff,
         cap: data.cap,
         // The wire may hand back a string; the countdown needs a Date.
         nextAt: data.nextAt ? new Date(data.nextAt) : null,

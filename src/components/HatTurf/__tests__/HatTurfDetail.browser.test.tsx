@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
     available: number;
     optedIn: boolean;
     left?: boolean;
+    ownerOff?: boolean;
     mode: string;
     cap?: number;
     nextAt?: Date | null;
@@ -249,6 +250,15 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-invite')).toBeNull();
     click(q('hat-turf-detail-hat'));
     await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
+  });
+
+  // Join refuses a user who keeps Hat Turf off their images, so inviting them is a dead end.
+  test('owner-off, never joined: no invite opens by itself', async () => {
+    h.stock = { available: 3, optedIn: false, ownerOff: true, mode: 'live' };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(q('hat-turf-detail-invite')).toBeNull();
   });
 
   test('Not now closes the invite and records the dismissal', async () => {

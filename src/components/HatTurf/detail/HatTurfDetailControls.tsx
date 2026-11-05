@@ -54,8 +54,10 @@ function HatButton({ imageId }: { imageId: number }) {
   if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
-  // Only someone who never joined is invited unprompted; a leaver rejoins from the button.
-  const showInvite = inviteOpen ?? (!!stock && !joined && !stock.left && !snoozed);
+  // Only someone who never joined is invited unprompted; a leaver rejoins from the button. Owner-off
+  // users are refused on Join, so they are not invited either.
+  const showInvite =
+    inviteOpen ?? (!!stock && !joined && !stock.left && !stock.ownerOff && !snoozed);
   const empty = joined && stock?.available === 0 && !placed;
 
   const press = () => {
