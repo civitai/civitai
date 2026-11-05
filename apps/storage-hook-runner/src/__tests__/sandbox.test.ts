@@ -1,6 +1,7 @@
+import { Worker } from 'node:worker_threads';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BACKSTOP_MS } from '../limits.ts';
-import { HookPool } from '../pool.ts';
+import { BackstopError, HookPool, PoolOverloadedError } from '../pool.ts';
 import { hookInputJson } from '../test-support/fixtures.ts';
 
 /**
@@ -18,7 +19,12 @@ afterAll(async () => {
 });
 
 const run = (source: string, opts: { timeoutMs?: number; input?: string } = {}) =>
-  pool.run({ source, inputJson: opts.input ?? hookInputJson(), timeoutMs: opts.timeoutMs ?? 50 });
+  pool.run({
+    appId: 'app-test',
+    source,
+    inputJson: opts.input ?? hookInputJson(),
+    timeoutMs: opts.timeoutMs ?? 50,
+  });
 
 describe('allow and deny', () => {
   it('returns {allow:true} from a hook that allows', async () => {
@@ -137,29 +143,36 @@ describe('time limit', () => {
 });
 
 describe('worker backstop', () => {
-  it('terminates a worker stuck in native code that never polls the interrupt, and recovers', async () => {
+  // A backstop termination is a RUNNER fault (the in-VM interrupt failed to stop the call), so
+  // the pool rejects with BackstopError (answered 500) instead of blaming the author with
+  // `timeout`.
+  it('terminates a worker stuck in native code that never polls the interrupt, as a runner fault, and recovers', async () => {
     // Measured locally: this loop spends ~1.3 s in allocation/GC near the memory cap with a
     // single interrupt poll. A pool with a 20 ms backstop must cut it at ~30 ms.
-    const p = await HookPool.start({ size: 1, backstopMs: 20 });
+    const backstopped: string[] = [];
+    const p = await HookPool.start({
+      size: 1,
+      backstopMs: 20,
+      onBackstop: (app) => backstopped.push(app),
+    });
     try {
       const t0 = performance.now();
-      const out = await p.run({
+      const out = p.run({
+        appId: 'app-stall',
         source:
           'export default function check() { const a = []; for (;;) a.push(new Array(1e5).fill(1)); }',
         inputJson: hookInputJson(),
         timeoutMs: 10,
       });
+      await expect(out).rejects.toBeInstanceOf(BackstopError);
       const wall = performance.now() - t0;
-      expect(out.result).toEqual({
-        allow: false,
-        cause: 'timeout',
-        detail: 'terminated by the worker backstop',
-      });
       expect(wall).toBeLessThan(500);
       expect(p.stats().terminated).toBe(1);
+      expect(backstopped).toEqual(['app-stall']);
 
       // The replacement worker serves the next call.
       const next = await p.run({
+        appId: 'app-test',
         source: 'export default function check() { return { allow: true }; }',
         inputJson: hookInputJson(),
         timeoutMs: 50,
@@ -168,6 +181,57 @@ describe('worker backstop', () => {
     } finally {
       await p.close();
     }
+  });
+});
+
+describe('an interrupt swallowed by the engine still ends the call as a timeout', () => {
+  // The interrupt fires inside Error.prepareStackTrace while QuickJS builds a stack, which
+  // swallows it; the hook then carried on and returned allow past its deadline.
+  it('Error.prepareStackTrace looping on `new Error()`', async () => {
+    const { result } = await run(
+      'Error.prepareStackTrace = () => { for(;;){} }; export default function c(){ new Error("x"); return {allow:true}; }',
+      { timeoutMs: 20 }
+    );
+    expect(result).toEqual({
+      allow: false,
+      cause: 'timeout',
+      detail: 'interrupted at the deadline',
+    });
+  });
+
+  it('Error.prepareStackTrace looping on `Error.captureStackTrace(o)`', async () => {
+    const { result } = await run(
+      'Error.prepareStackTrace = () => { for(;;){} }; export default function c(){ const o = {}; Error.captureStackTrace(o); o.stack; return {allow:true}; }',
+      { timeoutMs: 20 }
+    );
+    expect(result).toEqual({
+      allow: false,
+      cause: 'timeout',
+      detail: 'interrupted at the deadline',
+    });
+  });
+});
+
+describe('the deadline covers evaluation, not compilation', () => {
+  // A 64 KiB hook that does almost nothing at run time. With the deadline armed before
+  // compilation, compiling it alone used up a 1 ms budget.
+  const rows: string[] = [];
+  for (let n = 0; rows.join('').length < 60 * 1024; n++)
+    rows.push(`function r${n}(){return ${n}}\n`);
+  const big = `${rows.join('')}export default function check() { return { allow: true }; }`;
+
+  it('a 64 KiB hook with a 1 ms budget is evaluated, ten times in a row', async () => {
+    expect(Buffer.byteLength(big)).toBeGreaterThan(60 * 1024);
+    expect(Buffer.byteLength(big)).toBeLessThanOrEqual(64 * 1024);
+    const results = [];
+    for (let i = 0; i < 10; i++) results.push((await run(big, { timeoutMs: 1 })).result);
+    expect(results).toEqual(Array.from({ length: 10 }, () => ({ allow: true })));
+  });
+
+  it('a syntax error is still reported (from the compile step)', async () => {
+    const { result } = await run(`${big}\n}}}`, { timeoutMs: 1 });
+    expect(result).toMatchObject({ allow: false, cause: 'error' });
+    expect((result as { detail: string }).detail).toMatch(/^SyntaxError: /);
   });
 });
 
@@ -184,6 +248,26 @@ describe('memory and stack limits', () => {
       'export default function check() { const s = "x".repeat(32 * 1024 * 1024); return { allow: s.length > 0 }; }'
     );
     expect(result).toEqual({ allow: false, cause: 'oom', detail: 'out of memory' });
+  });
+
+  // oom is keyed on the engine's own InternalError, which hook code cannot construct: a look-alike
+  // is an ordinary author error.
+  it('a thrown look-alike of the out-of-memory error is cause error, not oom', async () => {
+    const { result } = await run(
+      'export default function check() { const e = new Error("out of memory"); e.name = "InternalError"; throw e; }'
+    );
+    expect(result).toEqual({
+      allow: false,
+      cause: 'error',
+      detail: 'InternalError: out of memory',
+    });
+  });
+
+  it('InternalError is not reachable as a global', async () => {
+    const { result } = await run(
+      'export default function check() { return { allow: false, reason: typeof InternalError }; }'
+    );
+    expect(result).toEqual({ allow: false, cause: 'denied', reason: 'undefined' });
   });
 
   it('allows a 1 MiB allocation (the cap is not set at zero)', async () => {
@@ -351,6 +435,13 @@ describe('author faults are distinct causes', () => {
     expect(result).toEqual({ allow: false, cause: 'denied', reason: 'r'.repeat(200) });
   });
 
+  it('strips U+061C, U+2028, U+2029 and U+FEFF from the reason', async () => {
+    const { result } = await run(
+      'export default function check() { return { allow: false, reason: "a\\u061Cb\\u2028c\\u2029d\\uFEFFe" }; }'
+    );
+    expect(result).toEqual({ allow: false, cause: 'denied', reason: 'abcde' });
+  });
+
   it('strips control and bidi characters from the reason', async () => {
     const { result } = await run(
       'export default function check() { return { allow: false, reason: "a\\u0000b\\nc\\u202Ed\\u0007" }; }'
@@ -372,16 +463,36 @@ describe('no state between calls', () => {
     try {
       const source =
         'export default function check() { const seen = typeof globalThis.__mark; globalThis.__mark = 1; return seen === "undefined" ? { allow: true } : { allow: false, reason: "state carried" }; }';
-      const first = await p.run({ source, inputJson: hookInputJson(), timeoutMs: 50 });
-      const second = await p.run({ source, inputJson: hookInputJson(), timeoutMs: 50 });
+      const first = await p.run({
+        appId: 'app-test',
+        source,
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
+      const second = await p.run({
+        appId: 'app-test',
+        source,
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
       expect(first.result).toEqual({ allow: true });
       expect(second.result).toEqual({ allow: true });
 
       // Module-level state and prototype pollution do not carry either.
       const counter =
         'let n = 0; if (Object.prototype.__polluted) n = 100; Object.prototype.__polluted = true;\nexport default function check() { n++; return n === 1 ? { allow: true } : { allow: false, reason: "n=" + n }; }';
-      const c1 = await p.run({ source: counter, inputJson: hookInputJson(), timeoutMs: 50 });
-      const c2 = await p.run({ source: counter, inputJson: hookInputJson(), timeoutMs: 50 });
+      const c1 = await p.run({
+        appId: 'app-test',
+        source: counter,
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
+      const c2 = await p.run({
+        appId: 'app-test',
+        source: counter,
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
       expect(c1.result).toEqual({ allow: true });
       expect(c2.result).toEqual({ allow: true });
     } finally {
@@ -415,12 +526,18 @@ describe('no state between calls', () => {
     try {
       for (const [cause, body] of bad) {
         const b = await p.run({
+          appId: 'app-test',
           source: `export default function check() { ${body} return { allow: true }; }`,
           inputJson: hookInputJson(),
           timeoutMs: 20,
         });
         expect(b.result).toMatchObject({ allow: false, cause });
-        const next = await p.run({ source: probe, inputJson: hookInputJson(), timeoutMs: 500 });
+        const next = await p.run({
+          appId: 'app-test',
+          source: probe,
+          inputJson: hookInputJson(),
+          timeoutMs: 500,
+        });
         expect({ after: cause, result: next.result }).toEqual({
           after: cause,
           result: { allow: true },
@@ -432,10 +549,34 @@ describe('no state between calls', () => {
     }
   });
 
+  it('deep nesting serialised by JSON.stringify ends cleanly and the worker keeps serving', async () => {
+    const p = await HookPool.start({ size: 1 });
+    try {
+      const deep = await p.run({
+        appId: 'app-test',
+        source:
+          'export default function check() { let a = []; for (let i = 0; i < 200000; i++) a = [a]; JSON.stringify(a); return { allow: true }; }',
+        inputJson: hookInputJson(),
+        timeoutMs: 500,
+      });
+      expect(deep.result).toMatchObject({ allow: false });
+      const next = await p.run({
+        appId: 'app-test',
+        source: 'export default function check() { return { allow: true }; }',
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
+      expect(next.result).toEqual({ allow: true });
+    } finally {
+      await p.close();
+    }
+  });
+
   it('a call after an OOM on the same worker is unaffected', async () => {
     const p = await HookPool.start({ size: 1 });
     try {
       const oom = await p.run({
+        appId: 'app-test',
         source:
           'export default function check() { new ArrayBuffer(32 * 1024 * 1024); return { allow: true }; }',
         inputJson: hookInputJson(),
@@ -443,12 +584,123 @@ describe('no state between calls', () => {
       });
       expect(oom.result).toMatchObject({ cause: 'oom' });
       const ok = await p.run({
+        appId: 'app-test',
         source:
           'export default function check() { new ArrayBuffer(8 * 1024 * 1024); return { allow: true }; }',
         inputJson: hookInputJson(),
         timeoutMs: 50,
       });
       expect(ok.result).toEqual({ allow: true });
+    } finally {
+      await p.close();
+    }
+  });
+});
+
+describe('per-app fairness', () => {
+  const LOOP = 'export default function check() { for (;;) {} }';
+  const ALLOW = 'export default function check() { return { allow: true }; }';
+
+  it('an app at its in-flight cap gets overloaded; another app is still admitted', async () => {
+    const p = await HookPool.start({ size: 1, maxQueue: 8, maxPerApp: 2 });
+    try {
+      const a1 = p.run({
+        appId: 'app-a',
+        source: LOOP,
+        inputJson: hookInputJson(),
+        timeoutMs: 100,
+      });
+      const a2 = p.run({
+        appId: 'app-a',
+        source: LOOP,
+        inputJson: hookInputJson(),
+        timeoutMs: 100,
+      });
+      await expect(
+        p.run({ appId: 'app-a', source: ALLOW, inputJson: hookInputJson(), timeoutMs: 50 })
+      ).rejects.toBeInstanceOf(PoolOverloadedError);
+      const b = await p.run({
+        appId: 'app-b',
+        source: ALLOW,
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
+      expect(b.result).toEqual({ allow: true });
+      await Promise.all([a1, a2]);
+      // The cap counts in-flight work only: once A's calls finish, A is admitted again.
+      const a3 = await p.run({
+        appId: 'app-a',
+        source: ALLOW,
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
+      expect(a3.result).toEqual({ allow: true });
+    } finally {
+      await p.close();
+    }
+  });
+
+  it('defaults the per-app cap to a quarter of the queue, rounded up', async () => {
+    const p = await HookPool.start({ size: 1, maxQueue: 6 });
+    try {
+      expect(p.stats().maxPerApp).toBe(2);
+    } finally {
+      await p.close();
+    }
+  });
+});
+
+describe('worker replacement and liveness', () => {
+  const CRASH = new URL('../test-support/crash-worker.mjs', import.meta.url);
+  const STALL =
+    'export default function check() { const a = []; for (;;) a.push(new Array(1e5).fill(1)); }';
+
+  it('a replacement worker that fails to start is retried with backoff until one starts', async () => {
+    let made = 0;
+    const p = await HookPool.start({
+      size: 1,
+      backstopMs: 20,
+      respawnBaseMs: 10,
+      createWorker: (url) => {
+        made++;
+        // 1: the initial worker. 2 and 3: replacements that crash on start. 4: a good one.
+        return new Worker(made === 2 || made === 3 ? CRASH : url);
+      },
+    });
+    try {
+      await expect(
+        p.run({ appId: 'app-test', source: STALL, inputJson: hookInputJson(), timeoutMs: 10 })
+      ).rejects.toBeInstanceOf(BackstopError);
+      const next = await p.run({
+        appId: 'app-test',
+        source: 'export default function check() { return { allow: true }; }',
+        inputJson: hookInputJson(),
+        timeoutMs: 50,
+      });
+      expect(next.result).toEqual({ allow: true });
+      expect(made).toBe(4);
+      expect(p.stats().restarts).toBe(3);
+    } finally {
+      await p.close();
+    }
+  });
+
+  it('a pool with no live worker for deadAfterMs reports not live', async () => {
+    let made = 0;
+    const p = await HookPool.start({
+      size: 1,
+      backstopMs: 20,
+      respawnBaseMs: 10,
+      deadAfterMs: 50,
+      createWorker: (url) => new Worker(made++ === 0 ? url : CRASH),
+    });
+    try {
+      expect(p.liveness().live).toBe(true);
+      await expect(
+        p.run({ appId: 'app-test', source: STALL, inputJson: hookInputJson(), timeoutMs: 10 })
+      ).rejects.toBeInstanceOf(BackstopError);
+      await new Promise((r) => setTimeout(r, 120));
+      expect(p.liveness()).toMatchObject({ live: false, ready: 0 });
     } finally {
       await p.close();
     }

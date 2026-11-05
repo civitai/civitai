@@ -78,6 +78,31 @@ describe('validateHookReturn', () => {
     });
   });
 
+  it('strips U+061C, U+2028, U+2029 and U+FEFF', () => {
+    expect(
+      validateHookReturn(JSON.stringify({ allow: false, reason: 'a\u061Cb\u2028c\u2029d\uFEFFe' }))
+    ).toEqual({ allow: false, cause: 'denied', reason: 'abcde' });
+  });
+
+  // The reason is clipped to 2 x 200 UTF-16 units BEFORE the strip regex and the code-point
+  // split, so a huge reason costs O(400). Consequence, pinned: only those first 400 units count,
+  // so controls filling them leave less text.
+  it('considers only the first 400 UTF-16 units', () => {
+    const reason = `${'\u0000'.repeat(300)}${'b'.repeat(300)}`;
+    expect(validateHookReturn(JSON.stringify({ allow: false, reason }))).toEqual({
+      allow: false,
+      cause: 'denied',
+      reason: 'b'.repeat(100),
+    });
+  });
+
+  it('does not leave half a surrogate pair at the 400-unit cut', () => {
+    const lock = '\u{1F512}';
+    const reason = `a${lock.repeat(250)}`; // unit 400 is the high half of the 200th lock
+    const out = validateHookReturn(JSON.stringify({ allow: false, reason }));
+    expect(out).toEqual({ allow: false, cause: 'denied', reason: `a${lock.repeat(199)}` });
+  });
+
   it('a reason that is blank after stripping is invalid_result "deny reason is empty"', () => {
     for (const reason of ['', '   ', '\u0000\u0007', '\u202e \n']) {
       expect(validateHookReturn(JSON.stringify({ allow: false, reason }))).toEqual({

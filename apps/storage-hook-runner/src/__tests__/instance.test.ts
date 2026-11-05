@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { QuickJSWASMModule } from 'quickjs-emscripten-core';
-import { QuickJSInstance, compileQuickJS, instantiate } from '../sandbox.ts';
+import { QuickJSInstance, SandboxDisposeError, compileQuickJS, instantiate } from '../sandbox.ts';
 import { hookInputJson } from '../test-support/fixtures.ts';
 
 /**
  * The shared-instance policy: one WASM instance serves a worker's calls, and it is replaced only
- * after a call that may have left it unsafe. The unsafe endings cannot be produced by hook code
- * on demand (that would be a QuickJS bug), so they are injected around a REAL instance.
+ * after a call that may have left it unsafe. Hook code CAN reach some unsafe endings (a review
+ * poisoned an instance on the main thread with 200k-deep nesting serialised by JSON.stringify,
+ * which overflowed the host stack), but not reliably on every host, so here they are injected
+ * around a REAL instance to pin the policy deterministically.
  */
 
 const compiled = compileQuickJS();
@@ -54,15 +56,15 @@ describe('QuickJSInstance', () => {
     expect(inst.created).toBe(1);
   });
 
-  it('replaces the instance after a call whose disposal failed', async () => {
+  // Fail closed: a call whose disposal failed is a RUNNER fault. Its computed answer (here an
+  // allow) is never returned; the worker answers 500 and the caller says hook_unavailable.
+  it('rejects a call whose disposal failed, never returning its allow, and replaces the instance', async () => {
     let made = 0;
     const inst = new QuickJSInstance(async () => {
       made++;
       return made === 1 ? disposeFails() : instantiate(compiled);
     });
-    const first = await inst.evaluate(ALLOW);
-    // The hook's answer stands; only the instance is condemned.
-    expect(first).toMatchObject({ result: { allow: true }, poisoned: true });
+    await expect(inst.evaluate(ALLOW)).rejects.toBeInstanceOf(SandboxDisposeError);
     const second = await inst.evaluate(ALLOW);
     expect(second).toMatchObject({ result: { allow: true }, poisoned: false });
     expect(inst.created).toBe(2);
@@ -94,6 +96,18 @@ describe('QuickJSInstance', () => {
       result: { allow: false, cause: 'error', detail: 'sandbox trap: RuntimeError' },
       poisoned: true,
     });
+    expect((await inst.evaluate(ALLOW)).result).toEqual({ allow: true });
+    expect(inst.created).toBe(2);
+  });
+
+  it('drops a rejected instantiation so the next call creates a new instance', async () => {
+    let made = 0;
+    const inst = new QuickJSInstance(async () => {
+      made++;
+      if (made === 1) throw new Error('injected: instantiate failed');
+      return instantiate(compiled);
+    });
+    await expect(inst.evaluate(ALLOW)).rejects.toThrow('injected: instantiate failed');
     expect((await inst.evaluate(ALLOW)).result).toEqual({ allow: true });
     expect(inst.created).toBe(2);
   });
