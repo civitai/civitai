@@ -398,40 +398,82 @@ describe('a report the send cannot file', () => {
     expect(lines('send-no-files')).toEqual([
       expect.objectContaining({ type: 'error', reportId: 1, case: 'no-files' }),
     ]);
+    expect(writesWith('details').map(({ data }) => data.details.sendHold)).toEqual([
+      { case: 'no-files', reason: expect.stringContaining('report 1'), at: expect.any(String) },
+    ]);
   });
 
   it.each([
     ['Image', 'the reported user is gone', { userId: 404 }],
     ['Image', 'the report names no reported user', { userId: null }],
+    ['Image', 'the reporting user is gone', { reportedById: 404 }],
     ['ExternalLink', 'the report names no reported user', { userId: null, details: {} }],
-  ])('keeps a %s report unsent and marked for a decision when %s', async (type, _why, copy) => {
-    primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
+    ['ExternalLink', 'the reporting user has no email', { details: {} }, null],
+  ])(
+    'keeps a %s report unsent and marked for a decision when %s',
+    async (type, _why, copy, reporterEmail: string | null = 'mod@example.invalid') => {
+      primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
+      dbMock.dbRead.user.findUnique.mockImplementation(
+        async ({ where }: { where: { id: number } }) =>
+          where.id === 10
+            ? { id: 10, email: reporterEmail, name: 'Mod', isModerator: true }
+            : where.id === 20
+            ? { id: 20, email: 'user@example.invalid', name: 'User', username: 'user' }
+            : null
+      );
+
+      await processCsamReport(primaryRow);
+
+      expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
+      const held = expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user' });
+      expect(lines('send-held')).toEqual([held]);
+      expect(lines('send-decision-needed')).toEqual([held]);
+      expect(writesWith('details')).toEqual([
+        {
+          where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
+          data: {
+            details: expect.objectContaining({
+              sendHold: {
+                case: 'missing-user',
+                reason: expect.any(String),
+                at: expect.any(String),
+              },
+            }),
+          },
+        },
+      ]);
+      expect(releases()).toHaveLength(1);
+    }
+  );
+
+  it.each([
+    ['leaves a hold of the same case as it is', 'missing-user', []],
+    ['rewrites a hold of another case', 'no-files', ['missing-user']],
+  ])('%s', async (_, seeded, written) => {
+    const sendHold = { case: seeded, reason: 'earlier run', at: '2026-01-01T00:00:00.000Z' };
+    primaryRow = { ...report, userId: 404, details: { sendHold } } as unknown as CsamReportProps;
+    // The reported user is gone.
     dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
       where.id === 10
         ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
-        : where.id === 20
-        ? { id: 20, email: 'user@example.invalid', name: 'User', username: 'user' }
         : null
     );
 
     await processCsamReport(primaryRow);
 
-    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-    expect(submitReport).not.toHaveBeenCalled();
-    const held = expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user' });
-    expect(lines('send-held')).toEqual([held]);
-    expect(lines('send-decision-needed')).toEqual([held]);
-    expect(writesWith('details')).toEqual([
-      {
-        where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
-        data: {
-          details: expect.objectContaining({
-            sendHold: { case: 'missing-user', reason: expect.any(String), at: expect.any(String) },
-          }),
-        },
-      },
-    ]);
-    expect(releases()).toHaveLength(1);
+    expect(lines('send-held')).toHaveLength(1);
+    expect(writesWith('details').map(({ data }) => data.details.sendHold.case)).toEqual(written);
+  });
+
+  it('removes the hold when the report is sent', async () => {
+    const sendHold = { case: 'no-files', reason: 'earlier run', at: '2026-01-01T00:00:00.000Z' };
+    primaryRow = { ...report, details: { sendHold } } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(stamps()).toHaveLength(1);
+    expect(stamps()[0].data.details).not.toHaveProperty('sendHold');
   });
 });
 
