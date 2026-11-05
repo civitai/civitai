@@ -5,6 +5,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -17,6 +18,7 @@ import type { RatingFloorResult } from '~/server/services/text-scan/rated-entiti
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 const SYSTEM_USER_ID = constants.system.user.id;
 
@@ -248,19 +250,22 @@ export async function applyHeldVerdictLeavingPrivate(db: RawDb, modelId: number)
 }
 
 /** The level and the public cache, after `applyHeldVerdictLeavingPrivate` committed. The write it
- *  follows has committed, so a failure here is logged, not thrown. */
+ *  follows has committed, so a failure is queued for the nsfw-level job and logged, not thrown. */
 export async function finishHeldVerdictApply(modelId: number) {
   await updateModelNsfwLevels([modelId])
     .then(() => bustPublicModelResponseCache(modelId))
-    .catch((error: Error) =>
-      logToAxiom({
+    .catch(async (error: Error) => {
+      await enqueueJobs([
+        { entityId: modelId, entityType: EntityType.Model, type: JobQueueType.UpdateNsfwLevel },
+      ]).catch(() => null);
+      await logToAxiom({
         name: 'text-scan',
         type: 'error',
-        message: 'held restricted nsfw verdict applied; level not refreshed',
+        message: 'held restricted nsfw verdict applied; level refresh queued',
         modelId,
         error: error.message,
-      }).catch(() => null)
-    );
+      }).catch(() => null);
+    });
 }
 
 /** Moves a dormant verdict back to a held lead, in the queue again. Guarded on the model being

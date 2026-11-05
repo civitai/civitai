@@ -10,13 +10,18 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/job-queue.service', () => ({ enqueueJobs: vi.fn() }));
 vi.mock('~/server/clickhouse/tracker', () => ({
   Tracker: class {
     entityChanges = entityChangesMock;
   },
 }));
 
-const { applyModelNsfwTextScan } = await import('~/server/services/text-scan/actions/model-nsfw');
+const { applyModelNsfwTextScan, finishHeldVerdictApply } = await import(
+  '~/server/services/text-scan/actions/model-nsfw'
+);
+const { enqueueJobs } = await import('~/server/services/job-queue.service');
+const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { createNotification } = await import('~/server/services/notification.service');
 
@@ -190,5 +195,33 @@ describe('applyModelNsfwTextScan on a model its owner restricted', () => {
     ).toBe(true);
     expect(updateModelNsfwLevels).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('finishHeldVerdictApply', () => {
+  const nsfwLevelJob = [{ entityId: 7, entityType: 'Model', type: 'UpdateNsfwLevel' }];
+  beforeEach(() => {
+    vi.mocked(updateModelNsfwLevels).mockResolvedValue(undefined as never);
+    vi.mocked(bustPublicModelResponseCache).mockResolvedValue(undefined as never);
+    vi.mocked(enqueueJobs).mockResolvedValue(undefined);
+  });
+
+  it('refreshes the level and the public cache, queueing nothing', async () => {
+    await finishHeldVerdictApply(7);
+    expect(updateModelNsfwLevels).toHaveBeenCalledWith([7]);
+    expect(bustPublicModelResponseCache).toHaveBeenCalledWith(7);
+    expect(enqueueJobs).not.toHaveBeenCalled();
+  });
+
+  it('queues the model for the nsfw-level job when the refresh fails, without throwing', async () => {
+    vi.mocked(updateModelNsfwLevels).mockRejectedValueOnce(new Error('db down'));
+    await expect(finishHeldVerdictApply(7)).resolves.toBeUndefined();
+    expect(enqueueJobs).toHaveBeenCalledWith(nsfwLevelJob);
+  });
+
+  it('still does not throw when the queue write fails too', async () => {
+    vi.mocked(updateModelNsfwLevels).mockRejectedValueOnce(new Error('db down'));
+    vi.mocked(enqueueJobs).mockRejectedValueOnce(new Error('db down'));
+    await expect(finishHeldVerdictApply(7)).resolves.toBeUndefined();
   });
 });
