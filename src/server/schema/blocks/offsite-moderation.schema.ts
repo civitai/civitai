@@ -196,6 +196,10 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // (`app-listing-moderator-edit.ts`). Changes no `status`; owner-visible.
   // `reason` — the owner-facing sentence.   `detail` — `details` | `media`.
   'moderator-edit',
+  // A moderator marked or unmarked the listing Official (`app-listing-official.service.ts`,
+  // added by `20261224120000_app_listing_official`). Writes `is_official` only; no `status`.
+  // `reason` — the owner-facing sentence.   `before` / `after` — { isOfficial }.
+  'set-official',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 
@@ -231,6 +235,17 @@ export const relistListingSchema = z.object({
   reason: modReason,
 });
 export type RelistListingInput = z.infer<typeof relistListingSchema>;
+
+/**
+ * MOD mark / unmark a listing Official ("made by the Civitai team"). The acting moderator is
+ * bound to `ctx.user.id` in the router, never supplied by the client. No `reason`: it is a
+ * label, not a takedown, and the event's owner-facing sentence is fixed server-side.
+ */
+export const setListingOfficialSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  isOfficial: z.boolean(),
+});
+export type SetListingOfficialInput = z.infer<typeof setListingOfficialSchema>;
 
 /**
  * MOD set the per-listing VISIBILITY LEVEL on ANY listing (D2's moderator half).

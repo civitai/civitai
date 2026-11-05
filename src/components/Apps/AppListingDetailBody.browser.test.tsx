@@ -2324,6 +2324,40 @@ describe('AppListingDetailBody — moderator menu section', () => {
  * (civitai/civitai#4197) and passes whether or not the node exists. Every absence below
  * is paired with a positive control proving the same fixture rendered.
  */
+describe('AppListingDetailBody — the Official badge', () => {
+  test('renders the Official badge in the header when the moderator flag is set', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ isOfficial: true })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-official-badge')).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-testid="apps-listing-official-badge"]')?.textContent
+    ).toContain('Official');
+  });
+
+  test('renders it in the moderator review PREVIEW too (the identity block preview keeps)', async () => {
+    const prev = await renderScoped(
+      <AppListingDetailBody detail={base({ isOfficial: true })} canOpenPage preview />
+    );
+    await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-official-badge"]')
+    ).toHaveLength(1);
+  });
+
+  test.each([
+    ['false', { isOfficial: false }],
+    ['absent', {}],
+  ])('renders NO Official badge when the flag is %s', async (_label, over) => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base(over)} />);
+    // Positive control FIRST: the header really did render.
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-testid="apps-listing-official-badge"]')).toHaveLength(
+      0
+    );
+  });
+});
+
 describe('AppListingDetailBody — the beta badge + notice', () => {
   test('renders BOTH the badge and the notice when the listing declares beta', async () => {
     const { container, within } = await renderScoped(

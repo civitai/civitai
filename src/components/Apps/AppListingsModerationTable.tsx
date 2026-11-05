@@ -8,6 +8,7 @@ import {
   NumberInput,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
 } from '@mantine/core';
@@ -401,6 +402,11 @@ export function AppListingsModerationTable({
                         “{row.betaMessage}”
                       </Text>
                     )}
+                    <ModListingOfficialSwitch
+                      appListingId={row.id}
+                      slug={row.slug}
+                      isOfficial={row.isOfficial}
+                    />
                   </Table.Td>
                   <Table.Td>
                     <Text size="xs">
@@ -619,6 +625,56 @@ export function AppListingsModerationTable({
         onDone={invalidate}
       />
     </Stack>
+  );
+}
+
+/**
+ * The moderator's "Official" toggle for one listing ("made by the Civitai team" — the badge on
+ * its store card and page). Calls `appListings.setListingOfficial`, which is
+ * `moderatorProcedure` and records a `set-official` moderation event.
+ *
+ * No reason modal: it is a label, not a takedown. It shows the row's value until this moderator
+ * writes, then the confirmed result (see `written`), instead of invalidating the table, because
+ * `invalidate` resets paging and
+ * would throw away every page the moderator loaded for a one-boolean change — the same
+ * trade-off the Message owner composer documents.
+ */
+function ModListingOfficialSwitch({
+  appListingId,
+  slug,
+  isOfficial,
+}: {
+  appListingId: string;
+  slug: string;
+  isOfficial: boolean;
+}) {
+  // The value THIS moderator last wrote (the server's confirmed result), or `null` before any
+  // write, when the row prop is authoritative. The table reads from a replica, so a refetch after
+  // a write can deliver a pre-write value — including after an on→off pair, where the prop can
+  // briefly read `false`, then a lagged `true`. So once written, the confirmed value wins for the
+  // life of this row; a reload shows the stored value.
+  const [written, setWritten] = useState<boolean | null>(null);
+  const checked = written ?? isOfficial;
+  const mutation = trpc.appListings.setListingOfficial.useMutation({
+    onSuccess: (result: { isOfficial: boolean }) => {
+      setWritten(result.isOfficial);
+      showSuccessNotification({
+        message: result.isOfficial ? 'Marked as Official.' : 'Official mark removed.',
+      });
+    },
+    onError: (e: { message: string }) =>
+      showErrorNotification({ title: 'Official update failed', error: new Error(e.message) }),
+  });
+  return (
+    <Switch
+      mt={4}
+      size="xs"
+      label="Official"
+      checked={checked}
+      disabled={mutation.isPending}
+      onChange={(e) => mutation.mutate({ appListingId, isOfficial: e.currentTarget.checked })}
+      data-testid={`apps-mod-official-${slug}`}
+    />
   );
 }
 

@@ -3638,6 +3638,14 @@ model AppListing {
   revisionOfId    String?      @map("revision_of_id")
   revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
   revisions       AppListing[] @relation("AppListingRevision")
+  // MODERATOR-SET "Official" flag: the app is made by the Civitai team. A provenance claim
+  // like `Model.isOfficial` / `Article.isOfficial` — set only by `setListingOfficialAsModerator`,
+  // never from an author input or the manifest; renders a badge on the store card and page.
+  // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written
+  // by raw SQL in `app-listing-official.service.ts` only, for the reason `visibility` above
+  // documents (a Prisma-declared scalar is named by every select-less query and would 500
+  // them until the manual migration `20261224120000_app_listing_official` is applied).
+  isOfficial      Boolean      @default(false) @map("is_official") // @no-type
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
