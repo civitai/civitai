@@ -1038,9 +1038,12 @@ describe('POST /api/v1/block-tokens', () => {
         browsingLevel,
       });
 
+      // Signed-out is not a case here: a model-slot mint by a signed-out (non-moderator) caller is
+      // refused earlier by the page-only launch gate ("This app type isn't available yet"), so it
+      // can never reach this guard. The run-page mint covers signed-out (page-mint.test.ts).
       it.each([
         ['a PG-only viewer', viewer(1)],
-        ['a signed-out viewer', null],
+        ['a PG+PG-13 viewer', viewer(3)],
       ])('🔴 refuses an R block for %s on civitai.red — no token', async (_label, user) => {
         const res = await mintModelSlot('r', user);
         expect(res._status).toBe(403);

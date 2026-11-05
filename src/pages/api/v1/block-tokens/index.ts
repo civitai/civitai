@@ -132,8 +132,6 @@ function hiddenByViewerBrowsingLevel(
   );
 }
 
-const HIDDEN_BY_BROWSING_LEVEL_ERROR = 'This app is hidden by your browsing settings.';
-
 /**
  * POST /api/v1/block-tokens
  *
@@ -1039,7 +1037,7 @@ async function tryPrivateRunMint(args: {
   // The viewer's browsing level, as the private-run PAGE applies it (owners and moderators are not
   // exempt): an r/x app outside it gets no token.
   if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
-    res.status(403).json({ error: HIDDEN_BY_BROWSING_LEVEL_ERROR });
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
     return 'handled';
   }
 
@@ -1718,7 +1716,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
   // …and on .red, only for a viewer whose browsing level includes it (page AND model-slot mints).
   if (hiddenByViewerBrowsingLevel(appContentRating, req, session?.user)) {
-    res.status(403).json({ error: HIDDEN_BY_BROWSING_LEVEL_ERROR });
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
     return;
   }
 
