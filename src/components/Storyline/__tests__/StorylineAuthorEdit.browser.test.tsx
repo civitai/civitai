@@ -1,0 +1,151 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
+import { renderWithProviders } from '../../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
+import { StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
+
+/**
+ * In the reader, a chapter's author edits the caption on each of their images and the chapter
+ * title in place, through the same writes the post editor uses. Nobody else sees the controls.
+ */
+
+type MutationOptions = { onSuccess?: (data: unknown, vars: unknown) => unknown };
+
+const mocks = vi.hoisted(() => ({
+  userId: 1 as number | undefined,
+  captions: {} as Record<number, string>,
+  setCaption: vi.fn(),
+  updatePost: vi.fn(),
+}));
+
+function mutation(spy: (vars: unknown) => void) {
+  return (options: MutationOptions) => ({
+    mutate: (vars: unknown) => {
+      spy(vars);
+      void options.onSuccess?.(null, vars);
+    },
+    isPending: false,
+  });
+}
+
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy({
+      'storyline.setImageCaption': { useMutation: mutation((v) => mocks.setCaption(v)) },
+      'post.update': { useMutation: mutation((v) => mocks.updatePost(v)) },
+    }),
+  };
+});
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => (mocks.userId ? { id: mocks.userId } : null),
+}));
+vi.mock('~/components/Storyline/StorylineEndOfChapter', () => ({
+  StorylineEndOfChapter: () => null,
+}));
+vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
+  useStorylineMode: () => ({
+    active: true,
+    endOpen: false,
+    setEndOpen: () => undefined,
+    // Image 7 is in chapter 10 by user 1; image 8 in chapter 11 by user 2.
+    chapterIdOfImage: (imageId: number) => ({ 7: 10, 8: 11 }[imageId]),
+    path: {
+      storyline: { id: 3, userId: 2 },
+      captions: mocks.captions,
+      chapters: [
+        { chapterId: 10, depth: 0, post: { id: 41, title: 'The Gate', userId: 1 } },
+        { chapterId: 11, depth: 1, post: { id: 42, title: 'The Road', userId: 2 } },
+      ],
+    },
+  }),
+}));
+
+const editCaption = () => page.getByRole('button', { name: 'Edit caption' });
+const addCaption = () => page.getByRole('button', { name: 'Add caption' });
+const editTitle = () => page.getByRole('button', { name: 'Edit title' });
+
+beforeEach(() => {
+  mocks.userId = 1;
+  mocks.captions = { 7: 'They reach the gate.' };
+  mocks.setCaption.mockReset();
+  mocks.updatePost.mockReset();
+});
+
+describe('StorylineStageOverlay: who sees the edit controls', () => {
+  test('the chapter author sees Edit caption and Edit title', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+
+    await expect.element(editCaption()).toBeVisible();
+    await expect.element(editTitle()).toBeVisible();
+    await expect.element(page.getByText('They reach the gate.')).toBeVisible();
+  });
+
+  test('an image with no caption offers Add caption', async () => {
+    mocks.captions = {};
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+
+    await expect.element(addCaption()).toBeVisible();
+  });
+
+  test.each([
+    ['another signed-in user', () => (mocks.userId = 2), 7],
+    ['a signed-out reader', () => (mocks.userId = undefined), 7],
+    // The storyline's owner (user 2 owns it) reading someone else's chapter.
+    ['the author of a different chapter', () => (mocks.userId = 1), 8],
+  ])('%s sees no edit controls', async (_name, setup, imageId) => {
+    setup();
+    mocks.captions = { [imageId]: 'A caption.' };
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={imageId} />);
+
+    await expect.element(page.getByText('A caption.')).toBeVisible();
+    expect(page.getByTestId('storyline-author-edit').elements()).toHaveLength(0);
+  });
+});
+
+describe('StorylineStageOverlay: saving', () => {
+  test('a caption saves through storyline.setImageCaption', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editCaption().click();
+
+    const box = page.getByRole('textbox', { name: 'Caption (shown in the story)' });
+    await expect.element(box).toHaveValue('They reach the gate.');
+    await userEvent.clear(box);
+    await userEvent.type(box, 'The gate is shut.');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    expect(mocks.setCaption).toHaveBeenCalledExactlyOnceWith({
+      imageId: 7,
+      content: 'The gate is shut.',
+    });
+    // Saved and closed: the controls are back.
+    await expect.element(editCaption()).toBeVisible();
+  });
+
+  test('the title saves through post.update on the chapter post', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editTitle().click();
+
+    const input = page.getByRole('textbox', { name: 'Chapter title' });
+    await expect.element(input).toHaveValue('The Gate');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'The Iron Gate{Enter}');
+
+    expect(mocks.updatePost).toHaveBeenCalledExactlyOnceWith({ id: 41, title: 'The Iron Gate' });
+    expect(mocks.setCaption).not.toHaveBeenCalled();
+  });
+
+  test('Cancel leaves the caption unsaved', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editCaption().click();
+    await userEvent.type(
+      page.getByRole('textbox', { name: 'Caption (shown in the story)' }),
+      ' More.'
+    );
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    expect(mocks.setCaption).not.toHaveBeenCalled();
+    await expect.element(page.getByText('They reach the gate.')).toBeVisible();
+  });
+});
