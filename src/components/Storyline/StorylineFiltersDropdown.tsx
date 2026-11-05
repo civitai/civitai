@@ -15,6 +15,7 @@ export const STORYLINE_FEED_FILTERS = [
   { value: 'complete', label: 'Complete' },
   { value: 'open', label: 'Open for continuations' },
   { value: 'mine', label: 'My storylines' },
+  { value: 'participated', label: 'Participated' },
 ] as const;
 export type StorylineFeedFilter = (typeof STORYLINE_FEED_FILTERS)[number]['value'];
 
@@ -88,7 +89,7 @@ export function StorylineFiltersDropdown({
       {currentUser && (
         <>
           <Divider label="Yours" className="text-sm font-bold" />
-          {chips(['mine'])}
+          {chips(['mine', 'participated'])}
         </>
       )}
     </Stack>
