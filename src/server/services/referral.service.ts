@@ -28,8 +28,6 @@ export const REFERRAL_SYSTEM_ACCOUNT_ID = 0;
 // Distinct CustomerSubscription.buzzType so referral grants stack with paid
 // yellow/green/blue subscriptions without tripping @@unique([userId, buzzType]).
 const REFERRAL_BUZZ_TYPE = 'referral';
-/** Knights shop membership is sold in months; the referral queue is counted in days. */
-const MEMBERSHIP_DAYS_PER_MONTH = 30;
 const EXPIRY_WARN_WINDOW_DAYS = 7;
 const PRISMA_UNIQUE_VIOLATION = 'P2002';
 
@@ -973,8 +971,6 @@ type ReferralQueueEntry = { tier: string; durationDays: number };
 type ReferralSubMetadata = {
   source?: string;
   referralQueue?: ReferralQueueEntry[];
-  /** Idempotency keys of external grants (the Knights shop), newest last; see `grantMembershipMonths`. */
-  grantKeys?: string[];
   [key: string]: unknown;
 };
 
@@ -998,14 +994,11 @@ export function collapseTierQueue(items: ReferralQueueEntry[]): ReferralQueueEnt
   return collapsed;
 }
 
-const MAX_GRANT_KEYS = 100;
-
 async function grantReferralSubscription(
   tx: Prisma.TransactionClient,
   userId: number,
   tier: string,
-  durationDays: number,
-  grantKey?: string
+  durationDays: number
 ) {
   // Referral grants are "tier-time chunks" queued on a single CustomerSubscription
   // keyed by buzzType='referral'. Each chunk keeps its original tier. Higher tiers
@@ -1034,12 +1027,6 @@ async function grantReferralSubscription(
   });
 
   const now = new Date();
-
-  const existingGrantKeys = (
-    (existing?.metadata as ReferralSubMetadata | null)?.grantKeys ?? []
-  ).filter((key): key is string => typeof key === 'string');
-  // The row lock above serialises two grants for the same user, so a replayed key finds the first one's mark.
-  if (grantKey && existingGrantKeys.includes(grantKey)) return { already: true as const };
 
   // Pool all unspent tier-time: the currently-active chunk's remaining days + the
   // queued chunks + the new redemption. Collapse + sort by tier DESC. First goes
@@ -1096,7 +1083,6 @@ async function grantReferralSubscription(
     ...existingMeta,
     source: 'referral-redemption',
     referralQueue: queue,
-    ...(grantKey ? { grantKeys: [...existingGrantKeys, grantKey].slice(-MAX_GRANT_KEYS) } : {}),
   };
 
   if (!existing) {
@@ -1121,7 +1107,7 @@ async function grantReferralSubscription(
     // a failed insert aborts this transaction regardless, and the rollback leaves the
     // tokens unspent and retryable — the same contract as the grant itself.
     await deliverMonthlyCosmetics({ userIds: [userId], tx });
-    return { created: true as const, activeTier: active.tier, queuedCount: queue.length };
+    return { created: true, activeTier: active.tier, queuedCount: queue.length };
   }
 
   await tx.customerSubscription.update({
@@ -1137,7 +1123,7 @@ async function grantReferralSubscription(
     },
   });
   await deliverMonthlyCosmetics({ userIds: [userId], tx });
-  return { updated: true as const, activeTier: active.tier, queuedCount: queue.length };
+  return { updated: true, activeTier: active.tier, queuedCount: queue.length };
 }
 
 // Cron-facing: advance any referral sub whose current period has ended by
@@ -1331,52 +1317,4 @@ export async function redeemTokens(params: { userId: number; offerIndex: number 
   });
 
   return redemption;
-}
-
-export class MembershipGrantRefused extends Error {
-  constructor(readonly reason: 'queue-full' | 'tier-unavailable', message: string) {
-    super(message);
-    this.name = 'MembershipGrantRefused';
-  }
-}
-
-/**
- * Grants `months` 30-day months of `tier` through the referral queue (`grantReferralSubscription`), once per `key`.
- * Used by the Knights gold shop, which passes its purchase key. It stacks like any referral grant: it never touches a
- * paid Stripe/Paddle/prepaid subscription (those sit on other `buzzType` rows, and the user's effective tier is the
- * highest of them), the highest tier of the user's referral time runs first, and repeated purchases queue behind it
- * up to `referrals.maxQueuedDays`. A full queue or an unconfigured tier throws `MembershipGrantRefused`: a refusal
- * the caller may treat as final. Any other throw is transient and safe to retry with the same key.
- */
-export async function grantMembershipMonths(params: {
-  userId: number;
-  tier: string;
-  months: number;
-  key: string;
-}): Promise<{ outcome: 'granted' | 'already' }> {
-  const { userId, tier, months, key } = params;
-  const tiers = constants.memberships.tierOrder as readonly string[];
-  if (!['bronze', 'silver', 'gold'].includes(tier) || !tiers.includes(tier)) {
-    throw new MembershipGrantRefused('tier-unavailable', `Unknown tier ${tier}`);
-  }
-  const durationDays = months * MEMBERSHIP_DAYS_PER_MONTH;
-
-  let result: Awaited<ReturnType<typeof grantReferralSubscription>>;
-  try {
-    result = await dbWrite.$transaction((tx) =>
-      grantReferralSubscription(tx, userId, tier, durationDays, key)
-    );
-  } catch (error) {
-    const message = (error as Error)?.message ?? '';
-    if (message.startsWith('Referral perk queue is full')) {
-      throw new MembershipGrantRefused('queue-full', message);
-    }
-    if (message.startsWith('Referral tier products are not yet configured')) {
-      throw new MembershipGrantRefused('tier-unavailable', message);
-    }
-    throw error;
-  }
-  // Also on a replay: a try that committed and died before this line is repaired by the caller's retry.
-  await invalidateSubscriptionCaches(userId);
-  return { outcome: 'already' in result ? 'already' : 'granted' };
 }
