@@ -7301,6 +7301,17 @@ export interface KnightsShopItem {
   sortOrder: number;
   createdAt: Date;
   purchases?: KnightsShopPurchase[];
+  changes?: KnightsShopItemChange[];
+}
+
+export interface KnightsShopItemChange {
+  id: number;
+  itemId: string;
+  item?: KnightsShopItem;
+  userId: number;
+  action: string;
+  changes: JsonValue;
+  createdAt: Date;
 }
 
 export interface KnightsShopPurchase {

@@ -11507,6 +11507,20 @@ model KnightsShopItem {
   createdAt   DateTime @default(now())
 
   purchases KnightsShopPurchase[]
+  changes   KnightsShopItemChange[]
+}
+
+/// The audit trail of catalog edits made from the moderator app. `changes` maps each changed field to `{from, to}`; a `create` holds the whole row as `{field: {from: null, to}}`. `userId` is the moderator, deliberately not a foreign key so deleting a user never rewrites the trail.
+model KnightsShopItemChange {
+  id        Int             @id @default(autoincrement())
+  itemId    String
+  item      KnightsShopItem @relation(fields: [itemId], references: [id])
+  userId    Int
+  action    String // create | update | retire | restore
+  changes   Json
+  createdAt DateTime        @default(now())
+
+  @@index([itemId, createdAt(sort: Desc)])
 }
 
 /// The shop's gold ledger. A purchase reserves its gold in `NewOrderPlayer.goldConverted` in the same transaction that writes the row (`pending`), and is `granted` once the Buzz, cosmetic or membership is delivered, or `failed` when it was refused for good and the gold is released. `requestKey` is the buyer's idempotency key (unique per player); `externalKey` is the server's key for the downstream grant (UserCosmetic claimKey, membership grant key). A Buzz pack points at its `KnightsGoldConversion` through `conversionId`. `dealDay` is set when the deal price was paid.

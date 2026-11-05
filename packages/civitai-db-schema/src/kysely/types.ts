@@ -3843,6 +3843,14 @@ export type KnightsShopItem = {
   sortOrder: Generated<number>;
   createdAt: Generated<Timestamp>;
 };
+export type KnightsShopItemChange = {
+  id: Generated<number>;
+  itemId: string;
+  userId: number;
+  action: string;
+  changes: unknown;
+  createdAt: Generated<Timestamp>;
+};
 export type KnightsShopPurchase = {
   id: Generated<number>;
   playerId: number;
@@ -6718,6 +6726,7 @@ export type DB = {
   KnightsQueueItem: KnightsQueueItem;
   KnightsReferenceImage: KnightsReferenceImage;
   KnightsShopItem: KnightsShopItem;
+  KnightsShopItemChange: KnightsShopItemChange;
   KnightsShopPurchase: KnightsShopPurchase;
   KnightsVote: KnightsVote;
   KnightsYesNoReference: KnightsYesNoReference;
