@@ -3,7 +3,6 @@
   import { invalidateAll } from '$app/navigation';
   import { count, formatClock, formatWait } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import PageNav from '$lib/PageNav.svelte';
   import { reducedMotion, tween } from '$lib/motion';
   import { PENDING_TEXT } from '$lib/shop-view';
   import PurchaseDialog from './PurchaseDialog.svelte';
@@ -119,8 +118,6 @@
 </script>
 
 <div class="page-wide shop" data-skipped={skipped ? '' : undefined}>
-  <PageNav />
-
   <header class="head">
     <div class="intro">
       <p class="eyebrow">The Armory</p>

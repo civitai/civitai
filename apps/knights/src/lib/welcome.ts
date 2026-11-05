@@ -1,4 +1,5 @@
-export const WELCOME_PATH = '/welcome';
+export const WELCOME_PATH = '/';
+export const HOME_PATH = '/home';
 
 const DATA_SUFFIX = '/__data.json';
 const INVALIDATED_PARAM = 'x-sveltekit-invalidated';
@@ -11,17 +12,20 @@ export function safeNext(raw: string | null | undefined): string {
   if (!raw || !/^\/(?![/\\])[^\\]*$/.test(raw)) return '/';
   if ([...raw].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return '/';
   if (/%(0[0-9a-f]|1[0-9a-f]|7f)/i.test(raw)) return '/';
-  return raw.split(/[?#]/)[0] === WELCOME_PATH ? '/' : raw;
+  return raw;
 }
 
 /** The page a request is really for: a client-side navigation arrives as `<page>/__data.json`. */
-function wantedPath(url: URL): string {
+export function wantedPath(url: URL): string {
   const params = new URLSearchParams(url.search);
   if (!url.pathname.endsWith(DATA_SUFFIX)) return url.pathname + url.search;
   params.delete(INVALIDATED_PARAM);
   const query = params.toString();
   return (url.pathname.slice(0, -DATA_SUFFIX.length) || '/') + (query ? `?${query}` : '');
 }
+
+/** Whether a request is for the welcome page, which `/` serves to a signed-out visitor. */
+export const isWelcomeRequest = (url: URL): boolean => wantedPath(url).split('?')[0] === WELCOME_PATH;
 
 /**
  * Where a signed-out request goes. A page load lands on the welcome screen, which holds the hub sign-in and
@@ -38,5 +42,5 @@ export function signedOutLocation({
 }): string {
   if (!navigation || url.pathname === '/api' || url.pathname.startsWith('/api/')) return loginRedirect;
   const next = safeNext(wantedPath(url));
-  return next === '/' ? WELCOME_PATH : `${WELCOME_PATH}?next=${encodeURIComponent(next)}`;
+  return next === WELCOME_PATH ? WELCOME_PATH : `${WELCOME_PATH}?next=${encodeURIComponent(next)}`;
 }

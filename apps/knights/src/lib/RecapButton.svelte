@@ -41,7 +41,7 @@
     // Nothing was loaded, so nothing was seen: closing must not dismiss the day.
     if (failed) {
       loaded = null;
-      if (begin && page.url.pathname !== '/play') void goto('/play', { replaceState: true });
+      if (begin && page.url.pathname !== '/play') void goto('/play');
       return;
     }
     submitting = true;
@@ -50,7 +50,7 @@
         if (!response.ok) throw new Error(String(response.status));
         loaded = null;
         await invalidate('app:recap');
-        if (begin && page.url.pathname !== '/play') await goto('/play', { replaceState: true });
+        if (begin && page.url.pathname !== '/play') await goto('/play');
       })
       .catch(() => (message = 'Could not save that. Try again.'))
       .finally(() => (submitting = false));

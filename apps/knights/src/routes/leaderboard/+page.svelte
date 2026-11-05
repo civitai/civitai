@@ -4,7 +4,6 @@
   import { helpCookie } from '$lib/fervor-help';
   import { compact, count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import PageNav from '$lib/PageNav.svelte';
   import RankEmblem from '$lib/RankEmblem.svelte';
   import { formatTally } from '$lib/tally';
   import type { PageData } from './$types';
@@ -105,7 +104,6 @@
 {/snippet}
 
 <div class="page-wide">
-  <PageNav />
   <header class="title">
     <div>
       <p class="eyebrow">This week's vigil</p>

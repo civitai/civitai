@@ -23,7 +23,7 @@
   });
   // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
   // The welcome screen is signed-out and brings its own chrome.
-  let bare = $derived(page.route.id === '/welcome');
+  let bare = $derived(page.route.id === '/');
   let fit = $derived(page.route.id === '/play');
 </script>
 
@@ -75,6 +75,12 @@
     max-width: none;
     padding: 0;
     overflow-y: auto;
+  }
+  /* Must match PrimaryNav's tab-bar breakpoint and height. */
+  @media (max-width: 75rem) {
+    .app {
+      padding-bottom: calc(57px + env(safe-area-inset-bottom));
+    }
   }
   @media (max-width: 40rem) {
     main {
