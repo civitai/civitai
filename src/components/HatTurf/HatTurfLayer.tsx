@@ -5,6 +5,8 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import type { HatSpot } from '~/components/HatTurf/HatTurfCardProvider';
+import revealClasses from '~/components/Sticker/placement-reveal.module.scss';
+import { hatRevealDelays, useHatReveal } from '~/components/HatTurf/useHatReveal';
 import classes from '~/components/HatTurf/HatTurfLayer.module.css';
 import { TurfHatArt } from '~/components/HatTurf/TurfHatArt';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
@@ -212,6 +214,7 @@ function HatTurfLayerContent({
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();
   const showHats = useHatTurfStore((state) => state.showHats);
+  const reveal = useHatReveal(showHats, !!card?.draft);
   const { cosmeticId, hats } = useChosenHat();
   const chosenArt = hats?.find((hat) => hat.cosmeticId === cosmeticId)?.art;
   const teamColor = useTeamColor();
@@ -310,9 +313,23 @@ function HatTurfLayerContent({
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
   const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
-  const drawn = showHats ? mineDrawn.slice(0, limit) : [];
+  const drawn = reveal.visible ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
-  const overflow = showHats ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
+  const overflow = reveal.visible ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
+  const delays = reveal.revealGen ? hatRevealDelays(drawn) : null;
+  // The reveal is on the art's wrapper, not the hat: its opacity keyframes would override `.dim`.
+  const revealed = (key: string, art: React.ReactNode) =>
+    delays ? (
+      <div
+        key={reveal.revealGen}
+        className={revealClasses.appear}
+        style={{ ['--sticker-delay' as string]: `${delays.get(key) ?? 0}ms` }}
+      >
+        {art}
+      </div>
+    ) : (
+      art
+    );
 
   const stop = (event: React.SyntheticEvent) => {
     // The card is a link and this sits on top of it.
@@ -364,7 +381,7 @@ function HatTurfLayerContent({
       {box && (
         <div
           ref={setSurface}
-          className={classes.box}
+          className={clsx(classes.box, reveal.fading && classes.fading)}
           style={{ width: box.width, height: box.height, left: box.left, top: box.top }}
         >
           {corner && <div className={classes.corner}>{corner}</div>}
@@ -387,11 +404,11 @@ function HatTurfLayerContent({
                 )}
                 style={{ ...poseStyle(pose), ['--hat-glow' as string]: colorOf(sticker.team) }}
               >
-                {hatArt(sticker.art, sticker.team, pose)}
+                {revealed(String(sticker.id), hatArt(sticker.art, sticker.team, pose))}
               </div>
             );
           })}
-          {showHats && placed && (
+          {reveal.visible && placed && (
             <div
               className={clsx(classes.placed, classes.landed, protectedImage && classes.muted)}
               style={poseStyle(placed)}
@@ -400,7 +417,8 @@ function HatTurfLayerContent({
               {hatArt(chosenArt, feed.team, placed)}
             </div>
           )}
-          {draft && showHats && surface && cosmeticId != null && (
+          {/* Shown with Show hats off too: placing a hat is still the game. */}
+          {draft && surface && cosmeticId != null && (
             // The card is a link: a press on the editor must not follow it.
             <div className="contents" data-testid="hat-turf-draft" onClick={stop}>
               <HatDraft

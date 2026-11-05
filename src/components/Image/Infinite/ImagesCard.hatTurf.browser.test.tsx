@@ -236,14 +236,13 @@ describe('Hat Turf on the /images feed card', () => {
   });
 
   // The joined test above is the positive control: same card, same context, showHats on.
-  test('with Show hats off a joined player gets no badge, hat button, gear or hats', async () => {
+  test('with Show hats off a joined player keeps the badge, hat button and gear, but sees no hats', async () => {
     useHatTurfStore.setState({ showHats: false });
     renderCard({ ...turf(), stickers: { 77: [stickerOnCard] as never } });
-    await cardRendered();
+    await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    expect(q('hat-turf-badge')).not.toBeNull();
+    expect(q('hat-turf-button')).not.toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(q('hat-turf-badge')).toBeNull();
-    expect(q('hat-turf-button')).toBeNull();
-    expect(q('hat-turf-gear')).toBeNull();
     expect(q('hat-turf-hat')).toBeNull();
   });
 

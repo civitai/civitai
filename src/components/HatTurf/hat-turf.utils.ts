@@ -100,6 +100,8 @@ export type HatSticker = {
   data: unknown;
   /** The hat's art; absent from an older server's push, which draws the team cone instead. */
   art?: TurfHatArt | null;
+  /** When it was placed. The reads carry it; a live push does not. */
+  createdAt?: Date | string | null;
 };
 
 export type HatPose = ReturnType<typeof normalizeStickerPlacement>;

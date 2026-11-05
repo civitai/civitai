@@ -5,7 +5,6 @@ import clsx from 'clsx';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
-import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
@@ -24,10 +23,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
   // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
   const joined = !!useTurfFeed()?.joined;
-  const showHats = useHatTurfStore((state) => state.showHats);
-  return joined && showHats ? (
-    <HatTurfBadgeContent imageId={imageId} className={className} />
-  ) : null;
+  return joined ? <HatTurfBadgeContent imageId={imageId} className={className} /> : null;
 }
 
 function HatTurfBadgeContent({ imageId, className }: { imageId: number; className?: string }) {

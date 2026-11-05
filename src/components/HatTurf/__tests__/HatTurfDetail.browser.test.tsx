@@ -361,7 +361,7 @@ describe('Hat Turf on image detail', () => {
     await vi.waitFor(() => expect(q('hat-turf-panel')).toBeNull());
   });
 
-  test('the panel shows every team count, hats left of the cap, and Show hats off hides all of Hat Turf', async () => {
+  test('the panel shows every team count, hats left of the cap, and Show hats off hides only the hats', async () => {
     render();
     await vi.waitFor(() => expect(hats().length).toBe(3));
     expect(q('hat-turf-detail-hat')).not.toBeNull();
@@ -372,19 +372,13 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-panel-supply')!.textContent).toMatch(/^3 of 50 hats/);
     click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
     await vi.waitFor(() => expect(hats().length).toBe(0));
-    expect(q('hat-turf-detail-badge')).toBeNull();
-    expect(q('hat-turf-badge')).toBeNull();
-    expect(q('hat-turf-detail-hat')).toBeNull();
-    expect(q('hat-turf-gear')).toBeNull();
-
-    // The one control left is the way back to the switch.
-    click(q('hat-turf-detail-hidden'));
-    await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
-    click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
-    await vi.waitFor(() => expect(hats().length).toBe(3));
+    // The game stays: standings, the hat button and its gear.
     expect(q('hat-turf-detail-badge')).not.toBeNull();
     expect(q('hat-turf-detail-hat')).not.toBeNull();
-    expect(q('hat-turf-detail-hidden')).toBeNull();
+    expect(q('hat-turf-gear')).not.toBeNull();
+
+    click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
+    await vi.waitFor(() => expect(hats().length).toBe(3));
   });
 
   test('the next hat counts down', async () => {
