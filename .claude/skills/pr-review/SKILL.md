@@ -5,8 +5,8 @@ description: Work the hosted review of your own civitai/civitai PR. Record the P
 
 # The hosted PR review
 
-Every team member's PR on civitai/civitai gets a hosted review. Each time a new head is pushed to a
-PR that is not a draft and was updated recently, a set of review lanes runs on it. These are the
+The hosted review covers PRs on civitai/civitai by enrolled team members. Each time a new head is
+pushed to such a PR, if it is not a draft and was updated recently, a set of review lanes runs on it. These are the
 `.claude/agents/` files from `main`. The PR then gets one GitHub check, `pr-review`, and HQ
 (hq.civitai.com) stores the round and its findings.
 
@@ -21,16 +21,14 @@ PR that is not a draft and was updated recently, a set of review lanes runs on i
 - Drafts are skipped. A round starts when the PR is marked ready.
 
 Nothing here needs to be run by hand. The repo's PostToolUse hook (`.claude/hooks/pr-review-nudge.mjs`)
-points you here when a Bash call opens or readies a PR. If you opened or readied it some other way
-(the web UI, an MCP tool), start at step 1 yourself.
+points you here when a Bash call opens or readies a PR whose branch is in this repo, not a fork,
+and `hq` is installed and signed in. If you opened or readied it some other way (the web UI, an MCP
+tool), start at step 1 yourself.
 
 ## What you need
 
 - The `hq` CLI, signed in as yourself, or a session with the HQ MCP tools. The MCP tool names are
   given next to each command below.
-- To get findings by mail as well: on hq.civitai.com, My profile → Task mail, choose the agent that
-  should receive them. Without a chosen agent, HQ mails your one listed agent if you have exactly
-  one. Otherwise you get no mail, and the watch in step 2 is how you find out a round is done.
 - If `hq` answers `403` on a PR review command, you have no grant on the review collections yet.
   Tell the user to ask an HQ admin. Don't work around it.
 
@@ -54,13 +52,10 @@ keeps it internal. It never goes into the PR body.
 hq pr-review watch civitai/civitai#<n>          # in the background; --head <sha> for one push
 ```
 
-It waits for the newest round to finish and prints it with its blocking findings. Exit codes:
-`0` clear, `10` blockers, `11` incomplete or superseded, `12` timed out (default 2h), `13` no
-correctness lane ran, `4` auth, `1` error. A mail about the round from HQ (sender `hq/pr-review`)
+It waits for the newest round to finish and prints it with its blocking findings. Exit `10` means
+the round has blocking findings. Exit `11` means watch again: you usually pushed while the round
+ran, and the new head gets its own round. A mail about the round from HQ (sender `hq/pr-review`)
 means the same thing: the round is done.
-
-Exit `11` usually means you pushed again while the round ran. The new head gets its own round, so
-watch again. A round left incomplete is retried by itself.
 
 ## 3. Read the findings
 
@@ -96,12 +91,6 @@ Account for every finding.
 **Stop after the first round with no blocking findings.** Fix its remaining medium and low
 findings in the same push, or record them, and don't wait for another round to approve that.
 Each push runs the whole review again, so don't push just to see a round go green.
-
-## Opting out of the mail
-
-The rounds still run. Only the mail stops. With the HQ MCP, `data_create` on `pr_review_prefs` with
-`{"login": "<your GitHub login, lower-cased>", "mail": "off"}`. To opt back in, `data_update` that
-row with `{"mail": "on"}`. Leave the row public, or it is not seen.
 
 ## Related
 

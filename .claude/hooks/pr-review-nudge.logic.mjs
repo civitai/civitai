@@ -7,18 +7,62 @@
  * intent in HQ before the hosted review's first round finishes, then wait for that round and work
  * its findings. It only adds context; it never blocks a command.
  *
+ * The hosted review covers enrolled team members, who use HQ, so the nudge needs all three, checked
+ * cheapest first (`nudgeEvent`):
+ *   1. the call opened or readied exactly one civitai/civitai PR (`prEvent`: the command and what
+ *      gh printed, no I/O). This is the only check every Bash call pays for;
+ *   2. `hq` is installed and signed in (`hqSignedIn`: PATH and the config file, no network);
+ *   3. the PR's head is in civitai/civitai, not a fork (`prHeadRepo`: ONE `gh api` read, made only
+ *      once 1 and 2 hold). gh prints the base repo's URL for a fork's PR too, so the URL cannot say.
+ * Any check that fails or cannot run means no nudge, silently.
+ *
  * The PR number comes from what gh PRINTED, never from the command: `gh pr create` prints the new
  * PR's URL, and `gh pr ready` prints `Pull request civitai/civitai#<n> is marked as "ready for
  * review"` (on stderr). A command that names the PR but did not open or ready it (it failed, or
  * it is quoted in an echo or a commit message) prints neither, so it fires nothing.
  */
 
-const REPO = 'civitai/civitai';
+import { spawnSync } from 'child_process';
+import { accessSync, constants, readFileSync } from 'fs';
+import { delimiter, join } from 'path';
 
-// `gh` at the start of a segment, any flags before `pr` (`gh -R civitai/civitai pr create`), and
-// the subcommand right after `pr`.
-const GH_PR =
-  /(?:^|[;&|\n(]\s*)(?:\w+=\S*\s+)*gh\s+(?:-{1,2}\S+(?:\s+(?!pr\b)[^\s-]\S*)?\s+)*pr\s+(create|ready)\b/;
+const REPO = 'civitai/civitai';
+const GH_TIMEOUT_MS = 10_000;
+
+/**
+ * `'create'` or `'ready'` when a segment of the command runs `gh … pr create|ready`, else null.
+ *
+ * A token scan, not a regex: it runs on every Bash call, and the pattern it replaced backtracked
+ * exponentially on a run of `--flag` tokens. Each segment (split on `; & | ( newline`) may start
+ * with `VAR=value` assignments, then `gh`, then flags (a flag without `=` may take one value, as in
+ * `-R civitai/civitai`), then `pr` and the subcommand. A segment that does not START with gh (an
+ * echo, a commit message) is not running it.
+ */
+export function ghPrSubcommand(command) {
+  for (const segment of (command || '').split(/[;&|\n(]/)) {
+    const tokens = segment.trim().split(/\s+/);
+    let i = 0;
+    while (i < tokens.length && /^\w+=/.test(tokens[i])) i++;
+    if (tokens[i] !== 'gh') continue;
+    let valueAllowed = false;
+    for (i += 1; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token === 'pr') {
+        const sub = tokens[i + 1];
+        if (sub === 'create' || sub === 'ready') return sub;
+        break;
+      }
+      if (token.startsWith('-')) {
+        valueAllowed = !token.includes('=');
+      } else if (valueAllowed) {
+        valueAllowed = false;
+      } else {
+        break;
+      }
+    }
+  }
+  return null;
+}
 
 // The PR as gh prints it. The owner/name must be EXACTLY civitai/civitai: a fork, or another repo
 // whose name starts with "civitai", is a different repo.
@@ -53,14 +97,69 @@ function onlyRepoPr(re, text) {
  * exactly one civitai/civitai PR, else null.
  */
 export function prEvent(command, toolResponse) {
-  const m = GH_PR.exec(command || '');
-  if (!m) return null;
-  const action = m[1];
+  const action = ghPrSubcommand(command);
+  if (!action) return null;
   const out = printed(toolResponse);
   const pr = onlyRepoPr(action === 'create' ? CREATED_URL : READY_REF, out);
   if (pr === null) return null;
   const draft = action === 'create' && /(?:^|\s)(?:--draft|-d)(?=\s|$)/.test(command);
   return { action, pr, draft };
+}
+
+function isExecutable(path) {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readText(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * True when `hq` is on PATH and has a token: `HQ_TOKEN`, else the `token` in hq's config file
+ * (`$XDG_CONFIG_HOME/hq/config.toml`, else `$HOME/.config/hq/config.toml`, the paths and the order
+ * the CLI itself reads). It makes no network call, so it cannot tell whether HQ still accepts the
+ * token; a rejected one shows as an auth error on the skill's first command.
+ */
+export function hqSignedIn(env = process.env, io = { isExecutable, readText }) {
+  const names = process.platform === 'win32' ? ['hq.exe', 'hq'] : ['hq'];
+  const dirs = (env.PATH || '').split(delimiter).filter(Boolean);
+  if (!dirs.some((dir) => names.some((name) => io.isExecutable(join(dir, name))))) return false;
+  if ((env.HQ_TOKEN || '').trim()) return true;
+  const base = env.XDG_CONFIG_HOME || (env.HOME ? join(env.HOME, '.config') : '');
+  if (!base) return false;
+  const m = /^\s*token\s*=\s*(?:"([^"\n]*)"|'([^'\n]*)')/m.exec(
+    io.readText(join(base, 'hq', 'config.toml'))
+  );
+  return Boolean(m && (m[1] ?? m[2]).trim());
+}
+
+/** The PR's head repo (`owner/name`) as GitHub reports it, or null when it cannot be read. */
+export function prHeadRepo(pr, env = process.env, run = spawnSync) {
+  const r = run('gh', ['api', `repos/${REPO}/pulls/${pr}`, '--jq', '.head.repo.full_name'], {
+    encoding: 'utf8',
+    timeout: GH_TIMEOUT_MS,
+    env,
+  });
+  if (r.error || r.status !== 0) return null;
+  return (r.stdout || '').trim() || null;
+}
+
+/** `prEvent`'s event when all three checks in the header hold, else null. */
+export function nudgeEvent(command, toolResponse, env = process.env, deps = {}) {
+  const event = prEvent(command, toolResponse);
+  if (!event) return null;
+  if (!(deps.hqSignedIn ?? hqSignedIn)(env)) return null;
+  const head = (deps.prHeadRepo ?? prHeadRepo)(event.pr, env);
+  return head && head.toLowerCase() === REPO ? event : null;
 }
 
 /** The context the hook adds for an event from `prEvent`. */

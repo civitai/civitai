@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { nudge, prEvent } from '../../.claude/hooks/pr-review-nudge.logic.mjs';
+import {
+  ghPrSubcommand,
+  hqSignedIn,
+  nudge,
+  nudgeEvent,
+  prEvent,
+} from '../../.claude/hooks/pr-review-nudge.logic.mjs';
 
 /**
  * The PostToolUse nudge that points a session at the `pr-review` skill once a Bash call has
@@ -96,6 +102,101 @@ describe('prEvent fires nothing for anything else', () => {
     ['no response at all', 'gh pr create --fill', undefined],
   ])('%s', (_label, command, response) => {
     expect(event(command, response)).toBeNull();
+  });
+});
+
+describe('ghPrSubcommand scans the command in linear time', () => {
+  const sub = ghPrSubcommand as (command: string) => string | null;
+
+  it('finds pr create after 40 flags, and gives up on 40 flags with no pr', () => {
+    expect(sub(`gh${' --flag'.repeat(40)} pr create --fill`)).toBe('create');
+    expect(sub(`gh${' --flag'.repeat(40)} x`)).toBeNull();
+  });
+
+  it('takes a value only after a flag without =', () => {
+    expect(sub('gh -R civitai/civitai pr ready 7')).toBe('ready');
+    expect(sub('gh --repo=civitai/civitai pr create')).toBe('create');
+    expect(sub('gh --repo=civitai/civitai stray pr create')).toBeNull();
+  });
+});
+
+describe('hqSignedIn reads PATH and the hq config, with no network', () => {
+  type Io = { isExecutable: (p: string) => boolean; readText: (p: string) => string };
+  const signedIn = hqSignedIn as (env: Record<string, string>, io: Io) => boolean;
+  const io = (hqAt: string | null, files: Record<string, string> = {}): Io => ({
+    isExecutable: (p) => hqAt !== null && p === `${hqAt}/hq`,
+    readText: (p) => files[p] ?? '',
+  });
+
+  it('needs hq on PATH', () => {
+    expect(signedIn({ PATH: '/a:/b', HQ_TOKEN: 't' }, io('/b'))).toBe(true);
+    expect(signedIn({ PATH: '/a', HQ_TOKEN: 't' }, io('/b'))).toBe(false);
+  });
+
+  it('reads the token from XDG_CONFIG_HOME before HOME, as the CLI does', () => {
+    const files = {
+      '/xdg/hq/config.toml': "token = 'from-xdg'\n",
+      '/home/u/.config/hq/config.toml': 'token = ""\n',
+    };
+    expect(
+      signedIn({ PATH: '/b', XDG_CONFIG_HOME: '/xdg', HOME: '/home/u' }, io('/b', files))
+    ).toBe(true);
+    expect(signedIn({ PATH: '/b', HOME: '/home/u' }, io('/b', files))).toBe(false);
+  });
+
+  it('is false with no token anywhere', () => {
+    expect(signedIn({ PATH: '/b', HOME: '/home/u' }, io('/b'))).toBe(false);
+    expect(signedIn({ PATH: '/b', HQ_TOKEN: '  ' }, io('/b'))).toBe(false);
+  });
+});
+
+describe('nudgeEvent checks cheapest first', () => {
+  type Deps = { hqSignedIn: () => boolean; prHeadRepo: (pr: number) => string | null };
+  const decide = nudgeEvent as (
+    command: string,
+    toolResponse: unknown,
+    env: Record<string, string>,
+    deps: Deps
+  ) => { action: string; pr: number } | null;
+
+  it('nudges a same-repo PR when hq is signed in', () => {
+    const heads: number[] = [];
+    const deps = {
+      hqSignedIn: () => true,
+      prHeadRepo: (pr: number) => {
+        heads.push(pr);
+        return 'Civitai/Civitai';
+      },
+    };
+    expect(decide('gh pr create --fill', created(7801), {}, deps)?.pr).toBe(7801);
+    expect(heads).toEqual([7801]);
+  });
+
+  it('says nothing for a fork or an unreadable head', () => {
+    expect(
+      decide(
+        'gh pr create',
+        created(7802),
+        {},
+        { hqSignedIn: () => true, prHeadRepo: () => 'someone/civitai' }
+      )
+    ).toBeNull();
+    expect(
+      decide('gh pr create', created(7803), {}, { hqSignedIn: () => true, prHeadRepo: () => null })
+    ).toBeNull();
+  });
+
+  it('never reads the head (the one network call) without hq, or without a PR event', () => {
+    const heads: number[] = [];
+    const prHeadRepo = (pr: number) => {
+      heads.push(pr);
+      return 'civitai/civitai';
+    };
+    expect(
+      decide('gh pr create', created(7804), {}, { hqSignedIn: () => false, prHeadRepo })
+    ).toBeNull();
+    expect(decide('ls', { stdout: '' }, {}, { hqSignedIn: () => true, prHeadRepo })).toBeNull();
+    expect(heads).toEqual([]);
   });
 });
 

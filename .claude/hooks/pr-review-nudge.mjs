@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * PostToolUse hook for Bash: after a call that opened or readied a civitai/civitai PR, adds
- * context pointing the session at the `pr-review` skill. Never blocks: any failure exits 0 silent.
+ * PostToolUse hook for Bash: after a call that opened or readied a civitai/civitai PR whose head is
+ * in this repo, in a session with `hq` signed in, adds context pointing the session at the
+ * `pr-review` skill. Never blocks: any failure exits 0 silent.
  *
  * Wiring only; every decision lives in pr-review-nudge.logic.mjs, which is what tests import.
  * No "am I the main module" check, for the reason check-writable.mjs gives.
@@ -9,7 +10,7 @@
 
 import { stdin } from 'process';
 
-import { nudge, prEvent } from './pr-review-nudge.logic.mjs';
+import { nudge, nudgeEvent } from './pr-review-nudge.logic.mjs';
 
 let input = '';
 
@@ -20,7 +21,7 @@ stdin.on('data', (chunk) => {
 stdin.on('end', () => {
   try {
     const data = JSON.parse(input || '{}');
-    const event = prEvent(data?.tool_input?.command || '', data?.tool_response);
+    const event = nudgeEvent(data?.tool_input?.command || '', data?.tool_response);
     if (event) {
       console.log(
         JSON.stringify({
