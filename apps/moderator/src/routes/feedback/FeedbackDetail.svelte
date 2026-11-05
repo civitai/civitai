@@ -14,6 +14,7 @@
   import FeedbackPlatformContext from './FeedbackPlatformContext.svelte';
   import FeedbackPlatformResolution from './FeedbackPlatformResolution.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
+  import FeedbackErrorReport from './FeedbackErrorReport.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
   import type {
     FeedbackRow,
@@ -216,6 +217,7 @@
   <section class="flex min-w-0 flex-col gap-3">
     <h3 class="text-xs tracking-wide text-dark-2 uppercase">Report</h3>
     <p class="wrap-break-word text-sm whitespace-pre-wrap">{row.message}</p>
+    <FeedbackErrorReport {context} />
     <FeedbackAttachments {context} />
   </section>
 

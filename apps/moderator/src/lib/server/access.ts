@@ -1,6 +1,9 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
-import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import {
+  APPS_PLATFORM_FEEDBACK_AREA,
+  ORCHESTRATION_FEEDBACK_AREA,
+} from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import {
   MODEL_FLAGS_APPEALS_PATH,
@@ -273,6 +276,11 @@ export const NAVIGATION: NavLink[] = [
         path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
         label: 'Apps platform (developers)',
         countKey: 'feedbackAppsPlatformNew',
+      },
+      {
+        path: `/feedback?area=${ORCHESTRATION_FEEDBACK_AREA}&status=new`,
+        label: 'Generation & training errors',
+        countKey: 'feedbackOrchestrationNew',
       },
     ],
   },
