@@ -82,6 +82,7 @@
             <MetaChip tone={row.restriction === 'minor' ? 'red' : 'neutral'}>
               {RESTRICTION_LABEL[row.restriction]}
             </MetaChip>
+            {#if !row.comFace}<MetaChip>No .com face</MetaChip>{/if}
             {#if row.isPrivate}
               <MetaChip>private: applies when published</MetaChip>
             {/if}
@@ -109,9 +110,9 @@
               {open === row.modelId ? 'Close' : 'Rule'}
             </Button>
           </div>
-          <div class="mt-2">
-            <ComFaceCard face={row.comFace} bare />
-          </div>
+          {#if row.comFace}
+            <div class="mt-2"><ComFaceCard face={row.comFace} bare /></div>
+          {/if}
           {#if open === row.modelId}
             <div class="mt-2 flex flex-col gap-2">
               <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
