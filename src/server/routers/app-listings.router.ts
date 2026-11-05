@@ -2329,6 +2329,36 @@ export const appListingsRouter = router({
       return detail;
     }),
 
+  /**
+   * Why `getAppDetail` 404'd, when the ONLY reason is the viewer's browsing level: an R/X app
+   * whose rating their level leaves out. Returns `{ contentRating }` (nothing else of the app) so
+   * the detail page can show a hidden state that explains it; `null` otherwise, and the page
+   * shows its ordinary NotFound. Same gates and rate limit as `getAppDetail`.
+   */
+  getAppHiddenState: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') return null;
+      const { getListingHiddenByBrowsingLevel } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingHiddenByBrowsingLevel(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
+    }),
+
   getAppCard: publicProcedure
     .use(enforceAppListingsReadFlag)
     .use(

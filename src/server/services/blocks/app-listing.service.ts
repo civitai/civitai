@@ -7,9 +7,12 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import {
   matureRatingsAllowed,
+  ratingHiddenByBrowsingLevel,
   storeVisibleListingRowGate,
+  type HiddenMatureRating,
   type MatureRatingsAllowed,
 } from '~/server/services/blocks/app-listing-store-gate';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import type {
@@ -2032,6 +2035,39 @@ export async function getListingSocialImage(
   });
   if (!gated) return null;
   return listingSocialImage(gated.row, { redCapable: opts.redCapable });
+}
+
+/**
+ * Why the app detail page has nothing to show this viewer — when the reason is ONLY that the app
+ * is rated R/X and their browsing level leaves that rating out. Returns just `{ contentRating }`
+ * then, so the page can render a hidden state that explains it (instead of a 404); the app's
+ * name, description and media never leave {@link getListingDetail}, which still returns null.
+ *
+ * Null for everything else: a listing the viewer may see, a missing one, or one hidden for any
+ * other reason (the site gate off a mature-capable host, status, level, scope, deploy). So it
+ * says no more than "an R/X app is here", and only to a request the site would otherwise serve
+ * it to. Owners and moderators are not exempt; they can change their own level.
+ */
+export async function getListingHiddenByBrowsingLevel(
+  input: GetAppListingDetailInput,
+  opts: {
+    redCapable: boolean;
+    scope?: StoreVisibilityScope;
+    floor?: ListingAudienceFloor;
+    viewerBrowsingLevel: number | null | undefined;
+  }
+): Promise<{ contentRating: HiddenMatureRating } | null> {
+  // Every gate EXCEPT the browsing level (all levels allowed), so a row that comes back is one
+  // the level alone is hiding.
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable: opts.redCapable,
+    scope: opts.scope,
+    floor: opts.floor ?? 'public',
+    browsingLevel: allBrowsingLevelsFlag,
+  });
+  if (!gated || !opts.redCapable) return null;
+  const hidden = ratingHiddenByBrowsingLevel(gated.row.contentRating, opts.viewerBrowsingLevel);
+  return hidden ? { contentRating: hidden } : null;
 }
 
 /**

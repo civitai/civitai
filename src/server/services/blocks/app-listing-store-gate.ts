@@ -94,3 +94,21 @@ export function matureRatingAllowed(
   if (!isMatureContentRating(rating)) return true;
   return (rating as string).toLowerCase() === 'r' ? allowed.r : allowed.x;
 }
+
+/** A mature rating the viewer's browsing level can hide. */
+export type HiddenMatureRating = 'r' | 'x';
+
+/**
+ * On a mature-capable site, the r/x rating the viewer's browsing level hides for an app rated
+ * `rating`, or null when nothing is hidden (a non-mature rating, or one the level includes).
+ * {@link matureRatingAllowed} with the site gate already passed — for the surfaces that show a
+ * hidden state (the run page, the detail page) rather than dropping the app. Call it only AFTER
+ * the site gate; off a mature-capable site a mature app is not there at all.
+ */
+export function ratingHiddenByBrowsingLevel(
+  rating: string | null | undefined,
+  browsingLevel: number | null | undefined
+): HiddenMatureRating | null {
+  if (matureRatingAllowed(rating, matureRatingsAllowed(true, browsingLevel))) return null;
+  return (rating as string).toLowerCase() === 'r' ? 'r' : 'x';
+}

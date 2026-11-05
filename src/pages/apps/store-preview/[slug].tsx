@@ -1,6 +1,9 @@
 import { Center, Loader } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { HiddenByBrowsingLevelNotice } from '~/components/Apps/HiddenByBrowsingLevelNotice';
+import { storePreviewView } from '~/components/Apps/appHiddenByBrowsingLevel';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
@@ -72,11 +75,41 @@ export default function AppStoreListingDetailPage({ socialImage }: Partial<PageP
     { slug },
     { enabled: !!canSeeStore && !!slug, retry: false }
   );
+  // Asked only once the detail read has failed: an R/X app the viewer's browsing level hides
+  // 404s above (none of it is sent) and this names just its rating, so the page explains why
+  // instead of showing NotFound.
+  const askHidden = !!canSeeStore && !!slug && !!error;
+  const hiddenQuery = trpc.appListings.getAppHiddenState.useQuery(
+    { slug },
+    { enabled: askHidden, retry: false }
+  );
+  const currentUser = useCurrentUser();
 
-  if (!canSeeStore) return <NotFound />;
-  if (error) return <NotFound />;
+  const view = storePreviewView({
+    canSeeStore: !!canSeeStore,
+    detail: data as ListingDetail | undefined,
+    detailError: error,
+    detailLoading: isLoading && !error,
+    hidden: hiddenQuery.isFetched ? hiddenQuery.data ?? null : undefined,
+    hiddenLoading: askHidden && !hiddenQuery.isFetched,
+  });
 
-  const detail = data as ListingDetail | undefined;
+  if (view.kind === 'not-found') return <NotFound />;
+  if (view.kind === 'hidden') {
+    return (
+      <>
+        <Meta title="App store preview — Civitai" deIndex />
+        <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']} align="center">
+          <HiddenByBrowsingLevelNotice
+            contentRating={view.contentRating}
+            signedIn={!!currentUser}
+          />
+        </AppsPageLayout>
+      </>
+    );
+  }
+
+  const detail = view.kind === 'detail' ? view.detail : undefined;
   const title = detail ? `${detail.name} — App store preview` : 'App store preview — Civitai';
   const description = detail?.tagline ?? 'Unified app store preview';
 
@@ -94,7 +127,7 @@ export default function AppStoreListingDetailPage({ socialImage }: Partial<PageP
         <Meta title={title} description={description} deIndex />
       )}
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']} align="center">
-        {isLoading ? (
+        {view.kind === 'loading' ? (
           <Center py="xl">
             <Loader />
           </Center>

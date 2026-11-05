@@ -46,6 +46,10 @@ import {
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import { isMatureContentRating } from '~/server/utils/server-domain';
+import {
+  matureRatingAllowed,
+  matureRatingsAllowed,
+} from '~/server/services/blocks/app-listing-store-gate';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -3412,7 +3416,10 @@ export class BlockRegistry {
     // false, a mature (r/x) app resolves to null → the router surfaces the SAME
     // NOT_FOUND as a missing app, so a mature app's DETAIL can't be read off
     // .red (mirrors the run-page SSR 404). Defaults false (fail-closed).
-    redCapable = false
+    redCapable = false,
+    // The viewer's browsing level: on a red-capable host an r/x app also needs that rating in
+    // it, or this resolves to null (no details). Missing reads as PG (fail-closed).
+    browsingLevel: number | null | undefined = undefined
   ): Promise<PublicAppDetail | null> {
     type Row = {
       id: string;
@@ -3485,7 +3492,11 @@ export class BlockRegistry {
     // NSFW-APP-RED-ONLY (non-red host): a mature (r/x) app is indistinguishable
     // from a missing one off .red — return null → NOT_FOUND. Uses the
     // authoritative content_rating column (set on approve), not the manifest.
-    if (!redCapable && isMatureContentRating(row.content_rating)) return null;
+    // …and on a red-capable host an r/x app the viewer's browsing level excludes is null too —
+    // the store's one rule (`matureRatingAllowed`).
+    if (!matureRatingAllowed(row.content_rating, matureRatingsAllowed(redCapable, browsingLevel))) {
+      return null;
+    }
     return {
       id: row.id,
       blockId: row.block_id,
