@@ -638,6 +638,13 @@ export async function setMuted(input: {
 
   // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
   // last because the orchestrator re-validates against the session's standing.
+  // The cookie is read now because the repeat below runs after this request has ended.
+  let cookie: string | undefined;
+  try {
+    cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
+  } catch {
+    cookie = undefined;
+  }
   const bustStanding = () =>
     bustKeyBestEffort(
       `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
@@ -648,6 +655,24 @@ export async function setMuted(input: {
       }
     );
   await bustStanding();
+  // After the bust, from which the main app refuses new submits. Best-effort and bounded just past
+  // the endpoint's own 5 s wait: the mute stands whatever this returns.
+  const cancelPending = async () => {
+    const cancelled = await postJson({
+      path: '/api/mod/user/cancel-pending-workflows',
+      body: { userId: input.userId },
+      label: 'Cancel pending generations',
+      auth: 'session',
+      timeoutMs: 6_000,
+      cookie,
+    });
+    if (!cancelled.ok)
+      void logAxiomError(new Error(cancelled.error), {
+        name: 'mute.cancel-pending-workflows-failed',
+        userId: input.userId,
+      });
+  };
+  await cancelPending();
   try {
     await invalidateUserSessions(input.userId);
   } finally {
@@ -655,13 +680,6 @@ export async function setMuted(input: {
     // file for its other actions.
     const { revokeOrchestratorUserTokens } = await import('./orchestrator');
     // Best-effort, like the revoke: the main app also refuses a muted account new generation tokens.
-    // The cookie is read now because the repeat below runs after this request has ended.
-    let cookie: string | undefined;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
-    } catch {
-      cookie = undefined;
-    }
     const expireGenerationCredentials = async () => {
       const result = await postJson({
         path: '/api/mod/user/expire-generation-credentials',
@@ -682,7 +700,9 @@ export async function setMuted(input: {
     setTimeout(() => {
       void bustStanding()
         .then(expireGenerationCredentials)
-        .finally(() => revokeOrchestratorUserTokens(input.userId));
+        .finally(() => revokeOrchestratorUserTokens(input.userId))
+        .finally(cancelPending)
+        .catch(() => undefined);
     }, ACCOUNT_STANDING_REBUST_MS).unref?.();
   }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);
