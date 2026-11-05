@@ -141,6 +141,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 const files = await import('~/server/services/creator-service-deal-file.service');
 const deals = await import('~/server/services/creator-service-deal.service');
 const unpack = await import('~/server/services/creator-service-deal-unpack.service');
+const reviews = await import('~/server/services/creator-service-dispute-review.service');
 const { dealFinalsClear } = await import('~/server/services/creator-service-escrow.service');
 const { dealReadyToDeliver } = await import('~/server/services/creator-service-deal-file-sql');
 const { requestServiceDealAttachmentSchema } = await import(
@@ -159,6 +160,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
+  '20261208120000_creator_service_dispute_review',
   '20261224120100_service_deal_file_held',
   '20261224120200_service_deal_file_attachment',
 ].map((name) =>
@@ -167,6 +169,7 @@ const MIGRATIONS = [
 
 const SELLER = 1;
 const BUYER = 2;
+const STRANGER = 3;
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -323,7 +326,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "ServiceDealFileHeld", "CsamReport" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "ServiceDealFileHeld", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -332,8 +335,11 @@ beforeEach(async () => {
 });
 
 /** Uploads an Attachment the way a buyer does, Ready at the server-held key with `content` there. */
+const ATTESTED = { rightsAttested: true, likenessAttested: true } as const;
+
 async function attach(dealId: number, fileName: string, content: Buffer, userId = BUYER) {
   const { fileId } = await files.requestServiceDealAttachment({
+    ...ATTESTED,
     dealId,
     userId,
     fileName,
@@ -444,6 +450,7 @@ describe('attaching', () => {
     await deals.acceptServiceDeal({ dealId, userId: SELLER });
     // An upload started before delivery cannot be completed after it.
     const { fileId: late } = await files.requestServiceDealAttachment({
+      ...ATTESTED,
       dealId,
       userId: BUYER,
       fileName: 'late.txt',
@@ -455,6 +462,7 @@ describe('attaching', () => {
 
     await expect(
       files.requestServiceDealAttachment({
+        ...ATTESTED,
         dealId,
         userId: BUYER,
         fileName: 'more.txt',
@@ -475,6 +483,7 @@ describe('attaching', () => {
     const dealId = await accepted();
     await expect(
       files.requestServiceDealAttachment({
+        ...ATTESTED,
         dealId,
         userId: SELLER,
         fileName: 'a.txt',
@@ -483,6 +492,7 @@ describe('attaching', () => {
       })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     const { fileId } = await files.requestServiceDealAttachment({
+      ...ATTESTED,
       dealId,
       userId: BUYER,
       fileName: 'a.txt',
@@ -504,6 +514,7 @@ describe('attaching', () => {
     const dealId = await accepted();
     for (let i = 0; i < SERVICE_ATTACHMENT_MAX_FILES; i++)
       await files.requestServiceDealAttachment({
+        ...ATTESTED,
         dealId,
         userId: BUYER,
         fileName: `f${i}.txt`,
@@ -513,6 +524,7 @@ describe('attaching', () => {
     await q(`UPDATE "ServiceDeal" SET "revisionsUsed" = 1`);
     await expect(
       files.requestServiceDealAttachment({
+        ...ATTESTED,
         dealId,
         userId: BUYER,
         fileName: 'one-more.txt',
@@ -572,9 +584,65 @@ describe('the scan an attachment goes through', () => {
 
     const [mine] = await list(dealId, BUYER);
     expect(mine).toMatchObject({ id: fileId, kind: 'Attachment', scanStatus: 'Failed' });
-    expect(mine.failReason).toBeTruthy();
+    expect(mine.failReason).toBe('A file in this delivery was rejected when it was checked.');
     expect(await list(dealId, SELLER)).toEqual([]);
     expect(await download(fileId, SELLER)).toBeNull();
+  });
+
+  it("passes an image rated exactly at the deal's level", async () => {
+    const dealId = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    const fileId = await attach(
+      dealId,
+      'dataset.zip',
+      buildZip([{ name: 'a.png', data: IMAGE_A }])
+    );
+    await unpack.unpackFinals();
+    await verdict('Scanned', '', 4);
+    await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed', "repackedAt" = now()`);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 1 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+  });
+
+  it('never passes on a skipped malware scan, though a Final does while the scan is off', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const dealId = await accepted();
+    const fileId = await attach(dealId, 'notes.txt', TEXT);
+    const finalId = await final(dealId, 'result.txt', TEXT);
+    while ((await unpack.unpackFinals()) > 0);
+    await q(
+      `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'NotScanned', "repackedAt" = now()`
+    );
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 1 });
+    expect((await fileRow(finalId)).scanStatus).toBe('Passed');
+    expect((await fileRow(fileId)).scanStatus).toBe('Pending');
+    // Nor when a verdict is recorded for it directly.
+    expect(await files.recordFinalScanResult({ fileId, verdict: 'Passed' })).toMatchObject({
+      recorded: false,
+    });
+    expect(await list(dealId, SELLER)).toEqual([expect.objectContaining({ id: finalId })]);
+    expect(await download(fileId, SELLER)).toBeNull();
+  });
+
+  it('does not let attachments waiting on a skipped scan crowd out a Final that can pass', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const dealId = await accepted();
+    // More waiting attachments than one settle pass reads, all ahead of the Final.
+    await q(
+      `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "fileName", "mimeType", size, status,
+         "unpackedAt", "repackedAt", "malwareScanStatus")
+       SELECT $1, 'Attachment', 'k-' || n, 'a.txt', 'text/plain', 1, 'Ready', now(), now(), 'NotScanned'
+       FROM generate_series(1, 60) n`,
+      [dealId]
+    );
+    const finalId = await final(dealId, 'result.txt', TEXT);
+    while ((await unpack.unpackFinals()) > 0);
+    await q(
+      `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'NotScanned', "repackedAt" = now() WHERE id = $1`,
+      [finalId]
+    );
+    await settle();
+    expect((await fileRow(finalId)).scanStatus).toBe('Passed');
   });
 
   it('holds nothing when it fails, even on a delivered deal', async () => {
@@ -605,6 +673,165 @@ async function rejectedZip(dealId: number, upload: typeof attach) {
   expect((await fileRow(fileId)).scanStatus).toBe('Failed');
   return fileId;
 }
+
+const ALL_STATUSES = [
+  'Requested',
+  'Accepted',
+  'Delivered',
+  'InRevision',
+  'Completed',
+  'Declined',
+  'Expired',
+  'CancellationRequested',
+  'Cancelled',
+  'Disputed',
+] as const;
+const ATTACHABLE = ['Requested', 'Accepted', 'InRevision'];
+const setStatus = (dealId: number, status: string) =>
+  q(
+    `UPDATE "ServiceDeal" SET status = $2::"ServiceDealStatus",
+       "releaseAt" = CASE WHEN $2 = 'Completed' THEN now() ELSE "releaseAt" END
+     WHERE id = $1`,
+    [dealId, status]
+  );
+const requestAs = (dealId: number, userId: number) =>
+  files.requestServiceDealAttachment({
+    ...ATTESTED,
+    dealId,
+    userId,
+    fileName: 'a.txt',
+    mimeType: 'text/plain',
+    size: TEXT.byteLength,
+  });
+
+describe('who may attach, and when', () => {
+  it.each(ALL_STATUSES)('a deal that is %s', async (status) => {
+    const dealId = await accepted();
+    const existing = await attach(dealId, 'notes.txt', TEXT);
+    await setStatus(dealId, status);
+    if (ATTACHABLE.includes(status)) {
+      await expect(requestAs(dealId, BUYER)).resolves.toMatchObject({ fileId: expect.any(Number) });
+      await files.deleteServiceDealAttachment({ fileId: existing, userId: BUYER });
+      expect(await fileRow(existing)).toBeUndefined();
+    } else {
+      await expect(requestAs(dealId, BUYER)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(
+        files.deleteServiceDealAttachment({ fileId: existing, userId: BUYER })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect((await fileRow(existing)).status).toBe('Ready');
+    }
+  });
+
+  it.each([
+    ['the seller', SELLER],
+    ['a third user', STRANGER],
+  ])("refuses %s the buyer's attachment", async (_, userId) => {
+    const dealId = await accepted();
+    const { fileId } = await requestAs(dealId, BUYER);
+    const ready = await attach(dealId, 'notes.txt', TEXT);
+    s3.headObject.mockResolvedValue({ status: 'present', size: TEXT.byteLength });
+    await expect(files.completeServiceDealAttachment({ fileId, userId })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    await expect(
+      files.deleteServiceDealAttachment({ fileId: ready, userId })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await fileRow(fileId)).status).toBe('Uploading');
+    expect((await fileRow(ready)).status).toBe('Ready');
+  });
+
+  it("refuses the buyer the seller's Finals through the attachment endpoints", async () => {
+    const dealId = await accepted();
+    const { fileId: uploading } = await files.requestServiceDealUpload({
+      dealId,
+      userId: SELLER,
+      kind: 'Final',
+      fileName: 'result.txt',
+      mimeType: 'text/plain',
+      size: TEXT.byteLength,
+    });
+    const ready = await final(dealId, 'other.txt', TEXT);
+    s3.headObject.mockResolvedValue({ status: 'present', size: TEXT.byteLength });
+    await expect(
+      files.completeServiceDealAttachment({ fileId: uploading, userId: BUYER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      files.deleteServiceDealAttachment({ fileId: ready, userId: BUYER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await fileRow(uploading)).status).toBe('Uploading');
+    expect((await fileRow(ready)).status).toBe('Ready');
+  });
+
+  it('refuses an attachment the request did not attest, even past the input schema', async () => {
+    const dealId = await accepted();
+    await expect(
+      files.requestServiceDealAttachment({
+        dealId,
+        userId: BUYER,
+        fileName: 'a.txt',
+        mimeType: 'text/plain',
+        size: 10,
+        rightsAttested: true,
+        likenessAttested: false,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await list(dealId, BUYER)).toEqual([]);
+  });
+
+  it('refuses a seller upload of kind Attachment, even past the input schema', async () => {
+    const dealId = await accepted();
+    await expect(
+      files.requestServiceDealUpload({
+        dealId,
+        userId: SELLER,
+        kind: 'Attachment' as 'Final',
+        fileName: 'a.txt',
+        mimeType: 'text/plain',
+        size: 10,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await list(dealId, SELLER)).toEqual([]);
+  });
+
+  it('does not complete an attachment once the deal is delivered while the upload is checked', async () => {
+    const dealId = await accepted();
+    const { fileId } = await requestAs(dealId, BUYER);
+    let first = true;
+    s3.headObject.mockImplementation(async () => {
+      // The seller delivers between the lookup and the move.
+      if (first) await setStatus(dealId, 'Delivered');
+      first = false;
+      return { status: 'present', size: TEXT.byteLength };
+    });
+    s3.send.mockResolvedValue(body(TEXT));
+    await expect(
+      files.completeServiceDealAttachment({ fileId, userId: BUYER })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect((await fileRow(fileId)).status).toBe('Uploading');
+  });
+});
+
+describe('a moderator', () => {
+  it('who is the seller sees an unscanned attachment only as the seller does', async () => {
+    const dealId = await accepted();
+    const fileId = await attach(dealId, 'notes.txt', TEXT);
+    expect(await list(dealId, SELLER, true)).toEqual([]);
+    expect(await download(fileId, SELLER, true)).toBeNull();
+    expect(await list(dealId, STRANGER, true)).toEqual([
+      expect.objectContaining({ id: fileId, canDownload: true }),
+    ]);
+    expect(await download(fileId, STRANGER, true)).not.toBeNull();
+  });
+
+  it("reads the buyer's attachments apart from the delivery in the dispute evidence", async () => {
+    const dealId = await accepted();
+    const attachmentId = await attach(dealId, 'notes.txt', TEXT);
+    const finalId = await final(dealId, 'result.txt', TEXT);
+    const evidence = await reviews.getServiceDisputeEvidence({ dealId, viewerId: STRANGER });
+    expect(evidence.files.map((file) => file.id)).toEqual([finalId]);
+    expect(evidence.attachments.map((file) => file.id)).toEqual([attachmentId]);
+  });
+});
 
 describe('removing a file that is evidence', () => {
   it("keeps the original of a rejected attachment the buyer removes, out of everyone's reach", async () => {
@@ -777,6 +1004,27 @@ describe('attachments take no part in delivery, acceptance or payout', () => {
     if (malware) await scanned([fileId], { malware });
     const finalId = await final(dealId, 'result.txt', TEXT);
     await scanned([finalId]);
+    expect(await readyToDeliver(dealId)).toBe(true);
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).resolves.toBeTruthy();
+  });
+
+  it.each([
+    [
+      'Uploading',
+      `UPDATE "ServiceDealFile" SET status = 'Uploading' WHERE kind::text = 'Attachment'`,
+    ],
+    [
+      'Processing',
+      `UPDATE "ServiceDealFile" SET status = 'Processing' WHERE kind::text = 'Attachment'`,
+    ],
+    ['Ready and not yet unpacked', null],
+  ])('an attachment that is %s does not block delivery', async (_state, sql) => {
+    const dealId = await accepted();
+    const finalId = await final(dealId, 'result.txt', TEXT);
+    await scanned([finalId]);
+    const fileId = await attach(dealId, 'notes.txt', TEXT);
+    if (sql) await q(sql);
+    expect((await fileRow(fileId)).unpackedAt).toBeNull();
     expect(await readyToDeliver(dealId)).toBe(true);
     await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).resolves.toBeTruthy();
   });

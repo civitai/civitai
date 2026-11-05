@@ -538,7 +538,8 @@ export async function settleFinals() {
       AND f."unpackedAt" IS NOT NULL
       AND f."repackedAt" IS NOT NULL
       AND (f."malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-        OR (f."malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}))
+        OR (f."malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}
+          AND f."kind"::text <> 'Attachment'))
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
     ORDER BY f."id" LIMIT 50`;

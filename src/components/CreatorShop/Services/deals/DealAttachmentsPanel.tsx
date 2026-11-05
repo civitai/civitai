@@ -20,6 +20,7 @@ import {
 } from '~/components/CreatorShop/Services/deals/deal-files';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDealFiles } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
+import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RouterOutput } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
@@ -73,12 +74,15 @@ function AttachStep({ deal, attachments }: { deal: ServiceDealView; attachments:
   const utils = trpc.useUtils();
   const [rights, setRights] = useState(false);
   const [likeness, setLikeness] = useState(false);
-  const [busy, setBusy] = useState<{ key: number; name: string }[]>([]);
-  const nextKey = useRef(0);
   const reset = useRef<() => void>(null);
   const requestAttachment = trpc.creatorServiceDealFile.requestAttachment.useMutation();
   const completeAttachment = trpc.creatorServiceDealFile.completeAttachment.useMutation();
   const refresh = () => utils.creatorServiceDealFile.list.invalidate({ dealId: deal.id });
+  const { busy, send: sendFiles } = useDealFileUploads({
+    verb: 'attach',
+    complete: (fileId) => completeAttachment.mutateAsync({ fileId }),
+    refresh,
+  });
 
   const slots = attachmentSlotsLeft(attachments);
   const attested = rights && likeness;
@@ -98,36 +102,16 @@ function AttachStep({ deal, attachments }: { deal: ServiceDealView; attachments:
           } left out: only ${slots} more ${slots === 1 ? 'file fits' : 'files fit'}.`,
         },
       });
-    for (const file of send) {
-      const key = nextKey.current++;
-      setBusy((items) => [...items, { key, name: file.name }]);
-      try {
-        const mimeType = file.type || 'application/octet-stream';
-        const { fileId, uploadUrl } = await requestAttachment.mutateAsync({
-          dealId: deal.id,
-          fileName: file.name,
-          mimeType,
-          size: file.size,
-          rightsAttested: true,
-          likenessAttested: true,
-        });
-        const put = await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': mimeType },
-        });
-        if (!put.ok) throw new Error('The upload did not go through. Try again.');
-        await completeAttachment.mutateAsync({ fileId });
-      } catch (error) {
-        showErrorNotification({
-          title: `Couldn't attach ${file.name}`,
-          error: error instanceof Error ? error : { message: String(error) },
-        });
-      } finally {
-        setBusy((items) => items.filter((item) => item.key !== key));
-        await refresh();
-      }
-    }
+    await sendFiles(send, (file, mimeType) =>
+      requestAttachment.mutateAsync({
+        dealId: deal.id,
+        fileName: file.name,
+        mimeType,
+        size: file.size,
+        rightsAttested: true,
+        likenessAttested: true,
+      })
+    );
   };
 
   return (

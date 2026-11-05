@@ -248,15 +248,19 @@ export async function getServiceDisputeEvidence({
   ]);
   const agentMode = await getDisputeAgentMode();
 
+  const withAccess = <T extends { id: number }>(file: T) => ({
+    ...file,
+    access: access?.rows.filter((a) => a.fileId === file.id).map(({ dealId: _, ...a }) => a),
+  });
   const { offeringId, offeringTitle, offeringDescription, ...dealFields } = deal;
   return {
     deal: dealFields,
     offering: { id: offeringId, title: offeringTitle, description: offeringDescription },
     events,
-    files: files.map((file) => ({
-      ...file,
-      access: access?.rows.filter((a) => a.fileId === file.id).map(({ dealId: _, ...a }) => a),
-    })),
+    // The seller's delivery. The buyer's own attachments are under their own key, so a buyer
+    // downloading what they attached never reads as the buyer receiving the delivery.
+    files: files.filter((file) => file.kind !== 'Attachment').map(withAccess),
+    attachments: files.filter((file) => file.kind === 'Attachment').map(withAccess),
     accessRecordedSince: access?.recordedSince ?? null,
     priorDisputes: { days: PRIOR_DISPUTE_DAYS, ...(prior[0] ?? { buyer: 0, seller: 0 }) },
     agentMode,

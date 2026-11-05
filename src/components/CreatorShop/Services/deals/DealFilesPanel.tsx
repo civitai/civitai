@@ -12,7 +12,8 @@ import {
   Text,
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
   buyerRoundFinalsState,
@@ -82,13 +83,16 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
 function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFile[] }) {
   const utils = trpc.useUtils();
   // Keyed per upload, not by name: two picks of the same name must not clear each other.
-  const [busy, setBusy] = useState<{ key: number; name: string }[]>([]);
-  const nextKey = useRef(0);
   const resetPreview = useRef<() => void>(null);
   const resetFinal = useRef<() => void>(null);
   const requestUpload = trpc.creatorServiceDealFile.requestUpload.useMutation();
   const completeUpload = trpc.creatorServiceDealFile.completeUpload.useMutation();
   const refreshFiles = () => utils.creatorServiceDealFile.list.invalidate({ dealId: deal.id });
+  const { busy, send: sendFiles } = useDealFileUploads({
+    verb: 'upload',
+    complete: (fileId) => completeUpload.mutateAsync({ fileId }),
+    refresh: refreshFiles,
+  });
   const deliver = trpc.creatorServiceDealFile.deliver.useMutation({
     onSuccess: async () => {
       await Promise.all([
@@ -120,35 +124,15 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           } fit.`,
         },
       });
-    for (const file of send) {
-      const key = nextKey.current++;
-      setBusy((items) => [...items, { key, name: file.name }]);
-      try {
-        const mimeType = file.type || 'application/octet-stream';
-        const { fileId, uploadUrl } = await requestUpload.mutateAsync({
-          dealId: deal.id,
-          kind,
-          fileName: file.name,
-          mimeType,
-          size: file.size,
-        });
-        const put = await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': mimeType },
-        });
-        if (!put.ok) throw new Error('The upload did not go through. Try again.');
-        await completeUpload.mutateAsync({ fileId });
-      } catch (error) {
-        showErrorNotification({
-          title: `Couldn't upload ${file.name}`,
-          error: error instanceof Error ? error : { message: String(error) },
-        });
-      } finally {
-        setBusy((items) => items.filter((item) => item.key !== key));
-        await refreshFiles();
-      }
-    }
+    await sendFiles(send, (file, mimeType) =>
+      requestUpload.mutateAsync({
+        dealId: deal.id,
+        kind,
+        fileName: file.name,
+        mimeType,
+        size: file.size,
+      })
+    );
   };
 
   const previewSlots = uploadSlotsLeft('Preview', deal.previewKind, files, round);

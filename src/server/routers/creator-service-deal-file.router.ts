@@ -51,6 +51,8 @@ export const creatorServiceDealFileRouter = router({
         fileName: input.fileName,
         mimeType: input.mimeType,
         size: input.size,
+        rightsAttested: input.rightsAttested,
+        likenessAttested: input.likenessAttested,
       })
     ),
   completeAttachment: attachGated

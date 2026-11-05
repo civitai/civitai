@@ -153,6 +153,8 @@ export async function requestServiceDealUpload({
   mimeType: string;
   size: number;
 }) {
+  // The input schema says the same; a caller that skips it must not create a buyer's Attachment.
+  if (kind !== 'Preview' && kind !== 'Final') throw throwBadRequestError('Unknown file kind.');
   // The buyer sees the file name. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
 
@@ -216,13 +218,20 @@ export async function requestServiceDealAttachment({
   fileName,
   mimeType,
   size,
+  rightsAttested,
+  likenessAttested,
 }: {
   dealId: number;
   userId: number;
   fileName: string;
   mimeType: string;
   size: number;
+  rightsAttested: boolean;
+  likenessAttested: boolean;
 }) {
+  // `attestedAt` records both; the input schema requires them too.
+  if (rightsAttested !== true || likenessAttested !== true)
+    throw throwBadRequestError('Confirm both statements to attach files.');
   // The seller sees the file name once the file passes. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
   assertScannableFile(fileName, size);
@@ -394,12 +403,22 @@ async function completeUpload(fileId: number, scope: Prisma.Sql) {
 
   // A preview is processed by the job; a final or attachment is ready now and is unpacked by the job.
   const next: ServiceDealFileStatus = file.kind === 'Preview' ? 'Processing' : 'Ready';
-  const moved = await dbWrite.$executeRaw`
-    UPDATE "ServiceDealFile"
-    SET "status" = ${next}::"ServiceDealFileStatus", "uploadedAt" = now(), "s3Key" = ${heldKey}::text
-    WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
+  // Under the deal lock and the same scope as the lookup: the deal may have moved on (a delivery
+  // closes the attach window) while the copy above was being made.
+  const moved = await dbWrite.$transaction(async (tx) => {
+    const [deal] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT d."id" FROM "ServiceDeal" d JOIN "ServiceDealFile" f ON f."dealId" = d."id"
+      WHERE f."id" = ${file.id}::int AND ${scope}
+      FOR UPDATE OF d`;
+    if (!deal) return null;
+    return tx.$executeRaw`
+      UPDATE "ServiceDealFile"
+      SET "status" = ${next}::"ServiceDealFileStatus", "uploadedAt" = now(), "s3Key" = ${heldKey}::text
+      WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
+  });
   // The uploader's key is dead either way. A repeat call that lost the race removes its own copy.
   await deleteObject(bucket, moved === 1 ? file.s3Key : heldKey).catch(() => null);
+  if (moved === null) throw throwConflictError('This deal no longer takes this file.');
   return { id: file.id, status: next };
 }
 
@@ -540,8 +559,9 @@ export async function recordFinalScanResult({
   fileId: number;
   verdict: 'Passed' | 'Failed';
 }) {
-  // A skipped malware scan stands in for a passed one only while the scan is off, so turning it on
-  // stops passing the Finals it skipped until they are scanned (see `settleFinals`).
+  // A skipped malware scan stands in for a passed one only for a Final and only while the scan is
+  // off, so turning it on stops passing the Finals it skipped until they are scanned (see
+  // `settleFinals`). An Attachment always needs a scan that ran.
   const malwareScanOn = verdict === 'Passed' ? await isFinalsMalwareScanOn() : true;
   const [file] = await dbWrite.$queryRaw<{ dealId: number; kind: ServiceDealFileKind }[]>`
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
@@ -552,7 +572,8 @@ export async function recordFinalScanResult({
         AND "repackedAt" IS NOT NULL
         AND "failReason" IS NULL
         AND ("malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-          OR ("malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}))
+          OR ("malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}
+            AND "kind"::text <> 'Attachment'))
         AND NOT EXISTS (
           SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = "ServiceDealFile"."id"
@@ -648,6 +669,12 @@ const finalScansClear = (row: {
   row.scanStatus === 'Passed' &&
   (row.malwareScanStatus === 'Passed' || row.malwareScanStatus === 'NotScanned');
 
+/** An attachment reaches the seller only on a malware scan that ran: a skipped one never counts. */
+const attachmentScansClear = (row: {
+  scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
+}) => row.scanStatus === 'Passed' && row.malwareScanStatus === 'Passed';
+
 /** The buyer's claim on a deal's final files: it is paid for, and not since reversed. */
 export const buyerOwnsFinals = (deal: Pick<DealForFiles, 'status' | 'completedAt'>) =>
   deal.status === 'Completed' || (deal.status === 'Disputed' && deal.completedAt !== null);
@@ -694,8 +721,9 @@ export async function listServiceDealFiles({
     if (row.kind === 'Attachment') {
       // The buyer's file. The seller is not told it exists until its scans pass, and then gets what
       // a buyer gets of a Final: the delivery copy's size, no failure detail.
-      const owner = isBuyer || isModerator;
-      const cleared = row.status === 'Ready' && finalScansClear(row);
+      // A moderator who is also the seller is the seller here.
+      const owner = isBuyer || (isModerator && !isSeller);
+      const cleared = row.status === 'Ready' && attachmentScansClear(row);
       if (!owner && !cleared) return [];
       return [
         {
@@ -819,9 +847,9 @@ export async function resolveServiceDealFileDownload({
   const isAttachment = row.kind === 'Attachment';
   const ready = row.status === 'Ready';
   const allowed = isAttachment
-    ? isModerator ||
+    ? (isModerator && row.sellerId !== userId) ||
       (row.buyerId === userId && ready) ||
-      (row.sellerId === userId && ready && finalScansClear(row))
+      (row.sellerId === userId && ready && attachmentScansClear(row))
     : row.sellerId === userId ||
       isModerator ||
       (row.buyerId === userId &&
