@@ -6,6 +6,8 @@ game and the new one agree. Values are in `src/lib/server/hidden/config.ts` (set
 
 ## Hidden checks (`src/lib/server/hidden`)
 
+Players see these as "skill checks"; the code, tables and config keep the name "hidden check".
+
 Known-answer images (`KnightsReferenceImage`, pool `hiddenCheck`) served in a Knight's feed beside queue items. A check is an
 ordinary vote in every way a player can see.
 

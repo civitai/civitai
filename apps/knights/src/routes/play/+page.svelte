@@ -503,7 +503,7 @@
   <div class="body">
   <div class="main">
   {#if data.notices.length > 0}
-    <section class="toast" role="status" aria-label="Sanity check">
+    <section class="toast" role="status" aria-label="Skill check">
       <Icon name="triangle-alert" size={18} />
       <div class="toast-body">
         {#each data.notices as notice (notice.title)}

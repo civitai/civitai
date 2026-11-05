@@ -82,7 +82,7 @@
 
   <section id="judging" aria-labelledby="judging-title">
     <p class="kicker">02 · How judging works</p>
-    <h2 id="judging-title">Consensus, verdicts and hidden checks</h2>
+    <h2 id="judging-title">Consensus, verdicts and skill checks</h2>
     <div class="steps">
       <article>
         <span class="ring"><Icon name="users" size={20} /></span>
@@ -103,7 +103,7 @@
       </article>
       <article>
         <span class="ring"><Icon name="eye-off" size={20} /></span>
-        <h3>Hidden checks</h3>
+        <h3>Skill checks</h3>
         <p>
           Some images already have a known answer. They are mixed in without notice and measure your
           accuracy: answer every image honestly.
