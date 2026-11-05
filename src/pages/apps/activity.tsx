@@ -678,15 +678,9 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
         <div id={panelId} hidden={!opened}>
           <Stack gap="xs">
             <Divider />
-            {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was once a bare scope list with
-                no `emptyLabel`, which fell through to that component's own default — "This app doesn't request any permissions — it only consumes data
-                from the host-bridge postMessage protocol." That was filed as an UNREACHABLE nit
-                while every row came from an install or a consent; the activity-only row makes it
-                REACHABLE AND WRONG BY CONSTRUCTION, since such a row carries `scopes: []` and
-                exists precisely because the app made scope-gated API calls. Telling that viewer
-                the app has no access is the one direction a permissions page must never be wrong
-                in. `scopeGrantEmptyScopeLabel` owns both labels so the two consumers of this
-                component cannot drift. */}
+            {/* Explicit emptyLabel: an activity-only row has `scopes: []` yet the app made scope-gated
+                calls, so the list's default 'no permissions' text would be wrong.
+                `scopeGrantEmptyScopeLabel` owns both labels. */}
             {/* 🔴 `ScopeConsentList`, NOT A BARE PERMISSION LIST — and it is the SAME mount
                 `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx` uses, handed the same
                 single `grant` object. It renders the permission rows and adds the per-scope revoke

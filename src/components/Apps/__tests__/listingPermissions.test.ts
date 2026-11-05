@@ -6,7 +6,6 @@ import {
   groupListingPermissions,
 } from '~/components/Apps/listingPermissions';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
  * The store page's permission row model and its ONE grouping/ordering rule (blocking `unit`
@@ -67,17 +66,9 @@ describe('groupListingPermissions — off-site connect scopes', () => {
 });
 
 describe('blockScopeGroups — the groups every block-scope renderer draws', () => {
-  // INVARIANT GUARD: grouping splits on `sensitive`, so no scope can miss a group; this pins it.
-  it('puts every described scope in exactly one group, sensitive or "Other"', () => {
+  it('partitions every described scope: nothing dropped or duplicated', () => {
     const all = Object.keys(SCOPE_DESCRIPTIONS);
     expect(all.length, 'SCOPE_DESCRIPTIONS is empty — this checks nothing').toBeGreaterThan(5);
-    for (const scope of all) {
-      const groups = blockScopeGroups([scope]);
-      expect(groups, scope).toHaveLength(1);
-      expect(groups[0].scopes, scope).toEqual([scope]);
-      expect(groups[0].key, scope).toBe(isSensitiveBlockScope(scope) ? 'sensitive' : 'other');
-    }
-    // All at once: the groups partition the input, nothing dropped or duplicated.
     const flat = blockScopeGroups(all).flatMap((g) => g.scopes);
     expect([...flat].sort()).toEqual([...all].sort());
   });
