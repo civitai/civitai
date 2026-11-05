@@ -1,19 +1,15 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { isSellable, stockFor, type ShopItem } from '@civitai/shared/knights-shop';
-import { getPaginatedCosmetics } from '../cosmetics.service';
 import { withModerators } from '../mod-activity';
 import { dbWrite } from '../db';
+import type { Outcome } from './coreset.service';
 import {
   diffFields,
   type EditShopItem,
   type FieldChange,
   type NewShopItem,
 } from './shop-catalog.schema';
-
-export type Outcome<T extends object = Record<never, never>> =
-  | ({ ok: true } & T)
-  | { ok: false; error: string };
 
 const EDITABLE = ['name', 'description', 'price', 'minRank', 'rotating', 'sortOrder'] as const;
 type Action = 'create' | 'update' | 'retire' | 'restore';
@@ -184,19 +180,36 @@ export async function previewShop(day: string) {
     .selectAll()
     .where('active', '=', true)
     .execute();
-  const sellable = rows.filter(isSellable);
+  const { stock } = stockFor(rows.filter(isSellable), day);
+  const cosmeticIds = stock.flatMap(({ item }) => (item.cosmeticId ? [item.cosmeticId] : []));
+  const present = new Set(
+    cosmeticIds.length
+      ? (
+          await db().selectFrom('Cosmetic').select('id').where('id', 'in', cosmeticIds).execute()
+        ).map((row) => row.id)
+      : []
+  );
   return {
     day,
-    ...stockFor(sellable, day),
+    stock: stock.map((entry) => ({
+      ...entry,
+      hidden:
+        entry.item.kind === 'cosmetic' && !present.has(entry.item.cosmeticId ?? -1)
+          ? ('cosmetic missing' as const)
+          : null,
+    })),
     excluded: rows.filter((item) => !isSellable(item)),
   };
 }
 
+/** Newest first, `limit` per page; `nextBefore` is the `before` cursor of the next page, null on the last. */
 export async function listShopChanges({
   itemId,
+  before,
   limit = 100,
 }: {
   itemId?: string;
+  before?: number;
   limit?: number;
 }) {
   let query = db()
@@ -212,18 +225,15 @@ export async function listShopChanges({
       'ch.createdAt',
     ]);
   if (itemId) query = query.where('ch.itemId', '=', itemId);
+  if (before) query = query.where('ch.id', '<', before);
   const rows = await query
-    .orderBy('ch.createdAt', 'desc')
     .orderBy('ch.id', 'desc')
-    .limit(limit)
+    .limit(limit + 1)
     .execute();
-  return (await withModerators(rows)).map((row) => ({
+  const page = rows.slice(0, limit);
+  const changes = (await withModerators(page)).map((row) => ({
     ...row,
     changes: row.changes as Record<string, FieldChange>,
   }));
-}
-
-export async function searchCosmetics(query: string) {
-  const { items } = await getPaginatedCosmetics({ name: query, limit: 10 });
-  return items.map(({ id, name, type, data }) => ({ id, name, type, data }));
+  return { changes, nextBefore: rows.length > limit ? page[page.length - 1].id : null };
 }

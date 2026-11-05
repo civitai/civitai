@@ -1,46 +1,79 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import CosmeticSample from '$lib/components/CosmeticSample.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { NewOrderRankType } from '@civitai/db-schema/enums';
   import { SHOP_TIERS } from '@civitai/shared/knights-shop';
   import LiveWarning from './LiveWarning.svelte';
 
   type Cosmetic = { id: number; name: string; type: string; data: unknown };
+  type Kind = 'buzz_pack' | 'cosmetic' | 'membership';
 
-  let kind = $state<'buzz_pack' | 'cosmetic' | 'membership'>('buzz_pack');
+  const KINDS: { value: Kind; label: string }[] = [
+    { value: 'buzz_pack', label: 'Buzz pack' },
+    { value: 'cosmetic', label: 'Cosmetic' },
+    { value: 'membership', label: 'Membership' },
+  ];
+
+  let { ranks }: { ranks: readonly string[] } = $props();
+
+  let kind = $state<Kind>('buzz_pack');
+  let tier = $state<string>(SHOP_TIERS[0]);
+  let minRank = $state('');
+  let rotating = $state(false);
   let name = $state('');
   let cosmetic = $state<Cosmetic | null>(null);
   let query = $state('');
   let results = $state<Cosmetic[]>([]);
+  let search = $state<'idle' | 'searching' | 'done' | 'error'>('idle');
   let timer: ReturnType<typeof setTimeout>;
+  let searchSeq = 0;
 
   const add = new FormState({
+    reload: true,
     onSuccess: () => {
       name = '';
       cosmetic = null;
       query = '';
-      void invalidateAll();
-      toast.success('Added, live now');
+      minRank = '';
+      rotating = false;
+      toast.success('Added');
     },
   });
 
+  function stopSearch() {
+    clearTimeout(timer);
+    searchSeq++;
+    results = [];
+    search = 'idle';
+  }
+
   function onSearch(e: Event) {
     query = (e.currentTarget as HTMLInputElement).value;
-    clearTimeout(timer);
+    stopSearch();
     const q = query.trim();
-    if (!q) {
-      results = [];
-      return;
-    }
+    if (!q) return;
+    search = 'searching';
+    const mine = searchSeq;
     timer = setTimeout(async () => {
-      const res = await fetch(`/knights-of-new-order/shop/cosmetics?q=${encodeURIComponent(q)}`);
-      results = res.ok ? await res.json() : [];
+      try {
+        const res = await fetch(`/knights-of-new-order/shop/cosmetics?q=${encodeURIComponent(q)}`);
+        if (!res.ok) throw new Error(String(res.status));
+        const found: Cosmetic[] = await res.json();
+        if (mine !== searchSeq) return;
+        results = found;
+        search = 'done';
+      } catch {
+        if (mine !== searchSeq) return;
+        results = [];
+        search = 'error';
+      }
     }, 300);
   }
 
@@ -48,8 +81,10 @@
     cosmetic = c;
     if (!name.trim()) name = c.name;
     query = '';
-    results = [];
+    stopSearch();
   }
+
+  onDestroy(() => clearTimeout(timer));
 </script>
 
 <section class="mb-6 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -60,15 +95,15 @@
     <div class="flex flex-wrap items-center gap-3 text-sm text-dark-2">
       <label class="flex items-center gap-2">
         Kind
-        <select
-          name="kind"
-          bind:value={kind}
-          class="h-8 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="buzz_pack">Buzz pack</option>
-          <option value="cosmetic">Cosmetic</option>
-          <option value="membership">Membership</option>
-        </select>
+        <input type="hidden" name="kind" value={kind} />
+        <Select.Root type="single" bind:value={kind}>
+          <Select.Trigger class="w-40">
+            {KINDS.find((k) => k.value === kind)?.label}
+          </Select.Trigger>
+          <Select.Content>
+            {#each KINDS as k (k.value)}<Select.Item value={k.value}>{k.label}</Select.Item>{/each}
+          </Select.Content>
+        </Select.Root>
       </label>
 
       {#if kind === 'buzz_pack'}
@@ -78,12 +113,17 @@
       {:else if kind === 'membership'}
         <label class="flex items-center gap-2">
           Tier
-          <select name="tier" required class="h-8 rounded-md border bg-background px-2 text-sm">
-            {#each SHOP_TIERS as tier (tier)}<option value={tier}>{tier}</option>{/each}
-          </select>
+          <input type="hidden" name="tier" value={tier} />
+          <Select.Root type="single" bind:value={tier}>
+            <Select.Trigger class="w-32">{tier}</Select.Trigger>
+            <Select.Content>
+              {#each SHOP_TIERS as t (t)}<Select.Item value={t}>{t}</Select.Item>{/each}
+            </Select.Content>
+          </Select.Root>
         </label>
         <label class="flex items-center gap-2">
-          Months <Input name="months" inputmode="numeric" required value="1" class="w-20" />
+          Months <Input name="months" value="1" readonly class="w-20" />
+          <span class="text-xs">The shop sells memberships one month at a time.</span>
         </label>
       {/if}
     </div>
@@ -107,6 +147,13 @@
             class="w-80"
             autocomplete="off"
           />
+          {#if search === 'searching'}
+            <p>Searching…</p>
+          {:else if search === 'error'}
+            <p class="text-red-300">Could not search cosmetics. Try again.</p>
+          {:else if search === 'done' && !results.length}
+            <p>No cosmetics match</p>
+          {/if}
           {#if results.length}
             <ul class="max-h-64 w-80 overflow-auto rounded-md border border-dark-4">
               {#each results as c (c.id)}
@@ -139,13 +186,18 @@
       </label>
       <label class="flex items-center gap-2">
         Minimum rank
-        <select name="minRank" class="h-8 rounded-md border bg-background px-2 text-sm">
-          <option value="">Anyone</option>
-          {#each Object.values(NewOrderRankType) as rank (rank)}<option value={rank}>{rank}</option>{/each}
-        </select>
+        <input type="hidden" name="minRank" value={minRank} />
+        <Select.Root type="single" bind:value={minRank}>
+          <Select.Trigger class="w-36">{minRank || 'Anyone'}</Select.Trigger>
+          <Select.Content>
+            <Select.Item value="">Anyone</Select.Item>
+            {#each ranks as rank (rank)}<Select.Item value={rank}>{rank}</Select.Item>{/each}
+          </Select.Content>
+        </Select.Root>
       </label>
       <label class="flex items-center gap-2">
-        <input type="checkbox" name="rotating" /> Rotating
+        <input type="hidden" name="rotating" value={rotating ? 'on' : ''} />
+        <Checkbox bind:checked={rotating} /> Rotating
       </label>
     </div>
     <label class="flex items-center gap-2 text-sm text-dark-2">

@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { utcDay } from '@civitai/shared/knights-shop';
 import { requireAccess } from '$lib/server/access';
 import { parseForm } from '$lib/server/query';
+import type { Outcome } from '$lib/server/knights/coreset.service';
 import {
   createShopItem,
   listShopChanges,
@@ -11,35 +12,48 @@ import {
   previewShop,
   setShopItemActive,
   updateShopItem,
-  type Outcome,
 } from '$lib/server/knights/shop-catalog.service';
 import {
   editShopItemSchema,
   itemIdSchema,
   newShopItemSchema,
+  SHOP_RANKS,
 } from '$lib/server/knights/shop-catalog.schema';
 
 const TABS = ['items', 'preview', 'audit'] as const;
 type Tab = (typeof TABS)[number];
 
 const isDay = (value: string | null): value is string =>
-  value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
+  value !== null &&
+  /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+  !Number.isNaN(Date.parse(value)) &&
+  new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+
+const cursor = (value: string | null) =>
+  value && /^\d{1,9}$/.test(value) ? Number(value) : undefined;
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
   const requested = url.searchParams.get('tab');
   const tab: Tab = TABS.find((t) => t === requested) ?? 'items';
+  const today = utcDay(new Date());
   const requestedDay = url.searchParams.get('day');
-  const day = isDay(requestedDay) ? requestedDay : utcDay(new Date());
+  const day = isDay(requestedDay) && requestedDay > today ? requestedDay : today;
   const itemId = url.searchParams.get('item') || undefined;
+  const before = cursor(url.searchParams.get('before'));
   const items = await listShopItems();
+  const audit = tab === 'audit' ? await listShopChanges({ itemId, before }) : null;
   return {
     tab,
     items,
+    ranks: SHOP_RANKS,
+    today,
     day,
     preview: tab === 'preview' ? await previewShop(day) : null,
     itemId: itemId ?? '',
-    changes: tab === 'audit' ? await listShopChanges({ itemId }) : [],
+    before: before ?? null,
+    changes: audit?.changes ?? [],
+    nextBefore: audit?.nextBefore ?? null,
   };
 };
 

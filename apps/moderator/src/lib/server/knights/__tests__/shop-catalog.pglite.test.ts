@@ -21,9 +21,13 @@ vi.mock('../../db', () => ({
   },
 }));
 
-const { createShopItem, previewShop, setShopItemActive, updateShopItem } = await import(
-  '../shop-catalog.service'
-);
+vi.mock('../../mod-activity', () => ({
+  withModerators: async <R extends { userId: number | null }>(rows: R[]) =>
+    rows.map(({ userId, ...row }) => ({ ...row, moderatorId: userId, moderatorUsername: null })),
+}));
+
+const { createShopItem, listShopChanges, previewShop, setShopItemActive, updateShopItem } =
+  await import('../shop-catalog.service');
 const { diffFields, editShopItemSchema, newShopItemSchema } = await import(
   '../shop-catalog.schema'
 );
@@ -117,6 +121,7 @@ describe('newShopItemSchema', () => {
     ['a cosmetic without a cosmetic', { kind: 'cosmetic' }],
     ['a membership with an unknown tier', { kind: 'membership', tier: 'platinum', months: '1' }],
     ['a membership of zero months', { kind: 'membership', tier: 'gold', months: '0' }],
+    ['a membership the shop never sells', { kind: 'membership', tier: 'gold', months: '3' }],
     ['a free item', { kind: 'buzz_pack', buzz: '50', price: '0' }],
     ['an unknown kind', { kind: 'trinket' }],
     ['a rank that does not exist', { kind: 'buzz_pack', buzz: '50', minRank: 'King' }],
@@ -296,5 +301,54 @@ describe('previewShop', () => {
     expect(preview.stock.map((s) => s.item.id)).toContain('fixed');
     expect(preview.stock.map((s) => s.item.id)).not.toContain('retired');
     expect(preview.excluded.map((i) => i.id)).toEqual(['three-months']);
+  });
+});
+
+describe('previewShop cosmetics', () => {
+  it('keeps an item whose cosmetic is missing in its slot but flags it as hidden from players', async () => {
+    await db.query(`INSERT INTO "Cosmetic" ("id","name","type") VALUES (1,'Halo','Badge')`);
+    await seedItem('cosmetic-1', { kind: 'cosmetic', buzz: null, cosmeticId: 1, sortOrder: 1 });
+    await seedItem('cosmetic-2', { kind: 'cosmetic', buzz: null, cosmeticId: 2, sortOrder: 2 });
+    await seedItem('buzz-50', { sortOrder: 3 });
+
+    const { stock } = await previewShop('2026-12-20');
+    expect(stock.map((s) => [s.item.id, s.hidden])).toEqual([
+      ['cosmetic-1', null],
+      ['cosmetic-2', 'cosmetic missing'],
+      ['buzz-50', null],
+    ]);
+  });
+});
+
+describe('listShopChanges', () => {
+  it('pages newest first by id and keeps the item filter across pages', async () => {
+    await seedItem('buzz-50');
+    await seedItem('buzz-100');
+    for (let i = 0; i < 3; i++) {
+      await setShopItemActive('buzz-50', i % 2 === 1, MOD);
+    }
+    await setShopItemActive('buzz-100', false, MOD);
+
+    const first = await listShopChanges({ limit: 3 });
+    expect(first.changes).toHaveLength(3);
+    expect(first.nextBefore).toBe(first.changes[2].id);
+
+    const second = await listShopChanges({ limit: 3, before: first.nextBefore ?? undefined });
+    expect(second.changes).toHaveLength(1);
+    expect(second.nextBefore).toBeNull();
+    const ids = [...first.changes, ...second.changes].map((c) => c.id);
+    expect(ids).toEqual([...ids].sort((a, b) => b - a));
+    expect(new Set(ids).size).toBe(4);
+
+    const filtered = await listShopChanges({ itemId: 'buzz-50', limit: 2 });
+    expect(filtered.changes.every((c) => c.itemId === 'buzz-50')).toBe(true);
+    expect(filtered.nextBefore).toBe(filtered.changes[1].id);
+    const rest = await listShopChanges({
+      itemId: 'buzz-50',
+      limit: 2,
+      before: filtered.nextBefore ?? undefined,
+    });
+    expect(rest.changes).toHaveLength(1);
+    expect(rest.nextBefore).toBeNull();
   });
 });

@@ -45,7 +45,10 @@ export const newShopItemSchema = z.discriminatedUnion(
       kind: z.literal('membership'),
       ...settings,
       tier: z.enum(SHOP_TIERS, { error: 'Pick bronze, silver or gold.' }),
-      months: positiveInt('Months must be a whole number above zero.').max(120),
+      months: positiveInt('Months must be a whole number above zero.').refine(
+        (months) => months === 1,
+        'Memberships are sold one month at a time.'
+      ),
     }),
   ],
   { error: 'Pick what the item is.' }

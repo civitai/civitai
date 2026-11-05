@@ -5,6 +5,7 @@
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { num } from '$lib/format';
   import AddItemForm from './AddItemForm.svelte';
+  import AuditFilter from './AuditFilter.svelte';
   import ShopItemCard from './ShopItemCard.svelte';
   import type { PageData } from './$types';
 
@@ -18,6 +19,12 @@
 
   const stamp = (value: Date | string) =>
     `${new Date(value).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  const auditHref = (before: number | null) => {
+    const params = new URLSearchParams({ tab: 'audit' });
+    if (data.itemId) params.set('item', data.itemId);
+    if (before !== null) params.set('before', String(before));
+    return `?${params}`;
+  };
   const show = (value: unknown) => (value === null || value === undefined ? 'none' : String(value));
 </script>
 
@@ -33,10 +40,10 @@
 <LinkTabs class="mb-4" items={tabs} active={data.tab} />
 
 {#if data.tab === 'items'}
-  <AddItemForm />
+  <AddItemForm ranks={data.ranks} />
   <div class="flex flex-col gap-3">
     {#each data.items as item (item.id)}
-      <ShopItemCard {item} />
+      <ShopItemCard {item} ranks={data.ranks} />
     {:else}
       <p class="text-sm text-dark-2">The catalog is empty. Add an item above.</p>
     {/each}
@@ -45,13 +52,16 @@
   <form method="GET" class="mb-4 flex items-center gap-2 text-sm text-dark-2">
     <input type="hidden" name="tab" value="preview" />
     <label class="flex items-center gap-2">
-      UTC day <Input type="date" name="day" value={data.day} class="w-44" />
+      UTC day
+      <Input type="date" name="day" value={data.day} min={data.today} class="w-44" />
     </label>
     <Button type="submit" size="sm">Show</Button>
   </form>
   <p class="mb-3 text-sm text-dark-2">
     What the shop sells on {data.preview.day}: active items the main app can sell, with the daily
-    rotation and deals drawn by the same code Knights runs.
+    rotation and deals drawn by the same code Knights runs. Preview uses the current catalog, so
+    today or a later day only. Buzz packs show as closed to players while Knights has Buzz
+    conversion switched off or no Buzz endpoint configured, which this app cannot read.
   </p>
   <div class="flex flex-col gap-2">
     {#each data.preview.stock as entry (entry.item.id)}
@@ -60,6 +70,7 @@
         <Badge variant="secondary">{entry.item.kind.replace('_', ' ')}</Badge>
         {#if entry.item.rotating}<Badge variant="outline">Rotating</Badge>{/if}
         {#if entry.deal}<Badge>Deal</Badge>{/if}
+        {#if entry.hidden}<Badge variant="destructive">Hidden from players: {entry.hidden}</Badge>{/if}
         <span class="ml-auto">
           {#if entry.deal}<s class="text-dark-2">{num(entry.item.price)}</s>{/if}
           {num(entry.price)} gold
@@ -76,21 +87,7 @@
     </p>
   {/if}
 {:else if data.tab === 'audit'}
-  <form method="GET" class="mb-4 flex items-center gap-2 text-sm text-dark-2">
-    <input type="hidden" name="tab" value="audit" />
-    <label class="flex items-center gap-2">
-      Item
-      <select
-        name="item"
-        value={data.itemId}
-        class="h-8 rounded-md border bg-background px-2 text-sm"
-      >
-        <option value="">All items</option>
-        {#each data.items as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
-      </select>
-    </label>
-    <Button type="submit" size="sm">Filter</Button>
-  </form>
+  {#key data.itemId}<AuditFilter items={data.items} itemId={data.itemId} />{/key}
   <div class="flex flex-col gap-2">
     {#each data.changes as change (change.id)}
       <div class="rounded-md border border-dark-4 bg-dark-6 p-3 text-sm">
@@ -111,4 +108,14 @@
       <p class="text-sm text-dark-2">No changes recorded yet.</p>
     {/each}
   </div>
+  {#if data.before !== null || data.nextBefore !== null}
+    <p class="mt-3 flex gap-4 text-sm">
+      {#if data.before !== null}
+        <a class="underline" href={auditHref(null)}>Newest changes</a>
+      {/if}
+      {#if data.nextBefore !== null}
+        <a class="underline" href={auditHref(data.nextBefore)}>Older changes</a>
+      {/if}
+    </p>
+  {/if}
 {/if}

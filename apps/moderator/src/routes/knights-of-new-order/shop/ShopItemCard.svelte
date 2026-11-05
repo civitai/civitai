@@ -1,21 +1,27 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import CosmeticSample from '$lib/components/CosmeticSample.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { num } from '$lib/format';
-  import { NewOrderRankType } from '@civitai/db-schema/enums';
+  import { isSellable } from '@civitai/shared/knights-shop';
   import type { ShopItemRow } from '$lib/server/knights/shop-catalog.service';
   import LiveWarning from './LiveWarning.svelte';
 
-  let { item }: { item: ShopItemRow } = $props();
+  let { item, ranks }: { item: ShopItemRow; ranks: readonly string[] } = $props();
 
   let editing = $state(false);
+  let minRank = $state(untrack(() => item.minRank ?? ''));
+  let rotating = $state(untrack(() => item.rotating));
+  let toggled = 'Saved';
   let confirming = $state(false);
   let toggleForm: HTMLFormElement | undefined = $state();
 
@@ -24,13 +30,31 @@
     reset: false,
     onSuccess: (result) => {
       editing = false;
-      toast.success(result?.changed === false ? 'Nothing to change' : 'Saved, live now');
+      toast.success(result?.changed === false ? 'Nothing to change' : 'Saved');
     },
   });
   const toggle = new FormState({
     reload: true,
-    onSuccess: () => toast.success(item.active ? 'Restored' : 'Retired'),
+    onSubmit: ({ action }) => {
+      toggled = action.search === '?/restore' ? 'Restored' : 'Retired';
+    },
+    onSuccess: (result) => toast.success(result?.changed === false ? 'Nothing to change' : toggled),
   });
+
+  function toggleEdit() {
+    editing = !editing;
+    if (editing) {
+      minRank = item.minRank ?? '';
+      rotating = item.rotating;
+    }
+  }
+
+  const rankOptions = $derived(
+    item.minRank && !ranks.includes(item.minRank) ? [...ranks, item.minRank] : ranks
+  );
+  const notSold = $derived(
+    isSellable(item) ? null : 'The shop sells memberships one month at a time.'
+  );
 
   const what = $derived(
     item.kind === 'buzz_pack'
@@ -56,16 +80,18 @@
         <Badge variant="secondary">{item.kind.replace('_', ' ')}</Badge>
         {#if item.cosmeticType}<Badge variant="outline">{item.cosmeticType}</Badge>{/if}
         {#if !item.active}<Badge variant="destructive">Retired</Badge>{/if}
+        {#if notSold}<Badge variant="outline" title={notSold}>Not sold</Badge>{/if}
         {#if item.rotating}<Badge variant="outline">Rotating</Badge>{/if}
         {#if item.minRank}<Badge variant="outline">{item.minRank}+</Badge>{/if}
       </div>
       <p class="text-sm text-dark-2">
         {what} · {num(item.price)} gold · sort {item.sortOrder} · <code>{item.id}</code>
       </p>
+      {#if notSold}<p class="text-sm text-dark-2">Not sold: {notSold}</p>{/if}
       {#if item.description}<p class="text-sm text-dark-2">{item.description}</p>{/if}
     </div>
     <div class="flex gap-2">
-      <Button size="sm" variant="outline" onclick={() => (editing = !editing)}>
+      <Button size="sm" variant="outline" onclick={toggleEdit}>
         {editing ? 'Close' : 'Edit'}
       </Button>
       {#if item.active}
@@ -107,17 +133,18 @@
         </label>
         <label class="flex items-center gap-2">
           Minimum rank
-          <select
-            name="minRank"
-            class="h-8 rounded-md border bg-background px-2 text-sm"
-            value={item.minRank ?? ''}
-          >
-            <option value="">Anyone</option>
-            {#each Object.values(NewOrderRankType) as rank (rank)}<option value={rank}>{rank}</option>{/each}
-          </select>
+          <input type="hidden" name="minRank" value={minRank} />
+          <Select.Root type="single" bind:value={minRank}>
+            <Select.Trigger class="w-36">{minRank || 'Anyone'}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="">Anyone</Select.Item>
+              {#each rankOptions as rank (rank)}<Select.Item value={rank}>{rank}</Select.Item>{/each}
+            </Select.Content>
+          </Select.Root>
         </label>
         <label class="flex items-center gap-2">
-          <input type="checkbox" name="rotating" checked={item.rotating} /> Rotating
+          <input type="hidden" name="rotating" value={rotating ? 'on' : ''} />
+          <Checkbox bind:checked={rotating} /> Rotating
         </label>
       </div>
       <label class="flex items-center gap-2 text-sm text-dark-2">
