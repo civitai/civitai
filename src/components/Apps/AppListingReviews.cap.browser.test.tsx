@@ -67,6 +67,12 @@ const showAllButtons = (container: HTMLElement) =>
     (b) => b.textContent?.trim() === 'Show all reviews'
   );
 
+/** Bring the last element (the scroll-to-load sentinel, when one renders) into view. */
+function scrollToEnd(container: HTMLElement) {
+  const divs = container.querySelectorAll('div');
+  divs[divs.length - 1]?.scrollIntoView();
+}
+
 beforeEach(() => {
   mocks.items = [];
   mocks.hasNextPage = false;
@@ -115,13 +121,17 @@ describe('AppListingReviews — first 4, then "Show all reviews"', () => {
     const within = page.elementLocator(container);
     await expect.element(within.getByText(DETAILS[0])).toBeInTheDocument();
 
+    // Scroll to the end so a scroll-to-load sentinel, if one were rendered, would be in view.
     // `InViewLoader` waits 1500ms before its first load; wait past it.
+    scrollToEnd(container);
     await new Promise((r) => setTimeout(r, 2500));
     expect(mocks.fetchNextPage).not.toHaveBeenCalled();
 
     await userEvent.click(within.getByRole('button', { name: 'Show all reviews' }));
+    await expect.element(within.getByText(DETAILS[6])).toBeInTheDocument();
+    scrollToEnd(container);
     await vi.waitFor(() => expect(mocks.fetchNextPage).toHaveBeenCalledTimes(1), {
-      timeout: 4000,
+      timeout: 5000,
     });
   });
 });
