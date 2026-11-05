@@ -1,5 +1,5 @@
-// Tags the main app's default browsing add-ons hide models by. Shared so Creator Studio's "listed on"
-// badges hide the same models the feeds do.
+// Tags the main app's DEFAULT browsing add-ons hide models by. The live add-ons are a Redis value that
+// can differ; Creator Studio's "listed on" badges follow these defaults.
 
 /** Hidden from every browsing level, like a POI model. */
 export const peopleBrowsingTagIds = [

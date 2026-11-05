@@ -41,10 +41,14 @@ function hasTagSql(alias: string, tagIds: number[]) {
   return sql<boolean>`exists (select 1 from "TagsOnModels" tom where tom."modelId" = ${sql.raw(alias)}."id" and tom."tagId" in (${ids}))`;
 }
 
+function hasPublicVersionSql(alias: string) {
+  return sql<boolean>`exists (select 1 from "ModelVersion" pv where pv."modelId" = ${sql.raw(alias)}."id" and pv."status" = 'Published' and pv."availability" = 'Public')`;
+}
+
 // The SQL twin of `siteListing`: a change to one is a change to both.
 function siteFilterSql(alias: string, site: SiteFilter) {
   const m = sql.raw(`${alias}.`);
-  const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and (${m}"mode" is null or ${m}"mode" != 'Archived') and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
+  const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
   const onCom = sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`;
   const hiddenOnRed = sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`;
   if (site === 'both') return sql<boolean>`(${listed} and ${onCom} and not ${hiddenOnRed})`;
@@ -331,6 +335,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         'mode',
       ])
       .select([
+        hasPublicVersionSql('"Model"').as('hasPublicVersion'),
         hasTagSql('"Model"', peopleBrowsingTagIds).as('hasPeopleTag'),
         hasTagSql('"Model"', childBrowsingTagIds).as('hasChildTag'),
       ])
@@ -495,6 +500,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         status: m.status,
         availability: m.availability,
         mode: m.mode,
+        hasPublicVersion: !!m.hasPublicVersion,
         nsfwLevel: Number(m.nsfwLevel ?? 0),
         poi: !!m.poi,
         minor: !!m.minor,
