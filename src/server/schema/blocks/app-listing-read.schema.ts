@@ -49,9 +49,8 @@ export type ListingKindFilter = z.infer<typeof listingKindFilterSchema>;
  *     no reviews yet, so this tie-break is what orders most of the store.
  *   - `popular`  — plays (open_count) DESC, then install_count DESC, then id (from
  *     the AppListingMetric rollup). Plays, because that is the count the store card
- *     shows; installs read ~0 for nearly every listing. An off-site listing has no
- *     play count, so it ranks by installs in the plays position (see
- *     `listingPopularSortKey`).
+ *     shows. An off-site listing has no play count, so it ranks by installs in the
+ *     plays position (see `listingPopularSortKey`).
  *   - `newest`   — created_at DESC.
  *   - `name`     — name ASC (case-insensitive).
  */
@@ -263,10 +262,9 @@ export type ListingCard = {
    * so neither identifies a user, neither reveals WHO opened or installed the app or
    * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
    *
-   *   1. A NEW PUBLIC FACT when it shipped, not added precision. At the time no sort
-   *      exposed `open_count`, so this number was a genuinely new fact about the
-   *      catalog. (Since then the store's `popular` sort ranks by `open_count` first —
-   *      see `listAppListingsSchema` — so the ordering is public through the sort too.)
+   *   1. A NEW PUBLIC FACT, not added precision. The store's `popular` sort ranks by
+   *      `open_count` first (see `listAppListingsSchema`), so the ordering is already
+   *      public.
    *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
    *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
    *      — a public, anon-capable REST list returning up to 50 cards per page — so an

@@ -1069,8 +1069,7 @@ export function listingBayesianSortKey(globalMean: number): Prisma.Sql {
  *   lpad(usage, 20) || lpad(installs, 20)    (then `al.id`, from the keyset tuple)
  *   usage = plays (`open_count`) for an ON-SITE listing, installs for any other kind
  *
- * Plays, because plays are what the store card shows and what most apps accumulate;
- * installs read ~0 for nearly every listing, so an installs-first key ranked by id.
+ * Plays, because plays are what the store card shows.
  *
  * 🔴 AN OFF-SITE LISTING HAS NO PLAY COUNT, NOT ZERO PLAYS — its `open_count` column is
  * the `NOT NULL DEFAULT 0`, and `cardOpenCount` projects it as `null`. Ranking it on that
