@@ -323,6 +323,15 @@ describe('MasonryColumnsVirtual landscape span', () => {
     ]);
   });
 
+  test('a wide card is never taller than the cap', async () => {
+    // 1920x1080 at two columns is 369px; a 200px cap must hold it to 200.
+    const cols = await columnsFor([{ id: 0, width: 1920, height: 1080 }], 3, {
+      minRatio: MASONRY_SPAN_MIN_RATIO,
+      maxHeight: 200,
+    });
+    expect(cols.flat().find((i) => i.span)?.height).toBe(200);
+  });
+
   test('only images at least 16:9 wide span', async () => {
     // Real feed sizes: 1920x1080 and SDXL's 1344x768 span; 2544x1904 (1.34) and 1216x832 (1.46) do not.
     const sizes = [

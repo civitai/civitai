@@ -22,6 +22,7 @@ import type { ImagesContextState } from '~/components/Image/Providers/ImagesProv
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -29,8 +30,6 @@ import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 
-/** Tallest image area of a two-column-wide card; its footer is added on top. */
-const SPAN_IMAGE_MAX_HEIGHT = 520;
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
 const SEARCH_RETRY_MAX_DELAY_MS = 60_000;
 const SEARCH_RETRY_BASE_DELAY_MS = 2000;
@@ -57,6 +56,8 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
   emptyMessage?: string;
   disableStoreFilters?: boolean;
+  /** Let a 16:9-or-wider image cover two columns (still needs the flag). Off unless a page asks. */
+  landscapeSpan?: boolean;
   hideHatTurf?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
@@ -78,6 +79,7 @@ export function ImagesInfiniteContent({
   showEmptyCta,
   emptyMessage,
   disableStoreFilters = false,
+  landscapeSpan,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const features = useFeatureFlags();
@@ -254,11 +256,11 @@ export function ImagesInfiniteContent({
               render={MasonryItem ?? ImagesCardMemoized}
               itemId={(data) => data.id}
               withAds={showAds}
-              spanLandscapeMaxHeight={
-                features.masonryLandscapeSpan && !MasonryItem
-                  ? SPAN_IMAGE_MAX_HEIGHT + IMAGES_CARD_FOOTER_HEIGHT
-                  : undefined
-              }
+              spanLandscapeMaxHeight={getImagesSpanMaxHeight({
+                optedIn: landscapeSpan,
+                flagOn: features.masonryLandscapeSpan,
+                customCard: !!MasonryItem,
+              })}
             />
           </ImagesProvider>
           {isRetrying ? (

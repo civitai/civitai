@@ -80,6 +80,8 @@ export function MasonryColumnsVirtual<TData>({
           columnWidth={columnWidth}
           scrollMargin={scrollMargin}
           className={clsx(
+            // Only a spanning feed overlays one column on another.
+            spanLandscapeMaxHeight && styles.column,
             'flex max-w-[450px] flex-col gap-4',
             columnCount === 1 ? 'w-full' : 'w-[320px]'
           )}
@@ -127,7 +129,7 @@ function VirtualColumn<TData>({
     estimateSize: (i) => items[i].height,
     overscan,
     getItemKey,
-    gap: 16,
+    gap: MASONRY_GAP,
     scrollMargin,
     initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
     // See MasonryGridVirtual for rationale — opts out of virtual-core's
@@ -137,7 +139,7 @@ function VirtualColumn<TData>({
 
   return (
     <div
-      className={clsx(styles.column, className)}
+      className={className}
       style={{
         width: '100%',
         ...style,
