@@ -6,7 +6,7 @@ import { closedPageHtml } from '$lib/server/closed-page';
 import { db } from '$lib/server/db';
 import { JOB_PATHS } from '$lib/server/jobs-auth';
 import { getStanding } from '$lib/server/standing';
-import { safeNext, signedOutLocation, WELCOME_PATH } from '$lib/welcome';
+import { isWelcomeRequest, safeNext, signedOutLocation } from '$lib/welcome';
 
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
@@ -37,8 +37,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   const navigation = isNavigationRequest(event.request);
-  const onWelcome = event.url.pathname === WELCOME_PATH;
-  // The welcome page's sign-in returns to the page the visitor first asked for, not to /welcome.
+  const onWelcome = isWelcomeRequest(event.url);
+  // The welcome page's sign-in returns to the page the visitor first asked for, not to the welcome page.
   const returnUrl = onWelcome
     ? new URL(safeNext(event.url.searchParams.get('next')), event.url.origin).href
     : event.url.href;
@@ -47,13 +47,10 @@ export const handle: Handle = async ({ event, resolve }) => {
     navigation,
   });
 
-  if (onWelcome) {
-    if (result.status === 'login') {
-      event.locals.signInUrl = result.redirect;
-      return resolve(event);
-    }
-    if (result.status === 'reauth') return resolve(event);
-    return new Response(null, { status: 302, headers: { location: '/' } });
+  // Only a signed-out visitor sees the welcome page; a signed-in one falls through to the checks below, and the page sends them home.
+  if (onWelcome && (result.status === 'login' || result.status === 'reauth')) {
+    if (result.status === 'login') event.locals.signInUrl = result.redirect;
+    return resolve(event);
   }
 
   if (result.status === 'login') {

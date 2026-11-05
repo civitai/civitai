@@ -38,7 +38,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     console.error('knights: career restart failed', { error });
     return refuse(500, 'Your career could not be restarted. Try again in a moment.');
   }
-  if (!outcome.reset) return json({ ok: true, to: '/' });
+  if (!outcome.reset) return json({ ok: true, to: '/home' });
 
   // The career is already reset; the original game's counters are caches it rebuilds on a miss.
   await forgetLegacyCounters(locals.user.id).catch((error) =>

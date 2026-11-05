@@ -30,9 +30,9 @@ beforeEach(() => {
 });
 
 describe('judgments load', () => {
-  it('sends a user who has not joined to the front page', async () => {
+  it('sends a user who has not joined to the home page', async () => {
     getPlayerStatus.mockResolvedValue(null);
-    await expect(run()).rejects.toMatchObject({ status: 303, location: '/' });
+    await expect(run()).rejects.toMatchObject({ status: 303, location: '/home' });
   });
 
   it('reads only the signed-in player and falls back to page 1 for a bad page', async () => {

@@ -315,9 +315,9 @@ describe('play load vote pacing', () => {
 });
 
 describe('play load when not sworn in', () => {
-  it('sends a user with no player row to the front page to join', async () => {
+  it('sends a user with no player row to the home page to join', async () => {
     getPlayerStatus.mockResolvedValue(null);
-    await expect(run()).rejects.toMatchObject({ status: 303, location: '/' });
+    await expect(run()).rejects.toMatchObject({ status: 303, location: '/home' });
     expect(getApprentice).not.toHaveBeenCalled();
   });
 });

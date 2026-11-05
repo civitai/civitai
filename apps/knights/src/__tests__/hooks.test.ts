@@ -37,12 +37,11 @@ beforeEach(() => {
 });
 
 describe('knights access gate', () => {
-  it('sends an anonymous visitor to the welcome screen', async () => {
+  it('shows an anonymous visitor the welcome page at /', async () => {
     guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
     const { response, resolve } = await run();
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('/welcome');
-    expect(resolve).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(resolve).toHaveBeenCalled();
   });
 
   it('lets a user through when the access decision allows them', async () => {
@@ -112,11 +111,11 @@ describe('knights access gate', () => {
 describe('welcome screen', () => {
   const login = { status: 'login', redirect: 'https://auth.civitai.com/login?returnUrl=x' };
 
-  it('sends a signed-out page load to /welcome with the page it wanted', async () => {
+  it('sends a signed-out page load to the welcome page with the page it wanted', async () => {
     guardCheck.mockResolvedValue(login);
     const { response, resolve } = await run('/play');
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('/welcome?next=%2Fplay');
+    expect(response.headers.get('location')).toBe('/?next=%2Fplay');
     expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -126,9 +125,9 @@ describe('welcome screen', () => {
     expect(response.headers.get('location')).toBe(login.redirect);
   });
 
-  it('renders /welcome for a signed-out visitor, with the sign-in URL for the page they wanted', async () => {
+  it('renders the welcome page for a signed-out visitor, with the sign-in URL for the page they wanted', async () => {
     guardCheck.mockResolvedValue(login);
-    const url = new URL('https://knights.civitai.com/welcome?next=%2F%2Fevil.com');
+    const url = new URL('https://knights.civitai.com/?next=%2F%2Fevil.com');
     const locals: Record<string, unknown> = {};
     const resolve = vi.fn(async () => new Response('welcome'));
     await (handle as unknown as (arg: unknown) => Promise<Response>)({
@@ -142,7 +141,7 @@ describe('welcome screen', () => {
 
   it('asks the hub to return to the sanitised next page', async () => {
     guardCheck.mockResolvedValue(login);
-    const url = new URL('https://knights.civitai.com/welcome?next=%2Fplay%3Fa%3D1');
+    const url = new URL('https://knights.civitai.com/?next=%2Fplay%3Fa%3D1');
     await (handle as unknown as (arg: unknown) => Promise<Response>)({
       event: { url, request: page(url), locals: {}, route: { id: null } },
       resolve: vi.fn(async () => new Response('')),
@@ -150,12 +149,20 @@ describe('welcome screen', () => {
     expect(guardCheck.mock.calls[0][1]).toBe('https://knights.civitai.com/play?a=1');
   });
 
-  it('sends a signed-in user from /welcome to /', async () => {
+  it('runs the access gate for a signed-in user at /, so the page can send them home', async () => {
+    accessFor.mockResolvedValue('allow');
     guardCheck.mockResolvedValue(signedIn({ id: 1 }));
-    const { response, resolve } = await run('/welcome');
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('/');
-    expect(resolve).not.toHaveBeenCalled();
+    const locals: Record<string, unknown> = {};
+    const url = new URL('https://knights.civitai.com/');
+    const resolve = vi.fn(async () => new Response('home'));
+    await (handle as unknown as (arg: unknown) => Promise<Response>)({
+      event: { url, request: page(url), locals, route: { id: null } },
+      resolve,
+    });
+    expect(accessFor).toHaveBeenCalled();
+    expect(locals.user).toEqual({ id: 1 });
+    expect(locals.signInUrl).toBeUndefined();
+    expect(resolve).toHaveBeenCalled();
   });
 });
 
