@@ -1,6 +1,8 @@
 import { Button } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { StorylineCaptionNote } from '~/components/Storyline/StorylineCaptionNote';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
@@ -47,6 +49,29 @@ export function StorylineToolbarChip({
       currentChapterId={chapterId}
       depth={depth ?? end.depth}
     />
+  );
+}
+
+/**
+ * The post's description for the chapter the image belongs to, under the stage. Rendered the way
+ * the post page renders it, clamped to a few lines.
+ */
+export function StorylineChapterDescription({ imageId }: { imageId: number | undefined }) {
+  const storyline = useStorylineMode();
+  const chapterId = storyline.active && imageId ? storyline.chapterIdOfImage(imageId) : undefined;
+  const postId = storyline.active
+    ? storyline.path.chapters.find((c) => c.chapterId === chapterId)?.post?.id
+    : undefined;
+  const { data: post } = trpc.post.get.useQuery({ id: postId ?? 0 }, { enabled: !!postId });
+  if (!postId || post?.id !== postId || !post.detail) return null;
+
+  return (
+    // Expanded, a long description scrolls here instead of shrinking the image above it.
+    <div className="max-h-[40vh] overflow-y-auto px-1" data-testid="storyline-chapter-description">
+      <ContentClamp key={postId} maxHeight={72}>
+        <RenderHtml html={post.detail} withMentions />
+      </ContentClamp>
+    </div>
   );
 }
 

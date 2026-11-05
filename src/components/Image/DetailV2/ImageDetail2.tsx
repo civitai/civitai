@@ -35,6 +35,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef } from 'react';
 import {
+  StorylineChapterDescription,
   StorylineStageOverlay,
   StorylineToolbarChip,
 } from '~/components/Storyline/StorylineDetail';
@@ -507,6 +508,7 @@ function ImageDetail2Content() {
                       </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
+                        <StorylineChapterDescription imageId={image?.id} />
                         <div className="flex justify-center">
                           <ReactionSettingsProvider
                             settings={{
