@@ -684,7 +684,9 @@ describe('store catalog with sub-listings, executed', () => {
   it('shows the item image only within the viewer level, on a red host', async () => {
     await holder.db.exec(`
       UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 2;
-      UPDATE app_sub_listings SET content_rating = 'r' WHERE id = '${CHILD_A}'`);
+      UPDATE app_sub_listings SET content_rating = 'pg13' WHERE id = '${CHILD_A}'`);
+    // `pg13`, not `r`: an `r` item is now off the page entirely for a viewer without R, and on a
+    // red host the card's rating does not cap its image, so this still isolates the image gate.
     const cover = async (opts: Partial<NonNullable<ListOpts>>) =>
       (await page(opts)).find((i) => i.id === CHILD_A)?.coverUrl;
     expect(await cover({ redCapable: true, viewerBrowsingLevel: 7 })).toBe('item-a');

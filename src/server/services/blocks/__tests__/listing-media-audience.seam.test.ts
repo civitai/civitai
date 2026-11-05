@@ -277,8 +277,12 @@ describe('SEAM — one shared cache, two host classes, two viewers', () => {
     expect(optedIn.coverUrl).toBe('edge:b.png@1200');
     expect(anonymous.coverUrl).toBe('edge:a.png@1200');
     expect(anonymous.iconUrl).toBeNull();
-    // Shared cache entry (same host class): the viewer term is applied BELOW the cache.
-    expect(cacheStats).toEqual({ misses: 1, hits: 1 });
+    // Whether R/X listings are allowed is a literal cache-key segment, so an R viewer and an
+    // anonymous one are two entries. The MEDIA term is still applied below the cache: a second
+    // viewer with the same R/X state (PG|R, distinct from R_VIEWER_LEVEL) shares the entry.
+    expect(cacheStats).toEqual({ misses: 2, hits: 0 });
+    expect((await card(true, PG | R)).coverUrl).toBe('edge:b.png@1200');
+    expect(cacheStats).toEqual({ misses: 2, hits: 1 });
   });
 
   it('off a red host the listing rating caps media even for an R viewer', async () => {
