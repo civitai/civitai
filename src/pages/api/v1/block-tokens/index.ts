@@ -27,6 +27,7 @@ import {
   getRequestDomainColor,
   isHostForColor,
   isMatureContentRating,
+  ratingAllowedOnHost,
 } from '~/server/utils/server-domain';
 import {
   allBrowsingLevelsFlag,
@@ -1034,7 +1035,14 @@ async function tryPrivateRunMint(args: {
 
   const app = access.block;
 
-  // The viewer's browsing level, as the private-run PAGE applies it (owners and moderators are not
+  // The SITE gate first, exactly as the private-run PAGE applies it (`ratingAllowedOnHost`): an r/x
+  // app gets no token off a red-capable host, whatever the viewer's level. Same refusal as the
+  // public path's host check.
+  if (!ratingAllowedOnHost(app.contentRating, req.headers.host ?? '')) {
+    res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return 'handled';
+  }
+  // …then the viewer's browsing level, as the page applies it (owners and moderators are not
   // exempt): an r/x app outside it gets no token.
   if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
     res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
