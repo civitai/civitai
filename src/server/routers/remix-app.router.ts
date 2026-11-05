@@ -34,11 +34,21 @@ const runStepRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
 const nonce = z.string().min(8).max(64);
 const quote = z.number().int().nonnegative();
-const gallery = z.object({
-  hostImageId: imageId,
-  method: z.enum(['free', 'team', 'paid']),
-  expectedPrice: z.number().int().min(0).optional(),
-});
+const gallery = z
+  .object({
+    hostImageId: imageId,
+    method: z.enum(['free', 'team', 'paid']),
+    expectedPrice: z.number().int().min(0).optional(),
+  })
+  // The gallery service reads a missing price as consent to the owner's current one.
+  .superRefine((input, ctx) => {
+    if (input.method === 'paid' && input.expectedPrice == null)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expectedPrice'],
+        message: 'A paid submission has to carry the price it was shown',
+      });
+  });
 
 const answer = z.union([z.string().max(1000), z.number().int().nonnegative()]);
 

@@ -45,8 +45,8 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   createPost: h.createPost,
   updatePost: h.updatePost,
   deletePost: h.deletePost,
-  // Resolves provenance exactly as `addPostImage` does before `createImage`, from the same two
-  // inputs, so what lands in `createImage` is what the real one would verify.
+  // A stand-in for `addPostImage`'s provenance step, from the same two inputs; the real one's
+  // wiring is pinned in add-post-image-upload-metadata.test.ts.
   addPostImage: vi.fn(
     async ({
       user,
