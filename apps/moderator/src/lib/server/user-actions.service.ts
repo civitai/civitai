@@ -697,7 +697,6 @@ export async function setMuted(input: {
     };
     await expireGenerationCredentials();
     await revokeOrchestratorUserTokens(input.userId);
-    // The repeat cancels again once its revoke has landed.
     setTimeout(() => {
       void bustStanding()
         .then(expireGenerationCredentials)

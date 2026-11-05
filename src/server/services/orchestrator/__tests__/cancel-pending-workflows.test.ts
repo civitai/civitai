@@ -10,13 +10,12 @@ vi.mock('~/env/server', () => ({ env }));
 const updateWorkflow = vi.hoisted(() =>
   vi.fn(async (_args: { path: { workflowId: string } }) => ({ error: undefined as unknown }))
 );
+// The real tag constant, so a change to it fails here instead of silently cancelling nothing.
+// generation.constants reads Scheduler members at load; any name will do.
 vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: vi.fn((opts: unknown) => opts),
   updateWorkflow,
-}));
-// The real module loads the whole orchestration client; only the tag is needed.
-vi.mock('~/shared/constants/generation.constants', () => ({
-  WORKFLOW_TAGS: { GENERATION: 'gen' },
+  Scheduler: new Proxy({}, { get: (_target, name) => String(name) }),
 }));
 
 const { cancelPendingWorkflows, CANCEL_PENDING_DEADLINE_MS } = await import(
@@ -112,6 +111,22 @@ describe('cancelPendingWorkflows', () => {
     await cancelPendingWorkflows(42);
     expect(cancelled()).toEqual(['w-1']);
     expect(loggedNames()).toContain('mute.cancel-workflows-list-failed');
+  });
+
+  // A mute can list up to 500 generations; firing them all at once floods the orchestrator.
+  it('runs at most ten cancels at a time, and still cancels them all', async () => {
+    pages = [{ items: Array.from({ length: 20 }, (_, i) => gen(`w-${i}`)) }];
+    let inFlight = 0;
+    let peak = 0;
+    updateWorkflow.mockImplementation(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return { error: undefined };
+    });
+    await cancelPendingWorkflows(42);
+    expect(peak).toBe(10);
+    expect(cancelled()).toHaveLength(20);
   });
 
   it('retries a failed cancel once, then logs the workflow id', async () => {

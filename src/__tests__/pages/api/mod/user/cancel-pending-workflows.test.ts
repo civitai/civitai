@@ -29,7 +29,7 @@ vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
 
 import handler from '~/pages/api/mod/user/cancel-pending-workflows';
 
-function call(body: Record<string, unknown>) {
+async function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
   let statusCode = 200;
   const res = {
@@ -41,7 +41,8 @@ function call(body: Record<string, unknown>) {
     setHeader: vi.fn(),
     end: () => res,
   } as unknown as Parameters<typeof handler>[1];
-  return handler(req, res).then(() => statusCode);
+  await handler(req, res);
+  return statusCode;
 }
 
 beforeEach(() => {

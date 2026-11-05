@@ -1,4 +1,5 @@
 import { updateWorkflow as clientUpdateWorkflow } from '@civitai/orchestration-client';
+import pLimit from 'p-limit';
 import { env } from '~/env/server';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -12,6 +13,7 @@ const LOOKBACK_MS = 2 * 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 5;
 const CANCEL_ATTEMPTS = 2;
+const CANCEL_CONCURRENCY = 10;
 /** The caller's wait. Cancels still running past it finish in the background. */
 export const CANCEL_PENDING_DEADLINE_MS = 5_000;
 
@@ -71,6 +73,7 @@ async function cancelAll(userId: number) {
   const token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!env.ORCHESTRATOR_ENDPOINT || !token) throw new Error('The orchestrator is not configured');
   const fromDate = new Date(Date.now() - LOOKBACK_MS);
+  const limit = pLimit(CANCEL_CONCURRENCY);
   const cancels: Promise<void>[] = [];
   let cursor: string | undefined;
   let pages = 0;
@@ -79,7 +82,8 @@ async function cancelAll(userId: number) {
       const { items, next } = await listGenerations(token, userId, fromDate, cursor);
       // Cancelled page by page, so a later page failing loses only what it held.
       for (const workflow of items)
-        if (isCancellable(workflow)) cancels.push(cancelOne(token, userId, workflow.id));
+        if (isCancellable(workflow))
+          cancels.push(limit(() => cancelOne(token, userId, workflow.id)));
       if (!next || !items.length) break;
       cursor = next;
     }

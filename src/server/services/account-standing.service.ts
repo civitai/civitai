@@ -121,8 +121,9 @@ async function bustStanding(userId: number) {
   }
 }
 
-/** Not awaited by callers: the orchestrator call has a 5 s timeout and runs inside job loops.
- *  `revokeCivitaiUserTokens` logs its own failures. Never rejects. */
+/** Resolves once the revoke settles and never rejects, so a later step can chain on it. Callers
+ *  do not await it: the orchestrator call has a 5 s timeout and runs inside job loops.
+ *  `revokeCivitaiUserTokens` logs its own failures. */
 function startRevoke(userId: number) {
   return Promise.resolve()
     .then(() => revokeCivitaiUserTokens({ userId }))
@@ -208,6 +209,5 @@ async function repeatStandingChange(userId: number) {
   }
   // Again: a key minted between the first expire and the cache settling would otherwise outlive the mute.
   await expireGenerationCredentialsIfMuted(userId);
-  // Cancels again once the revoke has landed.
   void startRevoke(userId).then(() => cancelPendingWorkflowsIfMuted(userId));
 }
