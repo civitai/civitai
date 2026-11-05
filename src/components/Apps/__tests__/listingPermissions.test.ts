@@ -40,12 +40,15 @@ describe('groupListingPermissions — on-site block scopes', () => {
     const [known, unknown] = blockScopePermissions(['models:read:self', 'made:up:scope']);
     expect(known.title).toBe('See the model it sits on');
     expect(known.detail).toBeTruthy();
-    // An unknown scope is never dropped: it falls through to its id.
+    // An unknown scope is never dropped, and a viewer never reads its raw id: it falls back to a
+    // humanised label.
     expect(unknown).toMatchObject({
       id: 'made:up:scope',
-      title: 'made:up:scope',
+      title: 'Made up scope',
       sensitive: false,
     });
+    expect(unknown.detail).toBeUndefined();
+    expect(blockScopePermissions(['zz:not-a_real:scope'])[0].title).toBe('Zz not a real scope');
   });
 });
 

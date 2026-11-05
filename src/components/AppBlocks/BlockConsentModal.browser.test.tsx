@@ -6,7 +6,6 @@ import {
   blockScopePermissions,
   groupListingPermissions,
 } from '~/components/Apps/listingPermissions';
-import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 
 /**
  * BlockConsentModal — the lazy-consent surface a logged-in viewer sees when a
@@ -425,9 +424,17 @@ describe('BlockConsentModal — scopes grouped and ordered like the store listin
   const SENSITIVE = [SPEND, APP_STORAGE_IMPORT];
   const OTHER = ['user:read:self', 'models:read:self', UNKNOWN];
 
-  /** Where a scope first appears in the dialog: its description, or its id when it has none. */
-  const positionIn = (text: string, scope: string) =>
-    text.indexOf(SCOPE_DESCRIPTIONS[scope] ?? scope);
+  /** The plain-language title each scope must show — never its id. */
+  const TITLE: Record<string, string> = {
+    'models:read:self': 'See the model it sits on',
+    [UNKNOWN]: 'Zz not a real scope',
+    [APP_STORAGE_IMPORT]: 'Use your data from another app',
+    'user:read:self': 'See your username and account status',
+    [SPEND]: 'Run AI work with your Buzz',
+  };
+
+  /** Where a scope's title first appears in the dialog. */
+  const positionIn = (text: string, scope: string) => text.indexOf(TITLE[scope]);
 
   const renderPrompt = async () => {
     renderWithProviders(
@@ -451,6 +458,16 @@ describe('BlockConsentModal — scopes grouped and ordered like the store listin
     expect(shown).toEqual([...SENSITIVE, ...OTHER]);
     const grouped = groupListingPermissions(blockScopePermissions(INPUT));
     expect(shown).toEqual([...grouped.sensitive, ...grouped.other].map((p) => p.id));
+  });
+
+  test('shows each scope as a plain-language title, never its id', async () => {
+    const text = await renderPrompt();
+    for (const scope of INPUT) {
+      expect(text, `${scope}'s title`).toContain(TITLE[scope]);
+      expect(text, `the raw id ${scope} reached the end user`).not.toContain(scope);
+    }
+    // An undescribed scope gets the humanised fallback, not a placeholder.
+    expect(text).not.toContain('(no description)');
   });
 
   test('names the two groups', async () => {
