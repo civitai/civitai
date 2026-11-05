@@ -714,6 +714,7 @@ describe("PHASE 3 private-run mint — R/X apps follow the viewer's browsing lev
     allow('r');
     const res = await invoke(BODY());
     expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(res._body).not.toHaveProperty('token');
   });
@@ -731,6 +732,7 @@ describe("PHASE 3 private-run mint — R/X apps follow the viewer's browsing lev
     allow('x');
     const res = await invoke(BODY());
     expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 

@@ -80,7 +80,8 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 vi.mock('~/server/utils/server-domain', () => ({
-  getAllServerHosts: () => ['civitai.com'],
+  // civitai.red is an allowed origin too, so the browsing-level cases below reach the mint.
+  getAllServerHosts: () => ['civitai.com', 'civitai.red'],
   // #2670 (color-domain maturity) added a getRequestDomainColor(req) call to the
   // mint. The test reqs carry no `host` header, so the real impl returns
   // undefined → SFW ceiling; mirror that here so the module mock stays complete.
@@ -1368,6 +1369,8 @@ describe("POST /api/v1/block-tokens — page mint, R/X apps follow the viewer's 
   ])('🔴 refuses an R app for %s on civitai.red — no token', async (_label, session) => {
     const res = await mintPage('r', session);
     expect(res._status).toBe(403);
+    // THIS guard's refusal, not an earlier 403 (origin, flags) — which would pass vacuously.
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(res._body).not.toHaveProperty('token');
     expect(res._body).not.toHaveProperty('scopes');
@@ -1382,6 +1385,7 @@ describe("POST /api/v1/block-tokens — page mint, R/X apps follow the viewer's 
   it('🔴 X needs X: an R-enabled viewer is refused an X app', async () => {
     const res = await mintPage('x', viewer(7));
     expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 

@@ -1044,6 +1044,8 @@ describe('POST /api/v1/block-tokens', () => {
       ])('🔴 refuses an R block for %s on civitai.red — no token', async (_label, user) => {
         const res = await mintModelSlot('r', user);
         expect(res._status).toBe(403);
+        // THIS guard's refusal, not an earlier 403 — which would pass vacuously.
+        expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
         expect(mockTokenService.sign).not.toHaveBeenCalled();
         expect(JSON.stringify(res._body)).not.toContain('jwt.signed.value');
         expect(res._body).not.toHaveProperty('token');
@@ -1058,6 +1060,7 @@ describe('POST /api/v1/block-tokens', () => {
       it('🔴 X needs X: an R-enabled viewer is refused an X block', async () => {
         const res = await mintModelSlot('x', viewer(7));
         expect(res._status).toBe(403);
+        expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
         expect(mockTokenService.sign).not.toHaveBeenCalled();
       });
 
