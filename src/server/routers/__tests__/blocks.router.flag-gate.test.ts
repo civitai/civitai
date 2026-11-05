@@ -150,6 +150,13 @@ describe('enforceAppBlocksFlag — query (listForModel)', () => {
     expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({ user: modUser });
   });
 
+  it("🔴 threads the viewer's browsing level so R/X blocks follow it", async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.listForModel(listInput);
+    // A signed-in viewer with no mature opt-in in this context → PG|PG13 = 3.
+    expect(mockListForModel.mock.calls[0][0]).toMatchObject({ viewerBrowsingLevel: 3 });
+  });
+
   it('non-moderator: gate disables → [] (no-widening), registry NOT consulted', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
     const result = await caller.listForModel(listInput);

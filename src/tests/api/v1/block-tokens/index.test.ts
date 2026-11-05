@@ -964,7 +964,7 @@ describe('POST /api/v1/block-tokens', () => {
       expect(mockTokenService.sign).not.toHaveBeenCalled();
     });
 
-    it('a MATURE-rated app MINTS on civitai.red (with the mature ceiling)', async () => {
+    it('a MATURE-rated app MINTS on civitai.red (with the mature ceiling) for a viewer with X', async () => {
       mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
         ...RESOLVED_INSTALL,
         appBlock: {
@@ -972,7 +972,15 @@ describe('POST /api/v1/block-tokens', () => {
           manifest: { scopes: ['models:read:self'], contentRating: 'x' },
         },
       });
-      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      // An X app also needs X in the viewer's browsing level (PG|PG13|R|X = 15).
+      const flagMod = await import('~/server/services/feature-flags.service');
+      (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        appBlocks: true,
+        canViewNsfw: true,
+      });
+      mockSession.value = {
+        user: { id: 42, bannedAt: null, isModerator: true, showNsfw: true, browsingLevel: 15 },
+      } as never;
       const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
@@ -987,6 +995,76 @@ describe('POST /api/v1/block-tokens', () => {
       expect(res._status).toBe(200);
       const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
       expect(signArgs.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+    });
+
+    /**
+     * 🔴 THE MODEL-SLOT MINT FOLLOWS THE VIEWER'S BROWSING LEVEL TOO. On civitai.red an R/X
+     * block needs that rating in the viewer's level, or no token is issued — so a direct mint
+     * cannot bypass `blocks.listForModel` omitting the block. Refused with the same 403 shape
+     * as the host refusal. G/PG/PG-13 are not gated by the level.
+     */
+    describe("model-slot mint — R/X blocks follow the viewer's browsing level", () => {
+      async function mintModelSlot(rating: string, user: Record<string, unknown> | null) {
+        mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+          ...RESOLVED_INSTALL,
+          appBlock: {
+            ...RESOLVED_INSTALL.appBlock,
+            manifest: { scopes: ['models:read:self'], contentRating: rating },
+          },
+        });
+        const flagMod = await import('~/server/services/feature-flags.service');
+        (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+          appBlocks: true,
+          canViewNsfw: true,
+        });
+        mockSession.value = (user ? { user } : null) as never;
+        const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+        const res = makeRes();
+        await handler(
+          makeReq({
+            origin: 'https://civitai.red',
+            headers: { host: 'civitai.red' },
+            body: validBody(),
+          }),
+          res
+        );
+        return res;
+      }
+      const viewer = (browsingLevel: number) => ({
+        id: 42,
+        bannedAt: null,
+        isModerator: true,
+        showNsfw: true,
+        browsingLevel,
+      });
+
+      it.each([
+        ['a PG-only viewer', viewer(1)],
+        ['a signed-out viewer', null],
+      ])('🔴 refuses an R block for %s on civitai.red — no token', async (_label, user) => {
+        const res = await mintModelSlot('r', user);
+        expect(res._status).toBe(403);
+        expect(mockTokenService.sign).not.toHaveBeenCalled();
+        expect(JSON.stringify(res._body)).not.toContain('jwt.signed.value');
+        expect(res._body).not.toHaveProperty('token');
+      });
+
+      it('an R-enabled viewer gets a token for the R block', async () => {
+        const res = await mintModelSlot('r', viewer(7));
+        expect(res._status).toBe(200);
+        expect((res._body as { token: string }).token).toBe('jwt.signed.value');
+      });
+
+      it('🔴 X needs X: an R-enabled viewer is refused an X block', async () => {
+        const res = await mintModelSlot('x', viewer(7));
+        expect(res._status).toBe(403);
+        expect(mockTokenService.sign).not.toHaveBeenCalled();
+      });
+
+      it('a PG-13 block still mints for a PG-only viewer (not gated by the level)', async () => {
+        const res = await mintModelSlot('pg13', viewer(1));
+        expect(res._status).toBe(200);
+      });
     });
 
     it('an SFW (g) app mints fine on civitai.com (host gate only touches mature)', async () => {

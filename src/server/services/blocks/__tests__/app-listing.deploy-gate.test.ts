@@ -503,6 +503,18 @@ describe("getListingHiddenByBrowsingLevel — the detail page's hidden state", (
     ).toBeNull();
   });
 
+  it('X needs X: an X app is hidden from an R viewer, an R app from an X-only one', async () => {
+    withRow('x');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 7 })).toEqual({
+      contentRating: 'x',
+    });
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 9 })).toBeNull();
+    withRow('r');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 9 })).toEqual({
+      contentRating: 'r',
+    });
+  });
+
   it('a missing listing is null', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValue(null);
     expect(await hiddenFn({ slug: 'nope' }, { ...red, viewerBrowsingLevel: 1 })).toBeNull();
