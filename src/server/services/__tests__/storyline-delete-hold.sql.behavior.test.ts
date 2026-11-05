@@ -275,7 +275,6 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
     expect(await storylineIds()).toEqual([2]);
     expect(await heldCopy()).toEqual(fullCopy(['owner', 'chapter-author']));
-    // Its comments are by unheld accounts, so they go: only a held commenter's thread is kept.
     expect(await comments()).toEqual([]);
     expect(await rows(`SELECT id FROM "Thread"`)).toEqual([]);
     expect(before.posts).toHaveLength(2);
@@ -324,10 +323,7 @@ describe('deleteStoryline under a real account hold', () => {
     await hold(CONTRIBUTOR);
     await deleteStoryline({ id: 1, userId: OWNER });
     expect((await heldCopy()).chapters).toHaveLength(2);
-    // CONTRIBUTOR also wrote the thread's first comment.
-    expect((await heldCopy()).storyline).toMatchObject([
-      { holdReasons: ['chapter-author', 'commenter'] },
-    ]);
+    expect((await heldCopy()).storyline).toMatchObject([{ holdReasons: ['chapter-author'] }]);
   });
 
   it("copies everything when a chapter is a moderator's tombstone", async () => {
@@ -350,58 +346,26 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await rows(`SELECT id, status FROM "Report"`)).toEqual([{ id: 70, status: 'Actioned' }]);
   });
 
-  describe("a held commenter's thread outlives the delete", () => {
-    for (const [where, setup, heldUser] of [
-      ['a comment on its thread', '', CONTRIBUTOR],
-      ['a reply in a reply thread', '', REPLIER],
-      [
-        'a reply thread linked only through its comment',
-        `INSERT INTO "Thread" (id, "commentId") VALUES (8, 1);
-         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (8, 8, 8);`,
-        8,
-      ],
-      [
-        'a thread linked by its root alone',
-        `INSERT INTO "Thread" (id, "rootThreadId") VALUES (4, 1);
-         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (4, 4, 6);`,
-        6,
-      ],
-      [
-        'two threads down, through a parent at each step',
-        `INSERT INTO "Thread" (id, "parentThreadId") VALUES (5, 1), (6, 5);
-         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (6, 6, 7);`,
-        7,
-      ],
-    ] as const)
-      it(`when held for ${where}`, async () => {
-        if (setup) await db.pg.exec(setup);
-        const before = await comments();
-        await hold(heldUser);
-        await deleteStoryline({ id: 1, userId: OWNER });
-        expect(await storylineIds()).toEqual([2]);
-        expect(await comments()).toEqual(before);
-        // Detached, with its old parent kept for moderators.
-        expect(
-          await rows(
-            `SELECT id, "storylineId", metadata->'detachedFrom' AS "from" FROM "Thread" WHERE id = 1`
-          )
-        ).toEqual([{ id: 1, storylineId: null, from: { storylineId: 1 } }]);
-        expect((await heldCopy()).storyline).toMatchObject([
-          { holdReasons: expect.arrayContaining(['commenter']) },
-        ]);
-      });
+  // Comments are not kept for a hold: a held commenter neither keeps a copy nor their comments.
+  it("deletes a held commenter's comments with it, keeping no copy", async () => {
+    await hold(REPLIER);
+    await deleteStoryline({ id: 1, userId: OWNER });
+    expect(await storylineIds()).toEqual([2]);
+    expect(await comments()).toEqual([]);
+    expect(await rows(`SELECT id FROM "Thread"`)).toEqual([]);
+    expect(await heldCopy()).toEqual(noCopy);
+  });
 
-    it('keeps a copy when the held author commented on its topic', async () => {
-      await db.pg.exec(`
-        INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
-        INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (20, 'storyline', 1, 9);
-      `);
-      await hold(9);
-      await deleteStoryline({ id: 1, userId: OWNER });
-      expect((await heldCopy()).storyline).toMatchObject([
-        { commenterIds: [CONTRIBUTOR, REPLIER, 9], holdReasons: ['commenter'] },
-      ]);
-    });
+  it('records a commenter on its topic in a copy kept for another reason', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (20, 'storyline', 1, 9);
+    `);
+    await reportIt();
+    await deleteStoryline({ id: 1, userId: OWNER });
+    expect((await heldCopy()).storyline).toMatchObject([
+      { commenterIds: [CONTRIBUTOR, REPLIER, 9], holdReasons: ['open-report'] },
+    ]);
   });
 
   it('copies everything when a hold lands after the checks, by the delete statement itself', async () => {
