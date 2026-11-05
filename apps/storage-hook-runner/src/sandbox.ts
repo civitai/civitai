@@ -92,8 +92,13 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Eval
   let interrupted = false;
   const start = performance.now();
   const deadline = start + args.timeoutMs;
-  // MUTATION (temporary, reverted in the next commit): interrupt handler removed.
-  void deadline;
+  rt.setInterruptHandler(() => {
+    if (performance.now() >= deadline) {
+      interrupted = true;
+      return true;
+    }
+    return false;
+  });
 
   const ctx = rt.newContext();
   const handles: QuickJSHandle[] = [];
