@@ -5,7 +5,8 @@ import { hookInputJson } from '../test-support/fixtures.ts';
 
 /**
  * The sandbox, exercised the way the runner uses it: through the real worker pool, so every
- * case runs in a real worker_thread on a fresh QuickJS WASM instance.
+ * case runs in a real worker_thread, on a fresh QuickJS runtime inside that worker's shared WASM
+ * instance.
  */
 
 let pool: HookPool;
@@ -387,6 +388,42 @@ describe('no state between calls', () => {
       'let n = 0;\nfunction bump() { n++; }\nexport default function check() { bump(); bump(); return { allow: false, reason: "n=" + n }; }'
     );
     expect(result).toEqual({ allow: false, cause: 'denied', reason: 'n=2' });
+  });
+
+  // The shared instance must not be poisoned by a call that ended badly. Pool of ONE, so every
+  // call below runs on the same worker and the same WASM instance. After each bad ending the
+  // probe runs normally: it allocates 8 MiB (half the cap, so a heap left over from the bad call
+  // would push it over), recurses 500 deep, loops long enough to need several interrupt polls,
+  // and checks that the bad call's global is gone.
+  it('after an OOM, an interrupt, a stack overflow or a throw, the next call on the same worker is normal', async () => {
+    const p = await HookPool.start({ size: 1 });
+    const probe =
+      'function f(n) { return n === 0 ? 0 : f(n - 1) + 1; }\n' +
+      'export default function check() { const b = new ArrayBuffer(8 * 1024 * 1024); let s = 0; for (let i = 0; i < 200000; i++) s += i; return typeof globalThis.__bad === "undefined" && b.byteLength === 8388608 && f(500) === 500 && s > 0 ? { allow: true } : { allow: false, reason: "poisoned" }; }';
+    const bad: Array<[string, string]> = [
+      ['oom', 'globalThis.__bad = 1; new ArrayBuffer(32 * 1024 * 1024);'],
+      ['timeout', 'globalThis.__bad = 1; for (;;) {}'],
+      ['stack_overflow', 'globalThis.__bad = 1; const g = (n) => g(n + 1) + 1; g(0);'],
+      ['error', 'globalThis.__bad = 1; throw new Error("x");'],
+    ];
+    try {
+      for (const [cause, body] of bad) {
+        const b = await p.run({
+          source: `export default function check() { ${body} return { allow: true }; }`,
+          inputJson: hookInputJson(),
+          timeoutMs: 20,
+        });
+        expect(b.result).toMatchObject({ allow: false, cause });
+        const next = await p.run({ source: probe, inputJson: hookInputJson(), timeoutMs: 500 });
+        expect({ after: cause, result: next.result }).toEqual({
+          after: cause,
+          result: { allow: true },
+        });
+      }
+      expect(p.stats().terminated).toBe(0);
+    } finally {
+      await p.close();
+    }
   });
 
   it('a call after an OOM on the same worker is unaffected', async () => {

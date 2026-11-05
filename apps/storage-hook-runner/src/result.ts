@@ -48,9 +48,10 @@ function clip(s: string, max: number): string {
 /**
  * Validate the JSON text a hook's return value serialised to (inside the VM). Exactly two shapes
  * are valid: `{"allow":true}` and `{"allow":false,"reason":<string>}` with no other keys. The
- * reason has control characters stripped first, then must be 1..REASON_MAX_CHARS code points and
- * not blank. Anything else is `invalid_result`; an over-long reason is refused, not truncated,
- * so an author sees the bug instead of a silently clipped message.
+ * reason has control and bidi characters stripped first, then is TRUNCATED to REASON_MAX_CHARS
+ * code points (a cut can split a multi-code-point grapheme such as a ZWJ emoji). If what is left
+ * is empty or whitespace only, the result is `invalid_result` ("deny reason is empty"): a refusal
+ * must carry something to show the user. Anything else is `invalid_result`.
  */
 export function validateHookReturn(json: string | undefined): HookResult {
   if (json === undefined) return fault('invalid_result', 'hook returned undefined');
@@ -79,12 +80,8 @@ export function validateHookReturn(json: string | undefined): HookResult {
     if (typeof obj.reason !== 'string') {
       return fault('invalid_result', 'deny reason must be a string');
     }
-    const reason = stripControls(obj.reason);
-    const len = Array.from(reason).length;
+    const reason = clip(stripControls(obj.reason), REASON_MAX_CHARS);
     if (reason.trim().length === 0) return fault('invalid_result', 'deny reason is empty');
-    if (len > REASON_MAX_CHARS) {
-      return fault('invalid_result', `deny reason is ${len} characters (max ${REASON_MAX_CHARS})`);
-    }
     return { allow: false, cause: 'denied', reason };
   }
   return fault('invalid_result', '`allow` must be the boolean true or false');

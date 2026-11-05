@@ -8,16 +8,25 @@ import { fault, validateHookReturn } from './result.ts';
 import type { HookResult } from './result.ts';
 
 /**
- * One hook evaluation, fully isolated.
+ * One hook evaluation, with no state carried between calls.
  *
- * ISOLATION GRANULARITY: a fresh WebAssembly INSTANCE per call (its own linear memory), not just a
- * fresh QuickJS runtime inside a shared instance. Runtimes in one instance share one linear
- * memory, so a QuickJS memory-safety bug could read residue from an earlier call (another app's
- * documents). Measured on Node 24.21 (500 calls, one small hook): runtime-per-call p50 0.14 ms,
- * instance-per-call recompiling the WASM p50 1.5-2.1 ms, instance-per-call from a WASM module
- * compiled ONCE p50 0.68 ms. The last is what this file does: `compileQuickJS()` compiles the
- * immutable code once per worker; every call instantiates it fresh. The CI benchmark
- * (src/__tests__/benchmark.test.ts) re-measures both modes.
+ * ISOLATION GRANULARITY: a fresh QuickJS RUNTIME (and context) per call, inside ONE WebAssembly
+ * instance per worker that is shared by that worker's calls. Chosen for latency: in CI run
+ * 41981302173 a fresh instance per call cost p50 3.05 / p99 35.7 ms against 0.71 / 4.96 ms for a
+ * fresh runtime (1 KiB hook). Every JS-visible thing (globals, module state, prototypes, heap
+ * objects) belongs to the runtime and is freed with it, so nothing a hook can observe carries
+ * over. What IS shared is the instance's linear memory and its allocator: the accepted residual
+ * risk is a QuickJS memory-safety bug reading freed memory of an earlier call.
+ *
+ * WHEN THE SHARED INSTANCE IS DISCARDED (`QuickJSInstance`): after any call that leaves the VM
+ * by a route other than a clean in-VM exception, namely a throw out of the WASM boundary (a WASM
+ * trap such as an emscripten abort, or a host stack overflow), a failure creating the runtime or
+ * context, or a failure disposing them (for example an assertion on leaked objects). After those the
+ * instance's allocator state is unknown, so the worker drops it and instantiates a new one from
+ * the module compiled once at startup. A clean in-VM exception (a throw, out of memory, stack
+ * overflow, the interrupt) unwinds through QuickJS's own error path and frees the runtime
+ * normally, so it keeps the instance: tests pin that the next call on the same worker is
+ * unaffected after each of them.
  *
  * NO CAPABILITIES: the context gets QuickJS's standard intrinsics, minus the two non-ES globals
  * quickjs-ng adds (`performance`, `queueMicrotask`), and nothing else. No host
@@ -50,7 +59,7 @@ export function compileQuickJS(): CompiledQuickJS {
   return { variant: newVariant(variant, { wasmModule }) };
 }
 
-/** A fresh, never-shared QuickJS WASM instance. */
+/** A new QuickJS WASM instance from the once-compiled module. */
 export function instantiate(compiled: CompiledQuickJS): Promise<QuickJSWASMModule> {
   return newQuickJSWASMModuleFromVariant(compiled.variant);
 }
@@ -68,19 +77,50 @@ export type EvaluateOutput = {
   elapsedMs: number;
 };
 
-/** Evaluate on a fresh instance. This is what the runner does for every request. */
-export async function evaluateHook(
-  compiled: CompiledQuickJS,
-  args: EvaluateArgs
-): Promise<EvaluateOutput> {
-  return evaluateHookOn(await instantiate(compiled), args);
-}
+export type SandboxOutput = EvaluateOutput & {
+  /** The call left the instance in an unknown state; it must not be used again. */
+  poisoned: boolean;
+};
 
 /**
- * Evaluate on a GIVEN instance, with a fresh runtime and context. The runner never reuses an
- * instance; this is exported so the benchmark can measure runtime-per-call against it.
+ * A worker's shared QuickJS instance. `evaluate` runs one call on a fresh runtime inside it and
+ * replaces the instance after any call that may have left it unsafe (see the header).
  */
-export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): EvaluateOutput {
+export class QuickJSInstance {
+  private current: Promise<QuickJSWASMModule> | null = null;
+  private readonly create: () => Promise<QuickJSWASMModule>;
+  /** How many instances were created; 1 after the first call. */
+  created = 0;
+
+  constructor(create: () => Promise<QuickJSWASMModule>) {
+    this.create = create;
+  }
+
+  static fromCompiled(compiled: CompiledQuickJS): QuickJSInstance {
+    return new QuickJSInstance(() => instantiate(compiled));
+  }
+
+  async evaluate(args: EvaluateArgs): Promise<SandboxOutput> {
+    if (!this.current) {
+      this.created++;
+      this.current = this.create();
+    }
+    const qjs = await this.current;
+    let out: SandboxOutput;
+    try {
+      out = evaluateHookOn(qjs, args);
+    } catch (err) {
+      // Creating the runtime or context failed: a runner fault, never the hook's.
+      this.current = null;
+      throw err;
+    }
+    if (out.poisoned) this.current = null;
+    return out;
+  }
+}
+
+/** One call on a fresh runtime and context inside `qjs`. */
+export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): SandboxOutput {
   const rt = qjs.newRuntime();
   rt.setMemoryLimit(MEMORY_LIMIT_BYTES);
   rt.setMaxStackSize(MAX_STACK_BYTES);
@@ -116,29 +156,32 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Eval
   };
 
   let result: HookResult;
+  let poisoned = false;
   try {
     result = run(ctx, keep, args, arm, () => interrupted);
   } catch (err) {
-    // A throw out of the VM boundary itself (host stack overflow, a WASM trap). The instance is
-    // never reused, so nothing carries over.
+    // A throw out of the WASM boundary itself (a host stack overflow, a WASM trap). The instance's
+    // state is unknown from here: the caller replaces it.
+    poisoned = true;
     result = classifyHostError(err, interrupted);
   } finally {
-    // Disposal can assert after an OOM or trap; the instance is dropped either way.
+    // A disposal failure (for example an assertion on leaked objects) also leaves the instance
+    // in an unknown state.
     for (const h of handles.reverse()) {
       try {
         if (h.alive) h.dispose();
       } catch {
-        /* dropped with the instance */
+        poisoned = true;
       }
     }
     try {
       ctx.dispose();
       rt.dispose();
     } catch {
-      /* dropped with the instance */
+      poisoned = true;
     }
   }
-  return { result, elapsedMs: performance.now() - start };
+  return { result, elapsedMs: performance.now() - start, poisoned };
 }
 
 function run(

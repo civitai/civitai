@@ -4,16 +4,19 @@ import { buildApp } from '../app.ts';
 import { SIG_HEADER } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
-import { compileQuickJS, evaluateHook, evaluateHookOn, instantiate } from '../sandbox.ts';
+import { QuickJSInstance, compileQuickJS, evaluateHookOn, instantiate } from '../sandbox.ts';
 import { SECRET, checkBody, hmac, hookInputJson } from '../test-support/fixtures.ts';
 
 /**
  * Per-call cost, printed as `BENCH ...` lines for the PR record. It asserts only that every
  * call answered correctly: timing on a shared CI runner is a measurement, not a gate.
  *
+ * OPT-IN: skipped unless RUNNER_BENCH=1, so it costs the CI suite nothing. Run it with
+ *   RUNNER_BENCH=1 pnpm --filter @civitai/storage-hook-runner-app exec vitest run src/__tests__/benchmark.test.ts
+ *
  * Measured:
- *   - in-process, fresh WASM instance per call (what the runner does) vs fresh runtime in a
- *     shared instance (the cheaper isolation the runner rejects), at 1 KiB and 64 KiB hooks;
+ *   - in-process, fresh runtime per call in a shared instance (what the runner does) vs a fresh
+ *     WASM instance per call (the stronger isolation it does not use), at 1 KiB and 64 KiB hooks;
  *   - end to end through Fastify (HMAC verify + sha256 + pool + worker + response signing).
  */
 
@@ -46,7 +49,7 @@ function report(label: string, samples: number[]) {
   console.log(`BENCH ${label} n=${samples.length} ${JSON.stringify(pct(samples))} ms`);
 }
 
-describe('benchmark (recorded, not gated)', () => {
+describe.skipIf(process.env.RUNNER_BENCH !== '1')('benchmark (opt-in: RUNNER_BENCH=1)', () => {
   const input = hookInputJson();
 
   it('sizes the fixtures as named', () => {
@@ -57,25 +60,29 @@ describe('benchmark (recorded, not gated)', () => {
   });
 
   for (const [name, source] of Object.entries(HOOKS)) {
-    it(`in-process, ${name}: instance-per-call vs runtime-per-call`, async () => {
+    it(`in-process, ${name}: runtime-per-call vs instance-per-call`, async () => {
       const compiled = compileQuickJS();
-      const perInstance: number[] = [];
-      for (let i = 0; i < N; i++) {
-        const t = performance.now();
-        const out = await evaluateHook(compiled, { source, inputJson: input, timeoutMs: 500 });
-        perInstance.push(performance.now() - t);
-        expect(out.result).toEqual({ allow: true });
-      }
-      const shared = await instantiate(compiled);
+      const shared = QuickJSInstance.fromCompiled(compiled);
       const perRuntime: number[] = [];
       for (let i = 0; i < N; i++) {
         const t = performance.now();
-        const out = evaluateHookOn(shared, { source, inputJson: input, timeoutMs: 500 });
+        const out = await shared.evaluate({ source, inputJson: input, timeoutMs: 500 });
         perRuntime.push(performance.now() - t);
         expect(out.result).toEqual({ allow: true });
       }
-      report(`in-process instance-per-call ${name}`, perInstance);
+      const perInstance: number[] = [];
+      for (let i = 0; i < N; i++) {
+        const t = performance.now();
+        const out = evaluateHookOn(await instantiate(compiled), {
+          source,
+          inputJson: input,
+          timeoutMs: 500,
+        });
+        perInstance.push(performance.now() - t);
+        expect(out.result).toEqual({ allow: true });
+      }
       report(`in-process runtime-per-call ${name}`, perRuntime);
+      report(`in-process instance-per-call ${name}`, perInstance);
     });
   }
 

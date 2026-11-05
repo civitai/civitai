@@ -65,8 +65,9 @@ responder or replayed onto another request. The caller must verify both.
 | `{allow: false, cause: "invalid_result", detail}` | returned anything but the two valid shapes, including a Promise                                                                                      | same                                      |
 
 `detail` is for the author's logs, never for end users. `reason` is author text shown to users:
-control and bidi-override characters are stripped, then it must be 1 to 200 code points and not
-blank, or the result is `invalid_result` (an over-long reason is refused, not truncated).
+control and bidi-override characters are stripped, then it is truncated to 200 code points. If
+nothing but whitespace is left (an empty or all-control-character reason), the result is
+`invalid_result` with detail `deny reason is empty`.
 
 Non-2xx answers mean the runner did not evaluate. The caller maps every one of them, and any
 transport failure or unverifiable response, to `hook_unavailable` (fail closed):
@@ -94,8 +95,8 @@ export default function check({ op, before, after, tally }) {
 
 Available: ECMAScript built-ins only (the QuickJS-NG engine). Not available: `import`, `require`,
 `fetch`, timers, `queueMicrotask`, `performance`, `console`, `process`, or any host function.
-Every call gets a fresh engine, so nothing (globals, module state, prototype changes) carries over
-from one call to the next.
+Every call gets a fresh QuickJS runtime and context, so nothing a hook can see (globals, module
+state, prototype changes, heap objects) carries over from one call to the next.
 
 ## Isolation and limits
 
@@ -110,17 +111,26 @@ All bounds live in `src/limits.ts`.
 | source   | 64 KiB                            | request validation                                               |
 | body     | 256 KiB                           | Fastify `bodyLimit`                                              |
 
-- **A fresh WebAssembly instance per call.** The QuickJS WASM is compiled once per worker; each
-  call instantiates it anew, so calls do not share linear memory. A fresh _runtime_ inside a
-  shared instance is cheaper but would leave one call's memory readable to a QuickJS
-  memory-safety bug in the next. The benchmark measures both.
+- **A fresh QuickJS runtime per call, inside one shared WebAssembly instance per worker.** The
+  QuickJS WASM is compiled once per worker and instantiated once; each call creates and disposes
+  its own runtime and context, which own every JS-visible object. This was chosen for latency: a
+  fresh instance per call measured p50 3.05 / p99 35.7 ms against 0.71 / 4.96 ms for a fresh
+  runtime (1 KiB hook, one CI run). The accepted residual
+  risk: calls on one worker share the instance's linear memory, so a QuickJS memory-safety bug
+  could read freed memory from an earlier call.
+- **When the shared instance is replaced.** After a call that leaves the VM other than by a clean
+  in-VM exception: a throw out of the WASM boundary (a WASM trap, a host stack overflow), a
+  failure creating the runtime or context, or a failure disposing them. The instance's state is
+  unknown after those, so the worker instantiates a new one. A throw, out of memory, an in-VM
+  stack overflow or the interrupt are clean exceptions and keep the instance; tests pin that the
+  next call on the same worker behaves normally after each of them.
 - **No bytecode cache.** quickjs-emscripten 0.32.0 has no public bytecode serialise API, and
-  caching a runtime would break isolation, so the hook is compiled on every call (measured below
+  caching a runtime would break isolation, so the hook is compiled on every call (the benchmark measures that
   at 1 KiB and 64 KiB).
 - **Why 256 KiB of stack, not 512.** Measured on Node 24.21: with 512 KiB QuickJS recurses deeper
   than the host V8 stack allows, so unbounded recursion overflows the host instead of raising
-  in-VM. 256 KiB raises in-VM at ~1,486 frames. A host overflow is still caught and answered as
-  `stack_overflow`.
+  in-VM. 256 KiB raises in-VM at ~1,486 frames. A host overflow is still caught, answered as
+  `stack_overflow`, and the worker's instance is replaced.
 - **Why a backstop.** The interrupt handler runs only when QuickJS polls it. A single native
   operation does not: an allocation loop near the heap cap was measured running 1.3 s with one
   poll against a 50 ms deadline. The backstop bounds that case.
@@ -164,5 +174,14 @@ The image is built from a `storage-hook-runner-vX.Y.Z` tag, as the other apps in
 
 `pnpm --filter @civitai/storage-hook-runner-app test` (vitest, project `app:storage-hook-runner`;
 CI runs it in the "App suites" workflow). The suites use real worker threads and real WASM
-instances; `src/__tests__/benchmark.test.ts` prints `BENCH` lines with per-call p50/p99 and
-asserts only correctness.
+instances.
+
+The benchmark, `src/__tests__/benchmark.test.ts`, is skipped unless `RUNNER_BENCH=1` is set, so
+CI does not run it. Run it with:
+
+```sh
+RUNNER_BENCH=1 pnpm --filter @civitai/storage-hook-runner-app exec vitest run src/__tests__/benchmark.test.ts
+```
+
+It prints `BENCH` lines with per-call p50/p99 (runtime-per-call as the runner does it, a fresh
+instance per call for comparison, and end to end over HTTP) and asserts only correctness.
