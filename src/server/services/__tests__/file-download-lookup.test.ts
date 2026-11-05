@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // which this repo's eslint config forbids.
 import type * as FileService from '../file.service';
 import type * as ModelHelpers from '~/server/common/model-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -755,7 +756,7 @@ describe('getFileForModelVersion — names against every file on the version', (
   const servedName = () => resolveDownloadUrlMock.mock.calls[0][2];
   const advertisedName = (id: number) =>
     getDownloadFilename({
-      model: version.model,
+      model: { ...version.model, type: version.model.type as ModelType },
       modelVersion: version,
       file: versionFiles.find((f) => f.id === id)!,
       versionFiles,
