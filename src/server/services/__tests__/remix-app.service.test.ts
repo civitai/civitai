@@ -486,7 +486,6 @@ describe('team remix', () => {
     addImage(37, { ownerId: OWNER });
     sameTeam('Blue', 0);
     await expect(quoteTeam(37)).resolves.toBeNull();
-    // Told why: they are on the team, they have just used up today's free submits.
     await expect(runTeam(37)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: expect.stringContaining("used today's free team submits"),

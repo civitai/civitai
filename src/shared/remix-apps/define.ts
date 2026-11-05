@@ -45,7 +45,9 @@ export type RemixApp = {
   engine: { safe: RemixAppEngine; mature?: RemixAppEngine };
   /**
    * Must be deterministic over `ctx`: no clock, randomness or I/O outside `ctx`. The host re-runs
-   * it from the start on every advance and feeds back the recorded results.
+   * it from the start on every advance and feeds back the recorded results. Its first effect
+   * must be a `workflow`: a run is stored only as its workflows, so an ask before the first has
+   * nowhere to keep its answer.
    */
   run(ctx: RemixCtx): Promise<RemixImage[]>;
 };

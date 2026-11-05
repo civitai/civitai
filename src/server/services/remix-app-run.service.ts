@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Workflow } from '@civitai/orchestration-client';
+import type { NsfwLevel, Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -20,6 +20,8 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { RemixAnswer, RemixApp, RemixAsk, RemixImage } from '~/shared/remix-apps/define';
 import { remixAnswerRefusal, replayRemixApp, type RemixLogEntry } from '~/shared/remix-apps/replay';
 import { getRuntimeRemixApp } from '~/shared/remix-apps/system-apps';
+import { orchestratorRefundableStatuses } from '~/shared/constants/generation.constants';
+import { isMature } from '~/shared/constants/orchestrator.constants';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 
 export const REMIX_APP_TAG = 'remix-app';
@@ -114,9 +116,9 @@ function runSourceId(segments: Segment[]) {
   return claimed;
 }
 
-const TERMINAL_FAILURES = new Set(['failed', 'expired', 'canceled']);
+type RunImage = RemixImage & { nsfwLevel?: NsfwLevel };
 
-function outputImages(workflow: Workflow): RemixImage[] {
+function outputImages(workflow: Workflow): RunImage[] {
   return (workflow.steps ?? []).flatMap((step) => {
     const images = ((step as { output?: { images?: unknown[] } }).output?.images ?? []) as {
       url?: string | null;
@@ -124,13 +126,15 @@ function outputImages(workflow: Workflow): RemixImage[] {
       height?: number | null;
       available?: boolean | null;
       blockedReason?: string | null;
+      nsfwLevel?: NsfwLevel;
     }[];
     return images
       .filter((image) => image.url && image.available !== false && !image.blockedReason)
-      .map(({ url, width, height }) => ({
+      .map(({ url, width, height, nsfwLevel }) => ({
         url: url as string,
         width: width ?? undefined,
         height: height ?? undefined,
+        nsfwLevel,
       }));
   });
 }
@@ -158,17 +162,22 @@ async function advance({
   caller: RemixAppCaller;
 }): Promise<RemixRunState> {
   const log: RemixLogEntry[] = [];
+  const levels = new Map<string, NsfwLevel | undefined>();
   for (const segment of segments) {
     for (const answer of segment.meta.answers) log.push({ type: 'ask', answer });
     const { status, id } = segment.workflow;
     const workflowId = id as string;
-    if (TERMINAL_FAILURES.has(status))
+    if (orchestratorRefundableStatuses.includes(status))
       return { status: 'failed', runId, workflowId, reason: `This step ${status}.` };
     if (status !== 'succeeded') return { status: 'running', runId, workflowId };
     const images = outputImages(segment.workflow);
     if (!images.length)
       return { status: 'failed', runId, workflowId, reason: 'This step has no usable output.' };
-    log.push({ type: 'workflow', result: { workflowId, images } });
+    for (const { url, nsfwLevel } of images) levels.set(url, nsfwLevel);
+    log.push({
+      type: 'workflow',
+      result: { workflowId, images: images.map(({ nsfwLevel: _, ...image }) => image) },
+    });
   }
 
   const source = runtimeSourceOf(image);
@@ -185,7 +194,12 @@ async function advance({
 
   if (outcome.status === 'done') {
     const workflowId = segments[segments.length - 1]?.workflow.id as string;
-    return { status: 'done', runId, workflowId, outputs: outcome.outputs };
+    // The run reads every blob so the next segment can use it; what it shows follows the viewer.
+    const hideMature = caller.isGreenDomain || !caller.user.showNsfw;
+    const outputs = hideMature
+      ? outcome.outputs.filter((image) => !isMature(levels.get(image.url)))
+      : outcome.outputs;
+    return { status: 'done', runId, workflowId, outputs };
   }
   if (outcome.effect.type === 'ask') return { status: 'ask', runId, ask: outcome.effect.spec };
 

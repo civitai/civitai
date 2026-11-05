@@ -21,7 +21,7 @@ type FakeWorkflow = {
   allowMatureContent?: boolean;
   externalId?: string;
   createdAt: string;
-  steps: { output?: { images: { url: string; available?: boolean }[] } }[];
+  steps: { output?: { images: { url: string; available?: boolean; nsfwLevel?: string }[] } }[];
   cost: { total: number };
 };
 
@@ -35,9 +35,13 @@ const h = vi.hoisted(() => ({
   assertInputs: vi.fn(async () => undefined),
 }));
 
-vi.mock('@civitai/orchestration-client', async () =>
-  (await import('~/server/services/orchestrator/__tests__/civitai-client.stub')).civitaiClientStub()
-);
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(
+    await import('~/server/services/orchestrator/__tests__/civitai-client.stub')
+  ).civitaiClientStub(),
+  // Read by `isMature`; the stub's placeholder would make every level non-mature.
+  NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: h.submitWorkflow,
   queryWorkflows: h.queryWorkflows,
@@ -149,10 +153,32 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
       return final.images;
     },
   });
+  /** One workflow after another, more than a run may hold. */
+  const endless = defineRemixApp({
+    slug: 'endless',
+    name: 'Endless',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      let images = [ctx.source];
+      for (let i = 0; i < 20; i++) {
+        const result = await ctx.workflow({
+          kind: 'image',
+          prompt: `pass ${i}`,
+          images: [images[0]],
+          aspectRatio: 'source',
+          quantity: 1,
+        });
+        images = result.images;
+      }
+      return images;
+    },
+  });
+  const apps = new Map([pickThenEdit, endless].map((app) => [app.slug, app]));
   return {
     ...real,
-    getRuntimeRemixApp: (slug: string) =>
-      slug === pickThenEdit.slug ? pickThenEdit : real.getRuntimeRemixApp(slug),
+    getRuntimeRemixApp: (slug: string) => apps.get(slug) ?? real.getRuntimeRemixApp(slug),
   };
 });
 
@@ -162,6 +188,7 @@ import { verifyProvenance } from '~/server/services/orchestrator/remix-provenanc
 import {
   advanceRemixRun,
   listRemixRuns,
+  MAX_RUN_SEGMENTS,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
@@ -207,10 +234,30 @@ const submits = () => h.workflows;
 const whatIfs = () =>
   h.submitWorkflow.mock.calls.filter(([args]) => (args as { query?: object }).query);
 
-function finish(workflowId: string, urls: string[]) {
+function finish(workflowId: string, urls: string[], nsfwLevel: Record<string, string> = {}) {
   const workflow = h.workflows.find((w) => w.id === workflowId)!;
   workflow.status = 'succeeded';
-  workflow.steps = [{ output: { images: urls.map((url) => ({ url, available: true })) } }];
+  workflow.steps = [
+    {
+      output: {
+        images: urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] })),
+      },
+    },
+  ];
+}
+
+/** A pick-then-edit run stopped at its pick, with four takes. */
+async function runToPick(nonce: string, viewer = caller()) {
+  addImage(SOURCE_ID);
+  const { runId } = await startRemixRun({
+    slug: 'pick-then-edit',
+    imageId: SOURCE_ID,
+    nonce,
+    quote: 30,
+    caller: viewer,
+  });
+  finish(submits()[0].id, ['a', 'b', 'c', 'd'].map(blob));
+  return runId;
 }
 
 beforeEach(() => {
@@ -391,6 +438,111 @@ describe('remix app runs', () => {
     expect(submits()).toHaveLength(1);
   });
 
+  it('refuses a price raised after the ask, and submits nothing for that step', async () => {
+    const runId = await runToPick('nonce-0011');
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'ask' });
+
+    h.price = 31;
+    await expect(
+      advanceRemixRun({ runId, answers: [1], quote: 30, caller: caller() })
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(submits()).toHaveLength(1);
+
+    // The same answer at the new price goes through.
+    await expect(
+      advanceRemixRun({ runId, answers: [1], quote: 31, caller: caller() })
+    ).resolves.toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(2);
+  });
+
+  it.each(['failed', 'expired', 'canceled'])('a %s step ends the run as failed', async (status) => {
+    const runId = await runToPick(`nonce-${status}`);
+    submits()[0].status = status;
+    await expect(
+      advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() })
+    ).resolves.toMatchObject({ status: 'failed', reason: `This step ${status}.` });
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('a step with no usable output ends the run as failed', async () => {
+    const runId = await runToPick('nonce-0012');
+    submits()[0].steps = [{ output: { images: [{ url: blob('gone'), available: false }] } }];
+    await expect(
+      advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() })
+    ).resolves.toMatchObject({ status: 'failed', reason: 'This step has no usable output.' });
+    expect(submits()).toHaveLength(1);
+  });
+
+  it(`stops a run at ${MAX_RUN_SEGMENTS} steps`, async () => {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'endless',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-0013',
+      quote: 30,
+      caller: caller(),
+    });
+    for (let i = 1; i < MAX_RUN_SEGMENTS; i++) {
+      finish(submits()[i - 1].id, [blob(`pass-${i}`)]);
+      await advanceRemixRun({ runId, quote: 30, caller: caller() });
+    }
+    expect(submits()).toHaveLength(MAX_RUN_SEGMENTS);
+
+    finish(submits()[MAX_RUN_SEGMENTS - 1].id, [blob('last')]);
+    await expect(advanceRemixRun({ runId, quote: 30, caller: caller() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(submits()).toHaveLength(MAX_RUN_SEGMENTS);
+  });
+
+  it('will not continue a run started on another version of the app', async () => {
+    const runId = await runToPick('nonce-0014');
+    const meta = submits()[0].metadata!;
+    submits()[0].metadata = { ...meta, remixRun: { ...(meta.remixRun as object), version: 2 } };
+    await expect(
+      advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() })
+    ).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('app changed') });
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('will not continue a run with a step deleted', async () => {
+    const runId = await runToPick('nonce-0015');
+    await advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() });
+    expect(submits()).toHaveLength(2);
+    h.workflows.splice(0, 1);
+    await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('a step was deleted'),
+    });
+    expect(submits()).toHaveLength(1);
+  });
+
+  describe('mature outputs', () => {
+    async function finishedRun(nonce: string, viewer: RemixAppCaller) {
+      const runId = await runToPick(nonce, viewer);
+      await advanceRemixRun({ runId, answers: [0], quote: 30, caller: viewer });
+      finish(submits()[1].id, [blob('pg'), blob('x')], { [blob('x')]: 'x' });
+      return advanceRemixRun({ runId, caller: viewer });
+    }
+    const urls = (state: Awaited<ReturnType<typeof finishedRun>>) =>
+      state.status === 'done' ? state.outputs.map((o) => o.url) : state;
+
+    it('are shown to a viewer who shows mature content off green', async () => {
+      expect(urls(await finishedRun('nonce-0016', caller()))).toEqual([blob('pg'), blob('x')]);
+    });
+
+    it('are hidden on green', async () => {
+      const green = caller({ isGreenDomain: true });
+      expect(urls(await finishedRun('nonce-0017', green))).toEqual([blob('pg')]);
+    });
+
+    it('are hidden from a viewer who hides mature content', async () => {
+      const viewer = caller();
+      viewer.user = { ...viewer.user, showNsfw: false };
+      expect(urls(await finishedRun('nonce-0018', viewer))).toEqual([blob('pg')]);
+    });
+  });
+
   it('lists runs that are neither posted nor dismissed', async () => {
     addImage(SOURCE_ID);
     const start = (nonce: string) =>
@@ -408,21 +560,26 @@ describe('remix app runs', () => {
 
 describe('replay', () => {
   const source = { imageId: SOURCE_ID, url: blob('source'), width: 1200, height: 800 };
-  const result = (name: string) => ({ workflowId: name, images: [{ url: blob(name) }] });
 
-  it('returns the same next effect from the same log, however often it replays', async () => {
+  it('builds the next workflow from the recorded answer alone', async () => {
     const app = (await import('~/shared/remix-apps/system-apps')).getRuntimeRemixApp(
       'pick-then-edit'
     )!;
-    const log = [
-      { type: 'workflow' as const, result: result('takes') },
-      { type: 'ask' as const, answer: 0 },
-    ];
-    const first = await replayRemixApp(app, source, log);
-    const second = await replayRemixApp(app, source, log);
+    const takes = { workflowId: 'takes', images: ['a', 'b', 'c'].map((n) => ({ url: blob(n) })) };
+    const replayWith = (answer: number) =>
+      replayRemixApp(app, source, [
+        { type: 'workflow', result: takes },
+        { type: 'ask', answer },
+      ]);
+    const imagesOf = (outcome: Awaited<ReturnType<typeof replayWith>>) =>
+      outcome.status === 'effect' && outcome.effect.type === 'workflow'
+        ? outcome.effect.request.images
+        : outcome;
 
-    expect(first).toMatchObject({ status: 'effect', index: 2, effect: { type: 'workflow' } });
-    expect(second).toEqual(first);
+    // Each replay starts the app over: a later replay must not see an earlier one's answer.
+    expect(imagesOf(await replayWith(2))).toEqual([{ url: blob('c') }]);
+    expect(imagesOf(await replayWith(0))).toEqual([{ url: blob('a') }]);
+    expect(imagesOf(await replayWith(2))).toEqual([{ url: blob('c') }]);
   });
 
   it('refuses a log that disagrees with what the app asks for', async () => {
