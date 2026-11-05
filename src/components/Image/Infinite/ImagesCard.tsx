@@ -434,10 +434,10 @@ function ImageReactions({
               }
             }}
           >
-            <div className={clsx(cardClasses.actions, cardClasses.oneLine)}>
+            <div className={clsx(cardClasses.actions, cardClasses.oneLine, classes.fitRow)}>
               <div className={cardClasses.actionRow}>
                 <Reactions
-                  className={clsx(cardClasses.reactions, classes.bar)}
+                  className={clsx(cardClasses.reactions, classes.bar, classes.fitReactions)}
                   entityId={image.id}
                   entityType="image"
                   reactions={image.reactions}

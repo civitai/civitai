@@ -98,14 +98,16 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
 vi.mock('~/components/LoginPopover/LoginPopover', () => ({
   LoginPopover: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
-vi.mock('~/components/Sticker/StickerPlacementCardBadge', () => ({
-  StickerPlacementCardBadge: () =>
-    stickerBadge.renders ? (
-      <button data-testid="sticker-badge" style={{ height: 26 }}>
-        stickers
-      </button>
-    ) : null,
-}));
+// The real chip, so the footer measures its real width; only its batch query is skipped.
+vi.mock('~/components/Sticker/StickerPlacementCardBadge', async () => {
+  const { StickerCountChip } = await import('~/components/Sticker/StickerCountChip');
+  return {
+    StickerPlacementCardBadge: () =>
+      stickerBadge.renders ? (
+        <StickerCountChip count={1} revealed onClick={() => undefined} />
+      ) : null,
+  };
+});
 vi.mock('~/components/Sticker/CardStickerOverlay', async (importOriginal) => ({
   ...(await importOriginal<typeof CardStickerOverlayModule>()),
   CardStickerOverlay: () => null,
@@ -210,6 +212,8 @@ afterEach(() => {
   cleanup();
   h.stock = { available: 3, optedIn: true };
   useHatTurfStore.setState({ showHats: true });
+  stickerBadge.renders = false;
+  features.stickerPlacement = false;
 });
 
 describe('Hat Turf on the /images feed card', () => {
@@ -340,4 +344,45 @@ describe('the /images card footer fits the height the masonry gives it', () => {
     if (value) await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
   });
+  // A tester's card: three-digit counts, a 530 tip and a sticker chip beside the hat button.
+  test.each([288, 320, 358])(
+    'a %ipx card with three-digit counts, a tip, a sticker chip and the hat button',
+    async (width) => {
+      features.stickerPlacement = true;
+      stickerBadge.renders = true;
+      renderWithProviders(
+        <TurfSummaryContext.Provider value={turf()}>
+          <IntersectionObserverProvider>
+            <div style={{ width }}>
+              <ImagesCard
+                data={{
+                  ...image,
+                  stats: {
+                    likeCountAllTime: 179,
+                    heartCountAllTime: 72,
+                    laughCountAllTime: 24,
+                    cryCountAllTime: 12,
+                    tippedAmountCountAllTime: 530,
+                  },
+                }}
+                height={400}
+              />
+            </div>
+          </IntersectionObserverProvider>
+        </TurfSummaryContext.Provider>
+      );
+      await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[aria-label*="sticker" i]')).not.toBeNull()
+      );
+      expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
+      // Reactions that don't fit wrap onto a line the footer clips; a 320px column has room for all.
+      const bar = document.body.querySelector('[class*="fitReactions"]')!.getBoundingClientRect();
+      const shown = [...document.body.querySelectorAll('[aria-label$="reaction"]')].filter(
+        (el) => el.getBoundingClientRect().top < bar.bottom
+      );
+      if (width >= 320) expect(shown).toHaveLength(4);
+      else expect(shown.length).toBeGreaterThanOrEqual(3);
+    }
+  );
 });
