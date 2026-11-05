@@ -1,7 +1,3 @@
-export const ROTATION_SIZE = 4;
-export const DEALS_PER_DAY = 2;
-export const DEAL_PERCENT = 20;
-
 /** The shape of a buyer's idempotency key. */
 export const REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 

@@ -9,15 +9,17 @@ import { BuzzRejectedError, type BuzzGrant, type BuzzPort } from '../conversion/
 import { markConversionPaid, retryPendingConversions } from '../conversion/convert';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { buyItem, retryPendingPurchases, type BuyDeps } from './purchase';
-import { stockFor } from './rotation';
+import { stockFor } from '@civitai/shared/knights-shop';
 
 const dealsToday = vi.hoisted(() => ({ count: 0 }));
-vi.mock('./config', async (original) => ({
-  ...(await original<typeof import('./config')>()),
-  get DEALS_PER_DAY() {
-    return dealsToday.count;
-  },
-}));
+vi.mock('@civitai/shared/knights-shop', async (original) => {
+  const actual = await original<typeof import('@civitai/shared/knights-shop')>();
+  return {
+    ...actual,
+    stockFor: (items: Parameters<typeof actual.stockFor>[0], day: string) =>
+      actual.stockFor(items, day, { dealsPerDay: dealsToday.count }),
+  };
+});
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 const DAY = '2026-12-20';

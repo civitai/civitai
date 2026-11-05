@@ -1,6 +1,6 @@
-import { DEALS_PER_DAY, DEAL_PERCENT, ROTATION_SIZE } from './config';
-
-export { DEAL_PERCENT, ROTATION_SIZE };
+export const ROTATION_SIZE = 4;
+export const DEALS_PER_DAY = 2;
+export const DEAL_PERCENT = 20;
 
 export type ShopItem = {
   id: string;
@@ -50,7 +50,8 @@ export const dealPrice = (price: number) =>
 /** Pure: the same catalog and day give the same stock and deals. */
 export function stockFor(
   items: ShopItem[],
-  day: string
+  day: string,
+  { dealsPerDay = DEALS_PER_DAY }: { dealsPerDay?: number } = {}
 ): { stock: StockEntry[]; deals: { item: ShopItem; price: number }[] } {
   const active = items.filter((item) => item.active);
   const fixed = active.filter((item) => !item.rotating);
@@ -64,7 +65,7 @@ export function stockFor(
   const dealIds = new Set(
     [...inStock]
       .sort(byHash(`${day}:deal`))
-      .slice(0, DEALS_PER_DAY)
+      .slice(0, dealsPerDay)
       .map((item) => item.id)
   );
   const stock = inStock.map((item) => {

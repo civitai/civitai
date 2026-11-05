@@ -7,7 +7,7 @@ import {
   stockFor,
   utcDay,
   type ShopItem,
-} from './rotation';
+} from '../knights-shop';
 
 const item = (id: string, over: Partial<ShopItem> = {}): ShopItem => ({
   id,

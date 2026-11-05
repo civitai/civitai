@@ -40,7 +40,8 @@
     "./held-media": "./src/held-media.ts",
     "./report-reward": "./src/report-reward.ts",
     "./new-order-levels": "./src/new-order-levels.ts",
-    "./new-order": "./src/new-order.ts"
+    "./new-order": "./src/new-order.ts",
+    "./knights-shop": "./src/knights-shop.ts"
   },
   "scripts": {
     "test": "vitest run",

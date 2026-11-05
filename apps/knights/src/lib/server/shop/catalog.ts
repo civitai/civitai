@@ -3,7 +3,13 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { rankIndex } from '../ranks';
 import { cosmeticImageKey, holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { hasActiveMembership } from './inventory';
-import { isSellable, msUntilNextDay, stockFor, utcDay, type ShopItem } from './rotation';
+import {
+  isSellable,
+  msUntilNextDay,
+  stockFor,
+  utcDay,
+  type ShopItem,
+} from '@civitai/shared/knights-shop';
 
 /** Affordability is not a state: the player's gold is checked at the press. */
 export type CardState = 'available' | 'owned' | 'member' | 'rank' | 'sold-out' | 'closed';

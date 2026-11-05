@@ -15,7 +15,7 @@ import {
 import { holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { hasActiveMembership } from './inventory';
-import { isSellable, stockFor, utcDay, type ShopItem } from './rotation';
+import { isSellable, stockFor, utcDay, type ShopItem } from '@civitai/shared/knights-shop';
 
 type Purchase = Selectable<DB['KnightsShopPurchase']>;
 type Log = (event: Record<string, unknown>) => unknown;
