@@ -773,7 +773,7 @@ export const appListingsRouter = router({
       return submitExternalListing({
         input,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
+        isModerator: actsAsModerator(ctx),
       });
     }),
 

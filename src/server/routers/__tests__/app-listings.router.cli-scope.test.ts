@@ -79,6 +79,7 @@ const {
   mockListMyAppListings,
   mockUpdateListing,
   mockUpdateRevisionDraft,
+  mockSubmitExternalListing,
   mockGetAppListingAuthoringContext,
   mockListListingHistory,
 } = vi.hoisted(() => ({
@@ -106,6 +107,7 @@ const {
   mockListMyAppListings: vi.fn(async () => [{ appListingId: 'lst_1', problems: [] }]),
   mockUpdateListing: vi.fn(async () => ({ listingId: 'lst_1', requiresReview: false })),
   mockUpdateRevisionDraft: vi.fn(async () => ({ shadowId: 'shd_1' })),
+  mockSubmitExternalListing: vi.fn(async () => ({ appListingId: 'lst_new' })),
   mockGetAppListingAuthoringContext: vi.fn(async () => ({ appListingId: 'lst_1' })),
   mockListListingHistory: vi.fn(async () => []),
 }));
@@ -135,6 +137,7 @@ vi.mock('~/server/services/blocks/offsite-listing.service', () => ({
   persistListingAssetImage: mockPersistListingAssetImage,
   updateListing: mockUpdateListing,
   updateRevisionDraft: mockUpdateRevisionDraft,
+  submitExternalListing: mockSubmitExternalListing,
 }));
 vi.mock('~/server/services/blocks/app-access.service', () => ({
   listMyAppListings: mockListMyAppListings,
@@ -530,4 +533,29 @@ describe('moderator listing-media authority needs a session or a full-access key
       expect(mock).toHaveBeenCalledWith(...actor(false));
     });
   }
+});
+
+describe('submitExternalListing: linking any OAuth client needs a moderator session or full-access key', () => {
+  const input = {
+    slug: 'my-app',
+    name: 'My App',
+    connectClientId: 'oc_1',
+    scopeJustifications: {},
+  };
+  const submit = (ctx: unknown) =>
+    appListingsRouter.createCaller(ctx as never).submitExternalListing(input);
+
+  it("a moderator's full-scope app token (not a personal key) does not act as a moderator", async () => {
+    await submit(tokenCtx(100, FULL));
+    expect(mockSubmitExternalListing).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 100, isModerator: false })
+    );
+  });
+
+  it("a moderator's session acts as a moderator", async () => {
+    await submit(authedCtx(100, true));
+    expect(mockSubmitExternalListing).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 100, isModerator: true })
+    );
+  });
 });
