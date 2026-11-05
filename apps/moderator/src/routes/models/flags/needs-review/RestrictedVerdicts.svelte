@@ -3,10 +3,17 @@
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { SvelteSet } from 'svelte/reactivity';
+  import ComFaceCard from '$lib/components/ComFaceCard.svelte';
+  import { leadComCoverBlurred } from '$lib/com-face';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import type { Restriction, RestrictedVerdictRow } from '$lib/minor-flags/restricted-verdicts';
+  import {
+    LIFTED_NOTE,
+    type Restriction,
+    type RestrictedVerdictRow,
+  } from '$lib/minor-flags/restricted-verdicts';
 
   let {
     rows,
@@ -19,7 +26,6 @@
     poi: 'real person',
     sfwOnly: 'SFW only',
   };
-  // Where a dismissed lead went; free text covers the rest.
   const DISMISS_REASONS = [
     'Escalated in Auto-flagged',
     'Escalated to CSAM tools',
@@ -27,6 +33,8 @@
   ];
 
   let open = $state<number | null>(null);
+  // Leads whose hidden .com cover the moderator revealed, one row at a time.
+  const revealed = new SvelteSet<number>();
   let reasons = $state<Record<number, string>>({});
   let errors = $state<Record<number, string>>({});
   let pending = $state<number | null>(null);
@@ -81,12 +89,13 @@
             <MetaChip tone={row.restriction === 'minor' ? 'red' : 'neutral'}>
               {RESTRICTION_LABEL[row.restriction]}
             </MetaChip>
-            {#if row.isPrivate}
+            {#if !row.comFace}<MetaChip>No .com face</MetaChip>{/if}
+            {#if row.isPrivate && !row.liftedBy}
               <MetaChip>private: applies when published</MetaChip>
             {/if}
             {#if row.unticked}
               <MetaChip tone="amber">
-                held as {RESTRICTION_LABEL[row.restriction]}; owner has since unticked it
+                held as {RESTRICTION_LABEL[row.restriction]}; {LIFTED_NOTE[row.liftedBy ?? 'owner']}
               </MetaChip>
             {/if}
             {#if row.autoApplied}
@@ -108,6 +117,16 @@
               {open === row.modelId ? 'Close' : 'Rule'}
             </Button>
           </div>
+          {#if row.comFace}
+            <div class="mt-2">
+              <ComFaceCard
+                face={row.comFace}
+                bare
+                blurred={leadComCoverBlurred(row, revealed)}
+                onReveal={() => revealed.add(row.modelId)}
+              />
+            </div>
+          {/if}
           {#if open === row.modelId}
             <div class="mt-2 flex flex-col gap-2">
               <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">

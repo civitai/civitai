@@ -1,0 +1,89 @@
+import type {
+  RemixAnswer,
+  RemixApp,
+  RemixAppSource,
+  RemixAsk,
+  RemixCtx,
+  RemixImage,
+  RemixWorkflowRequest,
+  RemixWorkflowResult,
+} from '~/shared/remix-apps/define';
+
+export type RemixEffect =
+  | { type: 'workflow'; request: RemixWorkflowRequest }
+  | { type: 'ask'; spec: RemixAsk };
+
+export type RemixLogEntry =
+  | { type: 'workflow'; result: RemixWorkflowResult }
+  | { type: 'ask'; answer: RemixAnswer };
+
+export type RemixReplayOutcome =
+  | { status: 'effect'; index: number; effect: RemixEffect }
+  | { status: 'done'; outputs: RemixImage[] };
+
+export class RemixReplayError extends Error {}
+
+class Suspend {
+  constructor(readonly index: number, readonly effect: RemixEffect) {}
+}
+
+/**
+ * Re-runs the app from the start against the recorded results, and returns the first effect with
+ * no result yet, or the outputs once `run` returns. Pure: the same app, source and log always give
+ * the same outcome.
+ */
+export async function replayRemixApp(
+  app: RemixApp,
+  source: RemixAppSource,
+  log: readonly RemixLogEntry[]
+): Promise<RemixReplayOutcome> {
+  let next = 0;
+  const step = (effect: RemixEffect) => {
+    const index = next++;
+    // A run is stored only as its workflows: an answer given before the first has nowhere to live.
+    if (index === 0 && effect.type !== 'workflow')
+      throw new RemixReplayError(`${app.slug} must run a workflow before it asks anything`);
+    const entry = log[index];
+    if (!entry) throw new Suspend(index, effect);
+    if (entry.type !== effect.type)
+      throw new RemixReplayError(
+        `${app.slug} asked for a ${effect.type} at step ${index}, but the run recorded a ${entry.type}`
+      );
+    return entry.type === 'workflow' ? entry.result : entry.answer;
+  };
+
+  const ctx: RemixCtx = {
+    source: Object.freeze({ ...source }),
+    workflow: async (request) => step({ type: 'workflow', request }) as RemixWorkflowResult,
+    ask: async (spec) => step({ type: 'ask', spec }) as never,
+  };
+
+  try {
+    const outputs = await app.run(ctx);
+    if (next < log.length)
+      throw new RemixReplayError(
+        `${app.slug} finished after ${next} steps, but the run recorded ${log.length}`
+      );
+    return { status: 'done', outputs };
+  } catch (error) {
+    if (error instanceof Suspend)
+      return { status: 'effect', index: error.index, effect: error.effect };
+    throw error;
+  }
+}
+
+/** Why an answer does not fit its ask, or `undefined` when it does. */
+export function remixAnswerRefusal(spec: RemixAsk, answer: RemixAnswer): string | undefined {
+  switch (spec.kind) {
+    case 'choice':
+      return spec.options.some((o) => o.value === answer) ? undefined : 'Not one of the options';
+    case 'pick':
+      return Number.isInteger(answer) && +answer >= 0 && +answer < spec.images.length
+        ? undefined
+        : 'Not one of the images';
+    case 'text':
+      return typeof answer === 'string' && answer.trim() && answer.length <= spec.maxLength
+        ? undefined
+        : `Enter up to ${spec.maxLength} characters`;
+  }
+}

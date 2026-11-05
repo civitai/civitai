@@ -198,6 +198,10 @@ export const batchBlockTagsSchema = z.object({ tagIds: z.array(z.number()) });
 export type BatchBlockTagsSchema = z.infer<typeof batchBlockTagsSchema>;
 
 export const getByUsernameSchema = z.object({ username: usernameSchema });
+
+export const getUsageLimitsSchema = z
+  .object({ ids: z.array(z.string().max(64)).max(20).optional() })
+  .optional();
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
 
 export const getUserListSchema = paginationSchema.extend({

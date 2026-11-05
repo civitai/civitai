@@ -172,8 +172,7 @@ export const accessRowsOf = async (db: PGlite) =>
 
 // The statements that decide what is deleted, run as written. Anything else the services issue
 // touches tables this stand-in does not have, and gets the db mock's empty answer.
-const ON_DB =
-  /DELETE FROM "(Model(Version|File)|ResourceReview)"|UPDATE "Thread"|AS held\b|FOR UPDATE/;
+const ON_DB = /DELETE FROM "(Model(Version|File)|ResourceReview)"|AS held\b|FOR UPDATE/;
 
 const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
   Array.isArray(first)

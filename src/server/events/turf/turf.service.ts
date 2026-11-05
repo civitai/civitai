@@ -24,7 +24,7 @@ import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/
 import { logToAxiom } from '~/server/logging/client';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
-import type { TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
+import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   isPrismaUniqueViolation,
@@ -73,6 +73,13 @@ const imageVisible = Prisma.sql`p."publishedAt" <= now() AND p.availability <> '
   AND i."blockedFor" IS NULL`;
 // Read apart from ownerAllowsTurf so a banned owner's image is not blamed on the owner's switch.
 const ownerActive = Prisma.sql`o."bannedAt" IS NULL AND o."deletedAt" IS NULL`;
+// A sticker's hat art, drawn as the sticker itself: the cosmetic's image and where its visible
+// pixels sit in it (the fit's canvas and bounds only; its outline is not needed to draw).
+const hatArt = (cosmeticId: Prisma.Sql) => Prisma.sql`(SELECT CASE WHEN hc.data ->> 'url' IS NULL
+    THEN NULL ELSE jsonb_build_object('url', hc.data ->> 'url',
+      'canvas', hc.data -> 'fit' -> 'canvas', 'bounds', hc.data -> 'fit' -> 'bounds') END
+  FROM "Cosmetic" hc WHERE hc.id = ${cosmeticId})`;
+
 // Hat counts beside contest entries could sway judging: no Hat Turf on an image in any contest.
 const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
@@ -189,6 +196,10 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   if (!placer.team) throw throwBadRequestError("You don't have that hat");
   const team = await event.getUserTeam(userId, { strict: true });
   if (!team) throw throwBadRequestError("You aren't on a team yet");
+  // The art is the sticker, so it must be the team it scores for.
+  // Case-insensitive, so a cosmetic spelled 'blue' still matches the event's 'Blue'.
+  if (placer.team.toLowerCase() !== team.toLowerCase())
+    throw throwBadRequestError("That hat isn't your team's");
 
   const [image] = await dbWrite.$queryRaw<
     {
@@ -360,6 +371,7 @@ type StickerRow = TurfStickerRow & {
   imageId: number;
   id: bigint;
   data: Prisma.JsonValue;
+  art: TurfHatArt | null;
   // The feed draws it: the placer is not banned or deleted (getTurfStickersForImages' rule).
   drawable: boolean;
   // A contest entry: its stickers still score, but no push carries them or its counts.
@@ -378,6 +390,7 @@ type StickerRow = TurfStickerRow & {
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
+      ${hatArt(Prisma.sql`s."cosmeticId"`)} AS art,
       (u."bannedAt" IS NULL AND u."deletedAt" IS NULL) AS drawable,
       ${contestEntry(Prisma.sql`s."imageId"`)} AS contest,
       COALESCE(((u."createdAt" < ${event.startDate}
@@ -736,6 +749,7 @@ type DrawnSticker = {
   team: string;
   cosmeticId: number;
   data: Prisma.JsonValue;
+  art: TurfHatArt | null;
   createdAt: Date;
 };
 
@@ -753,7 +767,8 @@ export async function getTurfStickers(
   const event = await getTurfEvent(eventName);
   if (!event || event.turf.mode === 'off') return { stickers: [], mine: null, nextCursor: null };
   const rows = (only: Prisma.Sql, limit: number) => dbRead.$queryRaw<DrawnSticker[]>`
-    SELECT s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt"
+    SELECT s.id, s."userId", s.team, s."cosmeticId", s.data,
+      ${hatArt(Prisma.sql`s."cosmeticId"`)} AS art, s."createdAt"
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
@@ -789,6 +804,9 @@ export type FeedSticker = {
   team: string;
   cosmeticId: number;
   data: Prisma.JsonValue;
+  art: TurfHatArt | null;
+  // When it was placed, so a push reveals in placement order as a read does.
+  createdAt: Date;
 };
 
 /**
@@ -798,7 +816,7 @@ export type FeedSticker = {
 export function pickFeedStickers(
   rows: readonly Pick<
     StickerRow,
-    'id' | 'userId' | 'team' | 'cosmeticId' | 'data' | 'createdAt' | 'drawable'
+    'id' | 'userId' | 'team' | 'cosmeticId' | 'data' | 'art' | 'createdAt' | 'drawable'
   >[],
   perImage = TURF_FEED_STICKERS
 ): FeedSticker[] {
@@ -825,6 +843,8 @@ export function pickFeedStickers(
       team: row.team,
       cosmeticId: row.cosmeticId,
       data: row.data,
+      art: row.art,
+      createdAt: row.createdAt,
     }));
 }
 
@@ -859,7 +879,8 @@ export async function getTurfStickersForImages(
       FROM ranked
       WHERE "teamRank" <= ${perImage}
     )
-    SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt"
+    SELECT id, "imageId", "userId", team, "cosmeticId", data,
+      ${hatArt(Prisma.sql`picked."cosmeticId"`)} AS art, "createdAt"
     FROM picked WHERE n <= ${perImage}
     ORDER BY "imageId", n
   `;
@@ -877,19 +898,29 @@ export async function watchTurfImages(eventName: string, imageIds: number[]) {
 }
 
 /**
- * The event hats a player can use as sticker art (any they own; the team cap is one), with how often
- * and when they last used each, for "last used" and "most used" ordering.
+ * The event hats a player can use as sticker art: those they own of their current team (placing
+ * refuses another team's, since the art is the sticker), with how often and when they last used
+ * each, for "last used" and "most used" ordering.
  */
 export async function getMyStickerHats(eventName: string, userId: number) {
   const event = await getTurfEvent(eventName);
   if (!event) throw throwNotFoundError('This event has no turf');
-  return dbRead.$queryRaw<{ cosmeticId: number; usageCount: number; lastUsedAt: Date | null }[]>`
-    SELECT uc."cosmeticId", count(s.id)::int AS "usageCount", max(s."createdAt") AS "lastUsedAt"
+  // Strict, as placing is: a failed team lookup errors rather than offering a guessed team's hats.
+  const team = await event.getUserTeam(userId, { strict: true });
+  if (!team) return [];
+  return dbRead.$queryRaw<
+    { cosmeticId: number; art: TurfHatArt | null; usageCount: number; lastUsedAt: Date | null }[]
+  >`
+    SELECT uc."cosmeticId", ${hatArt(Prisma.sql`uc."cosmeticId"`)} AS art,
+      count(s.id)::int AS "usageCount", max(s."createdAt") AS "lastUsedAt"
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     LEFT JOIN "EventTurfSticker" s
       ON s.event = ${event.name} AND s."userId" = uc."userId" AND s."cosmeticId" = uc."cosmeticId"
-    WHERE uc."userId" = ${userId} AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${event.name}
+    WHERE uc."userId" = ${userId} AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${
+    event.name
+  }
+      AND lower(c.data ->> 'team') = lower(${team})
     GROUP BY uc."cosmeticId"
     ORDER BY "lastUsedAt" DESC NULLS LAST, "usageCount" DESC, uc."cosmeticId"
   `;

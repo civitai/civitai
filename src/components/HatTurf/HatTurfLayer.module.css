@@ -10,6 +10,11 @@
   position: absolute;
 }
 
+/* With Show hats off, the hats a placement revealed leave again. `.placed` carries the transition. */
+.fading .placed {
+  opacity: 0 !important; /* beats .dim and .muted */
+}
+
 /* Above the hats, so they never take its taps. */
 .corner {
   position: absolute;
@@ -17,19 +22,6 @@
   left: 8px;
   z-index: 2;
   pointer-events: auto;
-}
-
-.draft {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  line-height: 0;
-  border-radius: var(--mantine-radius-sm);
-  outline: 2px dashed var(--mantine-color-white);
-  outline-offset: 4px;
-  cursor: move;
-  touch-action: none;
-  pointer-events: auto;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
 }
 
 .placed {
@@ -55,19 +47,6 @@
 .muted {
   opacity: 0.45;
   filter: grayscale(1) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
-}
-
-.own {
-  position: absolute;
-  /* On the cone's bottom-right corner: TeamHat's 24-unit box pads the cone (x 6-18, base y 17). */
-  right: 25%;
-  bottom: 29%;
-  transform: translate(50%, 50%);
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--mantine-color-white);
-  border-radius: 50%;
-  background-color: var(--mantine-color-violet-6);
 }
 
 .more {
@@ -97,39 +76,6 @@
   cursor: progress;
 }
 
-
-.actions {
-  position: absolute;
-  display: flex;
-  gap: 6px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-}
-
-.save,
-.discard {
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--mantine-color-white);
-  border-radius: 50%;
-  color: var(--mantine-color-white);
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.save {
-  width: 34px;
-  height: 34px;
-  background-color: var(--mantine-color-green-6);
-}
-
-.discard {
-  align-self: center;
-  width: 28px;
-  height: 28px;
-  background-color: var(--mantine-color-gray-7);
-}
-
 @keyframes land {
   from {
     opacity: 0;
@@ -143,5 +89,9 @@
 @media (prefers-reduced-motion: reduce) {
   .landed {
     animation: none;
+  }
+
+  .placed {
+    transition: none;
   }
 }

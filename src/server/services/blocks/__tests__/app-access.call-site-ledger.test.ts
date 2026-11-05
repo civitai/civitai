@@ -357,6 +357,10 @@ const GATE_LEDGER: Record<string, string> = {
     'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
     'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
     'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/app-developer-terms.service.ts':
+    'assertListingOwnerAcceptedAppDeveloperTerms — reads ONLY the canonical ownerUserId ' +
+    '(called with userId null, so the role is never consulted) to check that the listing ' +
+    'owner accepted the App Developer Terms. It grants nothing: it can only refuse.',
   'src/server/services/blocks/app-feedback.service.ts':
     'Private per-app feedback, TWO gates in opposite directions. (1) The owner INBOX ' +
     '(resolveInboxListingId: list, set owner status, flag as abusive) admits owner | ' +

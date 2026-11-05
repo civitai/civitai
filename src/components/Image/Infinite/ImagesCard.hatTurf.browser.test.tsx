@@ -98,14 +98,16 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
 vi.mock('~/components/LoginPopover/LoginPopover', () => ({
   LoginPopover: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
-vi.mock('~/components/Sticker/StickerPlacementCardBadge', () => ({
-  StickerPlacementCardBadge: () =>
-    stickerBadge.renders ? (
-      <button data-testid="sticker-badge" style={{ height: 26 }}>
-        stickers
-      </button>
-    ) : null,
-}));
+// The real chip, so the footer measures its real width; only its batch query is skipped.
+vi.mock('~/components/Sticker/StickerPlacementCardBadge', async () => {
+  const { StickerCountChip } = await import('~/components/Sticker/StickerCountChip');
+  return {
+    StickerPlacementCardBadge: () =>
+      stickerBadge.renders ? (
+        <StickerCountChip count={1} revealed onClick={() => undefined} />
+      ) : null,
+  };
+});
 vi.mock('~/components/Sticker/CardStickerOverlay', async (importOriginal) => ({
   ...(await importOriginal<typeof CardStickerOverlayModule>()),
   CardStickerOverlay: () => null,
@@ -210,6 +212,8 @@ afterEach(() => {
   cleanup();
   h.stock = { available: 3, optedIn: true };
   useHatTurfStore.setState({ showHats: true });
+  stickerBadge.renders = false;
+  features.stickerPlacement = false;
 });
 
 describe('Hat Turf on the /images feed card', () => {
@@ -232,14 +236,13 @@ describe('Hat Turf on the /images feed card', () => {
   });
 
   // The joined test above is the positive control: same card, same context, showHats on.
-  test('with Show hats off a joined player gets no badge, hat button, gear or hats', async () => {
+  test('with Show hats off a joined player keeps the badge, hat button and gear, but sees no hats', async () => {
     useHatTurfStore.setState({ showHats: false });
     renderCard({ ...turf(), stickers: { 77: [stickerOnCard] as never } });
-    await cardRendered();
+    await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    expect(q('hat-turf-badge')).not.toBeNull();
+    expect(q('hat-turf-button')).not.toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(q('hat-turf-badge')).toBeNull();
-    expect(q('hat-turf-button')).toBeNull();
-    expect(q('hat-turf-gear')).toBeNull();
     expect(q('hat-turf-hat')).toBeNull();
   });
 
@@ -339,5 +342,82 @@ describe('the /images card footer fits the height the masonry gives it', () => {
     );
     if (value) await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
+  });
+  // A tester's card: three-digit counts, a 530 tip and a sticker chip beside the hat button.
+  const crowded = {
+    ...image,
+    stats: {
+      likeCountAllTime: 179,
+      heartCountAllTime: 72,
+      laughCountAllTime: 24,
+      cryCountAllTime: 12,
+      tippedAmountCountAllTime: 530,
+    },
+  };
+  async function renderCrowded(width: number) {
+    features.stickerPlacement = true;
+    stickerBadge.renders = true;
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={turf()}>
+        <IntersectionObserverProvider>
+          <div style={{ width }}>
+            <ImagesCard data={crowded} height={400} />
+          </div>
+        </IntersectionObserverProvider>
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[aria-label*="sticker" i]')).not.toBeNull()
+    );
+  }
+  // How many reactions fit depends on the fonts; a reaction that doesn't wraps onto a line the
+  // bar clips, where it can be neither seen, hit nor focused.
+  function reactionState() {
+    const bar = document.body.querySelector('[class*="fitReactions"]')!.getBoundingClientRect();
+    return [...document.body.querySelectorAll<HTMLElement>('[aria-label$="reaction"]')].map(
+      (el) => {
+        const r = el.getBoundingClientRect();
+        const inert = el.inert;
+        // Hit-testing skips an inert element, so it is lifted while the point is sampled: what is
+        // measured is whether the bar's clipping hides it. Its top edge lies inside the footer's
+        // padding, above where the card itself clips.
+        el.inert = false;
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 2);
+        el.inert = inert;
+        return {
+          dropped: r.top >= bar.bottom - 0.5,
+          whole: r.bottom <= bar.bottom + 0.5 && r.right <= bar.right + 0.5,
+          visible: !!hit && el.contains(hit),
+          inert,
+        };
+      }
+    );
+  }
+
+  test.each([288, 320, 358])(
+    'a %ipx card with three-digit counts, a tip, a sticker chip and the hat button',
+    async (width) => {
+      await renderCrowded(width);
+      expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
+      const reactions = reactionState();
+      // At 288px some reaction always drops, so the checks below have something to check.
+      if (width === 288) expect(reactions.some((r) => r.dropped)).toBe(true);
+      await vi.waitFor(() => {
+        for (const r of reactionState()) {
+          if (r.dropped) expect(r).toMatchObject({ visible: false, inert: true });
+          else expect(r).toMatchObject({ whole: true, visible: true, inert: false });
+        }
+      });
+    }
+  );
+
+  test('a card wide enough for everything drops no reaction', async () => {
+    await renderCrowded(600);
+    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
+    const reactions = reactionState();
+    expect(reactions).toHaveLength(4);
+    for (const r of reactions)
+      expect(r).toMatchObject({ dropped: false, whole: true, visible: true, inert: false });
   });
 });

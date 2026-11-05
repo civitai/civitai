@@ -4,11 +4,12 @@
   gap: 8px;
 }
 
-/* The reaction buttons' height and fill, so the row keeps their height. */
+/* The action row's buttons are 36px (`h-9`); the badge matches them. */
 .badgeButton {
   display: inline-flex;
   align-items: center;
-  height: 30px;
+  flex: none;
+  height: 36px;
   padding: 0;
   border: 0;
   background: none;
@@ -16,12 +17,16 @@
   border-radius: 50%;
 }
 
+.rowBadge {
+  --hat-turf-badge-size: 36px;
+}
+
 .badgeEmpty {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background-color: var(--mantine-color-blue-6);
   color: var(--mantine-color-white);
@@ -96,20 +101,3 @@
   height: 30px;
 }
 
-/* Struck through: hats are off, and this is the way back to the switch. */
-.hidden {
-  position: relative;
-  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-1));
-
-  &::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 22px;
-    height: 2px;
-    border-radius: 1px;
-    background-color: currentColor;
-    transform: translate(-50%, -50%) rotate(-45deg);
-  }
-}

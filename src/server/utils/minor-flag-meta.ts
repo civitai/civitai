@@ -61,6 +61,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
   const {
     minorFlagSnapshot: _snapshot,
     ownerFlagOverride: _ownerFlagOverride,
+    ownerDeclaredFlags: _ownerDeclaredFlags,
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
@@ -163,6 +164,7 @@ export const RESTORE_CANNOT_PROMOTE_KEY = 'restoreCannotPromote';
  * Meta of a model that is Private after a moderator's `cannotPromote` decision: the flag stays forced
  * on while private, and the decision is kept in the restore marker for `publishPrivateModel`.
  * `banned: true` records it; `false` drops the marker so publish makes the model promotable.
+ * `toggleCannotPromote` writes the same rule in SQL, to toggle in one statement.
  */
 export function withPrivateCannotPromote<T extends object>(meta: T, banned: boolean): T {
   const { [RESTORE_CANNOT_PROMOTE_KEY]: _marker, ...rest } = meta as Record<string, unknown>;
@@ -180,8 +182,9 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
  * dispute. `comFaceRemoved` records that the listing re-check took the model off civitai.com.
  * `restrictedNsfwVerdict` is a moderator's lead that only its ruling clears; its rulings (and a
- * kept lead's dormant verdict) sit beside it. Client meta carrying any of these is ignored, so on
- * update the stored values survive the `{ ...prevMeta, ...meta }` merge.
+ * kept lead's dormant verdict) sit beside it, and `ownerDeclaredFlags` outlives the override a
+ * ruling drops. Client meta carrying any of these is ignored, so on update the stored values
+ * survive the `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',
@@ -190,6 +193,7 @@ export const SERVER_OWNED_META_KEYS = [
   'restrictedNsfwVerdict',
   'restrictedNsfwVerdictRulings',
   'restrictedNsfwVerdictDormant',
+  'ownerDeclaredFlags',
   'comFaceRemoved',
 ] as const satisfies readonly (keyof ModelMeta)[];
 

@@ -1,5 +1,6 @@
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyV3Read } from '~/server/db/kyselyDb';
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
@@ -113,11 +114,16 @@ import {
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
-import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
+import type {
+  OriginalImageRead,
+  OriginalImageSource,
+  SpooledImage,
+} from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  spoolOriginalImage,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -543,6 +549,29 @@ export async function sweepStaleSendDirs(root = baseDir) {
   const stale = found.filter(({ reportId, claimId }) => !liveDirs.has(`${reportId}-${claimId}`));
   for (const { path } of stale) await fsAsync.rm(path, { recursive: true, force: true });
   return stale.map(({ path }) => path);
+}
+
+const ARCHIVE_SCRATCH_ROOTS = ['base', 'images', 'generated-images', 'training-data'];
+
+/**
+ * Removes the archive scratch directories, named by report id alone, that a pass which died left
+ * behind. Run only at the start of the archive job, whose run lock keeps other archive passes out
+ * while it holds; a pass that outlives the lock can lose its directory here and fail. Send directories in the same roots are named `<id>-<claim>` and are left.
+ */
+export async function sweepArchiveScratchDirs(root = baseDir) {
+  const removed: string[] = [];
+  for (const scratch of ARCHIVE_SCRATCH_ROOTS) {
+    const rootDir = `${root}/${scratch}`;
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names.filter((name) => /^\d+$/.test(name))) {
+      await fsAsync.rm(`${rootDir}/${name}`, { recursive: true, force: true });
+      removed.push(`${rootDir}/${name}`);
+    }
+  }
+  return removed;
 }
 
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
@@ -2268,6 +2297,76 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
   for await (const page of pages) for (const row of page) yield row;
 }
 
+/** Every CommentV3 row `userId` wrote, keyset-paged. */
+const userCommentRows = (userId: number) =>
+  flattenPages(
+    scanPagesById(({ afterId, take }) => {
+      let query = kyselyV3Read
+        .selectFrom('CommentV3')
+        .selectAll()
+        .where('userId', '=', userId)
+        .orderBy('id', 'asc')
+        .limit(take);
+      if (afterId !== undefined) query = query.where('id', '>', afterId);
+      return query.execute();
+    })
+  );
+
+/** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
+export const userContentSections: {
+  name: string;
+  rows: (userId: number) => AsyncIterable<unknown>;
+}[] = [{ name: 'comments', rows: userCommentRows }];
+
+/**
+ * Writes every comment `userId` wrote to `comments.json` in the CSAM bucket, beside their reports'
+ * archives: the CommentV3 rows, then any CommentV2 row the mirror never copied. For accounts whose
+ * reports were archived before `data.json` carried comments.
+ */
+export async function archiveUserComments(userId: number) {
+  const v2 = await dbRead.commentV2.findMany({ where: { userId }, orderBy: { id: 'asc' } });
+  const mirrored = v2.length
+    ? new Set(
+        (
+          await kyselyV3Read
+            .selectFrom('CommentV3')
+            .select('id')
+            .where(
+              'id',
+              'in',
+              v2.map((c) => c.id)
+            )
+            .execute()
+        ).map((c) => c.id)
+      )
+    : new Set<number>();
+  const unmirrored = v2.filter((c) => !mirrored.has(c.id));
+
+  let comments = 0;
+  async function* counted<T>(rows: AsyncIterable<T>) {
+    for await (const row of rows) {
+      comments++;
+      yield row;
+    }
+  }
+
+  const sink = new stream.PassThrough();
+  const [, stored] = await Promise.all([
+    writeJsonObject({
+      sink,
+      replacer: bigintReplacer,
+      entries: [
+        ['userId', { value: userId }],
+        ['archivedAt', { value: new Date().toISOString() }],
+        ['comments', { items: counted(userCommentRows(userId)) }],
+        ['commentsV2NotInV3', { value: unmirrored }],
+      ],
+    }),
+    uploadStream({ stream: sink, userId, filename: 'comments.json' }),
+  ]);
+  return { userId, ...stored, comments: comments + unmirrored.length };
+}
+
 /**
  * Releases an archive and its sink after a failure that skipped `finalize()`.
  *
@@ -2569,9 +2668,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
    * pinned disabled — all of which leave the disk-staging path, which is unchanged and stays
    * reachable, in charge. That is the rollback: flip the flag off, no deploy.
    *
-   * `data.json` and `training-data.zip` are NOT affected by this flag. The first is small; the
-   * second is a file this code downloads rather than builds, and the NCMEC submission path reads
-   * it back off disk, so neither has the disk ceiling this removes.
+   * `data.json` and `training-data.zip` are NOT affected by this flag. The first is staged on disk
+   * and grows with the user's comment count; the second is a file this code downloads rather than
+   * builds, and the NCMEC submission path reads it back off disk. Neither is the media archive whose
+   * disk ceiling this removes.
    */
   const streamArchivesToStorage = await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD);
 
@@ -2709,36 +2809,19 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   }
 
   /**
-   * Writes the base evidence bundle to disk, then uploads it.
+   * Writes the base evidence bundle to disk, then uploads it: `user`, `reportId`, `models`,
+   * `modelVersions`, `images`, then one section per `userContentSections` entry.
    *
-   * 🔴 WHAT EVIDENCE IS IN THE BUNDLE IS UNCHANGED: the same five properties in the same order,
-   * the same `where` clauses with no `select` so every column still lands in it, and the same
-   * bigint replacer. `json-stream-helpers.test.ts` pins the serialiser's byte-identity against
-   * `JSON.stringify` — note that is a claim about the SERIALISER, over one fixed row order.
-   *
-   * Two things ARE different, and neither adds or removes a row. The queries now also carry
-   * `orderBy: { id: 'asc' }`, `take` and an `id > cursor` predicate, because they are paged. And
-   * as a consequence of that ordering, array element order is now `id ASC` where it was
-   * previously whatever the query plan happened to produce — so against real data this writes a
-   * document that is set-identical to the old one but NOT byte-identical to it. Making the order
-   * deterministic is an improvement for an evidence artefact, but it is a change, and anything
-   * that diffs two bundles across this commit will see it.
-   *
-   * Why it had to change: the previous shape loaded every `Image`, `Model` and `ModelVersion`
-   * row the reported user owns into three arrays and rendered them with one `JSON.stringify`.
-   * That has two ceilings. The soft one is memory — rows and rendered string resident together.
-   * The hard one is that `JSON.stringify` returns a single JavaScript string, and a JS string
-   * cannot exceed V8's maximum length — 536,870,888 characters on 64-bit
-   * (`require('buffer').constants.MAX_STRING_LENGTH`). Past that it throws
-   * `RangeError: Invalid string length`, which no amount of memory or retrying fixes. A report
-   * whose bundle crosses that line can never be archived.
+   * Streamed because `JSON.stringify` cannot exceed V8's maximum string length: a bundle past it
+   * could never be archived. Rows are written `id ASC`, so a bundle is not byte-comparable with one
+   * written before paging.
    */
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
     const user = await getReportedUser(userId);
 
-    // Model IDs are accumulated because `modelVersions` is filtered by them, exactly as before.
+    // Model IDs are accumulated because `modelVersions` is filtered by them.
     // Only the 4-byte ids are kept; the model ROWS stream through without being retained.
     const modelIds: number[] = [];
     let modelScanComplete = false;
@@ -2810,6 +2893,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         ['models', { items: streamModels() }],
         ['modelVersions', { items: streamModelVersions() }],
         ['images', { items: flattenPages(scanUserImages()) }],
+        ...userContentSections.map(
+          ({ name, rows }) =>
+            [name, { items: rows(userId) }] as [string, { items: AsyncIterable<unknown> }]
+        ),
       ],
     });
 
@@ -2868,9 +2955,16 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
-          let original: OriginalImageRead;
+          let original: OriginalImageRead | SpooledImage;
+          let attempts = 1;
           try {
-            original = await readOriginalImage(image, { reserve: budget.reserve });
+            original = await spoolOriginalImage(image, {
+              reserve: budget.reserve,
+              spoolDir: `${reportDirs.images}/spool`,
+              onRetry: (failedAttempt) => {
+                attempts = Math.max(attempts, failedAttempt + 1);
+              },
+            });
           } catch (e) {
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
@@ -2886,9 +2980,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
               ...errorClass(e),
               fullUrl: isEdgeUrlPassthrough(image.url),
               retried,
+              attempts,
             });
             if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
+          }
+          if (attempts > 1) {
+            logToAxiom({
+              name: 'csam-report',
+              type: 'info',
+              subType: 'archive-image-read-retried',
+              message: `report ${report.id}: image ${image.id} read on attempt ${attempts}`,
+              reportId: report.id,
+              imageId: image.id,
+              attempts,
+            });
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });
@@ -2896,9 +3002,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           }
           // Named by id: Image.name is user input.
           const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+          let source: Buffer | Readable | undefined;
           try {
-            await boundedArchive.append(original.data, { name }, original.release);
+            // Opened here, so a failed open throws to this catch rather than from an unwatched stream.
+            source =
+              'path' in original
+                ? (await fsAsync.open(original.path, 'r')).createReadStream()
+                : original.data;
+            await boundedArchive.append(source, { name }, original.release);
           } catch (e) {
+            // An unread stream holds the deleted file's space until it is closed.
+            if (source instanceof Readable) source.destroy();
             original.release();
             throw e;
           }
@@ -2910,7 +3024,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             imageId: image.id,
             source: original.source,
             sha256: original.sha256,
-            bytes: original.data.length,
+            bytes: 'path' in original ? original.bytes : original.data.length,
             contentType: original.contentType,
           });
         };

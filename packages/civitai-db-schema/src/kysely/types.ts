@@ -428,6 +428,11 @@ export type AppCollaborator = {
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
 };
+export type AppDeveloperTermsAcceptance = {
+  user_id: number;
+  version: string;
+  accepted_at: Generated<Timestamp>;
+};
 export type AppDevForgejoIdentity = {
   user_id: number;
   forgejo_username: string;
@@ -2625,7 +2630,7 @@ export type Comment = {
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
   /**
-   * Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+   * No longer set; only the reverse copy reads it. Kept until a migration drops it.
    */
   removedByAuthor: Generated<boolean>;
 };
@@ -6459,6 +6464,7 @@ export type DB = {
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_developer_terms_acceptances: AppDeveloperTermsAcceptance;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;

@@ -9,18 +9,16 @@ import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfButton.module.css';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { DEFAULT_SPOT, HatTurfPanelPopover } from '~/components/HatTurf/HatTurfPanel';
-import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showInfoNotification } from '~/utils/notifications';
 import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
 
-/** Hidden when signed out, when hats are switched off, or the image can't take a hat. */
+/** Hidden when signed out or the image can't take a hat. Show hats off keeps it: the game stays. */
 export function HatTurfButton({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
-  const showHats = useHatTurfStore((state) => state.showHats);
-  return feed && showHats ? <HatTurfButtonContent imageId={imageId} /> : null;
+  return feed ? <HatTurfButtonContent imageId={imageId} /> : null;
 }
 
 function HatTurfButtonContent({ imageId }: { imageId: number }) {
@@ -148,7 +146,7 @@ export function HatTurfGear({
             setOpen(!open);
           }}
         >
-          <IconSettingsFilled size={11} />
+          <IconSettingsFilled size={12} />
         </button>
       }
     />

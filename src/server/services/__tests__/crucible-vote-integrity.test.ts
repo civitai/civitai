@@ -555,7 +555,10 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     const progress = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
     expect(progress, 'progress agrees nothing is left').toMatchObject({
       remainingPairs: 0,
-      judgedPairs: 3,
+      // Two votes, two judged pairs: the settled 10-30 comes off the total, not onto judged.
+      judgedPairs: 2,
+      totalPairs: 2,
+      votesUsedUp: true,
     });
   });
 
