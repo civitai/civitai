@@ -238,9 +238,9 @@ describe('Hat Turf on the /images feed card', () => {
       renderCard(value(), video, width);
       await vi.waitFor(() => expect(q('rating-badge')).not.toBeNull());
       const rating_ = q('rating-badge')!;
-      const duration = [...rating_.parentElement!.children].find((el) =>
-        /^\d+:\d\d$/.test(el.textContent ?? '')
-      ) as HTMLElement;
+      const duration = q('duration-badge')!;
+      expect(duration.textContent).toBe('1m 35s');
+      expect(duration.parentElement).toBe(rating_.parentElement);
       const chips = [q('hat-turf-badge'), rating_, duration].filter(Boolean) as HTMLElement[];
       expect(chips.length).toBe(value() ? 3 : 2);
       const boxes = chips.map((el) => el.getBoundingClientRect());
