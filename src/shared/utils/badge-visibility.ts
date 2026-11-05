@@ -10,6 +10,12 @@ export function isBadgeShownOnProfile(
   return cosmeticId == null || !privacy?.hiddenBadgeIds?.includes(cosmeticId);
 }
 
+/** Drops ids the user no longer owns (expired or replaced badges), keeping the order of the rest. */
+export function keepOwnedBadgeIds(ids: number[] | null | undefined, ownedIds: Iterable<number>) {
+  const owned = new Set(ownedIds);
+  return (ids ?? []).filter((id) => owned.has(id));
+}
+
 /** A badge's image URL, or '' when it has none. */
 export function getBadgeImageUrl(badge: { data: unknown }) {
   return (((badge.data ?? {}) as BadgeCosmetic['data']).url ?? '') as string;

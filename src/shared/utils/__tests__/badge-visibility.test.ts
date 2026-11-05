@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isBadgeShownOnProfile, splitProfileBadges } from '~/shared/utils/badge-visibility';
+import {
+  isBadgeShownOnProfile,
+  keepOwnedBadgeIds,
+  splitProfileBadges,
+} from '~/shared/utils/badge-visibility';
 
 describe('isBadgeShownOnProfile', () => {
   it('shows a badge when the owner has set nothing', () => {
@@ -63,5 +67,16 @@ describe('splitProfileBadges', () => {
     );
     expect(highlightedBadges).toEqual([]);
     expect(ids(otherBadges)).toEqual([3]);
+  });
+});
+
+describe('keepOwnedBadgeIds', () => {
+  it('drops an unowned id from the middle and keeps the pick order', () => {
+    expect(keepOwnedBadgeIds([7, 99, 9, 3], [3, 7, 9])).toEqual([7, 9, 3]);
+  });
+
+  it('treats a missing list as empty', () => {
+    expect(keepOwnedBadgeIds(undefined, [1])).toEqual([]);
+    expect(keepOwnedBadgeIds(null, [1])).toEqual([]);
   });
 });
