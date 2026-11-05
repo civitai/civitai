@@ -902,7 +902,8 @@ export async function watchTurfImages(eventName: string, imageIds: number[]) {
 export async function getMyStickerHats(eventName: string, userId: number) {
   const event = await getTurfEvent(eventName);
   if (!event) throw throwNotFoundError('This event has no turf');
-  const team = await event.getUserTeam(userId).catch(() => null);
+  // Strict, as placing is: a failed team lookup errors rather than offering a guessed team's hats.
+  const team = await event.getUserTeam(userId, { strict: true });
   if (!team) return [];
   return dbRead.$queryRaw<
     { cosmeticId: number; art: TurfHatArt | null; usageCount: number; lastUsedAt: Date | null }[]
