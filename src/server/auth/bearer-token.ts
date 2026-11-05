@@ -4,7 +4,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
-import { isSystemAccountMeta } from '@civitai/auth';
+import { allowsModeratorWriteKeys, isSystemAccountMeta } from '@civitai/auth';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
 import { holdsModeratorAccess } from '~/server/auth/moderator-access';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -87,22 +87,24 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
   if (refuseModerationAccountSession(user, 'bearer-token')) return null;
-  // A system account with moderator access authenticates with read-only keys only. Its access is
-  // read from the primary, not the session copy, so a grant counts as soon as it lands.
+  // A system account with moderator access authenticates with read-only keys only, unless an admin
+  // has allowed it write keys. Both are read from the primary, not the session copy, so a grant
+  // counts as soon as it lands.
   if (
     isSystemAccountMeta(user.meta) &&
     ((apiKey.tokenScope ?? 0) & ~TokenScopePresets.ReadOnly) !== 0
   ) {
     const access = await dbWrite.user.findUnique({
       where: { id: user.id },
-      select: { isModerator: true, roles: { select: { role: true } } },
+      select: { meta: true, isModerator: true, roles: { select: { role: true } } },
     });
     if (
       !access ||
-      (await holdsModeratorAccess({
-        isModerator: access.isModerator,
-        roles: access.roles.map(({ role }) => role),
-      }))
+      (!allowsModeratorWriteKeys(access.meta) &&
+        (await holdsModeratorAccess({
+          isModerator: access.isModerator,
+          roles: access.roles.map(({ role }) => role),
+        })))
     )
       return null;
   }
