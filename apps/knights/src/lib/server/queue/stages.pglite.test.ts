@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import {
   castVote,
@@ -13,7 +14,7 @@ import {
 } from './queue.service';
 import { FEED } from './feed';
 
-const Q = 'knights.image.nsfwLevel';
+const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 const NOW = new Date('2026-12-15T12:00:00Z');
 const hoursAfter = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
 

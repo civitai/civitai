@@ -1,3 +1,5 @@
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
@@ -42,8 +44,8 @@ const parseOptions = (value: unknown): QuestionOption[] =>
 const hasBlockMarker = (image: { ingestion: string; blockedFor: string | null }) =>
   image.ingestion === 'Blocked' || image.blockedFor !== null;
 
-/** The page and its badge both read through this, so they cannot disagree about what is waiting. */
-const waitingOnInquisitors = (db: typeof dbWrite) =>
+/** Shared by the page and the sidebar badge, so a filter added here applies to both. The badge is uncapped; the page shows at most INQUISITOR_QUEUE_LIMIT. */
+const waitingOnInquisitors = (db: Kysely<DB>) =>
   db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')

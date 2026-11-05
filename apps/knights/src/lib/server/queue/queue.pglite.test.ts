@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import {
   castVote,
@@ -15,7 +16,7 @@ import {
   type QueueDeps,
 } from './queue.service';
 
-const Q = 'knights.image.nsfwLevel';
+const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
 const getFeed: typeof serveFeed = (db, userId, options = {}) =>
   serveFeed(db, userId, { random: () => 0.99, ...options });

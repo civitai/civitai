@@ -307,8 +307,7 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
-  // No path of its own, so each page keeps its existing grant. `/knights-of-new-order` is the linked-account
-  // review and must stay that path: the stored grant for it predates the group.
+  // /knights-of-new-order must keep this path: existing stored grants are keyed on it.
   {
     label: 'Knights of New Order',
     children: [

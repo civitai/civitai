@@ -8,14 +8,18 @@ import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, setLevel } = vi.hoisted(() => ({
+const { dbHandle, replica, setLevel } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
+  replica: { allowed: false },
   setLevel: vi.fn(),
 }));
 
 vi.mock('../../db', () => ({
   get dbRead() {
-    throw new Error('the Inquisitor queue must read from the primary, not the replica');
+    if (!replica.allowed) {
+      throw new Error('the Inquisitor queue must read from the primary, not the replica');
+    }
+    return dbHandle.current;
   },
   get dbWrite() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -24,7 +28,7 @@ vi.mock('../../db', () => ({
 }));
 vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: setLevel }));
 
-const { getInquisitorQueue, ruleOnInquisitorItem, RULING_LEASE_MS } = await import(
+const { countInquisitorQueue, getInquisitorQueue, ruleOnInquisitorItem, RULING_LEASE_MS } = await import(
   '../inquisitor.service'
 );
 
@@ -101,6 +105,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  replica.allowed = false;
   setLevel.mockResolvedValue(undefined);
   await db.exec(`DELETE FROM "KnightsVote"; DELETE FROM "KnightsQueueItem"; DELETE FROM "Image";`);
   await db.exec(
@@ -407,5 +412,31 @@ describe('ruleOnInquisitorItem', () => {
     expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
 
     expect((await verdicts(1))[0].verdict).toBe('correct');
+  });
+});
+
+describe('countInquisitorQueue', () => {
+  beforeEach(() => {
+    replica.allowed = true;
+  });
+
+  it('counts exactly what the page lists', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertItem(2, 2, 'Inquisitor');
+    await insertItem(3, 3, 'Open');
+    await db.query(
+      `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('other.q','bool','Is it?','[]'::jsonb)
+       ON CONFLICT DO NOTHING`
+    );
+    await insertItem(4, 3, 'Inquisitor', 'other.q');
+    // Image 99 does not exist: the inner join drops it from page and count alike.
+    await insertItem(5, 99, 'Inquisitor');
+
+    expect(await countInquisitorQueue()).toBe(2);
+    expect(await countInquisitorQueue()).toBe((await getInquisitorQueue()).length);
+  });
+
+  it('is zero when nothing waits', async () => {
+    expect(await countInquisitorQueue()).toBe(0);
   });
 });
