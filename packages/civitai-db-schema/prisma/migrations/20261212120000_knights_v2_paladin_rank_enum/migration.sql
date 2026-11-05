@@ -1,6 +1,7 @@
--- Idempotent: applied by hand, possibly more than once. Its own file and the last to apply: a new enum label must ship
--- after the client that knows it, so it cannot ride with the tables or columns.
--- Deploy the regenerated Prisma client first: Prisma throws on a label it does not know.
+-- Idempotent: applied by hand, possibly more than once. Its own file: a new enum label must ship after the client
+-- that knows it, so it cannot ride with the tables or columns.
+-- Apply after the main app (regenerated Prisma client: Prisma throws on a label it does not know) and BEFORE the
+-- Knights deploy: Knights compares "rankType" with 'Paladin' (leaderboard, notify), which fails while the label is missing.
 -- Run the two statements as separate autocommit statements: a new enum label cannot be used in the transaction that adds it.
 ALTER TYPE "NewOrderRankType" ADD VALUE IF NOT EXISTS 'Paladin';
 
