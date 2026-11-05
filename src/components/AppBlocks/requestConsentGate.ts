@@ -163,6 +163,71 @@ export function resolveHostConsentNotice(input: HostConsentNoticeInput): string[
   return resolveRequestConsent(input.status, input.missingScopes ?? []);
 }
 
+/**
+ * A host's per-mount memory of the missing-permissions notice: which app the viewer
+ * dismissed it for (read by {@link resolveHostConsentNotice} as `dismissedFor`), and
+ * whether the notice now showing was brought back by a refusal (the host passes it to
+ * `BlockConsentNotice` as `highlight`).
+ */
+export type ConsentNoticeDismissal = {
+  dismissedFor: string | null;
+  revived: boolean;
+};
+
+export const CONSENT_NOTICE_NOT_DISMISSED: ConsentNoticeDismissal = {
+  dismissedFor: null,
+  revived: false,
+};
+
+/** The viewer dismissed the notice for `appBlockId`. A later revival highlights it again. */
+export function dismissConsentNotice(appBlockId: string): ConsentNoticeDismissal {
+  return { dismissedFor: appBlockId, revived: false };
+}
+
+/**
+ * 🔴 BRING A DISMISSED NOTICE BACK WHEN A PERMISSION THE VIEWER CAN STILL GRANT
+ * BLOCKS SOMETHING THE APP TRIED TO DO. Shared by both hosts.
+ *
+ * A dismissal is "not now". It must not outlive the moment the missing permission
+ * starts to matter: once the app has had a request refused for a scope the viewer has
+ * not granted, the notice is the one host-owned place that explains why, so it is
+ * shown again (and highlighted) instead of leaving the viewer with only the app's own
+ * error message.
+ *
+ * Revives ONLY when all of these hold:
+ *   - the notice is currently dismissed for THIS app (`dismissedFor === appBlockId`).
+ *     A notice that is already showing, or a dismissal recorded for a different app,
+ *     is returned unchanged;
+ *   - at least one refused scope is in `missingScopes`, the set the mint withheld and
+ *     that consent can add. A scope outside that set is un-grantable here and keeps
+ *     its own handling (the CONSENT_UNAVAILABLE push and toast): bringing back a
+ *     notice whose "Allow…" cannot help would be a false offer.
+ *
+ * `refusedScopes` is `unknown` because one caller passes the block's own
+ * REQUEST_CONSENT hint, which is untrusted input. It is only intersected with
+ * `missingScopes`, never echoed, so a junk hint can do nothing but fail to match.
+ *
+ * Returns the SAME object when nothing changes, so a React state updater that calls
+ * this does not re-render.
+ */
+export function resolveConsentNoticeAfterRefusal(
+  current: ConsentNoticeDismissal,
+  input: {
+    appBlockId: string;
+    refusedScopes: unknown;
+    missingScopes: string[] | undefined;
+  }
+): ConsentNoticeDismissal {
+  if (current.dismissedFor !== input.appBlockId) return current;
+  if (!Array.isArray(input.refusedScopes)) return current;
+  const missing = new Set(input.missingScopes ?? []);
+  const blocksAGrantableScope = input.refusedScopes.some(
+    (s) => typeof s === 'string' && missing.has(s)
+  );
+  if (!blocksAGrantableScope) return current;
+  return { dismissedFor: null, revived: true };
+}
+
 /** What an un-grantable (prod-path) REQUEST_CONSENT should produce. */
 export type UngrantableConsentNotice = {
   /**
