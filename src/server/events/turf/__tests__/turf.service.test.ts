@@ -77,6 +77,8 @@ describe('placeTurfSticker', () => {
       OK_IMAGE,
       /don't have that hat/,
     ],
+    // The hat art is the sticker: a Pink hat scoring for Blue would show one team and count another.
+    ["the hat is another team's", { optedIn: true, team: 'Pink' }, OK_IMAGE, /isn't your team's/],
     [
       "the image isn't publicly visible",
       OK_PLACER,
@@ -126,6 +128,15 @@ describe('placeTurfSticker', () => {
     });
     expect(spent()).toHaveLength(1);
     expect(spent()[0].values[0]).toBe(2);
+  });
+
+  // Robustness: a hat whose team is spelled in another case still counts as the player's team.
+  it("places a hat whose team differs from the player's only in case", async () => {
+    given({ optedIn: true, team: 'blue' }, OK_IMAGE, 3);
+    await placeTurfSticker(input, NOW);
+    expect(dbMock.dbWrite.eventTurfSticker.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ team: 'Blue' }),
+    });
   });
 
   it('a second sticker on the same image is refused by the unique key, in words', async () => {
