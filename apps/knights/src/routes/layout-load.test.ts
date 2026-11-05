@@ -21,24 +21,27 @@ vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES })
 
 const { load } = await import('./+layout.server');
 
-const event = (user?: { username: string; id?: number }) =>
+// `url` is a getter that records a read: a load that touches it re-runs on every navigation.
+const urlReads = vi.hoisted(() => ({ count: 0 }));
+const eventFor = (user: unknown, depends = vi.fn()) =>
   ({
     locals: { user },
-    depends: vi.fn(),
-    url: new URL('http://knights.test/shop/inventory'),
+    depends,
+    get url() {
+      urlReads.count += 1;
+      return new URL('http://knights.test/shop/inventory');
+    },
   } as never);
+const event = (user?: { username: string; id?: number }) => eventFor(user);
 const run = (user: unknown = { id: 7, username: 'ana' }) =>
-  load({
-    locals: { user },
-    depends: vi.fn(),
-    url: new URL('http://knights.test/shop/inventory'),
-  } as never) as Promise<Record<string, any>>;
+  load(eventFor(user)) as Promise<Record<string, any>>;
 
 beforeEach(() => {
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ streak: 3, shields: 1, maxShields: 2 });
+  urlReads.count = 0;
   getRecapState.mockReset();
   getRecapState.mockResolvedValue({ optedOut: false, dismissedToday: false, hasHistory: true });
 });
@@ -71,6 +74,30 @@ describe('layout load', () => {
     getPlayerStatus.mockRejectedValue(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await run()).toMatchObject({ headerStats: { status: null, daily: null } });
+  });
+
+  it('keeps the status when only the streak read fails, so the pills show without it', async () => {
+    playerRow.value = { userId: 7 };
+    getDailyStatus.mockRejectedValue(new Error('daily down'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await run()).toMatchObject({
+      headerStats: { status: { rank: 'Acolyte' }, daily: null },
+    });
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('has no pills and reads no streak for a joined player whose status is missing', async () => {
+    playerRow.value = { userId: 7 };
+    getPlayerStatus.mockResolvedValue(null);
+    expect(await run()).toMatchObject({ headerStats: { status: null, daily: null } });
+    expect(getDailyStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not depend on the URL, and re-runs only when the header is invalidated', async () => {
+    const depends = vi.fn();
+    await load(eventFor({ id: 7, username: 'ana' }, depends));
+    expect(urlReads.count).toBe(0);
+    expect(depends).toHaveBeenCalledWith('knights:header');
   });
 
   it('points "Back to Civitai" at the configured main app, without a trailing slash', async () => {

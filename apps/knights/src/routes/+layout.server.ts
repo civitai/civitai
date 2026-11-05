@@ -27,23 +27,30 @@ async function recapUnseen(playerId: number | undefined): Promise<boolean> {
 
 // The header's gold and rank pills and the streak chip, for every page. A page that loads its own `status`/`daily` overrides
 // these in page data (play keeps its live copy); the rest get them here, so no page can forget the header's stats. A failed
-// read only costs the pills.
+// read only costs what failed: the pills when the status is gone, the streak alone when only the daily read failed.
 async function headerStats(playerId: number) {
+  let status: Awaited<ReturnType<typeof getPlayerStatus>>;
   try {
-    const status = await getPlayerStatus(db, playerId);
-    if (!status) return { status: null, daily: null };
-    const daily = await getDailyStatus(db, { playerId, rank: status.rank, now: queueDeps.now() });
-    return { status, daily };
+    status = await getPlayerStatus(db, playerId);
   } catch (error) {
     console.error('knights: could not read the header stats', { error });
     return { status: null, daily: null };
   }
+  if (!status) return { status: null, daily: null };
+  try {
+    const daily = await getDailyStatus(db, { playerId, rank: status.rank, now: queueDeps.now() });
+    return { status, daily };
+  } catch (error) {
+    console.error('knights: could not read the header streak', { error });
+    return { status, daily: null };
+  }
 }
 
-export const load: LayoutServerLoad = async ({ locals, depends, url }) => {
+// Not tied to the URL, so a client navigation keeps this data. It re-runs when something invalidates 'knights:header'
+// (leaving /play, whose votes move the stats) or 'app:recap', and after every form action and restart (`invalidateAll`).
+export const load: LayoutServerLoad = async ({ locals, depends }) => {
   depends('app:recap');
-  // Re-run on every navigation, so the stats are as fresh as a page's own load.
-  void url.pathname;
+  depends('knights:header');
   const civitaiUrl = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
   // Only a player has a career to restart, which the account menu offers.
   const player = locals.user

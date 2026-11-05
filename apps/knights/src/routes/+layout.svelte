@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../global.css';
   import '../motion.css';
+  import { afterNavigate, invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
@@ -15,6 +16,11 @@
     (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
   );
   let streak = $derived((page.data.daily as Streak | null | undefined) ?? data.headerStats?.daily ?? undefined);
+  // /play keeps its own live status for the header while it is open, so the layout's copy is as old as the visit. Leaving
+  // refreshes it for the pages that carry no status of their own.
+  afterNavigate(({ from }) => {
+    if (from?.route.id === '/play') void invalidate('knights:header');
+  });
   // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
   // The welcome screen is signed-out and brings its own chrome.
   let bare = $derived(page.route.id === '/welcome');
