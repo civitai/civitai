@@ -602,7 +602,7 @@ type Ranking = { entries: RankedEntry[]; imageCandidates?: 'reactions-30d' | 'ne
 const compareRanked = (a: RankedEntry, b: RankedEntry) =>
   b.v - a.v || KIND_ORDER[a.k] - KIND_ORDER[b.k] || b.id - a.id;
 
-/** `reactions` is partitioned by month and sorted on time first, so the 30-day window bounds the read. */
+/** `reactions` sorts on time first, not `ownerId`, so the 30-day window bounds the read. */
 async function reactedImageIds(userId: number, w: Windows, excluded: number[]) {
   if (!clickhouse) return undefined;
   try {

@@ -20,12 +20,12 @@ held until the flag opens).
   still gets `AuthedEndpoint`'s 401 first.
 - **Query:**
 
-  | Param | Values | Default |
-  |---|---|---|
-  | `type` | `image`, `video`, `model` | all three |
-  | `sort` | `engagement`, `newest` | `engagement` |
-  | `limit` | 1–100 | 20 |
-  | `cursor` | `metadata.nextCursor` of the previous page | — |
+  | Param    | Values                                     | Default      |
+  | -------- | ------------------------------------------ | ------------ |
+  | `type`   | `image`, `video`, `model`                  | all three    |
+  | `sort`   | `engagement`, `newest`                     | `engagement` |
+  | `limit`  | 1–100                                      | 20           |
+  | `cursor` | `metadata.nextCursor` of the previous page | —            |
 
 - **Rate limit:** 30 requests per minute per user (fixed window in Redis, fails open), on top of
   whatever applies to every API-key request. Over it: `429` with `Retry-After`.
@@ -45,9 +45,25 @@ held until the flag opens).
       "mediaUrl": "https://…",
       "createdAt": "2026-10-01T12:00:00.000Z",
       "nsfwLevel": 1,
-      "d7":      { "reactions": { "total": 3, "like": 2, "heart": 1, "laugh": 0, "cry": 0 }, "comments": 1, "collects": 0, "views": 40 },
-      "d30":     { "reactions": { "total": 9, "like": 6, "heart": 2, "laugh": 1, "cry": 0 }, "comments": 2, "collects": 1, "views": 210 },
-      "allTime": { "reactions": { "total": 9, "like": 6, "heart": 2, "laugh": 1, "cry": 0 }, "comments": 2, "collects": 1, "views": 230, "tippedBuzz": 50 }
+      "d7": {
+        "reactions": { "total": 3, "like": 2, "heart": 1, "laugh": 0, "cry": 0 },
+        "comments": 1,
+        "collects": 0,
+        "views": 40
+      },
+      "d30": {
+        "reactions": { "total": 9, "like": 6, "heart": 2, "laugh": 1, "cry": 0 },
+        "comments": 2,
+        "collects": 1,
+        "views": 210
+      },
+      "allTime": {
+        "reactions": { "total": 9, "like": 6, "heart": 2, "laugh": 1, "cry": 0 },
+        "comments": 2,
+        "collects": 1,
+        "views": 230,
+        "tippedBuzz": 50
+      }
     }
   ],
   "metadata": { "nextCursor": "…", "imageCandidates": "reactions-30d" }
@@ -62,15 +78,15 @@ tipper is ever named.
 
 All Postgres reads go to the read replica (`kyselyRead`) and are keyed by the page's item ids.
 
-| Counter | Source | Windows | Notes |
-|---|---|---|---|
-| Image/video reactions | `ImageReaction` | 7d, 30d, all | Like, Heart, Laugh, Cry; Dislike is not counted. Current reactions whose `createdAt` is in the window: an un-react removes the row, so it leaves every window. |
-| Model "reactions" | `ResourceReview` | 7d, 30d, all | Models have no emoji reactions. `thumbsUp` = recommended reviews, `thumbsDown` = not recommended, `total` = both. `exclude` and ToS-hidden reviews are skipped, as the model metric job does. |
-| Comments | `CommentV3` | 7d, 30d, all | Every live comment on the item, replies included; deleted, hidden and ToS-hidden ones are skipped. `CommentV3` is the table the metric jobs count since the comments consolidation; the old `CommentV2`/`Thread` pair is a mirror. |
-| Collects | `CollectionItem` | 7d, 30d, all | `ACCEPTED` entries; each collection the item is in counts once. |
-| Views (images/videos) | ClickHouse `daily_views` | 7d, 30d, all | Day-granular: "7d" is the last 7 UTC days including today. Omitted entirely when ClickHouse is unavailable, never reported as 0. |
-| Downloads (models) | `ModelMetric.downloadCount` | all only | The windowed ClickHouse rollup was not verified for this endpoint, so `d7`/`d30` carry no `downloads`. |
-| Tipped Buzz | `BuzzTip` | all only | `BuzzTip` keeps one row per tipper per item with a running `amount`, so a window cannot be derived from it. `d7`/`d30` carry no `tippedBuzz`. |
+| Counter               | Source                      | Windows      | Notes                                                                                                                                                                                                                              |
+| --------------------- | --------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image/video reactions | `ImageReaction`             | 7d, 30d, all | Like, Heart, Laugh, Cry; Dislike is not counted. Current reactions whose `createdAt` is in the window: an un-react removes the row, so it leaves every window.                                                                     |
+| Model "reactions"     | `ResourceReview`            | 7d, 30d, all | Models have no emoji reactions. `thumbsUp` = recommended reviews, `thumbsDown` = not recommended, `total` = both. `exclude` and ToS-hidden reviews are skipped, as the model metric job does.                                      |
+| Comments              | `CommentV3`                 | 7d, 30d, all | Every live comment on the item, replies included; deleted, hidden and ToS-hidden ones are skipped. `CommentV3` is the table the metric jobs count since the comments consolidation; the old `CommentV2`/`Thread` pair is a mirror. |
+| Collects              | `CollectionItem`            | 7d, 30d, all | `ACCEPTED` entries; each collection the item is in counts once.                                                                                                                                                                    |
+| Views (images/videos) | ClickHouse `daily_views`    | 7d, 30d, all | Day-granular: "7d" is the last 7 UTC days including today. Omitted entirely when ClickHouse is unavailable, never reported as 0.                                                                                                   |
+| Downloads (models)    | `ModelMetric.downloadCount` | all only     | The windowed ClickHouse rollup was not verified for this endpoint, so `d7`/`d30` carry no `downloads`.                                                                                                                             |
+| Tipped Buzz           | `BuzzTip`                   | all only     | `BuzzTip` keeps one row per tipper per item with a running `amount`, so a window cannot be derived from it. `d7`/`d30` carry no `tippedBuzz`.                                                                                      |
 
 **The caller is excluded from every count, in every window including `allTime`:** their own
 reactions, reviews, comments and collection entries. The caller's automation may react as the
@@ -134,20 +150,29 @@ views were omitted. "Largest" is the account with the most images and models (~9
 models); "mid" owns ~1k models. 20 timed runs after one warm-up, either re-reading the first page or
 walking 20 pages by cursor.
 
-| Shape | Largest p50 / p95 / max | Mid p50 / p95 / max |
-|---|---|---|
-| `sort=newest`, all types | 59 / 88 / 109 ms | 26 / 39 / 43 ms |
-| `sort=newest&type=model` | 61 / 86 / 86 ms | 22 / 37 / 40 ms |
-| `sort=newest&type=video` (sparse matches) | 121 / 174 / 284 ms | 83 / 126 / 139 ms |
-| `sort=engagement`, ranking cached | 26 / 44 / 46 ms | 27 / 33 / 42 ms |
-| `sort=engagement`, ranking rebuilt (cold, one run) | 538 ms (images), 172 ms (models) | 130 / 106 ms |
+| Shape                                              | Largest p50 / p95 / max          | Mid p50 / p95 / max |
+| -------------------------------------------------- | -------------------------------- | ------------------- |
+| `sort=newest`, all types                           | 59 / 88 / 109 ms                 | 26 / 39 / 43 ms     |
+| `sort=newest&type=model`                           | 61 / 86 / 86 ms                  | 22 / 37 / 40 ms     |
+| `sort=newest&type=video` (sparse matches)          | 121 / 174 / 284 ms               | 83 / 126 / 139 ms   |
+| `sort=engagement`, ranking cached                  | 26 / 44 / 46 ms                  | 27 / 33 / 42 ms     |
+| `sort=engagement`, ranking rebuilt (cold, one run) | 538 ms (images), 172 ms (models) | 130 / 106 ms        |
 
 Every per-page counter query is an index scan keyed by the page's ids (`ImageReaction` unique key,
 `CommentV3` entity index, `CollectionItem` image/model index, `BuzzTip` primary key,
 `ResourceReview (modelId, userId)`), 1–70 ms each for a page of the largest owner. The ranking's
 Postgres cost scales with the engagement its candidates received, not with catalogue size. The
-ClickHouse candidate read (filtered on `ownerId` and a 30-day `time` bound) has not yet been measured
-against production data.
+ClickHouse reads were measured once each against production for the owner with the most images
+(2026-11-05):
+
+| Query                                             | Index pruning                                                      | Rows read       | Elapsed | Memory |
+| ------------------------------------------------- | ------------------------------------------------------------------ | --------------- | ------- | ------ |
+| `reactions` candidates (30-day window, top 1,000) | primary key `(time, userId)`: 17/147 parts, 2,693/107,399 granules | 22.3 M (378 MB) | 0.70 s  | 219 MB |
+| `daily_views` for a page of 100 images            | primary key `(entityType, entityId)`: 16/225,907 granules          | 131 K (1.3 MB)  | 0.09 s  | 47 MB  |
+
+`ownerId` is not in the `reactions` sort key, so the candidate read prunes on `time` only: it reads
+every reaction from the last 30 days, and its cost scales with site-wide activity rather than with
+the owner's catalogue. It runs only when an owner's ranking cache is rebuilt.
 
 ## Tests
 
