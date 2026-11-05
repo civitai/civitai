@@ -10,6 +10,7 @@ import { ladderRows } from '$lib/server/ladder';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
+import { getStanding } from '$lib/server/standing';
 import type { LayoutServerLoad } from './$types';
 
 // The header's recap dot: a recap exists and has not been seen today, on the home card or in the header dialog (either one
@@ -47,6 +48,11 @@ async function headerStats(playerId: number) {
   }
 }
 
+// Muted players can't send feedback, so the flag alone doesn't open the control. The standing is read only when the flag is on.
+async function feedbackOpen(user: NonNullable<App.Locals['user']>): Promise<boolean> {
+  return (await feedbackEnabled(user)) && !(await getStanding(db, user.id)).muted;
+}
+
 // Not tied to the URL, so a client navigation keeps this data. It re-runs when something invalidates 'knights:header'
 // (leaving /play, whose votes move the stats) or 'app:recap', and after every form action and restart (`invalidateAll`).
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
@@ -68,8 +74,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
     shopOpen: shopEnabled(),
-    // The "Send feedback" control is hidden while the area's flag is off for this player.
-    feedbackOpen: locals.user ? await feedbackEnabled(locals.user) : false,
+    feedbackOpen: locals.user ? await feedbackOpen(locals.user) : false,
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),

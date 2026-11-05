@@ -31,7 +31,8 @@
 // a row written there would carry no fingerprint and never be counted.
 //
 // `knights` is written by the Knights of New Order app (`apps/knights`, `POST /feedback`), which shares this
-// Postgres and applies the same message bound and hourly rate limit itself. The generic inputs still accept it.
+// Postgres and writes its rows directly, not through feedback.create. It applies the same message bound and the same
+// 5/hour numbers, counted over the user's `knights` rows. The generic inputs still accept it.
 export const FEEDBACK_AREAS = [
   'bitdex-image-feed',
   'apps-marketplace',

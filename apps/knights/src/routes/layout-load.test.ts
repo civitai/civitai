@@ -5,6 +5,7 @@ const playerRow = vi.hoisted(() => ({ value: undefined as { userId: number } | u
 const getRecapState = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const getPlayerStatus = vi.hoisted(() => vi.fn());
+const getStanding = vi.hoisted(() => vi.fn());
 const BADGES = { small: { Knight: 'k48' }, large: { Knight: 'k450' } };
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({
@@ -17,6 +18,7 @@ vi.mock('$lib/server/db', () => ({
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState, getDailyStatus }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
+vi.mock('$lib/server/standing', () => ({ getStanding }));
 const feedbackEnabled = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
 vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES }));
@@ -41,6 +43,8 @@ const run = (user: unknown = { id: 7, username: 'ana' }) =>
 beforeEach(() => {
   feedbackEnabled.mockReset();
   feedbackEnabled.mockResolvedValue(false);
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
   getDailyStatus.mockReset();
@@ -67,6 +71,12 @@ describe('layout load', () => {
     feedbackEnabled.mockClear();
     expect(await load(event(undefined))).toMatchObject({ feedbackOpen: false });
     expect(feedbackEnabled).not.toHaveBeenCalled();
+  });
+
+  it('keeps the feedback control away from a muted player, whatever the flag says', async () => {
+    feedbackEnabled.mockResolvedValue(true);
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    expect(await run()).toMatchObject({ feedbackOpen: false });
   });
 
   it('carries the header stats for a player, so a page that loads none still shows them', async () => {

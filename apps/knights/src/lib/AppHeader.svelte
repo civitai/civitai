@@ -38,7 +38,6 @@
     shopOpen: boolean;
     /** Whether the viewer has a career, and so can restart it. */
     isPlayer?: boolean;
-    /** Feedback is being collected from this viewer (its Flipt area flag is on). */
     feedbackOpen?: boolean;
     status?: PlayerStatus;
     streak?: Streak;

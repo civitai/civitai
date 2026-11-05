@@ -4,6 +4,7 @@ import {
   FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_RATE_LIMIT,
 } from '@civitai/shared/feedback.constants';
+import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const AREA = 'knights';
@@ -11,7 +12,7 @@ const USER_AGENT_MAX_LENGTH = 200;
 
 export type FeedbackContext = { path?: string; userAgent?: string; rank?: string; level?: number };
 
-/** `path` is the client's claim, so only a same-origin path is kept; the rest is clipped, never rejected. */
+/** `path` is client-supplied: keep it only if same-origin (truncated), otherwise drop it rather than reject the report. */
 export function feedbackContext(input: {
   path: string | null;
   userAgent: string | null;
@@ -31,7 +32,7 @@ export function feedbackContext(input: {
 
 export type SubmitFeedbackResult = { ok: true } | { ok: false; reason: 'invalid' | 'rate-limited' };
 
-/** Files one `knights` row in the site's Feedback table, under the same message bound and hourly cap as the site's form. */
+/** Applies the site's message bound and hourly cap itself (same constants, counted over this user's `knights` rows). */
 export async function submitFeedback(
   db: Kysely<DB>,
   input: { userId: number; message: unknown; context: FeedbackContext; now: Date }
@@ -47,7 +48,7 @@ export async function submitFeedback(
     .select((eb) => eb.fn.countAll<string>().as('count'))
     .where('userId', '=', input.userId)
     .where('area', '=', AREA)
-    .where('createdAt', '>=', since)
+    .where('createdAt', '>=', utc(since))
     .executeTakeFirstOrThrow();
   if (Number(count) >= FEEDBACK_RATE_LIMIT.max) return { ok: false, reason: 'rate-limited' };
 
@@ -58,7 +59,7 @@ export async function submitFeedback(
       area: AREA,
       message,
       context: JSON.stringify(input.context),
-      createdAt: input.now,
+      createdAt: utc(input.now),
     })
     .execute();
   return { ok: true };

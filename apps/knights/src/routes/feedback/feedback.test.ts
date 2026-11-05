@@ -3,9 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const submitFeedback = vi.hoisted(() => vi.fn());
 const feedbackEnabled = vi.hoisted(() => vi.fn());
 const getPlayerStatus = vi.hoisted(() => vi.fn());
+const getStanding = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
 vi.mock('$lib/server/feedback/feedback.service', async (original) => ({
   ...(await original<typeof import('$lib/server/feedback/feedback.service')>()),
   submitFeedback,
@@ -35,6 +40,7 @@ beforeEach(() => {
   submitFeedback.mockReset().mockResolvedValue({ ok: true });
   feedbackEnabled.mockReset().mockResolvedValue(true);
   getPlayerStatus.mockReset().mockResolvedValue({ rank: 'Knight', level: 12 });
+  getStanding.mockReset().mockResolvedValue({ banned: false, muted: false });
 });
 
 describe('POST /feedback', () => {
@@ -60,6 +66,12 @@ describe('POST /feedback', () => {
 
   it('refuses, and writes nothing, when the flag is off for the player', async () => {
     feedbackEnabled.mockResolvedValue(false);
+    expect(await post({ message: 'hello' })).toMatchObject({ status: 403, body: { ok: false } });
+    expect(submitFeedback).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and writes nothing, when the player is muted', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
     expect(await post({ message: 'hello' })).toMatchObject({ status: 403, body: { ok: false } });
     expect(submitFeedback).not.toHaveBeenCalled();
   });

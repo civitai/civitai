@@ -1,5 +1,6 @@
 <script lang="ts">
   import { FEEDBACK_MESSAGE_MAX_LENGTH } from '@civitai/shared/feedback.constants';
+  import { tick } from 'svelte';
   import { page } from '$app/state';
   import Icon from './Icon.svelte';
   import { modal } from './modal';
@@ -11,6 +12,7 @@
   let message = $state<string | null>(null);
   let sent = $state(false);
   let submitting = $state(false);
+  let closeButton = $state<HTMLButtonElement>();
 
   const trimmed = $derived(text.trim());
   const remaining = $derived(FEEDBACK_MESSAGE_MAX_LENGTH - text.length);
@@ -35,6 +37,9 @@
       } | null;
       if (response.ok && result?.ok) {
         sent = true;
+        // The form is gone, so focus would fall to the page.
+        await tick();
+        closeButton?.focus();
         return;
       }
       message = result?.message ?? 'Your feedback could not be sent. Try again in a moment.';
@@ -60,7 +65,7 @@
       <h2 id="feedback-title">Thank you</h2>
       <p class="done"><Icon name="circle-check" size={18} />Your feedback was sent to the team.</p>
       <div class="actions">
-        <button type="button" class="btn" onclick={onclose} data-autofocus>Close</button>
+        <button type="button" class="btn" onclick={onclose} data-autofocus bind:this={closeButton}>Close</button>
       </div>
     {:else}
       <h2 id="feedback-title">Send feedback</h2>
