@@ -7,6 +7,7 @@
  * tested without a database.
  */
 import type { CatalogApp } from '~/server/registry-adapter/entities';
+import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
 export type CatalogListing = {
@@ -22,6 +23,23 @@ export type CatalogListing = {
   appBlockId: string | null;
   externalUrl: string | null;
 };
+
+/** The fields a store card contributes. The card's own kind data says which block, or which link. */
+export function listingFromCard(card: ListingCard): CatalogListing {
+  return {
+    id: card.id,
+    slug: card.slug,
+    kind: card.kind,
+    name: card.name,
+    tagline: card.tagline,
+    category: card.category,
+    contentRating: card.contentRating,
+    iconUrl: card.iconUrl,
+    creatorUsername: card.creator?.username ?? null,
+    appBlockId: card.kindData.kind === 'onsite' ? card.kindData.appBlockId : null,
+    externalUrl: card.kindData.kind === 'offsite' ? card.kindData.externalUrl : null,
+  };
+}
 
 export type CatalogBlock = NonNullable<CatalogApp['block']>;
 

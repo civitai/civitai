@@ -5,7 +5,12 @@ import type {
   CatalogListing,
   CatalogReadDeps,
 } from '~/server/registry-adapter/catalog-source';
-import { MAX_CATALOG_PAGES, readCatalog } from '~/server/registry-adapter/catalog-source';
+import {
+  MAX_CATALOG_PAGES,
+  listingFromCard,
+  readCatalog,
+} from '~/server/registry-adapter/catalog-source';
+import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import { buildEntities } from '~/server/registry-adapter/entities';
 
 const listing = (over: Partial<CatalogListing>): CatalogListing => ({
@@ -67,6 +72,65 @@ const appUrns = (apps: Awaited<ReturnType<typeof readCatalog>>) =>
       'urn:schema:civitai-schemas:app@v1'
     ) ?? []
   ).map((e) => e.urn);
+
+describe('listingFromCard', () => {
+  // Typed against the real card, so a change to the card's shape fails the test typecheck.
+  const card = (kindData: ListingCard['kindData']): ListingCard => ({
+    id: 'apl_card_9',
+    slug: 'comet-sketch',
+    kind: kindData.kind,
+    name: 'Comet Sketch',
+    tagline: 'Sketch comets',
+    category: 'art-k2',
+    contentRating: 'r',
+    iconUrl: 'https://img.example/comet.png',
+    coverUrl: 'https://img.example/comet-cover.png',
+    creator: { id: 4411, username: 'comet-maker', image: null },
+    recommend: { recommendedCount: 3, notRecommendedCount: 1, recommendPct: 0.75 },
+    reviewCount: 4,
+    isBeta: false,
+    openCount: 17,
+    restrictedAudience: null,
+    kindData,
+  });
+
+  it('an on-site card names its block, and no link', () => {
+    expect(
+      listingFromCard(
+        card({
+          kind: 'onsite',
+          appBlockId: 'ab_comet_3',
+          hasPage: true,
+          liveUrl: 'https://comet.example',
+        })
+      )
+    ).toEqual({
+      id: 'apl_card_9',
+      slug: 'comet-sketch',
+      kind: 'onsite',
+      name: 'Comet Sketch',
+      tagline: 'Sketch comets',
+      category: 'art-k2',
+      contentRating: 'r',
+      iconUrl: 'https://img.example/comet.png',
+      creatorUsername: 'comet-maker',
+      appBlockId: 'ab_comet_3',
+      externalUrl: null,
+    });
+  });
+
+  it('an off-site card names its link, and no block; the creator id never leaves', () => {
+    const out = listingFromCard(
+      card({ kind: 'offsite', externalUrl: 'https://comet-off.example' })
+    );
+    expect([out.kind, out.appBlockId, out.externalUrl]).toEqual([
+      'offsite',
+      null,
+      'https://comet-off.example',
+    ]);
+    expect(JSON.stringify(out)).not.toContain('4411');
+  });
+});
 
 describe('readCatalog — the public-catalog decision comes first', () => {
   it('🔴 a `none` scope (kill switch thrown) yields zero app entities and reads nothing', async () => {

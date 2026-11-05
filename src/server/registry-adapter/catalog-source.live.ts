@@ -4,6 +4,7 @@
  */
 import { dbRead } from '~/server/db/client';
 import type { CatalogReadDeps } from '~/server/registry-adapter/catalog-source';
+import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
 import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
@@ -35,22 +36,7 @@ export function liveCatalogReadDeps(): CatalogReadDeps {
         redCapable: true,
         viewerBrowsingLevel: allBrowsingLevelsFlag,
       });
-      return {
-        nextCursor,
-        items: items.map((card) => ({
-          id: card.id,
-          slug: card.slug,
-          kind: card.kind,
-          name: card.name,
-          tagline: card.tagline,
-          category: card.category,
-          contentRating: card.contentRating,
-          iconUrl: card.iconUrl,
-          creatorUsername: card.creator?.username ?? null,
-          appBlockId: card.kind === 'onsite' ? card.appBlockId : null,
-          externalUrl: card.kind === 'offsite' ? card.externalUrl : null,
-        })),
-      };
+      return { nextCursor, items: items.map(listingFromCard) };
     },
 
     loadBlocks: (ids) =>
