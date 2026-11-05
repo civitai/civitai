@@ -233,6 +233,14 @@ export default PublicEndpoint(
         res.setHeader('Cache-Control', 'private, no-store');
         return errorResponse(404, 'File not found');
       }
+      if (fileResult.status === 'failed-scan') {
+        // Moderators are served this file, so the refusal must not be edge-cached for them.
+        res.setHeader('Cache-Control', 'private, no-store');
+        return errorResponse(
+          403,
+          'This file did not pass a security scan and is not available for download'
+        );
+      }
       if (fileResult.status === 'archived')
         return errorResponse(410, 'Model archived, not available for download');
       if (fileResult.status === 'early-access') {

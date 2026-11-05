@@ -31,6 +31,8 @@ const {
   mockBustOrchestratorModelCache,
   mockBustOrchestratorScannedFileCache,
   mockResourceDataBust,
+  mockResolveUnpublishScope,
+  mockUnpublishModelVersionById,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
   // check resolves without importing the real orchestrator module.
@@ -65,6 +67,8 @@ const {
     mockBustOrchestratorModelCache: vi.fn().mockResolvedValue(undefined),
     mockBustOrchestratorScannedFileCache: vi.fn().mockResolvedValue(undefined),
     mockResourceDataBust: vi.fn().mockResolvedValue(undefined),
+    mockResolveUnpublishScope: vi.fn(),
+    mockUnpublishModelVersionById: vi.fn().mockResolvedValue({}),
   };
 });
 
@@ -125,7 +129,11 @@ vi.mock('~/server/services/model.service', () => ({
   unpublishModelById: mockUnpublishModelById,
 }));
 
-vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
+vi.mock('~/server/services/model-version.service', () => ({
+  addLinkedComponent: vi.fn(),
+  resolveUnpublishScope: mockResolveUnpublishScope,
+  unpublishModelVersionById: mockUnpublishModelVersionById,
+}));
 
 vi.mock('~/server/services/duplicate-model-hash.service', () => ({
   checkDuplicateHashOnScan: mockCheckDuplicateHashOnScan,
@@ -499,6 +507,85 @@ describe('model-file-scan.service', () => {
         expect.objectContaining({ type: 'error', name: 'model-file-scan' }),
         'webhooks'
       );
+    });
+
+    describe('a failed scan result', () => {
+      const versionMeta = { notes: 'kept' };
+      function setupScanWrite(pickle: ScanResultCode, versionStatus = 'Published') {
+        setupFileFound();
+        mockDbWrite.modelFile.update.mockResolvedValue({
+          pickleScanResult: pickle,
+          virusScanResult: ScanResultCode.Success,
+        });
+        mockDbWrite.modelVersion.findUnique.mockResolvedValue({
+          status: versionStatus,
+          meta: versionMeta,
+        });
+      }
+
+      it('unpublishes a published version that has other public versions', async () => {
+        setupScanWrite(ScanResultCode.Danger);
+        mockResolveUnpublishScope.mockResolvedValue({ kind: 'version', modelId: 200 });
+
+        await applyScanOutcome({
+          fileId: 1,
+          pickleScan: { result: ScanResultCode.Danger, message: null },
+        });
+
+        expect(mockUnpublishModelVersionById).toHaveBeenCalledWith({
+          id: 100,
+          reason: 'failed-scan',
+          meta: versionMeta,
+          user: { id: -1, isModerator: true },
+        });
+        expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      });
+
+      it('unpublishes the model when the version is its last public one', async () => {
+        setupScanWrite(ScanResultCode.Danger);
+        mockResolveUnpublishScope.mockResolvedValue({ kind: 'model', modelId: 200 });
+
+        await applyScanOutcome({
+          fileId: 1,
+          pickleScan: { result: ScanResultCode.Danger, message: null },
+        });
+
+        expect(mockUnpublishModelById).toHaveBeenCalledWith({
+          id: 200,
+          reason: 'failed-scan',
+          userId: -1,
+          isModerator: true,
+        });
+        expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
+      });
+
+      it('leaves a published version alone when the scan is clean or only errored', async () => {
+        for (const result of [ScanResultCode.Success, ScanResultCode.Error]) {
+          setupScanWrite(result);
+          mockResolveUnpublishScope.mockResolvedValue({ kind: 'model', modelId: 200 });
+
+          await applyScanOutcome({ fileId: 1, pickleScan: { result, message: null } });
+        }
+
+        expect(mockUnpublishModelById).not.toHaveBeenCalled();
+        expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
+      });
+
+      it('busts coverage for a failed file of a type that is never loaded', async () => {
+        setupScanWrite(ScanResultCode.Danger, 'Draft');
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({ ...baseFile, type: 'Training Data' });
+
+        await applyScanOutcome({
+          fileId: 1,
+          pickleScan: { result: ScanResultCode.Danger, message: null },
+        });
+
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+        // A draft has nothing public to take down.
+        expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
+        expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      });
     });
 
     it('does NOT invalidate the orchestrator for a hash-only rescan', async () => {
