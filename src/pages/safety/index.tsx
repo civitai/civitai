@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -119,6 +120,13 @@ export default function Safety({
                   providing feedback. Your involvement is crucial in shaping a safe AI community.
                   Together, we can navigate the exciting world of AI, ensuring that Civitai remains
                   a platform for innovation, creativity, and respect.
+                </p>
+                <p>
+                  For a plain-language overview of what we don&apos;t allow and how we stop it, see{' '}
+                  <Link href="/safety/eu-ai-act">
+                    How Civitai Keeps Generation and Sharing Safe
+                  </Link>
+                  .
                 </p>
                 <Title order={2} id="resource-dev">
                   Responsible Resource Development
