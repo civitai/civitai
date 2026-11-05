@@ -23,11 +23,7 @@ const schema = z.discriminatedUnion('action', [
   }),
 ]);
 
-/**
- * Creator Studio's bulk "make it safe": the model editor's "Draft a civitai.com version" flow for one
- * model at a time, through the editor's own procedures so their rate limit, account gates and
- * checks apply. `draft` also picks the first PG/PG-13 image as the cover.
- */
+/** Creator Studio's bulk "make it safe". It must go through the editor's own procedures. */
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
     // Only Creator Studio's JSON call: a cross-site form post cannot send this content type.

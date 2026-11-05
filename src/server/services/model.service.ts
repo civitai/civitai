@@ -4204,7 +4204,7 @@ export const upsertModel = async (
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
           );
-        // A .com cover this save changed (through the gate, for an owner) puts the model back on .com.
+        // A .com cover this save changed (through the gate, for an owner) ends the re-check's removal.
         if (coverChanged && data.sfwCoverImageId) {
           const { comFaceRemoved: _removed, ...rest } = mergedMeta;
           mergedMeta = rest;

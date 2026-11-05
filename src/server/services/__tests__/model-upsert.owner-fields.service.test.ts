@@ -1040,6 +1040,42 @@ describe('.com face re-check after a listing edit', () => {
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
   });
 
+  describe('with the stored title and description sent back unchanged', () => {
+    // The save repeats the stored listing, so only the field under test can trigger the queue.
+    const unchanged = { name: baseInput.name, description: baseInput.description };
+    beforeEach(() => {
+      mockPreviewComFaceIntent.mockResolvedValue({
+        status: 'ok',
+        output: { detected: false, reason: 'stub' },
+      });
+      mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+    });
+
+    it('does not queue it when nothing in the listing changed', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: withFace.sfwName });
+      expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+    });
+
+    it('queues it when the owner retitles the .com face', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+      expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    });
+
+    it('queues it when the owner picks another .com cover', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 6 });
+      expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    });
+
+    it('does not queue it when the owner clears the .com face', async () => {
+      mockStored({ ...withFace, ...unchanged });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+      expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+    });
+  });
+
   it('checks the stored title, description and the owner’s trigger words when an owner sets a face', async () => {
     mockStored({ name: 'Stored Title', description: '<p>Stored description</p>' });
     mockDbRead.modelVersion.findMany.mockResolvedValue([

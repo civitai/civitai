@@ -311,6 +311,16 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
   });
 
+  it('does not queue it for an edit that leaves the trigger words out', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ trainedWords: undefined });
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
   it('queues it when an owner adds a version with trigger words', async () => {
     seedExisting();
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);

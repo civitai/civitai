@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
@@ -28,22 +29,30 @@ type RetryState = { since: string; attempt: number; nextAt: string };
  * that reaches neither must not keep its face up unchecked.
  */
 export async function queueComFaceRecheck(modelId: number) {
-  try {
-    await addToQueue(QUEUE, modelId);
-    return;
-  } catch (error) {
+  // `false` means some id missed Redis; the Postgres parking lot behind it can drop ids silently.
+  const queued = await addToQueue(QUEUE, modelId).catch((error) => {
     logError('enqueue failed', modelId, error);
-  }
+    return false;
+  });
+  if (!queued) await fallBackFromQueue(modelId);
+}
+
+/** The retry-row write: a model already waiting keeps its deadline and only the backoff restarts,
+ *  as for a fresh edit. */
+export const dueRetryRowSql = (modelId: number, since: Date) => {
+  const value: RetryState = { since: since.toISOString(), attempt: 0, nextAt: '' };
+  return Prisma.sql`
+    INSERT INTO "KeyValue" (key, value) VALUES (${retryKey(modelId)}, ${JSON.stringify(
+    value
+  )}::jsonb)
+    ON CONFLICT (key) DO UPDATE
+    SET value = "KeyValue".value || '{"attempt":0,"nextAt":""}'::jsonb
+  `;
+};
+
+async function fallBackFromQueue(modelId: number) {
   try {
-    // A model already waiting keeps its deadline; only the backoff restarts, as for a fresh edit.
-    const value: RetryState = { since: new Date().toISOString(), attempt: 0, nextAt: '' };
-    await dbWrite.$executeRaw`
-      INSERT INTO "KeyValue" (key, value) VALUES (${retryKey(modelId)}, ${JSON.stringify(
-      value
-    )}::jsonb)
-      ON CONFLICT (key) DO UPDATE
-      SET value = "KeyValue".value || '{"attempt":0,"nextAt":""}'::jsonb
-    `;
+    await dbWrite.$executeRaw(dueRetryRowSql(modelId, new Date()));
     return;
   } catch (error) {
     logError('enqueue fallback retry row failed', modelId, error);
@@ -146,9 +155,10 @@ async function removeComFace(modelId: number, coverId: number, reason: ComFaceRe
 
 /** Drops the cover's safe bits from the model's level, which is what takes it off .com. */
 async function finishRemoval(modelId: number) {
-  // Imported here: model-version.service imports this module, and the level service pulls in search.
+  // Imported here: the level service pulls in search.
   const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
   await updateModelNsfwLevels([modelId]);
+  // Imported here: model-version.service imports this module.
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache(modelId);
 }
@@ -272,7 +282,13 @@ export async function processComFaceRechecks(now = new Date()) {
     }
   }
 
-  if (requeue.length) await addToQueue(QUEUE, requeue);
+  if (requeue.length) {
+    const queued = await addToQueue(QUEUE, requeue).catch((error) => {
+      logError('requeue failed', requeue[0], error);
+      return false;
+    });
+    if (!queued) for (const modelId of requeue) await fallBackFromQueue(modelId);
+  }
   await queue.commit();
   return counts;
 }

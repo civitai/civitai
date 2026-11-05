@@ -80,8 +80,10 @@ function arrange({
 }
 
 const coverCleared = () =>
-  db.$executeRaw.mock.calls.some((call) =>
-    (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
+  db.$executeRaw.mock.calls.some(
+    (call) =>
+      Array.isArray(call[0]) &&
+      (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
   );
 const marker = () => {
   const arg = db.$executeRaw.mock.calls[0]
@@ -102,6 +104,7 @@ beforeEach(() => {
   db.modelVersion.findMany.mockResolvedValue([{ trainedWords: ['trigger'] }] as never);
   db.$executeRaw.mockResolvedValue(1 as never);
   db.modActivity.create.mockResolvedValue({} as never);
+  mockAddToQueue.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -457,26 +460,29 @@ describe('the .com face listing re-check', () => {
 });
 
 describe('queueing a re-check when the queue is unavailable', () => {
-  const kvInsert = () =>
-    db.$executeRaw.mock.calls.find((call) =>
-      (call[0] as unknown as string[]).join('?').includes('INSERT INTO "KeyValue"')
-    );
+  /** The retry-row write, as the Prisma.Sql object the service hands `$executeRaw`. */
+  const retryRowWrite = () =>
+    db.$executeRaw.mock.calls
+      .map((call) => call[0] as unknown as { sql?: string; values?: unknown[] })
+      .find((sql) => sql.sql?.includes('INSERT INTO "KeyValue"'));
 
-  it('writes a due retry row that the next run checks', async () => {
-    mockAddToQueue.mockRejectedValueOnce(new Error('redis down'));
+  it.each([
+    ['reports a missed enqueue', () => mockAddToQueue.mockResolvedValueOnce(false)],
+    ['throws', () => mockAddToQueue.mockRejectedValueOnce(new Error('redis down'))],
+  ])('writes a due retry row when the queue %s, which the next run checks', async (_, fail) => {
+    fail();
 
     await queueComFaceRecheck(MODEL_ID);
 
-    const insert = kvInsert();
-    expect(insert?.[1]).toBe(KEY);
-    const row = JSON.parse(String(insert?.[2]));
+    const write = retryRowWrite();
+    expect(write?.values?.[0]).toBe(KEY);
+    const row = JSON.parse(String(write?.values?.[1]));
     expect(row).toEqual({ since: NOW.toISOString(), attempt: 0, nextAt: '' });
     expect(coverCleared()).toBe(false);
 
     vi.clearAllMocks();
     db.model.findUnique.mockResolvedValue(withFace as never);
     db.modelVersion.findMany.mockResolvedValue([{ trainedWords: ['trigger'] }] as never);
-    db.$executeRaw.mockResolvedValue(1 as never);
     arrange({ waiting: [row] });
     mockPreviewComFaceIntent.mockResolvedValue(intent(false));
 
@@ -486,15 +492,36 @@ describe('queueing a re-check when the queue is unavailable', () => {
     expect(counts.allowed).toBe(1);
   });
 
+  it('writes no retry row when the enqueue lands', async () => {
+    await queueComFaceRecheck(MODEL_ID);
+
+    expect(mockAddToQueue).toHaveBeenCalledWith('com-face-recheck', MODEL_ID);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('writes a due retry row for an edit the job could not queue again', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+    db.keyValue.upsert.mockRejectedValueOnce(new Error('bookkeeping failed'));
+    mockAddToQueue.mockResolvedValueOnce(false);
+
+    await processComFaceRechecks(NOW);
+
+    expect(mockAddToQueue).toHaveBeenCalledWith('com-face-recheck', [MODEL_ID]);
+    expect(retryRowWrite()?.values?.[0]).toBe(KEY);
+  });
+
   it('takes the face off .com when the retry row cannot be written either', async () => {
-    mockAddToQueue.mockRejectedValueOnce(new Error('redis down'));
+    mockAddToQueue.mockResolvedValueOnce(false);
     db.$executeRaw.mockRejectedValueOnce(new Error('db down'));
 
     await queueComFaceRecheck(MODEL_ID);
 
     expect(coverCleared()).toBe(true);
-    const removal = db.$executeRaw.mock.calls.find((call) =>
-      (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
+    const removal = db.$executeRaw.mock.calls.find(
+      (call) =>
+        Array.isArray(call[0]) &&
+        (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
     );
     const removalMarker = removal
       ?.slice(1)

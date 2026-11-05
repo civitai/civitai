@@ -371,7 +371,15 @@ describe('applyModelContentChange', () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
     await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
 
+    expect(queueComFaceRecheck).toHaveBeenCalledTimes(1);
     expect(queueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue the re-check when the write matched no row', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(queueComFaceRecheck).not.toHaveBeenCalled();
   });
 
   it('runs the follow-up work a content change implies', async () => {
