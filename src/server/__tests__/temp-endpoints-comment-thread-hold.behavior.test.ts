@@ -5,8 +5,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
- * Two one-off admin endpoints delete posts and images. A held owner's rows are left. The SQL runs
- * on a Postgres stand-in with the real foreign keys.
+ * Two one-off admin endpoints delete posts and images, which cascades into their comment threads.
+ * A thread holding a retained author's comment is detached first. The SQL runs on a Postgres
+ * stand-in with the real foreign keys.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -40,8 +41,8 @@ const fakeRes = () => {
     json: (body: unknown) => Object.assign(res, { body }) && res,
   });
 };
-const left = async (table: string) =>
-  (await db.query<{ id: number }>(`SELECT id FROM "${table}"`)).rows.map((r) => r.id);
+const commentIds = async () =>
+  (await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`)).rows.map((r) => r.id);
 
 beforeAll(async () => {
   db = new PGlite();
@@ -56,6 +57,16 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int REFERENCES "Post"(id) ON DELETE SET NULL,
       "needsReview" text, "blockedFor" text
+    );
+    CREATE TABLE "Thread" (
+      id int PRIMARY KEY,
+      "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
+      "imageId" int UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
+      "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (
+      id int PRIMARY KEY, "userId" int NOT NULL,
+      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "TagsOnImageNew" ("imageId" int);
@@ -72,7 +83,9 @@ afterAll(() => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await db.exec(`TRUNCATE "Image", "Post", "ImageConnection", "TagsOnImageNew" CASCADE`);
+  await db.exec(
+    `TRUNCATE "CommentV2", "Thread", "Image", "Post", "ImageConnection", "TagsOnImageNew" CASCADE`
+  );
   vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (ops: Promise<unknown>[]) =>
     Promise.all(ops)) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
@@ -84,6 +97,13 @@ beforeEach(async () => {
       (await run(first, values)).affectedRows ?? 0) as never
   );
 });
+
+/** A thread on `column` = `id`, with one comment by `author`. */
+const seedThread = (column: 'postId' | 'imageId', id: number, author: number) =>
+  db.exec(`
+    INSERT INTO "Thread" (id, "${column}") VALUES (100, ${id});
+    INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
+  `);
 
 describe('reset-training-model', () => {
   const seed = (owner: number) =>
@@ -100,12 +120,32 @@ describe('reset-training-model', () => {
     vi.mocked(dbMock.dbWrite.post.findMany).mockResolvedValue([{ id: 10 }] as never);
   });
   const call = () => resetTrainingModel({ query: { id: '5' } } as never, fakeRes() as never);
+  const left = async (table: string) =>
+    (await db.query<{ id: number }>(`SELECT id FROM "${table}"`)).rows.map((r) => r.id);
 
-  it('deletes the posts and their images, not just unlinks the images (control)', async () => {
+  it('deletes the posts and their images, not just unlinks the images', async () => {
     await seed(OWNER);
     await call();
     expect(await left('Post')).toEqual([]);
     expect(await left('Image')).toEqual([]);
+  });
+
+  it.each([
+    ['post', 'postId', 10, HELD],
+    ['image', 'imageId', 20, MARKED],
+  ] as const)("keeps a held author's comment on the deleted %s", async (_, column, id, author) => {
+    await seed(OWNER);
+    await seedThread(column, id, author);
+    await call();
+    expect(await left('Post')).toEqual([]);
+    expect(await commentIds()).toEqual([1]);
+  });
+
+  it('takes an unheld comment with the post (control)', async () => {
+    await seed(OWNER);
+    await seedThread('postId', 10, OWNER);
+    await call();
+    expect(await commentIds()).toEqual([]);
   });
 
   it.each([HELD, MARKED])("leaves a held owner's post and image (owner %i)", async (owner) => {
@@ -117,33 +157,45 @@ describe('reset-training-model', () => {
 });
 
 describe('migrate-article-images rollback', () => {
-  const seed = (owner: number) =>
-    db.exec(`
-      INSERT INTO "Image" (id, "userId") VALUES (30, ${owner});
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (30, ${OWNER});
       INSERT INTO "ImageConnection" VALUES (30, 7, 'Article');
-      INSERT INTO "TagsOnImageNew" VALUES (30);
     `);
+  });
   const call = () =>
     migrateArticleImages(
       { query: { rollback: 'true', dryRun: 'false' } } as never,
       fakeRes() as never
     );
-  const tags = async () => (await db.query(`SELECT 1 FROM "TagsOnImageNew"`)).rows.length;
 
-  it("deletes an unheld owner's article-only image, and its tags (control)", async () => {
-    await seed(OWNER);
+  it("keeps a held author's comment on an article-only image it deletes", async () => {
+    await seedThread('imageId', 30, HELD);
     await call();
-    expect(await left('Image')).toEqual([]);
-    expect(await tags()).toBe(0);
+    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
+    expect(await commentIds()).toEqual([1]);
   });
 
-  it.each([HELD, MARKED])(
-    "leaves a held owner's article-only image, and its tags (owner %i)",
-    async (owner) => {
-      await seed(owner);
-      await call();
-      expect(await left('Image')).toEqual([30]);
-      expect(await tags()).toBe(1);
-    }
-  );
+  it("leaves a held owner's article-only image, and its tags", async () => {
+    await db.exec(`
+      UPDATE "Image" SET "userId" = ${HELD} WHERE id = 30;
+      INSERT INTO "TagsOnImageNew" VALUES (30);
+    `);
+    await call();
+    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([{ id: 30 }]);
+    expect((await db.query(`SELECT 1 FROM "TagsOnImageNew"`)).rows).toHaveLength(1);
+  });
+
+  it('keeps a comment by an author only the hold marker covers', async () => {
+    await seedThread('imageId', 30, MARKED);
+    await call();
+    expect(await commentIds()).toEqual([1]);
+  });
+
+  it('takes an unheld comment with the image (control)', async () => {
+    await seedThread('imageId', 30, OWNER);
+    await call();
+    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
+    expect(await commentIds()).toEqual([]);
+  });
 });

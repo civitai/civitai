@@ -430,10 +430,9 @@ describe('mergeVersions', () => {
   });
 });
 
-// A review cascades with its version, and its comment threads with it, a held author's comments
-// included: comments are not kept for a hold.
-describe('comments on a review the version takes with it', () => {
-  it('go with the version', async () => {
+// A review cascades with its version, and its comment threads with it.
+describe("a held author's comment on a review the version takes with it", () => {
+  it('keeps the comment when the version is deleted', async () => {
     const id = stubVersion(CLEAN);
     await seedReviewThread(db, {
       reviewId: 1,
@@ -445,17 +444,47 @@ describe('comments on a review the version takes with it', () => {
     await deleteVersionById({ id, isModerator: false });
 
     expect(await versionIds(db)).not.toContain(id);
+    expect(await commentsLeft(db)).toEqual([{ id: 1, onReview: false }]);
+  });
+
+  it('takes an unheld comment with the version (control)', async () => {
+    const id = stubVersion(CLEAN);
+    await seedReviewThread(db, { reviewId: 1, versionId: id, reviewer: CLEAN, commenter: CLEAN });
+
+    await deleteVersionById({ id, isModerator: false });
+
     expect(await commentsLeft(db)).toEqual([]);
   });
 
-  // A reviewer's review of a source version goes when they also reviewed the target.
-  it('go with a review a merge drops as superseded', async () => {
+  // A reviewer's review of a source version goes when they also reviewed the target, or another
+  // source with a higher review id.
+  it.each([
+    ['the target', 0],
+    ['a later source', 2],
+  ])('keeps the comment when a merge drops a review superseded by one on %s', async (_, n) => {
+    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+    const keeper = n === 0 ? targetVersionId : sourceVersionIds[1];
+    await seedReviewThread(db, {
+      reviewId: 1,
+      versionId: sourceVersionIds[0],
+      reviewer: 9,
+      // Both legs of the hold: a pending report, and the marker.
+      commenter: n === 0 ? REPORTED : MARKED,
+    });
+    await seedReviewThread(db, { reviewId: 2, versionId: keeper, reviewer: 9, commenter: CLEAN });
+
+    await merge(CLEAN);
+
+    expect(await commentsLeft(db)).toContainEqual({ id: 1, onReview: false });
+  });
+
+  it('takes an unheld comment on a superseded review with the merge (control)', async () => {
     const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
     await seedReviewThread(db, {
       reviewId: 1,
       versionId: sourceVersionIds[0],
       reviewer: 9,
-      commenter: MARKED,
+      commenter: CLEAN,
     });
     await seedReviewThread(db, {
       reviewId: 2,
@@ -466,8 +495,7 @@ describe('comments on a review the version takes with it', () => {
 
     await merge(CLEAN);
 
-    // The comment on the kept target review stays (control).
-    expect(await commentsLeft(db)).toEqual([{ id: 2, onReview: true }]);
+    expect((await commentsLeft(db)).map((c) => c.id)).not.toContain(1);
   });
 });
 

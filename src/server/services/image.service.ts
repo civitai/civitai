@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { reviewCollectionImageSql } from '~/server/services/collection-review.sql';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -945,6 +947,7 @@ export const deleteImageById = async ({
       deletedById !== undefined &&
       (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
+    const markerView = await holdMarkerViewExists();
     const [image = null] = await dbWrite.$queryRaw<
       {
         url: string;
@@ -957,6 +960,7 @@ export const deleteImageById = async ({
         blockedFor: string | null;
       }[]
     >`
+      WITH ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT ${id}::int` }, markerView)}
       DELETE FROM "Image" WHERE id = ${id}
       RETURNING url, "postId", "nsfwLevel", "userId", metadata, ingestion::text, "needsReview", "blockedFor"
     `;
@@ -1100,6 +1104,7 @@ export async function deleteImages(
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
+  const markerView = await holdMarkerViewExists();
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1124,9 +1129,11 @@ export async function deleteImages(
         WHERE id IN (${Prisma.join(ids)})
           ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
         -- Locked, so a change to the row's own columns made meanwhile is re-checked against the
-        -- guard here. Holds kept in other tables are still read from the statement's snapshot.
+        -- guard here, and the thread detach below never acts on an image the guard then keeps.
+        -- Holds kept in other tables are still read from the statement's snapshot.
         ${onlyWhere ? Prisma.sql`FOR UPDATE` : Prisma.empty}
-      )
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
       DELETE FROM "Image"
       WHERE id IN (SELECT id FROM doomed)
         -- Again here: a row changed while this statement waits for it is re-checked only against

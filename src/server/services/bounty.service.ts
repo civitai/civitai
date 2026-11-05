@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import { bountyThreadParents, detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -874,7 +875,8 @@ export const deleteBountyById = async ({
       OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
     const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${keepsBounty}`;
     const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
-      WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
+      WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
+      gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
       files AS (
         DELETE FROM "File" WHERE "entityType" = 'Bounty' AND "entityId" IN (SELECT id FROM gone)
       ),
@@ -1981,7 +1983,8 @@ export async function deleteSettledKeptBounties() {
       AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
       AND NOT ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
-    WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
+    WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
+    gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
     files AS (
       DELETE FROM "File" WHERE "entityType" = 'Bounty' AND "entityId" IN (SELECT id FROM gone)
     )

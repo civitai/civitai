@@ -138,7 +138,8 @@ describe('upsertComment — thread lock on edit', () => {
   });
 });
 
-// An edit racing a moderator's ToS flag must fail as it would against a deleted comment, and cannot unhide it.
+// An author's own delete can keep a comment for a hold by hiding it. An edit racing that delete must
+// fail as it would against a deleted comment, and cannot unhide it.
 describe('upsertComment — an edit of a comment hidden since the read', () => {
   beforeEach(() => {
     db.commentV2.findUnique.mockResolvedValue({ threadId: 42, content: 'old' });

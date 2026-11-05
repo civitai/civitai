@@ -85,3 +85,61 @@ export const imageDeleteHoldLegs = (image: string) => ({
 
 export const imageDeleteHeldSqlText = (image: string) =>
   `(${Object.values(imageDeleteHoldLegs(image)).join('\n  OR ')})`;
+
+/**
+ * The main app's `accountHoldSql` with its marker view present. Kept identical by
+ * `moderator-delete-hold-parity.test.ts`.
+ */
+export const accountHoldSqlText = accountHold;
+
+/**
+ * Whether a held author wrote a comment in the thread `rootId` (an int SQL expression) or any thread
+ * below it: the main app's `heldCommentInTreeSql`, pinned through
+ * `detachHeldArticleThreadsSqlText`.
+ */
+export const heldCommentInTreeSqlText = (rootId: string) => `EXISTS (
+    WITH RECURSIVE tree AS (
+    SELECT (${rootId})::int AS id
+    UNION
+    SELECT n.id
+    FROM tree
+    CROSS JOIN LATERAL (
+      SELECT c.id FROM "Thread" c WHERE c."parentThreadId" = tree.id OR c."rootThreadId" = tree.id
+      UNION ALL
+      SELECT c.id
+      FROM "CommentV2" k
+      JOIN "Thread" c ON c."commentId" = k.id
+      WHERE k."threadId" = tree.id
+    ) n
+  )
+    SELECT 1
+    FROM (SELECT DISTINCT hc."userId" FROM tree JOIN "CommentV2" hc ON hc."threadId" = tree.id) a
+    WHERE ${accountHold('a."userId"')}
+  )`;
+
+/**
+ * Detaches the threads of the articles `articleIds` (a query selecting ids) that hold a held
+ * author's comment, so the article's delete does not cascade into them: the main app's
+ * `detachHeldThreadsSql({ articleId })`.
+ */
+export const detachHeldArticleThreadsSqlText = (articleIds: string) => `WITH detached_0 AS (
+      UPDATE "Thread" t
+      SET "articleId" = NULL,
+          metadata = COALESCE(t.metadata, '{}'::jsonb) || jsonb_build_object(
+            'detachedFrom', jsonb_build_object('articleId'::text, t."articleId"),
+            'detachedAt', now()
+          )
+      WHERE t."articleId" IN (${articleIds}) AND ${heldCommentInTreeSqlText('t.id')}
+      RETURNING t.id
+    ) SELECT NULL`;
+
+/**
+ * Whether a held author has a live comment on the article `articleId` that exists only in
+ * CommentV3, which no detach can save: the main app's `heldCommentV3OnArticleSql`.
+ */
+export const heldCommentV3OnArticleSqlText = (articleId: string) => `EXISTS (
+    SELECT 1 FROM "CommentV3" ac
+    WHERE ac."entityType" = 'article' AND ac."entityId" = ${articleId} AND ac."deletedAt" IS NULL
+      AND NOT EXISTS (SELECT 1 FROM "CommentV2" v WHERE v.id = ac.id)
+      AND ${accountHold('ac."userId"')}
+  )`;
