@@ -69,10 +69,3 @@ export const botCacheMiddleware = createMiddleware({
     }
   },
 });
-    } catch (error) {
-      origin.recordBotCacheOrigin('error', 'lookup');
-      origin.logBotCacheOriginFailure('lookup', error);
-      return renderAsMiss();
-    }
-  },
-});
