@@ -7,15 +7,20 @@
   import { isComSafeLevel, type ComFace } from '$lib/com-face';
   import { getEdgeUrl } from '$lib/media/edge-url';
 
-  /** A model's civitai.com face beside its .red one. Read-only: the cover is unblurred, as every
-   *  other tile in these queues is. */
+  /** A model's civitai.com face beside its .red one. Read-only. The cover shows unblurred, as every
+   *  other tile in these queues does, unless the caller blurs it. */
   let {
     face,
     bare = false,
+    blurred = false,
+    onReveal,
   }: {
     face: ComFace | null;
     /** For a list row: no card around it, a smaller cover. */
     bare?: boolean;
+    /** Hide the cover until the moderator reveals it; `onReveal` shows the Reveal button. */
+    blurred?: boolean;
+    onReveal?: () => void;
   } = $props();
 
   const cover = $derived(face?.cover ?? null);
@@ -27,11 +32,14 @@
     <div class="flex gap-3">
       {#if cover}
         {@const media = cover.type === 'video' ? 'video' : 'image'}
-        <a
-          href={getEdgeUrl(cover.url, { type: media, original: true })}
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Open the civitai.com cover"
+        <div class="flex shrink-0 flex-col items-start gap-1">
+        <svelte:element
+          this={blurred ? 'div' : 'a'}
+          href={blurred ? undefined : getEdgeUrl(cover.url, { type: media, original: true })}
+          target={blurred ? undefined : '_blank'}
+          rel={blurred ? undefined : 'noreferrer'}
+          role={blurred ? 'img' : undefined}
+          aria-label={blurred ? 'civitai.com cover, hidden' : 'Open the civitai.com cover'}
           class={cn(
             'relative block aspect-[4/5] shrink-0 overflow-hidden rounded-lg border bg-dark-6',
             bare ? 'w-16' : 'w-24',
@@ -43,7 +51,10 @@
             type={cover.type}
             anim={cover.type === 'video' ? false : undefined}
             width={200}
-            class="size-full object-cover object-top"
+            hoverPlay={!blurred}
+            class={blurred
+              ? 'size-full scale-110 object-cover object-top blur-xl'
+              : 'size-full object-cover object-top'}
           />
           <span
             class={cn(
@@ -53,7 +64,15 @@
           >
             {getBrowsingLevelLabel(cover.nsfwLevel)}{#if !comSafe}&nbsp;· not .com-safe{/if}
           </span>
-        </a>
+        </svelte:element>
+        {#if blurred && onReveal}
+          <button
+            type="button"
+            class="text-[11px] text-blue-400 hover:underline"
+            onclick={onReveal}>Reveal</button
+          >
+        {/if}
+        </div>
       {/if}
       <div class="min-w-0 space-y-1.5">
         <p class="m-0 font-semibold break-words text-dark-0">{face.name}</p>
