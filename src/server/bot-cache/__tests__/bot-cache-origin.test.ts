@@ -34,11 +34,8 @@ vi.mock('~/server/shell/shell-response', async (importOriginal) => ({
 
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
 import type { BotCacheEntry } from '~/server/bot-cache/bot-cache-origin';
-import {
-  botCacheCandidatePattern,
-  botCacheKey,
-  storeBotCacheRender,
-} from '~/server/bot-cache/bot-cache-origin';
+import { botCacheKey, storeBotCacheRender } from '~/server/bot-cache/bot-cache-origin';
+import { botCacheCandidatePattern } from '~/server/bot-cache/bot-cache-routes';
 import { botCacheMiddleware } from '~/server/middleware/bot-cache.middleware';
 import { runMiddlewares } from '~/server/middleware/index';
 

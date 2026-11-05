@@ -360,7 +360,8 @@ describe('origin cache: a stored render is served to the next crawler', () => {
     const html = await renderPage(IMAGE_PAGE, makeReq(url, variant), res);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Length', Buffer.byteLength(html));
-    res.end(html);
+    // The harness types `end` without arguments; the capture `_document` installs takes Next's.
+    (res.end as (chunk: string) => void).call(res, html);
     return { html, res };
   }
 

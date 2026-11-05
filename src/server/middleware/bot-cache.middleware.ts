@@ -1,16 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { botCacheRefusal } from '~/server/bot-cache/bot-cache';
-import {
-  BOT_CACHE_STATUS_HEADER,
-  botCacheCandidatePattern,
-  botCacheKey,
-  decodeBotCacheBody,
-  logBotCacheOriginFailure,
-  readBotCacheEntry,
-  recordBotCacheOrigin,
-} from '~/server/bot-cache/bot-cache-origin';
+import { botCacheCandidatePattern } from '~/server/bot-cache/bot-cache-routes';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
+import { BOT_CACHE_STATUS_HEADER } from '~/shared/constants/bot-cache.constants';
 
 /** The request in the shape `botCacheRefusal` reads at render (`IncomingMessage`). */
 function asRenderRequest(request: NextRequest) {
@@ -35,6 +27,9 @@ function renderAsMiss() {
  * `getServerSideProps` and React. Only for a request `botCacheRefusal` allows: checked against the
  * path's likely pattern before the lookup, so other paths cost none, and against the pattern the
  * entry was rendered as before it is served.
+ *
+ * The predicate and the cache are imported only for a candidate path, so they (the server env,
+ * Flipt, redis) are not part of the proxy's module graph for every other request.
  */
 export const botCacheMiddleware = createMiddleware({
   matcher: ['/:path*'],
@@ -42,25 +37,28 @@ export const botCacheMiddleware = createMiddleware({
   handler: async ({ request }) => {
     const candidate = botCacheCandidatePattern(request.nextUrl.pathname);
     if (!candidate) return;
+    const { botCacheRefusal } = await import('~/server/bot-cache/bot-cache');
     const req = asRenderRequest(request);
     if (botCacheRefusal(req as never, candidate, { degraded: false }) !== null) return;
 
+    const origin = await import('~/server/bot-cache/bot-cache-origin');
     try {
       const { pathname, search } = request.nextUrl;
-      const entry = await readBotCacheEntry(botCacheKey(req.headers.host ?? '', pathname, search));
+      const key = origin.botCacheKey(req.headers.host ?? '', pathname, search);
+      const entry = await origin.readBotCacheEntry(key);
       if (!entry || botCacheRefusal(req as never, entry.pattern, { degraded: false }) !== null) {
-        recordBotCacheOrigin('miss', 'lookup');
+        origin.recordBotCacheOrigin('miss', 'lookup');
         return renderAsMiss();
       }
-      const html = await decodeBotCacheBody(entry);
+      const html = await origin.decodeBotCacheBody(entry);
       const headers = new Headers(entry.headers);
       headers.delete('set-cookie');
       headers.set(BOT_CACHE_STATUS_HEADER, 'hit');
-      recordBotCacheOrigin('hit', 'lookup');
+      origin.recordBotCacheOrigin('hit', 'lookup');
       return new NextResponse(html, { status: 200, headers });
     } catch (error) {
-      recordBotCacheOrigin('error', 'lookup');
-      logBotCacheOriginFailure('lookup', error);
+      origin.recordBotCacheOrigin('error', 'lookup');
+      origin.logBotCacheOriginFailure('lookup', error);
       return renderAsMiss();
     }
   },

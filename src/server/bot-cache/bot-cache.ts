@@ -21,6 +21,11 @@ import {
   BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
   BOT_CACHE_REQ_KEY,
 } from '~/shared/constants/bot-cache.constants';
+import type {
+  BotCacheRouteName,
+  BotCacheRoutePattern,
+} from '~/server/bot-cache/bot-cache-routes';
+import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
 
 /**
  * Bot HTML edge cache: whether a verified crawler's full page render may be stored by the edge and
@@ -32,30 +37,11 @@ import {
  * anonymous viewer does not get, so it cannot be shared.
  */
 
-export const BOT_CACHE_ROUTES = {
-  '/models/[id]/[[...slug]]': 'models',
-  '/images/[imageId]': 'images',
-  '/posts/[postId]/[[...postSlug]]': 'posts',
-  '/articles/[id]/[[...slug]]': 'articles',
-  // The profile and its public tabs. Not `manage-categories` (owner only) or `shop/manage`.
-  '/user/[username]': 'user',
-  '/user/[username]/[list]': 'user',
-  '/user/[username]/3d-models': 'user',
-  '/user/[username]/achievements': 'user',
-  '/user/[username]/articles': 'user',
-  '/user/[username]/collections': 'user',
-  '/user/[username]/comics': 'user',
-  '/user/[username]/images': 'user',
-  '/user/[username]/models': 'user',
-  '/user/[username]/posts': 'user',
-  '/user/[username]/shop': 'user',
-  '/user/[username]/sticker-book': 'user',
-  '/user/[username]/storylines': 'user',
-  '/user/[username]/videos': 'user',
-} as const;
-
-export type BotCacheRoutePattern = keyof typeof BOT_CACHE_ROUTES;
-export type BotCacheRouteName = (typeof BOT_CACHE_ROUTES)[BotCacheRoutePattern];
+export { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
+export type {
+  BotCacheRouteName,
+  BotCacheRoutePattern,
+} from '~/server/bot-cache/bot-cache-routes';
 
 /** Set by the edge on a verified crawler's request, to `CF_VERIFIED_BOT_HEADER_SECRET`. */
 export const CF_VERIFIED_BOT_HEADER = 'x-civ-cf-verified-bot';

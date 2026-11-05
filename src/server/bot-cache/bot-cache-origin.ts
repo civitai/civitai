@@ -8,8 +8,7 @@ import {
   instrumentationRegistry,
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
-import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache';
-import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache';
+import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
 import { SHELL_CDN_CACHE_CONTROL_HEADER, shellBuildId } from '~/server/shell/shell-response';
@@ -22,7 +21,6 @@ import { SHELL_CDN_CACHE_CONTROL_HEADER, shellBuildId } from '~/server/shell/she
  * served, so the two caches hold the same objects for the same requests.
  */
 
-export const BOT_CACHE_STATUS_HEADER = 'x-civ-bot-cache';
 export const BOT_CACHE_ORIGIN_TTL_S = 300;
 /** Compressed. A larger page is rendered every time rather than crowd the cache. */
 export const BOT_CACHE_ORIGIN_MAX_STORED_BYTES = 256 * 1024;
@@ -77,34 +75,6 @@ export function botCacheKey(
 }
 
 export type BotCacheKey = ReturnType<typeof botCacheKey>;
-
-const staticSegments = (segments: string[]) => segments.filter((s) => !s.startsWith('[')).length;
-
-// Most static segments first, as Next prefers `/user/[username]/models` over `[list]`.
-const CANDIDATES = (Object.keys(BOT_CACHE_ROUTES) as BotCacheRoutePattern[])
-  .map((pattern) => ({ pattern, segments: pattern.split('/').filter(Boolean) }))
-  .sort((a, b) => staticSegments(b.segments) - staticSegments(a.segments));
-
-function matchesPattern(segments: string[], parts: string[]) {
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (segment.startsWith('[[...')) return true;
-    if (i >= parts.length) return false;
-    if (!segment.startsWith('[') && segment !== parts[i]) return false;
-  }
-  return parts.length === segments.length;
-}
-
-/**
- * The allowlisted page pattern a URL path most likely renders as, or `null` when it can be none of
- * them: lets the proxy skip the lookup for every other path. Only a guess — it does not know the
- * app's other static pages (`/user/[username]/manage-categories` reads as `[list]`) — so the
- * pattern a stored entry was RENDERED as is what a hit is checked against.
- */
-export function botCacheCandidatePattern(pathname: string): BotCacheRoutePattern | null {
-  const parts = pathname.split('/').filter(Boolean);
-  return CANDIDATES.find(({ segments }) => matchesPattern(segments, parts))?.pattern ?? null;
-}
 
 export const BOT_CACHE_ORIGIN_METRIC = PROM_PREFIX + 'bot_html_origin_cache_total';
 

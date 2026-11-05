@@ -7,3 +7,6 @@ export const BOT_CACHE_REQ_KEY = 'civBotCacheRoute';
 
 /** Set by `createServerSideProps` when a prefetch of a bot-cache candidate failed. */
 export const BOT_CACHE_PREFETCH_FAILED_REQ_KEY = 'civBotCachePrefetchFailed';
+
+/** `hit` on a response the origin cache served, `miss` on an allowed request it rendered. */
+export const BOT_CACHE_STATUS_HEADER = 'x-civ-bot-cache';
