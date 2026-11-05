@@ -33,6 +33,14 @@ export type RemixAsk =
   | { kind: 'pick'; prompt: string; images: RemixImage[] }
   | { kind: 'text'; prompt: string; maxLength: number };
 
+/**
+ * An ask as the viewer receives it: a pick's images the viewer may not see are `null`, so every
+ * other image keeps the index the app gave it.
+ */
+export type RemixViewerAsk =
+  | Exclude<RemixAsk, { kind: 'pick' }>
+  | { kind: 'pick'; prompt: string; images: (RemixImage | null)[] };
+
 /** `choice` answers with an option's value, `pick` with an image index, `text` with the text. */
 export type RemixAnswerOf<A extends RemixAsk> = A extends { kind: 'pick' } ? number : string;
 export type RemixAnswer = string | number;

@@ -39,6 +39,8 @@ const h = vi.hoisted(() => ({
   patchWorkflows: vi.fn(),
   /** What the whatIf prices an upscale at, apart from every other workflow. */
   upscalePrice: 12,
+  /** sysRedis, where the option prices are cached. */
+  sys: new Map<string, string>(),
 }));
 
 vi.mock('@civitai/orchestration-client', async () => ({
@@ -212,7 +214,36 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
       return images;
     },
   });
-  const apps = new Map([pickThenEdit, endless, asksFirst].map((app) => [app.slug, app]));
+  /** A choice straight after its first workflow: a run whose recorded state stops at a choice. */
+  const thenChoose = defineRemixApp({
+    slug: 'then-choose',
+    name: 'Then choose',
+    icon: 'sparkles',
+    version: 1,
+    engine: real.animeIt.engine,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      const finish = await ctx.ask({
+        kind: 'choice',
+        prompt: 'Finish it',
+        options: [
+          { value: 'upscale', label: 'Upscale' },
+          { value: 'keep', label: 'Keep' },
+        ],
+      });
+      if (finish === 'keep') return images;
+      return (await ctx.workflow({ kind: 'upscale', image: images[0], scale: 2 })).images;
+    },
+  });
+  const apps = new Map(
+    [pickThenEdit, endless, asksFirst, thenChoose].map((app) => [app.slug, app])
+  );
   return {
     ...real,
     getRuntimeRemixApp: (slug: string) => apps.get(slug) ?? real.getRuntimeRemixApp(slug),
@@ -220,6 +251,7 @@ vi.mock('~/shared/remix-apps/system-apps', async (importOriginal) => {
 });
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import { verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
@@ -293,7 +325,9 @@ async function runToPick(nonce: string, viewer = caller()) {
     quote: 30,
     caller: viewer,
   });
-  finish(submits()[0].id, ['a', 'b', 'c', 'd'].map(blob));
+  const takes = ['a', 'b', 'c', 'd'].map(blob);
+  // Rated, so the pick is shown to every viewer.
+  finish(submits()[0].id, takes, Object.fromEntries(takes.map((url) => [url, 'pg'])));
   return runId;
 }
 
@@ -336,6 +370,13 @@ beforeEach(() => {
   h.headlessPost.mockResolvedValue({ postId: 500, imageIds: [1], deduped: false });
   h.patchTags.mockResolvedValue(undefined);
   h.upscalePrice = 12;
+  const { sys } = h;
+  sys.clear();
+  redisMock.sysRedis.get.mockImplementation((async (key: string) => sys.get(key) ?? null) as never);
+  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+    sys.set(key, value);
+    return 'OK';
+  }) as never);
   // `add` at /metadata/remixRun/<key>: the one patch the run service writes.
   h.patchWorkflows.mockImplementation(
     async ({
@@ -748,6 +789,73 @@ describe('Pick of four', () => {
     return { runId, state };
   }
 
+  describe('the pick shows only takes the viewer may see', () => {
+    /** Four takes finished with `levels` (url → nsfw level; absent = not rated yet). */
+    async function atPick(nonce: string, levels: Record<string, string>, viewer = caller()) {
+      addImage(SOURCE_ID);
+      const { runId } = await startRemixRun({
+        slug: 'pick-of-four',
+        imageId: SOURCE_ID,
+        nonce,
+        quote: 30,
+        caller: viewer,
+      });
+      finish(submits()[0].id, takes, levels);
+      return runId;
+    }
+    const rated = Object.fromEntries(takes.map((url) => [url, 'pg']));
+    const hidesMature = () => {
+      const viewer = caller();
+      viewer.user = { ...viewer.user, showNsfw: false };
+      return viewer;
+    };
+
+    it('holds the run while a take is not rated yet', async () => {
+      const viewer = hidesMature();
+      const { [takes[1]]: _, ...oneUnrated } = rated;
+      const runId = await atPick('nonce-p4-unrated', oneUnrated, viewer);
+
+      expect(await advanceRemixRun({ runId, caller: viewer })).toMatchObject({ status: 'running' });
+      // POSITIVE CONTROL: rated, the pick is shown.
+      finish(submits()[0].id, takes, rated);
+      expect(await advanceRemixRun({ runId, caller: viewer })).toMatchObject({ status: 'ask' });
+    });
+
+    it.each([
+      ['on green', () => caller({ isGreenDomain: true })],
+      ['for a viewer who hides mature content', hidesMature],
+    ])('leaves a mature take out %s, and refuses a pick of it', async (_, viewer) => {
+      const runId = await atPick('nonce-p4-mature', { ...rated, [takes[1]]: 'x' }, viewer());
+
+      const state = await advanceRemixRun({ runId, caller: viewer() });
+
+      expect(state).toMatchObject({ status: 'ask', ask: { kind: 'pick' } });
+      const images = (state as { ask: { images: ({ url: string } | null)[] } }).ask.images;
+      expect(images.map((image) => image?.url ?? null)).toEqual([
+        takes[0],
+        null,
+        takes[2],
+        takes[3],
+      ]);
+      expect(JSON.stringify(state)).not.toContain(takes[1]);
+      await expect(
+        advanceRemixRun({ runId, answers: [1], caller: viewer() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it('ends the run when none of the takes can be shown', async () => {
+      const allMature = Object.fromEntries(takes.map((url) => [url, 'x']));
+      const runId = await atPick('nonce-p4-none', allMature);
+
+      expect(
+        await advanceRemixRun({ runId, caller: caller({ isGreenDomain: true }) })
+      ).toMatchObject({
+        status: 'failed',
+        reason: 'None of the results can be shown here.',
+      });
+    });
+  });
+
   it('prices each option from a whatIf on the workflow it leads to, and keeping as free', async () => {
     const { state } = await atFinish('nonce-p4-prices');
 
@@ -817,13 +925,38 @@ describe('Pick of four', () => {
     );
   });
 
-  it('will not post a run still waiting on an answer', async () => {
-    const { runId } = await atFinish('nonce-p4-unfinished');
+  it('prices the options once while that ask is open', async () => {
+    const { runId } = await atFinish('nonce-p4-cache');
+    const priced = whatIfs().length;
 
+    const again = await advanceRemixRun({ runId, answers: [2], caller: caller() });
+
+    expect(again).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
+    expect(whatIfs()).toHaveLength(priced);
+  });
+
+  it('will not post a run still waiting on an answer, and prices nothing to find that out', async () => {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'then-choose',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-choose-post',
+      quote: 30,
+      caller: caller(),
+    });
+    finish(submits()[0].id, [blob('one')]);
+    // POSITIVE CONTROL: at this ask, an advance prices its options.
+    const before = whatIfs().length;
+    expect(await advanceRemixRun({ runId, caller: caller() })).toHaveProperty('prices');
+    expect(whatIfs().length).toBeGreaterThan(before);
+    h.sys.clear();
+
+    const priced = whatIfs().length;
     await expect(postRemixResult({ runId, caller: caller(), ctx: {} as never })).rejects.toThrow(
       'This remix has not finished.'
     );
     expect(h.headlessPost).not.toHaveBeenCalled();
+    expect(whatIfs()).toHaveLength(priced);
   });
 });
 

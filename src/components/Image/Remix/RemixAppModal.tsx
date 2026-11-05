@@ -15,7 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RemixRunState } from '~/server/services/remix-app-run.service';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
-import type { RemixAnswer, RemixAsk, RemixImage } from '~/shared/remix-apps/define';
+import type { RemixAnswer, RemixImage, RemixViewerAsk } from '~/shared/remix-apps/define';
 import { REMIX_DONE_TAG } from '~/shared/remix-apps/tags';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import {
@@ -44,7 +44,7 @@ type Phase =
       kind: 'ask';
       runId: string;
       workflowId?: string;
-      ask: RemixAsk;
+      ask: RemixViewerAsk;
       answers: RemixAnswer[];
       prices?: Record<string, number>;
     }
@@ -102,7 +102,7 @@ function AskStep({
   pending,
   onAnswer,
 }: {
-  ask: RemixAsk;
+  ask: RemixViewerAsk;
   prices?: Record<string, number>;
   pending: boolean;
   onAnswer: (answer: RemixAnswer) => void;
@@ -132,17 +132,20 @@ function AskStep({
       )}
       {ask.kind === 'pick' && (
         <div className="grid grid-cols-2 gap-2">
-          {ask.images.map((image, index) => (
-            <UnstyledButton
-              key={image.url}
-              aria-label={`Pick image ${index + 1}`}
-              disabled={pending}
-              onClick={() => onAnswer(index)}
-              className="overflow-hidden rounded-md"
-            >
-              <EdgeMedia2 src={image.url} type="image" alt="" className="w-full object-cover" />
-            </UnstyledButton>
-          ))}
+          {ask.images.map((image, index) =>
+            // One the viewer may not see is left out; the rest keep the index the app gave them.
+            image ? (
+              <UnstyledButton
+                key={image.url}
+                aria-label={`Pick image ${index + 1}`}
+                disabled={pending}
+                onClick={() => onAnswer(index)}
+                className="overflow-hidden rounded-md"
+              >
+                <EdgeMedia2 src={image.url} type="image" alt="" className="w-full object-cover" />
+              </UnstyledButton>
+            ) : null
+          )}
         </div>
       )}
       {ask.kind === 'text' && (

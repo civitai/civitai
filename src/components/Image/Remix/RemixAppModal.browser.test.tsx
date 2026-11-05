@@ -373,6 +373,32 @@ describe('RemixAppModal', () => {
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
   });
 
+  test('a pick leaves out a take the viewer may not see, and the rest keep their index', async () => {
+    h.items = [workflow('wf-0', 'succeeded')];
+    const take = (n: number) => ({ url: `https://example.com/take-${n}.png` });
+    h.advance
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: { kind: 'pick', prompt: 'Pick your favourite', images: [take(1), null, take(3)] },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-1' });
+    await renderWithProviders(
+      <RemixAppModalContent
+        app={animeIt}
+        run={{ runId: RUN, workflowId: 'wf-0' }}
+        onClose={onClose}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: 'Pick image 3' })).toBeVisible();
+    expect(page.getByRole('button', { name: /^Pick image/ }).elements()).toHaveLength(2);
+
+    await page.getByRole('button', { name: 'Pick image 3' }).click();
+    await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
+    expect(h.advance.mock.calls[1][0]).toMatchObject({ runId: RUN, answers: [2] });
+  });
+
   test('a priced option shows its price, and tapping it runs the step at that price', async () => {
     h.items = [workflow('wf-0', 'succeeded')];
     h.advance

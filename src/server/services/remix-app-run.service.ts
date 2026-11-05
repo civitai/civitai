@@ -19,6 +19,7 @@ import {
 } from '~/server/services/headless-post.service';
 import type { ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   assertInputsUsable,
   buildRuntimeRequest,
@@ -36,6 +37,7 @@ import type {
   RemixAppSource,
   RemixAsk,
   RemixImage,
+  RemixViewerAsk,
 } from '~/shared/remix-apps/define';
 import { remixOptionEffects } from '~/shared/remix-apps/mock-host';
 import { isDefined } from '~/utils/type-guards';
@@ -74,7 +76,7 @@ export type RemixRunState =
   | {
       status: 'ask';
       runId: string;
-      ask: RemixAsk;
+      ask: RemixViewerAsk;
       /** A choice's price per option value: 0 when it finishes the run, absent when unknown. */
       prices?: Record<string, number>;
     }
@@ -173,15 +175,40 @@ function outputImages(workflow: Workflow): RunImage[] {
   });
 }
 
+type Gate = 'shown' | 'hidden' | 'unrated';
+
+/** Whether the viewer may see an output: the blob is the run's either way. */
+function gateOf(
+  url: string,
+  levels: Map<string, NsfwLevel | undefined>,
+  caller: RemixAppCaller
+): Gate {
+  if (!caller.isGreenDomain && caller.user.showNsfw) return 'shown';
+  // Fails closed: a rating not landed yet is neither shown nor hidden.
+  if (levels.has(url) && levels.get(url) == null) return 'unrated';
+  return isMature(levels.get(url)) ? 'hidden' : 'shown';
+}
+
 /** What the viewer may see of `outputs`; undefined while one is not rated yet (fails closed). */
 function visibleOutputs<T extends { url: string }>(
   outputs: T[],
   levels: Map<string, NsfwLevel | undefined>,
   caller: RemixAppCaller
 ): T[] | undefined {
-  if (!caller.isGreenDomain && caller.user.showNsfw) return outputs;
-  if (outputs.some(({ url }) => levels.has(url) && levels.get(url) == null)) return undefined;
-  return outputs.filter(({ url }) => !isMature(levels.get(url)));
+  const gates = outputs.map(({ url }) => gateOf(url, levels, caller));
+  if (gates.includes('unrated')) return undefined;
+  return outputs.filter((_, i) => gates[i] === 'shown');
+}
+
+/** A pick's images as the viewer gets them; undefined while one is not rated yet. */
+function viewerPick(
+  images: RemixImage[],
+  levels: Map<string, NsfwLevel | undefined>,
+  caller: RemixAppCaller
+): (RemixImage | null)[] | undefined {
+  const gates = images.map(({ url }) => gateOf(url, levels, caller));
+  if (gates.includes('unrated')) return undefined;
+  return images.map((image, i) => (gates[i] === 'shown' ? image : null));
 }
 
 /**
@@ -234,6 +261,24 @@ async function optionPrices({
   return Object.fromEntries(priced.filter(isDefined));
 }
 
+const NONE_SHOWN = 'None of the results can be shown here.';
+const OPTION_PRICES_TTL_SECONDS = 5 * 60;
+
+/** Prices for one open ask: a repeated advance at it re-prices nothing. */
+async function cachedOptionPrices(
+  [runId, segment, step]: [string, number, number],
+  price: () => Promise<Record<string, number>>
+) {
+  const key = `${REDIS_SYS_KEYS.REMIX_APP.OPTION_PRICES}:${runId}:${segment}:${step}` as const;
+  const cached = await sysRedis.get(key).catch(() => null);
+  if (cached) return JSON.parse(cached) as Record<string, number>;
+  const prices = await price();
+  await sysRedis
+    .set(key, JSON.stringify(prices), { EX: OPTION_PRICES_TTL_SECONDS })
+    .catch(() => undefined);
+  return prices;
+}
+
 const isSameAnswers = (a: RemixAnswer[], b: RemixAnswer[]) =>
   a.length === b.length && a.every((answer, i) => answer === b[i]);
 
@@ -257,6 +302,7 @@ async function advance({
   answers: given,
   quote,
   caller,
+  priceOptions = true,
 }: {
   runId: string;
   app: RemixApp;
@@ -265,6 +311,8 @@ async function advance({
   answers: RemixAnswer[];
   quote?: number;
   caller: RemixAppCaller;
+  /** Off where only whether the run finished matters. */
+  priceOptions?: boolean;
 }): Promise<RemixRunState> {
   let answers = given;
   const log: RemixLogEntry[] = [];
@@ -301,7 +349,13 @@ async function advance({
   let outcome = await replay();
   while (outcome.status === 'effect' && outcome.effect.type === 'ask' && pending.length) {
     const answer = pending.shift() as RemixAnswer;
-    const refusal = remixAnswerRefusal(outcome.effect.spec, answer);
+    const { spec } = outcome.effect;
+    const refusal =
+      remixAnswerRefusal(spec, answer) ??
+      // Only an image the viewer was shown can be picked.
+      (spec.kind === 'pick' && !viewerPick(spec.images, levels, caller)?.[answer as number]
+        ? 'Not one of the images'
+        : undefined);
     if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
     log.push({ type: 'ask', answer });
     outcome = await replay();
@@ -321,8 +375,18 @@ async function advance({
   }
   if (outcome.effect.type === 'ask') {
     const { spec } = outcome.effect;
-    if (spec.kind !== 'choice') return { status: 'ask', runId, ask: spec };
-    const prices = await optionPrices({ app, image, source, log, spec, caller, currencies });
+    const workflowId = last?.workflow.id as string;
+    if (spec.kind === 'pick') {
+      // The same gate as a finished run's outputs: these urls reach the viewer too.
+      const images = viewerPick(spec.images, levels, caller);
+      if (!images) return { status: 'running', runId, workflowId };
+      if (!images.some(Boolean)) return { status: 'failed', runId, workflowId, reason: NONE_SHOWN };
+      return { status: 'ask', runId, ask: { ...spec, images } };
+    }
+    if (spec.kind !== 'choice' || !priceOptions) return { status: 'ask', runId, ask: spec };
+    const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
+      optionPrices({ app, image, source, log, spec, caller, currencies })
+    );
     return { status: 'ask', runId, ask: spec, prices };
   }
 
@@ -455,7 +519,15 @@ async function workflowResult(workflowId: string, caller: RemixAppCaller): Promi
 async function runResult(runId: string, caller: RemixAppCaller): Promise<PostableResult> {
   const { segments, app, image } = await loadRun(runId, caller);
   // No quote: replaying a run that has not finished can price its next step, never submit it.
-  const state = await advance({ runId, app, image, segments, answers: [], caller });
+  const state = await advance({
+    runId,
+    app,
+    image,
+    segments,
+    answers: [],
+    caller,
+    priceOptions: false,
+  });
   if (state.status !== 'done') {
     const settled = segments.every(({ workflow }) => workflow.status === 'succeeded');
     throw state.status === 'running' && settled ? stillChecking() : notFinished();

@@ -85,7 +85,7 @@ export async function createHeadlessPost({
       throw new TRPCError({ code: 'CONFLICT', message: 'This is already being posted.' });
     const first = JSON.parse(stored) as HeadlessPostResult;
     // A gallery asked for on the repeat, or refused the first time. Safe to send again: the gallery
-    // takes one image once, and refuses before it charges.
+    // takes one image once (`Placement_surface_target_image_live_key`), and refuses before it charges.
     if (remixGallery && !first.gallery?.submitted) {
       first.gallery = await submitToGallery(ctx, remixGallery, first.imageIds[0]);
       await storeResult(key, first);
