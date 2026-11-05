@@ -8,6 +8,14 @@ const h = vi.hoisted(() => ({
     async () => null
   ),
   getToken: vi.fn(async () => 'orch-token'),
+  startRemixRun: vi.fn(async () => ({ status: 'running' })),
+  advanceRemixRun: vi.fn(async () => ({ status: 'running' })),
+}));
+
+vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  startRemixRun: h.startRemixRun,
+  advanceRemixRun: h.advanceRemixRun,
 }));
 
 vi.mock('~/server/services/remix-app.service', async (importOriginal) => ({
@@ -57,5 +65,25 @@ describe('remixApp.teamQuote', () => {
 
     await expect(args.getToken()).resolves.toBe('orch-token');
     expect(h.getToken).toHaveBeenCalledWith(42, expect.anything());
+  });
+});
+
+describe('remixApp.start and advance', () => {
+  const runId = 'r0123456789abcdef0123';
+  it('are refused with the remixApps flag off, before the service', async () => {
+    const off = remixAppRouter.createCaller(ctx(false));
+    await expect(
+      off.start({ slug: 'anime-it', imageId: 5, nonce: 'nonce-0001', quote: 30 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(off.advance({ runId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.startRemixRun).not.toHaveBeenCalled();
+    expect(h.advanceRemixRun).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: the same calls with the flag on reach the service.
+    const on = remixAppRouter.createCaller(ctx(true));
+    await on.start({ slug: 'anime-it', imageId: 5, nonce: 'nonce-0001', quote: 30 });
+    await on.advance({ runId });
+    expect(h.startRemixRun).toHaveBeenCalledTimes(1);
+    expect(h.advanceRemixRun).toHaveBeenCalledTimes(1);
   });
 });
