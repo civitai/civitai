@@ -66,7 +66,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
         : ' A hat protects this image.'
       : ''
   }`;
-  // One digit fits inside the 24px dial; from 10 the count moves out beside it and the hat takes the disc.
+  // Digits beyond one don't fit the dial; the count goes beside it.
   const countInside = !!leader && count < 10;
   const countBeside = !!leader && !countInside;
   const countEl = leader && (

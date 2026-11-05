@@ -1,9 +1,11 @@
 /*
  * A 24px dial (team ring around the leader's disc), and, when there is more to say, a dark chip
- * that carries the count (10 and up) and the lock to its right. `--dial` sizes the whole thing.
+ * that carries the count (10 and up) and the lock to its right. A surface resizes it by setting
+ * `--hat-turf-badge-size`: a different property from `--dial`, so it wins whatever the order the
+ * two stylesheets load in.
  */
 .badge {
-  --dial: 24px;
+  --dial: var(--hat-turf-badge-size, 24px);
   position: relative;
   display: inline-flex;
   flex: none;

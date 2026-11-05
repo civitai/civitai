@@ -104,6 +104,8 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import { resetExperimentExposuresForTests } from '~/components/Experiments/useExperimentExposure';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import detailClasses from '~/components/HatTurf/detail/HatTurfDetailControls.module.css';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
@@ -384,7 +386,18 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(badge()!.querySelector('[data-testid="hat-turf-count"]')).toBeNull();
   });
 
+  test('9, the largest count that stays inside the disc', async () => {
+    renderCard({
+      feed: feedWith({ 1: standing({ counted: { blue: 9, pink: 4 }, leader: 'blue' }) }),
+    });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const { count, disc } = parts();
+    expect(count!.textContent).toBe('9');
+    expect(disc.contains(count)).toBe(true);
+  });
+
   test.each([
+    [10, '10'],
     [42, '42'],
     [1240, '1.2k'],
   ])('%s: the count moves beside the dial and the hat takes the disc', async (lead, shown) => {
@@ -403,6 +416,19 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     // Still inside a phone card.
     const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
     expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
+  });
+
+  test('the detail action row draws the dial at its 36px', async () => {
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={feedWith({ 1: standing() })}>
+        <HatTurfBadge imageId={1} className={detailClasses.rowBadge} />
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const ring = badge()!.querySelector('svg')!.getBoundingClientRect();
+    expect(ring.width).toBe(36);
+    expect(badge()!.getBoundingClientRect().height).toBe(36);
   });
 
   test('the count pops when it changes after being seen, not when it first arrives', async () => {
