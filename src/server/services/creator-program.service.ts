@@ -1067,6 +1067,18 @@ export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts
     .filter((p) => includeNegativeAmounts || p.amount > 0);
 }
 
+const REFUNDED_WITHDRAWAL_STATUSES: CashWithdrawalStatus[] = [
+  CashWithdrawalStatus.Rejected,
+  CashWithdrawalStatus.Canceled,
+];
+
+/**
+ * The one external id a withdrawal's burn is refunded under. withdrawCash's failure path refunds
+ * through Buzz's refund endpoint, which records `refund-<transactionId>`; using the same id here
+ * lets Buzz treat a second refund of the same burn as a duplicate instead of paying it again.
+ */
+const getWithdrawalRefundExternalId = (transactionId: string) => `refund-${transactionId}`;
+
 export const updateCashWithdrawal = async ({
   withdrawalId,
   status,
@@ -1090,8 +1102,15 @@ export const updateCashWithdrawal = async ({
     ...(updatedMetadata ?? {}),
   };
 
-  if (status === CashWithdrawalStatus.Rejected || status === CashWithdrawalStatus.Canceled) {
+  if (REFUNDED_WITHDRAWAL_STATUSES.includes(status)) {
+    // Moving to Rejected or Canceled refunds the burn; a row already in one was refunded once.
+    if (REFUNDED_WITHDRAWAL_STATUSES.includes(withdrawal.status))
+      throw throwBadRequestError(
+        `Withdrawal ${withdrawalId} is already ${withdrawal.status}; it cannot be refunded again`
+      );
+
     if (withdrawal.transactionId) {
+      const refundExternalId = getWithdrawalRefundExternalId(withdrawal.transactionId);
       await withRetries(async () => {
         const transaction = await createBuzzTransaction({
           type: TransactionType.Refund,
@@ -1100,7 +1119,7 @@ export const updateCashWithdrawal = async ({
           fromAccountId: 0, // central bank
           amount: withdrawal.amount - (fees ?? 0),
           description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
-          externalTransactionId: withdrawal.transactionId as string,
+          externalTransactionId: refundExternalId,
         });
 
         metadata.refundTransactionId = transaction.transactionId;

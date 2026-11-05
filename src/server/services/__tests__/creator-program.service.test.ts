@@ -129,6 +129,7 @@ import {
   getPoolParticipantsV2,
   getUserCapCache,
   joinCreatorsProgram,
+  updateCashWithdrawal,
   withdrawCash,
 } from '~/server/services/creator-program.service';
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
@@ -1283,6 +1284,30 @@ describe('withdrawCash', () => {
       expect(canceled()).toBe(true);
     });
 
+    // A send that times out after Tipalti accepted it is refunded here and marked Canceled;
+    // Tipalti can still report that payment canceled or failed later.
+    it('refunds a withdrawal once when Tipalti cancels it after the send failed', async () => {
+      mockRefundTransaction.mockResolvedValue({ transactionId: 'tx-burn' });
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue({
+        id: 'withdrawal-1',
+        userId,
+        status: 'Canceled',
+        transactionId: 'tx-burn',
+        amount: 9500,
+        metadata: {},
+      });
+      await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }).catch(
+        () => null
+      );
+
+      const webhookRefunds = mockCreateBuzzTransaction.mock.calls.filter(
+        ([input]) => (input as { type?: TransactionType }).type === TransactionType.Refund
+      );
+      expect(mockRefundTransaction.mock.calls.length + webhookRefunds.length).toBe(1);
+    });
+
     it('does not cancel when a 409 has no refund on the ledger behind it', async () => {
       mockRefundTransaction.mockRejectedValue(conflict());
 
@@ -1290,6 +1315,45 @@ describe('withdrawCash', () => {
 
       expect(canceled()).toBe(false);
     });
+  });
+});
+
+// ─── updateCashWithdrawal refunds ─────────────────────────────────────────────────
+describe('updateCashWithdrawal refunds', () => {
+  const row = (status: string) => ({
+    id: 'withdrawal-1',
+    userId,
+    status,
+    transactionId: 'tx-burn',
+    amount: 9500,
+    metadata: {},
+  });
+
+  // withdrawCash's failure path refunds the same burn through Buzz's refund endpoint, recorded
+  // as refund-<transactionId>. Both paths must use that one id so Buzz sees a second refund of
+  // the burn as a duplicate. Do not change this id without changing that path too.
+  it('refunds under the same external id as the withdrawCash failure path', async () => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('InternalValue'));
+    mockCreateBuzzTransaction.mockResolvedValueOnce({ transactionId: 'tx-refund' });
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: TransactionType.Refund,
+        externalTransactionId: 'refund-tx-burn',
+      })
+    );
+  });
+
+  it.each(['Rejected', 'Canceled'])('refuses to refund a withdrawal already %s', async (status) => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row(status));
+
+    await expect(
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' })
+    ).rejects.toThrow('cannot be refunded again');
+    expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.cashWithdrawal.update).not.toHaveBeenCalled();
   });
 });
 
