@@ -30,14 +30,14 @@ describe('sweepArchiveScratchDirs', () => {
 
     const removed = await sweepArchiveScratchDirs(root);
 
-    expect(removed).toHaveLength(4);
-    for (const [scratch, name] of [
+    const swept = [
       ['base', '1'],
       ['images', '2'],
       ['generated-images', '3'],
       ['training-data', '4'],
-    ])
-      expect(fs.existsSync(dir(scratch, name))).toBe(false);
+    ];
+    expect(removed.sort()).toEqual(swept.map(([scratch, name]) => dir(scratch, name)).sort());
+    for (const [scratch, name] of swept) expect(fs.existsSync(dir(scratch, name))).toBe(false);
   });
 
   it('leaves send directories and anything not named by a report id', async () => {
@@ -49,6 +49,12 @@ describe('sweepArchiveScratchDirs', () => {
     expect(fs.existsSync(dir('training-data', `4-${SEND}`))).toBe(true);
     expect(fs.existsSync(dir('generated-send', '5'))).toBe(true);
     expect(fs.existsSync(dir('images', 'notes'))).toBe(true);
+  });
+
+  it('throws when a root cannot be read, so the job logs it', async () => {
+    fs.writeFileSync(path.join(root, 'images'), 'not a directory');
+
+    await expect(sweepArchiveScratchDirs(root)).rejects.toMatchObject({ code: 'ENOTDIR' });
   });
 
   it('does nothing when no pass has ever run', async () => {

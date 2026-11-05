@@ -313,6 +313,7 @@ describe('send-csam-reports scratch sweep', () => {
 describe('archive-csam-reports scratch sweep', () => {
   it('sweeps before the first report is archived', async () => {
     await archiveJob!.run({}).result;
+    expect(mocks.sweepArchiveScratchDirs).toHaveBeenCalledTimes(1);
     expect(mocks.sweepArchiveScratchDirs.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.archiveCsamDataForReport.mock.invocationCallOrder[0]
     );

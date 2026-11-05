@@ -555,8 +555,8 @@ const ARCHIVE_SCRATCH_ROOTS = ['base', 'images', 'generated-images', 'training-d
 
 /**
  * Removes the archive scratch directories, named by report id alone, that a pass which died left
- * behind. Safe only at the start of the archive job: its run lock means no other pass owns one.
- * Send directories in the same roots are named `<id>-<claim>` and are left.
+ * behind. Run only at the start of the archive job, whose run lock keeps other archive passes out
+ * while it holds; a pass that outlives the lock can lose its directory here and fail. Send directories in the same roots are named `<id>-<claim>` and are left.
  */
 export async function sweepArchiveScratchDirs(root = baseDir) {
   const removed: string[] = [];

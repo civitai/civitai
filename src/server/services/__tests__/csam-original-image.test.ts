@@ -563,10 +563,11 @@ describe('spoolOriginalImage', () => {
 
   it('fails without retrying on a part from another version, even when the store ignores If-Match', async () => {
     const transformToByteArray = vi.fn(async () => new Uint8Array(RANGE_PART_BYTES));
+    const destroy = vi.fn();
     const { backend, inputs } = largeStore(large, (index, _attempt, { start, end }) =>
       index === 1
         ? {
-            Body: { transformToByteArray, destroy: vi.fn() },
+            Body: { transformToByteArray, destroy },
             ContentRange: `bytes ${start}-${end}/${large.length}`,
             ETag: '"etag-3"',
           }
@@ -577,6 +578,7 @@ describe('spoolOriginalImage', () => {
       /another version/
     );
     expect(transformToByteArray).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledTimes(1);
     expect(
       inputs.filter((input) => input.Range?.startsWith(`bytes=${RANGE_PART_BYTES}-`))
     ).toHaveLength(1);
