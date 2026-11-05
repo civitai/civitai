@@ -98,7 +98,11 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal, popup opt-out) and `Kn
 
 ## Conversion (`src/lib/server/conversion`)
 
-Gold -> Buzz, the label pass and the tick's retries. Conversion is on by default; the kill switch `KNIGHTS_CONVERSION_DISABLED` (`conversionEnabled()`) set to exactly `true` turns it off, and `/gold` then refuses Convert. Apply by hand, in order: `20261213120000_knights_v2_progression`, `20261218120000_knights_v2_conversion`, deploy Knights, then the main app, then `20261223120000_knights_v2_drop_gold_clearing`. Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md).
+Gold -> Buzz, the label pass and the tick's retries. Conversion is on by default; the kill switch `KNIGHTS_CONVERSION_DISABLED` (`conversionEnabled()`) set to exactly `true` turns it off, and Buzz packs are then refused (the rest of the shop still sells). Apply by hand, in order: `20261213120000_knights_v2_progression`, `20261218120000_knights_v2_conversion`, deploy Knights, then the main app, then `20261223120000_knights_v2_drop_gold_clearing`. Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md).
+
+## Shop (`src/lib/server/shop`)
+
+`/gold` is the gold shop and `/gold/inventory` the inventory; Buzz packs are the conversion path with a fixed `(gold, buzz)`. Tables `KnightsShopItem` (the catalog, prices are data) and `KnightsShopPurchase` (the ledger), migration `20270104120000_knights_v2_shop` (by hand; apply, deploy the main app's `/api/mod/knights/shop/*` endpoints, deploy Knights, then `pnpm run seed:shop` on dev). Spending adds to `NewOrderPlayer.goldConverted` under the player row lock, so conversion, purchases and a career reset stay consistent. `KNIGHTS_SHOP_DISABLED` closes the shop; `KNIGHTS_CONVERSION_DISABLED` closes Buzz packs only. Detail: [`docs/features/knights-shop.md`](../../docs/features/knights-shop.md).
 
 ## Reference images and the apprenticeship (`src/lib/server/trials`, `src/lib/server/apprenticeship`)
 
@@ -137,7 +141,7 @@ Tokens and easings are in `src/global.css`, keyframes in `src/motion.css`. Keep 
 
 ## Wired packages
 
-`@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
+`@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
 `@civitai/flipt` (access flag), `@civitai/redis` (sys client: the guard's session revocation check, the skip sets, the leaderboard cache),
 `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
 

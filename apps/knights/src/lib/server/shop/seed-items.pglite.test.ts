@@ -1,0 +1,78 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createQueueDb } from '../../../test/pglite-kysely';
+import { FIXED_ITEMS, cosmeticItems, pickCosmetics, seedSql } from './seed-items';
+
+let pg: PGlite;
+
+beforeAll(async () => {
+  ({ pg } = await createQueueDb());
+});
+afterAll(async () => {
+  await pg.close();
+});
+
+const rows = [
+  { id: 1, name: "Knight's Seal", type: 'Badge' },
+  { id: 2, name: 'Second Badge', type: 'Badge' },
+  { id: 3, name: 'Third Badge', type: 'Badge' },
+  { id: 4, name: 'Gilded', type: 'NamePlate' },
+  { id: 5, name: 'Halo', type: 'ProfileDecoration' },
+  { id: 6, name: 'Laurel', type: 'ProfileDecoration' },
+  { id: 7, name: 'Wave', type: 'Sticker' },
+];
+
+describe('the dev shop seed', () => {
+  it('satisfies the table constraints, and seeding again changes nothing, not even an edited price', async () => {
+    const sql = seedSql([...FIXED_ITEMS, ...cosmeticItems(pickCosmetics(rows))]);
+    await pg.exec(sql);
+    const count = async () =>
+      (await pg.query<{ n: number }>(`SELECT count(*)::int n FROM "KnightsShopItem"`)).rows[0].n;
+    const first = await count();
+    await pg.exec(`UPDATE "KnightsShopItem" SET "price" = 777 WHERE "id" = 'buzz-50'`);
+
+    await pg.exec(sql);
+
+    expect(await count()).toBe(first);
+    expect(
+      (
+        await pg.query<{ price: number }>(
+          `SELECT "price" FROM "KnightsShopItem" WHERE "id"='buzz-50'`
+        )
+      ).rows[0].price
+    ).toBe(777);
+  });
+
+  it("sells the design's four Buzz packs and a month of each tier", () => {
+    expect(FIXED_ITEMS.filter((i) => i.kind === 'buzz_pack').map((i) => [i.buzz, i.price])).toEqual(
+      [
+        [50, 1000],
+        [130, 2500],
+        [275, 5000],
+        [600, 10000],
+      ]
+    );
+    expect(
+      FIXED_ITEMS.filter((i) => i.kind === 'membership').map((i) => [i.tier, i.months])
+    ).toEqual([
+      ['bronze', 1],
+      ['silver', 1],
+      ['gold', 1],
+    ]);
+  });
+
+  it('keeps an apostrophe in a cosmetic name', async () => {
+    await pg.exec(seedSql(cosmeticItems([{ id: 90, name: "Knight's Seal", type: 'Badge' }])));
+    const row = (
+      await pg.query<{ name: string }>(
+        `SELECT name FROM "KnightsShopItem" WHERE "id"='cosmetic-90'`
+      )
+    ).rows[0];
+    expect(row.name).toBe("Knight's Seal");
+  });
+
+  it('gates the decorations to ranks', () => {
+    const items = cosmeticItems(rows).filter((i) => i.cosmeticId === 5 || i.cosmeticId === 6);
+    expect(items.map((i) => i.minRank)).toEqual(['Templar', 'Paladin']);
+  });
+});
