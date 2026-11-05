@@ -179,30 +179,31 @@ describe('getInquisitorQueue', () => {
 });
 
 describe('Inquisitor queue filters', () => {
-  // 1 blocked, 2 pushed down, 3 no consensus, 4 write-back conflict, 5 neither, 6 outside the queue.
+  const ID = { blocked: 1, pushedDown: 2, noConsensus: 3, writeBack: 4, neither: 5, notWaiting: 6 };
+
   beforeEach(async () => {
     await db.exec(`INSERT INTO "Image" ("id","url") VALUES (4,'k4'), (5,'k5'), (6,'k6')`);
-    await insertItem(1, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'blocked' });
-    await insertItem(2, 2, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
-    await insertItem(3, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
-    await insertItem(4, 4, 'Inquisitor', Q, 2, { reason: 'level-moved' });
-    await insertItem(5, 5, 'Inquisitor', Q, 2, { reason: null });
-    await insertItem(6, 6, 'Open', Q, 2, { reason: null, escalationReason: 'blocked' });
+    await insertItem(ID.blocked, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'blocked' });
+    await insertItem(ID.pushedDown, 2, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(ID.noConsensus, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await insertItem(ID.writeBack, 4, 'Inquisitor', Q, 2, { reason: 'level-moved' });
+    await insertItem(ID.neither, 5, 'Inquisitor', Q, 2, { reason: null });
+    await insertItem(ID.notWaiting, 6, 'Open', Q, 2, { reason: null, escalationReason: 'blocked' });
   });
 
   it.each([
-    ['all', [1, 2, 3, 4, 5]],
-    ['blocked', [1]],
-    ['pushed-down', [2]],
-    ['no-consensus', [3]],
-    ['write-back', [4]],
+    ['all', [ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]],
+    ['blocked', [ID.blocked]],
+    ['pushed-down', [ID.pushedDown]],
+    ['no-consensus', [ID.noConsensus]],
+    ['write-back', [ID.writeBack]],
   ] as const)('lists exactly the %s items', async (filter, ids) => {
     expect((await getInquisitorQueue(filter)).map((i) => i.id)).toEqual(ids);
   });
 
   it('shows an item with neither reason under All only', async () => {
     for (const filter of ['blocked', 'pushed-down', 'no-consensus', 'write-back'] as const) {
-      expect((await getInquisitorQueue(filter)).map((i) => i.id)).not.toContain(5);
+      expect((await getInquisitorQueue(filter)).map((i) => i.id)).not.toContain(ID.neither);
     }
   });
 

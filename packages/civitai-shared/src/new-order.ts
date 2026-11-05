@@ -3,9 +3,18 @@ export const KNIGHTS_VOTE_NSFW_LEVEL_REASON = 'Knights Vote';
 
 export const KNIGHTS_NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
 
-/** Why an item went to the Inquisitors: a Blocked consensus, a rating far below the image's level, or a split that ran out of ranks or time. */
+/** Why an item went to the Inquisitors. Write-back handovers have none; they use `reason`. */
 export const KNIGHTS_ESCALATION_REASONS = ['blocked', 'pushed-down', 'no-consensus'] as const;
 export type KnightsEscalationReason = (typeof KNIGHTS_ESCALATION_REASONS)[number];
+
+/** Why a settled rating could not be written to the image and went to the Inquisitors instead (`reason`). */
+export const KNIGHTS_WRITEBACK_REASONS = [
+  'blocked',
+  'level-moved',
+  'moderator-locked',
+  'attempts-exhausted',
+] as const;
+export type KnightsWritebackReason = (typeof KNIGHTS_WRITEBACK_REASONS)[number];
 
 /** Ranks a queue item can wait at. Acolytes cannot judge and Inquisitors are the end of the path. */
 export const KNIGHTS_STAGE_RANKS = ['Knight', 'Templar', 'Paladin'] as const;

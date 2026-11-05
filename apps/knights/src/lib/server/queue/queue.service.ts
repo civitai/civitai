@@ -555,9 +555,7 @@ async function readImageState(db: Executor, imageId: number): Promise<ImageState
   return image ?? null;
 }
 
-type Reroute =
-  | Exclude<WritebackDecision, { kind: 'apply' }>
-  | { kind: 'inquisitor'; reason: 'attempts-exhausted' };
+type Reroute = Exclude<WritebackDecision, { kind: 'apply' }>;
 
 /** Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling. */
 async function reroute(

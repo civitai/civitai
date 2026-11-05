@@ -1,10 +1,16 @@
-import type { Kysely } from 'kysely';
+import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
-import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import type { InquisitorFilter } from '$lib/knights/inquisitor-filters';
+import {
+  KNIGHTS_ESCALATION_REASONS,
+  KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_WRITEBACK_REASONS,
+  type KnightsEscalationReason,
+  type KnightsWritebackReason,
+} from '@civitai/shared/new-order';
+import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
@@ -21,8 +27,8 @@ export type InquisitorItem = {
   imageName: string | null;
   imageType: string;
   prompt: string;
-  reason: string | null;
-  escalationReason: string | null;
+  reason: KnightsWritebackReason | null;
+  escalationReason: KnightsEscalationReason | null;
   source: string;
   currentLevel: number;
   locked: boolean;
@@ -43,6 +49,9 @@ const parseOptions = (value: unknown): QuestionOption[] =>
       )
     : [];
 
+const narrow = <T extends string>(values: readonly T[], value: string | null): T | null =>
+  values.find((candidate) => candidate === value) ?? null;
+
 const hasBlockMarker = (image: { ingestion: string; blockedFor: string | null }) =>
   image.ingestion === 'Blocked' || image.blockedFor !== null;
 
@@ -55,31 +64,32 @@ const waitingOnInquisitors = (db: Kysely<DB>) =>
     .where('i.status', '=', 'Inquisitor')
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION);
 
-const filterCondition = (filter: Exclude<InquisitorFilter, 'all'>) =>
+type QueueItemBuilder = ExpressionBuilder<DB & { i: DB['KnightsQueueItem'] }, 'i'>;
+
+const filterCondition = (eb: QueueItemBuilder, filter: Exclude<InquisitorFilter, 'all'>) =>
   filter === 'write-back'
-    ? sql<boolean>`i."reason" IS NOT NULL`
-    : sql<boolean>`i."escalationReason" = ${filter}`;
+    ? eb('i.reason', 'is not', null)
+    : eb('i.escalationReason', '=', filter);
 
 export type InquisitorFilterCounts = Record<InquisitorFilter, number>;
 
-/** One scan over the same base query as the list, so a tab's count is what clicking it shows. */
+/**
+ * One scan over the same base query as the list, so a tab's count is what clicking it shows. Reads the
+ * primary like the list; the sidebar badge reads the replica, so the two can differ by replica lag.
+ */
 export async function countInquisitorQueueByFilter(): Promise<InquisitorFilterCounts> {
   const row = await waitingOnInquisitors(dbWrite)
-    .select([
-      sql<string>`count(*)`.as('all'),
-      sql<string>`count(*) filter (where ${filterCondition('blocked')})`.as('blocked'),
-      sql<string>`count(*) filter (where ${filterCondition('pushed-down')})`.as('pushedDown'),
-      sql<string>`count(*) filter (where ${filterCondition('no-consensus')})`.as('noConsensus'),
-      sql<string>`count(*) filter (where ${filterCondition('write-back')})`.as('writeBack'),
-    ])
+    .select((eb) =>
+      INQUISITOR_FILTERS.map((filter) =>
+        filter === 'all'
+          ? eb.fn.countAll<string>().as(filter)
+          : eb.fn.countAll<string>().filterWhere(filterCondition(eb, filter)).as(filter)
+      )
+    )
     .executeTakeFirst();
-  return {
-    all: Number(row?.all ?? 0),
-    blocked: Number(row?.blocked ?? 0),
-    'pushed-down': Number(row?.pushedDown ?? 0),
-    'no-consensus': Number(row?.noConsensus ?? 0),
-    'write-back': Number(row?.writeBack ?? 0),
-  };
+  return Object.fromEntries(
+    INQUISITOR_FILTERS.map((filter) => [filter, Number(row?.[filter] ?? 0)])
+  ) as InquisitorFilterCounts;
 }
 
 export async function countInquisitorQueue(): Promise<number> {
@@ -93,7 +103,7 @@ export async function getInquisitorQueue(
   filter: InquisitorFilter = 'all'
 ): Promise<InquisitorItem[]> {
   const base = waitingOnInquisitors(dbWrite);
-  const items = await (filter === 'all' ? base : base.where(filterCondition(filter)))
+  const items = await (filter === 'all' ? base : base.where((eb) => filterCondition(eb, filter)))
     .select([
       'i.id',
       'i.imageId',
@@ -145,10 +155,12 @@ export async function getInquisitorQueue(
     .where('answer', '=', String(NsfwLevel.Blocked))
     .execute();
 
-  return items.map(({ options, ingestion, ...item }) => {
+  return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
     return {
       ...item,
+      reason: narrow(KNIGHTS_WRITEBACK_REASONS, reason),
+      escalationReason: narrow(KNIGHTS_ESCALATION_REASONS, escalationReason),
       hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
       blockReason: consensusBlockReason(blockedVotes.filter((vote) => vote.itemId === item.id)),
       votes: tallies

@@ -17,8 +17,8 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import {
-    INQUISITOR_FILTER_LABELS,
-    type InquisitorFilter,
+    ESCALATION_REASON_LABELS,
+    WRITEBACK_REASON_LABELS,
   } from '$lib/knights/inquisitor-filters';
   import type { InquisitorItem } from '$lib/server/knights/inquisitor.service';
 
@@ -52,11 +52,11 @@
       {/if}
       {#if item.locked}<Badge variant="secondary">Rating locked</Badge>{/if}
       {#if item.escalationReason}
-        <Badge variant="secondary">
-          {INQUISITOR_FILTER_LABELS[item.escalationReason as InquisitorFilter] ?? item.escalationReason}
-        </Badge>
+        <Badge variant="secondary">{ESCALATION_REASON_LABELS[item.escalationReason]}</Badge>
       {/if}
-      {#if item.reason}<Badge variant="outline">{item.reason}</Badge>{/if}
+      {#if item.reason}
+        <Badge variant="outline">{WRITEBACK_REASON_LABELS[item.reason]}</Badge>
+      {/if}
     </div>
 
     <p class="text-sm text-dark-2">

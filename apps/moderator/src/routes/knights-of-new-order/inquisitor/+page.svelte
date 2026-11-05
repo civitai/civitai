@@ -3,12 +3,25 @@
   import { page } from '$app/state';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { num } from '$lib/format';
-  import { INQUISITOR_FILTERS, INQUISITOR_FILTER_LABELS } from '$lib/knights/inquisitor-filters';
+  import {
+    DEFAULT_INQUISITOR_FILTER,
+    INQUISITOR_FILTERS,
+    INQUISITOR_FILTER_LABELS,
+    parseInquisitorFilter,
+    type InquisitorFilter,
+  } from '$lib/knights/inquisitor-filters';
   import { urlWith } from '$lib/url';
   import InquisitorCard from './InquisitorCard.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+
+  const applyFilter = (filter: InquisitorFilter) =>
+    goto(
+      urlWith(page.url, { filter: filter === DEFAULT_INQUISITOR_FILTER ? null : filter }),
+      { keepFocus: true, noScroll: true }
+    );
+  const shownCount = $derived(data.counts[data.filter]);
 </script>
 
 <header class="page-header">
@@ -20,13 +33,13 @@
   </p>
 </header>
 
+<!-- One-way `value`: the `Tabs` wrapper does not declare `value` bindable, so a function binding does not compile. `load` owns the filter and a click only navigates. -->
 <Tabs
   class="mb-4"
   value={data.filter}
-  onValueChange={(value) =>
-    value && goto(urlWith(page.url, { filter: value === 'all' ? null : value }))}
+  onValueChange={(value) => value && applyFilter(parseInquisitorFilter(value))}
 >
-  <TabsList>
+  <TabsList class="justify-start">
     {#each INQUISITOR_FILTERS as filter (filter)}
       <TabsTrigger value={filter}>
         {INQUISITOR_FILTER_LABELS[filter]} ({num(data.counts[filter])})
@@ -37,9 +50,9 @@
 
 {#if data.items.length === 0}
   <p class="text-sm text-dark-2">
-    {data.filter === 'all'
+    {data.filter === DEFAULT_INQUISITOR_FILTER
       ? 'No images are waiting for an Inquisitor ruling.'
-      : 'No images match this filter.'}
+      : `No images in ${INQUISITOR_FILTER_LABELS[data.filter]}.`}
   </p>
 {:else}
   <div class="flex flex-col gap-3">
@@ -47,7 +60,7 @@
       <InquisitorCard {item} />
     {/each}
   </div>
-  {#if data.items.length >= data.limit}
-    <p class="mt-3 text-xs text-dark-2">Showing the first {data.limit}, by priority and age.</p>
+  {#if shownCount > data.limit}
+    <p class="mt-3 text-xs text-dark-2">Showing the first {data.limit} of {num(shownCount)}.</p>
   {/if}
 {/if}
