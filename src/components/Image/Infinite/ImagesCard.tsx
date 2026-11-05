@@ -56,15 +56,31 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
 /** The masonry adds this to each card's image height for the reaction footer. */
 export const IMAGES_CARD_FOOTER_HEIGHT = 38;
 
-export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
+export function ImagesCard({
+  data,
+  height,
+  width,
+}: {
+  data: ImagesInfiniteModel;
+  height: number;
+  width?: number;
+}) {
   return (
     <HatTurfCardProvider>
-      <ImagesCardContent data={data} height={height} />
+      <ImagesCardContent data={data} height={height} width={width} />
     </HatTurfCardProvider>
   );
 }
 
-function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
+function ImagesCardContent({
+  data,
+  height,
+  width,
+}: {
+  data: ImagesInfiniteModel;
+  height: number;
+  width?: number;
+}) {
   const { getImages, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
@@ -151,7 +167,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       skip={getSkipValue(image)}
                       type={image.type}
                       wrapperProps={{ className: 'flex-1 h-full' }}
-                      width={450}
+                      width={Math.max(450, width ?? 0)}
                       hiDpi={features.hiDpiPreviews}
                       sourceWidth={image.width}
                       placeholder="empty"
