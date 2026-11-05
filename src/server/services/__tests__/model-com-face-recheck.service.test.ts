@@ -251,10 +251,11 @@ describe('the .com face listing re-check', () => {
     expect(db.keyValue.upsert).not.toHaveBeenCalled();
   });
 
-  it('starts the clock again for a model edited again while waiting on a retry', async () => {
+  // Ruled: the deadline belongs to the oldest edit still without a verdict; a later edit never moves it.
+  it('keeps the original deadline for a model edited again while waiting, resetting only the backoff', async () => {
     arrange({
       fresh: [MODEL_ID],
-      waiting: [{ since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() }],
+      waiting: [{ since: ago(60 * 60_000), attempt: 6, nextAt: later(30 * 60_000) }],
     });
     mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
 
@@ -262,8 +263,39 @@ describe('the .com face listing re-check', () => {
 
     expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
     expect(counts.gaveUp).toBe(0);
-    expect(coverCleared()).toBe(false);
-    expect(savedRetry()).toMatchObject({ since: NOW.toISOString(), attempt: 1 });
+    expect(savedRetry()).toEqual({
+      since: ago(60 * 60_000),
+      attempt: 1,
+      nextAt: later(COM_FACE_RECHECK_FIRST_DELAY_MS),
+    });
+  });
+
+  it('takes the face off as unverified at the window from the first edit, however often it is edited', async () => {
+    const start = NOW.getTime();
+    const step = 4 * 60 * 60_000;
+    let state: Record<string, unknown> | undefined;
+    let gaveUpAt: number | undefined;
+    for (let at = start; at <= start + COM_FACE_RECHECK_WINDOW_MS; at += step) {
+      vi.clearAllMocks();
+      vi.setSystemTime(at);
+      db.model.findUnique.mockResolvedValue(withFace as never);
+      db.$executeRaw.mockResolvedValue(1 as never);
+      db.modActivity.create.mockResolvedValue({} as never);
+      mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+      arrange({ fresh: [MODEL_ID], waiting: state ? [state] : [] });
+
+      const counts = await processComFaceRechecks(new Date(at));
+
+      if (counts.gaveUp) {
+        gaveUpAt = at;
+        break;
+      }
+      state = savedRetry();
+    }
+
+    expect(gaveUpAt).toBe(start + COM_FACE_RECHECK_WINDOW_MS);
+    expect(coverCleared()).toBe(true);
+    expect(marker()).toMatchObject({ reason: 'recheck-unverified' });
   });
 
   it('writes nothing more when the cover changed after the read', async () => {
@@ -361,6 +393,20 @@ describe('the .com face listing re-check', () => {
     expect(db.keyValue.upsert).toHaveBeenCalledTimes(2);
     expect(mockAddToQueue).toHaveBeenCalledWith('com-face-recheck', [MODEL_ID]);
     expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues again an edit to a model waiting on a retry when its bookkeeping throws', async () => {
+    arrange({
+      fresh: [MODEL_ID],
+      waiting: [{ since: ago(60 * 60_000), attempt: 6, nextAt: later(30 * 60_000) }],
+    });
+    mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+    db.keyValue.upsert.mockRejectedValueOnce(new Error('db blip'));
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(counts.errored).toBe(1);
+    expect(mockAddToQueue).toHaveBeenCalledWith('com-face-recheck', [MODEL_ID]);
   });
 
   it.each([

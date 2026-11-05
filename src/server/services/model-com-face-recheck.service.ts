@@ -9,8 +9,8 @@ const QUEUE = 'com-face-recheck';
 /** A model whose check got no verdict waits in a KeyValue row under this prefix until its next try. */
 const RETRY_KEY_PREFIX = 'com-face-recheck:';
 
-/** Retries back off from the first delay, doubling up to the max, until the window since the edit
- *  that queued the check runs out. */
+/** Retries back off from the first delay, doubling up to the max, until the window since the oldest
+ *  edit still without a verdict runs out. */
 export const COM_FACE_RECHECK_FIRST_DELAY_MS = 60_000;
 export const COM_FACE_RECHECK_MAX_DELAY_MS = 60 * 60_000;
 export const COM_FACE_RECHECK_WINDOW_MS = 24 * 60 * 60_000;
@@ -154,9 +154,10 @@ function logError(message: string, modelId: number, error?: unknown) {
 }
 
 /**
- * Runs the fresh edits and the retries that are due. A fresh edit starts the clock again, even for a
- * model already waiting on a retry. A model whose bookkeeping throws is logged and left for the next
- * run (a fresh edit is queued again), so one bad model never holds up the rest.
+ * Runs the fresh edits and the retries that are due. A fresh edit on a model already waiting on a
+ * retry runs now and resets the backoff, but keeps the deadline of the oldest edit still without a
+ * verdict. A model whose bookkeeping throws is logged and left for the next run (a fresh edit is
+ * queued again), so one bad model never holds up the rest.
  */
 export async function processComFaceRechecks(now = new Date()) {
   const startedAt = Date.now();
@@ -177,30 +178,34 @@ export async function processComFaceRechecks(now = new Date()) {
   const waiting = await dbWrite.keyValue.findMany({
     where: { key: { startsWith: RETRY_KEY_PREFIX } },
   });
-  const waitingIds = new Set<number>();
+  const waitingSince = new Map<number, string>();
   for (const row of waiting) {
     const modelId = Number(row.key.slice(RETRY_KEY_PREFIX.length));
     if (!Number.isInteger(modelId) || retryKey(modelId) !== row.key) continue;
-    waitingIds.add(modelId);
     const state = (row.value ?? {}) as Partial<RetryState>;
-    // Unreadable state is due now and counts as out of time, so it fails closed.
+    // An unreadable start counts as out of time and an unreadable nextAt as due, so both fail closed.
+    const since = Number.isFinite(Date.parse(state.since ?? ''))
+      ? state.since!
+      : new Date(0).toISOString();
+    waitingSince.set(modelId, since);
     const nextAt = Date.parse(state.nextAt ?? '');
     if (!(nextAt > now.getTime()))
       work.set(modelId, {
-        since: Number.isFinite(Date.parse(state.since ?? ''))
-          ? state.since!
-          : new Date(0).toISOString(),
+        since,
         attempt: Number.isInteger(state.attempt) ? Math.max(0, state.attempt!) : 0,
         nextAt: state.nextAt ?? '',
       });
   }
-  // Set after the retries, so a fresh edit replaces a waiting state: it starts the clock again.
-  for (const modelId of fresh) work.set(modelId, null);
+  // A fresh edit restarts the backoff only; the deadline stays with the oldest unverified edit.
+  for (const modelId of fresh) {
+    const since = waitingSince.get(modelId);
+    work.set(modelId, since ? { since, attempt: 0, nextAt: '' } : null);
+  }
 
   const requeue: number[] = [];
   for (const [modelId, state] of work) {
     if (Date.now() - startedAt > RUN_BUDGET_MS) {
-      if (!state) requeue.push(modelId);
+      if (fresh.has(modelId)) requeue.push(modelId);
       continue;
     }
     try {
@@ -211,7 +216,7 @@ export async function processComFaceRechecks(now = new Date()) {
       counts[result]++;
 
       if (result !== 'unavailable' && result !== 'failed') {
-        if (waitingIds.has(modelId))
+        if (waitingSince.has(modelId))
           await dbWrite.keyValue.deleteMany({ where: { key: retryKey(modelId) } });
         continue;
       }
@@ -245,7 +250,7 @@ export async function processComFaceRechecks(now = new Date()) {
     } catch (error) {
       counts.errored++;
       logError('recheck bookkeeping failed', modelId, error);
-      if (!state) requeue.push(modelId);
+      if (fresh.has(modelId)) requeue.push(modelId);
     }
   }
 
