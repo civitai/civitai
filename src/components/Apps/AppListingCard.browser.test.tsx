@@ -1689,3 +1689,61 @@ describe('AppListingCard — the restricted-visibility badge', () => {
     });
   });
 });
+
+/**
+ * The META LINE — the category (display label, linked to the store filtered by it) and a
+ * relative "Updated …" date. Absences are read off `querySelector` / `textContent` after a
+ * positive control (the `.not.toBeInTheDocument()` matcher is inert here — #4197).
+ */
+describe('🔴 AppListingCard — the category and last-updated meta line', () => {
+  const THREE_DAYS_AGO = () => new Date(Date.now() - 3 * 86_400_000).toISOString();
+
+  test('🔴 shows the category label linked to the store filtered by it', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    const link = page.getByTestId('apps-listing-card-category');
+    await expect.element(link).toHaveTextContent('Games');
+    const el = link.element();
+    expect(el.tagName).toBe('A');
+    expect(el.getAttribute('href')).toBe('/apps/store?category=games');
+    // Never the raw stored key, and never the card's own detail link.
+    expect(el.textContent).not.toBe('games');
+  });
+
+  test('🔴 shows "Updated <relative date>" from the listing\'s update time', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    await expect
+      .element(page.getByTestId('apps-listing-card-updated'))
+      .toHaveTextContent('Updated 3 days ago');
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).toBe(
+      'Games · Updated 3 days ago'
+    );
+  });
+
+  test('a category the store cannot filter by is plain text, not a link', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'hats' })} canOpenPage />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('hats');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('in preview the category is not a link (the moderator stays on the review)', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage preview />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('Games');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('no update time → no date, and the line still renders', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage />);
+    // Positive control: the meta line rendered.
+    await expect.element(page.getByTestId('apps-listing-card-category')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-updated"]')).toBeNull();
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).not.toContain(
+      'Updated'
+    );
+  });
+});

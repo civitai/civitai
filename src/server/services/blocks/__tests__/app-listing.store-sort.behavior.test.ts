@@ -98,22 +98,25 @@ dbMock.dbRead.appListing.findMany.mockImplementation(
 const { listAvailableListings } = await import('~/server/services/blocks/app-listing.service');
 
 /**
- * Six approved listings. Per sort, the order each column alone would give:
- *   plays    (open_count)    A 500 > B 40 = C 40 > D 0 = E 0 = F 0
- *   installs (install_count) D 90 > B 30 > C 7 > A 1 > E 0 = F 0
- *   created  (newest first)  A > B > C > D > E > F
- *   name     (A→Z)           B alpha, D bravo, C charlie, A delta, E echo, F foxtrot
- *   rating                   B (3 up) > A = D = E = F (no reviews) > C (2 down)
- * E and F are off-site (their `open_count` column is the NOT NULL default 0) and tie on every
- * metric, so only the id can order them.
+ * Seven approved listings. Per sort, the order each column alone would give:
+ *   plays    (open_count, on-site)  A 500 > B 40 > D 25 > C 12
+ *   installs (install_count)        D 90 > B 30 > E 25 > C 7 > A 1 > F 0 = G 0
+ *   created  (newest first)         A > B > C > D > E > F > G
+ *   name     (A→Z)                  B alpha, D bravo, C charlie, A delta, E echo, F foxtrot, G golf
+ *   rating                          B (3 up) > A = D = E = F = G (no reviews) > C (2 down)
+ * E, F and G are OFF-SITE: no play count (their `open_count` column is the NOT NULL default
+ * 0), so they rank on installs in the plays position. E's 25 installs put it above C (12
+ * plays, 7 installs) and below B (40 plays); it ties D's 25 plays and loses on installs.
+ * F and G tie on every metric, so only the id can order them.
  */
 const LISTINGS = [
   { id: 'apl_A', kind: 'onsite', name: 'Delta', days: 1, open: 500, install: 1, up: 0, down: 0 },
   { id: 'apl_B', kind: 'onsite', name: 'alpha', days: 2, open: 40, install: 30, up: 3, down: 0 },
-  { id: 'apl_C', kind: 'onsite', name: 'Charlie', days: 3, open: 40, install: 7, up: 0, down: 2 },
-  { id: 'apl_D', kind: 'onsite', name: 'bravo', days: 4, open: 0, install: 90, up: 0, down: 0 },
-  { id: 'apl_E', kind: 'offsite', name: 'Echo', days: 5, open: 0, install: 0, up: 0, down: 0 },
+  { id: 'apl_C', kind: 'onsite', name: 'Charlie', days: 3, open: 12, install: 7, up: 0, down: 2 },
+  { id: 'apl_D', kind: 'onsite', name: 'bravo', days: 4, open: 25, install: 90, up: 0, down: 0 },
+  { id: 'apl_E', kind: 'offsite', name: 'Echo', days: 5, open: 0, install: 25, up: 0, down: 0 },
   { id: 'apl_F', kind: 'offsite', name: 'foxtrot', days: 6, open: 0, install: 0, up: 0, down: 0 },
+  { id: 'apl_G', kind: 'offsite', name: 'golf', days: 7, open: 0, install: 0, up: 0, down: 0 },
 ] as const;
 
 beforeAll(async () => {
@@ -179,47 +182,69 @@ async function pagedOrder(sort: ListingSort, limit: number) {
   return { ids: out, pages: 20 };
 }
 
-const POPULAR = ['apl_A', 'apl_B', 'apl_C', 'apl_D', 'apl_F', 'apl_E'];
-const TOP_RATED = ['apl_B', 'apl_A', 'apl_D', 'apl_F', 'apl_E', 'apl_C'];
+// Plays (installs for off-site), then installs, then id DESC.
+const POPULAR = ['apl_A', 'apl_B', 'apl_D', 'apl_E', 'apl_C', 'apl_G', 'apl_F'];
+// Rating, then the popular key.
+const TOP_RATED = ['apl_B', 'apl_A', 'apl_D', 'apl_E', 'apl_G', 'apl_F', 'apl_C'];
 
 describe('store sort orders, executed', () => {
   it('🔴 "Most popular" ranks by plays, then installs, then id', async () => {
-    // A has the most plays and almost no installs: an installs-first key puts D first.
-    // B and C tie on plays and are split by installs (30 > 7).
+    // An installs-first key puts D first; a plays-only key pins E below C.
     expect(await order('popular')).toEqual(POPULAR);
   });
 
+  it('🔴 an off-site app ranks on its installs, not last', async () => {
+    const ids = await order('popular');
+    // E (off-site, 25 installs) outranks C (12 plays, 7 installs)…
+    expect(ids.indexOf('apl_E')).toBeLessThan(ids.indexOf('apl_C'));
+    // …and loses to B (40 plays).
+    expect(ids.indexOf('apl_B')).toBeLessThan(ids.indexOf('apl_E'));
+  });
+
   it('🔴 "Top rated" ranks by rating, then plays, then installs, then id', async () => {
-    // A, D, E and F all sit at the unreviewed mid-pack score; plays order A first, and only
-    // installs separate D (90) from the two off-site rows.
+    // A, D, E, F and G sit at the unreviewed mid-pack score, ordered by the popular key.
     expect(await order('top-rated')).toEqual(TOP_RATED);
   });
 
   it('"Newest" is unchanged: creation time, newest first (invariant guard)', async () => {
-    expect(await order('newest')).toEqual(['apl_A', 'apl_B', 'apl_C', 'apl_D', 'apl_E', 'apl_F']);
+    expect(await order('newest')).toEqual([
+      'apl_A',
+      'apl_B',
+      'apl_C',
+      'apl_D',
+      'apl_E',
+      'apl_F',
+      'apl_G',
+    ]);
   });
 
   it('"Name" is unchanged: case-insensitive A→Z (invariant guard)', async () => {
-    expect(await order('name')).toEqual(['apl_B', 'apl_D', 'apl_C', 'apl_A', 'apl_E', 'apl_F']);
+    expect(await order('name')).toEqual([
+      'apl_B',
+      'apl_D',
+      'apl_C',
+      'apl_A',
+      'apl_E',
+      'apl_F',
+      'apl_G',
+    ]);
   });
 
+  // Page size 2: three boundaries. Size 3: the boundary falls between D and E, which tie on
+  // the plays position (25) and are split by installs. Size 6: between G and F, which tie on
+  // every metric, so only the id half of the keyset places the cursor.
   it.each([
-    ['popular', POPULAR],
-    ['top-rated', TOP_RATED],
+    ['popular', 2, 4, POPULAR],
+    ['popular', 3, 3, POPULAR],
+    ['popular', 6, 2, POPULAR],
+    ['top-rated', 2, 4, TOP_RATED],
+    ['top-rated', 3, 3, TOP_RATED],
   ] as const)(
-    '🔴 %s pages through every row exactly once, in order, at page size 2',
-    async (sort, expected) => {
-      const { ids, pages } = await pagedOrder(sort, 2);
-      expect(pages).toBe(3);
+    '🔴 %s at page size %i pages through every row exactly once, in order',
+    async (sort, size, expectedPages, expected) => {
+      const { ids, pages } = await pagedOrder(sort, size);
+      expect(pages).toBe(expectedPages);
       expect(ids).toEqual(expected);
     }
   );
-
-  it('page size 5 resumes between two rows that tie on every metric, by id', async () => {
-    // The page-1 boundary falls between F and E, which share plays, installs and rating, so
-    // only the id half of the keyset can place the cursor.
-    const { ids, pages } = await pagedOrder('popular', 5);
-    expect(pages).toBe(2);
-    expect(ids).toEqual(POPULAR);
-  });
 });

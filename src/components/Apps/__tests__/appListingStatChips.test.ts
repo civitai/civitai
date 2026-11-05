@@ -35,6 +35,7 @@ const UP = 431;
 const DOWN = 68;
 const REVIEWS = UP + DOWN; // 499
 const INSTALLS = 4213;
+const PLAYS = 2718;
 
 type Input = Parameters<typeof buildListingStatChips>[0];
 
@@ -43,6 +44,7 @@ function detail(over: Partial<ListingDetail> = {}): Input {
     recommend: { recommendedCount: UP, notRecommendedCount: DOWN, recommendPct: UP / REVIEWS },
     reviewCount: REVIEWS,
     installCount: INSTALLS,
+    openCount: PLAYS,
     ...over,
   } as Input;
 }
@@ -149,7 +151,7 @@ describe('🔴 buildRecommendHoverMessage — the negative half is rendered (F2)
 
 describe('buildListingStatChips — the chip list', () => {
   it('the live posture yields both chips, in order', () => {
-    expect(byKey(buildListingStatChips(detail()))).toEqual(['recommend', 'installs']);
+    expect(byKey(buildListingStatChips(detail()))).toEqual(['recommend', 'plays']);
   });
 
   it('each chip carries its face value, accessible name, and hover title', () => {
@@ -161,33 +163,35 @@ describe('buildListingStatChips — the chip list', () => {
       ariaLabel: '431 recommendations',
       message: "86% recommend (499) · 68 don't",
     });
-    expect(by.installs).toMatchObject({
-      label: 'Installs',
-      value: INSTALLS,
-      ariaLabel: '4,213 installs',
+    // 🔴 PLAYS — the card's number (`openCount`), not installs.
+    expect(by.plays).toMatchObject({
+      label: 'Plays',
+      value: PLAYS,
+      ariaLabel: '2,718 plays',
     });
+    expect(chips.map((c) => c.value)).not.toContain(INSTALLS);
   });
 
-  it('🔴 the recommend chip ALWAYS carries a message; the installs chip never does', () => {
+  it('🔴 the recommend chip ALWAYS carries a message; the plays chip never does', () => {
     // The seam this whole module exists for, stated as a property rather than as one
     // literal — `StatHoverCard` renders `message` INSTEAD of `value`, so:
     //   - recommend: the number is already on the face, so a missing message = a
     //     dropdown that repeats the face. That was the bug.
-    //   - installs: the full count IS the content, so a message would replace it with
+    //   - plays: the full count IS the content, so a message would replace it with
     //     prose. Spelling the number twice is the mirror-image mistake.
     for (const over of [{}, NO_REVIEWS as Partial<ListingDetail>]) {
       const by = Object.fromEntries(buildListingStatChips(detail(over)).map((c) => [c.key, c]));
       expect(by.recommend.message, JSON.stringify(over)).toBeTruthy();
-      expect(by.installs.message, JSON.stringify(over)).toBeUndefined();
+      expect(by.plays.message, JSON.stringify(over)).toBeUndefined();
     }
   });
 
-  it('a zero installCount still yields the chip — 0 installs is a fact, not an absent field', () => {
-    const by = Object.fromEntries(
-      buildListingStatChips(detail({ installCount: 0 })).map((c) => [c.key, c])
-    );
-    expect(by.installs).toBeDefined();
-    expect(by.installs.value).toBe(0);
+  it('🔴 no plays chip where the card shows no play count: 0, or an off-site null', () => {
+    for (const openCount of [0, null]) {
+      expect(byKey(buildListingStatChips(detail({ openCount }))), String(openCount)).toEqual([
+        'recommend',
+      ]);
+    }
   });
 });
 

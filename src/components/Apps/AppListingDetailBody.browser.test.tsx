@@ -341,6 +341,9 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // file and from any constant an assertion names, so a chip that hardcoded a value
     // could not accidentally match it.
     installCount: 4213,
+    // The play count the store card shows. 2718 is distinct from 4213 and from every other
+    // number here, so a chip or row reading installs instead shows the wrong number.
+    openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
@@ -725,7 +728,7 @@ describe('AppListingDetailBody', () => {
     const chips = Array.from(container.querySelectorAll('[data-listing-stat]'));
     expect(chips).toHaveLength(2);
     expect(chips.map((c) => c.getAttribute('data-listing-stat')).sort()).toEqual([
-      'installs',
+      'plays',
       'recommend',
     ]);
     for (const chip of chips) {
@@ -734,9 +737,10 @@ describe('AppListingDetailBody', () => {
     expect(
       container.querySelector('[data-listing-stat="recommend"]')?.getAttribute('aria-label')
     ).toBe('317 recommendations');
-    expect(
-      container.querySelector('[data-listing-stat="installs"]')?.getAttribute('aria-label')
-    ).toBe('4,213 installs');
+    // 🔴 PLAYS, from `openCount` — the number the store card shows — not installs.
+    expect(container.querySelector('[data-listing-stat="plays"]')?.getAttribute('aria-label')).toBe(
+      '2,718 plays'
+    );
   });
 
   // ── Meta line ──────────────────────────────────────────────────────────────
@@ -908,7 +912,34 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays', 'updated']);
+  });
+
+  test('🔴 the Details PLAYS row shows the card\'s play count, labelled "Plays"', async () => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="plays"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toBe('Plays2,718');
+    // The install count is not shown under any label.
+    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.textContent).not.toContain('4,213');
+  });
+
+  test('every Details row carries its own leading icon', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ contentRating: 'pg' })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-listing-detail-row]'));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const key = row.getAttribute('data-listing-detail-row');
+      expect(
+        row.querySelector(`svg[data-listing-detail-icon="${key}"]`),
+        String(key)
+      ).not.toBeNull();
+    }
   });
 
   test('🔴 the Details CATEGORY row links to the store filtered to that category', async () => {
@@ -977,7 +1008,7 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'reviews', 'plays', 'updated']);
   });
 
   // ── the SOURCE row (public source-repository link) ─────────────────────────
@@ -1019,7 +1050,7 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays', 'updated']);
   });
 
   test('the SOURCE row survives the read-only PREVIEW posture (the mod must see what approving publishes)', async () => {
@@ -1032,7 +1063,7 @@ describe('AppListingDetailBody', () => {
     expect(row.textContent).toContain('codeberg.org/o/r');
     // The preview-omitted rows really are omitted here — so this is a claim about the
     // SOURCE row specifically, not about `preview` being ignored.
-    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.querySelector('[data-listing-detail-row="plays"]')).toBeNull();
     expect(container.querySelector('[data-listing-detail-row="updated"]')).toBeNull();
   });
 

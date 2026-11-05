@@ -267,6 +267,8 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         'reviewCount',
         'slug',
         'tagline',
+        // The card's "Updated …" line: the same public value the detail DTO carries.
+        'updatedAt',
       ].sort()
     );
     expect(card).not.toHaveProperty('status');
@@ -489,6 +491,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         // every approved listing by, and `updatedAt` is the direct analogue of the
         // model page's public `Updated: <date>` line.
         'installCount',
+        // The store card's play count, from the same projection (`cardOpenCount`), so the
+        // detail page's "Plays" and the card can never show different numbers.
+        'openCount',
         // 🔴 The author-declared beta pair. `isBeta` is also on the CARD (a badge); the
         // free-text `betaMessage` is DETAIL-ONLY, for the same reason `sourceRepoUrl` is —
         // a grid tile has no room for a sentence. The card allowlist above asserts the
@@ -1637,5 +1642,34 @@ describe('🔴 getListingPreviewForReview reads beta from the PARENT for a shado
     expect(res!.card.isBeta).toBe(true);
     expect(res!.detail.isBeta).toBe(true);
     expect(res!.detail.betaMessage).toBe('reviewer sees this');
+  });
+});
+
+describe('🔴 the detail page and the store card show the SAME play count', () => {
+  // installs and plays pairwise distinct, so a detail reading installs shows the wrong one.
+  const metric = { thumbsUpCount: 9, thumbsDownCount: 1, installCount: 4213, openCount: 2718 };
+
+  it("on-site: detail.openCount is the card's number, not installs", () => {
+    const row = hydratedRow({ metric }) as never;
+    expect(projectListingDetail(row).openCount).toBe(2718);
+    expect(projectListingDetail(row).openCount).toBe(projectListingCard(row).openCount);
+  });
+
+  it('off-site: both are null (unmeasurable), never the column default 0', () => {
+    const row = hydratedRow({
+      kind: 'offsite',
+      appBlockId: null,
+      externalUrl: 'https://x.example',
+      metric: { ...metric, openCount: 0 },
+    }) as never;
+    expect(projectListingDetail(row).openCount).toBeNull();
+    expect(projectListingCard(row).openCount).toBeNull();
+  });
+
+  it("the card carries the listing row's update time, as ISO-8601", () => {
+    const card = projectListingCard(
+      hydratedRow({ updatedAt: new Date('2026-05-06T07:08:09.000Z') }) as never
+    );
+    expect(card.updatedAt).toBe('2026-05-06T07:08:09.000Z');
   });
 });
