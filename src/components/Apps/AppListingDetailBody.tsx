@@ -65,6 +65,7 @@ import {
   type BrokenScreenshotIndexes,
 } from '~/components/Apps/appListingScreenshotNav';
 import { RelatedListings } from '~/components/Apps/RelatedListings';
+import { relatedRailHeading } from '~/components/Apps/related-listings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
@@ -752,6 +753,9 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   );
 }
 
+/** Jump target for the Details panel's link to the related-apps rail at the foot of the page. */
+const RELATED_RAIL_ANCHOR_ID = 'app-listing-related';
+
 /**
  * The "Details" accordion in the right rail — the model page's version-details panel,
  * over the listing's scalars. Rows come from the PURE `buildListingDetailRows`, so the
@@ -874,6 +878,19 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 )}
               </div>
             ))}
+            {/* Not a `data-listing-detail-row`: it is navigation, not a listing fact. */}
+            {!preview && (
+              <div className={detailClasses.detailRow}>
+                <Anchor
+                  size="sm"
+                  href={`#${RELATED_RAIL_ANCHOR_ID}`}
+                  underline="always"
+                  data-testid="apps-listing-details-related-link"
+                >
+                  {`${relatedRailHeading(detail.category)} →`}
+                </Anchor>
+              </div>
+            )}
           </Stack>
         </Accordion.Panel>
       </Accordion.Item>
@@ -1463,19 +1480,6 @@ export function AppListingDetailBody({
         </ContainerGrid2.Col>
       </ContainerGrid2>
 
-      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
-          Placed AFTER the two-column body but BEFORE the reviews/comments: those
-          threads are unbounded, so a rail below them would be buried behind an
-          arbitrary amount of scrolling for the viewers most likely to want it (the
-          ones who read the listing and didn't convert). Omitted in read-only preview —
-          it is a live, tRPC-backed surface. */}
-      {!preview && (
-        <>
-          <Divider />
-          <RelatedListings listingId={detail.id} category={detail.category} />
-        </>
-      )}
-
       {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text).
           Full-width below the grid, with the model page's `Title order={2}` section
           heading. Omitted in preview: a shadow listing has no review rows and we must
@@ -1498,6 +1502,18 @@ export function AppListingDetailBody({
       {/* Not in preview: a shadow listing has no comments to load. */}
       {!preview && (
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+      )}
+
+      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link, LAST on
+          the page, after this app's own reviews and comments. The comment thread above it
+          is unbounded, so the Details panel links here (`RELATED_RAIL_ANCHOR_ID`) to keep
+          the rail reachable without scrolling past it. Omitted in read-only preview — it
+          is a live, tRPC-backed surface. */}
+      {!preview && (
+        <Stack gap="lg" id={RELATED_RAIL_ANCHOR_ID}>
+          <Divider />
+          <RelatedListings listingId={detail.id} category={detail.category} />
+        </Stack>
       )}
     </Stack>
   );
