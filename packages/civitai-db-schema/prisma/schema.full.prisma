@@ -5007,6 +5007,20 @@ model AppStorageMigrationRun {
   @@map("app_storage_migration_runs")
 }
 
+// App Blocks App Storage permission hooks: the verified source of each hook file, keyed by its own
+// sha256 (content-addressed, append-only). RAW SQL ONLY (`storage-hooks.ts`), so the model is
+// stripped from the generated client; the migration `20261224120000_app_storage_hook_sources` is
+// applied by hand (with its CHECKs, which live only there).
+// @no-type
+model AppStorageHookSource {
+  sha256    String   @id
+  source    String
+  sizeBytes Int      @map("size_bytes")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_storage_hook_sources")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.

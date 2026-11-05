@@ -373,6 +373,25 @@ describe('POST /api/blocks/submit-version', () => {
     expect(res._body).toEqual({ message: 'bundle exceeds 50 MiB' });
   });
 
+  it('🔴 a permission-hook refusal also returns the structured storageHookErrors', async () => {
+    const { StorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
+    const problems = [
+      {
+        collection: 'cards',
+        file: 'hooks/cards.js',
+        reason: 'sha_mismatch' as const,
+        expected: 'a'.repeat(64),
+        actual: 'b'.repeat(64),
+      },
+    ];
+    const refusal = new StorageHookRefusal(problems);
+    mockSubmitVersion.mockRejectedValue(refusal);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({ message: refusal.message, storageHookErrors: problems });
+  });
+
   // ---------------------------------------------------------------------------
   // #4059 build provenance. The route's job is to pass the client's CLAIM
   // through unchanged and to reject a malformed one with a message that names

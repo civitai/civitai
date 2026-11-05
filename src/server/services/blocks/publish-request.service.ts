@@ -1324,6 +1324,20 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
 
+  // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
+  // a declared hook needs the hooks gate open for this author, and its file's bytes in THIS bundle
+  // must hash to the sha256 the manifest pins (the source is then recorded by that sha). A no-op
+  // for a manifest with no hook. Approve and the git-push path run the same pin. See
+  // `storage-hooks.ts`.
+  {
+    const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
+    await pinStorageHooks({
+      manifest,
+      userId: submittedByUserId,
+      readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    });
+  }
+
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
   // retry after an upstream error reuses the same key safely.
   const key = await storeBundle(bundleBuffer, bundleSha256);
@@ -2013,6 +2027,53 @@ async function extractBundleFilesFromBuffer(
   return out;
 }
 
+/**
+ * The bytes of the named files of an in-memory bundle ZIP (a path the bundle lacks is absent from
+ * the map), under the same per-file + aggregate caps. For the permission-hook pin
+ * (`storage-hooks.ts`), which reads a handful of files and not the whole bundle.
+ */
+async function readBundleFiles(
+  bundleBuffer: Buffer,
+  paths: readonly string[]
+): Promise<Map<string, Buffer>> {
+  const zip = await JSZip.loadAsync(bundleBuffer);
+  const out = new Map<string, Buffer>();
+  let totalBytes = 0;
+  for (const path of paths) {
+    const entry = Object.hasOwn(zip.files, path) ? zip.files[path] : undefined;
+    if (!entry || entry.dir) continue;
+    const content = await readZipEntryCapped(entry, {
+      maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+      remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - totalBytes,
+      maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
+      path,
+    });
+    totalBytes += content.length;
+    out.set(path, content);
+  }
+  return out;
+}
+
+/**
+ * The bytes of the named files of the pushed commit `ref` in civitai-apps/<slug> (a path the tree
+ * lacks is absent from the map). For the permission-hook pin on the git-push path, which has no
+ * bundle: only the hook files are fetched, not the whole tree.
+ */
+async function readForgejoFilesAtRef(
+  slug: string,
+  ref: string,
+  paths: readonly string[]
+): Promise<Map<string, Buffer>> {
+  const { listRepoTreeAtRef, getBlobContent } = await import('./forgejo.service');
+  const tree = await listRepoTreeAtRef(slug, ref);
+  const out = new Map<string, Buffer>();
+  for (const path of paths) {
+    const blobSha = tree.get(path);
+    if (blobSha) out.set(path, await getBlobContent(slug, blobSha));
+  }
+  return out;
+}
+
 async function fetchAndExtractBundleFiles(
   bundleKey: string
 ): Promise<Array<{ path: string; content: Buffer }>> {
@@ -2214,6 +2275,19 @@ export async function recordPendingFromPush(args: {
     await assertAcceptedAppDeveloperTerms(args.pusherUserId);
   } else {
     await assertAcceptedAppDeveloperTerms(ownerUserId);
+  }
+
+  // APP STORAGE PERMISSION HOOKS — a pushed commit never passes `submitVersion`, so the submit pin
+  // runs here, against the files of the pushed sha, for the app OWNER (the author this row is
+  // attributed to). Refused before anything is recorded or superseded; approve pins again. A no-op
+  // for a manifest with no hook. See `storage-hooks.ts`.
+  {
+    const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
+    await pinStorageHooks({
+      manifest: args.manifest,
+      userId: ownerUserId,
+      readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
+    });
   }
 
   // Already captured this exact (slug, sha) as pending? Refresh + done.
@@ -2930,6 +3004,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       forgejoCommitSha: true,
       submittedByUserId: true,
       appBlockId: true,
+      // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
+      fileSummary: true,
       // MOD REVIEW SANDBOX (#2831) — read the current deploy_state so we can tell
       // (synchronously, before this approve flips it to a production value) whether
       // a review preview was ever started for this request. Only then do we fire
@@ -3108,6 +3184,30 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       });
   const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
+
+  // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will
+  // ship: the stored bundle, or for a push-originated request the repo at the reviewed sha (which
+  // never passed `submitVersion`). Also refuses a reviewed file list that disagrees with those
+  // bytes, and re-checks the submitter's hooks gate. Refused before anything is written; a no-op
+  // for a manifest with no hook. See `storage-hooks.ts`.
+  {
+    const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
+    const reviewed = request.fileSummary as unknown as FileSummary | null;
+    await pinStorageHooks({
+      manifest,
+      userId: request.submittedByUserId,
+      readFiles: async (paths) => {
+        if (request.bundleKey) {
+          return readBundleFiles(await fetchBundleBuffer(request.bundleKey), paths);
+        }
+        if (request.forgejoCommitSha) {
+          return readForgejoFilesAtRef(request.slug, request.forgejoCommitSha, paths);
+        }
+        return new Map();
+      },
+      fileSummary: reviewed && Array.isArray(reviewed.files) ? reviewed.files : [],
+    });
+  }
 
   // The listing writes below log and continue on failure, so a split decision they could not
   // write is refused HERE, before anything is written or built — otherwise the app would deploy

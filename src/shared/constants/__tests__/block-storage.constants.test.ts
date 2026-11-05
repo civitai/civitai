@@ -24,13 +24,14 @@ const REQUESTS = {
 describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
   // runtime behind it.
-  it('ships with anyone-writes, owner writes, log collections, TTL and per-author write budgets switched off', () => {
+  it('ships with anyone-writes, owner writes, log collections, TTL, per-author write budgets and permission hooks switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
       anyoneWrites: false,
       ownerWrites: false,
       logCollections: false,
       ttl: false,
       perAuthorWriteBudget: false,
+      hooks: false,
     });
     expect(Object.isFrozen(APP_STORAGE_ENABLED_FEATURES)).toBe(true);
   });
@@ -43,6 +44,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
     ['logCollections', { visibility: 'private', kind: 'log', maxEntries: 500 }],
     ['ttl', { visibility: 'private', ttlSeconds: 86400 }],
     ['perAuthorWriteBudget', { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 200 }],
+    ['hooks', { visibility: 'private', hook: { file: 'hooks/cards.js', sha256: 'a'.repeat(64) } }],
   ] as const;
 
   // Updating the ledger above for a new switch key is not enough: the key must also get a
@@ -268,5 +270,160 @@ describe('write "anyone" collections (feature on)', () => {
       'storage collection notes lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry',
     ]);
     expect(appStorageScopeErrors(['apps:storage', 'apps:storage:publish'], parsed)).toEqual([]);
+  });
+});
+
+/**
+ * Permission hooks. Refused by the feature switch in production (the off/on control is in the
+ * ledger above), so the shape rules are pinned with the feature on, plus the exact refusal text
+ * while it is off.
+ */
+describe('storage hooks', () => {
+  const HOOKS_ON = { ...APP_STORAGE_ENABLED_FEATURES, hooks: true };
+  const SHA = 'b'.repeat(64);
+  const OTHER_SHA = 'c'.repeat(64);
+  const parseHook = (hook: unknown, manifest: Record<string, unknown> = {}) =>
+    parseManifestStorage(
+      { ...manifest, storage: { collections: { cards: { visibility: 'private', hook } } } },
+      HOOKS_ON
+    );
+
+  it('while the feature is off, says the hook is not available yet', () => {
+    expect(
+      parseManifestStorage({
+        storage: {
+          collections: { cards: { visibility: 'private', hook: { file: 'h.js', sha256: SHA } } },
+        },
+      }).errors
+    ).toEqual([
+      'storage.collections.cards.hook is not available yet — permission hooks arrive in a later phase of App Storage; remove hook (the collection schema still applies)',
+    ]);
+  });
+
+  it('normalises a valid hook, filling timeoutMs with 50; no hook means no key', () => {
+    const parsed = parseManifestStorage(
+      {
+        storage: {
+          collections: {
+            cards: { visibility: 'private', hook: { file: 'hooks/cards.js', sha256: SHA } },
+            notes: {
+              visibility: 'shared',
+              write: 'own',
+              hook: { file: 'src/x.y/notes-hook_1.mjs', sha256: OTHER_SHA, timeoutMs: 500 },
+            },
+            plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+          },
+        },
+      },
+      HOOKS_ON
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.collections.get('cards')?.hook).toEqual({
+      file: 'hooks/cards.js',
+      sha256: SHA,
+      timeoutMs: 50,
+    });
+    expect(parsed.collections.get('notes')?.hook).toEqual({
+      file: 'src/x.y/notes-hook_1.mjs',
+      sha256: OTHER_SHA,
+      timeoutMs: 500,
+    });
+    expect(parsed.collections.get('plays')).not.toHaveProperty('hook');
+  });
+
+  it('accepts timeoutMs 1 and a 200-character path', () => {
+    const file = `${'a'.repeat(197)}.js`;
+    expect(parseHook({ file, sha256: SHA, timeoutMs: 1 }).errors).toEqual([]);
+  });
+
+  const FILE_ERROR =
+    'storage.collections.cards.hook.file is required and must be the relative path of a .js or .mjs file in the bundle: "/"-separated segments, each starting with a letter, digit, _ or - (no "." or ".." segment, no leading "/"), at most 200 characters';
+  const SHA_ERROR =
+    'storage.collections.cards.hook.sha256 is required and must be the SHA-256 of the file as 64 lowercase hex characters';
+  const TIMEOUT_ERROR =
+    'storage.collections.cards.hook.timeoutMs must be a whole number of milliseconds from 1 to 500 (omitted means 50)';
+
+  it.each<[string, unknown, string[]]>([
+    [
+      'not an object',
+      'hooks/cards.js',
+      ['storage.collections.cards.hook must be an object { file, sha256, timeoutMs? }'],
+    ],
+    ['file missing', { sha256: SHA }, [FILE_ERROR]],
+    ['file a number', { file: 1, sha256: SHA }, [FILE_ERROR]],
+    ['leading slash', { file: '/hooks/cards.js', sha256: SHA }, [FILE_ERROR]],
+    ['".." segment', { file: 'hooks/../cards.js', sha256: SHA }, [FILE_ERROR]],
+    ['"." segment', { file: './cards.js', sha256: SHA }, [FILE_ERROR]],
+    ['hidden file', { file: 'hooks/.cards.js', sha256: SHA }, [FILE_ERROR]],
+    ['empty segment', { file: 'hooks//cards.js', sha256: SHA }, [FILE_ERROR]],
+    ['backslash', { file: 'hooks\\cards.js', sha256: SHA }, [FILE_ERROR]],
+    ['not .js', { file: 'hooks/cards.ts', sha256: SHA }, [FILE_ERROR]],
+    ['201 characters', { file: `${'a'.repeat(198)}.js`, sha256: SHA }, [FILE_ERROR]],
+    [
+      'inside node_modules',
+      { file: 'node_modules/x/index.js', sha256: SHA },
+      [
+        'storage.collections.cards.hook.file must not be inside node_modules — a hook is one self-contained module the app ships itself',
+      ],
+    ],
+    ['sha256 missing', { file: 'h.js' }, [SHA_ERROR]],
+    ['sha256 uppercase', { file: 'h.js', sha256: 'B'.repeat(64) }, [SHA_ERROR]],
+    ['sha256 of 63 chars', { file: 'h.js', sha256: 'b'.repeat(63) }, [SHA_ERROR]],
+    ['timeoutMs 0', { file: 'h.js', sha256: SHA, timeoutMs: 0 }, [TIMEOUT_ERROR]],
+    ['timeoutMs 501', { file: 'h.js', sha256: SHA, timeoutMs: 501 }, [TIMEOUT_ERROR]],
+    ['timeoutMs fractional', { file: 'h.js', sha256: SHA, timeoutMs: 10.5 }, [TIMEOUT_ERROR]],
+    [
+      'decide (v2)',
+      { file: 'h.js', sha256: SHA, decide: { allow: true } },
+      [
+        "storage.collections.cards.hook.decide is not supported — a v1 permission hook is code only (its file's default export decides each write); remove decide",
+      ],
+    ],
+    [
+      'unknown key',
+      { file: 'h.js', sha256: SHA, source: 'x' },
+      [
+        'storage.collections.cards.hook.source is not allowed (hook takes only file, sha256, timeoutMs)',
+      ],
+    ],
+  ])('refuses %s', (_label, hook, errors) => {
+    expect(parseHook(hook).errors).toEqual(errors);
+  });
+
+  it.each<[string, string]>([
+    ['dist', 'dist/hooks/cards.js'],
+    ['./dist/', 'dist/cards.js'],
+    ['dist/', 'dist/x.mjs'],
+    ['.', 'hooks/cards.js'],
+  ])('refuses a file inside outputDir %s (%s)', (outputDir, file) => {
+    expect(parseHook({ file, sha256: SHA }, { outputDir }).errors).toEqual([
+      `storage.collections.cards.hook.file ${JSON.stringify(
+        file
+      )} is inside the build output (outputDir) — a hook must be a committed source file of the bundle, shipped verbatim, so its sha256 can be checked at submit`,
+    ]);
+  });
+
+  it('accepts a file beside outputDir that only shares its prefix', () => {
+    expect(
+      parseHook({ file: 'dist-hooks/cards.js', sha256: SHA }, { outputDir: 'dist' }).errors
+    ).toEqual([]);
+  });
+
+  it('refuses one file pinned with two different sha256s', () => {
+    const { errors } = parseManifestStorage(
+      {
+        storage: {
+          collections: {
+            a: { visibility: 'private', hook: { file: 'h.js', sha256: SHA } },
+            b: { visibility: 'private', hook: { file: 'h.js', sha256: OTHER_SHA } },
+            c: { visibility: 'private', hook: { file: 'h.js', sha256: SHA } },
+          },
+        },
+      },
+      HOOKS_ON
+    );
+    expect(errors).toEqual([
+      'storage.collections.b.hook pins "h.js" with a different sha256 than storage.collections.a.hook — one file has one sha256',
+    ]);
   });
 });

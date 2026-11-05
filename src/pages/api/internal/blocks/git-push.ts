@@ -412,6 +412,20 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       pusherUserId: userIdForForgejoUsername(payload.pusher?.login ?? payload.pusher?.username),
     });
   } catch (e) {
+    // A refused permission hook (gate closed, or the pushed file does not match its sha256) is the
+    // author's to fix, like a manifest-validation failure: say why on the commit, record nothing.
+    const { isStorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
+    if (isStorageHookRefusal(e)) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: e.message.slice(0, 240),
+      });
+      res.status(400).json({ error: 'Storage hook refused', storageHookErrors: e.problems });
+      return;
+    }
     if (e instanceof AppDeveloperTermsNotAcceptedError) {
       await setCommitStatusSafe({
         slug,
