@@ -7,7 +7,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { showImageHiddenNotification } from '~/components/HideImageButton/showImageHiddenNotification';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props }: Props) {
   const images = useHiddenPreferencesData().hiddenImages;
@@ -30,7 +30,11 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
       }
       showImageHiddenNotification({
         imageId,
-        onUndo: () => toggleHiddenMutation.mutate({ kind: 'image', data }),
+        onUndo: () =>
+          toggleHiddenMutation.mutate(
+            { kind: 'image', data, hidden: false },
+            { onError: (error) => showErrorNotification({ error, title: 'Could not undo' }) }
+          ),
       });
     });
 

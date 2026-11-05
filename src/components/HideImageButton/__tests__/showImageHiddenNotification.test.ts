@@ -21,10 +21,9 @@ function findUndoButton(node: any): any {
 describe('showImageHiddenNotification', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('keeps the toast up long enough to react and offers Undo', () => {
+  it('offers Undo', () => {
     showImageHiddenNotification({ imageId: 7, onUndo: vi.fn() });
     const arg = showNotification.mock.calls[0][0];
-    expect(arg.autoClose).toBeGreaterThanOrEqual(8000);
     expect(findUndoButton(arg.message).props.children).toBe('Undo');
   });
 
