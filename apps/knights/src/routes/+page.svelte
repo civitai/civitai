@@ -49,7 +49,7 @@
       <span>Knights of New Order</span>
     </header>
 
-    <div class="stage">
+    <main class="stage">
       <div class="body">
         <section class="pitch">
           <p class="kicker">A Civitai game</p>
@@ -78,14 +78,14 @@
           <p class="age">Members must be 18 or older. Images may be mature.</p>
         </section>
 
-        <aside class="banner glow-card" aria-label="The Order awaits" use:glow>
+        <div class="banner glow-card" aria-hidden="true" use:glow>
           <p class="kicker">The Order awaits</p>
           <span class="crest"><Icon name="flame" size={36} /></span>
           <strong class="rank">Acolyte</strong>
           <span class="levels">Your first rank</span>
           <p class="begin">Begin as an apprentice</p>
           <p class="sub">Every Knight was once an Acolyte.</p>
-        </aside>
+        </div>
       </div>
 
       <div class="pillars long">
@@ -96,7 +96,7 @@
           </div>
         {/each}
       </div>
-    </div>
+    </main>
   </div>
 </div>
 
@@ -159,7 +159,6 @@
       transform: translate3d(var(--drift), -85vh, 0);
     }
   }
-  /* A pane of gold light under the pointer; moves by transform only, and only shows while hovered. */
   .glow-card {
     position: relative;
     isolation: isolate;
@@ -177,7 +176,7 @@
     border-radius: 50%;
     background: radial-gradient(circle, color-mix(in srgb, var(--io-gold) 42%, transparent), transparent 68%);
     opacity: 0;
-    transform: translate3d(var(--mx, 50%), var(--my, 50%), 0);
+    transform: translate3d(var(--mx, -999px), var(--my, -999px), 0);
     transition: opacity var(--motion-base) var(--ease-out-quart);
     pointer-events: none;
   }
@@ -372,7 +371,7 @@
     display: none;
   }
 
-  /* Touch has no hover and a reduced-motion player asked for stillness: no sparks, no glow, no shift. */
+  /* Mirrors effectsAllowed() in pointer-fx.ts: keep the two in step. */
   @media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) {
     .embers {
       display: none;

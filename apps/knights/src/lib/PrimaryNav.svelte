@@ -10,7 +10,7 @@
   <ul>
     {#each NAV_ITEMS as item (item.href)}
       <li>
-        <!-- /play loads a fresh feed item on arrival, so it is never prefetched. -->
+        <!-- Hover-prefetching /play would consume a feed item. -->
         <a
           href={item.href}
           aria-current={item.href === active ? 'page' : undefined}
@@ -58,7 +58,6 @@
     color: var(--io-gold-muted);
     transition: color var(--motion-fast) var(--ease-out-quart);
   }
-  /* The lit tab: a gold rule on the header's lower edge and a warm wash rising from it, like a lit sconce. */
   a::after {
     content: '';
     position: absolute;
@@ -102,15 +101,22 @@
     outline-offset: -4px;
   }
 
-  /* The header has no room for icons beside the tabs; they come back on the tab bar. */
   @media (min-width: 75.0625rem) {
     a :global(svg) {
       display: none;
     }
   }
 
-  /* A game's tab bar: fixed to the foot of the screen, thumb height, clear of the home indicator. Below 75rem the header's
-     stats and account menu leave no room for four tabs. */
+  @media (prefers-reduced-motion: reduce) {
+    a,
+    a::before,
+    a::after,
+    a :global(svg) {
+      transition: none;
+    }
+  }
+
+  /* Below 75rem the header's stats and account menu leave no room for four tabs. */
   @media (max-width: 75rem) {
     nav {
       position: fixed;

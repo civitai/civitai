@@ -76,7 +76,7 @@
     padding: 0;
     overflow-y: auto;
   }
-  /* The primary nav is a fixed tab bar at this width; leave room for it and the home-indicator inset. */
+  /* Must match PrimaryNav's tab-bar breakpoint and height. */
   @media (max-width: 75rem) {
     .app {
       padding-bottom: calc(57px + env(safe-area-inset-bottom));

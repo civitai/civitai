@@ -11,7 +11,7 @@ export type NavItem = {
   also?: readonly string[];
 };
 
-/** The primary navigation, in order. A new top-level screen is one more line here. */
+/** The primary navigation, in tab order. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/home', label: 'Home', icon: 'house', also: ['/judgments', '/leaderboard', '/gold'] },
   { href: '/play', label: 'Judge', icon: 'gavel' },

@@ -20,10 +20,7 @@ export function pointerOffset(
   };
 }
 
-/**
- * Keeps `--mx` and `--my` at the pointer's position inside the element, for a glow that follows it. One write per frame;
- * the bounds are read in the same frame, before the write, so nothing forces a layout.
- */
+/** Keeps `--mx`/`--my` at the pointer's position inside the element. Bounds are read in the same frame as the write, so nothing forces a layout. */
 export function glow(node: HTMLElement) {
   let frame = 0;
   let clientX = 0;
@@ -52,10 +49,7 @@ export function glow(node: HTMLElement) {
 const SETTLED = 0.001;
 const EASE = 0.08;
 
-/**
- * Shifts each `[data-depth]` child against the pointer by up to `depth` pixels, easing toward it and back to rest when the
- * pointer leaves. Only `transform` is written, and only while a frame is still moving.
- */
+/** Shifts each `[data-depth]` child against the pointer by up to `depth` px. Writes only `transform`, and only while a frame is still moving. */
 export function parallax(node: HTMLElement) {
   const layers = [...node.querySelectorAll<HTMLElement>('[data-depth]')].map((el) => ({
     el,

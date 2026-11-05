@@ -47,7 +47,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     navigation,
   });
 
-  // Only a signed-out visitor sees the welcome page; a signed-in one falls through to the checks below, and the page sends them home.
+  // A signed-in user must fall through to the checks below (ban, access); only signed-out visitors get the page.
   if (onWelcome && (result.status === 'login' || result.status === 'reauth')) {
     if (result.status === 'login') event.locals.signInUrl = result.redirect;
     return resolve(event);
