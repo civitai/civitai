@@ -1,0 +1,11 @@
+data/
+spelling-dictionary.txt
+*.private.json
+*.private.jsonl
+spelling.json
+__pycache__/
+.venv/
+.pytest_cache/
+tests/
+examples/
+scripts/

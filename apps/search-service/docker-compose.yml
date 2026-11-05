@@ -1,0 +1,22 @@
+# Local run: a local Qdrant plus the service. See README.md.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.16.0
+    ports:
+      - '6333:6333'
+  search-service:
+    build: .
+    ports:
+      - '8000:8000'
+    depends_on:
+      - qdrant
+    read_only: true
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      SEARCH_SERVICE_TOKENS: ${SEARCH_SERVICE_TOKENS:-local-dev-token}
+      # With an orchestrator token, set FAKE_EMBEDDINGS=0 and point QDRANT_URL at a real index.
+      FAKE_EMBEDDINGS: ${FAKE_EMBEDDINGS:-1}
+      ORCHESTRATOR_ACCESS_TOKEN: ${ORCHESTRATOR_ACCESS_TOKEN:-}
+      SPELLING_DIR: /data/spelling
+    volumes:
+      - ${SPELLING_DIR:-./data/spelling}:/data/spelling:ro
