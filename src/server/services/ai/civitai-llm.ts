@@ -190,12 +190,14 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
         suppressThinking,
       });
     }
-    console.error(
-      '[civitai-llm] JSON parse failed; finishReason=',
-      choice?.finish_reason,
-      '\n',
-      content
-    );
+    // Never the content, nor a SyntaxError message (V8 quotes the input in it): a model can be
+    // led to repeat the prompts it was sent.
+    console.error('[civitai-llm] JSON parse failed', {
+      model,
+      finishReason: choice?.finish_reason,
+      length: content.length,
+      fenced: fenced !== undefined,
+    });
     throw new Error('Failed to parse JSON from Civitai LLM completion');
   };
 
