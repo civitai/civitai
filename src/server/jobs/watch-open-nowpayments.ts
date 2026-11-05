@@ -9,15 +9,16 @@ export const watchOpenNowpaymentsJob = createJob(
   'watch-open-nowpayments',
   '0 13 * * *', // Daily
   async () => {
-    const { digest, listed, ...result } = await watchOpenDeposits();
+    const { digest, listed, ledger, ...result } = await watchOpenDeposits();
 
     let digestSent = 0;
-    if (digest.length || listed.length) {
+    if (digest.length || listed.length || ledger.missing.length) {
       try {
         await openCryptoDepositDigestEmail.send({
           to: DIGEST_TO,
           items: digest,
           listed,
+          ledger,
           counts: result.counts,
         });
         digestSent = digest.length;
@@ -34,8 +35,8 @@ export const watchOpenNowpaymentsJob = createJob(
 
     logToAxiom({
       name: 'watch-open-nowpayments-job',
-      type: result.counts.finishedUncredited > 0 ? 'warning' : 'info',
-      message: `Open deposits: ${result.counts.open} open (oldest ${result.counts.oldestOpenDays}d), ${result.closed} closed, ${result.counts.held} held, ${result.counts.finishedUncredited} finished but uncredited`,
+      type: result.counts.finishedUncredited > 0 || ledger.missing.length > 0 ? 'warning' : 'info',
+      message: `Open deposits: ${result.counts.open} open (oldest ${result.counts.oldestOpenDays}d), ${result.closed} closed, ${result.counts.held} held, ${result.counts.finishedUncredited} finished but uncredited, ${ledger.missing.length} credited but not in the ledger`,
       ...result.counts,
       checked: result.checked,
       closed: result.closed,
@@ -43,9 +44,12 @@ export const watchOpenNowpaymentsJob = createJob(
       digestSent,
       listed: listed.length,
       listedAwaitingOk: listed.filter((l) => l.state === 'awaiting_ok').length,
+      creditedNotInLedger: ledger.missing.length,
+      ledgerLookupFailed: ledger.lookupFailed,
+      ledgerNotChecked: ledger.notChecked,
     });
 
-    return { ...result, listed, digestSent };
+    return { ...result, listed, ledger, digestSent };
   },
   {
     lockExpiration: 30 * 60,

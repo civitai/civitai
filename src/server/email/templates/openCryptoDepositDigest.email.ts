@@ -40,13 +40,42 @@ const LISTED_STATE_LABEL: Record<ListedPaymentState, string> = {
   lookup_failed: 'NowPayments lookup failed',
 };
 
+/** A deposit row marked credited whose Buzz transaction is not in the ledger. */
+export type LedgerMissingDigestItem = {
+  paymentId: string;
+  userId: number | null;
+  username: string;
+  /** The row's status; null when a support-added id has no row. */
+  status: string | null;
+  buzzCredited: number | null;
+};
+
+export type LedgerCheckReport = {
+  missing: LedgerMissingDigestItem[];
+  lookupFailed: number;
+  /** Rows in the window past the per-run cap, left for the next run. */
+  notChecked: number;
+};
+
 export type OpenCryptoDepositDigestData = {
   to: string;
   items: OpenDepositDigestItem[];
   /** Listed payment ids and where each stands; empty when none are listed. */
   listed?: ListedPaymentDigestItem[];
+  ledger?: LedgerCheckReport;
   counts: { open: number; oldestOpenDays: number; held: number; finishedUncredited: number };
 };
+
+const ledgerSummary = (l: LedgerCheckReport) =>
+  `Marked credited but no Buzz transaction: ${l.missing.length}. Ledger lookups failed: ${l.lookupFailed}. Not checked (over the cap): ${l.notChecked}.`;
+
+const LEDGER_NOTE =
+  'These deposits are marked credited, but the Buzz ledger has no transaction for them. Hand them to the NowPayments desk; do not credit them from this digest.';
+
+const ledgerLine = (i: LedgerMissingDigestItem) =>
+  `Payment ${i.paymentId}: ${i.username} (${i.userId ?? 'no row'}), ${
+    i.buzzCredited ?? 'no'
+  } Buzz marked credited${i.status ? ` (${i.status})` : ''}`;
 
 const received = (i: OpenDepositDigestItem) =>
   i.payAmount != null
@@ -60,10 +89,12 @@ const listedLine = (i: ListedPaymentDigestItem) =>
   `Payment ${i.paymentId}: ${LISTED_STATE_LABEL[i.state]}${i.status ? ` (${i.status})` : ''}`;
 
 export const openCryptoDepositDigestEmail = createEmail({
-  header: ({ to, items, listed }: OpenCryptoDepositDigestData) => ({
+  header: ({ to, items, listed, ledger }: OpenCryptoDepositDigestData) => ({
     subject: `NP open-payment digest: ${items.length} crypto deposit${
       items.length === 1 ? '' : 's'
-    } still open${listed?.length ? `, ${listed.length} listed` : ''}`,
+    } still open${listed?.length ? `, ${listed.length} listed` : ''}${
+      ledger?.missing.length ? `, ${ledger.missing.length} credited but not in the ledger` : ''
+    }`,
     to,
     from: 'Civitai Support <hello@civitai.com>',
   }),
@@ -93,6 +124,17 @@ export const openCryptoDepositDigestEmail = createEmail({
           ? `
       <p>Listed payment ids (no IPN row):</p>
       <ul>${data.listed.map((i) => `<li>${listedLine(i)}</li>`).join('')}</ul>`
+          : ''
+      }${
+        data.ledger
+          ? `
+      <p>${ledgerSummary(data.ledger)}</p>${
+              data.ledger.missing.length
+                ? `
+      <p>${LEDGER_NOTE}</p>
+      <ul>${data.ledger.missing.map((i) => `<li>${ledgerLine(i)}</li>`).join('')}</ul>`
+                : ''
+            }`
           : ''
       }
       <div style="overflow-x:auto;">
@@ -124,6 +166,10 @@ export const openCryptoDepositDigestEmail = createEmail({
       ...lines,
       ...(data.listed?.length
         ? ['Listed payment ids (no IPN row):', ...data.listed.map((i) => `- ${listedLine(i)}`)]
+        : []),
+      ...(data.ledger ? [ledgerSummary(data.ledger)] : []),
+      ...(data.ledger?.missing.length
+        ? [LEDGER_NOTE, ...data.ledger.missing.map((i) => `- ${ledgerLine(i)}`)]
         : []),
     ].join('\n');
   },

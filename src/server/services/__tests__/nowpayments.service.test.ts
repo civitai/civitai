@@ -15,9 +15,11 @@ const {
   mockSignalClient,
   mockWithDistributedLock,
   mockKvGet,
+  mockKvSet,
 } = vi.hoisted(() => {
   return {
     mockKvGet: vi.fn(async (_key: string, defaultValue?: unknown) => defaultValue),
+    mockKvSet: vi.fn(async (_key: string, _value: unknown) => undefined),
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
       getPaymentStatus: vi.fn(),
@@ -47,7 +49,7 @@ vi.mock('~/server/services/notification.service', () => ({
 
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
-  dbKV: { get: mockKvGet },
+  dbKV: { get: mockKvGet, set: mockKvSet },
 }));
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
   default: mockNowpaymentsCaller,
@@ -1175,21 +1177,25 @@ function resetDepositMocks() {
 }
 
 type DepositRow = Record<string, unknown>;
-/** Applies the subset of a Prisma where-clause the deposit queries use: equality, in, gt and OR. */
+/** Applies the subset of a Prisma where-clause the deposit queries use: equality, in, gt, gte, not and OR. */
 const matchesWhere = (row: DepositRow, where: Record<string, any>): boolean =>
   Object.entries(where).every(([key, cond]) => {
     if (key === 'OR') return (cond as Record<string, any>[]).some((w) => matchesWhere(row, w));
     if (cond && typeof cond === 'object' && 'in' in cond) return cond.in.includes(row[key]);
     if (cond && typeof cond === 'object' && 'gt' in cond) return (row[key] as number) > cond.gt;
+    if (cond && typeof cond === 'object' && 'gte' in cond)
+      return row[key] != null && (row[key] as Date) >= cond.gte;
+    if (cond && typeof cond === 'object' && 'not' in cond) return (row[key] ?? null) !== cond.not;
     return (row[key] ?? null) === cond;
   });
 
 /** Serves cryptoDeposit findMany/count from a fake table, so a wrong where-clause changes results. */
 function serveDepositTable(table: () => DepositRow[]) {
-  mockDbRead.cryptoDeposit.findMany.mockImplementation(async ({ where }: any) =>
+  mockDbRead.cryptoDeposit.findMany.mockImplementation(async ({ where, take }: any) =>
     table()
       .filter((r) => matchesWhere(r, where))
       .sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
+      .slice(0, take)
   );
   mockDbRead.cryptoDeposit.count.mockImplementation(
     async ({ where }: any) => table().filter((r) => matchesWhere(r, where)).length
@@ -1605,9 +1611,7 @@ describe('watchOpenDeposits', () => {
 
         expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
         expect(rowStatus[911]).toBeUndefined();
-        expect(result.listed).toEqual([
-          { paymentId: '911', state: 'in_flight', status: npStatus },
-        ]);
+        expect(result.listed).toEqual([{ paymentId: '911', state: 'in_flight', status: npStatus }]);
       }
     );
 
@@ -1650,6 +1654,162 @@ describe('watchOpenDeposits', () => {
         { paymentId: '909', state: 'no_row', status: 'waiting' },
         { paymentId: '910', state: 'lookup_failed', status: null },
       ]);
+    });
+  });
+
+  describe('deposits marked credited with no Buzz transaction', () => {
+    const hoursAgo = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000);
+    const creditedRow = (paymentId: number, updatedHoursAgo: number, extra = {}) => ({
+      ...openRow(paymentId, 'finished', 3),
+      buzzCredited: 5000,
+      updatedAt: hoursAgo(updatedHoursAgo),
+      ...extra,
+    });
+    /** Serves the ledger-watch list; anything else reads as unset. */
+    const listLedgerIds = (ids: unknown) =>
+      mockKvGet.mockImplementation(async (key: string, defaultValue?: unknown) =>
+        key === 'nowpayments:watch-ledger-missing' ? ids : defaultValue
+      );
+    /** The ledger holds exactly these external ids. */
+    const ledgerHas = (...externalIds: string[]) =>
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+        externalIds.includes(id) ? { externalTransactionId: id } : null
+      );
+    const ledgerLookups = () =>
+      mockGetTransactionByExternalId.mock.calls.map(([id]) => id as string);
+    const expectNoCreditOrDepositWrite = () => {
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.updateMany).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.update).not.toHaveBeenCalled();
+    };
+
+    /** Serves the table; NowPayments reports every payment finished with one payin hash. */
+    const watchCredited = (rows: DepositRow[]) => {
+      serveDepositTable(() => rows);
+      mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: number) =>
+        makePayment({ payment_id: id, payment_status: 'finished', payin_hash: '0xpaid' })
+      );
+      return watchOpenDeposits();
+    };
+
+    beforeEach(() => {
+      mockKvGet.mockReset().mockImplementation(async (_k: string, d?: unknown) => d);
+      mockKvSet.mockReset().mockResolvedValue(undefined);
+      mockDbWrite.cryptoDeposit.update.mockReset().mockResolvedValue({});
+    });
+
+    it('reports a row marked credited whose np-deposit transaction is missing, and never credits it', async () => {
+      ledgerHas();
+
+      const result = await watchCredited([creditedRow(7001, 2)]);
+
+      expect(result.ledger).toEqual({
+        missing: [
+          {
+            paymentId: '7001',
+            userId: 42,
+            username: 'tester',
+            status: 'finished',
+            buzzCredited: 5000,
+          },
+        ],
+        lookupFailed: 0,
+        notChecked: 0,
+      });
+      expect(ledgerLookups()).toContain('np-deposit-7001');
+      expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [7001]);
+      expectNoCreditOrDepositWrite();
+    });
+
+    it('reports nothing when the ledger has the np-deposit transaction', async () => {
+      ledgerHas('np-deposit-7002');
+
+      const result = await watchCredited([creditedRow(7002, 2)]);
+
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, notChecked: 0 });
+      expect(mockKvSet).not.toHaveBeenCalled();
+    });
+
+    it('does not report a deposit a hand grant under its payin hash paid', async () => {
+      ledgerHas('np-payin-0xpaid');
+
+      const result = await watchCredited([creditedRow(7003, 2)]);
+
+      expect(result.ledger.missing).toEqual([]);
+      expect(ledgerLookups()).toEqual(['np-deposit-7003', 'np-payin-0xpaid']);
+    });
+
+    it('counts a failed ledger lookup as failed, not missing', async () => {
+      mockGetTransactionByExternalId.mockRejectedValue(new Error('buzz 503'));
+
+      const result = await watchCredited([creditedRow(7004, 2)]);
+
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 1, notChecked: 0 });
+      expect(mockKvSet).not.toHaveBeenCalled();
+    });
+
+    it('looks up only credited rows updated in the last 48h, plus listed ids', async () => {
+      ledgerHas();
+
+      await watchCredited([
+        creditedRow(7010, 47),
+        creditedRow(7011, 50),
+        creditedRow(7012, 2, { buzzCredited: null }),
+        creditedRow(7013, 2, { status: 'buzz_failed' }),
+      ]);
+
+      expect(ledgerLookups().filter((id) => id.startsWith('np-deposit-'))).toEqual([
+        'np-deposit-7010',
+      ]);
+    });
+
+    it('checks and reports a listed id whose row is older than the window', async () => {
+      listLedgerIds([7020]);
+      ledgerHas();
+
+      const result = await watchCredited([creditedRow(7020, 24 * 13)]);
+
+      expect(result.ledger.missing.map((m) => m.paymentId)).toEqual(['7020']);
+      expect(mockKvSet).not.toHaveBeenCalled();
+      expectNoCreditOrDepositWrite();
+    });
+
+    it('drops a listed id once its transaction is in the ledger, and keeps one whose lookup failed', async () => {
+      listLedgerIds([7030, 7031]);
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) => {
+        if (id === 'np-deposit-7031') throw new Error('buzz 503');
+        return id === 'np-deposit-7030' ? { externalTransactionId: id } : null;
+      });
+
+      const result = await watchCredited([creditedRow(7030, 24 * 13), creditedRow(7031, 24 * 13)]);
+
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 1, notChecked: 0 });
+      expect(mockKvSet).toHaveBeenCalledWith('nowpayments:watch-ledger-missing', [7031]);
+    });
+
+    it('never rewrites a list it could not read', async () => {
+      mockKvGet.mockImplementation(async (key: string, d?: unknown) => {
+        if (key === 'nowpayments:watch-ledger-missing') throw new Error('db down');
+        return d;
+      });
+      ledgerHas();
+
+      const result = await watchCredited([creditedRow(7040, 2)]);
+
+      expect(result.ledger.missing.map((m) => m.paymentId)).toEqual(['7040']);
+      expect(mockKvSet).not.toHaveBeenCalled();
+    });
+
+    it('counts rows past the per-run cap as not checked', async () => {
+      ledgerHas(...Array.from({ length: 2001 }, (_, i) => `np-deposit-${8000 + i}`));
+
+      const result = await watchCredited(
+        Array.from({ length: 2001 }, (_, i) => creditedRow(8000 + i, 2))
+      );
+
+      expect(result.ledger).toEqual({ missing: [], lookupFailed: 0, notChecked: 1 });
+      expect(ledgerLookups()).toHaveLength(2000);
     });
   });
 });
