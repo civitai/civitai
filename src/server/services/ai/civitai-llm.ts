@@ -1,6 +1,7 @@
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
+import { describeProviderError } from '~/server/services/ai/provider-error';
 
 export type { SimpleMessage } from '~/server/services/ai/openrouter';
 
@@ -80,6 +81,11 @@ function appendNoPreamble(messages: SimpleMessage[]): SimpleMessage[] {
   });
 }
 
+const messageTexts = (msg: SimpleMessage) =>
+  typeof msg.content === 'string'
+    ? [msg.content]
+    : msg.content.flatMap((c) => (c.type === 'text' ? [c.text] : []));
+
 // Last-ditch JSON extractor: take the substring from the first `{` to the
 // last `}`. Handles models that wrap JSON in prose or markdown.
 function extractJsonSlice(content: string): string | null {
@@ -135,8 +141,12 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error('[civitai-llm] HTTP', res.status, errText.slice(0, 500));
-      throw new Error(`Civitai LLM error ${res.status}: ${errText.slice(0, 500)}`);
+      const reason = describeProviderError(
+        { name: 'HTTPError', statusCode: res.status, body: errText },
+        { sent: finalMessages.flatMap(messageTexts) }
+      );
+      console.error('[civitai-llm] HTTP', reason);
+      throw new Error(`Civitai LLM error ${res.status}: ${reason}`);
     }
 
     const json = (await res.json()) as ChatCompletionResponse;

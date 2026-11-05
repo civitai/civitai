@@ -37,3 +37,27 @@ describe('an unparseable completion', () => {
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain('PROMPT_ECHO');
   });
 });
+
+describe('an HTTP error', () => {
+  it('logs and throws the status and error code without the response text', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { error: { message: 'bad input: PROMPT_ECHO', code: 'invalid_request' } },
+        { status: 400 }
+      )
+    );
+
+    const error = await call().then(
+      () => {
+        throw new Error('expected the call to reject');
+      },
+      (e: Error) => e
+    );
+
+    expect(error.message).not.toContain('PROMPT_ECHO');
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain('PROMPT_ECHO');
+    expect(error.message).toMatch(/^Civitai LLM error 400: .*code=invalid_request/);
+    expect(JSON.stringify(consoleError.mock.calls)).toContain('code=invalid_request');
+  });
+});
