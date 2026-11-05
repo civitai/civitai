@@ -431,8 +431,8 @@ async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<vo
   }
 
   const resp = await write.query(
-    `UPDATE "UserNotification" un SET viewed = TRUE WHERE id = $1 AND viewed IS FALSE`,
-    [id]
+    `UPDATE "UserNotification" un SET viewed = TRUE WHERE id = $1 AND "userId" = $2 AND viewed IS FALSE`,
+    [id, userId]
   );
   if (resp.rowCount) {
     await preventReplicationLag(userId);
