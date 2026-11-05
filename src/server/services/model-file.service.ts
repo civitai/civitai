@@ -30,8 +30,8 @@ import {
   ModelHashType,
   ModelStatus,
   ModelUploadType,
-  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
+import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { deleteModelFileObject } from '~/utils/s3-utils';
@@ -43,6 +43,10 @@ import {
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
+import {
+  liveRunDatasetTrainingStatuses,
+  reviewedDatasetTrainingStatuses,
+} from '~/shared/constants/training.constants';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -464,8 +468,6 @@ function fileOwnerSql(id: number, userId?: number) {
   `;
 }
 
-const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
-
 export async function deleteFile({
   id,
   userId,
@@ -496,11 +498,21 @@ export async function deleteFile({
   if (
     file.type === 'Training Data' &&
     file.modelVersion.trainingStatus &&
-    reviewedDatasetStatuses.includes(file.modelVersion.trainingStatus) &&
+    reviewedDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
     !isModerator
   )
     throw throwBadRequestError(
       "Training data for a training run under review or denied can't be deleted."
+    );
+
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    liveRunDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
+    !isModerator
+  )
+    throw throwBadRequestError(
+      "Training data can't be deleted while its training run is in progress or awaiting review."
     );
 
   const modelStatus = file.modelVersion.model.status;
@@ -527,12 +539,12 @@ export async function deleteFile({
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
     AND NOT ${modelRowHeldSql()}
     ${
-      // Repeats the check above at delete time, in case the run was moved to review in between.
+      // Repeats the checks above at delete time, in case the run moved on in between.
       isModerator
         ? Prisma.empty
         : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
           Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
-            reviewedDatasetStatuses
+            [...reviewedDatasetTrainingStatuses, ...liveRunDatasetTrainingStatuses]
           )}))`
     }
     RETURNING
