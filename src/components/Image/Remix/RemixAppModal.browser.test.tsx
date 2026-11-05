@@ -373,6 +373,70 @@ describe('RemixAppModal', () => {
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
   });
 
+  test('a pick leaves out a take the viewer may not see, and the rest keep their index', async () => {
+    h.items = [workflow('wf-0', 'succeeded')];
+    const take = (n: number) => ({ url: `https://example.com/take-${n}.png` });
+    h.advance
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: { kind: 'pick', prompt: 'Pick your favourite', images: [take(1), null, take(3)] },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-1' });
+    await renderWithProviders(
+      <RemixAppModalContent
+        app={animeIt}
+        run={{ runId: RUN, workflowId: 'wf-0' }}
+        onClose={onClose}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: 'Pick image 3' })).toBeVisible();
+    expect(page.getByRole('button', { name: /^Pick image/ }).elements()).toHaveLength(2);
+
+    await page.getByRole('button', { name: 'Pick image 3' }).click();
+    await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
+    expect(h.advance.mock.calls[1][0]).toMatchObject({ runId: RUN, answers: [2] });
+  });
+
+  test('a priced option shows its price, and tapping it runs the step at that price', async () => {
+    h.items = [workflow('wf-0', 'succeeded')];
+    h.advance
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: {
+          kind: 'choice',
+          prompt: 'Finish it',
+          options: [
+            { value: 'upscale', label: 'Upscale 2×' },
+            { value: 'keep', label: 'Keep it' },
+          ],
+        },
+        prices: { upscale: 12, keep: 0 },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-1' });
+    await renderWithProviders(
+      <RemixAppModalContent
+        app={animeIt}
+        run={{ runId: RUN, workflowId: 'wf-0' }}
+        onClose={onClose}
+      />
+    );
+
+    const upscale = page.getByRole('button', { name: /^Upscale 2×/ });
+    await expect.element(upscale).toHaveTextContent('12');
+    // Free to keep: no price on its button.
+    await expect
+      .element(page.getByRole('button', { name: 'Keep it' }))
+      .toHaveTextContent(/^Keep it$/);
+
+    await upscale.click();
+    await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
+    expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['upscale'], quote: 12 });
+    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+  });
+
   test('⋯ Dismiss adds remix:dismissed to the run and closes', async () => {
     h.items = [workflow('wf-0', 'processing')];
     await renderWithProviders(
@@ -421,7 +485,7 @@ describe('RemixAppModal', () => {
 
       await vi.waitFor(() =>
         expect(h.post).toHaveBeenCalledWith({
-          workflowId: 'wf-0',
+          runId: RUN,
           gallery: { hostImageId: 5, method: 'free', expectedPrice: undefined },
         })
       );
@@ -440,14 +504,14 @@ describe('RemixAppModal', () => {
 
       await page.getByRole('button', { name: 'Post' }).click();
       await vi.waitFor(() =>
-        expect(h.post).toHaveBeenLastCalledWith({ workflowId: 'wf-0', gallery: undefined })
+        expect(h.post).toHaveBeenLastCalledWith({ runId: RUN, gallery: undefined })
       );
 
       await gallerySwitch().click();
       await page.getByRole('button', { name: 'Post' }).click();
       await vi.waitFor(() =>
         expect(h.post).toHaveBeenLastCalledWith({
-          workflowId: 'wf-0',
+          runId: RUN,
           gallery: { hostImageId: 5, method: 'paid', expectedPrice: 50 },
         })
       );
@@ -465,7 +529,7 @@ describe('RemixAppModal', () => {
       await expect.element(gallerySwitch()).not.toBeChecked();
       await page.getByRole('button', { name: 'Post' }).click();
       await vi.waitFor(() =>
-        expect(h.post).toHaveBeenCalledWith({ workflowId: 'wf-0', gallery: undefined })
+        expect(h.post).toHaveBeenCalledWith({ runId: RUN, gallery: undefined })
       );
     });
 
@@ -476,7 +540,7 @@ describe('RemixAppModal', () => {
 
       await page.getByRole('button', { name: 'Post' }).click();
       await vi.waitFor(() =>
-        expect(h.post).toHaveBeenCalledWith({ workflowId: 'wf-0', gallery: undefined })
+        expect(h.post).toHaveBeenCalledWith({ runId: RUN, gallery: undefined })
       );
     });
   });

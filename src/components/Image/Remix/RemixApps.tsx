@@ -3,6 +3,7 @@ import { Menu } from '~/components/MantineOverlays';
 import {
   IconCamera,
   IconCube,
+  IconLayoutGrid,
   IconGridDots,
   IconHorseToy,
   IconPencil,
@@ -27,6 +28,7 @@ const icons: Record<string, typeof IconSparkles> = {
   grid: IconGridDots,
   pencil: IconPencil,
   clay: IconCube,
+  pick: IconLayoutGrid,
 };
 
 /** The remix apps this viewer can run on this image: the same rule the server applies. */
