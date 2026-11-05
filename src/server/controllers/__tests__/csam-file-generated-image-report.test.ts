@@ -49,6 +49,10 @@ describe('fileCsamReport (GeneratedImage)', () => {
     );
     expect(createCsamReport).toHaveBeenCalledTimes(1);
     expect(softDeleteUser).toHaveBeenCalledWith({ id: USER, userId: MOD });
+    // A stalled orchestrator must not hold up the removal.
+    expect(softDeleteUser.mock.invocationCallOrder[0]).toBeLessThan(
+      fetch.mock.invocationCallOrder[0]
+    );
   });
 
   it('removes the account when the strikes review route is not found', async () => {

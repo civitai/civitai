@@ -105,9 +105,18 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
         }).catch(() => undefined);
       }
     }
-  } else if (type === 'GeneratedImage') {
-    // Isolated like the training deny: the report row is committed, so no strikes-review failure may
-    // stop the account removal below. A 404 is the retired route, which leaves nothing to review.
+  }
+
+  // A supplemental report follows one that removed the account for this; one restored or banned for
+  // something else since is removed again.
+  const removed = !!supplementalOf && (await removedForCsam(userId));
+  if (userId !== -1 && !removed) {
+    await softDeleteUser({ id: userId, userId: reportedById });
+  }
+
+  if (type === 'GeneratedImage') {
+    // After the removal, so a slow or failing orchestrator can never hold it up. A 404 is the retired
+    // route, which leaves nothing to review.
     try {
       await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
     } catch (e) {
@@ -123,20 +132,13 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           name: 'csam-report',
           type: 'error',
           important: true,
-          message: 'strikes review failed; report filed and account still removed',
+          message: 'strikes review failed after the report was filed and the account removed',
           userId,
           reportedById,
           error: (e as Error)?.message,
         }).catch(() => undefined);
       }
     }
-  }
-
-  // A supplemental report follows one that removed the account for this; one restored or banned for
-  // something else since is removed again.
-  const removed = !!supplementalOf && (await removedForCsam(userId));
-  if (userId !== -1 && !removed) {
-    await softDeleteUser({ id: userId, userId: reportedById });
   }
 
   // Last, so the images are already blocked and the report row committed when the flag comes off.

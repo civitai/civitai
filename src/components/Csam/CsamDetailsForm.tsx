@@ -34,7 +34,7 @@ import {
 } from '~/server/schema/csam.schema';
 import { getModelUrl } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
-import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -69,15 +69,8 @@ export function CsamDetailsForm({
   );
 
   const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
-    onSuccess: ({ strikesReviewFailed }) => {
+    onSuccess: () => {
       closeModal('csam-confirm');
-      if (strikesReviewFailed)
-        showWarningNotification({
-          title: 'Report filed and account removed',
-          message:
-            "The user's generator strikes could not be marked reviewed. Do not file again — tell an infra owner.",
-          autoClose: false,
-        });
       onSuccess?.();
     },
     onError: (error) => {

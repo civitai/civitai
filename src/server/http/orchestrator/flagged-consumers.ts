@@ -34,6 +34,7 @@ export async function reviewConsumerStrikes(args: {
     method: 'POST',
     body: JSON.stringify({ moderatorId: args.moderatorId, notes: args.notes ?? '' }),
     headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(10_000),
   });
 }
 
