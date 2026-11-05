@@ -1,6 +1,7 @@
 import {
   createNotificationPendingRow,
   createNotificationsBulkInput,
+  markReadByKeysInput,
   sendSystemNoticesInput,
   type SendSystemNoticesInput,
   type SendSystemNoticesResult,
@@ -9,6 +10,7 @@ import {
   type CountNotificationsInput,
   type CreateNotificationPendingRow,
   type CreateNotificationRow,
+  type MarkReadByKeysInput,
   type MarkReadInput,
   type NotificationCategoryCount,
   type NotificationExistsInput,
@@ -270,6 +272,18 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
 
     markNotificationsRead: async (input: MarkReadInput): Promise<void> => {
       await post('/notifications/mark-read', input, config);
+    },
+
+    // Unlike markNotificationsRead this waits for the write and returns what it cleared, per category.
+    markNotificationsReadByKeys: async (
+      input: MarkReadByKeysInput
+    ): Promise<NotificationCategoryCount[]> => {
+      const res = (await post(
+        '/notifications/mark-read-by-key',
+        markReadByKeysInput.parse(input),
+        config
+      )) as Array<Omit<NotificationCategoryCount, 'count'> & { count: number | string }>;
+      return res.map((c) => ({ category: c.category, count: Number(c.count) }));
     },
 
     notificationExists: async (input: NotificationExistsInput): Promise<boolean> => {
