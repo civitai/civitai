@@ -312,9 +312,13 @@ export const NAVIGATION: NavLink[] = [
   {
     label: 'Knights of New Order',
     children: [
-      { path: '/knights-of-new-order/inquisitor', label: 'Inquisitor' },
+      {
+        path: '/knights-of-new-order/inquisitor',
+        label: 'Inquisitor',
+        countKey: 'knightsInquisitor',
+      },
       { path: '/knights-of-new-order/trials', label: 'Trials' },
-      { path: '/knights-of-new-order', label: 'Linked accounts' },
+      { path: '/knights-of-new-order', label: 'Linked accounts', countKey: 'knightsLinkReviews' },
     ],
   },
   { path: '/admin', label: 'Permissions' },
