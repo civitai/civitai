@@ -26,7 +26,7 @@ export function RemixResultLine({
   postDisabled?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2" data-testid="remix-result-line">
+    <div className="flex flex-wrap items-center gap-2" data-testid="remix-result-line">
       <Tooltip label="Remix again" visibleFrom="sm">
         <ActionIcon
           variant="default"
@@ -51,13 +51,13 @@ export function RemixResultLine({
             onChange={(e) => gallery.onChange(e.currentTarget.checked)}
             disabled={postDisabled}
             label={
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1 whitespace-nowrap">
                 Remix gallery <span aria-hidden>·</span> {gallery.price}
               </span>
             }
           />
         )}
-        <Button onClick={onPost} loading={posting} disabled={postDisabled}>
+        <Button className="shrink-0" onClick={onPost} loading={posting} disabled={postDisabled}>
           Post
         </Button>
       </div>
