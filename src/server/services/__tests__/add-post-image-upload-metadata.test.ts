@@ -4,7 +4,8 @@ import type * as Metadata from '~/utils/metadata';
 import type * as S3Utils from '~/utils/s3-utils';
 
 /**
- * `addPostImage` reads an upload's embedded metadata from storage when the caller sent none.
+ * `addPostImage` reads an upload's embedded metadata from storage when the caller sent none, and
+ * resolves a server-posted generation output's source from its workflow.
  *
  * The post.service import scaffold mirrors update-post-image-hidemeta-bust.test.ts.
  */
@@ -16,6 +17,15 @@ const mocks = vi.hoisted(() => ({
   readImageUploadObjectHead: vi.fn(),
   getMetadata: vi.fn(),
   fetch: vi.fn(),
+  getWorkflow: vi.fn(),
+}));
+
+vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getWorkflow: mocks.getWorkflow,
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: vi.fn(async () => 'token'),
 }));
 
 vi.mock('~/server/events/points/hooks', () => ({
@@ -111,6 +121,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 
 const { addPostImage } = await import('~/server/services/post.service');
+const { signProvenance } = await import('~/server/services/orchestrator/remix-provenance');
 
 const user = { id: 5 } as never;
 
@@ -185,5 +196,36 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     ).rejects.toThrow(/^No post with id 1$/);
     expect(mocks.readImageUploadObjectHead).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.post.findFirst).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('addPostImage — a generation output posted by the server', () => {
+  it("writes the source the workflow's signed provenance names", async () => {
+    // Headless posts (Remix Apps' Post) carry no meta; the workflow id is their only provenance.
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    mocks.getWorkflow.mockResolvedValue({
+      id: 'wf-1',
+      metadata: { provenance: signProvenance({ userId: 5, sourceImageIds: [900] }) },
+    });
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({
+      url: KEY,
+      type: 'image',
+      postId: 1,
+      user,
+      meta: { prompt: 'x' },
+      generationWorkflowId: 'wf-1',
+      serverMintedUrl: true,
+    } as never).catch(() => null);
+
+    expect(mocks.getWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-1' } })
+    );
+    expect(vi.mocked(createImage)).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(createImage).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.verifiedSourceImageIds).toEqual([900]);
+    expect(args).not.toHaveProperty('generationWorkflowId');
   });
 });

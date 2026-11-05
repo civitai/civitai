@@ -7,7 +7,17 @@ import {
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
 import { signProvenance, verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
-import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import {
+  getWorkflow,
+  patchWorkflowTags,
+  queryWorkflows,
+} from '~/server/services/orchestrator/workflows';
+import {
+  createHeadlessPost,
+  type HeadlessPostGallery,
+} from '~/server/services/headless-post.service';
+import type { ProtectedContext } from '~/server/createContext';
+import { logToAxiom } from '~/server/logging/client';
 import {
   assertInputsUsable,
   buildRuntimeRequest,
@@ -29,6 +39,8 @@ import {
 import { getRuntimeRemixApp } from '~/shared/remix-apps/system-apps';
 import {
   readRemixTag,
+  REMIX_APP_TAG,
+  REMIX_DONE_TAG,
   REMIX_RUN_TAG_PREFIX,
   REMIX_SEGMENT_TAG_PREFIX,
   remixRunTags,
@@ -135,6 +147,17 @@ function outputImages(workflow: Workflow): RunImage[] {
   });
 }
 
+/** What the viewer may see of `outputs`; undefined while one is not rated yet (fails closed). */
+function visibleOutputs<T extends { url: string }>(
+  outputs: T[],
+  levels: Map<string, NsfwLevel | undefined>,
+  caller: RemixAppCaller
+): T[] | undefined {
+  if (!caller.isGreenDomain && caller.user.showNsfw) return outputs;
+  if (outputs.some(({ url }) => levels.has(url) && levels.get(url) == null)) return undefined;
+  return outputs.filter(({ url }) => !isMature(levels.get(url)));
+}
+
 /**
  * Replays the app over the run so far and does the one thing the code reaches next: report a
  * segment still running, return an ask, price the next workflow, or submit it. `answers` are the
@@ -195,12 +218,9 @@ async function advance({
   if (outcome.status === 'done') {
     const workflowId = segments[segments.length - 1]?.workflow.id as string;
     // The run reads every blob so the next segment can use it; what it shows follows the viewer.
-    if (!caller.isGreenDomain && caller.user.showNsfw)
-      return { status: 'done', runId, workflowId, outputs: outcome.outputs };
-    // Fails closed: an output not rated yet keeps the run running until the scan lands.
-    const unrated = outcome.outputs.some(({ url }) => levels.has(url) && levels.get(url) == null);
-    if (unrated) return { status: 'running', runId, workflowId };
-    const outputs = outcome.outputs.filter(({ url }) => !isMature(levels.get(url)));
+    const outputs = visibleOutputs(outcome.outputs, levels, caller);
+    // An output not rated yet keeps the run running until the scan lands.
+    if (!outputs) return { status: 'running', runId, workflowId };
     return { status: 'done', runId, workflowId, outputs };
   }
   if (outcome.effect.type === 'ask') return { status: 'ask', runId, ask: outcome.effect.spec };
@@ -288,4 +308,68 @@ export async function advanceRemixRun({
     throw damaged('the app changed since it started. Start it again from the image.');
   const image = await loadSource(runSourceId(segments), caller, true);
   return advance({ runId, app, image, segments, answers, quote, caller });
+}
+
+/**
+ * Posts a finished remix's outputs, published, without the editor, and takes the run off the tray.
+ * The outputs are read from the viewer's own workflow, never sent by the client. A second tap
+ * returns the first post.
+ */
+export async function postRemixResult({
+  workflowId,
+  gallery,
+  caller,
+  ctx,
+}: {
+  workflowId: string;
+  gallery?: HeadlessPostGallery;
+  caller: RemixAppCaller;
+  ctx: ProtectedContext;
+}) {
+  const workflow = await getWorkflow({ token: caller.token, path: { workflowId } });
+  if (!workflow?.tags?.includes(REMIX_APP_TAG))
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix not found' });
+  if (workflow.status !== 'succeeded')
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'This remix has not finished.' });
+
+  const images = outputImages(workflow);
+  const levels = new Map(images.map(({ url, nsfwLevel }) => [url, nsfwLevel]));
+  const outputs = visibleOutputs(images, levels, caller);
+  if (!outputs)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'This result is still being checked. Try again in a moment.',
+    });
+  if (!outputs.length)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Nothing from this remix can be posted.' });
+
+  // Only a sanity check: whether this remix may go in free is the gallery's own decision, from the
+  // provenance `addPostImage` verified onto the new image.
+  const sourceId = (workflow.metadata as Record<string, unknown> | undefined)?.remixOfId;
+  const galleryHost = gallery && gallery.hostImageId === sourceId ? gallery : undefined;
+
+  const result = await createHeadlessPost({
+    ctx,
+    media: outputs.map(({ url, width, height }) => ({ workflowId, url, width, height })),
+    publish: true,
+    remixGallery: galleryHost,
+    idempotencyKey: `remix:${workflowId}`,
+    surface: 'remix-app',
+  });
+  if (gallery && !galleryHost)
+    result.gallery = { submitted: false, reason: "This isn't a remix of that image." };
+
+  await patchWorkflowTags({
+    token: caller.token,
+    input: [{ workflowId, tag: REMIX_DONE_TAG, op: 'add' }],
+  }).catch((error) =>
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'warning',
+      message: `posted, but ${REMIX_DONE_TAG} was not added: ${(error as Error).message}`,
+      details: { workflowId, postId: result.postId },
+    }).catch(() => undefined)
+  );
+  bustQueriedWorkflowsCache(caller.user.id).catch(() => null);
+  return result;
 }

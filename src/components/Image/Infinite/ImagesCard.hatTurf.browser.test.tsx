@@ -86,12 +86,18 @@ vi.mock('~/components/Image/Remix/CardRemixButton', () => ({ CardRemixButton: ()
 vi.mock('~/components/UserAvatar/UserAvatarSimple', () => ({
   UserAvatarSimple: () => <span>user</span>,
 }));
+const rating = vi.hoisted(() => ({ renders: false }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {
     return <>{children(true)}</>;
   }
-  ImageGuard2.BlurToggle = function BlurToggle() {
-    return null;
+  // A stand-in for the rating chip that keeps the size the card asks for; off unless a test turns it on.
+  ImageGuard2.BlurToggle = function BlurToggle({ h }: { h?: number }) {
+    return rating.renders ? (
+      <span data-testid="rating-badge" style={{ display: 'inline-flex', height: h, width: 30 }}>
+        PG
+      </span>
+    ) : null;
   };
   return { ImageGuard2 };
 });
@@ -191,12 +197,12 @@ const stickerOnCard = {
 };
 
 /** The /images card, under the feed's turf context (null: Hat Turf is off for the viewer). */
-function renderCard(value: TurfSummaries | null) {
+function renderCard(value: TurfSummaries | null, data = image, width = 300) {
   renderWithProviders(
     <TurfSummaryContext.Provider value={value}>
       <IntersectionObserverProvider>
-        <div style={{ width: 300 }}>
-          <ImagesCard data={image} height={400} />
+        <div style={{ width }}>
+          <ImagesCard data={data} height={400} />
         </div>
       </IntersectionObserverProvider>
     </TurfSummaryContext.Provider>
@@ -213,10 +219,41 @@ afterEach(() => {
   h.stock = { available: 3, optedIn: true };
   useHatTurfStore.setState({ showHats: true });
   stickerBadge.renders = false;
+  rating.renders = false;
   features.stickerPlacement = false;
 });
 
 describe('Hat Turf on the /images feed card', () => {
+  // 171: a 2-up grid on a 390px phone; 320: a desktop column.
+  test.each([
+    [171, 'with', turf],
+    [320, 'with', turf],
+    [171, 'without', () => null],
+    [320, 'without', () => null],
+  ])(
+    'a %ipx video card %s a turf badge keeps its corner chips on one 24px line',
+    async (width, _, value) => {
+      rating.renders = true;
+      const video = { ...image, type: MediaType.video, metadata: { duration: 95 } };
+      renderCard(value(), video, width);
+      await vi.waitFor(() => expect(q('rating-badge')).not.toBeNull());
+      const rating_ = q('rating-badge')!;
+      const duration = q('duration-badge')!;
+      expect(duration.textContent).toBe('1m 35s');
+      expect(duration.parentElement).toBe(rating_.parentElement);
+      const chips = [q('hat-turf-badge'), rating_, duration].filter(Boolean) as HTMLElement[];
+      expect(chips.length).toBe(value() ? 3 : 2);
+      const boxes = chips.map((el) => el.getBoundingClientRect());
+      for (const box of boxes) {
+        expect(box.height).toBe(24);
+        expect(box.top).toBe(boxes[0].top);
+      }
+      // Left to right: turf badge, rating, length.
+      for (let i = 1; i < boxes.length; i++)
+        expect(boxes[i].left).toBeGreaterThanOrEqual(boxes[i - 1].right);
+    }
+  );
+
   test('a joined player on a flagged feed gets the hat button, the standings badge and the hat layer', async () => {
     renderCard(turf());
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());

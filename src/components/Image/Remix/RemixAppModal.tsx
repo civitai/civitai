@@ -2,20 +2,27 @@ import { ActionIcon, Button, Loader, Modal, Text, TextInput, UnstyledButton } fr
 import { Menu } from '~/components/MantineOverlays';
 import { IconDots, IconX } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
-import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RemixResultLine } from '~/components/Image/Remix/RemixResultLine';
 import { isRunningWorkflow, useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
-import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
-import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
+import { setCachedWorkflowTag } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { remixResultGalleryOffer } from '~/components/RemixGallery/remix-gallery.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RemixRunState } from '~/server/services/remix-app-run.service';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer, RemixAsk, RemixImage } from '~/shared/remix-apps/define';
+import { REMIX_DONE_TAG } from '~/shared/remix-apps/tags';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { showErrorNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 
 export type RemixModalApp = { slug: string; name: string; runtime: boolean };
@@ -158,8 +165,8 @@ export function RemixAppModalContent({
   note,
   onClose,
 }: RemixAppModalProps & { onClose: () => void }) {
-  const router = useRouter();
-  const showCreatePostError = useShowCreatePostError();
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const [phase, setPhase] = useState<Phase>(run ? { kind: 'running', ...run } : { kind: 'offer' });
   // One nonce per offer: a repeated Run of the same offer names the same run.
   const [nonce, setNonce] = useState(() => crypto.randomUUID());
@@ -170,8 +177,11 @@ export function RemixAppModalContent({
   const start = trpc.remixApp.start.useMutation();
   const runOnce = trpc.remixApp.run.useMutation();
   const advance = trpc.remixApp.advance.useMutation();
-  const createPost = trpc.post.create.useMutation();
-  const [posting, setPosting] = useState(false);
+  const postRun = trpc.remixApp.post.useMutation();
+  const gallery = useResultGallery(
+    phase.kind === 'done' && features.remixGallery ? imageId : undefined,
+    currentUser?.id
+  );
   const pending = start.isPending || runOnce.isPending || advance.isPending;
 
   const onError = (error: { message: string }) =>
@@ -283,20 +293,27 @@ export function RemixAppModalContent({
     setPhase({ kind: 'offer' });
   }
 
-  async function post(outputs: RemixImage[], workflowId: string) {
-    setPosting(true);
-    try {
-      await postGeneratedMedia({
-        media: outputs.map(({ url }) => ({ url, generationWorkflowId: workflowId })),
-        router,
-        createPost: () => createPost.mutateAsync({}),
-      });
-      onClose();
-    } catch (e) {
-      showCreatePostError(e as Error);
-    } finally {
-      setPosting(false);
-    }
+  function post(workflowId: string) {
+    postRun.mutate(
+      { workflowId, gallery: gallery.submit },
+      {
+        onSuccess: (result) => {
+          setCachedWorkflowTag(workflowId, REMIX_DONE_TAG, 'add');
+          showSuccessNotification({
+            title: result.gallery?.submitted ? 'Posted and sent to the Remix gallery' : 'Posted',
+            message: <Link href={`/posts/${result.postId}`}>View post</Link>,
+          });
+          if (result.gallery && !result.gallery.submitted)
+            showWarningNotification({
+              title: 'Not sent to the Remix gallery',
+              message: result.gallery.reason,
+            });
+          onClose();
+        },
+        onError: (error) =>
+          showErrorNotification({ title: 'Could not post', error: new Error(error.message) }),
+      }
+    );
   }
 
   const workflowId = phaseWorkflowId(phase);
@@ -422,15 +439,57 @@ export function RemixAppModalContent({
             openQueue();
             onClose();
           }}
-          onPost={() =>
-            phase.kind === 'done' && phase.outputs.length && post(phase.outputs, phase.workflowId)
-          }
-          posting={posting}
+          gallery={gallery.control}
+          onPost={() => phase.kind === 'done' && phase.outputs.length && post(phase.workflowId)}
+          posting={postRun.isPending}
           postDisabled={phase.kind !== 'done' || !phase.outputs.length}
         />
       )}
     </div>
   );
+}
+
+/**
+ * The Remix gallery switch for a finished run: priced from the source's gallery, on by default
+ * only when it costs no Buzz. A choice is kept for the price it was made at, so a switch turned on
+ * while free never carries over to a paid offer.
+ */
+function useResultGallery(hostImageId: number | undefined, viewerId: number | undefined) {
+  const enabled = hostImageId != null && viewerId != null;
+  const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery(
+    { imageId: hostImageId ?? 0 },
+    { enabled }
+  );
+  const { data: eligibility } = trpc.placement.getRemixGalleryFreeEligibility.useQuery(
+    { hostImageId: hostImageId ?? 0, imageIds: [] },
+    { enabled }
+  );
+  const [choice, setChoice] = useState<{ method: string; on: boolean } | null>(null);
+  const offer = enabled ? remixResultGalleryOffer({ visibility, eligibility, viewerId }) : null;
+  if (!offer || hostImageId == null) return { control: undefined, submit: undefined };
+
+  const on = choice?.method === offer.method ? choice.on : offer.method !== 'paid';
+  return {
+    control: {
+      checked: on,
+      onChange: (checked: boolean) => setChoice({ method: offer.method, on: checked }),
+      price:
+        offer.method === 'paid' ? (
+          <CurrencyBadge currency="BUZZ" unitAmount={offer.price} size="xs" />
+        ) : offer.method === 'team' ? (
+          `free for Team ${offer.team}`
+        ) : (
+          'free'
+        ),
+    },
+    submit: on
+      ? {
+          hostImageId,
+          method: offer.method,
+          expectedPrice: offer.method === 'paid' ? offer.price : undefined,
+        }
+      : undefined,
+  };
 }
 
 function phaseWorkflowId(phase: Phase) {
