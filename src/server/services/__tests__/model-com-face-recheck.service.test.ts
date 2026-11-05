@@ -44,6 +44,7 @@ import {
   COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RECHECK_WINDOW_MS,
   processComFaceRechecks,
+  queueComFaceRecheck,
 } from '~/server/services/model-com-face-recheck.service';
 
 const db = dbMock.dbWrite;
@@ -452,5 +453,53 @@ describe('the .com face listing re-check', () => {
       expect.objectContaining({ message: COM_FACE_RECHECK_GAVE_UP })
     );
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+  });
+});
+
+describe('queueing a re-check when the queue is unavailable', () => {
+  const kvInsert = () =>
+    db.$executeRaw.mock.calls.find((call) =>
+      (call[0] as unknown as string[]).join('?').includes('INSERT INTO "KeyValue"')
+    );
+
+  it('writes a due retry row that the next run checks', async () => {
+    mockAddToQueue.mockRejectedValueOnce(new Error('redis down'));
+
+    await queueComFaceRecheck(MODEL_ID);
+
+    const insert = kvInsert();
+    expect(insert?.[1]).toBe(KEY);
+    const row = JSON.parse(String(insert?.[2]));
+    expect(row).toEqual({ since: NOW.toISOString(), attempt: 0, nextAt: '' });
+    expect(coverCleared()).toBe(false);
+
+    vi.clearAllMocks();
+    db.model.findUnique.mockResolvedValue(withFace as never);
+    db.modelVersion.findMany.mockResolvedValue([{ trainedWords: ['trigger'] }] as never);
+    db.$executeRaw.mockResolvedValue(1 as never);
+    arrange({ waiting: [row] });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+    expect(counts.allowed).toBe(1);
+  });
+
+  it('takes the face off .com when the retry row cannot be written either', async () => {
+    mockAddToQueue.mockRejectedValueOnce(new Error('redis down'));
+    db.$executeRaw.mockRejectedValueOnce(new Error('db down'));
+
+    await queueComFaceRecheck(MODEL_ID);
+
+    expect(coverCleared()).toBe(true);
+    const removal = db.$executeRaw.mock.calls.find((call) =>
+      (call[0] as unknown as string[]).join('?').includes('"sfwCoverImageId" = NULL')
+    );
+    const removalMarker = removal
+      ?.slice(1)
+      .find((value) => typeof value === 'string' && value.includes('sfwCoverImageId'));
+    expect(JSON.parse(String(removalMarker)).reason).toBe('recheck-unverified');
+    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
   });
 });

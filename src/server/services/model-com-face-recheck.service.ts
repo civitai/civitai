@@ -22,16 +22,34 @@ type RetryState = { since: string; attempt: number; nextAt: string };
  * Queues the intent re-check for a model whose listing (name, description or trigger words) an
  * owner just changed. Call after the write commits; it never throws, so a queue failure cannot fail
  * the save. Models without a .com face are skipped when the job runs.
+ *
+ * When the queue is unavailable the edit goes in as a due retry row instead, under the same window
+ * as any check without a verdict; when that write fails too the face comes off .com now. An edit
+ * that reaches neither must not keep its face up unchecked.
  */
 export async function queueComFaceRecheck(modelId: number) {
-  await addToQueue(QUEUE, modelId).catch((error) =>
-    logToAxiom({
-      type: 'error',
-      name: 'com-face-recheck',
-      message: 'enqueue failed',
-      modelId,
-      error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined)
+  try {
+    await addToQueue(QUEUE, modelId);
+    return;
+  } catch (error) {
+    logError('enqueue failed', modelId, error);
+  }
+  try {
+    // A model already waiting keeps its deadline; only the backoff restarts, as for a fresh edit.
+    const value: RetryState = { since: new Date().toISOString(), attempt: 0, nextAt: '' };
+    await dbWrite.$executeRaw`
+      INSERT INTO "KeyValue" (key, value) VALUES (${retryKey(modelId)}, ${JSON.stringify(
+      value
+    )}::jsonb)
+      ON CONFLICT (key) DO UPDATE
+      SET value = "KeyValue".value || '{"attempt":0,"nextAt":""}'::jsonb
+    `;
+    return;
+  } catch (error) {
+    logError('enqueue fallback retry row failed', modelId, error);
+  }
+  await removeUnverified(modelId).catch((error) =>
+    logError('enqueue fallback removal failed', modelId, error)
   );
 }
 
