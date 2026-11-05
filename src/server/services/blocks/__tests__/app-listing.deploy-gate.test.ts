@@ -56,6 +56,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
+import * as AppListingService from '../app-listing.service';
 import {
   getListingDetail,
   getStoreVisibleListingSummary,
@@ -428,5 +429,82 @@ describe("getStoreVisibleListingSummary — R/X parents follow the viewer's brow
       // @ts-expect-error -- `viewerBrowsingLevel` is required: no silent "site gate only" default.
       await getStoreVisibleListingSummary({ id: 'apl_2' }, { redCapable: true, scope: 'full' })
     ).toBeNull();
+  });
+});
+
+/**
+ * 🔴 THE HIDDEN STATE, NOT A 404. An R/X app the viewer's browsing level excludes still 404s
+ * through `getListingDetail` (so no name / description / media ever leaves), but the detail page
+ * asks `getListingHiddenByBrowsingLevel` why — and gets ONLY the rating back, to explain it. It
+ * answers null for anything else (visible, missing, or hidden for any other reason), so it is not
+ * an existence oracle beyond "an R/X app is here". Owners and moderators are not exempt.
+ */
+describe("getListingHiddenByBrowsingLevel — the detail page's hidden state", () => {
+  const hiddenFn = (AppListingService as Record<string, unknown>)
+    .getListingHiddenByBrowsingLevel as (
+    input: { slug: string },
+    opts: Record<string, unknown>
+  ) => Promise<unknown>;
+
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  const withRow = (contentRating: string) =>
+    mockDbRead.appListing.findFirst.mockResolvedValue({
+      ...offsiteRow({ contentRating }),
+      status: 'approved',
+    });
+  const red = { redCapable: true, scope: 'full', floor: 'public' };
+
+  it('🔴 an R app to a PG-only or signed-out viewer on a red-capable host → only its rating', async () => {
+    withRow('r');
+    for (const viewerBrowsingLevel of [1, undefined]) {
+      const result = await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel });
+      expect(result).toEqual({ contentRating: 'r' });
+    }
+  });
+
+  it('🔴 the OWNER and a MODERATOR with a PG-only level get the same hidden state', async () => {
+    withRow('r');
+    const owner = { userId: 7, isModerator: false }; // the row's creator (offsiteRow user id 7)
+    const mod = { userId: 9001, isModerator: true };
+    for (const [viewer, floor] of [
+      [owner, 'public'],
+      [mod, 'moderators'],
+    ] as const) {
+      expect(
+        await getListingDetail({ slug: 'ext-app' }, {
+          ...red,
+          floor,
+          viewer,
+          viewerBrowsingLevel: 1,
+        } as never)
+      ).toBeNull();
+      expect(
+        await hiddenFn({ slug: 'ext-app' }, { ...red, floor, viewer, viewerBrowsingLevel: 1 })
+      ).toEqual({ contentRating: 'r' });
+    }
+  });
+
+  it('nothing is hidden for a viewer who may see it, or for a non-mature app', async () => {
+    withRow('r');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 7 })).toBeNull();
+    withRow('pg13');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 1 })).toBeNull();
+  });
+
+  it('off a red-capable host an R app is not "hidden", it is not there (the site gate 404s)', async () => {
+    withRow('r');
+    expect(
+      await hiddenFn({ slug: 'ext-app' }, { ...red, redCapable: false, viewerBrowsingLevel: 31 })
+    ).toBeNull();
+  });
+
+  it('a missing listing is null', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValue(null);
+    expect(await hiddenFn({ slug: 'nope' }, { ...red, viewerBrowsingLevel: 1 })).toBeNull();
   });
 });
