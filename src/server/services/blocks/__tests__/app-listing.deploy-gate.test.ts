@@ -56,7 +56,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
-import { getListingDetail, listAvailableListings } from '../app-listing.service';
+import {
+  getListingDetail,
+  getStoreVisibleListingSummary,
+  listAvailableListings,
+} from '../app-listing.service';
 
 /** Reconstruct the SQL string Prisma received (single Prisma.Sql arg). */
 function capturedSql(): string {
@@ -379,5 +383,50 @@ describe("getListingDetail — R/X apps follow the viewer's browsing level", () 
         ).toBe('apl_2');
       }
     }
+  });
+});
+
+/**
+ * The visibility summary behind the public fork list's parent check and fork-start's parent check:
+ * an R/X parent the viewer's level excludes reads as not visible (null), like a missing one. 🔴 The
+ * level is a REQUIRED argument — omitting it is a type error, and at runtime reads as PG.
+ */
+describe("getStoreVisibleListingSummary — R/X parents follow the viewer's browsing level", () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  const summaryFor = (contentRating: string, viewerBrowsingLevel: number | null | undefined) => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteRow({ contentRating }),
+      status: 'approved',
+    });
+    return getStoreVisibleListingSummary(
+      { id: 'apl_2' },
+      { redCapable: true, scope: 'full', viewerBrowsingLevel }
+    );
+  };
+
+  it('🔴 an R parent is not visible to a PG-only or signed-out viewer on a red-capable host', async () => {
+    expect(await summaryFor('r', 1)).toBeNull();
+    expect(await summaryFor('r', undefined)).toBeNull();
+  });
+
+  it('an R parent is visible to an R viewer; a PG parent to everyone', async () => {
+    expect((await summaryFor('r', 7))?.id).toBe('apl_2');
+    expect((await summaryFor('pg', undefined))?.id).toBe('apl_2');
+  });
+
+  it('🔴 the level cannot be omitted (type error), and an omitted one reads as PG', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteRow({ contentRating: 'r' }),
+      status: 'approved',
+    });
+    expect(
+      // @ts-expect-error -- `viewerBrowsingLevel` is required: no silent "site gate only" default.
+      await getStoreVisibleListingSummary({ id: 'apl_2' }, { redCapable: true, scope: 'full' })
+    ).toBeNull();
   });
 });
