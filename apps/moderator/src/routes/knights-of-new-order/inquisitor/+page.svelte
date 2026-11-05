@@ -52,7 +52,7 @@
   <p class="text-sm text-dark-2">
     {data.filter === DEFAULT_INQUISITOR_FILTER
       ? 'No images are waiting for an Inquisitor ruling.'
-      : `No images in ${INQUISITOR_FILTER_LABELS[data.filter]}.`}
+      : `Nothing waiting under “${INQUISITOR_FILTER_LABELS[data.filter]}”.`}
   </p>
 {:else}
   <div class="flex flex-col gap-3">
