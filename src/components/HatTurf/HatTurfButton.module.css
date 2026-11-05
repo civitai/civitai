@@ -9,12 +9,12 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 24px;
   /* The reaction chips' height: any taller and the card's tip row grows. */
+  width: 22px;
   height: 22px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 50%;
   background-color: var(--mantine-color-gray-6);
   color: var(--mantine-color-white);
   cursor: pointer;
