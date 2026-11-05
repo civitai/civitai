@@ -143,8 +143,7 @@ export function shapeSessionUser({
   const appBuilderApproved: true | undefined = row.appBuilderApproved ? true : undefined;
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
-  // is effectively undefined; reproduced here). Meta stored as a JSON string is decoded first, so its
-  // fields (the system-account marker among them) reach the session.
+  // is effectively undefined; reproduced here). parseMeta keeps the system-account marker on string meta.
   const fullMeta = asObject(parseMeta(row.meta)) as { banDetails?: BanDetailsMeta } & Record<
     string,
     unknown
