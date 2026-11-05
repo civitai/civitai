@@ -171,9 +171,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
     bucket: 'test-images',
     backend: 'backblaze',
     s3: {
-      send: (command: { input: { Key: string } }) => {
+      send: (command: { input: GetObjectInput }) => {
         getObjectKeys.push(command.input.Key);
-        return mockGetObject(command.input.Key);
+        return mockGetObject(command.input.Key, command.input);
       },
     },
   }),
@@ -239,7 +239,8 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 }));
 
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
-let mockGetObject: (key: string) => Promise<unknown>;
+type GetObjectInput = { Key: string; Range?: string; IfMatch?: string };
+let mockGetObject: (key: string, input: GetObjectInput) => Promise<unknown>;
 const mockGetFileForModelVersion: (...args: unknown[]) => unknown = async () => ({
   status: 'not-found',
 });
@@ -1736,6 +1737,82 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
     expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
     expect(JSON.stringify(retried)).not.toContain('key-seven');
+  });
+
+  it('reads a large stored object in ranged parts, and archives it whole and once when a part resets', async () => {
+    // Every whole-object read resets partway, as a long single GET from storage did. Sized over
+    // the spool threshold (this file may not import csam-original-image for its constants).
+    const video = Buffer.alloc(48 * 1024 * 1024 + 4321);
+    for (let i = 0; i + 4 <= video.length; i += 4) video.writeUInt32BE(i, i);
+    const resettingBody = (bytes: Buffer, resetAfter?: number) => ({
+      transformToByteArray: async () => {
+        const body = new Readable({ read: () => undefined });
+        if (resetAfter === undefined) {
+          body.push(bytes);
+          body.push(null);
+        } else {
+          body.push(bytes.subarray(0, resetAfter));
+          setImmediate(() =>
+            body.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }))
+          );
+        }
+        const chunks: Buffer[] = [];
+        for await (const chunk of body) chunks.push(chunk as Buffer);
+        return new Uint8Array(Buffer.concat(chunks));
+      },
+      destroy: () => undefined,
+    });
+    const base = mockGetObject;
+    const ranges: string[] = [];
+    mockGetObject = async (key, input) => {
+      if (key !== 'key-seven') return base(key, input);
+      if (!input.Range)
+        return {
+          Body: resettingBody(video, 1024),
+          ContentType: 'video/mp4',
+          ContentLength: video.length,
+          ETag: '"etag-2"',
+        };
+      const [start, end] = input.Range.replace('bytes=', '').split('-').map(Number);
+      const firstTry = !ranges.includes(input.Range);
+      ranges.push(input.Range);
+      return {
+        Body: resettingBody(
+          video.subarray(start, end + 1),
+          start === 0 && firstTry ? 512 : undefined
+        ),
+        ContentRange: `bytes ${start}-${end}/${video.length}`,
+      };
+    };
+
+    const zip = await archivedZip();
+
+    // The first part once more after its reset, then each later part once.
+    expect(ranges.filter((range) => range.startsWith('bytes=0-'))).toHaveLength(2);
+    expect(new Set(ranges).size).toBe(ranges.length - 1);
+    expect(ranges.length).toBeGreaterThan(2);
+    expect(Object.keys(zip.files).sort()).toEqual(['7.mp4', '8.jpeg', 'manifest.json']);
+    const archived = await zip.file('7.mp4')!.async('nodebuffer');
+    expect(sha256(archived)).toBe(sha256(video));
+    // JSZip keeps one of two same-named entries, so count what the central directory holds.
+    const storage = {
+      send: async () => ({
+        Body: { transformToByteArray: async () => new Uint8Array(uploads.get('images.zip')!) },
+      }),
+    };
+    expect(await readZipEntryCount(storage as never, 'bucket', 'images.zip')).toBe(3);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    expect(manifest.images[0]).toMatchObject({
+      imageId: 7,
+      source: 'original',
+      sha256: sha256(video),
+      bytes: video.length,
+    });
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    expect(lines.find((p) => p.subType === 'archive-image-read')).toBeUndefined();
+    const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
+    expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
+    expect(JSON.stringify(lines)).not.toContain('key-seven');
   });
 });
 

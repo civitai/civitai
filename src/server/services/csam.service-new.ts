@@ -114,11 +114,16 @@ import {
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
-import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
+import type {
+  OriginalImageRead,
+  OriginalImageSource,
+  SpooledImage,
+} from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  spoolOriginalImage,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -2927,13 +2932,14 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
-          let original: OriginalImageRead;
+          let original: OriginalImageRead | SpooledImage;
           let attempts = 1;
           try {
-            original = await readOriginalImage(image, {
+            original = await spoolOriginalImage(image, {
               reserve: budget.reserve,
+              spoolDir: `${reportDirs.images}/spool`,
               onRetry: (failedAttempt) => {
-                attempts = failedAttempt + 1;
+                attempts = Math.max(attempts, failedAttempt + 1);
               },
             });
           } catch (e) {
@@ -2974,7 +2980,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           // Named by id: Image.name is user input.
           const name = `${image.id}.${extensionForContentType(original.contentType)}`;
           try {
-            await boundedArchive.append(original.data, { name }, original.release);
+            const source = 'path' in original ? fs.createReadStream(original.path) : original.data;
+            await boundedArchive.append(source, { name }, original.release);
           } catch (e) {
             original.release();
             throw e;
@@ -2987,7 +2994,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             imageId: image.id,
             source: original.source,
             sha256: original.sha256,
-            bytes: original.data.length,
+            bytes: 'path' in original ? original.bytes : original.data.length,
             contentType: original.contentType,
           });
         };
