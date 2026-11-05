@@ -93,7 +93,8 @@ vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
 const { mockQueueComFaceRecheck } = vi.hoisted(() => ({ mockQueueComFaceRecheck: vi.fn() }));
-vi.mock('~/server/services/model-com-face-recheck.service', () => ({
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   queueComFaceRecheck: mockQueueComFaceRecheck,
 }));
 

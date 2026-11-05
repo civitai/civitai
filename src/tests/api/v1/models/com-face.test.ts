@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import '~/__tests__/mocks/env.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { TRPCError } from '@trpc/server';
 
 const { user, caller, callerContexts } = vi.hoisted(() => ({
   user: { id: 7, isModerator: false },
@@ -48,6 +49,7 @@ const stored = {
   sfwOnly: false,
   lockedProperties: [] as string[],
   deletedAt: null,
+  sfwName: null as string | null,
 };
 
 let row: typeof stored = stored;
@@ -57,6 +59,8 @@ async function call(body: unknown, contentType = 'application/json') {
   let statusCode = 0;
   let payload: unknown;
   const res = {
+    headersSent: false,
+    setHeader: () => res,
     status(code: number) {
       statusCode = code;
       return res;
@@ -106,6 +110,43 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.upsert).not.toHaveBeenCalled();
   });
 
+  it('returns 404 for a missing or deleted model', async () => {
+    row = null as never;
+    expect((await call({ action: 'draft', modelId: 11 })).statusCode).toBe(404);
+    row = { ...stored, deletedAt: new Date() as never };
+    expect((await call({ action: 'draft', modelId: 11 })).statusCode).toBe(404);
+  });
+
+  // Bulk fills a missing face only: a direct call must not overwrite one the owner wrote.
+  it('skips a model that already has a .com title, writing nothing', async () => {
+    row = { ...stored, sfwName: 'Owner Title' };
+    const draft = await call({ action: 'draft', modelId: 11 });
+    const save = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
+    expect([draft.statusCode, draft.body.code, save.statusCode, save.body.code]).toEqual([
+      409,
+      'skipped',
+      409,
+      'skipped',
+    ]);
+    expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
+    expect(caller.model.upsert).not.toHaveBeenCalled();
+  });
+
+  it('skips a model not marked mature', async () => {
+    row = { ...stored, nsfw: false };
+    const save = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
+    expect([save.statusCode, save.body.code]).toEqual([409, 'skipped']);
+    expect(caller.model.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns the face check's refusal as a 400, not a 500", async () => {
+    caller.model.upsert.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: "The title can't be shown on civitai.com." })
+    );
+    const res = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('picks the first PG/PG-13 image as the cover and drafts through the editor procedure', async () => {
     caller.model.getCoverCandidates.mockResolvedValue([
       { id: 1, url: 'a', type: 'image', nsfwLevel: 8 },
@@ -132,7 +173,7 @@ describe('POST /api/v1/models/com-face', () => {
 
   // An omitted `minor` or `sfwOnly` parses as false in the upsert schema and would clear it.
   it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
-    row = { ...stored, minor: true, nsfw: false };
+    row = { ...stored, minor: true };
     const res = await call({
       action: 'save',
       modelId: 11,
@@ -146,7 +187,7 @@ describe('POST /api/v1/models/com-face', () => {
       expect.objectContaining({
         id: 11,
         name: 'Red Title',
-        nsfw: false,
+        nsfw: true,
         minor: true,
         sfwOnly: false,
         poi: false,

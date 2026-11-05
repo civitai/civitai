@@ -51,6 +51,7 @@ export default AuthedEndpoint(
         sfwOnly: true,
         lockedProperties: true,
         deletedAt: true,
+        sfwName: true,
       },
     });
     if (!model || model.deletedAt) return res.status(404).json({ error: 'Model not found' });
@@ -61,6 +62,18 @@ export default AuthedEndpoint(
         error:
           'A moderator has locked this model as mature, so it cannot get a civitai.com version. You can dispute the lock from the model page.',
         code: 'locked',
+      });
+    // Bulk only fills a missing face: an existing one may be hand-written, and the editor owns it.
+    if (model.sfwName != null)
+      return res.status(409).json({
+        error: 'Already has a civitai.com version. Edit it in the model editor.',
+        code: 'skipped',
+      });
+    if (!model.nsfw)
+      return res.status(409).json({
+        error:
+          'Not marked mature: where it is listed follows its images, not a civitai.com version.',
+        code: 'skipped',
       });
 
     try {
