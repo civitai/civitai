@@ -8,6 +8,7 @@ import format from 'pg-format';
 import { chunk } from 'lodash-es';
 import type {
   CreateNotificationRow,
+  MarkReadByKeysInput,
   MarkReadInput,
   NotificationCategory,
   NotificationListCursor,
@@ -402,6 +403,32 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
       await new Promise((resolve) => setTimeout(resolve, backoff));
     }
   }
+}
+
+// Synchronous, unlike markNotificationsRead: the caller corrects its badge from the returned counts.
+export async function markNotificationsReadByKeys({
+  userId,
+  keys,
+}: MarkReadByKeysInput): Promise<Array<{ category: NotificationCategory; count: number }>> {
+  const write = notifDbWrite();
+  const { rows } = await write.query<{ category: NotificationCategory }>(
+    `UPDATE "UserNotification" un SET viewed = TRUE
+     FROM "Notification" n
+     WHERE un."notificationId" = n.id AND un."userId" = $1 AND un.viewed IS FALSE
+       AND n.key = ANY($2::text[])
+     RETURNING n.category`,
+    [userId, keys]
+  );
+  if (!rows.length) return [];
+
+  const counts = new Map<NotificationCategory, number>();
+  for (const { category } of rows) counts.set(category, (counts.get(category) ?? 0) + 1);
+  for (const [category, count] of counts)
+    notificationCache.decrementUser(userId, category, count).catch(() => null);
+  // The write has committed: a failed lag mark must not turn it into a 500, whose retry finds nothing
+  // unread and returns [], leaving both badge caches high.
+  await preventReplicationLag(userId).catch(() => null);
+  return [...counts].map(([category, count]) => ({ category, count }));
 }
 
 async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<void> {

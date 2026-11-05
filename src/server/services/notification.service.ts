@@ -8,6 +8,10 @@ import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
 import {
+  imageReactionMilestoneKey,
+  imageReactionMilestones,
+} from '~/server/notifications/reaction.notifications';
+import {
   emailNotificationTypeList,
   isEmailNotificationType,
   isPushableNotificationType,
@@ -17,6 +21,7 @@ import {
   notificationSingleRowFull,
   type DeletePushSubscriptionInput,
   type GetUserNotificationsSchema,
+  type MarkImageMilestonesReadInput,
   type MarkReadNotificationInput,
   type ToggleNotificationSettingInput,
   type ToggleEmailSettingInput,
@@ -142,6 +147,22 @@ export const markNotificationsRead = async ({
     ).catch();
   }
 };
+
+// The old notifications app has no such route; its 404 lands here and the badge stays as it was.
+export async function markImageMilestonesRead({
+  userId,
+  imageId,
+}: MarkImageMilestonesReadInput & { userId: number }) {
+  try {
+    return await notifications.markNotificationsReadByKeys({
+      userId,
+      keys: imageReactionMilestones.map((n) => imageReactionMilestoneKey(imageId, n)),
+    });
+  } catch (e) {
+    if (e instanceof NotificationsClientError) return [];
+    throw e;
+  }
+}
 
 export const createUserNotificationSetting = async ({
   type,
