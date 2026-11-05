@@ -5,6 +5,7 @@
   import Avatar from './Avatar.svelte';
   import HeaderStats from './HeaderStats.svelte';
   import Icon from './Icon.svelte';
+  import PrimaryNav from './PrimaryNav.svelte';
   import RankBadge from './RankBadge.svelte';
   import RecapButton from './RecapButton.svelte';
   import RestartCareerDialog from './RestartCareerDialog.svelte';
@@ -98,11 +99,13 @@
 <svelte:window {onkeydown} />
 
 <header>
-  <a class="brand" href="/">
+  <a class="brand" href="/home">
     <Icon name="shield" size={24} />
     <span class="title">Knights of New Order</span>
     <span class="wordmark">Knights</span>
   </a>
+
+  <PrimaryNav />
 
   {#if status}
     <HeaderStats {status} {streak} {goldPerBuzz} {shopOpen} {ladder} />
@@ -191,10 +194,13 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-right: auto;
+    margin-right: 12px;
     min-width: 0;
     color: var(--io-gold);
     text-decoration: none;
+  }
+  .brand :global(svg) {
+    flex: none;
   }
   .title,
   .wordmark {
@@ -342,6 +348,18 @@
     }
   }
 
+  /* Beside the tabs and the stats there is room for the wordmark only until 90rem. */
+  @media (min-width: 75.0625rem) and (max-width: 89.9375rem) {
+    .title {
+      display: none;
+    }
+    .wordmark {
+      display: inline;
+      font-size: 15px;
+      letter-spacing: 1px;
+    }
+  }
+
   @media (max-width: 40rem) {
     header {
       height: 52px;
@@ -350,6 +368,7 @@
     }
     .brand {
       gap: 8px;
+      margin-right: auto;
     }
     .brand :global(svg) {
       width: 20px;
