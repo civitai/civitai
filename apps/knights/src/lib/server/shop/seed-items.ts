@@ -7,6 +7,8 @@ export type SeedItem = {
   price: number;
   buzz?: number;
   cosmeticId?: number;
+  /** With `name`, how `seedSql` finds the cosmetic in whichever database it runs against: ids differ between environments. */
+  cosmeticType?: string;
   tier?: 'bronze' | 'silver' | 'gold';
   months?: number;
   minRank?: string;
@@ -66,6 +68,7 @@ export function cosmeticItems(rows: CosmeticRow[]): SeedItem[] {
     name: row.name,
     price,
     cosmeticId: row.id,
+    cosmeticType: row.type,
     minRank,
     rotating: true,
     sortOrder,
@@ -88,29 +91,63 @@ const lit = (value: string | number | undefined) =>
     ? String(Math.trunc(value))
     : quote(value);
 
-/** `ON CONFLICT DO NOTHING`: a price someone edited survives a re-seed. */
+const COLUMNS = `"id","kind","name","description","price","buzz","cosmeticId","tier","months","minRank","rotating","sortOrder"`;
+
+/**
+ * `ON CONFLICT DO NOTHING`: a price someone edited survives a re-seed. A cosmetic item names its cosmetic and is
+ * inserted from the `Cosmetic` row of that name and type in the target database, so the SQL is the same anywhere;
+ * where no such cosmetic exists the item is skipped.
+ */
 export function seedSql(items: SeedItem[]): string {
-  if (items.length === 0) return '';
-  const rows = items.map(
-    (item) =>
-      `(${[
-        quote(item.id),
+  const plain = items.filter((item) => !item.cosmeticType);
+  const statements: string[] = [];
+  if (plain.length > 0) {
+    const rows = plain.map(
+      (item) =>
+        `(${[
+          quote(item.id),
+          quote(item.kind),
+          quote(item.name),
+          quote(item.description ?? ''),
+          lit(item.price),
+          lit(item.buzz),
+          lit(item.cosmeticId),
+          lit(item.tier),
+          lit(item.months),
+          lit(item.minRank),
+          item.rotating ? 'true' : 'false',
+          lit(item.sortOrder),
+        ].join(', ')})`
+    );
+    statements.push(
+      `INSERT INTO "KnightsShopItem" (${COLUMNS}) VALUES\n${rows.join(
+        ',\n'
+      )}\nON CONFLICT ("id") DO NOTHING;`
+    );
+  }
+  for (const item of items.filter((entry) => entry.cosmeticType)) {
+    statements.push(
+      `INSERT INTO "KnightsShopItem" (${COLUMNS})
+SELECT 'cosmetic-' || c."id", ${[
         quote(item.kind),
         quote(item.name),
         quote(item.description ?? ''),
         lit(item.price),
         lit(item.buzz),
-        lit(item.cosmeticId),
+        'c."id"',
         lit(item.tier),
         lit(item.months),
         lit(item.minRank),
         item.rotating ? 'true' : 'false',
         lit(item.sortOrder),
-      ].join(', ')})`
-  );
-  return `INSERT INTO "KnightsShopItem" ("id","kind","name","description","price","buzz","cosmeticId","tier","months","minRank","rotating","sortOrder") VALUES\n${rows.join(
-    ',\n'
-  )}\nON CONFLICT ("id") DO NOTHING;`;
+      ].join(', ')}
+FROM (SELECT "id" FROM "Cosmetic" WHERE "name" = ${quote(item.name)} AND "type" = ${quote(
+        item.cosmeticType!
+      )} AND "source" = 'Purchase' ORDER BY "id" DESC LIMIT 1) c
+ON CONFLICT ("id") DO NOTHING;`
+    );
+  }
+  return statements.join('\n');
 }
 
 export function pickCosmetics(rows: CosmeticRow[]): CosmeticRow[] {

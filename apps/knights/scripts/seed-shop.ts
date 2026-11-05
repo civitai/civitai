@@ -11,7 +11,10 @@ import {
 
 // Seeds the placeholder shop catalog. Safe to repeat: an existing item (and any price edited on it) is left alone.
 //   pnpm run seed:shop              inserts into the local database named by DATABASE_URL
-//   pnpm run seed:shop --print-sql  prints the SQL instead, to run through your own write path
+//   pnpm run seed:shop --print-sql  prints the SQL instead. It finds each cosmetic by name and type, so it can be run
+//                                   against another database, where only the cosmetics that exist there are added.
+// The cosmetics to sell are still picked from the local database, so a catalog meant for another environment is
+// previewed here first.
 async function main() {
   const connectionString = process.env.DATABASE_URL;
   assertLocalDatabase(connectionString);

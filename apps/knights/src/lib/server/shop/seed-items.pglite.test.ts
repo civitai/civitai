@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { FIXED_ITEMS, cosmeticItems, pickCosmetics, seedSql } from './seed-items';
 
@@ -22,8 +22,20 @@ const rows = [
   { id: 7, name: 'Wave', type: 'Sticker' },
 ];
 
+const seedCosmetics = (cosmetics: { id: number; name: string; type: string }[]) =>
+  pg.query(
+    `INSERT INTO "Cosmetic" ("id","name","type","source","data")
+     SELECT id, name, type, 'Purchase', '{}' FROM jsonb_to_recordset($1::jsonb) AS t(id int, name text, type text)`,
+    [JSON.stringify(cosmetics)]
+  );
+
+beforeEach(async () => {
+  await pg.exec(`TRUNCATE "KnightsShopItem","Cosmetic" RESTART IDENTITY CASCADE`);
+});
+
 describe('the dev shop seed', () => {
   it('satisfies the table constraints, and seeding again changes nothing, not even an edited price', async () => {
+    await seedCosmetics(rows);
     const sql = seedSql([...FIXED_ITEMS, ...cosmeticItems(pickCosmetics(rows))]);
     await pg.exec(sql);
     const count = async () =>
@@ -62,13 +74,36 @@ describe('the dev shop seed', () => {
   });
 
   it('keeps an apostrophe in a cosmetic name', async () => {
-    await pg.exec(seedSql(cosmeticItems([{ id: 90, name: "Knight's Seal", type: 'Badge' }])));
+    const seal = { id: 90, name: "Knight's Seal", type: 'Badge' };
+    await seedCosmetics([seal]);
+    await pg.exec(seedSql(cosmeticItems([seal])));
     const row = (
       await pg.query<{ name: string }>(
         `SELECT name FROM "KnightsShopItem" WHERE "id"='cosmetic-90'`
       )
     ).rows[0];
     expect(row.name).toBe("Knight's Seal");
+  });
+
+  it("finds each cosmetic by name and type in the database it runs on, not by the seeding database's ids", async () => {
+    const sql = seedSql(cosmeticItems(pickCosmetics(rows)));
+    await seedCosmetics([
+      { id: 501, name: 'Halo', type: 'ProfileDecoration' },
+      { id: 502, name: 'Wave', type: 'Sticker' },
+    ]);
+
+    await pg.exec(sql);
+
+    expect(
+      (
+        await pg.query<{ id: string; cosmeticId: number }>(
+          `SELECT "id","cosmeticId" FROM "KnightsShopItem" ORDER BY "id"`
+        )
+      ).rows
+    ).toEqual([
+      { id: 'cosmetic-501', cosmeticId: 501 },
+      { id: 'cosmetic-502', cosmeticId: 502 },
+    ]);
   });
 
   it('gates the decorations to ranks', () => {

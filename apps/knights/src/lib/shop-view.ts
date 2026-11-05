@@ -60,7 +60,7 @@ export const tierName = (tier: string | null) =>
   tier && tier in TIER ? TIER[tier as keyof typeof TIER] : tier ?? '';
 
 export const monthsLabel = (months: number | null) =>
-  months === 1 ? '1 month' : `${months ?? 0} months`;
+  months === null ? '' : months === 1 ? '1 month' : `${months} months`;
 
 const COSMETIC_TYPE = {
   Badge: 'Badge',
@@ -89,7 +89,7 @@ export const cardTitle = (card: CardLike) =>
   card.kind === 'buzz_pack'
     ? `Buzz pack · ${count(card.buzz ?? 0)}`
     : card.kind === 'membership'
-    ? `${tierName(card.tier)} membership · ${monthsLabel(card.months)}`
+    ? [`${tierName(card.tier)} membership`, monthsLabel(card.months)].filter(Boolean).join(' · ')
     : card.name;
 
 export const cardBlurb = (card: CardLike) =>
@@ -97,9 +97,9 @@ export const cardBlurb = (card: CardLike) =>
   (card.kind === 'buzz_pack'
     ? `${count(card.buzz ?? 0)} Yellow Buzz, sent to your Civitai wallet.`
     : card.kind === 'membership'
-    ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(
-        card.months
-      )}. Perks only, no monthly Buzz. Only if you have no active membership.`
+    ? `${tierName(card.tier)} perks on Civitai${
+        card.months === null ? '' : ` for ${monthsLabel(card.months)}`
+      }. Perks only, no monthly Buzz. Only if you have no active membership.`
     : card.cosmeticType === 'Sticker'
     ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
     : cosmeticTypeLabel(card.cosmeticType));
