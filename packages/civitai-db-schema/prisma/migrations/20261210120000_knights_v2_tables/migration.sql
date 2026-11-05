@@ -326,8 +326,8 @@ CREATE TABLE IF NOT EXISTS "KnightsAcolyteLevelGold" (
   CONSTRAINT "KnightsAcolyteLevelGold_pkey" PRIMARY KEY ("playerId", "level")
 );
 
--- The gold shop: a catalog, and the gold ledger of what was bought. Load the catalog with `pnpm run seed:shop` in apps/knights
--- after the main app build with the shop endpoints (/api/mod/knights/shop) is deployed.
+-- The gold shop: a catalog, and the gold ledger of what was bought. The catalog is managed from the moderator app
+-- (/knights-of-new-order/shop); `pnpm run seed:shop` in apps/knights fills a local dev database only.
 CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
   "id" SERIAL PRIMARY KEY,
   "kind" TEXT NOT NULL,
