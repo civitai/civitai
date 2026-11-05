@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
-
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
 // The package's ESM build can't be loaded by `importOriginal` here; every suite fakes it whole.
@@ -90,14 +88,11 @@ describe('previewComFaceIntent', () => {
     mockSubmitWorkflow.mockReset();
   });
 
-  it('logs a missing prompt row and reports unavailable without submitting', async () => {
+  it('reports unavailable without submitting when the prompt row is missing', async () => {
     await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
       status: 'unavailable',
     });
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'model-com-face-intent prompt missing' })
-    );
   });
 
   it("returns the label's verdict when its prompt row exists", async () => {

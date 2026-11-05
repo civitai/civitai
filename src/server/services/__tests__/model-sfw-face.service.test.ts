@@ -191,6 +191,14 @@ describe('the .com face intent gate', () => {
     ).rejects.toThrow(COM_FACE_REFUSED_MESSAGE);
   });
 
+  it('gives the listing refusal when the .com text is flagged too', async () => {
+    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.X));
+    await expect(assertSfwFaceSafe({ sfwName: 'Nude Pack', name: 'n', userId: 1 })).rejects.toThrow(
+      COM_FACE_REFUSED_MESSAGE
+    );
+  });
+
   it.each([
     [
       'gives no verdict',

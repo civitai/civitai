@@ -16,8 +16,7 @@ const bodySchema = z.discriminatedUnion('action', [
   }),
 ]);
 
-// The main app owns every rule here (ownership, the mature lock, the intent check, the draft rate
-// limit); this only forwards the creator's session to it.
+// Forwards the creator's session; every rule (ownership, locks, checks) lives in the main app endpoint.
 export const POST: RequestHandler = async ({ request }) => {
   assertOwnWrite(request);
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));

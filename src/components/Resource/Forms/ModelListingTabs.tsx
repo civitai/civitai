@@ -30,6 +30,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import {
+  COM_FACE_REFUSED_MESSAGE,
   isComSafeLevel,
   normalizeSfwFaceText,
   SFW_DESCRIPTION_MAX_LENGTH,
@@ -59,9 +60,12 @@ const CHECK_DEBOUNCE_MS = 800;
 export function ModelListingTabs({
   modelId,
   redFields,
+  comFaceRemoved,
 }: {
   modelId?: number;
   redFields: ReactNode;
+  /** The listing re-check took the model off civitai.com. */
+  comFaceRemoved?: boolean;
 }) {
   const form = useFormContext<ListingForm>();
   const [sfwName, sfwDescription, nsfw] = useWatch({
@@ -136,6 +140,11 @@ export function ModelListingTabs({
           </Tabs.Panel>
 
           <Tabs.Panel value="com" pt="md">
+            {comFaceRemoved && (
+              <Alert color="red" p="xs" mb="md">
+                <Text size="xs">{COM_FACE_REFUSED_MESSAGE}</Text>
+              </Alert>
+            )}
             <ComListing
               modelId={modelId}
               ownContent={ownComContent}

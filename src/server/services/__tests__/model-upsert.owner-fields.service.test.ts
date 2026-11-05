@@ -4,6 +4,7 @@ import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
 import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 import type * as ModelCoverService from '~/server/services/model-cover.service';
+import type * as ComFaceRecheck from '~/server/services/model-com-face-recheck.service';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
 // Scaffold mirrors model-locked-properties.service.test.ts.
@@ -109,6 +110,11 @@ const { mockAssertCoverImagesValid } = vi.hoisted(() => ({
 vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCoverService>()),
   assertCoverImagesValid: mockAssertCoverImagesValid,
+}));
+const { mockQueueComFaceRecheck } = vi.hoisted(() => ({ mockQueueComFaceRecheck: vi.fn() }));
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ComFaceRecheck>()),
+  queueComFaceRecheck: mockQueueComFaceRecheck,
 }));
 const { mockSettleAppeals } = vi.hoisted(() => ({ mockSettleAppeals: vi.fn() }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
@@ -980,6 +986,52 @@ describe('cover gate', () => {
     expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
     );
+  });
+});
+
+describe('.com face re-check after a listing edit', () => {
+  const withFace = { sfwName: 'Retro Style', sfwCoverImageId: 5 };
+
+  it('queues it for an owner who renames a model that has a .com face', async () => {
+    mockStored(withFace);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('queues it for an owner who edits the description', async () => {
+    mockStored(withFace);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, description: 'New description' });
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue it for a moderator’s edit', async () => {
+    mockStored(withFace);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('does not queue it for a model without a .com face', async () => {
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('refuses an owner’s save whose .com cover was cleared after the save read it', async () => {
+    mockStored(withFace);
+    mockLocked({ sfwCoverImageId: null });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 5 })).rejects.toThrow(
+      'civitai.com card changed while you were editing'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('drops the removal marker when a save sets a .com cover again', async () => {
+    mockStored({
+      sfwName: 'Retro Style',
+      sfwCoverImageId: null,
+      meta: { comFaceRemoved: { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5 } },
+    });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwCoverImageId: 6 });
+    expect(updateData().meta).not.toHaveProperty('comFaceRemoved');
   });
 });
 

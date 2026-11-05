@@ -8,6 +8,7 @@ import { Flags } from '~/shared/utils/flags';
 export const SFW_NAME_TOO_LONG_MESSAGE = `Title must be ${MODEL_NAME_MAX_LENGTH} characters or fewer.`;
 export const SFW_DESCRIPTION_MAX_LENGTH = 50_000;
 export const SFW_DESCRIPTION_TOO_LONG_MESSAGE = 'Description is too long.';
+export const COM_FACE_REFUSED_MESSAGE = "We can't make this model safe for civitai.com.";
 
 /**
  * A model's .com face: `Model.sfwName` / `sfwDescription`, shown in place of the name and
@@ -131,8 +132,5 @@ export function imagesForFace<T extends { nsfwLevel: number }>(
   showSfwFace: boolean
 ) {
   if (!showSfwFace || !model.nsfw || !model.hasSfwFace) return images;
-  return images.filter(
-    (image) =>
-      image.nsfwLevel !== 0 && (image.nsfwLevel & sfwBrowsingLevelsFlag) === image.nsfwLevel
-  );
+  return images.filter((image) => isComSafeLevel(image.nsfwLevel));
 }

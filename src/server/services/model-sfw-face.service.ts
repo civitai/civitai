@@ -15,6 +15,7 @@ import type { TextScanField } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { truncateModelName } from '~/shared/constants/model-name.constants';
+import { COM_FACE_REFUSED_MESSAGE } from '~/shared/utils/model-sfw-face';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
@@ -111,25 +112,22 @@ const fieldLabels: Record<SfwFaceCheckField, string> = {
   versions: 'version names and trigger words',
 };
 
-export const COM_FACE_REFUSED_MESSAGE = "We can't make this model safe for civitai.com.";
+export { COM_FACE_REFUSED_MESSAGE };
 export const COM_FACE_CHECK_UNAVAILABLE_MESSAGE = "We couldn't check this right now, try again.";
 
 /**
- * Refuses a .com face for a model whose own listing (its .red title, description and trigger words)
- * the intent check flags. Fails closed: no verdict is a refusal.
+ * The intent check on a model's own listing: its .red title, description and trigger words.
+ * `unavailable` when no verdict came back.
  */
-export async function assertComFaceAllowed({
+export async function checkComFaceIntent({
   name,
   description,
-  modelId,
-  userId,
+  triggerWords,
 }: {
   name: string;
   description?: string | null;
-  modelId?: number;
-  userId: number;
-}) {
-  const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
+  triggerWords: string[];
+}): Promise<'allowed' | 'detected' | 'unavailable'> {
   const text = removeTags(description ?? '').trim();
   const fields: TextScanField[] = [
     { heading: 'Name', text: name },
@@ -147,8 +145,23 @@ export async function assertComFaceAllowed({
     });
     return { status: 'unavailable' as const };
   });
-  if (verdict.status !== 'ok') throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
-  if (verdict.output.detected) throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
+  if (verdict.status !== 'ok') return 'unavailable';
+  return verdict.output.detected ? 'detected' : 'allowed';
+}
+
+/**
+ * Refuses a .com face for a model whose own listing the intent check flags. Fails closed: no
+ * verdict is a refusal. The check also re-runs after a listing edit on a model that keeps a face
+ * (`recheckComFace`).
+ */
+export async function assertComFaceAllowed(args: {
+  name: string;
+  description?: string | null;
+  triggerWords: string[];
+}) {
+  const result = await checkComFaceIntent(args);
+  if (result === 'unavailable') throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
+  if (result === 'detected') throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
 }
 
 /**
@@ -171,8 +184,9 @@ export async function assertSfwFaceSafe({
   userId: number;
 }) {
   // Both checks wait on the orchestrator, so they run together; the listing refusal still wins.
+  const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
   const [allowed, verdicts] = await Promise.allSettled([
-    assertComFaceAllowed({ name, description, modelId, userId }),
+    assertComFaceAllowed({ name, description, triggerWords }),
     checkSfwFace({ sfwName, sfwDescription, userId }),
   ]);
   if (allowed.status === 'rejected') throw allowed.reason;
@@ -232,8 +246,8 @@ export async function draftSfwFace({
   modelId?: number;
   userId: number;
 }) {
-  await assertComFaceAllowed({ name, description, modelId, userId });
   const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
+  await assertComFaceAllowed({ name, description, triggerWords });
   const source = JSON.stringify({ title: name, description: description ?? '', triggerWords });
   let draft = await requestDraft([{ role: 'user', content: source }], userId);
 
@@ -315,8 +329,16 @@ function parseDraft(content: string | undefined) {
   }
 }
 
-async function getOwnTriggerWords({ modelId, userId }: { modelId: number; userId: number }) {
-  const versions = await dbRead.modelVersion.findMany({
+export async function getOwnTriggerWords({
+  modelId,
+  userId,
+  db = dbRead,
+}: {
+  modelId: number;
+  userId: number;
+  db?: Pick<typeof dbRead, 'modelVersion'>;
+}) {
+  const versions = await db.modelVersion.findMany({
     where: { modelId, model: { userId } },
     select: { trainedWords: true },
   });

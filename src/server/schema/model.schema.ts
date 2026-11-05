@@ -491,6 +491,9 @@ export type ModelMeta = Partial<{
   poiHashCleared: { at: string };
   /** A system check (not a moderator) added the nsfw lock. Server-owned. */
   systemNsfwLock: { source: string; at: string };
+  /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
+   *  moderator can restore it. A save that sets a .com cover clears it. Server-owned. */
+  comFaceRemoved: { at: string; sfwCoverImageId: number };
   /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
    *  in Needs review. Server-owned, moderator-only. */
   restrictedNsfwVerdict: RestrictedNsfwVerdict;
