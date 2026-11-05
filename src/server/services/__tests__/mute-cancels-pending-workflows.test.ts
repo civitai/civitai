@@ -4,10 +4,10 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
-// A mute drops the cached standing FIRST, so a submit during the cancel is refused and cannot land
-// after it; then cancels the pending generations; then takes its session step and revokes the
-// tokens. Do not move the cancel before the bust or after the revoke, and do not let its failure
-// stop the rest of the mute.
+// A mute drops the cached standing FIRST, so a submit during the cancel is refused; then cancels
+// the pending generations; then takes its session step and revokes the tokens. The delayed repeat
+// cancels once more after its own revoke. Do not move the first cancel before the bust or after
+// the revoke, and do not let a failed cancel stop the rest of the mute.
 
 const order = vi.hoisted(() => [] as string[]);
 const cancelPendingWorkflows = vi.hoisted(() =>

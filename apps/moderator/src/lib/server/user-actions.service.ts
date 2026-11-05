@@ -655,15 +655,15 @@ export async function setMuted(input: {
       }
     );
   await bustStanding();
-  // After the bust, from which the main app refuses new submits. Best-effort and bounded: the mute
-  // stands whatever this returns.
+  // After the bust, from which the main app refuses new submits. Best-effort and bounded just past
+  // the endpoint's own 5 s wait: the mute stands whatever this returns.
   const cancelPending = async () => {
     const cancelled = await postJson({
       path: '/api/mod/user/cancel-pending-workflows',
       body: { userId: input.userId },
       label: 'Cancel pending generations',
       auth: 'session',
-      timeoutMs: 8_000,
+      timeoutMs: 6_000,
       cookie,
     });
     if (!cancelled.ok)

@@ -143,12 +143,12 @@ export async function afterAccountBanChanged(userId: number): Promise<void> {
 export type StandingSessionStep = { kind: 'refresh' | 'invalidate'; caller: SessionStateCaller };
 
 /**
- * Run after a mute or unmute has committed: drops the cached standing, so new submits are refused
- * from here; on a mute, cancels the account's pending generations; then takes the caller's session
- * step and revokes the orchestrator's cached tokens, and repeats the bust, session and revoke after
- * `ACCOUNT_STANDING_REBUST_MS`. The revoke comes last because the orchestrator re-validates through
- * `/api/v1/me`. Never throws; returns whether the session step succeeded, for a caller that must
- * report a failed one.
+ * Run after a mute or unmute has committed: drops the cached standing, so the app refuses new
+ * submits from here; on a mute, cancels the account's pending site generations; then takes the
+ * caller's session step and revokes the orchestrator's cached tokens. After
+ * `ACCOUNT_STANDING_REBUST_MS` it repeats the bust, session and revoke, then cancels again. The
+ * revoke comes last because the orchestrator re-validates through `/api/v1/me`. Never throws;
+ * returns whether the session step succeeded, for a caller that must report a failed one.
  */
 export async function afterAccountStandingChanged(
   userId: number,
@@ -167,7 +167,7 @@ export async function afterAccountStandingChanged(
   } catch (error) {
     logStandingError('account-standing.session-step-failed', userId, error);
   } finally {
-    startRevoke(userId);
+    void startRevoke(userId);
   }
   await expireGenerationCredentialsIfMuted(userId);
   setTimeout(() => void repeatStandingChange(userId), ACCOUNT_STANDING_REBUST_MS).unref?.();

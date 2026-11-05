@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as AccountStandingService from '~/server/services/account-standing.service';
 import type { AccountStanding } from '~/server/services/account-standing.service';
 
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -10,7 +11,8 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 
 const getAccountStanding = vi.fn<(userId: number) => Promise<AccountStanding>>();
-vi.mock('~/server/services/account-standing.service', () => ({
+vi.mock('~/server/services/account-standing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AccountStandingService>()),
   getAccountStanding: (userId: number) => getAccountStanding(userId),
 }));
 
