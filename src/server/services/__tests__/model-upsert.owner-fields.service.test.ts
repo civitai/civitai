@@ -181,6 +181,7 @@ const storedModel = {
   allowDerivatives: true,
   allowDifferentLicense: false,
   coverImageId: null as number | null,
+  sfwName: null as string | null,
   sfwCoverImageId: null as number | null,
 };
 
