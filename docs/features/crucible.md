@@ -93,6 +93,16 @@ The entry count on the crucible page is the number of entries its grid lists to 
 
 Other features can act on an entry once it is accepted, for example an event that gives a team points for each entrant. An entry is accepted when judges can see it, checked every two minutes. Crucibles listed for an AI theme review (internal staff config) are not accepted by this check. Only crucibles carrying an event tag a subscriber listens for are swept. When an entry leaves the crucible, every subscriber is told to take it back: at once when a moderator or the owner removes it or the entrant withdraws it, and at the next check when its image or the entrant's account is deleted. An entry that stays in the crucible but is hidden another way (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels) stays accepted; a subscriber that must not count it checks for that itself. Code: `src/server/services/crucible-entry-accepted.ts`.
 
+## AI theme review
+
+Staff can turn on an AI theme review for a crucible. It is internal for now: there is no setting in the UI, and the review's prompt is kept with the operator config, outside the repo. Every few minutes the review checks each new judgeable image entry against the crucible's theme, using the daily challenge's judge. It runs in one of three modes:
+
+- **Shadow:** verdicts are only recorded, and every entry is accepted.
+- **Flag:** an off-theme entry is reported to moderators and is not accepted.
+- **Enforce:** an off-theme entry is removed with the reason "Off-topic for this crucible", its fee is refunded, and the entrant is told the theme review removed it.
+
+An entry that passes is accepted. When the judge can't score an entry, it is tried again a few times; after that it is reported to moderators and accepted. Code: `src/server/services/crucible-theme-review.ts`.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).

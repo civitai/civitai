@@ -174,6 +174,7 @@ import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-co
 import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
 import { crucibleSyncJobs } from '~/server/jobs/sync-crucible-scores';
 import { crucibleEntryAcceptedJob } from '~/server/jobs/crucible-entry-accepted';
+import { crucibleThemeReviewJob } from '~/server/jobs/crucible-theme-review';
 import { prizeAutoPayJob } from '~/server/jobs/prize-autopay';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -347,6 +348,7 @@ export const jobs: Job[] = [
   ...crucibleJobs,
   ...crucibleSyncJobs,
   crucibleEntryAcceptedJob,
+  crucibleThemeReviewJob,
   prizeAutoPayJob,
   pushSubscriptionCleanupJob,
 ];
