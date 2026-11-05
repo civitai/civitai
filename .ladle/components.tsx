@@ -1,5 +1,6 @@
 import { MantineProvider, createTheme, Modal } from '@mantine/core';
 import type { GlobalProvider } from '@ladle/react';
+import { StoryTRPCProvider } from './trpc';
 
 // 🔴 ORDER MATCHES `src/pages/_app.tsx` — globals FIRST, then Mantine's LAYERED stylesheet.
 // `styles.layer.css` wraps every Mantine rule in `@layer mantine`, and a layer's precedence
@@ -67,8 +68,10 @@ export const Provider: GlobalProvider = ({ children, globalState }) => (
     defaultColorScheme={globalState.theme === 'dark' ? 'dark' : 'light'}
     forceColorScheme={globalState.theme === 'dark' ? 'dark' : 'light'}
   >
-    <div className="ladle-story-wrapper" style={{ padding: 24, width: 'fit-content' }}>
-      {children}
-    </div>
+    <StoryTRPCProvider>
+      <div className="ladle-story-wrapper" style={{ padding: 24, width: 'fit-content' }}>
+        {children}
+      </div>
+    </StoryTRPCProvider>
   </MantineProvider>
 );
