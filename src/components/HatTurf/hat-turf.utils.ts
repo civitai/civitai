@@ -1,6 +1,7 @@
 import { SignalTopic } from '~/server/common/enums';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
+import type { TurfHatArt } from '~/server/schema/turf.schema';
 import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
@@ -106,6 +107,8 @@ export type HatSticker = {
   team: string;
   cosmeticId: number;
   data: unknown;
+  /** The hat's art; absent from an older server's push, which draws the team cone instead. */
+  art?: TurfHatArt | null;
 };
 
 export type HatPose = { x: number; y: number; scale: number; rotation: number; flip: boolean };
@@ -213,13 +216,27 @@ function readPushedStickers(raw: unknown): HatSticker[] | undefined {
     );
   });
   if (!ok) return undefined;
-  return raw.map(({ id, userId, team, cosmeticId, data }) => ({
+  return raw.map(({ id, userId, team, cosmeticId, data, art }) => ({
     id,
     userId,
     team,
     cosmeticId,
     data,
+    ...(readHatArt(art) && { art: readHatArt(art) }),
   }));
+}
+
+/** A hat's art from a push: a url, with the fit's canvas and bounds only when well-formed. */
+function readHatArt(raw: unknown): TurfHatArt | undefined {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (typeof r.url !== 'string') return undefined;
+  const nums = (v: unknown, n: number) =>
+    Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number');
+  return {
+    url: r.url,
+    canvas: nums(r.canvas, 2) ? (r.canvas as [number, number]) : null,
+    bounds: nums(r.bounds, 4) ? (r.bounds as [number, number, number, number]) : null,
+  };
 }
 
 /** The signal topic a card listens on for one image's counts; must match the server's `eventTurfTopic`. */

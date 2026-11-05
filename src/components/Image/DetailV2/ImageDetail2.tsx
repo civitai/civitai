@@ -86,7 +86,10 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
-import { HatTurfDetailControls } from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
 import {
   HatTurfDetailProvider,
   HatTurfDetailReset,
@@ -324,6 +327,7 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
+      {takesHats(image) && <HatTurfDetailBadge imageId={image.id} />}
     </>
   );
 

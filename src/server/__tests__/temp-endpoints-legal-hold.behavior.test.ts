@@ -5,9 +5,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
- * Two one-off admin endpoints delete posts and images, which cascades into their comment threads.
- * A thread holding a retained author's comment is detached first. The SQL runs on a Postgres
- * stand-in with the real foreign keys.
+ * Two one-off admin endpoints delete posts and images. A held owner's rows are left. The SQL runs
+ * on a Postgres stand-in with the real foreign keys.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -19,9 +18,31 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 vi.mock('~/server/services/article.service', () => ({ recomputeArticleIngestion: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({ invalidateManyImageExistence: vi.fn() }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
+// The held-verdict apply has its own suite; here only that the reset takes the model out of Private
+// through it.
+const { mockLeavingPrivate } = vi.hoisted(() => ({
+  mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
+}));
+vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
+  applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
+  finishHeldVerdictApply: vi.fn(async () => undefined),
+}));
 
+const { mockArchiveUserComments } = vi.hoisted(() => ({
+  mockArchiveUserComments: vi.fn(async (userId: number) => ({
+    userId,
+    key: `${userId}/comments.json`,
+    etag: null,
+    comments: 1,
+  })),
+}));
+vi.mock('~/server/services/csam.service-new', () => ({
+  archiveUserComments: mockArchiveUserComments,
+}));
+import archiveHeldUserComments from '~/pages/api/admin/temp/archive-held-user-comments';
 import resetTrainingModel from '~/pages/api/admin/temp/reset-training-model';
 import migrateArticleImages from '~/pages/api/admin/temp/migrate-article-images';
+import '~/__tests__/mocks/logging.mock';
 
 const OWNER = 1;
 const HELD = 2; // named on a pending report
@@ -41,8 +62,8 @@ const fakeRes = () => {
     json: (body: unknown) => Object.assign(res, { body }) && res,
   });
 };
-const commentIds = async () =>
-  (await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`)).rows.map((r) => r.id);
+const left = async (table: string) =>
+  (await db.query<{ id: number }>(`SELECT id FROM "${table}"`)).rows.map((r) => r.id);
 
 beforeAll(async () => {
   db = new PGlite();
@@ -57,16 +78,6 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int REFERENCES "Post"(id) ON DELETE SET NULL,
       "needsReview" text, "blockedFor" text
-    );
-    CREATE TABLE "Thread" (
-      id int PRIMARY KEY,
-      "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
-      "imageId" int UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
-      "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE "CommentV2" (
-      id int PRIMARY KEY, "userId" int NOT NULL,
-      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "TagsOnImageNew" ("imageId" int);
@@ -83,11 +94,10 @@ afterAll(() => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await db.exec(
-    `TRUNCATE "CommentV2", "Thread", "Image", "Post", "ImageConnection", "TagsOnImageNew" CASCADE`
-  );
-  vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (ops: Promise<unknown>[]) =>
-    Promise.all(ops)) as never);
+  await db.exec(`TRUNCATE "Image", "Post", "ImageConnection", "TagsOnImageNew" CASCADE`);
+  vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (
+    ops: Promise<unknown>[] | ((tx: unknown) => unknown)
+  ) => (typeof ops === 'function' ? ops(dbMock.dbWrite) : Promise.all(ops))) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
     (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
       (await run(first, values)).rows) as never
@@ -97,13 +107,6 @@ beforeEach(async () => {
       (await run(first, values)).affectedRows ?? 0) as never
   );
 });
-
-/** A thread on `column` = `id`, with one comment by `author`. */
-const seedThread = (column: 'postId' | 'imageId', id: number, author: number) =>
-  db.exec(`
-    INSERT INTO "Thread" (id, "${column}") VALUES (100, ${id});
-    INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
-  `);
 
 describe('reset-training-model', () => {
   const seed = (owner: number) =>
@@ -120,32 +123,27 @@ describe('reset-training-model', () => {
     vi.mocked(dbMock.dbWrite.post.findMany).mockResolvedValue([{ id: 10 }] as never);
   });
   const call = () => resetTrainingModel({ query: { id: '5' } } as never, fakeRes() as never);
-  const left = async (table: string) =>
-    (await db.query<{ id: number }>(`SELECT id FROM "${table}"`)).rows.map((r) => r.id);
 
-  it('deletes the posts and their images, not just unlinks the images', async () => {
+  it('deletes the posts and their images, not just unlinks the images (control)', async () => {
     await seed(OWNER);
     await call();
     expect(await left('Post')).toEqual([]);
     expect(await left('Image')).toEqual([]);
   });
 
-  it.each([
-    ['post', 'postId', 10, HELD],
-    ['image', 'imageId', 20, MARKED],
-  ] as const)("keeps a held author's comment on the deleted %s", async (_, column, id, author) => {
+  it('takes the model out of Private with any held scan verdict, in one transaction', async () => {
     await seed(OWNER);
-    await seedThread(column, id, author);
+    const tx = { model: { update: vi.fn() } };
+    vi.mocked(dbMock.dbWrite.$transaction).mockImplementationOnce((async (
+      fn: (t: unknown) => unknown
+    ) => fn(tx)) as never);
     await call();
-    expect(await left('Post')).toEqual([]);
-    expect(await commentIds()).toEqual([1]);
-  });
-
-  it('takes an unheld comment with the post (control)', async () => {
-    await seed(OWNER);
-    await seedThread('postId', 10, OWNER);
-    await call();
-    expect(await commentIds()).toEqual([]);
+    expect(tx.model.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
+    );
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate.mock.calls[0]).toEqual([tx, 5]);
   });
 
   it.each([HELD, MARKED])("leaves a held owner's post and image (owner %i)", async (owner) => {
@@ -157,45 +155,65 @@ describe('reset-training-model', () => {
 });
 
 describe('migrate-article-images rollback', () => {
-  beforeEach(async () => {
-    await db.exec(`
-      INSERT INTO "Image" (id, "userId") VALUES (30, ${OWNER});
+  const seed = (owner: number) =>
+    db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (30, ${owner});
       INSERT INTO "ImageConnection" VALUES (30, 7, 'Article');
+      INSERT INTO "TagsOnImageNew" VALUES (30);
     `);
-  });
   const call = () =>
     migrateArticleImages(
       { query: { rollback: 'true', dryRun: 'false' } } as never,
       fakeRes() as never
     );
+  const tags = async () => (await db.query(`SELECT 1 FROM "TagsOnImageNew"`)).rows.length;
 
-  it("keeps a held author's comment on an article-only image it deletes", async () => {
-    await seedThread('imageId', 30, HELD);
+  it("deletes an unheld owner's article-only image, and its tags (control)", async () => {
+    await seed(OWNER);
     await call();
-    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
-    expect(await commentIds()).toEqual([1]);
+    expect(await left('Image')).toEqual([]);
+    expect(await tags()).toBe(0);
   });
 
-  it("leaves a held owner's article-only image, and its tags", async () => {
+  it.each([HELD, MARKED])(
+    "leaves a held owner's article-only image, and its tags (owner %i)",
+    async (owner) => {
+      await seed(owner);
+      await call();
+      expect(await left('Image')).toEqual([30]);
+      expect(await tags()).toBe(1);
+    }
+  );
+});
+
+describe('archive-held-user-comments', () => {
+  beforeEach(() => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(
+      (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
+        (await run(first, values)).rows) as never
+    );
+  });
+  const call = async (dryRun: boolean) => {
+    const res = fakeRes();
+    await archiveHeldUserComments({ query: { dryRun: String(dryRun) } } as never, res as never);
+    return res;
+  };
+
+  it('archives each user a report or a hold marker holds, and no one else', async () => {
     await db.exec(`
-      UPDATE "Image" SET "userId" = ${HELD} WHERE id = 30;
-      INSERT INTO "TagsOnImageNew" VALUES (30);
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
+        VALUES (4, now() - interval '2 years', now() - interval '2 years');
+      INSERT INTO "CsamReport" ("userId", details) VALUES (${HELD}, '{"secondaryUserId": "5"}');
     `);
-    await call();
-    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([{ id: 30 }]);
-    expect((await db.query(`SELECT 1 FROM "TagsOnImageNew"`)).rows).toHaveLength(1);
-  });
+    try {
+      expect((await call(true)).body).toMatchObject({ userIds: [HELD, MARKED, 5] });
+      expect(mockArchiveUserComments).not.toHaveBeenCalled();
 
-  it('keeps a comment by an author only the hold marker covers', async () => {
-    await seedThread('imageId', 30, MARKED);
-    await call();
-    expect(await commentIds()).toEqual([1]);
-  });
-
-  it('takes an unheld comment with the image (control)', async () => {
-    await seedThread('imageId', 30, OWNER);
-    await call();
-    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
-    expect(await commentIds()).toEqual([]);
+      const res = await call(false);
+      expect(mockArchiveUserComments.mock.calls.map(([id]) => id)).toEqual([HELD, MARKED, 5]);
+      expect(res).toMatchObject({ statusCode: 200, body: { users: 3, comments: 3 } });
+    } finally {
+      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = 4 OR details ? 'secondaryUserId'`);
+    }
   });
 });

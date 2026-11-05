@@ -56,6 +56,7 @@ const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
+  creatorEngagementApi: { availability: ['mod'], fliptKey: 'creator-engagement-api' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
   // Landscape images cover two feed columns on /images (3+ columns). Mods only while it is reviewed.
   masonryLandscapeSpan: { availability: ['mod'], fliptKey: 'masonry-landscape-span' },

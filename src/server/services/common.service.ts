@@ -323,11 +323,27 @@ export const entityAvailabilityUpdate = async ({
     return;
   }
 
-  await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
+  const update = `
     UPDATE "${entityType}" t
     SET "availability" = '${availability}'::"Availability",
       "updatedAt" = NOW()
-    WHERE t.id IN (${entityIds.join(', ')})`);
+    WHERE t.id IN (${entityIds.join(', ')})`;
+  if (entityType !== 'Model' || availability === Availability.Private) {
+    await dbWrite.$executeRawUnsafe(update);
+    return;
+  }
+
+  // A scan verdict held while a model was Private applies as it leaves Private, in the same write.
+  const { applyHeldVerdictLeavingPrivate, finishHeldVerdictApply } = await import(
+    '~/server/services/text-scan/actions/model-nsfw'
+  );
+  const applied = await dbWrite.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(update);
+    const ids: number[] = [];
+    for (const id of entityIds) if (await applyHeldVerdictLeavingPrivate(tx, id)) ids.push(id);
+    return ids;
+  });
+  for (const id of applied) await finishHeldVerdictApply(id);
 };
 
 export type EntityAccessWithKey = {

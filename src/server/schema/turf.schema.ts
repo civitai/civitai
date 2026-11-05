@@ -62,3 +62,10 @@ export const watchTurfImagesSchema = z.object({
   event: eventName,
   imageIds: z.array(z.number().int().positive()).max(50),
 });
+
+/** A sticker's hat art: the cosmetic's image, and where its visible pixels sit (fit canvas, bounds). */
+export type TurfHatArt = {
+  url: string;
+  canvas?: [number, number] | null;
+  bounds?: [number, number, number, number] | null;
+};

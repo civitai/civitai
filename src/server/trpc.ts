@@ -67,9 +67,24 @@ onDevalueWriteFallback((error) => {
   }
 });
 
-export interface TRPCMeta {
-  /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
-  requiredScope?: number;
+/**
+ * How a procedure gates scoped tokens: one required bitmask (every bit needed), or a list of
+ * scopes of which any one admits. Never both: a meta that sets both is a type error here and
+ * refused at call time by `runEnforceTokenScope`.
+ */
+type TRPCScopeMeta =
+  | {
+      /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
+      requiredScope?: number;
+      anyOfScopes?: never;
+    }
+  | {
+      requiredScope?: never;
+      /** A scoped token passes with any one of these. An empty list refuses every scoped token. */
+      anyOfScopes: readonly number[];
+    };
+
+export type TRPCMeta = TRPCScopeMeta & {
   /**
    * When true, this procedure cannot be invoked via API key or OAuth token,
    * regardless of scope — only session auth (browser cookie) is allowed.
@@ -83,7 +98,7 @@ export interface TRPCMeta {
    * (`isFullScopeUserKey`); session auth is unaffected.
    */
   requireFullUserCredential?: boolean;
-}
+};
 
 const t = initTRPC
   .context<Context>()

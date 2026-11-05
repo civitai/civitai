@@ -99,10 +99,4 @@ describe('isCommentGoneForMembers', () => {
     dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: true } as never);
     await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(true);
   });
-
-  it('still answers gone for a detached CommentV2 comment', async () => {
-    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ detached: true }] as never);
-    await expect(isCommentGoneForMembers(COMMENT_ID)).resolves.toBe(true);
-  });
 });
