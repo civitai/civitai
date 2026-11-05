@@ -3,24 +3,18 @@ import type { CosmeticType } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import {
+  CosmeticEquipRefusedError,
   deleteUserCosmeticCache,
   equipCosmetic,
   unequipCosmeticByType,
 } from '~/server/services/user.service';
 
-/** The Knights gold shop inserts `UserCosmetic` rows itself; this is the cache bust the main app's own grants do. */
 export async function refreshKnightsShopCosmetics(userId: number) {
   await refreshOwnedStickerCache([userId]);
   await deleteUserCosmeticCache(userId);
 }
 
 export class KnightsCosmeticRefused extends Error {}
-
-const EQUIP_REFUSALS = [
-  "You don't have that cosmetic",
-  'Stickers cannot be equipped',
-  'Event decorations are placed',
-];
 
 /** Equips through the main app's `equipCosmetic`: ownership, event-decoration and withheld-cosmetic rules, caches and the worn-cosmetic queue. */
 export async function equipKnightsShopCosmetic({
@@ -31,13 +25,12 @@ export async function equipKnightsShopCosmetic({
   cosmeticId: number;
 }) {
   try {
-    await equipCosmetic({ userId, cosmeticId });
+    // Knights equips right after it grants, which the replica may not have seen yet.
+    await equipCosmetic({ userId, cosmeticId, readOwnershipFromPrimary: true });
   } catch (error) {
     // Only the service's own refusals are final; a database or network failure stays a 5xx the caller can retry.
+    if (error instanceof CosmeticEquipRefusedError) throw new KnightsCosmeticRefused(error.message);
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST') {
-      throw new KnightsCosmeticRefused(error.message);
-    }
-    if (error instanceof Error && EQUIP_REFUSALS.some((text) => error.message.startsWith(text))) {
       throw new KnightsCosmeticRefused(error.message);
     }
     throw error;
