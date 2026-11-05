@@ -36,7 +36,7 @@ export type MasonrySpanOptions = {
   maxHeight: number;
 };
 
-export const MASONRY_SPAN_MIN_RATIO = 1.3;
+export const MASONRY_SPAN_MIN_RATIO = 1.75;
 /** A two-wide item needs three columns: two to span, one to keep a normal feed beside it. */
 const SPAN_MIN_COLUMNS = 3;
 

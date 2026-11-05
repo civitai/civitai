@@ -4,7 +4,11 @@ import { renderAtViewport } from '../../../test/geometry-setup';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
-import { MASONRY_GAP, useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
+import {
+  MASONRY_GAP,
+  MASONRY_SPAN_MIN_RATIO,
+  useMasonryColumns,
+} from '~/components/MasonryColumns/masonry.utils';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import type * as AdsProvider from '~/components/Ads/AdsProvider';
 import type * as AdsUtils from '~/components/Ads/ads.utils';
@@ -119,7 +123,7 @@ function Probe({
   ) as ColumnItem<unknown>[][];
   return null;
 }
-const SPAN = { minRatio: 1.3, maxHeight: MAX_HEIGHT };
+const SPAN = { minRatio: MASONRY_SPAN_MIN_RATIO, maxHeight: MAX_HEIGHT };
 const columnsFor = async (data: Item[], columnCount: number, span?: typeof SPAN) => {
   await renderAtViewport(<Probe data={data} columnCount={columnCount} span={span} />, {
     width: 400,
@@ -277,7 +281,7 @@ describe('MasonryColumnsVirtual landscape span', () => {
     const feed: Item[] = Array.from({ length: 200 }, (_, id) => ({
       id,
       width: 1000,
-      height: id % 3 === 0 ? 560 + ((id * 37) % 90) : 700 + ((id * 53) % 900),
+      height: id % 3 === 0 ? 540 + ((id * 37) % 30) : 700 + ((id * 53) % 900),
     }));
     for (const count of [3, 4, 5, 6]) {
       const cols = await columnsFor(feed, count, SPAN);
@@ -317,6 +321,22 @@ describe('MasonryColumnsVirtual landscape span', () => {
       'spacer',
       'wide',
     ]);
+  });
+
+  test('only images at least 16:9 wide span', async () => {
+    // Real feed sizes: 1920x1080 and SDXL's 1344x768 span; 2544x1904 (1.34) and 1216x832 (1.46) do not.
+    const sizes = [
+      { width: 1920, height: 1080 },
+      { width: 2544, height: 1904 },
+      { width: 1216, height: 832 },
+      { width: 1344, height: 768 },
+    ].map((d, id) => ({ id, ...d }));
+    for (const item of sizes) {
+      // Alone in the feed, so nothing else decides it.
+      const cols = await columnsFor([item], 3, SPAN);
+      const spans = cols.flat().some((i) => i.span);
+      expect(spans, `${item.width}x${item.height}`).toBe(item.id === 0 || item.id === 3);
+    }
   });
 
   test('on a phone nothing spans', async () => {
