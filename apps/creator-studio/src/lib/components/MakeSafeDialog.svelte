@@ -16,7 +16,7 @@
     coverUrl: string;
   };
   type Card =
-    | { state: 'skipped'; reason: string; dispute?: boolean }
+    | { state: 'skipped'; reason: string }
     | { state: 'waiting' | 'drafting' | 'saving' }
     | { state: 'ready'; draft: Draft; accepted: boolean }
     | { state: 'saved'; listedOnCom: boolean }
@@ -32,12 +32,6 @@
   let controller: AbortController | null = null;
 
   function initialCard(model: CreatorModel): Card {
-    if (model.lockedMature)
-      return {
-        state: 'skipped',
-        reason: 'A moderator locked this model as mature, so it cannot be made safe.',
-        dispute: true,
-      };
     if (!model.nsfw)
       return {
         state: 'skipped',
@@ -80,6 +74,11 @@
         return false;
       }
       const err = e as Error & { status?: number };
+      // 409 is the endpoint's skip (a model that can't get a face): retrying would only repeat it.
+      if (err.status === 409) {
+        cards[model.id] = { state: 'skipped', reason: err.message };
+        return true;
+      }
       cards[model.id] = { state: 'failed', reason: err.message };
       // The hourly draft limit is spent: the rest would only fail the same way.
       if (err.status === 429) {
@@ -140,7 +139,6 @@
       return card?.state === 'ready' && card.accepted;
     })
   );
-  const anyDraftable = $derived(models.some((model) => cards[model.id]?.state !== 'skipped'));
 
   async function saveAccepted() {
     saving = true;
@@ -178,7 +176,7 @@
 <Dialog.Root bind:open={() => open, setOpen}>
   <Dialog.Content class="max-h-[85vh] max-w-2xl overflow-y-auto" interactOutsideBehavior="ignore">
     <Dialog.Header>
-      <Dialog.Title>Make safe for civitai.com</Dialog.Title>
+      <Dialog.Title>Customize for civitai.com</Dialog.Title>
       <Dialog.Description>
         Each model gets a civitai.com title, description and cover, drafted from its listing. Its
         civitai.red listing doesn't change. Tick the ones to keep, then save them.
@@ -188,14 +186,12 @@
     {#if offPage > 0}
       <p class="text-sm text-dark-2">
         {offPage} selected {offPage === 1 ? 'version is' : 'versions are'} on other pages and not included.
-        Open those pages to make their models safe.
+        Open those pages to include them.
       </p>
     {/if}
 
     {#if models.length === 0}
       <p class="text-sm text-dark-2">None of the selected models are on this page.</p>
-    {:else if !anyDraftable}
-      <p class="text-sm text-dark-2">None of the selected models need a civitai.com version.</p>
     {/if}
 
     <ul class="flex flex-col gap-3">
@@ -222,17 +218,7 @@
           </div>
 
           {#if card?.state === 'skipped'}
-            <p class="mt-1 text-sm text-dark-2">
-              {card.reason}
-              {#if card.dispute}
-                <a
-                  href={modelUrl(model.id, model)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="underline">Dispute it on the model page</a
-                >
-              {/if}
-            </p>
+            <p class="mt-1 text-sm text-dark-2">{card.reason}</p>
           {:else if card?.state === 'saved' && !card.listedOnCom}
             <p class="mt-1 text-sm text-dark-2">
               Saved, but not on civitai.com yet: its cover doesn't count until that image is

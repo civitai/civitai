@@ -48,6 +48,7 @@ const stored = {
   minor: false,
   sfwOnly: false,
   lockedProperties: [] as string[],
+  mode: null as string | null,
   deletedAt: null,
   sfwName: null as string | null,
   sfwDescription: null as string | null,
@@ -101,13 +102,33 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  it('refuses a model locked as mature, for draft and save', async () => {
+  // A mature lock is no bar: the .com face's own check and the background re-check are the gate.
+  it('accepts a model locked as mature, for draft and save', async () => {
     row = { ...stored, lockedProperties: ['nsfw'] };
+    caller.model.getCoverCandidates.mockResolvedValue([{ id: 2, url: 'b', nsfwLevel: 2 }]);
+    caller.model.draftSfwFace.mockResolvedValue({ sfwName: 'Safe', sfwDescription: '<p>ok</p>' });
     const draft = await call({ action: 'draft', modelId: 11 });
-    expect(draft.statusCode).toBe(409);
-    expect(draft.body.code).toBe('locked');
+    const save = await call({ action: 'save', modelId: 11, sfwName: 'Safe', sfwCoverImageId: 2 });
+    expect([draft.statusCode, save.statusCode]).toEqual([200, 200]);
+    expect(caller.model.draftSfwFace).toHaveBeenCalledTimes(1);
+    expect(caller.model.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['minor', { minor: true }],
+    ['POI', { poi: true }],
+    ['SFW-only', { sfwOnly: true }],
+    ['taken-down', { mode: 'TakenDown' }],
+  ])('refuses a %s model, for draft and save, writing nothing', async (_, flags) => {
+    row = { ...stored, ...flags };
+    const draft = await call({ action: 'draft', modelId: 11 });
     const save = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
-    expect(save.statusCode).toBe(409);
+    for (const res of [draft, save])
+      expect([res.statusCode, res.body]).toEqual([
+        409,
+        { error: "This model can't get a civitai.com version.", code: 'skipped' },
+      ]);
+    expect(caller.model.getCoverCandidates).not.toHaveBeenCalled();
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
     expect(caller.model.upsert).not.toHaveBeenCalled();
   });
@@ -187,9 +208,7 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  // An omitted `minor` or `sfwOnly` parses as false in the upsert schema and would clear it.
   it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
-    row = { ...stored, minor: true };
     const res = await call({
       action: 'save',
       modelId: 11,
@@ -204,7 +223,7 @@ describe('POST /api/v1/models/com-face', () => {
         id: 11,
         name: 'Red Title',
         nsfw: true,
-        minor: true,
+        minor: false,
         sfwOnly: false,
         poi: false,
         availability: 'Public',
