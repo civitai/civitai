@@ -78,6 +78,10 @@ export type CreatorModel = {
   nsfwLevel: number;
   /** Flagged as depicting a real person — a new price on it is refused (licensingFeeBlockedFor). */
   poi: boolean;
+  /** Has its own civitai.com title and cover. */
+  hasComFace: boolean;
+  /** A moderator locked it as mature, so it cannot get a civitai.com face. */
+  lockedMature: boolean;
   versions: CreatorModelVersion[];
 };
 
@@ -290,7 +294,18 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi'])
+      .select([
+        'id',
+        'name',
+        'type',
+        'status',
+        'nsfw',
+        'nsfwLevel',
+        'poi',
+        'sfwName',
+        'sfwCoverImageId',
+        'lockedProperties',
+      ])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -447,6 +462,8 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       nsfw: !!m.nsfw,
       nsfwLevel: Number(m.nsfwLevel ?? 0),
       poi: !!m.poi,
+      hasComFace: m.sfwName != null && m.sfwCoverImageId != null,
+      lockedMature: !!m.nsfw && (m.lockedProperties ?? []).includes('nsfw'),
       versions: byModel.get(m.id) ?? [],
     })),
     total,
