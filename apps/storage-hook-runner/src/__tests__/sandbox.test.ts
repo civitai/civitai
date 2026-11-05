@@ -62,8 +62,8 @@ describe('allow and deny', () => {
 describe('time limit', () => {
   // The bound is asserted at two timeouts so a fixed sleep or a hardcoded deadline cannot pass
   // both. `elapsedMs` is measured inside the worker from arming the deadline. The detail is the
-  // INTERRUPT HANDLER's: the backstop also answers `timeout`, so the cause alone would not show
-  // that the handler fired.
+  // INTERRUPT HANDLER's, and no worker may be terminated: without the handler the backstop would
+  // end the call instead (now as a BackstopError rejection, which also fails this test).
   it.each([10, 200])('interrupts an infinite loop at its %i ms deadline', async (ms) => {
     const terminatedBefore = pool.stats().terminated;
     const t0 = performance.now();
@@ -213,23 +213,28 @@ describe('an interrupt swallowed by the engine still ends the call as a timeout'
 });
 
 describe('the deadline covers evaluation, not compilation', () => {
-  // A 64 KiB hook that does almost nothing at run time. With the deadline armed before
-  // compilation, compiling it alone used up a 1 ms budget.
-  const rows: string[] = [];
-  for (let n = 0; rows.join('').length < 60 * 1024; n++)
-    rows.push(`function r${n}(){return ${n}}\n`);
-  const big = `${rows.join('')}export default function check() { return { allow: true }; }`;
+  // A ~60 KiB hook that is slow to COMPILE (one long expression in a function it never calls;
+  // measured locally at 11-28 ms to compile) and quick to RUN: a 30,000-iteration loop, long
+  // enough that QuickJS polls the interrupt handler at least once (it polls every ~10,000
+  // operations), short enough to finish well inside 5 ms. With the deadline armed before
+  // compilation, the compile alone used up the 5 ms budget and the loop's first poll interrupted
+  // the hook. A first version of this test (a hook of many small functions and no loop) never
+  // went red: a hook that runs fewer operations than one poll interval is never interrupted.
+  const terms = Array.from({ length: 12_000 }, (_, i) => `x+${i % 97}`).join('+');
+  const big =
+    `function never(x) { return ${terms}; }\n` +
+    'export default function check() { let s = 0; for (let i = 0; i < 30000; i++) s += i; return s > 0 ? { allow: true } : { allow: false, reason: "x" }; }';
 
-  it('a 64 KiB hook with a 1 ms budget is evaluated, ten times in a row', async () => {
-    expect(Buffer.byteLength(big)).toBeGreaterThan(60 * 1024);
+  it('a hook that is slow to compile and quick to run gets its whole budget, five times in a row', async () => {
+    expect(Buffer.byteLength(big)).toBeGreaterThan(50 * 1024);
     expect(Buffer.byteLength(big)).toBeLessThanOrEqual(64 * 1024);
     const results = [];
-    for (let i = 0; i < 10; i++) results.push((await run(big, { timeoutMs: 1 })).result);
-    expect(results).toEqual(Array.from({ length: 10 }, () => ({ allow: true })));
+    for (let i = 0; i < 5; i++) results.push((await run(big, { timeoutMs: 5 })).result);
+    expect(results).toEqual(Array.from({ length: 5 }, () => ({ allow: true })));
   });
 
   it('a syntax error is still reported (from the compile step)', async () => {
-    const { result } = await run(`${big}\n}}}`, { timeoutMs: 1 });
+    const { result } = await run(`${big}\n}}}`, { timeoutMs: 5 });
     expect(result).toMatchObject({ allow: false, cause: 'error' });
     expect((result as { detail: string }).detail).toMatch(/^SyntaxError: /);
   });
