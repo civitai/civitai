@@ -4,7 +4,7 @@ import { Tracker } from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
-import type { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta, RestrictedNsfwVerdict } from '~/server/schema/model.schema';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -129,7 +129,8 @@ export async function applySystemModelNsfwFlag({
 async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boolean) {
   const heldLeadGuard = heldLead
     ? Prisma.sql`AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
-      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')`
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'liftedBy')`
     : Prisma.empty;
   return db.$executeRaw`
     UPDATE "Model" m
@@ -164,14 +165,16 @@ async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boo
  * Records the verdict as a moderator's lead, without touching nsfw, where the rating may not be
  * overridden (`holdsRatingSql`). Guarded on there being no nsfw lock: a moderator's lock is already a
  * ruling. A lead already waiting keeps its time and restriction, so a redelivery does not move it in
- * the queue and an owner who later unticks the flag does not relabel it. True when it wrote.
+ * the queue and an owner who later unticks the flag does not relabel it. On a model no longer minor or
+ * POI the new verdict is not a lifted flag's, so it applies as any held lead. True when it wrote.
  */
 async function holdRestrictedVerdict(db: RawDb, modelId: number, source: string) {
   const held = await db.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
           'restrictedNsfwVerdict', COALESCE(
-            m.meta->'restrictedNsfwVerdict',
+            CASE WHEN m.minor OR m.poi THEN m.meta->'restrictedNsfwVerdict'
+              ELSE (m.meta->'restrictedNsfwVerdict') - 'liftedBy' END,
             jsonb_build_object(
               'source', ${source}::text,
               'at', now(),
@@ -194,8 +197,11 @@ async function holdRestrictedVerdict(db: RawDb, modelId: number, source: string)
  * model leaves Private (`applyHeldVerdictLeavingPrivate`). Null when there is nothing to apply.
  */
 export async function applyHeldRestrictedVerdict(
-  modelId: number
+  modelId: number,
+  { ownerCleared = false }: { ownerCleared?: boolean } = {}
 ): Promise<ModelTextModerationOutcome | null> {
+  // The owner's own untick is the latest lift: an earlier moderator or revert lift no longer holds it.
+  if (ownerCleared) await dropLiftedBy(dbWrite, modelId, { flagged: false });
   const found = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
@@ -220,7 +226,7 @@ export async function applyHeldRestrictedVerdict(
     (stored?.restrictedNsfwVerdictDormant && (await reviveDormantVerdict(dbWrite, modelId))
       ? stored.restrictedNsfwVerdictDormant
       : undefined);
-  if (!lead || lead.applied) return null;
+  if (!lead || lead.applied || lead.liftedBy) return null;
   if (model.availability === 'Private') return 'held_restricted';
   return applySystemModelNsfwFlag({ model, source: lead.source, heldLead: true });
 }
@@ -238,6 +244,7 @@ export async function applyHeldVerdictLeavingPrivate(db: RawDb, modelId: number)
     WHERE m.id = ${modelId}
       AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'liftedBy')
   `;
   if (!lead) return false;
   if (!(await flipRow(db, modelId, lead.source ?? 'text-scan', true))) return false;
@@ -266,6 +273,42 @@ export async function finishHeldVerdictApply(modelId: number) {
         error: error.message,
       }).catch(() => null);
     });
+}
+
+/**
+ * After a lift other than the owner's save, in its transaction: a kept verdict comes back as a held
+ * lead, and a held lead records who lifted the flag. Neither applies, here or on a later save or
+ * publish: lifting minor or POI is not a ruling on the rating, so the lead waits for a moderator.
+ */
+export async function holdLeadAfterFlagLift(
+  db: RawDb,
+  modelId: number,
+  liftedBy: NonNullable<RestrictedNsfwVerdict['liftedBy']>
+) {
+  await reviveDormantVerdict(db, modelId);
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = jsonb_set(m.meta, '{restrictedNsfwVerdict,liftedBy}', to_jsonb(${liftedBy}::text))
+    WHERE m.id = ${modelId}
+      AND jsonb_typeof(m.meta->'restrictedNsfwVerdict') = 'object'
+      AND NOT (m.meta->'restrictedNsfwVerdict' ? 'applied')
+      AND m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
+      AND NOT (m.minor OR m.poi)
+  `;
+}
+
+/**
+ * Forgets who lifted the flag on a waiting lead: a flag set again (`flagged`) or the owner's own untick
+ * makes that lift history, so the lead takes the ordinary owner path and its note names the last lift.
+ */
+export async function dropLiftedBy(db: RawDb, modelId: number, { flagged }: { flagged: boolean }) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = m.meta #- '{restrictedNsfwVerdict,liftedBy}'
+    WHERE m.id = ${modelId}
+      AND m.meta->'restrictedNsfwVerdict' ? 'liftedBy'
+      AND (m.minor OR m.poi) = ${flagged}
+  `;
 }
 
 /** Moves a dormant verdict back to a held lead, in the queue again. Guarded on the model being

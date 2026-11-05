@@ -333,7 +333,6 @@ export const entityAvailabilityUpdate = async ({
     return;
   }
 
-  // A scan verdict held while a model was Private applies as it leaves Private, in the same write.
   const { applyHeldVerdictLeavingPrivate, finishHeldVerdictApply } = await import(
     '~/server/services/text-scan/actions/model-nsfw'
   );

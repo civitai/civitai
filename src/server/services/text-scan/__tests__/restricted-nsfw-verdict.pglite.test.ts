@@ -48,6 +48,8 @@ const { resolveRestrictedNsfwVerdict } = await import(
   '~/server/services/text-scan/actions/restricted-nsfw-verdict'
 );
 
+const { rollbackMinorHashAutoFlags } = await import('~/server/services/minor-hash.service');
+
 const MODEL = 41;
 const OWNER = 52;
 const MODERATOR = 3;
@@ -82,6 +84,7 @@ beforeAll(async () => {
   const raw = pgliteRaw(db);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   const tx = { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
@@ -522,6 +525,27 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
     expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
   });
+
+  it('applies a lifted lead once the owner unticks a flag set again since', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    expect(await applyHeldRestrictedVerdict(MODEL, { ownerCleared: true })).toBe('applied');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after.meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
+  });
+
+  it.each(['moderator', 'hashRevert'] as const)(
+    'leaves a lead whose flag was lifted by %s for a moderator to rule on',
+    async (liftedBy) => {
+      const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy };
+      await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+      expect(await applyHeldRestrictedVerdict(MODEL)).toBeNull();
+      const after = await row();
+      expect(after).toMatchObject({ nsfw: false, lockedProperties: [] });
+      expect(after.meta.restrictedNsfwVerdict).toEqual(held);
+    }
+  );
 });
 
 describe('a Private model, which must stay SFW-only', () => {
@@ -593,6 +617,38 @@ describe('a Private model, which must stay SFW-only', () => {
     const after = await row();
     expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
     expect(after.meta).toEqual(applied);
+  });
+
+  it('a lifted lead the owner unticks again on a Private model applies at publish', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    await makePrivate();
+    expect(await applyHeldRestrictedVerdict(MODEL, { ownerCleared: true })).toBe('held_restricted');
+    expect(await publish()).toBe(true);
+    await expectApplied();
+  });
+
+  it('a lead whose flag a moderator lifted stays held at publish', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    await makePrivate();
+    expect(await publish()).toBe(false);
+    await expectHeld();
+  });
+
+  it('a new scan verdict on a lifted lead applies at publish', async () => {
+    const held = { ...lead('minor').restrictedNsfwVerdict, liftedBy: 'moderator' };
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
+    await makePrivate();
+    expect(
+      await applySystemModelNsfwFlag({
+        model: scanned({ availability: 'Private' }),
+        source: 'text-scan',
+      })
+    ).toBe('held_restricted');
+    expect((await row()).meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
+    expect(await publish()).toBe(true);
+    await expectApplied();
   });
 
   it('publishing with no lead changes nothing (control)', async () => {
@@ -689,6 +745,59 @@ describe("a lead from the owner's flag over the scan's rating", () => {
       expect(after.meta).not.toHaveProperty('ownerFlagOverride');
       expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
       expect(after.nsfw).toBe(false);
+    }
+  );
+
+  it('keeps an earlier declaration and its time, adding the flags the override lists', async () => {
+    const earlier = { at: '2026-10-01T00:00:00.000Z', flags: ['poi'] };
+    await seed({
+      minor: true,
+      locked: ['nsfw', 'minor', 'sfwOnly'],
+      meta: {
+        systemNsfwLock: SYSTEM_LOCK,
+        ownerFlagOverride: override,
+        ownerDeclaredFlags: earlier,
+        ...lead('minor'),
+      },
+    });
+    await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling: 'keep', userId: MODERATOR });
+    expect((await row()).meta.ownerDeclaredFlags).toEqual({
+      at: earlier.at,
+      flags: ['poi', 'minor'],
+    });
+  });
+
+  it.each([
+    ['keep', undefined],
+    ['dismiss', 'Checked the gallery'],
+  ] as const)(
+    'after %s, a hash rollback from an old snapshot still sees the owner declared minor',
+    async (ruling, reason) => {
+      // An old snapshot: no prevMinor, no minor lock, and a rating no minor flag leaves.
+      const oldSnapshot = {
+        at: '2026-10-01T00:00:00.000Z',
+        source: 'auto',
+        prevNsfw: true,
+        prevSfwOnly: false,
+        prevLockedProperties: ['nsfw'],
+      };
+      await seed({
+        minor: true,
+        locked: ['nsfw', 'minor', 'sfwOnly'],
+        meta: {
+          systemNsfwLock: SYSTEM_LOCK,
+          ownerFlagOverride: override,
+          minorFlagSnapshot: oldSnapshot,
+          ...lead('minor'),
+        },
+      });
+      const rollback = () =>
+        rollbackMinorHashAutoFlags({ dryRun: true, limit: 1, modelIds: [MODEL] });
+      expect((await rollback()).keptMinor).toBe(1);
+      await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling, reason, userId: MODERATOR });
+      expect((await row()).meta.ownerDeclaredFlags.flags).toEqual(['minor']);
+      expect((await row()).meta.ownerDeclaredFlags.at).toBe(override.at);
+      expect(await rollback()).toMatchObject({ keptMinor: 1, rolledBack: 0 });
     }
   );
 });
