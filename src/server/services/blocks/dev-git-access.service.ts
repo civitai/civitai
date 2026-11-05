@@ -163,10 +163,7 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
   // Fast path: a COMPLETE identity already exists (non-empty token).
   const fast = await readIdentity(userId);
   if (fast && fast.forgejoTokenEncrypted) {
-    return {
-      forgejoUsername: fast.forgejoUsername,
-      token: decryptToken(fast.forgejoTokenEncrypted, secret),
-    };
+    return { forgejoUsername: fast.forgejoUsername, token: decryptToken(fast.forgejoTokenEncrypted, secret) };
   }
 
   // Claim provisioning by inserting a placeholder (empty-token) row.
@@ -190,16 +187,9 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
     for (let i = 0; i < PROVISION_WAIT_TRIES; i++) {
       const row = await readIdentity(userId);
       if (row && row.forgejoTokenEncrypted) {
-        return {
-          forgejoUsername: row.forgejoUsername,
-          token: decryptToken(row.forgejoTokenEncrypted, secret),
-        };
+        return { forgejoUsername: row.forgejoUsername, token: decryptToken(row.forgejoTokenEncrypted, secret) };
       }
-      if (
-        row &&
-        !row.forgejoTokenEncrypted &&
-        Date.now() - row.createdAt.getTime() > STALE_CLAIM_MS
-      ) {
+      if (row && !row.forgejoTokenEncrypted && Date.now() - row.createdAt.getTime() > STALE_CLAIM_MS) {
         // Reclaim the abandoned claim. Guard on a RANGE (still empty + still
         // older than the threshold), NOT exact createdAt equality — Postgres
         // timestamptz(6) keeps microseconds but Prisma reads a millisecond Date,
@@ -240,9 +230,7 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
       await deleteForgejoUser(forgejoUsername);
       const recreated = await createForgejoUser({ username: forgejoUsername, email });
       if (!recreated.created || !recreated.password) {
-        throw new Error(
-          `Forgejo user ${forgejoUsername} could not be (re)created with a known password`
-        );
+        throw new Error(`Forgejo user ${forgejoUsername} could not be (re)created with a known password`);
       }
       password = recreated.password;
     }

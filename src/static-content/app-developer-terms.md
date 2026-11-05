@@ -2,7 +2,7 @@
 title: Civitai App Developer Terms
 description: Terms for building, publishing and running an app on Civitai
 ---
-Last updated: [GO-LIVE DATE: MM/DD/YYYY, filled in at go-live]
+Last updated: November 10, 2026
 
 These App Developer Terms ("Developer Terms") apply to you if you build, publish or run an app on Civitai ("App"). They are Additional Terms under Section 19.4 of the Civitai Terms of Service ("Terms") and are part of the Terms. If they conflict with the Terms on anything about Apps, these Developer Terms control. Words defined in the Terms have the same meaning here.
 
