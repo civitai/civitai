@@ -2065,6 +2065,10 @@ export async function getListingHiddenByBrowsingLevel(
     floor: opts.floor ?? 'public',
     browsingLevel: allBrowsingLevelsFlag,
   });
+  // `!opts.redCapable` is an INVARIANT GUARD, not a live branch: off a red-capable host the loader
+  // above already drops every r/x row (the site gate is not lifted by `allBrowsingLevelsFlag`),
+  // so a row reaching here is non-mature and `ratingHiddenByBrowsingLevel` would answer null
+  // anyway. Kept so this function can never report "hidden by level" for a site-gated app.
   if (!gated || !opts.redCapable) return null;
   const hidden = ratingHiddenByBrowsingLevel(gated.row.contentRating, opts.viewerBrowsingLevel);
   return hidden ? { contentRating: hidden } : null;

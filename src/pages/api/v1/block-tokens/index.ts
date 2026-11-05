@@ -34,6 +34,7 @@ import {
   effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { ratingHiddenByBrowsingLevel } from '~/server/services/blocks/app-listing-store-gate';
 import {
   resolvePerCallBuzzBudget,
   isAppStorageScope,
@@ -104,10 +105,34 @@ function resolveEffectiveBrowsingLevel(args: {
   maxBrowsingLevel: number;
 }): number {
   const { req, sessionUser, maxBrowsingLevel } = args;
-  const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
-  const viewerBrowsingLevel = getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
-  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerBrowsingLevel);
+  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerOwnBrowsingLevel(req, sessionUser));
 }
+
+/** The viewer's own browsing level for this request (`getServerBrowsingLevel`; PG when absent). */
+function viewerOwnBrowsingLevel(req: NextApiRequest, sessionUser: SessionUser | undefined) {
+  const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
+  return getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
+}
+
+/**
+ * 🔴 An r/x app is minted a token only for a viewer whose browsing level includes that rating —
+ * the store's one rule (`ratingHiddenByBrowsingLevel`), so a direct mint cannot run an app the run
+ * page shows as hidden or a model slot omits. Same 403 shape as the host refusal. Call only after
+ * the host gate; `isMatureContentRating` first so a non-mature app never reaches the rule.
+ */
+function hiddenByViewerBrowsingLevel(
+  contentRating: unknown,
+  req: NextApiRequest,
+  sessionUser: SessionUser | undefined
+): boolean {
+  return (
+    typeof contentRating === 'string' &&
+    isMatureContentRating(contentRating) &&
+    ratingHiddenByBrowsingLevel(contentRating, viewerOwnBrowsingLevel(req, sessionUser)) != null
+  );
+}
+
+const HIDDEN_BY_BROWSING_LEVEL_ERROR = 'This app is hidden by your browsing settings.';
 
 /**
  * POST /api/v1/block-tokens
@@ -1011,6 +1036,13 @@ async function tryPrivateRunMint(args: {
 
   const app = access.block;
 
+  // The viewer's browsing level, as the private-run PAGE applies it (owners and moderators are not
+  // exempt): an r/x app outside it gets no token.
+  if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
+    res.status(403).json({ error: HIDDEN_BY_BROWSING_LEVEL_ERROR });
+    return 'handled';
+  }
+
   // 🔴 NO SOFT-DELETE / BAN RE-READ HERE — `resolvePrivateRunAccess` owns it, against
   // the PRIMARY, and refuses `viewer-ineligible`. This branch used to perform its own
   // copy (the fourth in this file), which is what created the asymmetry review found:
@@ -1682,6 +1714,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     !redCapableHost
   ) {
     res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return;
+  }
+  // …and on .red, only for a viewer whose browsing level includes it (page AND model-slot mints).
+  if (hiddenByViewerBrowsingLevel(appContentRating, req, session?.user)) {
+    res.status(403).json({ error: HIDDEN_BY_BROWSING_LEVEL_ERROR });
     return;
   }
 
