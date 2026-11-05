@@ -4,6 +4,32 @@
 -- the yes/no import runs after.
 -- Apply after 20261209120000_knights_new_order_player_and_link_review.
 
+-- Refuses a database that holds only part of the pre-consolidation chain: every table below is created with IF NOT
+-- EXISTS, so a half-migrated table would be skipped and the indexes on its later columns would fail midway.
+DO $$
+DECLARE
+  final_columns TEXT[][] := ARRAY[
+    ['KnightsQueueItem', 'escalatedAt'], ['KnightsQueueItem', 'audience'], ['KnightsQueueItem', 'voteCount'],
+    ['KnightsVote', 'consequence'], ['KnightsVote', 'noticedAt'], ['KnightsVote', 'blockReason'],
+    ['KnightsPlayer', 'startAtSeen'], ['KnightsPlayer', 'recapPopupOptOut'], ['KnightsNotificationSend', 'kind']
+  ];
+  i INT;
+BEGIN
+  FOR i IN 1 .. array_length(final_columns, 1) LOOP
+    IF to_regclass(format('%I', final_columns[i][1])) IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = final_columns[i][1] AND column_name = final_columns[i][2]
+    ) THEN
+      RAISE EXCEPTION 'Knights: "%" exists without "%"; this database holds part of the old migration chain. Finish that chain or drop the Knights tables first.',
+        final_columns[i][1], final_columns[i][2];
+    END IF;
+  END LOOP;
+  IF to_regclass('"KnightsGoldClearing"') IS NOT NULL OR to_regclass('"KnightsDetectionRun"') IS NOT NULL
+    OR to_regclass('"KnightsTrialAnswer"') IS NOT NULL OR to_regclass('"KnightsTrialRun"') IS NOT NULL THEN
+    RAISE EXCEPTION 'Knights: tables dropped by the old chain still exist; this database holds part of it. Finish that chain or drop the Knights tables first.';
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS "KnightsQuestion" (
   "key" TEXT PRIMARY KEY,
   "version" INTEGER NOT NULL DEFAULT 1,
