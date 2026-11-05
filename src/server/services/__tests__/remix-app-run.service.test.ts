@@ -697,8 +697,13 @@ describe('posting a finished run', () => {
     finish(workflowId, [url], level ? { [url]: level } : {});
     return workflowId;
   }
-  const post = (workflowId: string, over: Partial<Parameters<typeof postRemixResult>[0]> = {}) =>
-    postRemixResult({ workflowId, caller: caller(), ctx: {} as never, ...over });
+  const post = (
+    workflowId: string,
+    over: {
+      caller?: RemixAppCaller;
+      gallery?: Parameters<typeof postRemixResult>[0]['gallery'];
+    } = {}
+  ) => postRemixResult({ workflowId, caller: caller(), ctx: {} as never, ...over });
 
   it("posts the workflow's own outputs, published, once per workflow, and takes the run off the tray", async () => {
     const workflowId = await finishedAnime('nonce-post-1', blob('out'));
@@ -988,7 +993,9 @@ describe('replay', () => {
         { type: 'ask', answer },
       ]);
     const imagesOf = (outcome: Awaited<ReturnType<typeof replayWith>>) =>
-      outcome.status === 'effect' && outcome.effect.type === 'workflow'
+      outcome.status === 'effect' &&
+      outcome.effect.type === 'workflow' &&
+      outcome.effect.request.kind === 'image'
         ? outcome.effect.request.images
         : outcome;
 
