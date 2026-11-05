@@ -86,9 +86,10 @@ type BlockConsentNoticeProps = {
  * viewer sees the full list and decides. It never grants anything by itself. The
  * filled yellow uses `autoContrast`, so its label colour is chosen for the fill.
  *
- * 🔴 WHEN A DISMISSED NOTICE COMES BACK, IT FLASHES ONCE. The host revives it when the
- * app has had a request refused for a permission the viewer can still grant (see
- * `resolveConsentNoticeAfterRefusal`). Because the notice was unmounted while
+ * 🔴 WHEN A DISMISSED NOTICE COMES BACK, IT FLASHES ONCE. The host revives it when a
+ * request that passed through the host was refused for a permission the viewer can
+ * still grant — today a reaction refused as `needs-consent` (see
+ * `resolveConsentNoticeAfterRefusal` for what does and does not count). Because the notice was unmounted while
  * dismissed, it mounts fresh with `highlight`, and the `attention-flash` animation
  * (defined in `tailwind.config.js`) plays once. It sits behind `motion-safe:`, so a
  * viewer who asked for reduced motion sees the notice return without the flash.

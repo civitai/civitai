@@ -1995,15 +1995,24 @@ export function PageBlockHost({
   // A request the app made was refused for `refusedScopes`. Whether that brings a
   // dismissed missing-permissions notice back is decided ONLY by
   // `resolveConsentNoticeAfterRefusal`, shared with IframeHost; this is the wiring.
-  // A functional update, so the message handlers that call it never read a stale
-  // dismissal and do not have to re-subscribe when the viewer dismisses.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
   const reviveConsentNoticeOnRefusal = useCallback(
-    (refusedScopes: unknown) => {
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
       setConsentNotice((current) =>
-        resolveConsentNoticeAfterRefusal(current, { appBlockId, refusedScopes, missingScopes })
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
       );
     },
-    [appBlockId, missingScopes]
+    [appBlockId]
   );
 
   /**
@@ -2134,11 +2143,6 @@ export function PageBlockHost({
         return;
       }
 
-      // The SDK sends REQUEST_CONSENT, naming the scope, when a gated call was refused,
-      // so this is where the host learns of a refusal. A hint naming a scope the viewer
-      // can still grant brings a dismissed notice back; an un-grantable one does not
-      // and keeps the handling below. (Review mode returned above: no notice there.)
-      reviveConsentNoticeOnRefusal(payload?.scopes);
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         openConsentModal(scopesToGrant);
@@ -2224,7 +2228,6 @@ export function PageBlockHost({
     reviewRunForReal,
     viewerSignedIn,
     surface,
-    reviveConsentNoticeOnRefusal,
   ]);
 
   // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected

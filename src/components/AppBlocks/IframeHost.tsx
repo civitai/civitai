@@ -2039,19 +2039,24 @@ export function IframeHost({
   // A request the app made was refused for `refusedScopes`. Whether that brings a
   // dismissed missing-permissions notice back is decided ONLY by
   // `resolveConsentNoticeAfterRefusal`, shared with PageBlockHost; this is the wiring.
-  // A functional update, so the message handlers that call it never read a stale
-  // dismissal and do not have to re-subscribe when the viewer dismisses.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
   const reviveConsentNoticeOnRefusal = useCallback(
-    (refusedScopes: unknown) => {
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
       setConsentNotice((current) =>
         resolveConsentNoticeAfterRefusal(current, {
           appBlockId: install.appBlockId,
           refusedScopes,
-          missingScopes,
+          missingScopes: missingScopesRef.current,
         })
       );
     },
-    [install.appBlockId, missingScopes]
+    [install.appBlockId]
   );
 
   /**
@@ -2107,11 +2112,6 @@ export function IframeHost({
         send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
         return;
       }
-      // The SDK sends REQUEST_CONSENT, naming the scope, when a gated call was refused,
-      // so this is where the host learns of a refusal. A hint naming a scope the viewer
-      // can still grant brings a dismissed notice back; an un-grantable one does not
-      // and keeps the handling below. Only after the `ready` gate, like the modal.
-      if (readGateStatus() === 'ready') reviveConsentNoticeOnRefusal(payload?.scopes);
       const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
       if (scopesToGrant != null) {
         openConsentModal(scopesToGrant);
@@ -2171,7 +2171,6 @@ export function IframeHost({
     missingScopes,
     grantedScopes,
     openConsentModal,
-    reviveConsentNoticeOnRefusal,
     currentUser?.id,
   ]);
 

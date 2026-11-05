@@ -188,6 +188,13 @@ export function dismissConsentNotice(appBlockId: string): ConsentNoticeDismissal
  * 🔴 BRING A DISMISSED NOTICE BACK WHEN A PERMISSION THE VIEWER CAN STILL GRANT
  * BLOCKS SOMETHING THE APP TRIED TO DO. Shared by both hosts.
  *
+ * The hosts call it for the refusals that pass through them and produce no other
+ * prompt: today, a reaction refused as `needs-consent` (`entityReactionRefusedScopes`).
+ * NOT for REQUEST_CONSENT: that already opens the consent modal, so a notice revived
+ * behind it would only come back after the viewer declined. A refused call the app
+ * makes to a REST endpoint directly (tipping, for one) never reaches the host, so it
+ * cannot revive the notice.
+ *
  * A dismissal is "not now". It must not outlive the moment the missing permission
  * starts to matter: once the app has had a request refused for a scope the viewer has
  * not granted, the notice is the one host-owned place that explains why, so it is
@@ -203,9 +210,6 @@ export function dismissConsentNotice(appBlockId: string): ConsentNoticeDismissal
  *     its own handling (the CONSENT_UNAVAILABLE push and toast): bringing back a
  *     notice whose "Allow…" cannot help would be a false offer.
  *
- * `refusedScopes` is `unknown` because one caller passes the block's own
- * REQUEST_CONSENT hint, which is untrusted input. It is only intersected with
- * `missingScopes`, never echoed, so a junk hint can do nothing but fail to match.
  *
  * Returns the SAME object when nothing changes, so a React state updater that calls
  * this does not re-render.
@@ -214,16 +218,13 @@ export function resolveConsentNoticeAfterRefusal(
   current: ConsentNoticeDismissal,
   input: {
     appBlockId: string;
-    refusedScopes: unknown;
+    refusedScopes: readonly string[];
     missingScopes: string[] | undefined;
   }
 ): ConsentNoticeDismissal {
   if (current.dismissedFor !== input.appBlockId) return current;
-  if (!Array.isArray(input.refusedScopes)) return current;
   const missing = new Set(input.missingScopes ?? []);
-  const blocksAGrantableScope = input.refusedScopes.some(
-    (s) => typeof s === 'string' && missing.has(s)
-  );
+  const blocksAGrantableScope = input.refusedScopes.some((s) => missing.has(s));
   if (!blocksAGrantableScope) return current;
   return { dismissedFor: null, revived: true };
 }
