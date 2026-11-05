@@ -16,6 +16,20 @@ export function keepOwnedBadgeIds(ids: number[] | null | undefined, ownedIds: It
   return (ids ?? []).filter((id) => owned.has(id));
 }
 
+/**
+ * The list to save after the user edits the owned picks: their new picks, then every saved id they
+ * don't own right now. Leaderboard and membership badges come and go with the same id, so a hide or
+ * pin set earlier must outlive the badge being away.
+ */
+export function withUnownedBadgeIds(
+  picks: number[],
+  saved: number[] | null | undefined,
+  ownedIds: Iterable<number>
+) {
+  const owned = new Set(ownedIds);
+  return [...picks, ...(saved ?? []).filter((id) => !owned.has(id))];
+}
+
 /** A badge's image URL, or '' when it has none. */
 export function getBadgeImageUrl(badge: { data: unknown }) {
   return (((badge.data ?? {}) as BadgeCosmetic['data']).url ?? '') as string;

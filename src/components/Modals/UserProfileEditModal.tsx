@@ -52,6 +52,7 @@ import {
   dedupeBadgesByImage,
   getBadgeImageUrl,
   keepOwnedBadgeIds,
+  withUnownedBadgeIds,
 } from '~/shared/utils/badge-visibility';
 import * as z from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -451,13 +452,6 @@ export default function UserProfileEditModal() {
       profileBackground !== prevProfileBackgroundId ||
       changedCosmeticId(cardDecoration, prevCardDecoration) !== undefined ||
       leaderboardShowcase !== prevLeaderboardShowcase;
-    // Saving drops badge ids the user no longer owns; the tiles can't unpin them.
-    if (user && profileData.privacySettings)
-      profileData.privacySettings = {
-        ...profileData.privacySettings,
-        highlightedBadgeIds,
-        hiddenBadgeIds,
-      };
     const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
     if (shouldUpdateProfile) mutate({ creatorCardStatsPreferences, ...profileData });
@@ -669,9 +663,17 @@ export default function UserProfileEditModal() {
                   onChange={(nextHighlighted) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,
-                      highlightedBadgeIds: nextHighlighted,
+                      highlightedBadgeIds: withUnownedBadgeIds(
+                        nextHighlighted,
+                        privacySettings?.highlightedBadgeIds,
+                        ownedBadgeIds
+                      ),
                       // A pinned badge can't also be hidden.
-                      hiddenBadgeIds: hiddenBadgeIds.filter((id) => !nextHighlighted.includes(id)),
+                      hiddenBadgeIds: withUnownedBadgeIds(
+                        hiddenBadgeIds.filter((id) => !nextHighlighted.includes(id)),
+                        privacySettings?.hiddenBadgeIds,
+                        ownedBadgeIds
+                      ),
                     })
                   }
                 />
@@ -688,10 +690,16 @@ export default function UserProfileEditModal() {
                   onChange={(nextHidden) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,
-                      hiddenBadgeIds: nextHidden,
+                      hiddenBadgeIds: withUnownedBadgeIds(
+                        nextHidden,
+                        privacySettings?.hiddenBadgeIds,
+                        ownedBadgeIds
+                      ),
                       // Hiding a badge unpins it.
-                      highlightedBadgeIds: highlightedBadgeIds.filter(
-                        (id) => !nextHidden.includes(id)
+                      highlightedBadgeIds: withUnownedBadgeIds(
+                        highlightedBadgeIds.filter((id) => !nextHidden.includes(id)),
+                        privacySettings?.highlightedBadgeIds,
+                        ownedBadgeIds
                       ),
                     })
                   }

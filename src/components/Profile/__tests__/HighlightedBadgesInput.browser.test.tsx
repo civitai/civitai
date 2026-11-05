@@ -15,13 +15,12 @@ const badges = [
 
 describe('HighlightedBadgesInput', () => {
   test('numbers pins consecutively when a saved id is no longer owned', async () => {
-    // 99 is saved between two owned badges but has no tile.
+    // 99 is saved between two owned badges but has no tile. Pick order differs from tile order.
     await renderWithProviders(
-      <HighlightedBadgesInput badges={badges} value={[1, 99, 2, 3]} onChange={vi.fn()} />
+      <HighlightedBadgesInput badges={badges} value={[3, 99, 1, 2]} onChange={vi.fn()} />
     );
-    await expect.element(page.getByText('1', { exact: true })).toBeVisible();
-    await expect.element(page.getByText('2', { exact: true })).toBeVisible();
-    await expect.element(page.getByText('3', { exact: true })).toBeVisible();
-    await expect.element(page.getByText('4', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Three' })).toHaveTextContent('1');
+    await expect.element(page.getByRole('button', { name: 'One' })).toHaveTextContent('2');
+    await expect.element(page.getByRole('button', { name: 'Two' })).toHaveTextContent('3');
   });
 });

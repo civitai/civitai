@@ -51,6 +51,7 @@ export function HighlightedBadgesInput({
           <Tooltip key={badge.id} label={badge.name ?? 'Badge'} withArrow>
             <Box
               role="button"
+              aria-label={badge.name ?? 'Badge'}
               tabIndex={0}
               onClick={() => toggle(badge.id)}
               onKeyDown={(e: KeyboardEvent) => {
