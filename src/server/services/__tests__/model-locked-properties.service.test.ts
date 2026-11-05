@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as HoldVerdict from '~/server/services/text-scan/actions/hold-restricted-verdict';
 
 // Unit tests for upsertModel's lockedProperties enforcement — locks are read from the
 // stored row, never from the client payload. model.service.ts has a very large import
@@ -101,6 +102,16 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
 }));
+const { mockHoldVerdict } = vi.hoisted(() => ({
+  mockHoldVerdict: vi.fn(async (..._args: unknown[]) => true),
+}));
+vi.mock('~/server/services/text-scan/actions/hold-restricted-verdict', async (importOriginal) => {
+  const actual = await importOriginal<typeof HoldVerdict>();
+  mockHoldVerdict.mockImplementation((...args) =>
+    actual.holdRestrictedVerdict(...(args as Parameters<typeof actual.holdRestrictedVerdict>))
+  );
+  return { ...actual, holdRestrictedVerdict: mockHoldVerdict };
+});
 
 import {
   MINOR_LOCKED_PROPERTIES,
@@ -514,6 +525,59 @@ describe('upsertModel — profanity lock against a lock that landed after the re
     expect(data).not.toHaveProperty('nsfw');
     expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
     expect(data.meta).not.toHaveProperty('systemNsfwLock');
+  });
+});
+
+// A Private model stays SFW until it leaves Private: the profanity detection waits as a lead.
+describe('upsertModel — profanity on a Private model', () => {
+  // Its own object, so a hold written outside the save's transaction does not pass for one inside it.
+  const tx = new Proxy(mockDbWrite, {});
+  beforeEach(() => {
+    mockDbWrite.$transaction.mockImplementation((async (fn: (t: typeof tx) => unknown) =>
+      fn(tx)) as never);
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+  });
+  afterEach(() => {
+    mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+      typeof arg === 'function' ? arg(mockDbWrite) : Promise.all(arg as unknown[])) as never);
+  });
+
+  it('keeps the model SFW and holds the detection as a lead, in the transaction', async () => {
+    mockStored({ availability: 'Private' } as Partial<typeof storedModel>);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    const data = updateData();
+    expect(data.nsfw).toBeUndefined();
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(data.meta).not.toHaveProperty('systemNsfwLock');
+    expect(mockHoldVerdict).toHaveBeenCalledWith(tx, MODEL_ID, 'profanity-filter', {
+      privateOnly: true,
+    });
+  });
+
+  it('drops the rating and holds the lead when the model turned Private after the read', async () => {
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...storedModel })
+      .mockResolvedValue({ ...storedModel, availability: 'Private' });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().nsfw).toBeUndefined();
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+    expect(mockHoldVerdict).toHaveBeenCalledWith(tx, MODEL_ID, 'profanity-filter', {
+      privateOnly: true,
+    });
+  });
+
+  it('holds no lead on a public model, which takes the rating', async () => {
+    mockStored({ availability: 'Public' } as Partial<typeof storedModel>);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().nsfw).toBe(true);
+    expect(mockHoldVerdict).not.toHaveBeenCalled();
   });
 });
 

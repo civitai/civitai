@@ -164,6 +164,7 @@ export const RESTORE_CANNOT_PROMOTE_KEY = 'restoreCannotPromote';
  * Meta of a model that is Private after a moderator's `cannotPromote` decision: the flag stays forced
  * on while private, and the decision is kept in the restore marker for `publishPrivateModel`.
  * `banned: true` records it; `false` drops the marker so publish makes the model promotable.
+ * `toggleCannotPromote` writes the same rule in SQL, to toggle in one statement.
  */
 export function withPrivateCannotPromote<T extends object>(meta: T, banned: boolean): T {
   const { [RESTORE_CANNOT_PROMOTE_KEY]: _marker, ...rest } = meta as Record<string, unknown>;
