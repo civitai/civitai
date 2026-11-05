@@ -9,6 +9,7 @@ import {
   MODEL_MODERATION_SCAN_LABELS,
   resolveBackfillCursor,
 } from '~/server/services/model-moderation.adapter';
+import { constants } from '~/server/common/constants';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as FliptClient from '~/server/flipt/client';
@@ -136,7 +137,13 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(flip).toBeDefined();
     expect(flip?.sql).toContain('array_append');
     expect(flip?.sql).toContain("'systemNsfwLock'");
-    expect(flip?.values).toEqual(expect.arrayContaining(['xguard-text-moderation', 1]));
+    // source, the system actor on the applied record, source again, then the model id.
+    expect(flip?.values).toEqual([
+      'xguard-text-moderation',
+      constants.system.user.id,
+      'xguard-text-moderation',
+      1,
+    ]);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
