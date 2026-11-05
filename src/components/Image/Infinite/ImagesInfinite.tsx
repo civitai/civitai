@@ -261,6 +261,7 @@ export function ImagesInfiniteContent({
                 flagOn: features.masonryLandscapeSpan,
                 customCard: !!MasonryItem,
               })}
+              hasMore={hasNextPage}
             />
           </ImagesProvider>
           {isRetrying ? (

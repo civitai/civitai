@@ -34,12 +34,18 @@ export type MasonrySpanOptions = {
   minRatio: number;
   /** Cap on a two-wide item's total height (footer included). */
   maxHeight: number;
+  /** More pages are coming: hold a wide item back until its lookahead window is full. */
+  holdTail?: boolean;
 };
 
 /** 16:9 or wider (>= 1.75, so 1344x768 counts). */
 export const MASONRY_SPAN_MIN_RATIO = 1.75;
 /** A two-wide item needs three columns: two to span, one to keep a normal feed beside it. */
 const SPAN_MIN_COLUMNS = 3;
+/** How many items after a wide one are candidates to fill the blank room beside it. */
+export const MASONRY_FILL_LOOKAHEAD = 8;
+/** Blank room this small stays a spacer rather than being filled. */
+const MIN_FILL_ROOM = 48;
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -57,6 +63,7 @@ export function useMasonryColumns<TData>(
   const createAdFeed = useCreateAdFeed();
   const spanMinRatio = span?.minRatio;
   const spanMaxHeight = span?.maxHeight;
+  const holdTail = span?.holdTail ?? false;
 
   return useMemo(() => {
     // 0 = not laid out yet. Anything else non-positive/fractional is a bad measurement; render
@@ -128,25 +135,34 @@ export function useMasonryColumns<TData>(
     );
     const nextStart = (c: number) => (counts[c] ? ends[c] + MASONRY_GAP : 0);
 
-    for (const item of feed) {
-      let spans = false;
-      if (item.type === 'data') {
-        const { width, height } = imageDimensions(item.data);
-        spans = height > 0 && width / height >= spanMinRatio;
-      }
+    const spansWide = (item: AdFeedItem<TData>) => {
+      if (item.type !== 'data') return false;
+      const { width, height } = imageDimensions(item.data);
+      return height > 0 && width / height >= spanMinRatio;
+    };
+    const placeSingle = (item: AdFeedItem<TData>, column: number, height: number) => {
+      columnItems[column].push({ height, data: item });
+      ends[column] = nextStart(column) + height;
+      counts[column]++;
+    };
+    const placed = new Set<number>();
 
-      if (!spans) {
+    for (let index = 0; index < feed.length; index++) {
+      if (placed.has(index)) continue;
+      const item = feed[index];
+
+      if (!spansWide(item)) {
         const height = itemHeight(item, columnWidth, maxItemHeight);
         let shortest = 0;
         for (let j = 1; j < columnCount; ++j) {
           if (nextStart(j) < nextStart(shortest)) shortest = j;
         }
-        const start = nextStart(shortest);
-        columnItems[shortest].push({ height, data: item });
-        ends[shortest] = start + height;
-        counts[shortest]++;
+        placeSingle(item, shortest, height);
         continue;
       }
+
+      // Its lookahead must be fully loaded, or a later page could pull a filler in and reflow it.
+      if (holdTail && index + MASONRY_FILL_LOOKAHEAD >= feed.length) break;
 
       // The adjacent pair that costs least: how far down the item begins plus the blank room left
       // beside it in the shorter column. Ties go to the left.
@@ -165,6 +181,24 @@ export function useMasonryColumns<TData>(
           pairStart = start;
           pairCost = cost;
         }
+      }
+
+      // Pull later single-column items that fit into the shorter column's blank room.
+      const shorter = nextStart(pair) <= nextStart(pair + 1) ? pair : pair + 1;
+      const target = Math.max(nextStart(pair), nextStart(pair + 1));
+      const lookaheadEnd = Math.min(feed.length, index + 1 + MASONRY_FILL_LOOKAHEAD);
+      for (let k = index + 1; k < lookaheadEnd; k++) {
+        if (target - nextStart(shorter) <= MIN_FILL_ROOM) break;
+        const candidate = feed[k];
+        if (placed.has(k) || candidate.type !== 'data' || spansWide(candidate)) continue;
+        const candidateHeight = itemHeight(candidate, columnWidth, maxItemHeight);
+        if (nextStart(shorter) + candidateHeight + MASONRY_GAP > target) continue;
+        placeSingle(candidate, shorter, candidateHeight);
+        placed.add(k);
+      }
+      pairStart = Math.max(nextStart(pair), nextStart(pair + 1));
+      if (nextStart(pair) < pairStart && pairStart - nextStart(pair) < MASONRY_GAP) {
+        pairStart = nextStart(pair) + MASONRY_GAP;
       }
 
       const height = itemHeight(item, spanWidth, spanMaxHeight);
@@ -193,6 +227,7 @@ export function useMasonryColumns<TData>(
     adsReallyAreEnabled,
     spanMinRatio,
     spanMaxHeight,
+    holdTail,
   ]);
 }
 
