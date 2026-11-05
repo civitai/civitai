@@ -358,7 +358,15 @@ export function shouldMarkImageMilestonesRead(
 
 /** Clears the viewer's milestone notifications for an image they own when they view it. */
 export function useMarkImageMilestonesReadOnView(ownImageId: number | undefined) {
-  const { milestone } = useQueryNotificationsCount();
+  const currentUser = useCurrentUser();
+  // The bell's own query and options, read directly: `useQueryNotificationsCount` also mounts the
+  // announcement queries, which the image viewer has no use for.
+  const { data: counts } = trpc.user.checkNotifications.useQuery(undefined, {
+    enabled: !!currentUser,
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
+  const milestone = counts?.milestone ?? 0;
   const queryUtils = trpc.useUtils();
   const queryClient = useQueryClient();
   const { mutate } = trpc.notification.markImageMilestonesRead.useMutation({
