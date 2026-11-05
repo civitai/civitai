@@ -12,6 +12,7 @@
     submit,
     floating = true,
     milestone = null,
+    gold = 0,
   }: {
     level: number;
     /** XP still needed for the next level, when it is known for this level. */
@@ -22,6 +23,7 @@
     /** Over the top of the image stage; otherwise it sits in the page flow. */
     floating?: boolean;
     milestone?: string | null;
+    gold?: number;
   } = $props();
 </script>
 
@@ -30,6 +32,7 @@
   <div class="body">
     <p class="ov-eyebrow">{milestone ? 'Milestone' : 'Level up'}</p>
     <p class="heading">{milestone ?? `You have reached level ${level}`}</p>
+    {#if gold > 0}<p class="gold">+{count(gold)} gold</p>{/if}
     {#if xpToNext !== null}<p class="sub">{count(xpToNext)} XP to level {level + 1}</p>{/if}
     {#if message}<p class="notice" role="alert">{message}</p>{/if}
   </div>
@@ -87,6 +90,11 @@
     margin-top: 2px;
     color: var(--io-parchment-muted);
     font: 400 16px/1.3 var(--io-font-body);
+  }
+  .gold {
+    margin-top: 2px;
+    color: var(--io-gold);
+    font: 600 16px/1.3 var(--io-font-body);
   }
   .dismiss {
     min-height: 0;

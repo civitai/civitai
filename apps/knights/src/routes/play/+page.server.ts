@@ -28,6 +28,7 @@ import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
 import { crossedMilestone } from '$lib/server/apprenticeship/standing';
+import { acolyteLevelGoldSince } from '$lib/server/apprenticeship/level-gold';
 import {
   acknowledgeCheckpoint,
   answerApprentice,
@@ -68,7 +69,8 @@ type RankPerks = {
   /** The perks of the rank the player held before, for the rank-up's "what changed". */
   previous?: Perks;
 };
-type Notice = ProgressNotice & RankPerks & { milestone?: string; milestoneLevel?: number };
+type Notice = ProgressNotice &
+  RankPerks & { milestone?: string; milestoneLevel?: number; levelGold?: number };
 
 const perksOf = (rank: string): Perks | undefined =>
   isRank(rank)
@@ -102,7 +104,10 @@ async function acolyteMilestone(
 ): Promise<Notice | null> {
   if (progress?.kind !== 'level') return progress;
   const milestone = crossedMilestone(progress.from, progress.level);
-  if (milestone) return { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level };
+  if (milestone) {
+    const levelGold = await acolyteLevelGoldSince(db, userId, progress.from, progress.level);
+    return { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level, levelGold };
+  }
   await dismissProgress(seenStore, userId, status);
   return null;
 }

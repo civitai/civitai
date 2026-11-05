@@ -126,8 +126,9 @@
           </li>
           <li>
             After every {facts.apprenticeship.checkpointEvery} answers a short recap shows how you did and
-            the ones you missed, with the right answers. An Acolyte's answers never decide anything and
-            earn no gold.
+            the ones you missed, with the right answers. An Acolyte's answers never decide anything. Each
+            level you reach on the way, up to level {facts.apprenticeship.knightLevel}, pays
+            {facts.apprenticeship.levelGold} gold, once, even if you later restart your career.
           </li>
         </ul>
       </div>

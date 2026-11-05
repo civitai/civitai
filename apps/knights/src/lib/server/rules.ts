@@ -32,6 +32,7 @@ export function rulesFacts(yesNoJudges: number) {
       accuracyPercent: Math.round(APPRENTICE.accuracyBar * 100),
       window: APPRENTICE.window,
       checkpointEvery: APPRENTICE.checkpointEvery,
+      levelGold: PROGRESSION.acolyteLevelGold,
     },
     ranks: rankTable().map((r) => ({
       rank: r.rank,

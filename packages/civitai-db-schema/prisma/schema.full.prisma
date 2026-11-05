@@ -8224,6 +8224,16 @@ model KnightsApprenticeAnswer {
   @@index([playerId, id])
 }
 
+/// One row per paid Acolyte level; kept across career restarts so a level never pays twice. `gold` is the amount paid at the time.
+model KnightsAcolyteLevelGold {
+  playerId  Int
+  level     Int
+  gold      Int
+  createdAt DateTime @default(now())
+
+  @@id([playerId, level])
+}
+
 /// Where a harvest job stopped reading `ModActivity`.
 model KnightsHarvestCursor {
   name           String   @id

@@ -1,6 +1,7 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { getLevelProgression } from '../progression/levels';
+import { grantAcolyteLevelGold } from './level-gold';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REFERENCE_POOL, REFERENCE_SOURCE, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
@@ -82,7 +83,7 @@ export type AnswerResult =
       status: 'rejected';
       reason: 'no-player' | 'not-acolyte' | 'checkpoint-pending' | 'not-current' | 'bad-answer';
     }
-  | { status: 'recorded'; correct: boolean; xp: number; promoted: boolean };
+  | { status: 'recorded'; correct: boolean; xp: number; gold: number; promoted: boolean };
 
 /** Rows of `KnightsApprenticeAnswer` for one player since their last career reset. */
 const answersOf = (db: Executor, playerId: number) =>
@@ -388,8 +389,15 @@ export async function answerApprentice(
     }
 
     const exp = player.exp + xp;
+    let gold = 0;
     if (xp > 0) {
       await trx.updateTable('NewOrderPlayer').set({ exp }).where('userId', '=', userId).execute();
+      gold = await grantAcolyteLevelGold(trx, {
+        playerId: userId,
+        before: getLevelProgression(player.exp).level,
+        after: getLevelProgression(exp).level,
+        now,
+      });
     }
     const after = await progressOf(trx, userId);
     const promoted = earnsKnighthood({
@@ -398,7 +406,7 @@ export async function answerApprentice(
       graded: after.graded,
     });
     if (promoted) await promoteToKnight(trx, userId);
-    return { status: 'recorded', correct, xp, promoted };
+    return { status: 'recorded', correct, xp, gold, promoted };
   });
 
   if (result.status === 'recorded') {
