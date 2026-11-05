@@ -220,14 +220,19 @@ function run(
   // Object.getPrototypeOf are captured BEFORE any hook code runs, and the InternalError global
   // is then removed, so hook code cannot construct one: `oom` is decided by the error's identity,
   // not by a name and message a hook could copy (see classifyVmError).
-  const objectCtor = keep(ctx.getProp(ctx.global, 'Object'));
-  const engine: EngineIntrinsics = {
-    objectCtor,
-    getPrototypeOf: keep(ctx.getProp(objectCtor, 'getPrototypeOf')),
-    internalErrorProto: keep(
-      ctx.getProp(keep(ctx.getProp(ctx.global, 'InternalError')), 'prototype')
-    ),
-  };
+  // The check is a closure created here, over the intrinsics as they are before the hook runs
+  // (this WASM build has no host-side identity comparison: `ctx.eq` throws "does not expose
+  // equality").
+  const checker = ctx.evalCode(
+    '(() => { const P = InternalError.prototype; const g = Object.getPrototypeOf; return (e) => e !== null && typeof e === "object" && g(e) === P; })()',
+    'engine.js',
+    { type: 'global', strict: true }
+  );
+  if (checker.error) {
+    keep(checker.error);
+    throw new Error('sandbox setup failed');
+  }
+  const engine: EngineIntrinsics = { isInternalError: keep(checker.value) };
 
   // quickjs-ng's base objects include non-ES globals: `performance` (a high-resolution clock, a
   // timing side channel), `queueMicrotask` (a scheduler) and `InternalError` (above). None is
@@ -309,9 +314,8 @@ function run(
 }
 
 type EngineIntrinsics = {
-  objectCtor: QuickJSHandle;
-  getPrototypeOf: QuickJSHandle;
-  internalErrorProto: QuickJSHandle;
+  /** In-VM `(e) => Object.getPrototypeOf(e) === InternalError.prototype`, captured pre-hook. */
+  isInternalError: QuickJSHandle;
 };
 
 /** True only for an error whose prototype IS the engine's InternalError.prototype. */
@@ -320,14 +324,14 @@ function isEngineInternalError(
   err: QuickJSHandle,
   engine: EngineIntrinsics
 ): boolean {
-  const proto = ctx.callFunction(engine.getPrototypeOf, engine.objectCtor, err);
-  if (proto.error) {
-    proto.error.dispose();
+  const r = ctx.callFunction(engine.isInternalError, ctx.undefined, err);
+  if (r.error) {
+    r.error.dispose();
     return false;
   }
-  const same = ctx.eq(proto.value, engine.internalErrorProto);
-  proto.value.dispose();
-  return same;
+  const yes = ctx.typeof(r.value) === 'boolean' && ctx.dump(r.value) === true;
+  r.value.dispose();
+  return yes;
 }
 
 /**
