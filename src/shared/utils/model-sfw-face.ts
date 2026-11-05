@@ -21,6 +21,11 @@ export type ModelSfwFaceSource = {
   sfwDescription?: string | null;
 };
 
+/** A rating .com shows as is: rated, with only PG/PG-13 bits. What a .com cover must be. */
+export function isComSafeLevel(nsfwLevel: number) {
+  return nsfwLevel !== 0 && (nsfwLevel & sfwBrowsingLevelsFlag) === nsfwLevel;
+}
+
 /** An empty input or an empty RTE document is stored as NULL, never as a blank face. */
 export function normalizeSfwFaceText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();

@@ -170,9 +170,7 @@ describe('draftSfwFace', () => {
   });
 });
 
-// Decision (Justin, hq:creator_studio_show_cf07): a model whose listing is built around sexual
-// content cannot get a civitai.com face, whether drafted or typed by hand, and a check that cannot
-// run refuses rather than lets it through.
+// Fails closed: a check that cannot run refuses.
 describe('the .com face intent gate', () => {
   beforeEach(() => {
     mockPreviewTextScanNsfw.mockReset().mockResolvedValue(rated(NsfwLevel.PG));

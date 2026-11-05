@@ -53,7 +53,7 @@ const stored = {
 let row: typeof stored = stored;
 let levelAfterSave = 0;
 
-async function call(body: unknown) {
+async function call(body: unknown, contentType = 'application/json') {
   let statusCode = 0;
   let payload: unknown;
   const res = {
@@ -70,7 +70,7 @@ async function call(body: unknown) {
     {
       method: 'POST',
       query: {},
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': contentType },
       body,
     } as unknown as NextApiRequest,
     res as unknown as NextApiResponse
@@ -84,7 +84,6 @@ describe('POST /api/v1/models/com-face', () => {
     callerContexts.length = 0;
     row = stored;
     levelAfterSave = 2 | 8;
-    // The handler reads the model row, then (after a save) only its level.
     dbMock.dbWrite.model.findUnique.mockImplementation((async (args: {
       select: Record<string, unknown>;
     }) => (args.select.userId ? row : { nsfwLevel: levelAfterSave })) as never);
@@ -96,8 +95,6 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  // Decision (Justin, hq:creator_studio_show_cf07): a model a moderator locked as mature is
-  // skipped, not drafted; its owner disputes the lock instead.
   it('refuses a model locked as mature, for draft and save', async () => {
     row = { ...stored, lockedProperties: ['nsfw'] };
     const draft = await call({ action: 'draft', modelId: 11 });
@@ -133,9 +130,7 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  // Decision: the save goes through the editor's own procedure (account gates, token scope, audit),
-  // and passes every flag the upsert schema would default back as stored: an omitted `minor` or
-  // `sfwOnly` parses as false and would clear it.
+  // An omitted `minor` or `sfwOnly` parses as false in the upsert schema and would clear it.
   it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
     row = { ...stored, minor: true, nsfw: false };
     const res = await call({
@@ -166,6 +161,16 @@ describe('POST /api/v1/models/com-face', () => {
     levelAfterSave = 8;
     const res = await call({ action: 'save', modelId: 11, sfwName: 'Safe', sfwCoverImageId: 2 });
     expect(res.body).toEqual({ listedOnCom: false });
+  });
+
+  it('refuses a form post, which a cross-site page can send without a preflight', async () => {
+    const res = await call(
+      { action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 },
+      'application/x-www-form-urlencoded'
+    );
+    expect(res.statusCode).toBe(415);
+    expect(caller.model.upsert).not.toHaveBeenCalled();
+    expect(callerContexts).toHaveLength(0);
   });
 
   it('accepts a JSON server-to-server call that has no Origin', async () => {

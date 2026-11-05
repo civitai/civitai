@@ -170,9 +170,14 @@ export async function assertSfwFaceSafe({
   modelId?: number;
   userId: number;
 }) {
-  await assertComFaceAllowed({ name, description, modelId, userId });
-  const verdicts = await checkSfwFace({ sfwName, sfwDescription, userId });
-  const entries = Object.entries(verdicts) as [SfwFaceCheckField, SfwFaceVerdict][];
+  // Both checks wait on the orchestrator, so they run together; the listing refusal still wins.
+  const [allowed, verdicts] = await Promise.allSettled([
+    assertComFaceAllowed({ name, description, modelId, userId }),
+    checkSfwFace({ sfwName, sfwDescription, userId }),
+  ]);
+  if (allowed.status === 'rejected') throw allowed.reason;
+  if (verdicts.status === 'rejected') throw verdicts.reason;
+  const entries = Object.entries(verdicts.value) as [SfwFaceCheckField, SfwFaceVerdict][];
 
   const flagged = entries.filter(([, verdict]) => verdict.status === 'flagged');
   if (flagged.length)

@@ -7,6 +7,7 @@ import { createCallerFactory } from '~/server/trpc';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import type { SessionUser } from '~/types/session';
 
 const createCaller = createCallerFactory(appRouter);
@@ -22,9 +23,6 @@ const schema = z.discriminatedUnion('action', [
   }),
 ]);
 
-const isSafeImage = (nsfwLevel: number) =>
-  nsfwLevel !== 0 && (nsfwLevel & sfwBrowsingLevelsFlag) === nsfwLevel;
-
 /**
  * Creator Studio's bulk "make it safe": the model editor's "Draft a civitai.com version" flow for one
  * model at a time, through the editor's own procedures so their rate limit, account gates and
@@ -32,6 +30,8 @@ const isSafeImage = (nsfwLevel: number) =>
  */
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
+    // Only Creator Studio's JSON call: a cross-site form post cannot send this content type.
+    if (!isJsonRequest(req)) return res.status(415).json({ error: 'Send this request as JSON' });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid request body' });
     const input = parsed.data;
@@ -70,16 +70,13 @@ export default AuthedEndpoint(
 
     try {
       const ctx = await createContext({ req, res });
-      // Creator Studio calls server to server, with no Origin or Referer. A JSON body is what rules
-      // out a cross-site form post, the case the origin check exists for.
-      const caller = createCaller({
-        ...ctx,
-        acceptableOrigin: ctx.acceptableOrigin || isJsonRequest(req),
-      });
+      // Creator Studio calls server to server, with no Origin or Referer; the JSON check above is
+      // what rules out the cross-site form post the origin check exists for.
+      const caller = createCaller({ ...ctx, acceptableOrigin: true });
 
       if (input.action === 'draft') {
         const candidates = await caller.model.getCoverCandidates({ id: model.id });
-        const cover = candidates.find((image) => isSafeImage(image.nsfwLevel));
+        const cover = candidates.find((image) => isComSafeLevel(image.nsfwLevel));
         if (!cover)
           return res.status(422).json({
             error:
