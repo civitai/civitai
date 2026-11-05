@@ -439,6 +439,67 @@ describe('upsertModel — system nsfw lock marker', () => {
   });
 });
 
+describe('upsertModel — restricted nsfw verdict lead', () => {
+  const lead = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'minor' };
+  const ruling = { ruling: 'keep', at: '2026-11-04T01:00:00.000Z', by: MODERATOR_ID };
+
+  // Only the lead's ruling clears it, so a moderator's model form is held to it as well.
+  it.each([false, true])(
+    'keeps the stored lead and rulings when the client sends them cleared (moderator %s)',
+    async (isModerator) => {
+      mockStored({
+        minor: true,
+        sfwOnly: true,
+        meta: {
+          restrictedNsfwVerdict: lead,
+          restrictedNsfwVerdictRulings: [ruling],
+          restrictedNsfwVerdictDormant: lead,
+        },
+      });
+
+      await upsert({
+        id: MODEL_ID,
+        userId: isModerator ? MODERATOR_ID : OWNER_ID,
+        isModerator,
+        name: 'Cleaned',
+        meta: {
+          restrictedNsfwVerdict: null,
+          restrictedNsfwVerdictRulings: [],
+          restrictedNsfwVerdictDormant: null,
+        },
+      } as never);
+
+      expect(updateData().meta).toEqual(
+        expect.objectContaining({
+          restrictedNsfwVerdict: lead,
+          restrictedNsfwVerdictRulings: [ruling],
+          restrictedNsfwVerdictDormant: lead,
+        })
+      );
+    }
+  );
+
+  it.each([false, true])('ignores a lead the client sends (moderator %s)', async (isModerator) => {
+    mockStored({ minor: true, sfwOnly: true, meta: null });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: isModerator ? MODERATOR_ID : OWNER_ID,
+      isModerator,
+      name: 'Cleaned',
+      meta: {
+        restrictedNsfwVerdict: lead,
+        restrictedNsfwVerdictRulings: [ruling],
+        restrictedNsfwVerdictDormant: lead,
+      },
+    } as never);
+
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdict');
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictDormant');
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictRulings');
+  });
+});
+
 describe('upsertModel — profanity lock against a lock that landed after the read', () => {
   it("neither rewrites the lock nor marks it the system's", async () => {
     mockDbWrite.model.findUnique
@@ -958,6 +1019,82 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(updateData().meta).toEqual(
       expect.objectContaining({ ownerFlagOverride: expect.objectContaining({ flags: ['poi'] }) })
     );
+  });
+
+  describe("over the scan's nsfw lock", () => {
+    const scanLock = { source: 'text-scan', at: '2026-11-01T00:00:00.000Z' };
+
+    it.each([
+      ['minor', { minor: true }, ['nsfw', 'minor', 'sfwOnly']],
+      ['poi', { poi: true, minor: false }, ['nsfw', 'poi', 'sfwOnly']],
+    ] as const)(
+      'holds the scan verdict as a %s lead and leaves the rest as the flag sets it',
+      async (restriction, flag, locks) => {
+        mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: scanLock } });
+
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, ...flag, sfwOnly: false, nsfw: false });
+
+        expect(updateData()).toEqual(
+          expect.objectContaining({ ...flag, nsfw: false, sfwOnly: true, lockedProperties: locks })
+        );
+        expect(updateData().meta).toEqual(
+          expect.objectContaining({
+            systemNsfwLock: scanLock,
+            ownerFlagOverride: expect.objectContaining({ flags: [restriction] }),
+            restrictedNsfwVerdict: { source: 'text-scan', at: scanLock.at, restriction },
+          })
+        );
+        // In the save itself, not a write of its own.
+        expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it("writes no lead over a moderator's lock (control)", async () => {
+      mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: null });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
+      expect(updateData().meta).toEqual(
+        expect.objectContaining({ ownerFlagOverride: expect.anything() })
+      );
+      expect(updateData().meta).not.toHaveProperty('restrictedNsfwVerdict');
+    });
+
+    it('keeps a lead already waiting', async () => {
+      const waiting = {
+        source: 'text-scan',
+        at: '2026-10-01T00:00:00.000Z',
+        restriction: 'sfwOnly',
+      };
+      mockStored({
+        nsfw: true,
+        lockedProperties: ['nsfw'],
+        meta: { systemNsfwLock: scanLock, restrictedNsfwVerdict: waiting },
+      });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
+      expect((updateData().meta as Record<string, unknown>).restrictedNsfwVerdict).toEqual(waiting);
+    });
+
+    it('takes no lead the owner sends, and the owner cannot strip the one it writes', async () => {
+      mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: scanLock } });
+      await upsert({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        minor: true,
+        sfwOnly: false,
+        nsfw: false,
+        meta: {
+          restrictedNsfwVerdict: {
+            source: 'owner',
+            at: '2000-01-01T00:00:00.000Z',
+            restriction: 'poi',
+          },
+        },
+      } as never);
+      expect((updateData().meta as Record<string, unknown>).restrictedNsfwVerdict).toEqual({
+        source: 'text-scan',
+        at: scanLock.at,
+        restriction: 'minor',
+      });
+    });
   });
 
   // An automated revert of the later flag must know the owner declared it too.

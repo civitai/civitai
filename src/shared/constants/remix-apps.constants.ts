@@ -23,23 +23,13 @@ const editEngine = (tier: RemixTier): RemixAppEngine => ({
   versionId: REMIX_ENGINES.edit[tier].modelVersionId,
 });
 
-const DEFAULT_ENGINE: RemixAppDefinition['engine'] = {
+export const DEFAULT_ENGINE: RemixAppDefinition['engine'] = {
   safe: editEngine('safe'),
   mature: editEngine('mature'),
 };
 
-/** The P1 launch list. */
+/** One-shot apps not yet on the remix app runtime (`~/shared/remix-apps/system-apps`). */
 export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
-  {
-    slug: 'anime-it',
-    name: 'Anime it',
-    icon: 'sparkles',
-    output: 'image',
-    engine: DEFAULT_ENGINE,
-    prompt: 'Redraw this image as a high-quality anime illustration, keeping the composition.',
-    params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
-  },
   {
     slug: 'make-it-real',
     name: 'Make it real',

@@ -510,12 +510,12 @@ describe('comment v3 reverse copy', () => {
     expect(await count('FROM "CommentV2" WHERE id = 90')).toBe(0);
   });
   // The old ToS restore skips only marked rows: unmarked, it would republish the author's removal.
-  it('an author removal a hold kept goes back marked, as a new row and on an existing one', async () => {
+  it('carries removedByAuthor back to the old tables, as a new row and on an existing one', async () => {
     await db.pg.exec(`
       INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 16);
       INSERT INTO "Thread"("imageId") VALUES (16);
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "removedByAuthor", "createdAt")
-        VALUES (95, 'image', 16, 5, 'kept for a hold', true, true, '2025-02-01');
+        VALUES (95, 'image', 16, 5, 'marked row', true, true, '2025-02-01');
     `);
     for (let pass = 0; pass < 2; pass++) await reverseComments(db.pg, ALL, SCOPE);
     const marked = () =>

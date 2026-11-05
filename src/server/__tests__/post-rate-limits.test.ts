@@ -6,8 +6,8 @@ import type { SessionUser } from '~/types/session';
  * outcome depends on how the middleware picks among matching rules (highest limit
  * per period), not on the rule list alone.
  *
- * The comparison is `attempts > limit`, so a cap of N admits a caller holding N
- * prior attempts and refuses one holding N + 1. Each case asserts both sides.
+ * A cap of N admits exactly N: a caller holding N - 1 prior attempts makes the Nth
+ * call, one holding N is refused. Each case asserts both sides.
  */
 
 const { capturedHandler } = vi.hoisted(() => ({
@@ -47,6 +47,7 @@ vi.mock('~/env/client', () => ({
   },
 }));
 
+import { CacheTTL } from '~/server/common/constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   getDailyPostLimit,
@@ -54,6 +55,7 @@ import {
   postRateLimits,
 } from '~/server/schema/post.schema';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 const mockHGet = redisMock.redis.packed.hGet;
 
@@ -95,16 +97,16 @@ async function attemptWith(sessionUser: SessionUser, count: number, ageMs: numbe
   return next;
 }
 
-/** Holding `limit` attempts from 2h ago passes; one more is refused with `message`. */
+/** The `limit`th call passes; the next one is refused with `message`. */
 async function expectCap(
   sessionUser: SessionUser,
   limit: number,
   ageMs: number,
   message: RegExp | string
 ) {
-  const next = await attemptWith(sessionUser, limit, ageMs);
-  expect(next, `${limit} prior attempts should still be admitted`).toHaveBeenCalledTimes(1);
-  const refused = expect(attemptWith(sessionUser, limit + 1, ageMs)).rejects;
+  const next = await attemptWith(sessionUser, limit - 1, ageMs);
+  expect(next, `call ${limit} should still be admitted`).toHaveBeenCalledTimes(1);
+  const refused = expect(attemptWith(sessionUser, limit, ageMs)).rejects;
   if (typeof message === 'string') await refused.toMatchObject({ message });
   else await refused.toThrow(message);
 }
@@ -220,15 +222,79 @@ describe('getDailyPostLimit', () => {
   it.each(cases)('score $score, tier $tier → $limit', async ({ score, tier, limit }) => {
     const sessionUser = user({ score, tier });
     expect(getDailyPostLimit(sessionUser)).toBe(limit);
-    // The middleware admits `limit` prior attempts and refuses `limit + 1`.
-    const admitted = await attemptWith(sessionUser, limit, 2 * HOUR);
+    // The `limit`th call is admitted and the one after it refused.
+    const admitted = await attemptWith(sessionUser, limit - 1, 2 * HOUR);
     expect(admitted).toHaveBeenCalledTimes(1);
-    await expect(attemptWith(sessionUser, limit + 1, 2 * HOUR)).rejects.toThrow(
+    await expect(attemptWith(sessionUser, limit, 2 * HOUR)).rejects.toThrow(
       /reached today's limit/
     );
   });
 
   it('treats a missing score as the base tier', () => {
     expect(getDailyPostLimit(user({ meta: {} as SessionUser['meta'], tier: 'free' }))).toBe(20);
+  });
+});
+
+describe('postRateLimits refusal meta', () => {
+  const DAY = 24 * HOUR;
+
+  async function refusalMeta(sessionUser: SessionUser, count: number, ageMs: number) {
+    const error = await attemptWith(sessionUser, count, ageMs).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+    expect(error, 'expected a refusal').toBeDefined();
+    return rateLimitMetaOf(error);
+  }
+
+  it('a daily refusal carries posts.daily with its counts and window', async () => {
+    const ageMs = 2 * HOUR;
+    const meta = await refusalMeta(user({ tier: 'free' }), 20, ageMs);
+    expect(meta).toMatchObject({
+      id: 'posts.daily',
+      kind: 'product',
+      limit: 20,
+      used: 20,
+      remaining: 0,
+      windowSeconds: DAY / 1000,
+    });
+    // Every attempt is ageMs old, so the window frees and clears together. The ±1 s absorbs the
+    // clock moving between the harness stamping attempts and the middleware reading it.
+    expect(meta?.retryAfterSeconds).toBeGreaterThanOrEqual((DAY - ageMs) / 1000 - 1);
+    expect(meta?.retryAfterSeconds).toBeLessThanOrEqual((DAY - ageMs) / 1000);
+    expect(meta?.resetAt).toBe(meta?.retryAt);
+  });
+
+  it('admits the 20th post of the day and refuses the 21st', async () => {
+    const free = user({ tier: 'free' });
+    expect(await attemptWith(free, 19, 2 * HOUR)).toHaveBeenCalledTimes(1);
+    await expect(attemptWith(free, 20, 2 * HOUR)).rejects.toThrow(/reached today's limit of 20/);
+  });
+
+  it('a first-day refusal carries posts.hourly, a distinct id', async () => {
+    const meta = await refusalMeta(user({ createdAt: new Date() }), 2, 10 * 60 * 1000);
+    expect(meta).toMatchObject({ id: 'posts.hourly', kind: 'product', limit: 2, used: 2 });
+    expect(meta?.retryAfterSeconds).toBeGreaterThanOrEqual(50 * 60 - 1);
+    expect(meta?.retryAfterSeconds).toBeLessThanOrEqual(50 * 60);
+  });
+});
+
+describe('rateLimit() with a limit-0 rule', () => {
+  it('refuses with the rule message and promises no retry time', async () => {
+    mockHGet.mockResolvedValue([]);
+    rateLimit([{ limit: 0, period: CacheTTL.hour, errorMessage: 'Members only.' }]);
+    const handler = capturedHandler.handler;
+    if (!handler) throw new Error('harness broken: rateLimit() registered no handler');
+    const error = await handler({
+      ctx: { user: user(), req: { headers: {} } },
+      input: {},
+      path: 'resource.load',
+      next: vi.fn(),
+    }).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+    expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS', message: 'Members only.' });
+    expect(rateLimitMetaOf(error)).toBeUndefined();
   });
 });

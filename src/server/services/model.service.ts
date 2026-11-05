@@ -23,11 +23,6 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import {
-  detachHeldThreadsCte,
-  heldLegacyCommentOnModelSql,
-  modelThreadParents,
-} from '~/server/services/comment-thread-hold';
 import { isRemovedWithOwner, withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { uniq } from 'lodash-es';
@@ -2402,8 +2397,6 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
 
 /** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
 export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
-/** The same, for a model kept only for another account's comments on it: its owner is not held. */
-export const MODEL_KEPT_FOR_HELD_COMMENT = 'Kept: retained content; contact Legal.';
 
 const holdUnconfirmed = (e: unknown): never => {
   throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
@@ -2463,8 +2456,6 @@ export const permaDeleteModelById = async ({
 
       // Get images to delete and queue search index updates
       let imagesToDelete: { id: number }[] = [];
-      // Each delete detaches its held threads in the same statement, so a hold placed between the
-      // two still keeps them.
       if (postIds.length > 0) {
         imagesToDelete = await tx.image.findMany({
           where: { postId: { in: postIds } },
@@ -2472,28 +2463,22 @@ export const permaDeleteModelById = async ({
         });
 
         const doomedImages = Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`;
-        await tx.$executeRaw`
-            WITH ${detachHeldThreadsCte({ imageId: doomedImages }, true)}
-            DELETE FROM "Image" WHERE id IN (${doomedImages})`.catch(holdUnconfirmed);
+        await tx.$executeRaw`DELETE FROM "Image" WHERE id IN (${doomedImages})`;
       }
 
       const doomedPosts = Prisma.sql`SELECT p.id FROM "Post" p
         WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`;
-      await tx.$executeRaw`
-          WITH ${detachHeldThreadsCte({ postId: doomedPosts }, true)}
-          DELETE FROM "Post" WHERE id IN (${doomedPosts})`.catch(holdUnconfirmed);
+      await tx.$executeRaw`DELETE FROM "Post" WHERE id IN (${doomedPosts})`;
 
       // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
       // the rollback restores the posts and images.
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
-        WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)},
-        ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
+        WITH ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
         DELETE FROM "Model" m
         WHERE m.id = ${id}
           AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
-          AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
       `.catch(holdUnconfirmed);
       if (!deletedModel) {
@@ -2502,13 +2487,7 @@ export const permaDeleteModelById = async ({
         const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
         if (!stillThere)
           throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        const [owner] = await tx.$queryRaw<{ ownerHeld: boolean }[]>`
-          SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS "ownerHeld"
-        `.catch(holdUnconfirmed);
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: owner?.ownerHeld === false ? MODEL_KEPT_FOR_HELD_COMMENT : MODEL_KEPT_FOR_HOLD,
-        });
+        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
       }
       return { deletedModel, imagesToDelete };
     },
@@ -3727,6 +3706,52 @@ export const removedWithOwnerEditError = () =>
 const cannotPublishError = () =>
   throwBadRequestError('This model cannot be published due to moderation restrictions.');
 
+/**
+ * A scan verdict held, or kept dormant, because the model was minor or POI applies once an owner's save
+ * clears both flags; a later save retries one still waiting on an unrestricted model (an earlier apply
+ * failed). Never fails the save.
+ */
+async function applyHeldVerdictAfterOwnerSave(
+  before: { minor: boolean; poi: boolean; meta: Prisma.JsonValue },
+  after: { id: number; minor: boolean; poi: boolean }
+) {
+  const meta = before.meta as ModelMeta | null;
+  const waiting =
+    (meta?.restrictedNsfwVerdict && !meta.restrictedNsfwVerdict.applied) ||
+    !!meta?.restrictedNsfwVerdictDormant;
+  if (!(before.minor || before.poi || waiting) || after.minor || after.poi) return;
+  const { applyHeldRestrictedVerdict } = await import(
+    '~/server/services/text-scan/actions/model-nsfw'
+  );
+  await applyHeldRestrictedVerdict(after.id).catch((error: Error) =>
+    logToAxiom({
+      name: 'text-scan',
+      type: 'error',
+      message: 'held restricted nsfw verdict not applied',
+      modelId: after.id,
+      error: error.message,
+    }).catch(() => null)
+  );
+}
+
+/**
+ * Runs `write`, which takes the model out of Private, and applies a held scan verdict in the same
+ * transaction: if the apply fails, the write rolls back with it and the model stays Private.
+ */
+export async function leavePrivateWithHeldVerdict(
+  modelId: number,
+  write: (tx: Prisma.TransactionClient) => Promise<unknown>
+) {
+  const { applyHeldVerdictLeavingPrivate, finishHeldVerdictApply } = await import(
+    '~/server/services/text-scan/actions/model-nsfw'
+  );
+  const applied = await dbWrite.$transaction(async (tx) => {
+    await write(tx);
+    return applyHeldVerdictLeavingPrivate(tx, modelId);
+  });
+  if (applied) await finishHeldVerdictApply(modelId);
+}
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -4071,6 +4096,7 @@ export const upsertModel = async (
     // The locks as the transaction found them, for the change history's "before".
     let lockedBeforeUpdate: string[] | undefined;
 
+    let heldVerdictApplied = false;
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4099,9 +4125,21 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
-          const ownerFlagOverride =
-            applyRaisedRestrictions(locked, data) ?? withRaisedFlags(locked, data);
+          const raisedOverScanLock = applyRaisedRestrictions(locked, data);
+          const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
+          // The owner's flag clears a rating a scan set: the scan's verdict waits for a moderator,
+          // as one held on a model already flagged does, rather than going with the rating.
+          const scanLock = prevMeta?.systemNsfwLock;
+          if (raisedOverScanLock && scanLock && !prevMeta?.restrictedNsfwVerdict)
+            meta = {
+              ...(meta ?? {}),
+              restrictedNsfwVerdict: {
+                source: scanLock.source,
+                at: scanLock.at,
+                restriction: raisedOverScanLock.flags.includes('minor') ? 'minor' : 'poi',
+              },
+            };
         }
         if (
           !isModerator &&
@@ -4302,10 +4340,28 @@ export const upsertModel = async (
             tx,
           });
 
+        // A scan verdict held while the model was Private applies as a moderator takes it out.
+        if (
+          (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
+          data.availability &&
+          data.availability !== Availability.Private
+        ) {
+          const { applyHeldVerdictLeavingPrivate } = await import(
+            '~/server/services/text-scan/actions/model-nsfw'
+          );
+          heldVerdictApplied = await applyHeldVerdictLeavingPrivate(tx, updated.id);
+        }
+
         return updated;
       },
       { maxWait: 10000, timeout: 30000 }
     );
+    if (heldVerdictApplied) {
+      const { finishHeldVerdictApply } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      await finishHeldVerdictApply(id);
+    }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
 
@@ -4416,6 +4472,7 @@ export const upsertModel = async (
       );
       await settleFlagAppealsAfterModeratorLift({ modelId: result.id, userId, liftedLabels });
     }
+    await applyHeldVerdictAfterOwnerSave(beforeUpdate, result);
 
     // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
     // each resource: without this, a creator who adds RentCivit is told the model is "not enabled
@@ -6875,6 +6932,8 @@ export const privateModelFromTraining = async ({
       meta: true,
       status: true,
       availability: true,
+      minor: true,
+      poi: true,
     },
   });
 
@@ -7076,15 +7135,32 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
+    await applyHeldVerdictAfterOwnerSave(model, result);
 
     return withoutMinorHashMeta(result);
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
-    await dbWrite.model.updateMany({
-      where: { id, ...keepDowned },
-      data: { status: ModelStatus.Draft, availability: Availability.Public },
-    });
+    const reverted = await leavePrivateWithHeldVerdict(id, (tx) =>
+      tx.model.updateMany({
+        where: { id, ...keepDowned },
+        data: { status: ModelStatus.Draft, availability: Availability.Public },
+      })
+    ).then(
+      () => true,
+      (revertError: Error) =>
+        logToAxiom({
+          name: 'private-model-from-training',
+          type: 'error',
+          message: 'revert left the model Private: held scan verdict not applied',
+          modelId: id,
+          error: revertError.message,
+        })
+          .catch(() => null)
+          .then(() => false)
+    );
+    // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
+    if (!reverted) throw throwDbError(error);
 
     await dbWrite.modelVersion.updateMany({
       where: { modelId: id, ...keepDowned },
@@ -7179,6 +7255,8 @@ export const publishPrivateModel = async (
     }
   }
 
+  const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
+  let heldVerdictApplied = false;
   await dbWrite.$transaction(async (tx) => {
     // Everything above ran before this transaction, and a takedown can land in between. Re-read
     // under a lock that the writes below then hold: the model first, then its versions, the order
@@ -7270,6 +7348,8 @@ export const publishPrivateModel = async (
       },
       select: { id: true },
     });
+    // A scan verdict held while the model was Private applies as it leaves Private.
+    heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, modelId);
 
     if (publishVersions) {
       // Anti-bump guard: set publishedAt = NOW() only on rows that are
@@ -7290,6 +7370,7 @@ export const publishPrivateModel = async (
       `;
     }
   });
+  if (heldVerdictApplied) await heldVerdict.finishHeldVerdictApply(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

@@ -9,6 +9,7 @@ import {
   IconInfoCircle,
   IconX,
 } from '@tabler/icons-react';
+import { getRateLimit, withRetryText } from '~/utils/rate-limit';
 
 export function showErrorNotification({
   error,
@@ -28,7 +29,7 @@ export function showErrorNotification({
       ))}
     </ul>
   ) : (
-    reason ?? error.message
+    reason ?? withRetryText(error.message, getRateLimit(error))
   );
 
   showNotification({

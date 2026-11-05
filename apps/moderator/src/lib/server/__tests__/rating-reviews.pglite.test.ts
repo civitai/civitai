@@ -23,6 +23,11 @@ vi.mock('../db', () => ({
   },
 }));
 
+// Distinct bases, so the .com face link is seen to take the .com one.
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://com.test', CIVITAI_LINK_URL: 'https://red.test' },
+}));
+
 const service = await import('../rating-reviews.service');
 
 let db: PGlite;
@@ -147,7 +152,12 @@ describe('resolveRatingReview', () => {
       await seedEntity(db, 'Bounty', { userId: owner, nsfwLevel: 4 })
     );
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({
       status: 'Unactioned',
     });
@@ -217,7 +227,12 @@ describe('resolveRatingReview', () => {
       if (e.level === 'query' && /update "RatingReview"/i.test(e.query.sql))
         bound.push(...e.query.parameters);
     });
-    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod });
+    await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 4,
+      modComment: KEPT,
+      moderatorId: mod,
+    });
     expect(bound.length).toBeGreaterThan(0);
     expect(bound.some((p) => p instanceof Date)).toBe(false);
   });
@@ -311,7 +326,12 @@ describe('resolveRatingReview', () => {
     });
     const id = await fileReview('Model', modelId, 4, 1);
 
-    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod });
+    await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 4,
+      modComment: KEPT,
+      moderatorId: mod,
+    });
 
     const [m] = await rows<{ meta: Record<string, unknown>; lockedProperties: string[] }>(
       db,
@@ -585,7 +605,12 @@ describe('resolveRatingReview', () => {
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4);
   });
@@ -604,7 +629,12 @@ describe('resolveRatingReview', () => {
     const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 16, modComment: KEPT, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 16,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(all);
   });
@@ -627,7 +657,12 @@ describe('resolveRatingReview', () => {
       service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
     ).rejects.toThrow(/has started/);
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4 | 32);
   });
@@ -780,6 +815,53 @@ describe('hydrateRatingReviews', () => {
       nsfwLevel: 4,
       override: 4,
     });
+  });
+
+  it('gives a model its civitai.com face, or null when it has none, and nothing to other types', async () => {
+    const [cover] = await rows<{ id: number }>(
+      db,
+      `INSERT INTO "Image" ("url", "type", "nsfwLevel") VALUES ('com-cover', 'image', 2) RETURNING "id"`
+    );
+    const withFace = await seedEntity(db, 'Model', {
+      userId: owner,
+      name: 'red name',
+      sfwName: 'com name',
+      sfwCoverImageId: cover.id,
+    });
+    const noCover = await seedEntity(db, 'Model', { userId: owner, sfwName: 'only a name' });
+    const noFace = await seedEntity(db, 'Model', { userId: owner, sfwCoverImageId: cover.id });
+    const goneCover = await seedEntity(db, 'Model', {
+      userId: owner,
+      sfwName: 'cover gone',
+      sfwCoverImageId: 9999,
+    });
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'p' });
+    for (const id of [withFace, noCover, noFace, goneCover]) await fileReview('Model', id);
+    await fileReview('Post', postId);
+
+    const all = await listPending();
+    const model = (id: number) => all.find((i) => i.entityType === 'Model' && i.entityId === id);
+
+    expect(model(withFace)?.entity?.comFace).toEqual({
+      name: 'com name',
+      url: `https://com.test/models/${withFace}`,
+      cover: { id: cover.id, url: 'com-cover', type: 'image', nsfwLevel: 2 },
+      coverPicked: true,
+    });
+    expect(model(noCover)?.entity?.comFace).toEqual({
+      name: 'only a name',
+      url: `https://com.test/models/${noCover}`,
+      cover: null,
+      coverPicked: false,
+    });
+    expect(model(goneCover)?.entity?.comFace).toEqual({
+      name: 'cover gone',
+      url: `https://com.test/models/${goneCover}`,
+      cover: null,
+      coverPicked: true,
+    });
+    expect(model(noFace)?.entity?.comFace).toBeNull();
+    expect(all.find((i) => i.entityType === 'Post')?.entity).not.toHaveProperty('comFace');
   });
 
   it('joins each entity and shows only a text-scan raise', async () => {

@@ -50,6 +50,47 @@ const csamBaseDir = await vi.hoisted(async () => {
   return nodePath.join(dirname, 'csam');
 });
 
+// CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
+const v3 = vi.hoisted(() => ({
+  comments: [] as { id: number; userId: number; content: string }[],
+  calls: [] as {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+    orderBy?: string[];
+  }[],
+}));
+vi.mock('~/server/db/kyselyDb', () => {
+  type State = {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+    orderBy?: string[];
+    ids?: number[];
+  };
+  const query = (state: State): Record<string, unknown> => ({
+    selectAll: () => query(state),
+    select: () => query(state),
+    orderBy: (...args: string[]) => query({ ...state, orderBy: args }),
+    where: (column: string, op: string, value: number | number[]) =>
+      op === 'in'
+        ? query({ ...state, ids: value as number[] })
+        : query({ ...state, [column === 'userId' ? 'userId' : 'afterId']: value }),
+    limit: (take: number) => query({ ...state, take }),
+    execute: async () => {
+      // A cursor that never advances fails here rather than hanging the test.
+      if (v3.calls.length > 50) throw new Error('CommentV3 scan did not end');
+      v3.calls.push(state);
+      if (state.ids) return v3.comments.filter((c) => state.ids!.includes(c.id));
+      return v3.comments
+        .filter(
+          (c) => c.userId === state.userId && (state.afterId === undefined || c.id > state.afterId)
+        )
+        .slice(0, state.take);
+    },
+  });
+  return { kyselyV3Read: { selectFrom: () => query({}) } };
+});
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
 // this file's module graph — no `process.cwd()` monkey-patching, which would leak to every other
 // file sharing the worker.
@@ -206,6 +247,7 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 
 import {
   archiveCsamDataForReport,
+  archiveUserComments,
   ARCHIVE_SCAN_PAGE_SIZE,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
@@ -216,6 +258,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { FlaggedConsumerFetchError } from '~/server/http/orchestrator/flagged-consumers';
 import {
   MAX_PENDING_ARCHIVE_ENTRIES,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -289,6 +332,60 @@ describe('getCsamsToArchive', () => {
     ] as never);
     const reports = await getCsamsToArchive();
     expect(reports.map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
+    const generatorEvidence = {
+      id: 11,
+      userId: 707070,
+      reportedById: 5,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(),
+      details: {
+        generatedImages: [
+          { jobId: 'job-1', source: 'workflow', blobs: [{ blobId: 'b1', status: 'preserved' }] },
+        ],
+        generatorEvidence: { version: 1, approvedAt: new Date().toISOString() },
+      },
+      images: [],
+    };
+    const control = {
+      id: 12,
+      userId: 717171,
+      reportedById: 5,
+      type: 'Image',
+      details: {},
+      images: [],
+    };
+    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
+      generatorEvidence,
+      control,
+      namesNoUrl,
+    ] as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: control.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+
+    // The job's loop: archive what was selected.
+    for (const report of await getCsamsToArchive()) await archiveCsamDataForReport(report);
+
+    const stampedIds = dbMock.dbWrite.csamReport.update.mock.calls
+      .map(([args]) => args as { where: { id: number }; data: { archivedAt?: unknown } })
+      .filter((args) => args.data.archivedAt instanceof Date)
+      .map((args) => args.where.id);
+    expect(stampedIds).toEqual([control.id]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .filter((p) => p.subType === 'archive-skipped-unsupported')
+    ).toEqual([
+      expect.objectContaining({ count: 1, reason: 'generator evidence archive not supported' }),
+      expect.objectContaining({ count: 1, reason: 'no generated image URL to archive' }),
+    ]);
   });
 });
 
@@ -688,6 +785,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
 
     await archiveCsamDataForReport({
       ...report,
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
       details: { generatedImages: [{ jobId: 'job-1', blobs: named.map((url) => ({ url })) }] },
     } as never);
 
@@ -700,6 +798,133 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
         namedMissing: 1,
       })
     );
+  });
+
+  const generatedLine = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-generated-images');
+  const stamped = () =>
+    dbMock.dbWrite.csamReport.update.mock.calls.some(
+      ([args]) => (args as { data?: { archivedAt?: unknown } }).data?.archivedAt instanceof Date
+    );
+  const sentHoursAgo = (hours: number) => ({
+    ...report,
+    reportSentAt: new Date(Date.now() - hours * 3_600_000),
+  });
+  const rejectOne = (failing: string) => async (url: unknown) => {
+    if (url === failing) throw new Error('synthetic timeout');
+    return fakeBlob(8);
+  };
+
+  it('keeps failing the pass on a download that rejects, until the give-up window ends', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await expect(
+      archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
+    ).rejects.toThrow('synthetic timeout');
+    expect(stamped()).toBe(false);
+  });
+
+  it('archives the rest and counts the download it gave up on', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ kind: 'generatedImages', entries: IMAGE_COUNT - 1 })
+    );
+    const line = generatedLine();
+    expect(line).toMatchObject({
+      reportId: report.id,
+      expected: IMAGE_COUNT,
+      strikeUrls: IMAGE_COUNT,
+      entries: IMAGE_COUNT - 1,
+      unreadable: 1,
+      type: 'error',
+    });
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).not.toContain('example.invalid');
+    expect(logged).not.toContain('synthetic timeout');
+  });
+
+  it('counts a body that is not media as unreadable after the window', async () => {
+    mockFetchBlob = async (url: unknown) =>
+      url === 'https://example.invalid/blob-3.jpeg'
+        ? { ...fakeBlob(8), type: 'text/html' }
+        : fakeBlob(8);
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+  });
+
+  it('stamps a pass that read nothing once the give-up window has passed', async () => {
+    mockFetchBlob = async () => null;
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
+  });
+
+  it('archives the blobs the report names when the strikes list is not found', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(404, 'Not Found');
+    };
+    const named = 'https://example.invalid/named-0.jpeg';
+
+    await archiveCsamDataForReport({
+      ...report,
+      details: { generatedImages: [{ jobId: 'job-1', blobs: [{ url: named }] }] },
+    } as never);
+
+    expect(stamped()).toBe(true);
+    expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
+    expect(generatedLine()).toMatchObject({
+      strikesNotFound: true,
+      strikeUrls: 0,
+      entries: 1,
+      type: 'info',
+    });
+  });
+
+  it('fails the pass when the strikes list fails any other way', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(503, 'Service Unavailable');
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('503');
+    expect(stamped()).toBe(false);
+  });
+
+  it('fails the pass, inside the window, on an error status or a body that is not media', async () => {
+    for (const answer of [null, { ...fakeBlob(8), type: 'text/html' }]) {
+      mockFetchBlob = async (url: unknown) =>
+        url === 'https://example.invalid/blob-3.jpeg' ? answer : fakeBlob(8);
+
+      await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+        'a generated image gave no media'
+      );
+      expect(stamped()).toBe(false);
+    }
+  });
+
+  it('stops queued downloads once the pass has failed', async () => {
+    let calls = 0;
+    mockFetchBlob = async () => {
+      calls += 1;
+      return null;
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'a generated image gave no media'
+    );
+    // At most the first round of the concurrency limit was started.
+    expect(calls).toBeLessThanOrEqual(10);
   });
 
   it('holds a bounded number of generated-image buffers', async () => {
@@ -764,11 +989,20 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
   }));
   const models = [{ id: 11, name: 'm-eleven', userId: report.userId }];
   const modelVersions = [{ id: 21, modelId: 11, name: 'v-twenty-one' }];
+  const comments = [{ id: 31, userId: report.userId, content: 'a comment' }];
 
-  /** Exactly the document the pre-fix code produced, built the pre-fix way. */
+  /** Exactly the document `JSON.stringify` would produce, in the bundle's property order. */
   const expectedBundle = () =>
-    JSON.stringify({ user, reportId: report.reportId, models, modelVersions, images }, (_k, v) =>
-      typeof v === 'bigint' ? v.toString() : v
+    JSON.stringify(
+      {
+        user,
+        reportId: report.reportId,
+        models,
+        modelVersions,
+        images,
+        comments,
+      },
+      (_k, v) => (typeof v === 'bigint' ? v.toString() : v)
     );
 
   function seedDb() {
@@ -777,6 +1011,8 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue(models);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue(modelVersions);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    v3.comments = comments;
+    v3.calls = [];
   }
 
   /**
@@ -890,6 +1126,50 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     // The cursor has to advance, or the same page is re-read forever.
     const cursors = dbMock.dbRead.image.findMany.mock.calls.map(([a]) => a?.where?.id?.gt);
     expect(cursors.slice(0, 3)).toEqual([undefined, pageSize, 2 * pageSize]);
+  });
+
+  it("archives every comment the reported user wrote, page by page, and nobody else's", async () => {
+    const pageSize = ARCHIVE_SCAN_PAGE_SIZE;
+    seedDb();
+    v3.comments = [
+      ...Array.from({ length: pageSize + 1 }, (_, i) => ({
+        id: i + 1,
+        userId: report.userId,
+        content: `c${i + 1}`,
+      })),
+      { id: pageSize + 2, userId: report.userId + 1, content: 'not theirs' },
+    ];
+
+    await archiveCsamDataForReport(report as never);
+
+    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
+    expect(bundle.comments.map((c: { id: number }) => c.id)).toEqual(
+      Array.from({ length: pageSize + 1 }, (_, i) => i + 1)
+    );
+    expect(v3.calls).toHaveLength(2);
+    expect(v3.calls[0].orderBy).toEqual(['id', 'asc']);
+    expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
+  });
+
+  it("archives a held user's comments on their own, with the CommentV2 rows CommentV3 lacks", async () => {
+    seedDb();
+    v3.comments = [
+      { id: 1, userId: report.userId, content: 'c1' },
+      { id: 2, userId: report.userId, content: 'c2' },
+      { id: 3, userId: report.userId + 1, content: 'not theirs' },
+    ];
+    dbMock.dbRead.commentV2.findMany.mockResolvedValue([
+      { id: 1, userId: report.userId },
+      { id: 99, userId: report.userId },
+    ] as never);
+
+    const result = await archiveUserComments(report.userId);
+
+    const archive = JSON.parse(uploads.get('comments.json')!.toString('utf8'));
+    expect(archive.userId).toBe(report.userId);
+    expect(archive.comments.map((c: { id: number }) => c.id)).toEqual([1, 2]);
+    expect(archive.commentsV2NotInV3.map((c: { id: number }) => c.id)).toEqual([99]);
+    expect(result.comments).toBe(3);
   });
 
   it('filters model versions by the COMPLETE set of model ids, not a partially-scanned one', async () => {
@@ -1291,6 +1571,12 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
         source: 'missing',
         reason: 'full url unreadable',
       });
+      const read = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .find((p) => p.subType === 'archive-image-read' && p.imageId === 10);
+      expect(read).toMatchObject({ fullUrl: true, retried: false, type: 'info' });
+      expect(JSON.stringify(read)).not.toContain('ten.png');
     });
 
     it('still fails the archive on a stored object it cannot read, however long ago it was sent', async () => {
@@ -1355,6 +1641,41 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     );
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+  });
+
+  it('logs which image failed the pass, and how far it got, without the key or the message', async () => {
+    mockGetObject = async (key) => {
+      if (key === 'key-eight')
+        throw Object.assign(new Error('aborted reading key-eight'), { code: 'ECONNRESET' });
+      return {
+        Body: { transformToByteArray: async () => new Uint8Array(stored) },
+        ContentType: 'image/webp',
+        ContentLength: stored.length,
+      };
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('aborted');
+
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    const read = lines.find((p) => p.subType === 'archive-image-read');
+    const failed = lines.find((p) => p.subType === 'archive-failed');
+    expect(read).toMatchObject({
+      reportId: report.id,
+      imageId: 8,
+      errorName: 'Error',
+      errorCode: 'ECONNRESET',
+      fullUrl: false,
+      retried: true,
+      type: 'error',
+    });
+    expect(failed).toMatchObject({
+      reportId: report.id,
+      stored: ['base'],
+      errorCode: 'ECONNRESET',
+    });
+    const text = JSON.stringify([read, failed]);
+    expect(text).not.toContain('key-eight');
+    expect(text).not.toContain('eight.jpeg');
   });
 });
 

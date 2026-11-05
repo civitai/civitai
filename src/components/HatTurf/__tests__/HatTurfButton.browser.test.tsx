@@ -531,31 +531,21 @@ describe('hats on a feed ImageCard', () => {
     expect(q('hat-turf-more')!.textContent).toContain('+10');
   });
 
-  test('Show hats off hides the hats but the badge stays', async () => {
-    useHatTurfStore.setState({ showHats: false });
-    renderCard({
-      images: { 77: summary() },
-      stickers: { 77: [sticker(1, 'blue')] },
-    });
-    await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
-    expect(hats().length).toBe(0);
-    useHatTurfStore.setState({ showHats: true });
-  });
-
-  test('turning Show hats off and on again in the gear menu logs both', async () => {
+  // Show hats off drops every Hat Turf control from the card, the gear with it, so the way back
+  // on is the image page (HatTurfDetail.browser.test.tsx).
+  test('turning Show hats off in the gear menu logs it, and the card drops its hat button and gear', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
-    const toggle = () =>
-      (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() =>
       expect(document.body.querySelector('input[type="checkbox"]')).not.toBeNull()
     );
-    toggle();
+    (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
-    toggle();
-    await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(true));
-    expect(actions()).toEqual(['hide_all_hats_on', 'hide_all_hats_off']);
+    await vi.waitFor(() => expect(q('hat-turf-gear')).toBeNull());
+    expect(q('hat-turf-button')).toBeNull();
+    expect(q('hat-turf-badge')).toBeNull();
+    expect(actions()).toEqual(['hide_all_hats_on']);
   });
 
   test('tells the provider the card is on screen, and stops when it leaves', async () => {

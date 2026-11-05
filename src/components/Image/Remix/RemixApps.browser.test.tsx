@@ -12,12 +12,19 @@ const h = vi.hoisted(() => ({
   run: vi.fn(async (_input: { slug: string; imageId: number; nonce: string }) => ({
     workflowId: 'wf',
   })),
+  start: vi.fn(async (_input: { slug: string; imageId: number; nonce: string; quote: number }) => ({
+    status: 'running',
+  })),
   confirm: vi.fn(),
   flags: { remixApps: true, isGreen: false } as Record<string, boolean>,
   user: { id: 9, showNsfw: true } as { id: number; showNsfw: boolean } | null,
   quoteEnabled: [] as boolean[],
-  /** What the open menu's quote returns; the default prices the first app at 25. */
-  quote: null as null | { isLoading: boolean; prices?: Record<string, unknown>[] },
+  /** What the open menu's quote returns; the default prices both kinds of app at 25. */
+  quote: null as null | {
+    isLoading: boolean;
+    isError?: boolean;
+    prices?: Record<string, unknown>[];
+  },
 }));
 
 vi.mock('~/components/TrackView/track.utils', () => ({
@@ -56,12 +63,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             h.quoteEnabled.push(opts.enabled);
             const quote = h.quote ?? {
               isLoading: false,
-              prices: [{ slug: 'anime-it', cost: 25, ready: true }],
+              prices: [
+                { slug: 'make-it-real', cost: 25, ready: true },
+                { slug: 'anime-it', cost: 25, ready: true },
+              ],
             };
             return {
               data: opts.enabled && quote.prices ? { prices: quote.prices } : undefined,
               isLoading: quote.isLoading,
-              isError: false,
+              isError: !!quote.isError,
             };
           },
         },
@@ -69,7 +79,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       // The real router, so the queue's query key is the one the generator caches under.
       { orchestrator: original.trpc.orchestrator }
     ),
-    trpcVanilla: { remixApp: { run: { mutate: h.run } } },
+    trpcVanilla: { remixApp: { run: { mutate: h.run }, start: { mutate: h.start } } },
   };
 });
 
@@ -79,7 +89,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { RemixAppsSection } from '~/components/Image/Remix/RemixApps';
 import { RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import type { RemixSourceImage } from '~/components/Image/Remix/remix.utils';
-import { SYSTEM_REMIX_APPS } from '~/shared/constants/remix-apps.constants';
+import { REMIX_MENU_APPS } from '~/shared/remix-apps/system-apps';
 
 const video: RemixSourceImage = {
   id: 1,
@@ -89,7 +99,8 @@ const video: RemixSourceImage = {
   ingestion: 'Scanned',
   hasPositivePrompt: false,
 };
-const firstApp = SYSTEM_REMIX_APPS[0];
+const firstApp = REMIX_MENU_APPS.find((app) => !app.runtime)!;
+const runtimeApp = REMIX_MENU_APPS.find((app) => app.runtime)!;
 
 const renderMenu = (image: RemixSourceImage) =>
   renderWithProviders(
@@ -120,7 +131,7 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.startRemix).not.toHaveBeenCalled();
     await expect.element(page.getByText('Remix apps')).toBeVisible();
     expect(h.quoteEnabled.at(-1)).toBe(true);
-    for (const app of SYSTEM_REMIX_APPS)
+    for (const app of REMIX_MENU_APPS)
       await expect.element(page.getByRole('menuitem', { name: app.name })).toBeVisible();
   });
 
@@ -211,6 +222,20 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.run.mock.calls[2][0].nonce).not.toBe(first);
   });
 
+  test('a runtime app starts a run, capped at the price that was on screen', async () => {
+    localStorage.setItem('remix-apps:confirmed', '1');
+    renderMenu(video);
+    await page.getByRole('button', { name: 'Remix' }).click();
+    await page.getByRole('menuitem', { name: runtimeApp.name }).click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
+    expect(h.start.mock.calls[0][0]).toMatchObject({
+      slug: runtimeApp.slug,
+      imageId: video.id,
+      quote: 25,
+    });
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
   describe('nothing runs without a price on screen', () => {
     const section = () => (
       <Menu opened>
@@ -242,6 +267,13 @@ describe('Remix apps in the Remix menu', () => {
       await expect.element(item()).toBeEnabled();
       tap();
       await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
+    });
+
+    test('a failed quote says the price is unavailable and how to retry', async () => {
+      h.quote = { isLoading: false, isError: true };
+      await renderWithProviders(section());
+      await expect.element(page.getByText(/Price unavailable/)).toBeVisible();
+      await expect.element(item()).toBeDisabled();
     });
 
     test('a refused price is shown in place of the price, and the app cannot be run', async () => {

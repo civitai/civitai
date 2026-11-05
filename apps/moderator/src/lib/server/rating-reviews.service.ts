@@ -21,6 +21,7 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { dbRead, dbWrite } from './db';
+import { loadComFaces, type ComFaceSource } from './com-face';
 import { cappedText } from './html-to-text';
 import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-covers';
 import { postCoverRows } from './post-covers';
@@ -28,6 +29,7 @@ import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review';
 import type { MediaType } from '$lib/media/edge-url';
+import type { ComFace } from '$lib/com-face';
 
 export type RatingReviewUser = { id: number; username: string | null; image: string | null };
 
@@ -40,6 +42,8 @@ export type RatingReviewEntitySummary = {
   /** Set for an Article only; every other type's cover is the first image of its preview set. */
   coverUrl: string | null;
   coverType: MediaType | null;
+  /** A Model's civitai.com face, null when it has none; absent on every other type. */
+  comFace?: ComFace | null;
 };
 
 export type RatingReviewRow = {
@@ -89,7 +93,11 @@ function keepsRating(
   return liveLevel != null && getHighestBrowsingLevelBit(ratingBits(liveLevel)) === appliedLevel;
 }
 
-type Summary = Omit<RatingReviewEntitySummary, 'path'> & { parentId: number | null };
+type Summary = Omit<RatingReviewEntitySummary, 'path' | 'comFace'> & {
+  parentId: number | null;
+  /** A Model's .com face columns, turned into `comFace` for the queue page only. */
+  comFaceSource?: ComFaceSource;
+};
 
 export type RatingReviewImage = {
   id: number;
@@ -170,7 +178,7 @@ async function loadSummaries(
     case 'Model': {
       const found = await dbRead
         .selectFrom('Model')
-        .select(['id', 'name', 'nsfwLevel'])
+        .select(['id', 'name', 'nsfwLevel', 'sfwName', 'sfwCoverImageId'])
         .where('id', 'in', ids)
         .where('deletedAt', 'is', null)
         .execute();
@@ -181,6 +189,7 @@ async function loadSummaries(
           title: r.name,
           nsfwLevel: r.nsfwLevel,
           override: null,
+          comFaceSource: { id: r.id, sfwName: r.sfwName, sfwCoverImageId: r.sfwCoverImageId },
         });
       break;
     }
@@ -682,6 +691,11 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
   );
   const summaries = new Map(loaded.map(([t, s]) => [t, s]));
   const scans = new Map(loaded.map(([t, , s]) => [t, s]));
+  const comFaces = await loadComFaces(
+    [...(summaries.get('Model')?.values() ?? [])].flatMap((s) =>
+      s.comFaceSource ? [s.comFaceSource] : []
+    )
+  );
 
   return found.map((r): RatingReviewRow => {
     const t = r.entityType as RatingReviewEntityType;
@@ -712,6 +726,7 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
             override: s.override,
             coverUrl: s.coverUrl,
             coverType: s.coverType,
+            ...(t === 'Model' && { comFace: comFaces.get(s.id) ?? null }),
           }
         : null,
       scan: scans.get(t)?.get(r.entityId) ?? null,

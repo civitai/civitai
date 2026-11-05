@@ -45,6 +45,7 @@ export const turfImageSchema = z.object({
 export type TurfStickersCursor = { createdAt: string; id: string };
 
 export const setTurfOptInSchema = z.object({ event: eventName, optedIn: z.boolean() });
+export const setTurfOwnerOffSchema = z.object({ event: eventName, off: z.boolean() });
 
 export const removeTurfStickerSchema = z.object({ id: z.coerce.bigint().positive() });
 
@@ -61,3 +62,10 @@ export const watchTurfImagesSchema = z.object({
   event: eventName,
   imageIds: z.array(z.number().int().positive()).max(50),
 });
+
+/** A sticker's hat art: the cosmetic's image, and where its visible pixels sit (fit canvas, bounds). */
+export type TurfHatArt = {
+  url: string;
+  canvas?: [number, number] | null;
+  bounds?: [number, number, number, number] | null;
+};

@@ -440,6 +440,7 @@ describe('the check', () => {
     expect(values).toEqual({
       skipped: 0,
       stale: 0,
+      unsupported: 0,
       images_missing: 1,
       object_missing: 0,
       entries_mismatch: 0,
@@ -512,6 +513,59 @@ describe('the check', () => {
     const { counts } = await run();
 
     expect(counts.skipped).toBe(1);
+    expect(counts.stale).toBe(1);
+  });
+
+  it('counts an unarchived generator-evidence report as unsupported, not stale', async () => {
+    const generatorEvidence = await addReport('GeneratedImage', {
+      archivedAt: null,
+      details: { generatorEvidence: { version: 1 }, generatedImages: [] },
+    });
+    const late = await addReport('Image', { archivedAt: null });
+    for (const id of [generatorEvidence, late])
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '12 hours' WHERE id = $1`,
+        [id]
+      );
+
+    const { counts } = await run();
+
+    expect(counts.unsupported).toBe(1);
+    expect(counts.stale).toBe(1);
+  });
+
+  it('counts an unarchived generated-image report naming no URL as unsupported, not stale', async () => {
+    const ids = [
+      await addReport('GeneratedImage', { archivedAt: null }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: {
+          generatedImages: [
+            { blobs: [{ id: 'b1' }, { id: 'b2', url: '' }, { id: 'b5', url: null }] },
+          ],
+        },
+      }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [{ blobs: [{ id: 'b4', url: 'https://example.com/b4' }] }],
+        },
+      }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: { generatedImages: [{ blobs: [{ id: 'b3', url: 'https://example.com/b3' }] }] },
+      }),
+    ];
+    for (const id of ids)
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '12 hours' WHERE id = $1`,
+        [id]
+      );
+
+    const { counts } = await run();
+
+    expect(counts.unsupported).toBe(3);
     expect(counts.stale).toBe(1);
   });
 

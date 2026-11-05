@@ -32,6 +32,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { HIDDEN_APP_SLUG_MAX, HIDDEN_APPS_MAX } from '~/shared/utils/my-apps-hidden';
 
 export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
@@ -197,6 +198,10 @@ export const batchBlockTagsSchema = z.object({ tagIds: z.array(z.number()) });
 export type BatchBlockTagsSchema = z.infer<typeof batchBlockTagsSchema>;
 
 export const getByUsernameSchema = z.object({ username: usernameSchema });
+
+export const getUsageLimitsSchema = z
+  .object({ ids: z.array(z.string().max(64)).max(20).optional() })
+  .optional();
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
 
 export const getUserListSchema = paginationSchema.extend({
@@ -349,6 +354,13 @@ export const userMenuSettingsSchema = z.object({
     .optional(),
 });
 
+/** `hiddenApps` — see the key in `userSettingsSchema`. */
+export const hiddenAppsSettingSchema = z
+  .record(z.string().min(1).max(HIDDEN_APP_SLUG_MAX), z.iso.datetime())
+  .refine((m) => Object.keys(m).length <= HIDDEN_APPS_MAX, {
+    message: `At most ${HIDDEN_APPS_MAX} hidden apps`,
+  });
+
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
@@ -395,11 +407,19 @@ export const userSettingsSchema = z.object({
   // Opt-in, per event name: take part in Hat Turf (events/turf). Placing needs it. Written only by
   // hatTurf.setOptIn.
   eventTurfOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Per event name: keep Hat Turf off my images (events/turf): no new stickers, and those placed are
+  // neither drawn nor counted while it is true. Written only by hatTurf.setOwnerOff.
+  eventTurfOwnerOff: z.record(z.string(), z.boolean()).optional(),
   // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
   // or absent means the default, 'off' means none. Written only by event.setShowcaseHat.
   eventShowcaseHat: z
     .record(z.string(), z.union([z.number().int(), z.literal('off')]).nullable())
     .optional(),
+  // "Remove from My apps" on the `/apps` home: listing slug -> ISO time of the removal. An app
+  // stays off the home until it is used after that time (`isHiddenFromHome`,
+  // shared/utils/my-apps-hidden.ts). Written only by appListings.hideMyApp / unhideMyApp, as an
+  // atomic per-slug merge/remove; capped at HIDDEN_APPS_MAX entries, oldest dropped.
+  hiddenApps: hiddenAppsSettingSchema.optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.

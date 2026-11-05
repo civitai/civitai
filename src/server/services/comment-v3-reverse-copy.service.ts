@@ -193,7 +193,7 @@ export async function reverseComments(
      ) SELECT count(*)::int AS threads FROM ins`,
     p
   );
-  // An author's removal a hold kept is marked as the old ToS restore reads it, so it is not republished.
+  // Carries removedByAuthor to the old tables. Nothing sets it any more; the carry goes with the columns.
   const columns = `(id, content, "userId", "threadId", "tosViolation", hidden, "pinnedAt", "createdAt", "updatedAt", metadata)`;
   const values = `v.id, v.content, v."userId", t.id, v."tosViolation", v.hidden, ${ms(
     'v."pinnedAt"'

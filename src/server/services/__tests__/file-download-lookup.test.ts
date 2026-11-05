@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // which this repo's eslint config forbids.
 import type * as FileService from '../file.service';
 import type * as ModelHelpers from '~/server/common/model-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -706,5 +707,97 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
     // is exactly the distinction the comment above claims this assertion makes.
     expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
     expect(optionsArg()?.direct).not.toBe(true);
+  });
+});
+
+// The API and search index advertise each file's name against every file on the version. The
+// download route must name against the same set, not only the files the request could pick from,
+// or two files that share an uploaded name download under one name and overwrite each other.
+describe('getFileForModelVersion — names against every file on the version', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  let getDownloadFilename: typeof FileService.getDownloadFilename;
+  beforeAll(async () => {
+    ({ getFileForModelVersion, getDownloadFilename } = await import('../file.service'));
+  }, 60000);
+
+  const version = publishedModelVersion();
+  const file = (id: number, type: string, visibility: string) => ({
+    id,
+    url: `https://abcd1234.r2.cloudflarestorage.com/civitai/files/${id}.safetensors`,
+    name: 'shared.safetensors',
+    overrideName: null,
+    type,
+    visibility,
+    metadata: { format: 'SafeTensor' },
+    hashes: [{ hash: `h${id}` }],
+  });
+  let versionFiles: ReturnType<typeof file>[] = [];
+
+  beforeEach(() => {
+    modelVersionFindFirst.mockReset();
+    modelFileFindMany.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    modelVersionFindFirst.mockResolvedValue(version);
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+    modelFileFindMany.mockImplementation(
+      async ({ where }: { where: { type?: string; visibility?: string } }) =>
+        versionFiles.filter(
+          (f) =>
+            (where.type === undefined || f.type === where.type) &&
+            (where.visibility === undefined || f.visibility === where.visibility)
+        )
+    );
+  });
+
+  const ATTRIBUTION = { caller: 'download-route', actor: 'user' } as const;
+  const servedName = () => resolveDownloadUrlMock.mock.calls[0][2];
+  const advertisedName = (id: number) =>
+    getDownloadFilename({
+      model: { ...version.model, type: version.model.type as ModelType },
+      modelVersion: version,
+      file: versionFiles.find((f) => f.id === id)!,
+      versionFiles,
+    });
+
+  it('serves each ?type= download under the name the API gives that file', async () => {
+    versionFiles = [file(1, 'Model', 'Public'), file(2, 'VAE', 'Public')];
+    expect(advertisedName(1)).not.toBe(advertisedName(2));
+
+    for (const type of ['Model', 'VAE'] as const) {
+      await getFileForModelVersion({
+        modelVersionId: 1,
+        type,
+        user: { id: 1 },
+        attribution: ATTRIBUTION,
+      });
+    }
+
+    expect(resolveDownloadUrlMock.mock.calls.map((call) => call[2])).toEqual([
+      advertisedName(1),
+      advertisedName(2),
+    ]);
+  });
+
+  it.each([
+    ['the primary file', {}],
+    ['a pinned file id', { fileId: 1 }],
+  ])('names %s against private siblings the viewer cannot see', async (_label, pick) => {
+    versionFiles = [file(1, 'Model', 'Public'), file(2, 'Model', 'Private')];
+    expect(advertisedName(1)).not.toBe('shared.safetensors');
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      ...pick,
+      user: { id: 1 },
+      attribution: ATTRIBUTION,
+    });
+
+    expect(resolveDownloadUrlMock.mock.calls[0][0]).toBe(1);
+    expect(servedName()).toBe(advertisedName(1));
   });
 });

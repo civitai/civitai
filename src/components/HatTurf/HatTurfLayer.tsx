@@ -6,7 +6,7 @@ import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import type { HatSpot } from '~/components/HatTurf/HatTurfCardProvider';
 import classes from '~/components/HatTurf/HatTurfLayer.module.css';
-import { TeamHat } from '~/components/HatTurf/TeamHat';
+import { TurfHatArt } from '~/components/HatTurf/TurfHatArt';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useChosenHat } from '~/components/HatTurf/useHatTurf';
@@ -28,7 +28,8 @@ import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type Box = { width: number; height: number; left: number; top: number };
+/** `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider. */
+type Box = { width: number; height: number; left: number; top: number; shownWidth: number };
 
 /** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
@@ -89,7 +90,8 @@ function HatTurfLayerContent({
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();
   const showHats = useHatTurfStore((state) => state.showHats);
-  const { cosmeticId } = useChosenHat();
+  const { cosmeticId, hats } = useChosenHat();
+  const chosenArt = hats?.find((hat) => hat.cosmeticId === cosmeticId)?.art;
   const teamColor = useTeamColor();
   const utils = trpc.useUtils();
   const place = trpc.hatTurf.place.useMutation();
@@ -123,13 +125,15 @@ function HatTurfLayerContent({
         height: drawn.height,
         left: at.x - self.x + drawn.left,
         top: at.y - self.y + drawn.top,
+        shownWidth: Math.min(drawn.width, media.offsetWidth),
       };
       setBox((current) =>
         current &&
         current.width === next.width &&
         current.height === next.height &&
         current.left === next.left &&
-        current.top === next.top
+        current.top === next.top &&
+        current.shownWidth === next.shownWidth
           ? current
           : next
       );
@@ -163,11 +167,12 @@ function HatTurfLayerContent({
   const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
-  const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
+  // Capped so a wide image-detail picture does not draw hats past a sticker's size.
+  const hatSize = (scale: number) => (box ? Math.min(96, Math.max(22, box.shownWidth * scale)) : 0);
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
-  const limit = drawLimit ?? (box && box.width < NARROW_PICTURE ? 3 : 5);
+  const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
   const drawn = showHats ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
   const overflow = showHats ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
@@ -264,8 +269,11 @@ function HatTurfLayerContent({
                   ['--hat-glow' as string]: colorOf(sticker.team),
                 }}
               >
-                <TeamHat color={colorOf(sticker.team)} size={hatSize(pose.scale)} />
-                {own && <i className={classes.own} />}
+                <TurfHatArt
+                  art={sticker.art}
+                  color={colorOf(sticker.team)}
+                  size={hatSize(pose.scale)}
+                />
               </div>
             );
           })}
@@ -275,10 +283,14 @@ function HatTurfLayerContent({
               style={{ ...at(placed.x, placed.y), transform: 'translate(-50%, -50%)' }}
               data-testid="hat-turf-placed"
             >
-              <TeamHat color={colorOf(feed.team)} size={hatSize(HAT_DEFAULT_SCALE)} />
+              <TurfHatArt
+                art={chosenArt}
+                color={colorOf(feed.team)}
+                size={hatSize(HAT_DEFAULT_SCALE)}
+              />
             </div>
           )}
-          {draft && (
+          {draft && showHats && (
             <>
               <div
                 className={classes.draft}
@@ -302,7 +314,11 @@ function HatTurfLayerContent({
                 }}
                 onClick={stop}
               >
-                <TeamHat color={colorOf(feed.team)} size={hatSize(HAT_DEFAULT_SCALE)} />
+                <TurfHatArt
+                  art={chosenArt}
+                  color={colorOf(feed.team)}
+                  size={hatSize(HAT_DEFAULT_SCALE)}
+                />
               </div>
               <div
                 className={classes.actions}
