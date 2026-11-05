@@ -34,12 +34,15 @@ export function useDraftGestures(maxScale: number) {
   // Refused outright while one is live, which is only safe because the owning
   // pointer is captured: its up or cancel is guaranteed to arrive, so a gesture
   // cannot be stranded and this cannot become a permanent refusal.
-  const onGesture = useCallback((next: Gesture) => {
-    if (gesture.current) return false;
-    gesture.current = next;
-    useStore.getState().setInteraction(next.mode);
-    return true;
-  }, [useStore]);
+  const onGesture = useCallback(
+    (next: Gesture) => {
+      if (gesture.current) return false;
+      gesture.current = next;
+      useStore.getState().setInteraction(next.mode);
+      return true;
+    },
+    [useStore]
+  );
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
