@@ -36,6 +36,7 @@ const MIGRATIONS = [
   '20261231120000_knights_v2_queue_stages',
   '20270101120000_knights_v2_recap_opt_out',
   '20270102120000_knights_v2_player_day_day_idx',
+  '20270103120000_knights_v2_acolyte_level_gold',
 ].map((name) =>
   fileURLToPath(
     new URL(

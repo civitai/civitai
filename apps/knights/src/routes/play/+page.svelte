@@ -467,6 +467,7 @@
       {submit}
       {floating}
       milestone={levelNotice.milestone ?? null}
+      gold={levelNotice.levelGold ?? 0}
     />
   {/if}
 {/snippet}

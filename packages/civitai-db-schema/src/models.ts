@@ -5209,6 +5209,13 @@ export interface KnightsApprenticeAnswer {
   checkpointSeenAt: Date | null;
 }
 
+export interface KnightsAcolyteLevelGold {
+  playerId: number;
+  level: number;
+  gold: number;
+  createdAt: Date;
+}
+
 export interface KnightsHarvestCursor {
   name: string;
   lastActivityId: number;
