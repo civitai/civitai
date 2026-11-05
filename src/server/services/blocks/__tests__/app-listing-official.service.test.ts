@@ -38,7 +38,7 @@ const {
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../../packages/civitai-db-schema/prisma/migrations/20261224120000_app_listing_official/migration.sql'
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261224120200_app_listing_official/migration.sql'
 );
 
 const PRE_FEATURE_ACTIONS = [
