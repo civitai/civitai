@@ -40,13 +40,13 @@ afterEach(() => cleanup());
 
 describe('the sentence names what will not work', () => {
   test('🔴 names the missing permissions in GROUPED order, not in the order they arrived', async () => {
-    // Input order: react (not sensitive) then tip (sensitive). The shared grouping rule
-    // puts sensitive first, so the sentence must read tip → react. A component that
-    // just mapped its input would read react → tip.
-    renderNotice({ missingScopes: ['social:react:self', 'social:tip:self'] });
+    // Input order: follow collections (not sensitive) then tip (sensitive). The shared
+    // grouping rule puts the sensitive group first, so the sentence must read
+    // tip → collections. A component that just mapped its input would read them reversed.
+    renderNotice({ missingScopes: ['collections:write:self', 'social:tip:self'] });
     await expect.element(page.getByTestId('block-consent-notice')).toBeInTheDocument();
     expect(sentence()).toBe(
-      "Tipper can't tip on your behalf or react to images for you until you allow it."
+      "Tipper can't tip on your behalf or follow collections for you until you allow it."
     );
   });
 
@@ -57,14 +57,15 @@ describe('the sentence names what will not work', () => {
   });
 
   test('🔴 caps the list at two and says "and more" for the rest', async () => {
-    // Three nameable scopes: one sensitive, two not. The two non-sensitive ones share a
-    // rank, so they keep their input order — collections before react.
+    // Three nameable scopes, listed in reverse of display order. Grouped: sensitive
+    // [tip (has an OAuth bit), react (no bit, so after it)], then other [collections].
+    // The cap keeps the first two, so the NON-sensitive one is what "and more" stands for.
     renderNotice({
       missingScopes: ['collections:write:self', 'social:react:self', 'social:tip:self'],
     });
     await expect.element(page.getByTestId('block-consent-notice')).toBeInTheDocument();
     expect(sentence()).toBe(
-      "Tipper can't tip on your behalf, follow collections for you and more until you allow it."
+      "Tipper can't tip on your behalf, react to images for you and more until you allow it."
     );
   });
 
