@@ -55,6 +55,11 @@ export function blockScopePermissions(scopes: string[]): ListingPermission[] {
   });
 }
 
+/** The plain-language name a viewer reads for one block scope. */
+export function blockScopeTitle(scope: string): string {
+  return blockScopePermissions([scope])[0].title;
+}
+
 /** `apps:storage:shared_write` → "Apps storage shared write". */
 function humaniseScopeId(scope: string): string {
   const words = scope

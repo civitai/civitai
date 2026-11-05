@@ -175,6 +175,7 @@ export default function BlockConsentModal({
         </Group>
         <ListingPermissionGroups
           permissions={blockScopePermissions(missingScopes)}
+          marker="neutral"
           renderDetail={(scope) =>
             forSource && scope === APP_STORAGE_PUBLISH_SCOPE ? (
               <SourcePublishConsentDetail

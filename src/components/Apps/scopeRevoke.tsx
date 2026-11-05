@@ -7,6 +7,7 @@ import {
   SCOPE_NOT_GRANTED_NOTE,
   SCOPE_WITHHELD_NOTE,
 } from '~/components/Apps/scopeConsentRows';
+import { blockScopeTitle } from '~/components/Apps/listingPermissions';
 import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
@@ -23,12 +24,11 @@ import { trpc } from '~/utils/trpc';
  * first — it owns the rule that the REVOKABILITY DECISION IS THE SERVER'S and is never
  * re-derived on the client.
  *
- * 🔴 `BlockScopeList` STAYS PRESENTATION-ONLY AND KNOWS NONE OF THIS. It has FOUR call sites fed
- * from THREE different scope sets (its own docstring enumerates them), and only two of them are
- * permissions surfaces — `AppSettingsModal` and `AppListingDetailBody` must not grow a revoke
- * control they were never meant to have. So the component takes an OPTIONAL `consent` prop and
- * renders a caller-supplied node; the decision about whether a control exists at all is made
- * here, by the two callers that pass it.
+ * 🔴 THE ROW RENDERER (`ListingPermissionGroups`) STAYS PRESENTATION-ONLY AND KNOWS NONE OF THIS.
+ * It is shared with the store listing, the consent prompt and the settings modal, none of which
+ * may grow a revoke control. It takes an OPTIONAL `renderDetail` and draws a caller-supplied
+ * node; the decision about whether a control exists at all is made here, through
+ * `ScopeConsentList`.
  */
 
 /**
@@ -74,7 +74,7 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
   return (
     <Stack gap="xs" data-testid="scope-revoke-confirm-body">
       <Text size="sm">
-        <strong>{appName}</strong> will stop being able to use <code>{scope}</code> straight away —
+        <strong>{appName}</strong> loses &ldquo;{blockScopeTitle(scope)}&rdquo; straight away —
         including in a session you already have open.
       </Text>
       <Text size="sm">
@@ -335,7 +335,7 @@ export function useScopeRevoke({
 
   const requestRevoke = (scope: string) => {
     openConfirmModal({
-      title: `Remove ${scope}?`,
+      title: `Remove “${blockScopeTitle(scope)}”?`,
       children: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
       labels: { confirm: 'Remove permission', cancel: 'Keep it' },
       confirmProps: { color: 'red', 'data-testid': 'scope-revoke-confirm' },
@@ -389,7 +389,7 @@ export function useScopeRevoke({
               setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
               showSuccessNotification({
                 title: 'Permission removed',
-                message: `${appName} can no longer use ${scope}.`,
+                message: `${appName} no longer has “${blockScopeTitle(scope)}”.`,
               });
               // Un-awaited — the viewer has already been told and the spinner must not wait on it.
               // The local claim is NOT cleared here; it goes inert on its own once the server's
@@ -528,8 +528,8 @@ export function ScopeConsentAction({
   }
   if (state === 'not-granted') {
     return (
-      // `fs="italic"` to match the `fixed` note directly above and `BlockScopeList`'s own
-      // no-control text — one component was rendering three notes under two italic conventions.
+      // `fs="italic"` to match the `fixed` note directly above and the list's own empty-state
+      // text — one component was rendering three notes under two italic conventions.
       <Text size="xs" c="dimmed" fs="italic" data-testid="scope-not-granted-note">
         {SCOPE_NOT_GRANTED_NOTE}
       </Text>
