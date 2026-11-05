@@ -2,7 +2,7 @@
   import type { ComponentProps } from 'svelte';
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import { monthsLabel, tierName } from '$lib/shop-view';
+  import { cosmeticTypeLabel, monthsLabel, tierName } from '$lib/shop-view';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
@@ -62,7 +62,7 @@
         ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(card.months)}. Stacks after any membership you already have.`
         : card.cosmeticType === 'Sticker'
         ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
-        : (card.cosmeticType ?? 'Cosmetic'))
+        : cosmeticTypeLabel(card.cosmeticType))
   );
 
   const cta = $derived(
@@ -391,6 +391,18 @@
     }
     .buy.shake {
       animation: none;
+    }
+  }
+  @media (max-width: 47.99rem) {
+    .card:not(.deal):not(.pack) {
+      grid-template-columns: auto 1fr;
+    }
+    .card:not(.deal):not(.pack) .buy.small,
+    .card:not(.deal):not(.pack) .seal,
+    .card:not(.deal):not(.pack) .state {
+      grid-column: 1 / -1;
+      justify-self: stretch;
+      text-align: center;
     }
   }
   .buy:focus-visible {

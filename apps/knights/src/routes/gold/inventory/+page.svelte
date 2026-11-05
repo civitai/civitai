@@ -40,6 +40,19 @@
       : item.type === 'NamePlate'
       ? 'Nameplate'
       : item.type;
+  const metaOf = (item: Item) =>
+    [
+      typeLabel(item),
+      item.type === 'Sticker'
+        ? item.uses === null
+          ? 'unlimited'
+          : `${count(item.uses)} left`
+        : item.origin === 'rank'
+        ? 'rank reward'
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   const daysLeft = $derived(
     data.membership
       ? Math.max(0, Math.ceil((Date.parse(data.membership.endsAt) - Date.parse(data.now)) / 86_400_000))
@@ -96,9 +109,7 @@
               {#if item.image}<img src={item.image} alt="" loading="lazy" />{:else}<Icon name={iconOf(item)} size={40} />{/if}
             </div>
             <h3>{item.name}</h3>
-            <p class="meta">
-              {typeLabel(item)}{#if item.type === 'Sticker'} · {item.uses === null ? 'unlimited' : `${count(item.uses)} left`}{:else if item.origin === 'rank'} · rank reward{/if}
-            </p>
+            <p class="meta">{metaOf(item)}</p>
             {#if item.type === 'Sticker'}
               <a class="act" href={page.data.civitaiUrl}>Use on Civitai</a>
             {:else}
@@ -118,7 +129,9 @@
               >
                 <input type="hidden" name="cosmeticId" value={item.cosmeticId} />
                 <button type="submit" class="act" class:on={item.equipped} disabled={busy === item.cosmeticId} aria-pressed={item.equipped}>
-                  {#if item.equipped}
+                  {#if busy === item.cosmeticId}
+                    Working…
+                  {:else if item.equipped}
                     <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" pathLength="1" /></svg>
                     Equipped
                   {:else}

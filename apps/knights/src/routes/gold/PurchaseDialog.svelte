@@ -4,7 +4,7 @@
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { modal } from '$lib/modal';
-  import { monthsLabel, tierName } from '$lib/shop-view';
+  import { cosmeticTypeLabel, monthsLabel, tierName } from '$lib/shop-view';
   import '$lib/overlay.css';
   import type { PageData } from './$types';
 
@@ -45,7 +45,7 @@
         ? `${count(card.buzz ?? 0)} Yellow Buzz, sent to your Civitai wallet.`
         : card.kind === 'membership'
         ? `${tierName(card.tier)} perks on Civitai for ${monthsLabel(card.months)}. Stacks after any membership you already have.`
-        : (card.cosmeticType ?? 'Cosmetic'))
+        : cosmeticTypeLabel(card.cosmeticType))
   );
   const delivered = $derived(card.kind !== 'cosmetic');
   const cancel = () => {

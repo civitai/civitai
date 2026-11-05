@@ -54,3 +54,16 @@ export const tierName = (tier: string | null) =>
 
 export const monthsLabel = (months: number | null) =>
   months === 1 ? '1 month' : `${months ?? 0} months`;
+
+const COSMETIC_TYPE = {
+  Badge: 'Badge',
+  NamePlate: 'Nameplate',
+  ProfileDecoration: 'Avatar decoration',
+  CardDecoration: 'Card decoration',
+  Sticker: 'Sticker',
+} as const;
+/** A cosmetic type as the player reads it. */
+export const cosmeticTypeLabel = (type: string | null) =>
+  type && type in COSMETIC_TYPE
+    ? COSMETIC_TYPE[type as keyof typeof COSMETIC_TYPE]
+    : type ?? 'Cosmetic';

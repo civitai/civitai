@@ -35,6 +35,7 @@
   let short = $state<{ id: string; key: number; by: number } | null>(null);
   let notice = $state<string | null>(null);
   let noticePending = $state(false);
+  let noticeInventory = $state(false);
 
   onMount(() => {
     const timer = setInterval(() => {
@@ -62,6 +63,7 @@
     const to = balance.convertible;
     stamped = card.id;
     noticePending = pending;
+    noticeInventory = card.kind === 'cosmetic' && !pending;
     notice = pending
       ? 'Your gold is reserved. Civitai has not confirmed it yet; we retry automatically and never charge twice.'
       : card.kind === 'cosmetic'
@@ -147,7 +149,7 @@
     {#if notice}
       <p class="notice-line" class:wait={noticePending} role="status">
         <Icon name={noticePending ? 'hourglass' : 'circle-check'} size={18} />{notice}
-        {#if !noticePending && cosmetics.length > 0}<a href="/gold/inventory">Open inventory</a>{/if}
+        {#if noticeInventory}<a href="/gold/inventory">Open inventory</a>{/if}
       </p>
     {/if}
 
@@ -488,6 +490,13 @@
     }
   }
   @media (max-width: 47.99rem) {
+    .recent li {
+      flex-wrap: wrap;
+      row-gap: 0.15rem;
+    }
+    .recent .what {
+      flex: 1 0 60%;
+    }
     .head {
       flex-direction: column;
       align-items: stretch;

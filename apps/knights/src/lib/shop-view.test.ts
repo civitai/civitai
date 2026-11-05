@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { monthsLabel, refusalText, tierName } from './shop-view';
+import { cosmeticTypeLabel, monthsLabel, refusalText, tierName } from './shop-view';
 
 describe('shop wording', () => {
   it('says how short the gold is, and where a rank gate opens', () => {
@@ -9,6 +9,12 @@ describe('shop wording', () => {
 
   it('tells a held player the gold is kept', () => {
     expect(refusalText('held')).toContain('kept, not lost');
+  });
+
+  it('names cosmetic types the way a player says them', () => {
+    expect(cosmeticTypeLabel('NamePlate')).toBe('Nameplate');
+    expect(cosmeticTypeLabel('ProfileDecoration')).toBe('Avatar decoration');
+    expect(cosmeticTypeLabel(null)).toBe('Cosmetic');
   });
 
   it('names tiers and months', () => {
