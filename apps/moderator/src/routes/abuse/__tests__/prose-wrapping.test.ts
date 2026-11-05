@@ -109,7 +109,7 @@ describe('the locator can go wrong — controls', () => {
   });
 
   it('rejects a tag that collapses line breaks — negative control', () => {
-    // The pre-fix reason tag, verbatim. It wraps, and it still flattens the producer's `\n`.
+    // Wraps, but flattens the producer's `\n`.
     expect(keepsNewlines('<p class="break-words whitespace-normal">')).toBe(false);
     expect(keepsNewlines('<p class="break-words">')).toBe(false);
   });
@@ -141,8 +141,8 @@ describe('a finding’s reason preserves its line breaks', () => {
   });
 
   it('the reason still breaks a long unbroken token — invariant guard', () => {
-    // Not a regression test: `break-words` was already here. It pins that switching the whitespace
-    // mode did not drop the opt-in that stops a long URL or id overflowing the card.
+    // Changing the whitespace mode must not drop the opt-in that stops a long URL or id
+    // overflowing the card.
     const { name, tag } = soleHost(RUN_PAGE_DIR, 'reason');
     expect(tag, `${RUN_PAGE_DIR}/${name} renders reason in ${tag}`).toMatch(/\bbreak-words\b/);
   });
