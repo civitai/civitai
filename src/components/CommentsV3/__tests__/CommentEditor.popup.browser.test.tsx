@@ -84,10 +84,11 @@ describe.each([
     await vi.waitFor(() =>
       expect(document.querySelector('button[aria-label="Link"]')).not.toBeNull()
     );
-    await settle(800);
-
-    const link = document.querySelector('button[aria-label="Link"]');
-    expect(link).not.toBeNull();
-    expect(isReachable(link!)).toBe(true);
+    // The strip positions itself after it appears; a clipped one never becomes reachable.
+    await vi.waitFor(() => {
+      const link = document.querySelector('button[aria-label="Link"]');
+      expect(link).not.toBeNull();
+      expect(isReachable(link!)).toBe(true);
+    });
   });
 });
