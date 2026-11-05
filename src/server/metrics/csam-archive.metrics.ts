@@ -254,7 +254,7 @@ export function ensureRegisterCsamArchiveEvidenceMetrics(reg: Registry = client.
       'civitai_csam_archive_incomplete',
       'Sent CSAM reports whose evidence archive is not complete and verified, by reason, as of the last evidence check. ' +
         'skipped = the archive recorded archiveSkipped; stale = not archived some hours after sending; ' +
-        'unsupported = a generator-evidence report, which the archive job leaves out; ' +
+        'unsupported = a generator-evidence report or a generated-image report naming no URL, which the archive job leaves out; ' +
         'images_missing = the archive could not store an item the report names; object_missing = a stored object is absent or changed; ' +
         'entries_mismatch = a stored zip does not hold the entries the archive wrote; unverifiable = nothing to verify against; ' +
         'check_error = the check itself failed. Set by the archive job, so read it with max() across pods.',
