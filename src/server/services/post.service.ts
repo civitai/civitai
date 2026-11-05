@@ -44,7 +44,6 @@ import { editPostImageSelect, postSelect } from '~/server/selectors/post.selecto
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -682,15 +681,10 @@ const getPostCollectionCollectionItem = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  let db: typeof dbRead | typeof dbWrite;
-  let post: Awaited<ReturnType<typeof readPostDetailViaKysely>> = undefined;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6)) {
-    const kysely = await getKyselyWithoutLag('post', id);
-    db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
-    post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
-  } else {
-    db = await getDbWithoutLag('post', id);
-  }
+  const kysely = await getKyselyWithoutLag('post', id);
+  // The Prisma client on the same side of the lag decision, for the reads below.
+  const db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
+  let post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
   // A post whose user row is gone reads `undefined` through Kysely, and Prisma throws for it.
   if (post === undefined) post = await readPostDetailViaPrisma(db, { id, viewer: user });
 

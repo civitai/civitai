@@ -202,7 +202,16 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
   unconfirmedOpens?: UnconfirmedOpen[];
   clearedUnconfirmedOpens?: ClearedUnconfirmedOpen[];
+  /**
+   * The case and reason a send run last held this report unsent for a moderator, written when the
+   * case changes and removed when the report is sent.
+   */
+  sendHold?: SendHold;
 };
+
+/** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
+type SendHoldCase = 'no-files' | 'missing-user';
+type SendHold = { case: SendHoldCase; reason: string; at: string };
 
 type StoredObject = { key: string; etag: string | null };
 
@@ -646,7 +655,7 @@ async function getInitialReportData(claim: SendClaim) {
   const reportingUser = await getReportingUser(report.reportedById);
   const reportedUser = report.userId ? await getReportedUser(report.userId) : undefined;
   if (!reportingUser || !reportedUser)
-    return await deleteUnderClaim(claim, 'no reporting or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting or reported user');
 
   const userActivity = await snapshotUserActivity(claim);
   if (!userActivity) return;
@@ -916,35 +925,31 @@ const appendId =
   (key: 'cancelledReportIds' | 'possibleDuplicateReportIds', id: number) =>
   (details: CsamReportDetails) => ({ ...details, [key]: [...(details[key] ?? []), id] });
 
-async function deleteUnderClaim(claim: SendClaim, reason: string) {
-  // A CyberTip left open for it is cancelled first. One that may be with NCMEC keeps the row, its
-  // only record here, for a human to decide on.
-  const stored = await cancelStoredCyberTip(claim);
-  if (stored === 'lost') return;
-  const possibleDuplicates = claim.report.details?.possibleDuplicateReportIds ?? [];
-  const unconfirmed = claim.report.details?.unconfirmedOpens ?? [];
-  if (stored === 'held' || possibleDuplicates.length > 0 || unconfirmed.length > 0)
-    return logSendLine(
-      claim,
-      'send-delete-held',
-      {
-        message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
-        ncmecReportId: claim.report.reportId ?? undefined,
-        possibleDuplicateReportIds: possibleDuplicates,
-        unconfirmedOpens: unconfirmed.length,
-      },
-      'error'
-    );
-  const { count } = await dbWrite.csamReport.deleteMany({ where: underClaim(claim) });
-  claim.settled = true;
-  if (count === 0)
-    return logSendLine(
-      claim,
-      'send-delete-refused',
-      { message: `report ${claim.report.id} not deleted (${reason}): claim lost` },
-      'error'
-    );
-  logSendLine(claim, 'send-deleted', { message: reason });
+/**
+ * Keeps a report the send cannot file unsent, marked with why, for a moderator to decide. Any
+ * CyberTip an earlier run left for it stays as it is and is named on the line.
+ */
+async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  const { report } = claim;
+  const possibleDuplicates = report.details?.possibleDuplicateReportIds ?? [];
+  const unconfirmed = report.details?.unconfirmedOpens ?? [];
+  const fields = {
+    message: `report ${report.id} held (${holdCase}): ${reason}`,
+    case: holdCase,
+    hoursPending: hoursSinceFiled(report),
+    ncmecReportId: report.reportId ?? undefined,
+    possibleDuplicateReportIds: possibleDuplicates,
+    unconfirmedOpens: unconfirmed.length,
+  };
+  logSendLine(claim, 'send-held', fields, 'error');
+  logSendLine(claim, 'send-decision-needed', fields, 'error');
+  await recordSendHold(claim, holdCase, reason);
+}
+
+async function recordSendHold(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  if (!isProd || claim.report.details?.sendHold?.case === holdCase) return;
+  const sendHold: SendHold = { case: holdCase, reason, at: new Date().toISOString() };
+  await updateUnderClaim(claim, 'send-hold', {}, (details) => ({ ...details, sendHold }));
 }
 
 async function releaseClaim(claim: SendClaim) {
@@ -1023,11 +1028,14 @@ async function cancelStoredCyberTip(
   return delivered ? 'held' : 'cancelled';
 }
 
-/** A report naming no file that can be sent opens no CyberTip: it waits, alerted, for a decision. */
-function logNoFiles(claim: SendClaim, message: string) {
+/** A report naming no file that can be sent opens no CyberTip: it waits, alerted and held, for a decision. */
+async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const stored = {
+    case: 'no-files' satisfies SendHoldCase,
+    ncmecReportId: claim.report.reportId ?? undefined,
+  };
   logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
@@ -1040,6 +1048,7 @@ function logNoFiles(claim: SendClaim, message: string) {
       },
       'error'
     );
+  await recordSendHold(claim, 'no-files', message);
 }
 
 /**
@@ -1223,7 +1232,8 @@ async function sendCyberTip(
           sendClaimId: null,
           sendClaimedAt: null,
         },
-        (stored) => ({ ...stored, ...details }),
+        // A hold no longer applies to a report that is sent.
+        ({ sendHold: _cleared, ...stored }) => ({ ...stored, ...details }),
         'send-stamp-lost'
       )
     )
@@ -1244,7 +1254,7 @@ async function reportImages(claim: SendClaim) {
 
   const images = await getImages(report.images.map((x) => x.id));
   if (!images.length)
-    return logNoFiles(claim, `report ${report.id} names no image that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no image that still exists`);
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
@@ -1558,7 +1568,7 @@ async function reportGenerationData(claim: SendClaim) {
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
   // A moderator's filing is the record that it was reported, so a report with nothing to send is kept.
   if (!generatedImages?.length)
-    return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
+    return await logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
   // Named by claim, so two runs never share a scratch directory.
   const dir = `${baseDir}/generated-send/${report.id}-${claim.claimId}`;
@@ -1616,7 +1626,10 @@ async function sendGenerationData(
   for (const { url } of failed) readFailures[url] = (readFailures[url] ?? 0) + 1;
   if (failed.length > 0) await recordReadFailures(claim, readFailures);
   if (!fetched.length)
-    return logNoFiles(claim, `report ${report.id} has no generated image that can be fetched`);
+    return await logNoFiles(
+      claim,
+      `report ${report.id} has no generated image that can be fetched`
+    );
   const sendShort =
     hoursSinceFiled(report) >= CSAM_SEND_SHORT_AFTER_HOURS &&
     failed.every(({ url }) => readFailures[url] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
@@ -1704,7 +1717,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
   const files = evidenceFilesToSend(details);
   if (!files.length)
-    return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+    return await logNoFiles(claim, `report ${report.id} has no preserved generator file`);
   if (evidenceSizeProblem(details))
     return logSendFailure(
       report,
@@ -1799,7 +1812,7 @@ async function reportTrainingData(claim: SendClaim) {
 
   const version = modelVersions[0];
   if (!version)
-    return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
   const dir = `${baseDir}/training-data/${report.id}-${claim.claimId}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
@@ -1832,7 +1845,8 @@ async function reportTrainingData(claim: SendClaim) {
       return logSendFailure(report, e, 'archive-data');
     }
     await recordSkippedEntries(claim, inflated);
-    if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
+    if (!files.length)
+      return await logNoFiles(claim, `report ${report.id} training data holds no image`);
 
     const fileDetailsOf = (filename: string) =>
       ({ originalFileName: xmlText(filename), fileViewedByEsp: false } satisfies FileDetailsXml);
@@ -1869,7 +1883,7 @@ async function reportExternalLink(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
   if (!reportingUser?.email || !report.userId)
-    return await deleteUnderClaim(claim, 'no reporting user email or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting user email or reported user');
 
   const details = report.details as unknown as ExternalCsamReportDetails;
   const userActivity = await getUserIpInfo(report);

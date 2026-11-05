@@ -277,7 +277,6 @@ export const getDefaultModelVersion = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  // One Kysely statement, on the client the `getKyselyWithoutLag('model', …)` lag decision picks.
   const db = await getKyselyWithoutLag('model', modelId);
   const result = await readDefaultModelVersionsViaKysely(db, { modelId, modelVersionId });
 
