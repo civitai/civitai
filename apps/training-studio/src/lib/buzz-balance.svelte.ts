@@ -34,15 +34,16 @@ export const buzzBalance = {
 
 /** `matureSpend` against the live Blue balance, for every spend site. `mature` = the dataset has
  *  mature images (then the non-Blue part is Yellow, never Green); `member` = a paid membership, which
- *  lets Blue pay for mature content. Unknown membership counts as not a member. */
+ *  lets Blue pay for mature content. Unknown membership counts as not a member. `blueFirst` false = Blue
+ *  is not charged, so the whole price is non-Blue. */
 export function nonBlueSpend(
   price: number | null | undefined,
   mode: 'yellow' | 'green',
-  opts: { mature?: boolean; member?: boolean } = {}
+  opts: { mature?: boolean; member?: boolean; blueFirst: boolean }
 ): Spend | null {
   return matureSpend({
     price,
-    blue: balances?.blue,
+    blue: opts.blueFirst ? balances?.blue : 0,
     mode,
     mature: opts.mature ?? false,
     member: opts.member ?? false,

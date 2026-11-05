@@ -1,5 +1,11 @@
 export type SpendCurrency = 'yellow' | 'green';
 
+/** The accounts a submit charges, in order: Blue ahead of the paid account unless the user turned
+ *  Blue-first off, then the paid account only. */
+export function spendOrder(mode: SpendCurrency, blueFirst: boolean): string[] {
+  return blueFirst ? ['blue', mode] : [mode];
+}
+
 export type Spend = {
   amount: number;
   currency: SpendCurrency;

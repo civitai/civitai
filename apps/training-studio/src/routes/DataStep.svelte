@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
   import JSZip from 'jszip';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Alert from '@civitai/ui/components/ui/alert/index.js';
@@ -735,7 +736,9 @@
             {rating}
           </Tooltip.Trigger>
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            {#if isMember}
+            {#if !buzzMode.blueFirst}
+              Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
+            {:else if isMember}
               Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
               Blue Buzz is charged in Yellow.
             {:else}

@@ -456,7 +456,7 @@
   const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
     if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
-    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}`;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}#${buzzMode.blueFirst}`;
   });
   $effect(() => {
     // A stale "could not price" must not linger after the panel closes or the input empties.
@@ -501,6 +501,7 @@
       ? nonBlueSpend(quote.cost, buzzMode.value, {
           mature: furtherMature > 0,
           member: hostConfig().isPaidMember === true,
+          blueFirst: buzzMode.blueFirst,
         })
       : null
   );
@@ -1263,9 +1264,11 @@
                     I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
                       >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
                     > will be charged.
-                  {:else}
+                  {:else if buzzMode.blueFirst}
                     I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
                     charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {:else}
+                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
                   {/if}
                 </label>
               </div>

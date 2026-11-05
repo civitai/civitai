@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { matureAckKey, matureAckMissing, matureSpend } from './mature-charge';
+import { matureAckKey, matureAckMissing, matureSpend, spendOrder } from './mature-charge';
+
+describe('spendOrder', () => {
+  it('spends Blue first by default, then the paid account', () => {
+    expect(spendOrder('yellow', true)).toEqual(['blue', 'yellow']);
+  });
+
+  it('a paid-only choice charges the paid account only, never Blue', () => {
+    expect(spendOrder('yellow', false)).toEqual(['yellow']);
+    expect(spendOrder('green', false)).toEqual(['green']);
+  });
+});
 
 const base = { price: 1400, blue: 384, mode: 'green' as const, mature: false, member: true };
 
