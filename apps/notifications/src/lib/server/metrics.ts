@@ -92,14 +92,15 @@ export const redisErrorsTotal = new Counter({
 });
 
 /**
- * Web-push sends by outcome. `accepted` means the push service took the message (201) — NOT that the
- * device received it or the user saw it; do not build a "delivery rate" on it. `expired` (404/410 →
- * row deleted) is the normal churn path, not an error.
+ * Web-push sends by outcome and notification type. `accepted` means the push service took the message
+ * (201) — NOT that the device received it or the user saw it; do not build a "delivery rate" on it.
+ * `expired` (404/410 → row deleted) is the normal churn path, not an error. `type` is bounded by the
+ * types a user can hold a push row for (the toggleable ones); never label by a free-form value.
  */
 export const pushDeliveryTotal = new Counter({
   name: 'notifications_push_delivery_total',
-  help: 'Web-push send attempts, labeled by outcome (accepted/expired/rate_limited/payload_too_large/failure/capped).',
-  labelNames: ['outcome'] as const,
+  help: 'Web-push send attempts, labeled by outcome (accepted/expired/rate_limited/payload_too_large/failure/capped) and notification type.',
+  labelNames: ['outcome', 'type'] as const,
   registers: [register],
 });
 
@@ -120,7 +121,7 @@ for (const outcome of [
   'failure',
   'capped',
 ] as const)
-  pushDeliveryTotal.inc({ outcome }, 0);
+  pushDeliveryTotal.inc({ outcome, type: 'none' }, 0); // baseline only; no send is typed 'none'
 for (const outcome of ['dispatched', 'failure'] as const) emailDispatchTotal.inc({ outcome }, 0);
 for (const operation of ['get', 'set', 'increment', 'has', 'clearCategory', 'bustUser'] as const)
   redisErrorsTotal.inc({ operation }, 0);

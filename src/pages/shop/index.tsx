@@ -8,9 +8,9 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
   SimpleGrid,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconPencilMinus, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';

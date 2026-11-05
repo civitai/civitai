@@ -23,6 +23,7 @@ import {
 } from '~/server/events/points/roster-score';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
+import { refreshShowcaseHats, SHOWCASE_SETTING } from '~/server/events/showcase-hat';
 
 // Keeps the roster sets (roster.ts) in step with Postgres, one member at a time or in batches. Every
 // write re-derives the member from scratch, so the same call serves an opt-in, an opt-out, a hat
@@ -93,11 +94,13 @@ export async function loadRosterMemberStates(
     ) j ON true
     LEFT JOIN LATERAL (
       SELECT json_agg(
-        json_build_object('id', x."cosmeticId", 'worn', x.worn, 'price', x.price)
+        json_build_object('id', x."cosmeticId", 'worn', x.worn, 'price', x.price, 'picked', x.picked)
         ORDER BY x.worn DESC, x.price DESC NULLS LAST, x."obtainedAt" DESC, x."cosmeticId"
       ) AS hats
       FROM (
         SELECT uc."cosmeticId", uc."equippedToId" IS NOT NULL AS worn, uc."obtainedAt",
+          uc."cosmeticId"::text IS NOT DISTINCT FROM
+            (u.settings -> ${SHOWCASE_SETTING} ->> ${event.name}) AS picked,
           (SELECT min(si."unitAmount") FROM "CosmeticShopItem" si
             WHERE si."cosmeticId" = uc."cosmeticId") AS price
         FROM "UserCosmetic" uc
@@ -402,6 +405,8 @@ export async function syncEventRosterMembers(
 ) {
   const ids = [...new Set(userIds)];
   if (!ids.length) return;
+  // Most callers changed someone's hats, which can change the hat their avatar shows.
+  await refreshShowcaseHats(ids);
   let all: RosterEvent[];
   try {
     all = events ?? (await rosterEvents());

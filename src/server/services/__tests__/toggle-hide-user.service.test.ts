@@ -6,6 +6,10 @@ import { userFollowsCache } from '~/server/redis/caches';
 import { toggleFollowUser } from '~/server/services/user.service';
 import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 const { Prisma } = await import('@prisma/client');
 
 // The real class, because `isPrismaUniqueViolation` is an `instanceof` check — a

@@ -75,6 +75,7 @@ const LAYOUT = `
   .absolute{position:absolute} .inset-0{inset:0} .inset-x-0{left:0;right:0}
   .top-1{top:4px} .bottom-1{bottom:4px} .flex{display:flex} .flex-col{flex-direction:column}
   .items-center{align-items:center} .right-2{right:8px} .top-2{top:8px}
+  .left-2{left:8px} .bottom-2{bottom:8px}
 `;
 
 const stage = (placements: PlacedSticker[], viewerId = OWNER_ID) => (
@@ -139,5 +140,29 @@ describe('peeking past the review chrome', () => {
     await expect
       .element(page.getByRole('button', { name: 'Hide controls' }))
       .not.toBeInTheDocument();
+  });
+
+  // A tester's report: a sticker placed near the top-right corner sat under the
+  // pill, with its Approve/Decline peeking out below it.
+  test('the toggle stays off a pending sticker placed in its corner', async () => {
+    renderOverlay([
+      placed({
+        data: { cosmeticId: 9, x: 0.85, y: 0.1, scale: 0.3, rotation: 0, flip: false, opacity: 1 },
+      }),
+    ]);
+
+    const toggle = page.getByRole('button', { name: 'Hide controls' });
+    await expect.element(toggle).toBeInTheDocument();
+    const rect = async (el: ReturnType<typeof page.getByText>) =>
+      ((await el.element()) as HTMLElement).getBoundingClientRect();
+    const overlaps = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+    const pill = await rect(toggle);
+    const art = await rect(page.getByAltText(':test:'));
+    expect(art.height).toBeGreaterThan(0);
+    expect(overlaps(pill, art)).toBe(false);
+    expect(overlaps(pill, await rect(page.getByText('Approve')))).toBe(false);
+    expect(overlaps(pill, await rect(page.getByText('Decline')))).toBe(false);
   });
 });

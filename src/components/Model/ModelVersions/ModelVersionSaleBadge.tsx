@@ -1,4 +1,5 @@
-import { Anchor, Card, Group, Text, Tooltip } from '@mantine/core';
+import { Anchor, Card, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconTag } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ModelVersionTerms } from '@civitai/buzz';

@@ -178,6 +178,7 @@ export function getModelVersionForFile(db: Kysely<DB>, modelVersionId: number) {
       'ModelVersion.createdAt',
       'ModelVersion.requireAuth',
       'ModelVersion.usageControl',
+      'ModelVersion.baseModel',
       'Model.id as modelId',
       'Model.name as modelName',
       'Model.type as modelType',

@@ -158,7 +158,7 @@ export function PostImageDropzone({
             upload(fileData, { postId: data.id });
           },
           onError(error) {
-            showCreatePostError(error.message);
+            showCreatePostError(error);
           },
         }
       );

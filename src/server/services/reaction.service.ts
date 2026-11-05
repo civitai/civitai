@@ -7,13 +7,7 @@ import {
   readImageReactionIdViaKysely,
   readImageReactionIdViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
-import {
-  answerMetrics,
-  articleMetrics,
-  bountyEntryMetrics,
-  postMetrics,
-  questionMetrics,
-} from '~/server/metrics';
+import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
@@ -156,16 +150,6 @@ const getReaction = async ({
   // A stale hit is handled downstream: deleteReaction reports 0 rows.
   const db = await getDbWithoutLag();
   switch (entityType) {
-    case 'question':
-      return await db.questionReaction.findFirst({
-        where: { userId, reaction, questionId: entityId },
-        select: { id: true },
-      });
-    case 'answer':
-      return await db.answerReaction.findFirst({
-        where: { userId, reaction, answerId: entityId },
-        select: { id: true },
-      });
     case 'commentOld':
       return await db.commentReaction.findFirst({
         where: { userId, reaction, commentId: entityId },
@@ -226,20 +210,6 @@ const deleteReaction = async ({
   userId: number;
 }) => {
   switch (entityType) {
-    case 'question': {
-      const { count } = await dbWrite.questionReaction.deleteMany({
-        where: { questionId: entityId, userId, reaction },
-      });
-      if (count > 0) await questionMetrics.queueUpdate(entityId);
-      return count;
-    }
-    case 'answer': {
-      const { count } = await dbWrite.answerReaction.deleteMany({
-        where: { answerId: entityId, userId, reaction },
-      });
-      if (count > 0) await answerMetrics.queueUpdate(entityId);
-      return count;
-    }
     case 'commentOld': {
       const { count } = await dbWrite.commentReaction.deleteMany({
         where: { commentId: entityId, userId, reaction },
@@ -296,16 +266,6 @@ const createReaction = async ({
   ...data
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
-    case 'question':
-      return await dbWrite.questionReaction.create({
-        data: { ...data, questionId: entityId },
-        select: { reaction: true },
-      });
-    case 'answer':
-      return await dbWrite.answerReaction.create({
-        data: { ...data, answerId: entityId },
-        select: { reaction: true },
-      });
     case 'commentOld':
       return await dbWrite.commentReaction.create({
         data: { ...data, commentId: entityId },

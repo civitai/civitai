@@ -81,7 +81,8 @@ async function viewerFor(ctx: Context, entity: Entity): Promise<CommentV3Viewer>
 /** Fills each author's profile picture and cosmetics from the user caches, as the v2 reads do. */
 async function withAuthors(page: CommentV3Page) {
   const lookup = await getCosmeticsAndProfilePicturesForUsers(
-    page.comments.flatMap((c) => (c.user ? [c.user.id] : []))
+    page.comments.flatMap((c) => (c.user ? [c.user.id] : [])),
+    { showcaseHat: true }
   );
   return {
     ...page,
@@ -173,7 +174,7 @@ async function asNewItem(row: StoredCommentV3) {
       .select(['id', 'username', 'deletedAt', 'image'])
       .where('id', '=', row.userId)
       .executeTakeFirst(),
-    getCosmeticsAndProfilePicturesForUsers([row.userId]),
+    getCosmeticsAndProfilePicturesForUsers([row.userId], { showcaseHat: true }),
   ]);
   return {
     id: row.id,

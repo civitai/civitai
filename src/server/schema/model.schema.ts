@@ -38,6 +38,12 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import {
+  SFW_DESCRIPTION_MAX_LENGTH,
+  SFW_DESCRIPTION_TOO_LONG_MESSAGE,
+  SFW_NAME_TOO_LONG_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -55,6 +61,8 @@ export type GetModelByIdSchema = z.infer<typeof getModelByIdSchema>;
 export const getModelByIdSchema = z.object({
   id: z.number(),
   excludeTrainingData: z.boolean().optional(),
+  /** The editor's read: owners and mods get the stored .red name/description, not the .com face. */
+  forEditor: z.boolean().optional(),
 });
 
 export const getAllModelsSchema = z.object({
@@ -220,15 +228,16 @@ export const modelGallerySettingsInput = z.object({
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const checkSfwFaceSchema = z.object({
-  sfwName: z.string().max(255).optional(),
-  sfwDescription: z.string().max(50000).optional(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH).optional(),
+  sfwDescription: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).optional(),
   modelId: z.number().optional(),
 });
 export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
 
 export const draftSfwFaceSchema = z.object({
+  // The .red name, which may predate its own cap.
   name: z.string().trim().min(1).max(255),
-  description: z.string().max(50000).nullish(),
+  description: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).nullish(),
   modelId: z.number().optional(),
 });
 
@@ -237,8 +246,10 @@ export const modelUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
-  sfwName: z.string().trim().max(255).nullish(),
-  sfwDescription: getSanitizedStringSchema().nullish(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH, SFW_NAME_TOO_LONG_MESSAGE).nullish(),
+  sfwDescription: getSanitizedStringSchema()
+    .pipe(z.string().max(SFW_DESCRIPTION_MAX_LENGTH, SFW_DESCRIPTION_TOO_LONG_MESSAGE))
+    .nullish(),
   coverImageId: z.number().int().positive().nullish(),
   sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
@@ -383,6 +394,33 @@ export type PoiFlagSnapshot = {
   prevLockedProperties?: string[];
 };
 
+type RestrictedNsfwPrior = {
+  nsfw: boolean;
+  sfwOnly: boolean;
+  lockedProperties: string[];
+  systemNsfwLock: { source: string; at: string } | null;
+};
+
+export type RestrictedNsfwVerdict = {
+  source: string;
+  at: string;
+  restriction: 'minor' | 'poi' | 'sfwOnly';
+  /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
+  applied?: { at: string; prior: RestrictedNsfwPrior };
+};
+
+/** One ruling on a restricted-verdict lead, with the values it replaced. `autoApply` is the scan's own
+ *  flip of an SFW-only model, by the system user; the others are a moderator's. */
+export type RestrictedNsfwVerdictRulingRecord = {
+  at: string;
+  by: number;
+  ruling: 'keep' | 'dismiss' | 'rateNsfw' | 'autoApply';
+  restriction: RestrictedNsfwVerdict['restriction'];
+  reason?: string | null;
+  verdict?: RestrictedNsfwVerdict;
+  prior: RestrictedNsfwPrior;
+};
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -453,6 +491,14 @@ export type ModelMeta = Partial<{
   poiHashCleared: { at: string };
   /** A system check (not a moderator) added the nsfw lock. Server-owned. */
   systemNsfwLock: { source: string; at: string };
+  /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
+   *  in Needs review. Server-owned, moderator-only. */
+  restrictedNsfwVerdict: RestrictedNsfwVerdict;
+  /** Moderator rulings on past restricted-verdict leads, with the values each replaced. Moderator-only. */
+  restrictedNsfwVerdictRulings: RestrictedNsfwVerdictRulingRecord[];
+  /** A lead a moderator kept while the model was minor or POI: revived as a held lead when the owner
+   *  clears the flag. Server-owned, moderator-only. */
+  restrictedNsfwVerdictDormant: RestrictedNsfwVerdict;
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

@@ -895,3 +895,129 @@ describe('payoutEnabled and tipsEnabled', () => {
     expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });
 });
+
+describe('non-commercial base models: no fee, no comp, no tips', () => {
+  const NON_COMMERCIAL = [
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
+  ];
+  type Fee = { role: string; amount: number; recipientModelVersionId: number };
+  const charged = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { fees, payoutEnabled, tipsEnabled } = body as Body & {
+      fees: Fee[];
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { fees, payoutEnabled, tipsEnabled };
+  };
+  const OWN_FEE = { licensingFee: 5 as never, licensingFeeType: 'PerImageBuzz' as never };
+  const ROOT_FEE = { ...OWN_FEE, isLicensingRoot: true };
+  const SOURCE_FEE = {
+    licensingSourceVersionId: 900 as never,
+    sourceLicensingFee: 3 as never,
+    sourceLicensingFeeRecipientUserId: 31 as never,
+  };
+
+  const VARIANTS = {
+    'no fee': {},
+    'own fee': OWN_FEE,
+    'licensing-root fee': ROOT_FEE,
+    'lineage fee': { ...SOURCE_FEE, sourceBaseModel: 'SDXL 1.0' as never },
+  };
+  it.each(
+    NON_COMMERCIAL.flatMap((baseModel) =>
+      Object.entries(VARIANTS).map(([variant, fee]) => [baseModel, variant, fee] as const)
+    )
+  )('a %s version with %s sends no fee and turns comp and tips off', async (baseModel, _, fee) => {
+    expect(await charged({ baseModel, ...fee })).toEqual({
+      fees: [],
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a commercial licensing root that charges its fee still opts out of creator comp', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0', ...ROOT_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'baseModel',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a Flux.1 D version still charges its own fee and keeps tips (control)', async () => {
+    const { fees, tipsEnabled } = await charged({ baseModel: 'Flux.1 D', ...OWN_FEE });
+    expect(fees).toEqual([expect.objectContaining({ amount: 5 })]);
+    expect(tipsEnabled).toBe(true);
+  });
+
+  it('a Flux.1 D version without a fee keeps creator comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.1 D' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a commercial version without a fee keeps creator comp and tips', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('drops a lineage fee owed to a non-commercial source version', async () => {
+    const { fees } = await charged({
+      baseModel: 'SDXL 1.0',
+      ...SOURCE_FEE,
+      ...OWN_FEE,
+      sourceBaseModel: 'Flux.2 Klein 9B' as never,
+    });
+    expect(fees.map((f) => f.role)).toEqual(['version']);
+  });
+
+  it('a Flux.2 Klein 4B version keeps its fee, comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B', ...OWN_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'version',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+    expect(
+      (
+        await charged({
+          baseModel: 'SDXL 1.0',
+          ...SOURCE_FEE,
+          sourceBaseModel: 'SDXL 1.0' as never,
+        })
+      ).fees
+    ).toEqual([
+      expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
+    ]);
+  });
+});

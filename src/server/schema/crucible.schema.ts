@@ -24,7 +24,8 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
-  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
+  CRUCIBLE_MIN_VIEW_SECONDS_MAX,
+  CRUCIBLE_MIN_VIEW_SECONDS_MIN,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
@@ -188,9 +189,9 @@ export const createCrucibleInputBaseSchema = z.object({
     .optional(),
   minViewSeconds: z
     .number()
-    .refine((s) => (CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS as readonly number[]).includes(s), {
-      message: 'Unsupported minimum view time',
-    })
+    .int()
+    .min(CRUCIBLE_MIN_VIEW_SECONDS_MIN)
+    .max(CRUCIBLE_MIN_VIEW_SECONDS_MAX)
     .nullish(),
   maxClipSeconds: z
     .number()
@@ -410,7 +411,9 @@ export const updateCrucibleSchema = z.object({
     .nullish(),
   minViewSeconds: z
     .number()
-    .refine((s) => (CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS as readonly number[]).includes(s))
+    .int()
+    .min(CRUCIBLE_MIN_VIEW_SECONDS_MIN)
+    .max(CRUCIBLE_MIN_VIEW_SECONDS_MAX)
     .nullish(),
   maxClipSeconds: z
     .number()

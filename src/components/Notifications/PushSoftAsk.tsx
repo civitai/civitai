@@ -1,21 +1,18 @@
 import { Button, Group, Paper, Stack, Text } from '@mantine/core';
 import { IconBellRinging, IconShare2 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import { useEffect } from 'react';
+import { isPushAskSnoozed, usePushPromptActions } from '~/components/Notifications/pushPrompt';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { trpc } from '~/utils/trpc';
-
-const MAX_DISMISSALS = 3;
-const REASK_AFTER_DAYS = 90;
 
 /**
  * The pre-permission ask. Our own prompt first — the native browser prompt fires only after a yes,
  * so a "no" here costs nothing, while a "no" on the native prompt is a permanent denial.
  */
 export function PushSoftAsk() {
-  const { support, permission, active, busy, enable } = usePushSubscription();
+  const { support, permission, active } = usePushSubscription();
   const { data: settings, isLoading } = trpc.user.getSettings.useQuery();
-  const setSettingsMutation = trpc.user.setSettings.useMutation();
-  const queryUtils = trpc.useUtils();
 
   if (support === 'needs-standalone') {
     return (
@@ -38,17 +35,23 @@ export function PushSoftAsk() {
   // A browser-level denial is permanent and cannot be re-requested from code — nothing useful to ask.
   if (permission === 'denied') return null;
 
-  const dismissedCount = settings?.pushPromptDismissedCount ?? 0;
-  const dismissedAt = settings?.pushPromptDismissedAt;
-  if (dismissedCount >= MAX_DISMISSALS) return null;
-  if (dismissedAt && dayjs().diff(dayjs(dismissedAt), 'day') < REASK_AFTER_DAYS) return null;
+  if (isPushAskSnoozed(settings)) return null;
 
-  const dismiss = () => {
-    setSettingsMutation.mutate(
-      { pushPromptDismissedCount: dismissedCount + 1, pushPromptDismissedAt: new Date() },
-      { onSuccess: () => queryUtils.user.getSettings.invalidate() }
-    );
-  };
+  return <PushSoftAskCard variant={permission === 'granted' ? 'finish' : 'new'} />;
+}
+
+function PushSoftAskCard({ variant }: { variant: 'new' | 'finish' }) {
+  const isMobile = useIsMobile({ type: 'media' });
+  const { busy } = usePushSubscription();
+  const { track, notNow, enable } = usePushPromptActions(
+    'settings-card',
+    variant,
+    isMobile ? 'mobile' : 'desktop'
+  );
+
+  useEffect(() => {
+    track('shown');
+  }, [track]);
 
   return (
     <Paper withBorder p="md" radius="md">
@@ -66,7 +69,7 @@ export function PushSoftAsk() {
             <Button size="xs" loading={busy} onClick={() => enable()}>
               Enable push notifications
             </Button>
-            <Button size="xs" variant="subtle" color="gray" onClick={dismiss}>
+            <Button size="xs" variant="subtle" color="gray" onClick={notNow}>
               Not now
             </Button>
           </Group>

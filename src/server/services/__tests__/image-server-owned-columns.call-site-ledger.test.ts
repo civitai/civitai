@@ -414,6 +414,12 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   string,
   { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
 > = {
+  // A team hat sticker on someone's image: any visible image in a published post is a target by
+  // design, and placeTurfSticker checks that before the write.
+  'src/server/events/turf/turf.service.ts#placeTurfSticker': {
+    writes: ['imageId'],
+    decision: 'subject',
+  },
   // Called from the daily-challenge jobs, and from upsertUserChallenge with its resolved cover.
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeRecord': {
     writes: ['coverImageId: input.coverImageId'],
@@ -654,6 +660,13 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId'],
     decision: 'owner-checked',
     guards: { imageId: 'if (image.post.userId !== userId)' },
+  },
+  // The spark: someone else's image by design, refused unless it may be shown, is outside a block
+  // with the starter and its creator's remix gallery is open. Written once, here.
+  'src/server/services/storyline.service.ts#createStoryline': {
+    writes: ['sparkImageId'],
+    decision: 'owner-checked',
+    guards: { sparkImageId: 'if (sparkImageId) await assertStorylineSpark({' },
   },
   // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
   // collaborator, or an image this request uploaded, refused otherwise. A pick sent back unchanged

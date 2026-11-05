@@ -68,6 +68,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
   APPEAL_ALREADY_PENDING,
+  getAppealRefusal,
   IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   OrphanedAppealReason,
@@ -75,6 +76,7 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -841,27 +843,46 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenAppeal({ id, message }: { id: number; message: string }) {
-  return dbWrite.appeal.update({
-    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
-    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
-    where: { id, entityType: { not: EntityType.Image }, category: null },
-    data: {
-      status: AppealStatus.Pending,
-      appealMessage: message,
-      // The moderator queue sorts and displays on createdAt, so leaving the
-      // original request's stamp puts a months-old row ahead of fresh ones under
-      // a date that describes a request nobody is being asked to review.
-      createdAt: new Date(),
-      resolvedAt: null,
-      resolvedBy: null,
-      resolvedMessage: null,
-      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
-      resolvedReason: null,
-      internalNotes: null,
-    },
-  });
+export async function reopenAppeal({
+  id,
+  message,
+  context,
+}: {
+  id: number;
+  message: string;
+  /** null clears the stored context; omitted leaves it. */
+  context?: LockReviewContext | null;
+}) {
+  try {
+    return await dbWrite.appeal.update({
+      // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+      // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+      where: { id, entityType: { not: EntityType.Image }, category: null },
+      data: {
+        status: AppealStatus.Pending,
+        appealMessage: message,
+        // Restamp: the moderator queue sorts on createdAt, so the old stamp would rank a stale row first.
+        createdAt: new Date(),
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedMessage: null,
+        // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+        resolvedReason: null,
+        internalNotes: null,
+        ...(context !== undefined && { context: context ?? Prisma.DbNull }),
+      },
+    });
+  } catch (error) {
+    // Another of the owner's rows went Pending meanwhile: one may be pending at a time.
+    if (isPrismaUniqueViolation(error))
+      throw throwBadRequestError('Your request is already under review.');
+    throw error;
+  }
 }
+
+const lockReviewWhere = {
+  context: { path: ['kind'], equals: LOCK_REVIEW_KIND },
+} satisfies Prisma.AppealWhereInput;
 
 export function getAppealCount({
   userId,
@@ -881,6 +902,8 @@ export function getAppealCount({
       category: null,
       // Waiting on review because the content was removed first is not the user's doing.
       NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
+      // A request to unlock a setting is not a dispute of a removal.
+      AND: [{ OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewWhere }] }],
     },
   });
 }
@@ -956,7 +979,13 @@ export async function createEntityAppeal({
   userId,
   buzzType,
   skipFee,
-}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType; skipFee?: boolean }) {
+  context,
+}: Omit<CreateEntityAppealInput, 'locks'> & {
+  userId: number;
+  buzzType: BuzzSpendType;
+  skipFee?: boolean;
+  context?: LockReviewContext;
+}) {
   let buzzTransactionId: string | null = null;
 
   if (!skipFee) {
@@ -1008,7 +1037,7 @@ export async function createEntityAppeal({
       }
 
       return tx.appeal.create({
-        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId },
+        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId, context },
       });
     });
 
@@ -1230,8 +1259,39 @@ export async function isAppealBlockedByHoldMarker({
 }
 
 /**
- * The rule `createEntityAppealHandler` refuses an image appeal on, so the owner's page offers one
- * only when it would be accepted. Anyone else's image reads as no.
+ * The images whose appealable-looking block is refused anyway: a hold marker keeps them, or the
+ * appeal flow excludes the image or its owner. The endpoint, the owner's image page and the
+ * removed-images list all read this. The owner query runs even with no images.
+ */
+export async function getAppealRefusedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  const [held, excluded] = await Promise.all([
+    getHoldMarkerBlockedImageIds({ imageIds, userId }),
+    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+  ]);
+  if (excluded.users.has(userId)) return new Set(imageIds);
+  return new Set(imageIds.filter((id) => held.has(id) || excluded.images.has(id)));
+}
+
+export async function isImageAppealRefused({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  return (await getAppealRefusedImageIds({ imageIds: [imageId], userId })).has(imageId);
+}
+
+/**
+ * Whether the owner's page shows the appeal prompt. An image with a pending or decided appeal shows
+ * it; the prompt then says the appeal is under review or the decision stands, as the endpoint's
+ * refusal does. Anyone else's image reads as no.
  */
 export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
   const [image] = await dbWrite.$queryRaw<
@@ -1240,7 +1300,9 @@ export async function canAppealOwnImage({ imageId, userId }: { imageId: number; 
     SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
   `;
   if (!image || !isAppealableImage(image)) return false;
-  return !(await isAppealBlockedByHoldMarker({ imageId, userId }));
+  const latest = await getLatestAppeal({ entityType: EntityType.Image, entityId: imageId, userId });
+  if (getAppealRefusal(EntityType.Image, latest)) return true;
+  return !(await isImageAppealRefused({ imageId, userId }));
 }
 
 // Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
@@ -1381,7 +1443,7 @@ export async function closeAppealsDeletedByOwner({
 
 /**
  * Closes and refunds a deleted model's pending appeals without a notice: the owner is already told
- * about the removal. A flag dispute or an unpublish appeal (site form) alike has nothing left to
+ * about the removal. A flag dispute, a lock review or an unpublish appeal (site form) has nothing left to
  * rule on once the model is gone. Best-effort: the delete already happened, so failures are logged, not thrown. The sweep
  * stays the safety net.
  */
@@ -1449,8 +1511,8 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     ...rest.filter((a) => a.modelDeletedByAppellant === true).map((a) => a.id),
   ]);
 
-  // Model appeals are flag disputes, so a deleted model leaves nothing to rule on. Only images,
-  // where the removal itself can be what is appealed, are routed for review.
+  // A deleted model leaves nothing to rule on, whether its appeal disputes a flag or a lock. Only
+  // images, where the removal itself can be what is appealed, are routed for review.
   const notOwnerDeleted = rest.filter((a) => !ownerDeletedIds.has(a.id));
   const closeQuietIds = [
     ...quiet.map((a) => a.id),
@@ -1507,7 +1569,12 @@ export async function resolveEntityAppeal({
   resolvedReason,
   refundBuzz,
   userId,
-}: ResolveAppealInput & { userId?: number }) {
+  modelAppealKind,
+}: ResolveAppealInput & {
+  userId?: number;
+  /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
+  modelAppealKind?: 'flag';
+}) {
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({
@@ -1517,6 +1584,10 @@ export async function resolveEntityAppeal({
       entityType,
       entityRemovedAt: null,
       category: null,
+      // A JSON path NOT alone also drops the rows whose context is NULL, which every flag appeal's is.
+      ...(modelAppealKind === 'flag' && {
+        OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewWhere }],
+      }),
     },
     data: {
       status,
@@ -1539,6 +1610,31 @@ export async function resolveEntityAppeal({
   });
   if (appeals.length === 0) return [];
 
+  await settleResolvedAppeals(appeals, { status, resolvedMessage, refundBuzz });
+  return appeals;
+}
+
+export type ResolvedAppeal = {
+  id: number;
+  entityId: number;
+  entityType: EntityType;
+  resolvedAt: Date | null;
+  buzzTransactionId: string | null;
+  status: AppealStatus;
+  userId: number;
+  createdAt: Date;
+};
+
+/** What follows a ruling on appeals already closed: the entity's own change, any refund, and the
+ *  owner's notification and email. For a caller that closes the row itself, under its own lock. */
+export async function settleResolvedAppeals(
+  appeals: ResolvedAppeal[],
+  {
+    status,
+    resolvedMessage,
+    refundBuzz,
+  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'>
+) {
   const approved = status === AppealStatus.Approved;
 
   // Batch-fetch recipients once to avoid N+1 lookups inside the loop.

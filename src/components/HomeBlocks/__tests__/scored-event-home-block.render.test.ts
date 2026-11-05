@@ -18,6 +18,9 @@ const h = vi.hoisted(() => ({
   cosmetic: undefined as unknown,
   standings: undefined as unknown,
   hats: [] as unknown[],
+  showcase: null as unknown,
+  showcaseLoading: false,
+  showcaseEnabled: [] as unknown[],
   eventData: undefined as unknown,
   dismissed: [] as string[],
   inView: true,
@@ -43,6 +46,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useQuery: (_i: unknown, o?: { enabled?: boolean }) => ({
         data: o?.enabled ? h.hats : undefined,
       }),
+    },
+    'event.getMyShowcaseHatArt': {
+      useQuery: (_i: unknown, o?: { enabled?: boolean }) => {
+        h.showcaseEnabled.push(o?.enabled);
+        const loading = !!o?.enabled && h.showcaseLoading;
+        return { data: o?.enabled && !loading ? h.showcase : undefined, isLoading: loading };
+      },
     },
     'event.getData': {
       useQuery: (_i: unknown, o?: { enabled?: boolean }) => {
@@ -193,6 +203,9 @@ beforeEach(() => {
   h.cosmetic = undefined;
   h.standings = STANDINGS;
   h.hats = [];
+  h.showcase = null;
+  h.showcaseLoading = false;
+  h.showcaseEnabled = [];
   h.eventData = data;
   h.dismissed = [];
   h.inView = true;
@@ -317,6 +330,52 @@ describe('joined', () => {
     expect(el.querySelector('[data-testid="event-home-block-get-hat"]')?.getAttribute('href')).toBe(
       '/events/birthday2026#team-hats'
     );
+  });
+
+  // Justin (2026-11-03): where we say which team you're on, it is your showcase hat, not the team cap.
+  // The standings rows are a legend of the teams, so they keep each team's cap.
+  describe('your team panel hat', () => {
+    const panelHat = (el: HTMLElement) =>
+      srcs(el.querySelector('[data-testid="event-home-block-my-team"]'));
+    const rowHats = (el: HTMLElement) =>
+      srcs(el.querySelector('[data-testid="event-home-block-standings"]'));
+    const until = new Date(NOW.getTime() + 86_400_000).toISOString();
+
+    it('is the hat your avatar shows, while the standings keep the team caps', () => {
+      joinAs('Pink');
+      h.showcase = { cosmeticId: 9, url: 'my-showcase', until };
+      const el = block();
+      expect(panelHat(el)).toEqual(['my-showcase']);
+      expect(rowHats(el)).toEqual(['cap-blue', 'cap-pink']);
+    });
+
+    it("is your team's cap when no showcase hat is on show", () => {
+      joinAs('Pink');
+      expect(panelHat(block())).toEqual(['cap-pink']);
+    });
+
+    it("is your team's cap once a cached showcase hat has run past the event", () => {
+      joinAs('Pink');
+      h.showcase = {
+        cosmeticId: 9,
+        url: 'my-showcase',
+        until: new Date(NOW.getTime() - 1).toISOString(),
+      };
+      expect(panelHat(block())).toEqual(['cap-pink']);
+    });
+
+    it('is not drawn while the showcase hat loads, so the team cap never flashes first', () => {
+      joinAs('Pink');
+      h.showcaseLoading = true;
+      expect(panelHat(block())).toEqual([]);
+    });
+
+    it('is not asked for before you join', () => {
+      h.user = { id: 1 };
+      block();
+      expect(h.showcaseEnabled.length).toBeGreaterThan(0);
+      expect(h.showcaseEnabled.every((e) => !e)).toBe(true);
+    });
   });
 
   // To whoever puts the longer copy back: "Get another hat / One more post scoring" wrapped to four

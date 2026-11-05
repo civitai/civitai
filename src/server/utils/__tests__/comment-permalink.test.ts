@@ -34,6 +34,7 @@ const row = (over: Partial<Record<keyof CommentPermalinkRow, unknown>>): Comment
     entityType: 'post',
     entityId: PARENT_ID,
     comicProjectId: null,
+    comicChapterPosition: null,
     appListingSlug: null,
     ...over,
   } as CommentPermalinkRow);
@@ -41,8 +42,8 @@ const link = (r: CommentPermalinkRow | null | undefined) => buildCommentPermalin
 
 /**
  * Every ID-ADDRESSED entity type, with the URL it must keep producing. `comicChapter` is keyed on
- * the project rather than the chapter — a real asymmetry the resolver has to preserve, and one a
- * careless rewrite flattens to `entityId` (a chapter id in a `/comics/` URL).
+ * the project and the chapter's 1-indexed position rather than the chapter id — a real asymmetry
+ * the resolver has to preserve, and one a careless rewrite flattens to `entityId`.
  */
 const HANDLED: Array<[string, Partial<Record<keyof CommentPermalinkRow, unknown>>, string]> = [
   ['post', { entityType: 'post' }, `/posts/${PARENT_ID}?${QUERY}`],
@@ -54,8 +55,13 @@ const HANDLED: Array<[string, Partial<Record<keyof CommentPermalinkRow, unknown>
   ['challenge', { entityType: 'challenge' }, `/challenges/${PARENT_ID}?${QUERY}`],
   [
     'comicChapter',
-    { entityType: 'comicChapter', entityId: 9901, comicProjectId: PARENT_ID },
-    `/comics/${PARENT_ID}?${QUERY}`,
+    {
+      entityType: 'comicChapter',
+      entityId: 9901,
+      comicProjectId: PARENT_ID,
+      comicChapterPosition: 2,
+    },
+    `/comics/${PARENT_ID}/comic/3?${QUERY}`,
   ],
   ['image', { entityType: 'image' }, `/images/${PARENT_ID}?${QUERY}`],
   ['model3d', { entityType: 'model3d' }, `/3d-models/${PARENT_ID}?${QUERY}`],

@@ -283,3 +283,471 @@ export function buildCases(ctx) {
     },
   ];
 }
+
+// --- image delivery (`--cases image-delivery`) ---------------------------------------------------
+//
+// Compares Next (`server.js`, the reference) with the standalone server serving
+// `/api/internal/image-delivery/[id]`. Every answer must be Next's, byte for byte, except the
+// paths that are not an exact one-segment match (declared below, as for the tRPC route): the
+// route's caller never sends them.
+//
+// `counted` is the status label the route's own counter (`civitai_app_image_delivery_request_total`)
+// must move by for the case: 'found', 'not_found', or null when the route answers before counting
+// (auth) or the path is not the route. With `--route-counter` the harness checks the counter on
+// BOTH servers moved by exactly these amounts, so a candidate that never ran the route cannot pass,
+// and the reference is the positive control that the counter can be read at all.
+//
+// The rows below are written to the job's empty database by `seed-image-delivery.mjs` before
+// these cases run. Ids are the image url keys the caller sends; none is a real image.
+
+const UUID = (n) => `0d1e2f3a-4b5c-4d6e-8f70-${String(n).padStart(12, '0')}`;
+export const IMAGE_DELIVERY_IDS = {
+  image: UUID(1),
+  video: UUID(2),
+  gone: UUID(3),
+  shared: UUID(4),
+  goneHidden: UUID(5),
+  unknown: UUID(99),
+};
+
+/** [id, url, hideMeta, type, mimeType, ingestion] */
+export const IMAGE_DELIVERY_ROWS = [
+  [910001, IMAGE_DELIVERY_IDS.image, false, 'image', 'image/jpeg', 'Scanned'],
+  // `mimeType` blank: the endpoint answers null.
+  [910002, IMAGE_DELIVERY_IDS.video, true, 'video', '  ', 'Scanned'],
+  // Source known gone and metadata visible: not deliverable, so 404.
+  [910003, IMAGE_DELIVERY_IDS.gone, false, 'image', 'image/png', 'NotFound'],
+  // Two rows share a url: the most restrictive (hideMeta) wins.
+  [910004, IMAGE_DELIVERY_IDS.shared, false, 'image', 'image/webp', 'Scanned'],
+  [910005, IMAGE_DELIVERY_IDS.shared, true, 'image', 'image/webp', 'Scanned'],
+  // Source gone but metadata hidden: still delivered.
+  [910006, IMAGE_DELIVERY_IDS.goneHidden, true, 'image', null, 'NotFound'],
+];
+
+/**
+ * @param {{ webhookToken: string }} ctx
+ */
+export function buildImageDeliveryCases(ctx) {
+  const auth = { authorization: `Bearer ${ctx.webhookToken}` };
+  const at = (id) => `/api/internal/image-delivery/${id}`;
+  const { image, video, gone, shared, goneHidden, unknown } = IMAGE_DELIVERY_IDS;
+  return [
+    // --- found: from the database, then from the cache the first request filled ----------------
+    { id: 'image-db', path: at(image), headers: auth, counted: 'found' },
+    { id: 'image-cached', path: at(image), headers: auth, warm: true, counted: 'found' },
+    { id: 'video-blank-mime', path: at(video), headers: auth, counted: 'found' },
+    { id: 'video-blank-mime-cached', path: at(video), headers: auth, warm: true, counted: 'found' },
+    { id: 'shared-url-most-restrictive', path: at(shared), headers: auth, counted: 'found' },
+    { id: 'gone-but-hidden', path: at(goneHidden), headers: auth, counted: 'found' },
+
+    // --- not found ---------------------------------------------------------------------------------
+    { id: 'unknown-id', path: at(unknown), headers: auth, counted: 'not_found' },
+    // Negative results are not cached: the second request reads the database again.
+    { id: 'unknown-id-again', path: at(unknown), headers: auth, warm: true, counted: 'not_found' },
+    { id: 'gone-source', path: at(gone), headers: auth, counted: 'not_found' },
+
+    // --- odd ids: decoded the same way by both, still one segment ---------------------------------
+    {
+      id: 'id-encoded-slash-and-space',
+      path: at('a%20b%2Fc'),
+      headers: auth,
+      counted: 'not_found',
+    },
+    { id: 'id-utf8', path: at('%C3%A9t%C3%A9.png'), headers: auth, counted: 'not_found' },
+    { id: 'id-very-long', path: at('x'.repeat(2048)), headers: auth, counted: 'not_found' },
+    {
+      // The path's id wins over a query `id`, under Next and here.
+      id: 'id-also-in-query',
+      path: `${at(image)}?id=${unknown}&id=${gone}`,
+      headers: auth,
+      counted: 'found',
+    },
+
+    // --- auth -------------------------------------------------------------------------------------
+    { id: 'auth-missing', path: at(image), headers: {}, counted: null },
+    {
+      id: 'auth-wrong-bearer',
+      path: at(image),
+      headers: { authorization: 'Bearer not-the-token' },
+      counted: null,
+    },
+    {
+      id: 'auth-query-token',
+      path: `${at(image)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      // The caller's exact request shape (`?token=`, no Bearer) on a hideMeta row: the value
+      // that decides whether metadata is stripped.
+      id: 'hidemeta-query-token',
+      path: `${at(video)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      id: 'hidemeta-shared-url-query-token',
+      path: `${at(shared)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      // A repeated ?token= arrives as an array and is refused.
+      id: 'auth-repeated-query-token',
+      path: `${at(image)}?token={WEBHOOK_TOKEN}&token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: null,
+    },
+    {
+      // An unrelated Bearer next to a valid ?token= still passes.
+      id: 'auth-other-bearer-plus-query-token',
+      path: `${at(image)}?token={WEBHOOK_TOKEN}`,
+      headers: { authorization: 'Bearer something-else' },
+      counted: 'found',
+    },
+
+    // --- what the router does before a route runs -------------------------------------------------
+    {
+      // Next strips these; not stripping `x-nextjs-data` makes the route module add
+      // `x-nextjs-matched-path` to the response.
+      id: 'client-sent-internal-headers',
+      path: at(image),
+      headers: {
+        ...auth,
+        'x-nextjs-data': '1',
+        'x-matched-path': '/api/trpc/[trpc]',
+        'x-middleware-override-headers': 'authorization',
+        'x-middleware-request-authorization': 'Bearer not-the-token',
+        'x-now-route-matches': `nxtPid=${unknown}`,
+      },
+      counted: 'found',
+    },
+    {
+      // Next drops `nxtP…` query keys; a route module invoked directly would take `nxtPid` as the
+      // route param and answer for that image instead.
+      id: 'internal-query-param-override',
+      path: `${at(unknown)}?nxtPid=${image}`,
+      headers: auth,
+      counted: 'not_found',
+    },
+    {
+      // Pins that edge-sent x-forwarded-* headers do not change the answer. It does NOT cover the
+      // server's own x-forwarded-* fill: this handler reads no forwarded header, so removing the
+      // fill changes nothing here (a mutation check confirmed it survives).
+      id: 'edge-forwarded-headers-do-not-change-the-answer',
+      path: at(image),
+      headers: {
+        ...auth,
+        'x-forwarded-for': '198.51.100.23',
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'example.test',
+      },
+      counted: 'found',
+    },
+    {
+      id: 'post-with-json-body',
+      method: 'POST',
+      path: at(image),
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: '{"a":1}',
+      counted: 'found',
+    },
+    { id: 'head', method: 'HEAD', path: at(image), headers: auth, counted: 'found' },
+
+    // --- not an exact match: this server's plain answers; the caller never sends these ---------
+    {
+      id: 'trailing-slash',
+      path: `${at(image)}/`,
+      headers: auth,
+      counted: null,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+    },
+    {
+      id: 'more-segments',
+      path: `${at(image)}/extra`,
+      headers: auth,
+      counted: null,
+      divergence: { reason: PAGE_RENDERED, candidate: NOT_FOUND },
+    },
+    {
+      id: 'no-id',
+      path: '/api/internal/image-delivery/',
+      headers: auth,
+      counted: null,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+    },
+    {
+      id: 'bad-percent-escape',
+      path: at('%E0%A4%A'),
+      headers: auth,
+      counted: null,
+      divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
+    },
+
+    // --- the server's other routes, next to this one ---------------------------------------------
+    {
+      id: 'other-internal-route',
+      path: '/api/live?token={WEBHOOK_TOKEN}',
+      headers: {},
+      counted: null,
+    },
+    {
+      id: 'trpc-call',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+      counted: null,
+    },
+  ];
+}
+
+// --- browser beacons (`--cases beacons`) ----------------------------------------------------------
+//
+// Compares Next (`server.js`, the reference) with the standalone server serving the three tracking
+// beacons: `/api/internal/ping` (page views, `TrackPageView.tsx`), `/api/internal/pulse` (entity
+// views, `TrackView.tsx`) and `/api/track/batch` (the coalesced search/action/impression flush,
+// `trackEventBuffer.ts`).
+//
+// Both servers run the SAME route module on the same request, so these cases cover only what sits
+// between the server and the handler, not the handler's own validation:
+//   - the body as each caller sends it: ping's `fetch` with a string body and no Content-Type (the
+//     browser sends `text/plain`), pulse's and batch's `application/json` (a `sendBeacon` Blob or a
+//     `fetch`), and JSON with a charset;
+//   - the body limit (Next's default `bodyParser`, 1mb: none of the three sets `config.api`), which
+//     each route module applies from its own config, so every route is sent a body over it;
+//   - the session (signed in) and the forwarded headers each server fills in;
+//   - what Next's router does before a route runs: internal headers and `nxtP…` query keys;
+//   - the endpoint wrapper's preflight and a non-POST method, one cross-origin refusal;
+//   - paths that are not an exact match, a neighbouring beacon that stays on Next, and the
+//     server's other routes.
+//
+// A beacon's response is an empty 200 or a short 400, which a server that never ran the route
+// could imitate. So every case also names the tracker rows the route must send (`tracked`, table
+// names): with `--tracker`, the harness reads what each server sent to the job's tracker stub for
+// that request and requires both to have sent exactly those tables, with the same rows. The
+// reference sending them is the positive control that the stub sees anything. Rows carry the
+// session's user id, so the signed-in case also checks that the session is read the same way.
+
+const BEACON_UA = DESKTOP_UA;
+/** What a same-origin browser request carries through the CDN. */
+const beaconFrom = {
+  'user-agent': BEACON_UA,
+  'cf-connecting-ip': NORMAL_IP,
+  'cf-ipcountry': 'US',
+  'x-forwarded-for': NORMAL_IP,
+  'x-forwarded-proto': 'https',
+  origin: SITE,
+  referer: `${SITE}/models/123/some-model`,
+  'sec-fetch-site': 'same-origin',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-dest': 'empty',
+};
+const TEXT = { 'content-type': 'text/plain;charset=UTF-8' };
+const JSON_CT = { 'content-type': 'application/json' };
+
+const PING = '/api/internal/ping';
+const PULSE = '/api/internal/pulse';
+const BATCH = '/api/track/batch';
+
+const PAGE_VIEW = {
+  duration: 5234,
+  path: '/models/123/some-model',
+  windowWidth: 1920,
+  windowHeight: 1080,
+};
+const VIEW = { type: 'ImageView', entityType: 'Image', entityId: 4321 };
+const SEARCH = {
+  kind: 'search',
+  data: { query: 'a cat', index: 'models_v9', filters: { tags: ['x'] } },
+};
+const ACTION = { kind: 'action', data: { type: 'AddToBounty_Click' } };
+
+/** A JSON body padded to exactly `bytes` bytes with a field the schemas strip. */
+function paddedJson(value, bytes) {
+  const base = JSON.stringify({ ...value, pad: '' });
+  if (base.length > bytes) throw new Error('paddedJson: value is larger than the target size');
+  return JSON.stringify({ ...value, pad: 'a'.repeat(bytes - base.length) });
+}
+// Next's default limit is '1mb', which `bytes` reads as 1048576.
+const UNDER_LIMIT = 1024 * 1024 - 64;
+const OVER_LIMIT = 1024 * 1024 + 64;
+
+/**
+ * @param {{ sessionCookie: string }} ctx
+ */
+export function buildBeaconCases(ctx) {
+  const signedIn = { ...beaconFrom, cookie: ctx.sessionCookie };
+  const post = (id, path, headers, body, tracked, extra = {}) => ({
+    id,
+    method: 'POST',
+    path,
+    headers,
+    body,
+    tracked,
+    ...extra,
+  });
+  return [
+    // --- each caller's body -------------------------------------------------------------------------
+    // ping: what the browser sends for a string body, and the caller's exact shape (no header).
+    post('ping-text-plain', PING, { ...beaconFrom, ...TEXT }, JSON.stringify(PAGE_VIEW), [
+      'pageViews',
+    ]),
+    post('ping-no-content-type', PING, beaconFrom, JSON.stringify(PAGE_VIEW), ['pageViews']),
+    post('pulse-json', PULSE, { ...beaconFrom, ...JSON_CT }, JSON.stringify(VIEW), ['views']),
+    post(
+      'pulse-json-charset',
+      PULSE,
+      { ...beaconFrom, 'content-type': 'application/json; charset=utf-8' },
+      JSON.stringify(VIEW),
+      ['views']
+    ),
+    post('batch-json', BATCH, { ...beaconFrom, ...JSON_CT }, JSON.stringify([SEARCH, ACTION]), [
+      'search',
+      'actions',
+    ]),
+
+    // --- the body limit, per route module ----------------------------------------------------------
+    post(
+      'ping-just-under-1mb',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      paddedJson(PAGE_VIEW, UNDER_LIMIT),
+      ['pageViews']
+    ),
+    post(
+      'ping-just-over-1mb',
+      PING,
+      { ...beaconFrom, ...TEXT },
+      paddedJson(PAGE_VIEW, OVER_LIMIT),
+      []
+    ),
+    post(
+      'pulse-just-over-1mb',
+      PULSE,
+      { ...beaconFrom, ...JSON_CT },
+      paddedJson(VIEW, OVER_LIMIT),
+      []
+    ),
+    post(
+      'batch-just-over-1mb',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      paddedJson({ x: [SEARCH] }, OVER_LIMIT),
+      []
+    ),
+
+    // --- session and forwarded headers --------------------------------------------------------------
+    post('pulse-signed-in', PULSE, { ...signedIn, ...JSON_CT }, JSON.stringify(VIEW), ['views']),
+    post(
+      // No CDN headers at all: each server fills x-forwarded-* from the socket, which the row's
+      // `ip` column is derived from.
+      'no-forwarded-headers',
+      PULSE,
+      { 'user-agent': BEACON_UA, origin: SITE, referer: `${SITE}/`, ...JSON_CT },
+      JSON.stringify(VIEW),
+      ['views']
+    ),
+
+    // --- what the router does before a route runs ---------------------------------------------------
+    post(
+      // Next strips these; not stripping `x-nextjs-data` makes the route module add
+      // `x-nextjs-matched-path` to the response (the negative control's diff).
+      'client-sent-internal-headers',
+      PULSE,
+      {
+        ...beaconFrom,
+        ...JSON_CT,
+        'x-nextjs-data': '1',
+        'x-matched-path': '/api/trpc/[trpc]',
+        'x-middleware-override-headers': 'origin',
+        'x-middleware-request-origin': 'https://elsewhere.example',
+        'x-now-route-matches': 'nxtPtrpc=a',
+      },
+      JSON.stringify(VIEW),
+      ['views']
+    ),
+    post(
+      // Next drops `nxtP…` query keys before the route runs; so must this server.
+      'internal-query-keys',
+      BATCH,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([SEARCH]),
+      ['search'],
+      { path: `${BATCH}?nxtPfoo=1&nextInternalLocale=en&x=1` }
+    ),
+
+    // --- the endpoint wrapper -----------------------------------------------------------------------
+    {
+      // A CORS preflight, answered by the endpoint wrapper before the handler.
+      id: 'pulse-options-preflight',
+      method: 'OPTIONS',
+      path: PULSE,
+      headers: {
+        ...beaconFrom,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      },
+      tracked: [],
+    },
+    // `PublicEndpoint` does not refuse a method outside its list (it only answers an OPTIONS
+    // preflight), so a GET reaches the handler under Next as here and fails its body parse.
+    { id: 'ping-get', path: PING, headers: beaconFrom, tracked: [] },
+    post(
+      'pulse-cross-origin',
+      PULSE,
+      { ...beaconFrom, ...JSON_CT, origin: 'https://elsewhere.example' },
+      JSON.stringify(VIEW),
+      []
+    ),
+
+    // --- not an exact match: this server's plain answers; the callers never send these ------------
+    post(
+      'ping-trailing-slash',
+      `${PING}/`,
+      { ...beaconFrom, ...TEXT },
+      JSON.stringify(PAGE_VIEW),
+      [],
+      {
+        divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+      }
+    ),
+    post(
+      'batch-extra-segment',
+      `${BATCH}/x`,
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify([SEARCH]),
+      [],
+      {
+        divergence: { reason: PAGE_RENDERED, candidate: NOT_FOUND },
+      }
+    ),
+    post(
+      // A sibling beacon that stays on Next: this server does not serve it.
+      'neighbouring-beacon-not-served',
+      '/api/track/block-render',
+      { ...beaconFrom, ...JSON_CT },
+      JSON.stringify({ appBlockId: 'a', blockInstanceId: 'b', slotId: 'c' }),
+      [],
+      {
+        divergence: {
+          reason:
+            'Next serves this route; this server serves only the pages in served-pages.cjs, and routing sends it only those.',
+          candidate: NOT_FOUND,
+        },
+      }
+    ),
+
+    // --- the server's other routes, next to these ---------------------------------------------------
+    {
+      id: 'other-internal-route',
+      path: '/api/live?token={WEBHOOK_TOKEN}',
+      headers: {},
+      tracked: [],
+    },
+    {
+      id: 'trpc-call',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+      tracked: [],
+    },
+  ];
+}

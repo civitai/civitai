@@ -16,10 +16,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * space has said yes, and a refusal is the one outcome that never gets there.
  */
 
-// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/placement', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
-);
+// The Kysely placement reads these routes make. Their rows, against a real database, are pinned
+// in placement-reads.kysely-parity.test.ts.
+const placementReads = vi.hoisted(() => ({
+  getImagePlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
   placementPriceRange: async () => ({
@@ -52,8 +56,8 @@ const PLACER = 52;
 const IMAGE = 74;
 const POST = 88;
 
-const spaceFindMany = dbMock.dbWrite.placementSpace.findMany;
-const imageFindUnique = dbMock.dbWrite.image.findUnique;
+const spaceRows = placementReads.listPlacementSpacesFor;
+const imageTarget = placementReads.getImagePlacementTarget;
 
 type Row = {
   entityType: 'user' | 'post' | 'image';
@@ -79,14 +83,14 @@ const own = (entityType: 'post' | 'image', mode = 'review'): Row => ({
 });
 
 const given = (imageType: 'image' | 'video' | 'audio', rows: Row[]) => {
-  imageFindUnique.mockResolvedValue({
+  imageTarget.mockResolvedValue({
     id: IMAGE,
     userId: OWNER,
     postId: POST,
     type: imageType,
-    user: { username: 'creator' },
+    username: 'creator',
   });
-  spaceFindMany.mockResolvedValue(rows);
+  spaceRows.mockResolvedValue(rows);
 };
 
 const data = { cosmeticId: 5, x: 0.25, y: 0.75, scale: 0.2, rotation: 15 };
@@ -140,7 +144,7 @@ const outcome = async (route: () => Promise<unknown>) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.placement.count.mockResolvedValue(0);
+  placementReads.countPlacements.mockResolvedValue(0);
   // One row answers both raw reads the free route makes before the claim: the
   // sticker the placer owns, and their remaining uses of it.
   dbMock.dbWrite.$queryRaw.mockResolvedValue([

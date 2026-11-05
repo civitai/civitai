@@ -8,6 +8,8 @@ import {
   ScopeRevokedAtLine,
   useScopeRevoke,
 } from '~/components/Apps/scopeRevoke';
+import { StorageImportGrants } from '~/components/Apps/StorageImportGrants';
+import { APP_STORAGE_IMPORT_SCOPE } from '~/shared/constants/block-storage.constants';
 
 /**
  * PHASE 3 — the ONE permissions block both surfaces render.
@@ -189,6 +191,9 @@ export function ScopeConsentList({
           the latest. The rule and its reasoning live on `ScopeRevokedAtLine`. */}
       <ScopeRevokedAtLine scopesRevokedAt={grant?.scopesRevokedAt ?? null} />
       <ScopeRevokeFailureNotice failure={failure} />
+      {grant && grant.scopes.includes(APP_STORAGE_IMPORT_SCOPE) ? (
+        <StorageImportGrants appBlockId={grant.appBlockId} appName={grant.name} />
+      ) : null}
     </Stack>
   );
 }

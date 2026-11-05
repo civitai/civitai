@@ -1,4 +1,5 @@
-import { Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import { Button, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconMessage } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';

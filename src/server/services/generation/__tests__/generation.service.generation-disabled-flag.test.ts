@@ -345,3 +345,20 @@ describe('moderator flag writes', () => {
     expect(bustMvCache).not.toHaveBeenCalled();
   });
 });
+
+describe('getResourceCanGenerate — base model with generation switched off', () => {
+  const canGenerateOn = (baseModel: string) =>
+    getResourceCanGenerate({
+      resource: { ...baseResource, baseModel, flags: ModelVersionFlag.None },
+      user: { id: 123, isModerator: true },
+      hiddenGates: noHiddenGates,
+    });
+
+  it('blocks a covered Ideogram 4.0 resource, for moderators too', () => {
+    expect(canGenerateOn('Ideogram 4.0')).toBe(false);
+  });
+
+  it('leaves Ideogram 4.5, which shares the ecosystem, generatable', () => {
+    expect(canGenerateOn('Ideogram 4.5')).toBe(true);
+  });
+});

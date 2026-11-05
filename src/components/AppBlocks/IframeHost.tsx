@@ -46,6 +46,7 @@ import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -54,6 +55,7 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
+import { APP_STORAGE_PUBLISH_SCOPE } from '~/shared/constants/block-storage.constants';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
@@ -106,6 +108,7 @@ import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.sc
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
+import { appsRunBackTarget, type AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
@@ -395,6 +398,7 @@ export function AppBlockChrome({
   slotId,
   hostSurface,
   canOpenPage = false,
+  launchOrigin = 'store',
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -443,6 +447,12 @@ export function AppBlockChrome({
   /** The host that mounted this chrome. Decides whether it offers app feedback
    *  (`APP_FEEDBACK_HOST_SURFACES`); omitted → no Feedback button. */
   hostSurface?: BlockHostSurface;
+  /** Where the full-page run was launched from (`?from=home`, read by the run page's
+   *  `getServerSideProps`). Decides where the breadcrumb's first crumb and the mobile back
+   *  chevron lead: `home` → "My apps" (`/apps`); anything else → "Marketplace"
+   *  (`/apps/store`). See `appsRunBackTarget`. Omitted → the store, which is what every
+   *  surface other than a home launch should say. */
+  launchOrigin?: AppsRunOrigin;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -598,6 +608,9 @@ export function AppBlockChrome({
   // through the store. A narrow model sidebar therefore resolves `geometry.compact`
   // TRUE (it is genuinely narrow) and still renders exactly the chrome it always has.
   const compact = isPage && geometry.compact;
+  // The run chrome's way out, shared by the desktop crumb and the mobile back chevron so the
+  // two renderings can never name or link different places.
+  const back = appsRunBackTarget(launchOrigin);
   // The platform-nav destinations, authored ONCE and rendered into whichever surface
   // is carrying them: their own dropdown on a desktop-width bar, the ⋮ sheet below
   // `sm`. `ChromeSurfaceItem` is what makes one authoring serve both — see its header
@@ -640,8 +653,8 @@ export function AppBlockChrome({
           old href would have made every press from this menu a redirect hop, and
           removing the item outright would delete a door out of a running app for
           the app's own owner — which the ledger guard's own message warns against.
-          So it is repointed, keeping the label ("My apps" still names what an owner
-          arrives at: state C is their app list) and taking the subnav's glyph for
+          So it was repointed (and has since been RELABELLED "My builds" — see below) and
+          takes the subnav's glyph for
           the row it now shares, `IconCode`. It carries `?view=apps` (`MY_APPS_HREF`,
           spelled literally because the chrome-nav ledger parses literal hrefs): an author
           who also holds the App Assistant would otherwise land on the assistant.
@@ -663,8 +676,21 @@ export function AppBlockChrome({
           whereas these items stand alone over a running app and need the noun
           ("App activity"). "Marketplace" is the one label that is shared verbatim,
           because "Apps home" named a destination the store itself stopped calling
-          that. */}
-      <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore size={14} stroke={1.5} />}>
+          that.
+
+          🔴 THE STORE MOVED TO `/apps/store`, and `/apps` is now the viewer's "My apps"
+          home — the launcher of the apps they have, and so the natural way out of a
+          running app. It leads this section with the subnav's own label and glyph. The
+          author's app list on `/apps/build?view=apps` was "My apps" too; it is now
+          "My builds" everywhere (owner decision), so the two never share a name. The item
+          set is pinned in `chromeNavAlignsWithSubNav.test.ts`. */}
+      <ChromeSurfaceItem href="/apps" leftSection={<IconApps size={14} stroke={1.5} />}>
+        My apps
+      </ChromeSurfaceItem>
+      <ChromeSurfaceItem
+        href="/apps/store"
+        leftSection={<IconBuildingStore size={14} stroke={1.5} />}
+      >
         Marketplace
       </ChromeSurfaceItem>
       <ChromeSurfaceItem
@@ -677,7 +703,7 @@ export function AppBlockChrome({
         href="/apps/build?view=apps"
         leftSection={<IconCode size={14} stroke={1.5} />}
       >
-        My apps
+        My builds
       </ChromeSurfaceItem>
       {isModerator && (
         <ChromeSurfaceItem href="/apps/review" leftSection={<IconGavel size={14} stroke={1.5} />}>
@@ -846,19 +872,20 @@ export function AppBlockChrome({
               thing, and the thing it says ("up to the Marketplace") is exactly what a
               back chevron says in a third of the space. It is a real anchor
               (`NextLink`), so middle-click / long-press / keyboard all behave, and it
-              points at the SAME `/apps` the crumb did — the destination did not move,
-              only its rendering.
+              points at the SAME place the crumb does (`back`, from `appsRunBackTarget`:
+              `/apps` for a launch from the My apps home, `/apps/store` otherwise) — the
+              two renderings share one destination.
 
               `ActionIcon size="sm"` is not a style choice here: it is what keeps the
               row at its pinned 31px resting height (`CHROME_BAR_PX`), the same as the
               icon buttons the desktop bar has always used. */}
             <ActionIcon
               component={Link}
-              href="/apps"
+              href={back.href}
               variant="subtle"
               color="gray"
               size="sm"
-              aria-label="Back to Marketplace"
+              aria-label={`Back to ${back.label}`}
               data-testid="app-block-back"
               style={{ flexShrink: 0 }}
             >
@@ -901,6 +928,7 @@ export function AppBlockChrome({
             label={label}
             isPage={isPage}
             slug={slug}
+            back={back}
             onOpenReview={setReviewListingId}
           />
         )}
@@ -1004,7 +1032,7 @@ export function AppBlockChrome({
 
 /**
  * The desktop bar's leading cluster: the platform-nav trigger, the badge app name and
- * the `Marketplace / <app name>` breadcrumb.
+ * the `Marketplace / <app name>` breadcrumb (`My apps / <app name>` after a home launch).
  *
  * 🔴 EXTRACTED PURELY TO KEEP THE COMPACT/DESKTOP BRANCH READABLE — every element
  * inside it is byte-for-byte what shipped, including the testids, the ARIA and the
@@ -1021,6 +1049,7 @@ function ChromeDesktopLeadingGroup({
   label,
   isPage,
   slug,
+  back,
   onOpenReview,
 }: {
   geometry: ChromeGeometry;
@@ -1031,6 +1060,8 @@ function ChromeDesktopLeadingGroup({
   label: string;
   isPage: boolean;
   slug: string | undefined;
+  /** The first crumb's destination and label — see `appsRunBackTarget`. */
+  back: ReturnType<typeof appsRunBackTarget>;
   onOpenReview: (appListingId: string) => void;
 }) {
   return (
@@ -1160,21 +1191,20 @@ function ChromeDesktopLeadingGroup({
                 and long-press all still behave. */}
             <Anchor
               component={Link}
-              href="/apps"
+              href={back.href}
               size="xs"
               underline="always"
               style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
-              {/* Reads "Marketplace", not "Apps" — the destination `/apps` is what the
-                  store's own nav calls its first entry (`appsSections[0].label`), and a
-                  crumb that names the page differently from the page's own tab makes the
-                  trail look like it leads somewhere else. The testid deliberately keeps
-                  its `-apps` spelling: it addresses the crumb by its ROUTE, which has not
-                  moved, so a future copy change does not churn every test that reaches
-                  for it. */}
-              Marketplace
+              {/* Names its destination the way that page's own nav does: "Marketplace" for
+                  `/apps/store` (the `marketplace` row of `appsSections`, not "Apps"), or
+                  "My apps" for `/apps` when the run was launched from the home. A crumb that
+                  names the page differently from the page's own tab makes the trail look
+                  like it leads somewhere else. The testid keeps its historical `-apps`
+                  spelling, so tests that reach for it do not churn. */}
+              {back.label}
             </Anchor>
             <Text size="xs" c="dimmed" aria-hidden>
               /
@@ -2044,6 +2074,16 @@ export function IframeHost({
       // `useRequestConsent`), its payload is `{ scopes? }` with NO requestId, and
       // there is no host→block reply message for it — so there is nothing to
       // reply TO and no promise to fail fast. Dropping it cannot hang the block.
+
+      // A request carrying `from` asks for `apps:storage:publish` in ANOTHER app, which only
+      // `PageBlockHost` prompts for. This host refuses it with the `CONSENT_UNAVAILABLE` push below
+      // and never reads it as a request for this app's own scopes.
+      // Why refuse rather than drop: the model slot has no source-publish prompt yet, and reading
+      // the request as an ordinary one would open THIS app's prompt for a scope in another app.
+      if (resolveSourcePublishConsentRequest(payload) !== null) {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
       const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
       if (scopesToGrant != null) {
         openConsentModal(scopesToGrant);

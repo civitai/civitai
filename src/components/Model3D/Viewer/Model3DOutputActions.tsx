@@ -7,7 +7,8 @@
  * implementation of the Post/Download flow rather than duplicating it.
  */
 
-import { Button, Menu } from '@mantine/core';
+import { Button } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDownload } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 

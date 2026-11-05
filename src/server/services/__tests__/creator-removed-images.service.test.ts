@@ -11,7 +11,6 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
-import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   getMyRemovedImages,
   REMOVAL_REASON,
@@ -29,7 +28,6 @@ const RECENT = new Date(1_700_000_400_000);
 
 type State = {
   imageId: number;
-  excluded?: boolean;
   owned?: boolean;
   blockedFor?: string | null;
   needsReview?: string | null;
@@ -54,7 +52,6 @@ function given({
 }) {
   chQuery.mockResolvedValue({ json: async () => events });
   const stateRows = states.map((s) => ({
-    excluded: false,
     owned: true,
     blockedFor: 'moderated',
     needsReview: null,
@@ -127,59 +124,52 @@ describe('getMyRemovedImages', () => {
     expect(scoreJob).not.toContain("'DeleteTOS'");
   });
 
-  it('judges each removal with the appeal flow’s excludedRecord', async () => {
-    given({ events: [{ imageId: 1, removedAt: 1 }], states: [{ imageId: 1 }] });
-
-    await getMyRemovedImages(USER, EARLY);
-
-    const query = sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!);
-    expect(query.sql).toContain(`${excludedRecord(Prisma.raw('r')).sql} AS excluded`);
-    expect(query.values).toContainEqual([1]);
-  });
-
-  it('leaves out a removal excludedRecord flags', async () => {
+  it('lists an image the report lookup flags like any other removal, with no appeal', async () => {
     given({
       events: [
+        { imageId: 3, removedAt: 3 },
         { imageId: 2, removedAt: 2 },
         { imageId: 1, removedAt: 1 },
       ],
-      states: [{ imageId: 1 }, { imageId: 2, excluded: true }],
-    });
-
-    const result = await getMyRemovedImages(USER, EARLY);
-
-    expect(result.items.map((i) => i.imageId)).toEqual([1]);
-    expect(result.total).toBe(1);
-  });
-
-  it('leaves out an image the appeal flow’s report lookup excludes', async () => {
-    given({
-      events: [
-        { imageId: 2, removedAt: 2 },
-        { imageId: 1, removedAt: 1 },
-      ],
-      states: [{ imageId: 1 }, { imageId: 2 }],
+      // 3 is an ordinary removal no appeal is offered for: blocked by a scan, not a moderator.
+      states: [{ imageId: 1 }, { imageId: 2 }, { imageId: 3, blockedFor: 'tos' }],
       excludedImages: [2],
     });
 
     const result = await getMyRemovedImages(USER, EARLY);
 
-    expect(result.items.map((i) => i.imageId)).toEqual([1]);
-    expect(result.total).toBe(1);
+    expect(result.total).toBe(3);
+    const byId = new Map(result.items.map((i) => [i.imageId, i]));
+    expect(byId.get(1)?.canAppeal).toBe(true);
+    const comparable = (id: number) => ({ ...byId.get(id), imageId: 0, removedAt: null });
+    expect(comparable(2)).toStrictEqual(comparable(3));
   });
 
-  it('lists nothing for an owner the appeal flow excludes', async () => {
-    given({
-      events: [{ imageId: 1, removedAt: 1 }],
-      states: [{ imageId: 1 }],
-      excludedOwners: [USER],
-    });
+  it('lists an owner the appeal flow excludes like anyone else, with no appeal', async () => {
+    const setup = {
+      events: [
+        { imageId: 3, removedAt: 3 },
+        { imageId: 2, removedAt: 2 },
+        { imageId: 1, removedAt: 1 },
+      ],
+      // 3 is an ordinary removal no appeal is offered for: blocked by a scan, not a moderator.
+      states: [{ imageId: 1 }, { imageId: 2 }, { imageId: 3, blockedFor: 'tos' }],
+    };
+    given(setup);
+    const normal = await getMyRemovedImages(USER, EARLY);
+    given({ ...setup, excludedOwners: [USER] });
+    const excluded = await getMyRemovedImages(USER, EARLY);
 
-    expect(await getMyRemovedImages(USER, EARLY)).toEqual({
-      total: 0,
-      truncated: false,
-      items: [],
+    expect(normal.items.map((i) => i.canAppeal)).toEqual([false, true, true]);
+    expect(excluded.items.map((i) => i.imageId)).toEqual([3, 2, 1]);
+    expect(excluded.total).toBe(normal.total);
+    const comparable = (item: (typeof excluded.items)[number]) => ({
+      ...item,
+      imageId: 0,
+      removedAt: null,
     });
+    for (const item of excluded.items)
+      expect(comparable(item)).toStrictEqual(comparable(normal.items[0]));
   });
 
   it('leaves out a removal it could not check', async () => {
@@ -273,7 +263,8 @@ describe('getMyRemovedImages', () => {
   // in for it by reading the filters off the query it is sent.
   const serve = (rows: { imageId: number; removedAt: number; reason: string | null }[]) =>
     chQuery.mockImplementation(async ({ query, query_params }) => {
-      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      const excluded: string[] =
+        (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
       expect(Number.isInteger(query_params.windowStart)).toBe(true);
       // Applied only when the SQL carries the clause, so dropping it from the query fails a test.
       const start = query.includes('removedAt > {windowStart:Int64}')
@@ -328,7 +319,7 @@ describe('getMyRemovedImages', () => {
     expect(result.truncated).toBe(false);
   });
 
-  it('still says it stopped at the limit when some of those rows are left out', async () => {
+  it('still says it stopped at the limit when some of those rows are flagged', async () => {
     const events = Array.from({ length: REMOVED_IMAGES_LIMIT }, (_, i) => ({
       imageId: i + 1,
       removedAt: 1,
@@ -337,7 +328,7 @@ describe('getMyRemovedImages', () => {
 
     const result = await getMyRemovedImages(USER, EARLY);
 
-    expect(result.total).toBe(REMOVED_IMAGES_LIMIT - 1);
+    expect(result.total).toBe(REMOVED_IMAGES_LIMIT);
     expect(result.truncated).toBe(true);
   });
 
@@ -365,7 +356,9 @@ describe('getMyRemovedImages', () => {
       excludedImages: [7],
     });
 
-    expect((await getMyRemovedImages(USER, RECENT)).items).toEqual([]);
+    expect((await getMyRemovedImages(USER, RECENT)).items).toEqual([
+      expect.objectContaining({ imageId: 7, canAppeal: false }),
+    ]);
   });
 
   it('fails rather than answering an empty list when ClickHouse fails', async () => {

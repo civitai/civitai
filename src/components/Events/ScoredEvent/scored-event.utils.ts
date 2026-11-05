@@ -72,6 +72,20 @@ export function buildStandingsSeries({
   });
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Points each team earned per hour; a gap where an hour has not been settled yet. */
+export function hourlySeries(hourly: {
+  start: Date;
+  teams: { team: string; points: (number | null)[] }[];
+}) {
+  const start = hourly.start.getTime();
+  return hourly.teams.map(({ team, points }) => ({
+    team,
+    points: points.map((y, i) => ({ x: start + i * HOUR_MS, y })),
+  }));
+}
+
 const ENTITY_NOUNS: Record<string, string> = {
   Image: 'images',
   Model: 'models',

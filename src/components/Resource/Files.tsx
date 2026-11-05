@@ -5,19 +5,18 @@ import {
   getPrimaryShade,
   Group,
   Loader,
-  Popover,
   Progress,
   Select,
   Stack,
   Text,
   TextInput,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
   Badge,
   Switch,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { Dropzone, type FileRejection } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import {

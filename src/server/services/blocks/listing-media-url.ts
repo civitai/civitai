@@ -5,7 +5,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
  *
  * 🔴 PUBLIC SURFACES DO NOT CALL THESE DIRECTLY. Every public render of listing media goes
  * through `listing-media-audience.ts`, which decides per image and per request whether the viewer
- * may see it and only then calls these builders. Direct callers are the author's own "My apps"
+ * may see it and only then calls these builders. Direct callers are the author's own "My builds"
  * read and the moderator review facts, which must show what is attached; the ledger in
  * `listing-media-audience.ledger.test.ts` pins that list.
  *
@@ -40,7 +40,7 @@ export function listingIconUrl(icon: { url: string | null } | null | undefined):
  *
  *   - the PUBLIC store projection passes the first screenshot's URL, because a shopper
  *     should see *something* rather than a grey box;
- *   - the AUTHOR's own "My apps" read passes `null`, because a missing cover is exactly
+ *   - the AUTHOR's own "My builds" read passes `null`, because a missing cover is exactly
  *     the fact its owner needs to see. Substituting a screenshot there would hide an
  *     incomplete listing from the only person who can complete it — and the advisory
  *     `computeListingProblems` warning already tells them the cover is missing, so the

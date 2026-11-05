@@ -10,6 +10,10 @@ import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
 import { placementMarkLayout } from '~/components/Sticker/placement-mark-layout';
 import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
+import {
+  PEEK_TOGGLE_CORNER_CLASS,
+  peekToggleCorner,
+} from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
@@ -356,6 +360,11 @@ export function StickerPlacementOverlay({
   // every placed sticker and not just the one they belong to; isolation would cap
   // them at the layer's own z-index.
   const pendingControls: ReactElement[] = [];
+  const toggleCorner = peekToggleCorner(
+    visible
+      .filter((placement) => placement.isPending && placement.ownerId === viewerId)
+      .map(({ data }) => data)
+  );
 
   return (
     <>
@@ -732,7 +741,7 @@ export function StickerPlacementOverlay({
             h={44}
             radius="xl"
             variant="default"
-            className="pointer-events-auto absolute right-2 top-2"
+            className={clsx('pointer-events-auto absolute', PEEK_TOGGLE_CORNER_CLASS[toggleCorner])}
             leftSection={peek ? <IconEye size={16} /> : <IconEyeOff size={16} />}
             aria-pressed={peek}
             onClick={() => setPeeking(!peek)}

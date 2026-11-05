@@ -179,8 +179,10 @@ export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null
 export function setSessionCookie(
   cookies: Cookies,
   token: string,
-  slot: CookieSlot = sessionCookieMode()
+  slot: CookieSlot = sessionCookieMode(),
+  { roll = false }: { roll?: boolean } = {}
 ): void {
+  const clearShared = slot === 'host' && !roll && otherSharedSession(cookies, token);
   const name = sessionCookieNameForSlot(slot);
   cookies.set(name, token, {
     path: '/',
@@ -191,6 +193,28 @@ export function setSessionCookie(
     maxAge: getSigner().maxAge,
   });
   if (slot === 'shared') dropStaleHostCopy(cookies, token);
+  if (clearShared) expireSharedSessionCookie(cookies);
+}
+
+/**
+ * In host mode, whether the shared slot holds a session other than `token`. Left in place, it is the account the
+ * hub reads again if it goes back to shared mode, and it would drop the newer host-only session as a stale copy.
+ * A refresh (`roll`) does not count: it changes no account, and the shared slot may hold a newer account the main
+ * app switched to.
+ */
+function otherSharedSession(cookies: Pick<Cookies, 'get'>, token: string): boolean {
+  if (sessionCookieMode() !== 'host' || hostSessionCookieName() === sessionCookieName())
+    return false;
+  const shared = cookies.get(sessionCookieNameForSlot('shared'));
+  return shared !== undefined && !isCopyOf(shared, token);
+}
+
+/** Expire the shared-slot session cookie at both scopes. The session itself is not ended. */
+function expireSharedSessionCookie(cookies: Cookies): void {
+  const name = sessionCookieNameForSlot('shared');
+  const domain = cookieDomain();
+  cookies.delete(name, { path: '/', secure: true });
+  if (domain) cookies.delete(name, { path: '/', secure: true, domain });
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   listAllListingsForModerationSchema,
   listAppListingsSchema,
   listListingForksSchema,
+  myAppsHideInputSchema,
   startForkSchema,
   type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
@@ -101,6 +102,11 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import type { Context } from '~/server/createContext';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+
+/** Moderator authority on the listing editor needs a session or full-access key, never an app-scoped token. */
+const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
@@ -898,7 +904,7 @@ export const appListingsRouter = router({
           userId: ctx.user.id,
           // Mirror the mod-only client search: a mod editing a listing that links a
           // foreign OAuth client isn't blocked by the owner re-assertion.
-          isModerator: ctx.user.isModerator,
+          isModerator: actsAsModerator(ctx),
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -930,7 +936,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await getMyListingForEdit({ listingId: input.listingId, userId: ctx.user.id });
+        return await getMyListingForEdit({
+          listingId: input.listingId,
+          userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -950,7 +960,7 @@ export const appListingsRouter = router({
    * 403 for the same token, so `civitai app doctor --fix` could repair an approved app's
    * media but not its tagline.
    *
-   *   (a) Same `loadOwnedEditableListing` owner/seat gate, no moderator override.
+   *   (a) Same `loadOwnedEditableListing` owner/seat gate (plus a session-backed moderator).
    *   (b) Same `buildListingPatchData` write surface — author-owned scalars only.
    *   (c) Strictly TIGHTER on the revision model than `updateListing`: it REFUSES a
    *       top-level listing (`revisionOfId == null` → INVALID_REVISION) and refuses a
@@ -978,7 +988,7 @@ export const appListingsRouter = router({
           patch: input.patch,
           userId: ctx.user.id,
           // Mirror the mod-only client search (same rationale as `updateListing`).
-          isModerator: ctx.user.isModerator,
+          isModerator: actsAsModerator(ctx),
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1035,6 +1045,7 @@ export const appListingsRouter = router({
           appBlockId: input.appBlockId,
           slug: input.slug,
           userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1057,7 +1068,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await beginListingRevision({ listingId: input.listingId, userId: ctx.user.id });
+        return await beginListingRevision({
+          listingId: input.listingId,
+          userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -1089,6 +1104,7 @@ export const appListingsRouter = router({
         return await submitListingRevision({
           shadowId: input.shadowId,
           userId: ctx.user.id,
+          isModerator: actsAsModerator(ctx),
           changelog: input.changelog,
         });
       } catch (err) {
@@ -1271,6 +1287,7 @@ export const appListingsRouter = router({
       return getAppListingAuthoringContext({
         appListingId: input.appListingId,
         userId: ctx.user.id,
+        isModerator: actsAsModerator(ctx),
       });
     }),
 
@@ -1302,7 +1319,11 @@ export const appListingsRouter = router({
       const { listListingHistory } = await import(
         '~/server/services/blocks/app-listing-history.service'
       );
-      return listListingHistory({ appListingId: input.appListingId, userId: ctx.user.id });
+      return listListingHistory({
+        appListingId: input.appListingId,
+        userId: ctx.user.id,
+        isModerator: actsAsModerator(ctx),
+      });
     }),
 
   /**
@@ -2009,6 +2030,103 @@ export const appListingsRouter = router({
           input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
         viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
+    }),
+
+  /**
+   * The CALLER's apps for the `/apps` "My apps" home — full-page apps they have granted,
+   * bought into or recently used, and off-site apps they have consented to. Derived from
+   * existing rows only; see `my-apps.logic.ts` for the membership rules.
+   *
+   * 🔴 NO INPUT, ON PURPOSE: the user is `ctx.user.id` and nothing else. Same store gates as
+   * `listAvailable` (scope + audience floor, so a listing appears only if this viewer could
+   * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
+   * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
+   *
+   * Returns the derived `apps` AND the viewer's "Remove from My apps" `hidden` map
+   * (slug → ISO time). The server does NOT filter hidden apps out: whether one shows again
+   * depends on this browser's recently-opened time too, so the client merge applies the one
+   * rule (`isHiddenFromHome`) to both sources (`mergeHomeApps`).
+   */
+  listMyApps: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .query(async ({ ctx }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-my-apps');
+      if (scope === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const [{ listMyApps }, { getMyHiddenApps }] = await Promise.all([
+        import('~/server/services/blocks/my-apps.service'),
+        import('~/server/services/blocks/my-apps-hidden.service'),
+      ]);
+      const [apps, hidden] = await Promise.all([
+        listMyApps({
+          userId: ctx.user.id,
+          scope,
+          floor,
+          redCapable: isRedCapableRequest(ctx),
+          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+          canOpenPage: !!ctx.features?.appBlocksPages,
+        }),
+        getMyHiddenApps(ctx.user.id),
+      ]);
+      return { apps, hidden };
+    }),
+
+  /**
+   * "Remove from My apps": hide one app (by listing slug) from the CALLER's `/apps` home
+   * until they use it again. Writes only `User.settings.hiddenApps[slug]`, atomically (see
+   * `my-apps-hidden.service.ts`). Idempotent: repeating it leaves the app hidden, with the
+   * hide time moved to now. No input names a user — it is always `ctx.user.id`.
+   */
+  hideMyApp: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many requests — slow down.',
+      })
+    )
+    .input(myAppsHideInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
+      // through `applyStoreGates`, whose scope metric counts store READS.
+      if (narrowStoreScope((ctx as { _storeScope?: unknown })._storeScope) === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { hideMyApp } = await import('~/server/services/blocks/my-apps-hidden.service');
+      return hideMyApp({ userId: ctx.user.id, slug: input.slug });
+    }),
+
+  /**
+   * The Undo of `hideMyApp`: drop the caller's hide for one slug. Idempotent — unhiding an
+   * app that is not hidden is a no-op success.
+   */
+  unhideMyApp: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many requests — slow down.',
+      })
+    )
+    .input(myAppsHideInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
+      // through `applyStoreGates`, whose scope metric counts store READS.
+      if (narrowStoreScope((ctx as { _storeScope?: unknown })._storeScope) === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { unhideMyApp } = await import('~/server/services/blocks/my-apps-hidden.service');
+      return unhideMyApp({ userId: ctx.user.id, slug: input.slug });
     }),
 
   /**

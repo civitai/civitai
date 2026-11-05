@@ -44,6 +44,16 @@ vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { resolvePageBlockBySlug: mockResolvePageBlockBySlug },
 }));
 
+// The launch's ClickHouse event, which the page sends without awaiting.
+vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
+  recordAppListingOpen: vi.fn(async () => undefined),
+}));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: vi.fn(async () => false),
+}));
+
 /**
  * 🔴 THE CANONICAL `dbMock`, NOT A PER-FILE MOCK OF THE DB CLIENT MODULE. A per-file mock of
  * a shared module freezes THIS file's mock shape into every later file in the same worker

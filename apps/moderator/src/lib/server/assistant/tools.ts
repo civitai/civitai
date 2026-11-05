@@ -42,9 +42,11 @@ import {
 } from './reads';
 import { getRegistrationEmails, normalizeEmail, redactEmails } from './email';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
+import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 
-// The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
-// rules on a report or messages anyone. The two writes touch only the assistant's own tables.
+// The assistant's tools. Every one but `propose_playbook` and `request_tool` is a READ: no tool bans,
+// mutes, strikes, removes, extends or changes a membership, rules on a report or messages anyone. Those two
+// writes touch only the assistant's own tables.
 //
 // A moderator is offered only the tools whose `requires` pages they hold, so the assistant is never a
 // way round a page grant. Addresses are shown only to a moderator who could read them in User Lookup.
@@ -76,6 +78,8 @@ type Tool<S extends z.ZodType> = {
   input: S;
   /** Any one of these pages opens the data. `null`: every assistant user. */
   requires: string[] | null;
+  /** A permission the moderator must also hold for the tool to be offered at all. */
+  grant?: PermissionId;
   run: (args: z.output<S>, ctx: ToolContext) => Promise<ToolResult>;
   timeoutMs?: number;
   onTimeout?: (args: z.output<S>) => Record<string, unknown>;
@@ -324,6 +328,10 @@ const ADDRESS_TIMEOUT_SECONDS = 15;
 const SHOWN_ACTORS = 20;
 /** Narrowest first, so these are the identifying ones. */
 const ADDRESSES_SHOWN = 3;
+
+/** Refusal text names Stripe objects (`sub_…`, `in_…`); the model provider gets the words only. */
+export const withoutStripeIds = (text: string) =>
+  text.replace(/\b(?:sub_sched|sub|cus|in|pi|ch|price|prod)_[A-Za-z0-9]+/g, '[Stripe id]');
 
 export const TOOLS = [
   tool({
@@ -870,6 +878,195 @@ export const TOOLS = [
     },
   }),
 
+  // Membership extension: read the verdict and prefill the panel, nothing more. Do not add a tool that
+  // calls the extend endpoint: it is a money write, and text in a member's profile or a report could
+  // talk the model into one. A person previews and confirms it on the panel.
+  tool({
+    name: 'preview_membership_extension',
+    description: `What extending one account's Stripe membership by N free days (1-${MEMBERSHIP_EXTEND_MAX_DAYS}) would do: the subscription's status and period end, the new end, and the problems that would refuse it. Read-only.`,
+    input: z.object({ userId, days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS) }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    // The preview request itself may take 60 s; the loop's default would give up first.
+    timeoutMs: 65_000,
+    run: async ({ userId: id, days }) => {
+      // Lazy: user-actions.service needs the request context (`$app/server`), which a tool module
+      // loaded outside SvelteKit (the pglite suites) does not have.
+      const { previewMembershipExtension } = await import('../user-actions.service');
+      const r = await previewMembershipExtension({ userId: id, days });
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      // Status, dates and the verdict only: no Stripe ids for the model provider.
+      const { subscription: sub, trialEndIso, mode } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
+      const data = {
+        days,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        newEnd: trialEndIso,
+        mode,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_extension',
+    description:
+      "Hand the moderator a link to this account's Extend membership panel with the days and reason filled in. Nothing is extended: the moderator previews and confirms it there. Only when the moderator asked for an extension.",
+    input: z.object({
+      userId,
+      days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS),
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    run: async ({ userId: id, days, reason }) => {
+      const params = new URLSearchParams({ extendDays: String(days), extendReason: reason });
+      return {
+        data: {
+          proposed: true,
+          extended: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-extend`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
+  tool({
+    name: 'preview_membership_cancel',
+    description:
+      "What setting (true) or undoing (false) cancel-at-period-end on one account's Stripe membership would do: its status, period end and cancel state, and the problems that would refuse it. Read-only.",
+    input: z.object({ userId, cancelAtPeriodEnd: z.boolean() }),
+    requires: [LOOKUP],
+    grant: 'user.membership.cancel',
+    timeoutMs: 65_000,
+    run: async ({ userId: id, cancelAtPeriodEnd }) => {
+      const { previewMembershipCancel } = await import('../user-actions.service');
+      const r = await previewMembershipCancel({ userId: id, cancelAtPeriodEnd });
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      const { subscription: sub, changed } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
+      const data = {
+        cancelAtPeriodEnd,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        alreadySo: changed === false,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_cancel',
+    description:
+      "Hand the moderator a link to this account's Cancel at period end panel with the choice and reason filled in. Nothing is changed: the moderator previews and confirms it there. Only when the moderator asked for it.",
+    input: z.object({
+      userId,
+      cancelAtPeriodEnd: z.boolean(),
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.cancel',
+    run: async ({ userId: id, cancelAtPeriodEnd, reason }) => {
+      const params = new URLSearchParams({
+        cancelAtPeriodEnd: String(cancelAtPeriodEnd),
+        cancelReason: reason,
+      });
+      return {
+        data: {
+          proposed: true,
+          changed: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-cancel`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
+  tool({
+    name: 'preview_membership_resync',
+    description:
+      "Whether one account's membership record differs from its Stripe subscription, field by field, any Buzz-bought membership a re-sync would end, and the problems that would refuse it. Read-only.",
+    input: z.object({ userId }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    timeoutMs: 65_000,
+    run: async ({ userId: id }) => {
+      const { previewMembershipResync } = await import('../user-actions.service');
+      const r = await previewMembershipResync({ userId: id });
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      // Leave out endsBuzzMembership.confirm: only the moderator's checkbox may send it.
+      const { changes, endsBuzzMembership } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
+      const data = {
+        changes: changes.filter((c) => c.field !== 'id' && c.field !== 'priceId'),
+        idOrPlanDiffers: changes.some((c) => c.field === 'id' || c.field === 'priceId'),
+        endsBuzzMembership: endsBuzzMembership && {
+          status: endsBuzzMembership.status,
+          currentPeriodEnd: endsBuzzMembership.currentPeriodEnd,
+        },
+        problems,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_resync',
+    description:
+      "Hand the moderator a link to this account's Re-sync from Stripe panel with the reason filled in. Nothing is re-synced: the moderator previews and confirms it there. Only when the moderator asked for it.",
+    input: z.object({
+      userId,
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    run: async ({ userId: id, reason }) => {
+      const params = new URLSearchParams({ resyncReason: reason });
+      return {
+        data: {
+          proposed: true,
+          resynced: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-resync`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
   tool({
     name: 'request_tool',
     description:
@@ -902,8 +1099,12 @@ export const TOOLS = [
 
 export type ToolName = (typeof TOOLS)[number]['name'];
 
-export const toolsFor = (ctx: Pick<ToolContext, 'canAccess'>) =>
-  TOOLS.filter((t) => !t.requires || t.requires.some((path) => ctx.canAccess(path)));
+export const toolsFor = (ctx: Pick<ToolContext, 'canAccess' | 'hasGrant'>) =>
+  TOOLS.filter(
+    (t) =>
+      (!t.requires || t.requires.some((path) => ctx.canAccess(path))) &&
+      (!t.grant || ctx.hasGrant(t.grant))
+  );
 
 /**
  * Every tool a playbook may name, with its inputs and the pages that unlock it, for the playbook editor.

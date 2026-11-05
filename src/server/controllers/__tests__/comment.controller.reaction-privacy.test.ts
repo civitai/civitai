@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const svc = vi.hoisted(() => ({
   getComments: vi.fn(),
-  getPinnedComments: vi.fn(),
+  getPinnedCommentsViaKysely: vi.fn(),
   getCommentById: vi.fn(),
 }));
 
@@ -61,7 +61,7 @@ const masked = [
 describe('model comment reads mask opted-out reactors and keep the rows', () => {
   it('comment.getAll, pinned and paged comments alike', async () => {
     svc.getComments.mockResolvedValue([comment(1)]);
-    svc.getPinnedComments.mockResolvedValue([comment(2)]);
+    svc.getPinnedCommentsViaKysely.mockResolvedValue([comment(2)]);
 
     const { comments } = await getCommentsInfiniteHandler({
       input: { modelId: 1 } as never,

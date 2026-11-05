@@ -188,6 +188,7 @@ export class MixedStampError extends Error {
 
 /** A rejected workflow is split at most this many times (128 down to groups of 8). */
 const MAX_SPLIT_DEPTH = 4;
+const PACE_CREDIT_MS = 100;
 /**
  * 429s are the orchestrator's flow control, not errors: they are budgeted by time, and longer
  * than one workflow can run (30 min), since another process may hold the account's quota.
@@ -545,7 +546,8 @@ export class Embedder {
     const rate = this.stepsPerSecond;
     if (!rate) return;
     const now = this.now();
-    const at = Math.max(now, this.nextSubmitAt);
+    // Timers wake a millisecond or more late; without crediting that, hundreds of steps/s fall short.
+    const at = this.nextSubmitAt >= now - PACE_CREDIT_MS ? this.nextSubmitAt : now;
     this.nextSubmitAt = at + (steps * 1000) / rate;
     if (at > now) await this.sleep(at - now);
   }

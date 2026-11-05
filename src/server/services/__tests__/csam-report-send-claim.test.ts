@@ -1,7 +1,5 @@
 import fs from 'fs';
-import fsAsync from 'fs/promises';
 import JSZip from 'jszip';
-import type { Readable } from 'stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -25,7 +23,7 @@ const {
   finishReport,
   cancelReport,
   getObject,
-  fetchBlobAsFile,
+  generatedFile,
   getFileForModelVersion,
 } = vi.hoisted(() => ({
   getStatus: vi.fn(),
@@ -35,7 +33,7 @@ const {
   finishReport: vi.fn(),
   cancelReport: vi.fn(),
   getObject: vi.fn(),
-  fetchBlobAsFile: vi.fn(),
+  generatedFile: vi.fn(),
 }));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
@@ -67,11 +65,6 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
     backend: 'backblaze',
     s3: { send: () => getObject() },
   }),
-}));
-
-vi.mock('~/utils/file-utils', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  fetchBlobAsFile,
 }));
 
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
@@ -137,13 +130,17 @@ beforeEach(() => {
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
   finishReport.mockReset().mockResolvedValue({});
   cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
-  fetchBlobAsFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
+  generatedFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
   getObject.mockReset().mockImplementation(async () => ({
     Body: { transformToByteArray: async () => new Uint8Array(stored) },
     ContentType: 'image/png',
     ContentLength: stored.length,
   }));
-  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
+  // Each generated-image URL answers with `generatedFile`'s file, or an error response for null.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const file = await generatedFile(String(input));
+    return file ? new Response(file) : new Response(null, { status: 404 });
+  });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
     where.id === 10
       ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
@@ -377,9 +374,6 @@ describe('deleting a report the send finds nothing to send for', () => {
   ])(
     'deletes no %s report that evidence was folded into after the run read it',
     async (type, runCopy, primaryCopy) => {
-      // No training-data directory is made or removed on disk.
-      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-      vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
       const runStart = { ...report, type, ...runCopy } as unknown as CsamReportProps;
       primaryRow = { ...report, type, ...primaryCopy } as unknown as CsamReportProps;
 
@@ -733,19 +727,6 @@ describe('sending each type of report', () => {
         url: 'https://example.invalid/td.zip',
       });
       vi.mocked(globalThis.fetch).mockResolvedValue(new Response(new Uint8Array(zip)));
-      // The zip passes through the job's disk; here, through memory.
-      let written = Buffer.alloc(0);
-      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-      vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
-      vi.spyOn(fsAsync, 'writeFile').mockImplementation(async (_, data) => {
-        const chunks: Buffer[] = [];
-        for await (const chunk of data as Readable) chunks.push(Buffer.from(chunk));
-        written = Buffer.concat(chunks);
-      });
-      vi.spyOn(fs, 'readFile').mockImplementation(((
-        _: unknown,
-        done: (e: Error | null, data: Buffer) => void
-      ) => done(null, written)) as never);
     }
     const trainingReport = {
       ...report,
@@ -772,7 +753,7 @@ describe('sending each type of report', () => {
       await processCsamReport(trainingReport);
 
       expect(getFileForModelVersion).toHaveBeenCalledTimes(1);
-      expect(fsAsync.writeFile).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('opens no CyberTip for a zip with no image in it', async () => {
@@ -794,31 +775,27 @@ describe('sending each type of report', () => {
 
       await processCsamReport(trainingReport);
 
-      expect(uploadFile).toHaveBeenCalledTimes(2);
+      expect(uploadFile).toHaveBeenCalledTimes(1);
       expect(Math.max(...uploadFile.mock.invocationCallOrder)).toBeLessThan(order(cancelReport));
       expect(stamps()).toEqual([]);
     });
 
-    it('cancels only once an upload already in flight has finished', async () => {
-      await serveZip(['a.png', 'b.png']);
-      let inFlightDone = false;
-      uploadFile
-        .mockRejectedValueOnce(new Error('synthetic upload failure'))
-        .mockImplementationOnce(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          inFlightDone = true;
-          return { data: { fileId: 'file-2', hash: 'ncmec-md5' } };
-        });
-      let doneAtCancel: boolean | undefined;
-      cancelReport.mockImplementation(async () => {
-        doneAtCancel = inFlightDone;
-        return answering(0);
-      });
+    it('uploads one file at a time, since each upload holds its file whole', async () => {
+      await serveZip(['a.png', 'b.png', 'c.png']);
       primaryRow = trainingReport;
+      let inFlight = 0;
+      let most = 0;
+      uploadFile.mockImplementation(async () => {
+        most = Math.max(most, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+      });
 
-      await processCsamReport(trainingReport);
+      await processCsamReport(primaryRow);
 
-      expect(doneAtCancel).toBe(true);
+      expect(uploadFile.mock.calls.length).toBeGreaterThan(1);
+      expect(most).toBe(1);
     });
 
     it('opens no CyberTip when the training data cannot be downloaded', async () => {
@@ -839,12 +816,19 @@ describe('sending each type of report', () => {
       await serveZip(['a.png']);
       arrange();
       primaryRow = trainingReport;
+      const made = vi.spyOn(fs, 'mkdirSync');
+      let scratch: string | undefined;
+      getFileForModelVersion.mockImplementation(async () => {
+        scratch = made.mock.calls
+          .map(([dir]) => String(dir))
+          .find((dir) => /training-data\/1-/.test(dir));
+        return { status: 'success', url: 'https://example.invalid/td.zip' };
+      });
 
       await processCsamReport(trainingReport).catch(() => undefined);
 
-      expect(fs.rmSync).toHaveBeenCalledWith(expect.stringMatching(/training-data\/1$/), {
-        recursive: true,
-      });
+      expect(scratch && fs.existsSync(scratch)).toBe(false);
+      expect(scratch).toBeDefined();
     });
   });
 
@@ -859,7 +843,7 @@ describe('sending each type of report', () => {
   ])(
     'opens no CyberTip for a generated-image report a job of which has no file: the fetch %s',
     async (_, gone) => {
-      fetchBlobAsFile.mockImplementation(async (url: string) =>
+      generatedFile.mockImplementation(async (url: string) =>
         url === 'blob-gone' ? gone() : new File(['generated'], 'generated.png')
       );
       primaryRow = {
@@ -882,7 +866,7 @@ describe('sending each type of report', () => {
         JSON.stringify({ 'blob-gone': 1 })
       );
       // An error response must come back as no file, not as the file.
-      expect(fetchBlobAsFile).toHaveBeenCalledWith('blob-gone', undefined, { requireOk: true });
+      expect(generatedFile).toHaveBeenCalledWith('blob-gone');
     }
   );
 
@@ -901,7 +885,7 @@ describe('sending each type of report', () => {
         },
       } as unknown as CsamReportProps);
     beforeEach(() =>
-      fetchBlobAsFile.mockImplementation(async (url: string) =>
+      generatedFile.mockImplementation(async (url: string) =>
         url === 'blob-gone' ? null : new File(['generated'], 'generated.png')
       )
     );
@@ -954,7 +938,7 @@ describe('sending each type of report', () => {
       ['second', [true, false]],
     ])('sends a URL the filing names twice when only its %s fetch failed', async (_, fetched) => {
       let fetches = 0;
-      fetchBlobAsFile.mockImplementation(async () =>
+      generatedFile.mockImplementation(async () =>
         fetched[fetches++] ? new File(['generated'], 'generated.png') : null
       );
       primaryRow = {
@@ -978,26 +962,22 @@ describe('sending each type of report', () => {
       expect(stamps()[0].data.details).not.toHaveProperty(['readFailures', 'blob-twice']);
     });
 
-    it('waits for an upload in flight before cancelling', async () => {
-      fetchBlobAsFile.mockResolvedValue(new File(['generated'], 'generated.png'));
-      let inFlightDone = false;
-      uploadFile
-        .mockRejectedValueOnce(new Error('synthetic upload failure'))
-        .mockImplementationOnce(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          inFlightDone = true;
-          return { data: { fileId: 'file-2', hash: 'ncmec-md5' } };
-        });
-      let doneAtCancel: boolean | undefined;
-      cancelReport.mockImplementation(async () => {
-        doneAtCancel = inFlightDone;
-        return answering(0);
-      });
+    it('uploads one file at a time, since each upload holds its file whole', async () => {
       primaryRow = twoJobs(1);
+      generatedFile.mockResolvedValue(new File(['generated'], 'generated.png'));
+      let inFlight = 0;
+      let most = 0;
+      uploadFile.mockImplementation(async () => {
+        most = Math.max(most, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+      });
 
       await processCsamReport(primaryRow);
 
-      expect(doneAtCancel).toBe(true);
+      expect(uploadFile.mock.calls.length).toBeGreaterThan(1);
+      expect(most).toBe(1);
     });
 
     it('holds the report at the short-send limit on the first failed fetch of that file', async () => {
@@ -1009,7 +989,7 @@ describe('sending each type of report', () => {
     });
 
     it('keeps a report none of whose generated images can be fetched, waiting', async () => {
-      fetchBlobAsFile.mockResolvedValue(null);
+      generatedFile.mockResolvedValue(null);
       primaryRow = twoJobs(CSAM_SEND_SHORT_AFTER_HOURS, { 'blob-1': 5, 'blob-gone': 5 });
 
       await processCsamReport(primaryRow);

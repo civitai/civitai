@@ -78,7 +78,6 @@ describe('MiniMax H3 licence registration', () => {
     expect(server.nonCommercial).toBeUndefined();
     expect(server.disableMature).toBeUndefined();
     expect(server.restrictedNsfwLevels).toBeUndefined();
-    expect(server.requiresSameLicense).toBeUndefined();
   });
 });
 

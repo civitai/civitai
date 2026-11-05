@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 import type { RestrictedListingAudience } from '~/shared/utils/app-listing-visibility';
+import { HIDDEN_APP_SLUG_MAX } from '~/shared/utils/my-apps-hidden';
 import {
   LISTING_FORKS_PAGE_DEFAULT,
   LISTING_FORKS_PAGE_MAX,
@@ -133,6 +134,16 @@ export const getAppListingDetailSchema = z
     message: 'Provide exactly one of `slug` or `id`',
   });
 export type GetAppListingDetailInput = z.infer<typeof getAppListingDetailSchema>;
+
+/**
+ * `appListings.hideMyApp` / `unhideMyApp` — "Remove from My apps" (and its Undo) by listing
+ * SLUG, the one handle every home tile has. Same bound as the detail lookup's slug. Trimmed so
+ * a padded slug cannot store a second key for the same app.
+ */
+export const myAppsHideInputSchema = z.object({
+  slug: z.string().trim().min(1).max(HIDDEN_APP_SLUG_MAX),
+});
+export type MyAppsHideInput = z.infer<typeof myAppsHideInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Public DTOs (allowlist projections).
@@ -388,10 +399,8 @@ export type ListingDetailKindData =
 export type ListingDetail = {
   id: string;
   /**
-   * Integer surrogate key (`app_listings.serial_id`). Carried so the detail page
-   * can mount the CommentsV2 discussion (`<CommentsProvider entityType="appListing"
-   * entityId={serialId} />`) — CommentsV2 is integer-keyed, the store `id` is a TEXT
-   * ULID. Public + non-sensitive (an opaque row number, like the numeric ids already
+   * Integer surrogate key (`app_listings.serial_id`): comments key on it, because the store `id`
+   * is a TEXT ULID. Public and non-sensitive (an opaque row number, like the numeric ids already
    * exposed for images/models/posts).
    */
   serialId: number;

@@ -1,17 +1,12 @@
-import { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   type CreatorRemoval,
   removalWindowStart,
   removalsQuery,
   withoutReversed,
 } from '~/server/services/creator-removals.service';
-import {
-  getAppealExcludedIds,
-  getHoldMarkerBlockedImageIds,
-} from '~/server/services/report.service';
+import { getAppealRefusedImageIds } from '~/server/services/report.service';
 import { ZERO_WEIGHT_REASONS } from '~/shared/utils/creator-removal-weights';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
@@ -67,23 +62,17 @@ async function getRemovalEvents(userId: number, now: Date) {
 
 type ImageState = {
   imageId: number;
-  excluded: boolean;
   owned: boolean;
   blockedFor: string | null;
   needsReview: string | null;
 };
 
 function getImageStates(userId: number, imageIds: number[]) {
-  const r = Prisma.raw('r');
   return dbRead.$queryRaw<ImageState[]>`
-    SELECT r."imageId", ${excludedRecord(r)} AS excluded,
-      coalesce(i."userId" = ${userId}, false) AS owned, i."blockedFor", i."needsReview"
-    FROM (
-      SELECT u.id AS "imageId", li."blockedFor"
-      FROM unnest(${imageIds}::int[]) AS u(id)
-      LEFT JOIN "Image" li ON li.id = u.id
-    ) r
-    LEFT JOIN "Image" i ON i.id = r."imageId"
+    SELECT u.id AS "imageId", coalesce(i."userId" = ${userId}, false) AS owned,
+      i."blockedFor", i."needsReview"
+    FROM unnest(${imageIds}::int[]) AS u(id)
+    LEFT JOIN "Image" i ON i.id = u.id
   `;
 }
 
@@ -102,7 +91,7 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 
 /**
  * The member's own removed images that currently cost points, newest first, up to the limit.
- * Removals the appeal flow excludes are left out too, and `total` counts only what is listed.
+ * One the appeal flow excludes is listed like any other, with no appeal.
  */
 export async function getMyRemovedImages(userId: number, now = new Date()) {
   const fetched = await getRemovalEvents(userId, now);
@@ -111,27 +100,22 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
   if (!events.length) return none;
 
   const imageIds = events.map((e) => Number(e.imageId));
-  const [states, excludedIds] = await Promise.all([
+  const [states, refused] = await Promise.all([
     getImageStates(userId, imageIds),
-    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+    getAppealRefusedImageIds({ imageIds, userId }),
   ]);
-  if (excludedIds.users.has(userId)) return none;
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
   // An image with no state row is left out rather than shown unchecked.
   const listed = events.flatMap((e) => {
     const id = Number(e.imageId);
     const state = stateById.get(id);
-    if (!state || state.excluded || excludedIds.images.has(id)) return [];
+    if (!state) return [];
     return [{ id, removedAt: e.removedAt, state }];
   });
 
   const existing = listed.filter((e) => e.state.owned).map((e) => e.id);
-  // A hold that has ended no longer excludes the owner above, but the images it kept stay refused.
-  const [appeals, holdBlocked] = await Promise.all([
-    getLatestAppeals(userId, existing),
-    getHoldMarkerBlockedImageIds({ imageIds: existing, userId }),
-  ]);
+  const appeals = await getLatestAppeals(userId, existing);
 
   const items: RemovedImage[] = listed.map(({ id, removedAt, state }) => ({
     removedAt: new Date(Number(removedAt) * 1000),
@@ -140,7 +124,7 @@ export async function getMyRemovedImages(userId: number, now = new Date()) {
     canAppeal:
       state.owned &&
       isAppealableImage(state) &&
-      !holdBlocked.has(id) &&
+      !refused.has(id) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
   return { total: items.length, truncated: fetched.length >= REMOVED_IMAGES_LIMIT, items };

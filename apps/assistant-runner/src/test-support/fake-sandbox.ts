@@ -87,6 +87,10 @@ export class FakeSandboxService {
   readonly tunnelHosts = new Map<string, string>();
   /** Tools this sandbox does not list, as an older sandbox image without them. */
   readonly hiddenTools = new Set<string>();
+  /** Newer tools this sandbox lists too (`read_files`, `run_checks`), as a newer sandbox image does. */
+  readonly newTools = new Set<string>();
+  /** Its `edit_file` lists `edits` in its input schema, as a newer sandbox image's does. */
+  editsSchema = false;
   #server: HttpServer | undefined;
   #base = '';
   #looks = new Map<string, number>();
@@ -246,10 +250,20 @@ export class FakeSandboxService {
       { capabilities: { tools: {} } }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS.filter((tool) => !this.hiddenTools.has(tool.name)).map((tool) => ({
-        ...tool,
-        inputSchema: { type: 'object', properties: {}, additionalProperties: true },
-      })),
+      tools: [
+        ...TOOLS,
+        ...[...this.newTools].map((name) => ({ name, description: `The sandbox's ${name}.` })),
+      ]
+        .filter((tool) => !this.hiddenTools.has(tool.name))
+        .map((tool) => ({
+          ...tool,
+          inputSchema: {
+            type: 'object' as const,
+            properties:
+              tool.name === 'edit_file' && this.editsSchema ? { edits: { type: 'array' } } : {},
+            additionalProperties: true,
+          },
+        })),
     }));
     server.setRequestHandler(
       CallToolRequestSchema,

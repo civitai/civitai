@@ -1,6 +1,7 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
 import type { PopoverProps } from '@mantine/core';
-import { Anchor, Group, Loader, NumberInput, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Anchor, Group, Loader, NumberInput, Text, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
@@ -14,6 +15,7 @@ import classes from './GenerationCostPopover.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { overMobileSheetZIndex } from '~/shared/constants/app-layout.constants';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useGenerationFormStore } from '~/store/generation-form.store';
 import { startCase } from 'lodash-es';
@@ -248,6 +250,7 @@ export function GenerationCostPopoverDetail({
     openModal({
       title: 'Generation Cost Breakdown',
       centered: true,
+      zIndex: overMobileSheetZIndex,
       children: <BreakdownExplanation />,
     });
   };
@@ -292,7 +295,12 @@ export function GenerationCostPopoverDetail({
     <div className={classes.table}>
       <div className={classes.header}>
         <span>Generation Cost Breakdown</span>
-        <LegacyActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
+        <LegacyActionIcon
+          variant="subtle"
+          radius="xl"
+          aria-label="How the cost is calculated"
+          onClick={handleShowExplanationClick}
+        >
           <IconInfoCircle size={18} />
         </LegacyActionIcon>
       </div>
@@ -336,6 +344,7 @@ export function GenerationCostPopoverDetail({
                       openModal({
                         title: 'Licensing Fees',
                         centered: true,
+                        zIndex: overMobileSheetZIndex,
                         children: (
                           <LicensingFeeDetail
                             fees={workflowCost.fees ?? {}}

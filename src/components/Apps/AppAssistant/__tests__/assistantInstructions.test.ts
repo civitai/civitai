@@ -165,6 +165,7 @@ describe('buildAssistantSystemPrompt', () => {
         SUBMIT_RULE_TEXT,
         FEEDBACK_RULE_TEXT,
         COVER_RULE_TEXT,
+        APP_ACTIVITY_RULE_TEXT,
       ].join('\n')
     );
   });
@@ -188,6 +189,11 @@ const FEEDBACK_RULE_TEXT =
 // button); the user's press makes it, and it is offered only when they asked for one.
 const COVER_RULE_TEXT =
   "- When the user asks for a store cover image for the app, call generate_app_cover with a prompt that describes the app's subject and mood, with no text or logos. It spends nothing itself: the user sees the price and a button, and only their press makes the cover and puts it on the app's store listing. Tell them that in one short sentence; your reply ends there. Never make a cover any other way, and never call generate_app_cover unless they asked for a cover.";
+
+// The whole sentence: a stuck or wrong preview is read with app_activity before any guess (a
+// slideshow app stalled after four pictures with no error anywhere the assistant could see).
+const APP_ACTIVITY_RULE_TEXT =
+  '- When the user says the preview is stuck, blank, slow or wrong, call app_activity before you guess or change code: it lists the app’s recent generations, its calls to Civitai and the errors its code threw.';
 
 describe('submitting the app for review', () => {
   it('is offered through submit_for_review, on both runners, never through the CLI or a zip', () => {

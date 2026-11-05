@@ -56,7 +56,8 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 /**
  * This suite mounts ANONYMOUSLY (the mock above), and recents are ACCOUNT-scoped
  * (#4048) with `null` — signed out — as its own bucket, not a wildcard. Seeds
- * must therefore be written as `null`, or the body reads an empty rail.
+ * are therefore written as `null`, so the strip-absence test seeds a store the
+ * viewer could actually read.
  */
 const SESSION_OWNER_ID: number | null = null;
 
@@ -135,7 +136,7 @@ function StoreWithControls() {
     </>
   );
 }
-const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
+const { clearRecentlyOpenedApps, getRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
   './recentlyOpenedAppsStore'
 );
 
@@ -255,12 +256,15 @@ describe('AppListingsMarketplaceBody', () => {
     // (Mantine's `Select` mirrors `aria-label` onto BOTH the input and its
     // listbox, hence `.first()`: the input is the control under test.)
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
-    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
-    // Kind filter is now inside the dropdown, defaulting to All.
+    await expect.element(page.getByRole('button', { name: 'Most popular' })).toBeInTheDocument();
+    // Kind filter is now inside the dropdown; nothing checked means all.
     await openFilters();
     await expect
-      .element(page.getByRole('button', { name: 'All apps' }))
-      .toHaveAttribute('aria-pressed', 'true');
+      .element(page.getByRole('checkbox', { name: 'Embedded', exact: true }))
+      .not.toBeChecked();
+    await expect
+      .element(page.getByRole('checkbox', { name: 'Standalone', exact: true }))
+      .not.toBeChecked();
     // Query fired with kind=all default. `limit: 48` (was 24) — the column ladder now
     // reaches FIVE columns on a 2560 container, where 24 is under five rows; the page
     // size and its relationship to the server's `max(50)` cap are pinned in the blocking
@@ -268,17 +272,20 @@ describe('AppListingsMarketplaceBody', () => {
     // ⚠️ This said "SIX columns … only four rows" until the card-width floor moved 383 →
     // 460 in this same PR and made six unreachable. Written true, falsified by a later
     // commit on the same branch.
-    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated', limit: 48 });
+    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'popular', limit: 48 });
   });
 
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
     renderWithProviders(<StoreWithControls />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
+    // Staged: checking Embedded narrows to embedded apps, but nothing is written until Apply.
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    expect(router.replace).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
 
     expect(router.replace).toHaveBeenCalled();
     const [url, , options] = vi.mocked(router.replace).mock.calls.at(-1)!;
-    expect(url).toMatchObject({ query: { kind: 'offsite' } });
+    expect(url).toMatchObject({ query: { kind: 'onsite' } });
     // Shallow so the filter change doesn't re-run getServerSideProps, and
     // scroll:false so it doesn't jump the viewport mid-browse.
     expect(options).toMatchObject({ shallow: true, scroll: false });
@@ -376,7 +383,7 @@ describe('AppListingsMarketplaceBody', () => {
 
   test('sorting writes the sort param', async () => {
     renderWithProviders(<StoreWithControls />);
-    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     expect(replacedQueries().at(-1)).toMatchObject({ sort: 'newest' });
   });
@@ -385,9 +392,10 @@ describe('AppListingsMarketplaceBody', () => {
     router.query = { kind: 'offsite' };
     renderWithProviders(<StoreWithControls />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'All apps' }));
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
     // `?kind=all` is the default view — a nav that lands on
-    // `/apps?kind=all&sort=top-rated` looks like state you have to clear.
+    // `/apps?kind=all&sort=popular` looks like state you have to clear.
     expect(replacedQueries().at(-1)).not.toHaveProperty('kind');
   });
 
@@ -432,21 +440,13 @@ describe('AppListingsMarketplaceBody', () => {
     expect(grid.parentElement).not.toBe(grid);
   });
 
-  // ── "Recently opened" rail ──────────────────────────────────────────────────
-  // Selection/target logic is pinned in the CI-run node unit suite
-  // (__tests__/recentAppsRail.test.ts). What these assert is the WIRING: the
-  // page really reads the store after mount, really renders the rail BELOW the
-  // search/filter controls but ABOVE the result grid, and really renders NOTHING
-  // for a viewer with no recents.
+  // ── No "Recently opened" strip ─────────────────────────────────────────────
+  // The store (`/apps/store`) is pure discovery: recents moved to the viewer's
+  // "My apps" home (`AppsHomeBody`). The card CTAs still WRITE recents.
 
-  test('a viewer with NO recents sees no rail at all (no heading, no reserved space)', async () => {
-    renderWithProviders(<StoreWithControls />);
-    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
-    expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
-    expect(page.getByText('Recently opened').elements()).toHaveLength(0);
-  });
-
-  test('🔴 a viewer WITH recents sees the rail BELOW the controls and ABOVE the grid (CLS)', async () => {
+  test('🔴 the store renders NO recents strip, even for a viewer WITH recents', async () => {
+    // The seed is real and readable for this (signed-out) owner bucket — the control
+    // below proves it, so the absence is the strip being gone, not an empty store.
     recordRecentlyOpenedApp(
       {
         id: 'ab_1',
@@ -458,38 +458,12 @@ describe('AppListingsMarketplaceBody', () => {
       },
       SESSION_OWNER_ID
     );
+    expect(getRecentlyOpenedApps(SESSION_OWNER_ID).map((a) => a.slug)).toEqual(['gen-matrix']);
+
     renderWithProviders(<StoreWithControls />);
-
-    const rail = page.getByTestId('apps-recent-rail');
-    await expect.element(rail).toBeInTheDocument();
-    await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
-
-    // Document order, asserted on BOTH sides — `compareDocumentPosition` is the
-    // direct encoding of position, where a visual-only check would pass with the
-    // rail appended at the bottom like the legacy body did.
-    const railEl = rail.element();
-    const search = page.getByLabelText('Search').element();
-    const firstCard = page.getByTestId('apps-listing-grid-col').elements()[0];
-
-    // 1. The rail comes AFTER the search input. The rail hydrates one frame late
-    //    (localStorage is client-only), so placing it above the primary controls
-    //    shifted them down by ~90px after paint — a CLS regression Faro RUM
-    //    reports for this page. Below the controls, the late insertion only moves
-    //    the grid.
-    expect(search.compareDocumentPosition(railEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 2. …but still BEFORE the first result card, so "jump back in" outranks
-    //    browsing and stays above the fold.
-    expect(
-      railEl.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-  });
-
-  test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {
-    recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' }, SESSION_OWNER_ID);
-    renderWithProviders(<StoreWithControls />);
-    const item = page.getByTestId('apps-recent-rail-item');
-    await expect.element(item).toBeInTheDocument();
-    // hasPage unknown for a legacy entry → the always-valid detail link.
-    await expect.element(item).toHaveAttribute('href', '/apps/store-preview/legacy-app');
+    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
+    expect(page.getByText('Recently opened').elements()).toHaveLength(0);
+    expect(page.getByText('Gen Matrix').elements()).toHaveLength(0);
   });
 });

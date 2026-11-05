@@ -156,6 +156,7 @@ export const actions: Actions = {
         return fail(403, { switchError: true });
       const user = await getOrProduceSessionUser(targetUserId);
       if (!user) return fail(404, { switchError: true });
+      if (user.bannedAt || user.deletedAt) return fail(403, { switchError: true });
       const token = await mintUserSession(user, {
         parent: locals.session,
         clearImpersonation: true,

@@ -29,7 +29,7 @@ export const birthday2026 = createEvent(name, {
     heroVideo: { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 },
     dates: 'Nov 1 to Nov 30',
     summary:
-      'Four color teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and model likes from signed-in members all score for your team.',
+      'Four color teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and stories, and model likes from signed-in members all score for your team.',
     steps: [
       {
         title: 'Join',
@@ -41,7 +41,7 @@ export const birthday2026 = createEvent(name, {
       },
       {
         title: 'Score for your team',
-        body: "While your content wears a hat, its views, reactions, comments, stickers, accepted remixes and model likes from signed-in members count for your team. Hats keep earning while you're away, so there's nothing to do daily.",
+        body: "While your content wears a hat, its views, reactions, comments, stickers, accepted remixes and stories, and model likes from signed-in members count for your team. Hats keep earning while you're away, so there's nothing to do daily.",
       },
     ],
     prize: {
@@ -130,6 +130,8 @@ export const birthday2026 = createEvent(name, {
   badgePrefix: 'Birthday 2026',
   scoring: {
     capPerActorPerOwnerPerDay: 50,
+    storySparksPerActorPerDay: 3,
+    teamRemixWaiver: { perPlacerPerDay: 10 },
     types: {
       view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
       reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
@@ -140,5 +142,18 @@ export const birthday2026 = createEvent(name, {
     },
     newAccountDays: 7,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
+    // The Crucible seed: 1M per music-video Crucible, 50/30/20 to the teams of its top three, dated
+    // to the Crucible's end.
+    teamAwards: [],
+  },
+  turf: {
+    mode: 'shadow',
+    testerFlag: 'birthday2026-turf',
+    // Launch values only. Later steps are set through the live override (turf/config.ts) and are
+    // not announced ahead of time.
+    supply: [{ from: new Date('2026-11-01T00:00:00Z'), perHour: 5, cap: 50 }],
+    creditedPlayers: [{ from: new Date('2026-11-01T00:00:00Z'), players: 25 }],
+    renderLimit: 12,
+    mapMaxEntries: 50_000,
   },
 });

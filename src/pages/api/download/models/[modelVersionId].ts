@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import {
+  constants,
+  isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
+} from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
@@ -19,7 +23,7 @@ import {
   shouldResolveDirect,
 } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { resolveActorFor } from '~/utils/resolve-attribution';
+import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
@@ -236,7 +240,9 @@ export default PublicEndpoint(
           return res.status(403).json({
             error: 'Early Access',
             deadline: fileResult.details.deadline,
-            message: 'This asset is in Early Access. You can use Buzz access it now!',
+            message: isNonCommercialBaseModel(fileResult.details.baseModel)
+              ? notCommerciallyAvailableMessage(fileResult.details.baseModel)
+              : 'This asset is in Early Access. You can use Buzz access it now!',
           });
         else return res.redirect(`/model-versions/${modelVersionId}`);
       }
@@ -296,10 +302,10 @@ export default PublicEndpoint(
         const now = new Date();
 
         // An unpublished version is only reachable by its owner and by internal services — the scanner
-        // fetches the file minutes after upload, which was landing a Download event (userId -1,
-        // `civitai-spine` UA) and leaving every draft showing 1 download before it went live.
+        // fetches the file minutes after upload, which was landing a Download event and leaving every
+        // draft showing 1 download before it went live.
         const tracker = new Tracker(req, res);
-        if (fileResult.published)
+        if (fileResult.published && countsAsPublicDownload(session?.user))
           await tracker.modelVersionEvent({
             type: 'Download',
             modelId: fileResult.modelId,

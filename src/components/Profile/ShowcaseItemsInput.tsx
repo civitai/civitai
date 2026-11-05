@@ -188,7 +188,7 @@ export const ShowcaseItemsInput = ({
                     return (
                       <SortableItem key={key} id={key}>
                         <Box pos="relative">
-                          <GenericImageCard {...item} image={coverImage} disabled />
+                          <GenericImageCard {...item} image={coverImage} disabled hideEventDecoration />
                           {removeBtn}
                         </Box>
                       </SortableItem>

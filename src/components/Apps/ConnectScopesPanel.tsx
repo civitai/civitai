@@ -1,4 +1,5 @@
-import { Card, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Card, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconInfoCircle, IconKey } from '@tabler/icons-react';
 import { ConnectScopeRow } from '~/components/Apps/ConnectScopeRow';
 import {

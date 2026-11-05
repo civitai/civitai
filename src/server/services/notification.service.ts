@@ -119,8 +119,8 @@ export const markNotificationsRead = async ({
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
   // Best-effort: the UI already marked read optimistically, so a transient failure must not surface as a
-  // tRPC error. Client errors log centrally; only a non-request error logs here. `id` is a bigint
-  // (UserNotification.id is int4) — narrow to a JSON-safe number.
+  // tRPC error. Client errors log centrally; only a non-request error logs here. `id` is a bigint,
+  // which JSON cannot carry; ids stay far below 2^53, so a number holds it exactly.
   try {
     await notifications.markNotificationsRead({
       userId,

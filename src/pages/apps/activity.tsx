@@ -14,9 +14,9 @@ import {
   Stack,
   Tabs,
   Text,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -70,6 +70,7 @@ import {
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   BLOCK_SPEND_SCOPE,
 } from '~/shared/constants/block-scope.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -356,7 +357,12 @@ function EmptyState({ label }: { label: string }) {
           {label}
         </Text>
         {canSeeStore && (
-          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+          <Anchor
+            component={Link}
+            href={APPS_STORE_HREF}
+            size="sm"
+            data-testid="apps-empty-marketplace-link"
+          >
             Browse the marketplace
           </Anchor>
         )}

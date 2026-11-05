@@ -216,6 +216,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { FlaggedConsumerFetchError } from '~/server/http/orchestrator/flagged-consumers';
 import {
   MAX_PENDING_ARCHIVE_ENTRIES,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -289,6 +290,60 @@ describe('getCsamsToArchive', () => {
     ] as never);
     const reports = await getCsamsToArchive();
     expect(reports.map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
+    const generatorEvidence = {
+      id: 11,
+      userId: 707070,
+      reportedById: 5,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(),
+      details: {
+        generatedImages: [
+          { jobId: 'job-1', source: 'workflow', blobs: [{ blobId: 'b1', status: 'preserved' }] },
+        ],
+        generatorEvidence: { version: 1, approvedAt: new Date().toISOString() },
+      },
+      images: [],
+    };
+    const control = {
+      id: 12,
+      userId: 717171,
+      reportedById: 5,
+      type: 'Image',
+      details: {},
+      images: [],
+    };
+    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
+      generatorEvidence,
+      control,
+      namesNoUrl,
+    ] as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: control.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+
+    // The job's loop: archive what was selected.
+    for (const report of await getCsamsToArchive()) await archiveCsamDataForReport(report);
+
+    const stampedIds = dbMock.dbWrite.csamReport.update.mock.calls
+      .map(([args]) => args as { where: { id: number }; data: { archivedAt?: unknown } })
+      .filter((args) => args.data.archivedAt instanceof Date)
+      .map((args) => args.where.id);
+    expect(stampedIds).toEqual([control.id]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .filter((p) => p.subType === 'archive-skipped-unsupported')
+    ).toEqual([
+      expect.objectContaining({ count: 1, reason: 'generator evidence archive not supported' }),
+      expect.objectContaining({ count: 1, reason: 'no generated image URL to archive' }),
+    ]);
   });
 });
 
@@ -688,6 +743,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
 
     await archiveCsamDataForReport({
       ...report,
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
       details: { generatedImages: [{ jobId: 'job-1', blobs: named.map((url) => ({ url })) }] },
     } as never);
 
@@ -700,6 +756,133 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
         namedMissing: 1,
       })
     );
+  });
+
+  const generatedLine = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-generated-images');
+  const stamped = () =>
+    dbMock.dbWrite.csamReport.update.mock.calls.some(
+      ([args]) => (args as { data?: { archivedAt?: unknown } }).data?.archivedAt instanceof Date
+    );
+  const sentHoursAgo = (hours: number) => ({
+    ...report,
+    reportSentAt: new Date(Date.now() - hours * 3_600_000),
+  });
+  const rejectOne = (failing: string) => async (url: unknown) => {
+    if (url === failing) throw new Error('synthetic timeout');
+    return fakeBlob(8);
+  };
+
+  it('keeps failing the pass on a download that rejects, until the give-up window ends', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await expect(
+      archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
+    ).rejects.toThrow('synthetic timeout');
+    expect(stamped()).toBe(false);
+  });
+
+  it('archives the rest and counts the download it gave up on', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ kind: 'generatedImages', entries: IMAGE_COUNT - 1 })
+    );
+    const line = generatedLine();
+    expect(line).toMatchObject({
+      reportId: report.id,
+      expected: IMAGE_COUNT,
+      strikeUrls: IMAGE_COUNT,
+      entries: IMAGE_COUNT - 1,
+      unreadable: 1,
+      type: 'error',
+    });
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).not.toContain('example.invalid');
+    expect(logged).not.toContain('synthetic timeout');
+  });
+
+  it('counts a body that is not media as unreadable after the window', async () => {
+    mockFetchBlob = async (url: unknown) =>
+      url === 'https://example.invalid/blob-3.jpeg'
+        ? { ...fakeBlob(8), type: 'text/html' }
+        : fakeBlob(8);
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+  });
+
+  it('stamps a pass that read nothing once the give-up window has passed', async () => {
+    mockFetchBlob = async () => null;
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
+  });
+
+  it('archives the blobs the report names when the strikes list is not found', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(404, 'Not Found');
+    };
+    const named = 'https://example.invalid/named-0.jpeg';
+
+    await archiveCsamDataForReport({
+      ...report,
+      details: { generatedImages: [{ jobId: 'job-1', blobs: [{ url: named }] }] },
+    } as never);
+
+    expect(stamped()).toBe(true);
+    expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
+    expect(generatedLine()).toMatchObject({
+      strikesNotFound: true,
+      strikeUrls: 0,
+      entries: 1,
+      type: 'info',
+    });
+  });
+
+  it('fails the pass when the strikes list fails any other way', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(503, 'Service Unavailable');
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('503');
+    expect(stamped()).toBe(false);
+  });
+
+  it('fails the pass, inside the window, on an error status or a body that is not media', async () => {
+    for (const answer of [null, { ...fakeBlob(8), type: 'text/html' }]) {
+      mockFetchBlob = async (url: unknown) =>
+        url === 'https://example.invalid/blob-3.jpeg' ? answer : fakeBlob(8);
+
+      await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+        'a generated image gave no media'
+      );
+      expect(stamped()).toBe(false);
+    }
+  });
+
+  it('stops queued downloads once the pass has failed', async () => {
+    let calls = 0;
+    mockFetchBlob = async () => {
+      calls += 1;
+      return null;
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'a generated image gave no media'
+    );
+    // At most the first round of the concurrency limit was started.
+    expect(calls).toBeLessThanOrEqual(10);
   });
 
   it('holds a bounded number of generated-image buffers', async () => {
@@ -1291,6 +1474,12 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
         source: 'missing',
         reason: 'full url unreadable',
       });
+      const read = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .find((p) => p.subType === 'archive-image-read' && p.imageId === 10);
+      expect(read).toMatchObject({ fullUrl: true, retried: false, type: 'info' });
+      expect(JSON.stringify(read)).not.toContain('ten.png');
     });
 
     it('still fails the archive on a stored object it cannot read, however long ago it was sent', async () => {
@@ -1355,6 +1544,41 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     );
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+  });
+
+  it('logs which image failed the pass, and how far it got, without the key or the message', async () => {
+    mockGetObject = async (key) => {
+      if (key === 'key-eight')
+        throw Object.assign(new Error('aborted reading key-eight'), { code: 'ECONNRESET' });
+      return {
+        Body: { transformToByteArray: async () => new Uint8Array(stored) },
+        ContentType: 'image/webp',
+        ContentLength: stored.length,
+      };
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('aborted');
+
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    const read = lines.find((p) => p.subType === 'archive-image-read');
+    const failed = lines.find((p) => p.subType === 'archive-failed');
+    expect(read).toMatchObject({
+      reportId: report.id,
+      imageId: 8,
+      errorName: 'Error',
+      errorCode: 'ECONNRESET',
+      fullUrl: false,
+      retried: true,
+      type: 'error',
+    });
+    expect(failed).toMatchObject({
+      reportId: report.id,
+      stored: ['base'],
+      errorCode: 'ECONNRESET',
+    });
+    const text = JSON.stringify([read, failed]);
+    expect(text).not.toContain('key-eight');
+    expect(text).not.toContain('eight.jpeg');
   });
 });
 

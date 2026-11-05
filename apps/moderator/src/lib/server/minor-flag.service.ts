@@ -1,6 +1,7 @@
 import { bustMinorQueueCounts } from './minor-hash.service';
 import type { checkedResolutionReason } from './resolution-reason';
 import { callModEndpoint, type ActionResult, type JsonResult } from './user-actions.service';
+import { RULING_LABEL, type RestrictedVerdictRuling } from '$lib/minor-flags/restricted-verdicts';
 
 /**
  * The write half of the minor-flag queues. Every verdict goes to the main app's
@@ -85,6 +86,29 @@ export const resolveMinorFlagAppealPerLabel = (
       'Rule per label'
     )
   );
+
+export type LockReviewResult = { ok: true; unlocked: string[] } | { ok: false; error: string };
+
+/** Rules on an owner's request to unlock settings; the main app unlocks only what is still locked. */
+export async function resolveLockReview(
+  appealId: number,
+  modelId: number,
+  approve: boolean,
+  reason: RulingReason
+): Promise<LockReviewResult> {
+  const result = await callModEndpoint(
+    'model/resolve-lock-review',
+    { appealId, modelId, approve, ...reason },
+    approve ? 'Unlock settings' : 'Keep settings locked'
+  );
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  const unlocked = result.body.unlocked;
+  return {
+    ok: true,
+    unlocked: Array.isArray(unlocked) ? unlocked.filter((k) => typeof k === 'string') : [],
+  };
+}
 
 export type RedetectionOutcome = 'kept' | 'dismissed' | 'closed';
 export type RedetectionResult =
@@ -208,3 +232,20 @@ const toCountedResult = async (
   await bustMinorQueueCounts();
   return { ok: true };
 };
+
+export type RestrictedVerdictResult = { ok: true } | { ok: false; error: string };
+
+/** The main app owns the write and every refusal (Rate NSFW on minor/POI, a minor dismiss with no
+ *  reason); this only carries the moderator's session. */
+export async function ruleRestrictedVerdict(
+  modelId: number,
+  ruling: RestrictedVerdictRuling,
+  reason: string | undefined
+): Promise<RestrictedVerdictResult> {
+  const result = await callModEndpoint(
+    'model/resolve-restricted-nsfw-verdict',
+    { modelId, ruling, ...(reason ? { reason } : {}) },
+    RULING_LABEL[ruling]
+  );
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}

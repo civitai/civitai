@@ -1,5 +1,6 @@
 import type { GroupProps } from '@mantine/core';
-import { ActionIcon, Button, Group, Popover } from '@mantine/core';
+import { ActionIcon, Button, Group } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';

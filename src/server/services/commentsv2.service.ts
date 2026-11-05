@@ -63,7 +63,7 @@ import {
 } from '~/server/services/commentsv2.reply-threads';
 import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { CommentEntityType } from '~/shared/utils/prisma/enums';
+import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { onCommentCreated, onCommentsRemoved } from '~/server/events/points/hooks';
@@ -83,6 +83,7 @@ import {
   toggleTopicMute,
 } from '~/server/services/commentv3/write.service';
 import { getCosmeticsAndProfilePicturesForUsers } from '~/server/services/user.service';
+import { getShowcaseHatsForUsers } from '~/server/events/showcase-hat';
 
 export type CommentThread = {
   id: number;
@@ -265,14 +266,6 @@ export async function getThreadEntityOwnerId({
         .executeTakeFirst();
       return row?.userId ?? null;
     }
-    case 'question':
-      return findUserId(
-        dbRead.question.findUnique({ where: { id: entityId }, select: { userId: true } })
-      );
-    case 'answer':
-      return findUserId(
-        dbRead.answer.findUnique({ where: { id: entityId }, select: { userId: true } })
-      );
     case 'challenge': {
       const row = await dbRead.challenge.findUnique({
         where: { id: entityId },
@@ -287,6 +280,15 @@ export async function getThreadEntityOwnerId({
     case 'storyline':
       return findUserId(
         dbRead.storyline.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'model3d':
+      return findUserId(
+        dbRead.model3D.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    // `entityId` is the serialId. Stays user_id: `ownerOfThreadContent` grants hide/pin on it.
+    case 'appListing':
+      return findUserId(
+        dbRead.appListing.findUnique({ where: { serialId: entityId }, select: { userId: true } })
       );
     case 'comicChapter': {
       const row = await dbRead.comicChapter.findUnique({
@@ -657,9 +659,6 @@ export async function toggleSectionMute({
   return { muted: true, threadId: thread.id, hasThread: true };
 }
 
-const isCommentEntityType = (type: string): type is CommentEntityType =>
-  (Object.values(CommentEntityType) as string[]).includes(type);
-
 export async function getSectionMuted({
   entityType,
   entityId,
@@ -678,8 +677,7 @@ export async function getSectionMuted({
 
   // Read what the suppression reads (`CommentTopicMute`), not the `ThreadMute` the toggle writes:
   // the mirror trigger keeps them in step, and if they drift the suppression is what the user
-  // experiences. A retired thread type (question, answer) has no topic.
-  if (!isCommentEntityType(entityType)) return { muted: false, hasThread: true };
+  // experiences.
   const mute = await kyselyRead
     .selectFrom('CommentTopicMute')
     .select('userId')
@@ -823,14 +821,19 @@ export const isCommentDetached = (commentId: number) => isDetached(commentDetach
 
 /**
  * Whether a member gets the comment as missing: gone, hidden for ToS, or detached. Read on the
- * primary, so a delete just made counts.
+ * primary, so a delete just made counts. A comment on a surface that writes CommentV3 has no
+ * CommentV2 row.
  */
 export const isCommentGoneForMembers = async (commentId: number) => {
   const row = await dbWrite.commentV2.findUnique({
     where: { id: commentId },
     select: { tosViolation: true },
   });
-  return !row || row.tosViolation || (await isCommentDetached(commentId));
+  if (!row) {
+    const v3 = await getV3WriteComment(prismaRunner(dbWrite), commentId);
+    return !v3 || v3.tosViolation;
+  }
+  return row.tosViolation || (await isCommentDetached(commentId));
 };
 
 export const getCommentThreadStorylineId = (threadId: number) =>
@@ -1028,8 +1031,8 @@ export async function getCommentsThreadDetails2({
   entityId,
   entityType,
 }: CommentConnectorInput): Promise<{ id: number; locked: boolean } | null> {
-  // A surface that writes CommentV3 has no thread; its lock is the topic's, and there is no id.
-  if (isV3WriteSurface(entityType)) {
+  // A surface read from CommentV3 takes its lock from the topic, with no thread id (0).
+  if (constants.comments.v3ReadSurfaces.includes(entityType)) {
     const topic = await kyselyRead
       .selectFrom('CommentTopic')
       .select('locked')
@@ -1038,8 +1041,6 @@ export async function getCommentsThreadDetails2({
       .executeTakeFirst();
     return topic ? { id: 0, locked: topic.locked } : null;
   }
-  const viaKysely = await readImageThreadViaKysely(entityType, entityId);
-  if (viaKysely !== undefined) return viaKysely;
   return dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
@@ -1414,18 +1415,36 @@ export async function getCommentsInfinite({
       : { threads: [], childlessCommentIds: [] };
 
     const replyComments = replies.threads.flatMap((thread) => thread.comments);
-    const userCosmetics = await getCosmeticsAndProfilePicturesForUsers(
-      [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
-        (x) => x.user.id
-      )
-    );
+    const [userCosmetics, regularShowcaseHats] = await Promise.all([
+      getCosmeticsAndProfilePicturesForUsers(
+        [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
+          (x) => x.user.id
+        ),
+        { showcaseHat: true }
+      ),
+      // The page's own comments carry their cosmetics from the query, all but the showcase hat.
+      getShowcaseHatsForUsers(regularComments.flatMap((x) => (x.user ? [x.user.id] : []))),
+    ]);
     const withUserCosmetics = (comment: CommentV2WithCachedUser): CommentV2Model => ({
       ...comment,
       user: { ...comment.user, ...userCosmetics(comment.user.id) },
     });
 
     return {
-      comments: [...pinnedComments.map(withUserCosmetics), ...regularComments],
+      comments: [
+        ...pinnedComments.map(withUserCosmetics),
+        ...regularComments.map((comment) =>
+          comment.user
+            ? {
+                ...comment,
+                user: {
+                  ...comment.user,
+                  showcaseHat: regularShowcaseHats[comment.user.id] ?? null,
+                },
+              }
+            : comment
+        ),
+      ],
       nextCursor,
       targetComment: targetComment ? withUserCosmetics(targetComment) : null,
       replyThreads: replies.threads.map((thread) => ({

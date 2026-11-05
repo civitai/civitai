@@ -6,13 +6,13 @@ import {
   Card,
   CloseButton,
   Group,
-  Menu,
   RingProgress,
   ScrollArea,
   Text,
   useMantineTheme,
   rgba,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -61,7 +61,6 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
-import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -87,6 +86,12 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
+import { HatTurfDetailControls } from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailProvider,
+  HatTurfDetailReset,
+  takesHats,
+} from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
@@ -142,6 +147,15 @@ const sharedIconProps: IconProps = {
 };
 
 export function ImageDetail2() {
+  const { images } = useImageDetailContext();
+  return (
+    <HatTurfDetailProvider images={images}>
+      <ImageDetail2Content />
+    </HatTurfDetailProvider>
+  );
+}
+
+function ImageDetail2Content() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
@@ -342,11 +356,12 @@ export function ImageDetail2() {
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
+      <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[60px]">
+              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
@@ -522,6 +537,11 @@ export function ImageDetail2() {
                               imageNsfwLevel={image.nsfwLevel}
                               className="ml-2"
                             />
+                            {takesHats(image) && (
+                              <div className="ml-2">
+                                <HatTurfDetailControls imageId={image.id} />
+                              </div>
+                            )}
                           </ReactionSettingsProvider>
                         </div>
                         {storyline.active ? (
@@ -563,6 +583,7 @@ export function ImageDetail2() {
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
+                data-testid="image-detail-sheet"
               >
                 {/* The padding is on the `!active` branch only. Expanded, this row
                     is at the TOP of the panel and the inset below it would be a
@@ -660,9 +681,7 @@ export function ImageDetail2() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {isAppealableImage(image) && isOwner && (
-                      <OwnerBlockedImageNotice imageId={image.id} />
-                    )}
+                    {isOwner && <OwnerBlockedImageNotice image={image} />}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

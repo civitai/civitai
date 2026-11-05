@@ -107,7 +107,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(
-    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage"`
+    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport"`
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
@@ -141,19 +141,49 @@ describe('the removed-images list', () => {
     expect(result.total).toBe(3);
   });
 
-  // A hold marker's kept image reads as a moderator block; listing it with an appeal link would
-  // tell its owner something unusual is going on. The case above is the control.
-  it('lists nothing, and so offers no appeal, to an owner under a hold marker', async () => {
+  // A hold marker's kept image reads as a moderator block; an appeal link on it would tell its
+  // owner something unusual is going on. The case above is the control.
+  it('lists the same removals to an owner under a hold marker, with no appeal', async () => {
+    const before = await getMyRemovedImages(OWNER, NOW);
     await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
 
-    const result = await getMyRemovedImages(OWNER, NOW);
+    const held = await getMyRemovedImages(OWNER, NOW);
 
-    expect(result).toEqual({ total: 0, truncated: false, items: [] });
+    expect(before.items.some((i) => i.canAppeal)).toBe(true);
+    expect(held.items.map((i) => i.imageId)).toEqual(before.items.map((i) => i.imageId));
+    expect(held.items.map((i) => i.canAppeal)).toEqual(held.items.map(() => false));
   });
 
-  // Once the hold ends the owner is no longer left out above, but the image it kept stays refused
-  // by the appeal endpoint until it is purged or released. Another removed image in the same list,
-  // which no hold kept, keeps its appeal.
+  it('gives a held owner’s item exactly what an ordinary non-appealable item gets', async () => {
+    // Blocked by a scan rather than a moderator: a state any owner can reach, and never appealable.
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'tos' WHERE id = ${REJECTED}`);
+    const ordinary = (await getMyRemovedImages(OWNER, NOW)).items.find(
+      (i) => i.imageId === REJECTED
+    );
+    await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
+    const held = (await getMyRemovedImages(OWNER, NOW)).items.find(
+      (i) => i.imageId === STILL_REMOVED
+    );
+
+    expect(ordinary?.canAppeal).toBe(false);
+    const comparable = (item: typeof held) => ({ ...item, imageId: 0, removedAt: null });
+    expect(comparable(held)).toStrictEqual(comparable(ordinary));
+  });
+
+  it('lists an owner a CSAM report names as before the report, with no appeal', async () => {
+    const before = await getMyRemovedImages(OWNER, NOW);
+    await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`);
+
+    const after = await getMyRemovedImages(OWNER, NOW);
+
+    expect(before.items.some((i) => i.canAppeal)).toBe(true);
+    expect(after).toStrictEqual({
+      ...before,
+      items: before.items.map((i) => ({ ...i, canAppeal: false })),
+    });
+  });
+
+  // A hold's kept image stays refused until it is purged or released, even after the hold ends.
   it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
     const ALSO_REMOVED = 9;
     holder.chQuery.mockResolvedValue({
@@ -500,7 +530,8 @@ describe('the Removed content score', () => {
     ];
     // ClickHouse leaves out the aged-out and cost-free rows itself; read its filters off the query.
     holder.chQuery.mockImplementation(async ({ query, query_params }) => {
-      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      const excluded: string[] =
+        (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
       // The query trims the reason as `removalWeight` does; an untrimmed match would list ' other '.
       const trims = query.includes("trimBoth(ifNull(reason, ''))");
       const json = own.filter((r) => {

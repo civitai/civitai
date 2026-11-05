@@ -40,12 +40,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/utils/trpc', () => {
   const noopMutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
-  const recording = (fn: (v: unknown) => void, result: unknown = {}) => () => ({
+  const recording = (fn: (v: unknown) => unknown, result: unknown = {}) => () => ({
     mutate: vi.fn(),
-    mutateAsync: (vars: unknown) => {
-      fn(vars);
-      return Promise.resolve(result);
-    },
+    mutateAsync: (vars: unknown) => Promise.resolve(fn(vars) ?? result),
     isPending: false,
   });
   return {
@@ -210,6 +207,31 @@ describe('ExternalSubmitForm — edit mode', () => {
       expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-1' })
     );
     expect(mocks.updateListing).not.toHaveBeenCalled();
+  });
+
+  test('a MODERATOR with no revision yet saves on the live listing, and submits the revision a material change opens', async () => {
+    mocks.updateListing.mockReturnValueOnce({ requiresReview: true, shadowId: 'shadow-new' });
+    renderWithProviders(
+      <ExternalSubmitForm edit={makeApprovedCtx({ role: 'moderator', shadowId: null })} />
+    );
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('textbox', { name: /^Name/ }).fill('Mod Rename');
+    await page.getByTestId('apps-offsite-edit-save').click();
+
+    await vi.waitFor(() =>
+      expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-new' })
+    );
+    expect(mocks.updateListing).toHaveBeenCalledWith(
+      expect.objectContaining({ listingId: 'apl_parent', patch: { name: 'Mod Rename' } })
+    );
+    expect(mocks.updateRevision).not.toHaveBeenCalled();
+  });
+
+  test('an OWNER on an approved listing with no revision id still cannot save (the control)', async () => {
+    renderWithProviders(
+      <ExternalSubmitForm edit={makeApprovedCtx({ role: 'owner', shadowId: null })} />
+    );
+    await expect.element(page.getByTestId('apps-offsite-edit-save')).toBeDisabled();
   });
 
   test('an APPROVED edit writes the scalar patch to the SHADOW and submits the revision', async () => {

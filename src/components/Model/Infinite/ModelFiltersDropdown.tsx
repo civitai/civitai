@@ -5,11 +5,11 @@ import {
   Drawer,
   Group,
   Indicator,
-  Popover,
   ScrollArea,
   Stack,
   TextInput,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
 import { useCallback, useMemo } from 'react';

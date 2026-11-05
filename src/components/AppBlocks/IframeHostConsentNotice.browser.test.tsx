@@ -810,4 +810,25 @@ describe('IframeHost consent backstop — the surface', () => {
       posts.stop();
     }
   });
+  // GUARD: the model slot has no prompt for `apps:storage:publish` in a SOURCE app (only the page
+  // host has one), so a request carrying `from` is refused here. Read as an ordinary request it
+  // would open THIS app's own prompt for its missing scopes, which is not what the block asked.
+  // `baseProps` leaves `WITHHELD` missing, so without the refusal each request below opens it.
+  test('a REQUEST_CONSENT carrying from gets CONSENT_UNAVAILABLE and opens no modal', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'], from: 'notes-app' });
+      postFromBlock('REQUEST_CONSENT', { scopes: [WITHHELD], from: 'notes-app' });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(2));
+      for (const m of posts.of('CONSENT_UNAVAILABLE')) {
+        expect(m.payload).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+      }
+      await new Promise((r) => setTimeout(r, 100));
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
 });

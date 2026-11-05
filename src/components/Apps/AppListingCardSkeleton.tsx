@@ -25,15 +25,13 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * occupying the card's exact box means each cell's top/left/width/height is
  * already final when the query resolves.
  *
- * 🔴 WHAT IT DOES **NOT** BUY, AND MUST NOT BE SOLD AS. Two shifts survive, both
- * by construction:
+ * 🔴 WHAT IT DOES **NOT** BUY, AND MUST NOT BE SOLD AS. One shift survives, by
+ * construction:
  *   · THE COUNT AXIS. This renders two rows at the current column count; the
  *     query returns up to 48. When the two differ the GRID still resizes on
  *     resolve — fewer/more rows — so page height moves even though no cell does.
- *   · THE RECENTS RAIL. It is seeded empty for SSR parity and hydrates from
- *     localStorage one frame late, inserting ~90px above the grid. That is the
- *     status quo (and is why the rail is rendered BELOW the search/sort controls
- *     — see `AppListingsMarketplaceBody`), and nothing here touches it.
+ * (The store's "Recently opened" rail, which used to hydrate in above the grid,
+ * moved to the `/apps` home and no longer shifts this page.)
  * "Zero layout shift" is therefore the wrong claim. "Zero per-card shift" is the
  * right one.
  *
@@ -228,7 +226,7 @@ export function AppListingCardSkeleton() {
             on the left and the creator on the right, at the card's footer height. It is
             reserved unconditionally (the rollup half always renders on a card, and the play
             count shares its line). */}
-        <Divider mt="auto" />
+        <Divider mt="auto" style={{ marginInline: 'calc(var(--mantine-spacing-md) * -1)' }} />
         <Group
           gap="sm"
           wrap="nowrap"

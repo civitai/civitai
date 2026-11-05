@@ -6,15 +6,8 @@
  * generator uses WorkflowPicker instead.
  */
 
-import {
-  Badge,
-  Group,
-  SegmentedControl,
-  Text,
-  Tooltip,
-  UnstyledButton,
-  Stack,
-} from '@mantine/core';
+import { Badge, Group, SegmentedControl, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowLeft,
   IconCheck,

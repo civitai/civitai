@@ -13,12 +13,11 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,

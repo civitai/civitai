@@ -7,7 +7,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { setCsamArchiveIncomplete } from '~/server/metrics/csam-archive.metrics';
 import type { CsamArchiveIncompleteReason } from '~/server/metrics/csam-archive.metrics';
 import type { CsamArchiveObjectKind } from '~/server/services/csam.service-new';
-import { getCsamS3Client } from '~/server/services/csam.service-new';
+import { getCsamS3Client } from '~/server/services/csam-bucket';
+import { GENERATOR_EVIDENCE_VERSION } from '~/server/services/generator-evidence/evidence-meta';
 
 type S3 = Pick<S3Client, 'send'>;
 
@@ -26,7 +27,11 @@ type ArchiveObjectRow = {
   namedMissing: number | null;
 };
 
-type CheckFailure = Exclude<CsamArchiveIncompleteReason, 'skipped' | 'stale'>;
+type CheckFailure = Exclude<CsamArchiveIncompleteReason, 'skipped' | 'stale' | 'unsupported'>;
+
+const GENERATOR_EVIDENCE_SQL = Prisma.sql`COALESCE(details -> 'generatorEvidence' ->> 'version' = ${String(
+  GENERATOR_EVIDENCE_VERSION
+)}, false)`;
 
 const MEDIA_KIND: Partial<Record<string, CsamArchiveObjectKind>> = {
   Image: 'images',
@@ -129,6 +134,7 @@ export async function checkCsamArchiveEvidence({
   const counts: Record<CsamArchiveIncompleteReason, number> = {
     skipped: 0,
     stale: 0,
+    unsupported: 0,
     images_missing: 0,
     object_missing: 0,
     entries_mismatch: 0,
@@ -136,17 +142,26 @@ export async function checkCsamArchiveEvidence({
     check_error: 0,
   };
 
-  const [pending] = await dbWrite.$queryRaw<{ skipped: number; stale: number }[]>`
+  // Generator-evidence reports are left out of the archive job (getCsamsToArchive), so they are
+  // counted apart rather than read as stale.
+  const [pending] = await dbWrite.$queryRaw<
+    { skipped: number; stale: number; unsupported: number }[]
+  >`
     SELECT
       count(*) FILTER (WHERE details ->> 'archiveSkipped' IS NOT NULL)::int AS skipped,
       count(*) FILTER (
-        WHERE details ->> 'archiveSkipped' IS NULL AND "reportSentAt" < now() - interval '6 hours'
+        WHERE details ->> 'archiveSkipped' IS NULL AND ${GENERATOR_EVIDENCE_SQL}
+      )::int AS unsupported,
+      count(*) FILTER (
+        WHERE details ->> 'archiveSkipped' IS NULL AND NOT ${GENERATOR_EVIDENCE_SQL}
+          AND "reportSentAt" < now() - interval '6 hours'
       )::int AS stale
     FROM "CsamReport"
     WHERE "reportSentAt" IS NOT NULL AND "archivedAt" IS NULL
   `;
   counts.skipped = pending?.skipped ?? 0;
   counts.stale = pending?.stale ?? 0;
+  counts.unsupported = pending?.unsupported ?? 0;
 
   // Reports archived before objects were recorded have nothing to check against and are left out.
   const candidates = await dbWrite.$queryRaw<Candidate[]>`

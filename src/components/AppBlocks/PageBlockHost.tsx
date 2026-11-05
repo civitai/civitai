@@ -7,6 +7,11 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
+import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   countGuestFrameEvent,
@@ -22,6 +27,7 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
@@ -154,6 +160,7 @@ import {
   resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -782,6 +789,12 @@ export interface PageBlockHostProps {
    */
   onRefreshEntryUrl?: () => Promise<string>;
   /**
+   * DEV-TUNNEL ONLY: every `BLOCK_ERROR` payload the block posts (unvalidated), for the dev host
+   * to keep for App Assistant's app activity (`useDevPreviewErrorReporter`). Unset on every other
+   * surface, so a production block's errors go nowhere new.
+   */
+  onBlockError?: (payload: unknown) => void;
+  /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
    * side-effecting / money / private / cross-user handler replies with a
@@ -839,6 +852,15 @@ export interface PageBlockHostProps {
    * Default false → a mounter that hasn't wired it shows no dead links.
    */
   canOpenPage?: boolean;
+  /**
+   * Where this run was launched from, for the chrome's way out (breadcrumb + mobile back
+   * chevron): `home` → "My apps" (`/apps`), otherwise "Marketplace" (`/apps/store`). Only
+   * the `/apps/run` route sets it (from `?from=home`, in `getServerSideProps`); every other
+   * mounter leaves the store default. Never put on the iframe `src` or in BLOCK_INIT; its
+   * one use outside the chrome is re-stamping `?from=home` on the URL a block NAVIGATE
+   * pushes, so a reload keeps the way out. See `apps-run-origin.ts`.
+   */
+  launchOrigin?: AppsRunOrigin;
   /**
    * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
    * it is spelled out rather than inferred from `surface`.
@@ -934,9 +956,11 @@ export function PageBlockHost({
   onRetryToken,
   onGuestReloaded,
   onRefreshEntryUrl,
+  onBlockError,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
+  launchOrigin = 'store',
   fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
@@ -1874,12 +1898,15 @@ export function PageBlockHost({
     });
   }, [status, appBlockId, blockInstanceId]);
 
-  // BLOCK_ERROR{fatal:true} → fatal.
+  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel only).
+  const onBlockErrorRef = useRef(onBlockError);
+  onBlockErrorRef.current = onBlockError;
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_ERROR', (raw) => {
       if (raw && typeof raw === 'object' && (raw as { fatal?: unknown }).fatal === true) {
         setStatus((current) => (current === 'loading' || current === 'ready' ? 'fatal' : current));
       }
+      onBlockErrorRef.current?.(raw);
     });
     return off;
   }, [onMessage]);
@@ -2063,6 +2090,28 @@ export function PageBlockHost({
         return;
       }
 
+      // `apps:storage:publish` in the SOURCE app of one of this app's imports (`from`): a prompt
+      // for that app, not for this one, so it never reaches the missing-set path below. The
+      // modal names the source from this app's approved imports, and the server records the grant
+      // only for a source this app imports with `readwrite`. A malformed request is refused.
+      const sourcePublish = resolveSourcePublishConsentRequest(payload);
+      if (sourcePublish === 'invalid') {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
+      if (sourcePublish !== null) {
+        openBlockConsentModal({
+          appBlockId,
+          blockName: appName,
+          missingScopes: [APP_STORAGE_PUBLISH_SCOPE],
+          from: sourcePublish.from,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        });
+        return;
+      }
+
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         openConsentModal(scopesToGrant);
@@ -2235,6 +2284,10 @@ export function PageBlockHost({
         base: BLOCK_HOST_DEEP_LINK_BASE[surface],
         slug,
         siteNavigation: BLOCK_HOST_SITE_NAVIGATION[surface],
+        // Keeps `?from=home` on the pushed URL of a home-launched run, so a reload after the
+        // app navigates still leads back to "My apps"; the host's value beats any `from` in
+        // the block's own path (see `resolveNavigateRequest`).
+        launchOrigin,
       });
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
@@ -2283,7 +2336,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode, surface]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
@@ -5771,6 +5824,7 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         hostSurface={surface}
         canOpenPage={canOpenPage}
+        launchOrigin={launchOrigin}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`
@@ -5824,6 +5878,16 @@ export function PageBlockHost({
           onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
         />
       )}
+      {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when
+          the app opens, never one per storage call. Live runs of a storage app only; a review
+          or the dev tunnel writes to a namespace this does not measure. */}
+      {!reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' &&
+        declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
+          <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

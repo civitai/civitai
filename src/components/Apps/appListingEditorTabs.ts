@@ -1,7 +1,7 @@
 import { OWNER_UNPUBLISH_ACTION } from '~/components/Apps/offsiteOwnerControls';
 import type {
-  AppRole,
   ListingCapability,
+  ListingEditorRole,
   ListingKind,
 } from '~/server/services/blocks/app-access.service';
 import {
@@ -76,7 +76,7 @@ export type EditorTabContext = {
   kind: ListingKind;
   /** `null` for an off-site listing. */
   appBlockId: string | null;
-  role: AppRole;
+  role: ListingEditorRole;
   /** The listing's kind-derived capability row (`capabilitiesForKind`). */
   capabilities: Readonly<Record<ListingCapability, boolean>>;
   /**
@@ -342,7 +342,9 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
     tabs.push('details');
     if (ctx.capabilities.listingMedia === true && ctx.appBlockId != null) tabs.push('media');
   }
-  if (authorable) {
+  // A moderator gets content tabs only: no manifest, earnings, collaborators or feedback.
+  const moderator = ctx.role === 'moderator';
+  if (authorable && !moderator) {
     if (ctx.capabilities.submitVersion === true && ctx.appBlockId != null) tabs.push('manifest');
     if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
     tabs.push('collaborators');
@@ -374,7 +376,7 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const canSetLevel = isVisibilityEligibleListingStatus(ctx.status);
   if (ctx.role === 'owner' && (canPublish || canSetLevel)) tabs.push('publishing');
   tabs.push('history');
-  if (ctx.hasFeedback === true) tabs.push('feedback');
+  if (ctx.hasFeedback === true && !moderator) tabs.push('feedback');
   return tabs;
 }
 
