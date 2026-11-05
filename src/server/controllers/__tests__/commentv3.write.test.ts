@@ -29,7 +29,7 @@ const m = vi.hoisted(() => ({
   onTopicCommentsRemoved: vi.fn(async (_: unknown) => undefined),
   onCommentCreated: vi.fn(async (_: unknown) => undefined),
   getStored: vi.fn(),
-  deleteUnlessHeld: vi.fn(),
+  deleteComments3: vi.fn(),
   afterDeleted: vi.fn(async (_: unknown) => undefined),
 }));
 
@@ -60,7 +60,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: m.access }));
 vi.mock('~/server/services/commentv3/moderation.service', () => ({
   bulkSetCommentV3TosViolation: m.tos,
-  deleteCommentsV3UnlessHeld: m.deleteUnlessHeld,
+  deleteCommentsV3: m.deleteComments3,
   afterCommentsV3Deleted: m.afterDeleted,
 }));
 vi.mock('~/server/services/sticker.service', () => ({
@@ -320,43 +320,20 @@ describe('commentv3 update', () => {
 describe('commentv3 delete', () => {
   const removed = [{ id: 101, userId: AUTHOR, entityType: 'article', entityId: 10 }];
 
-  it('lets only the author or a moderator delete, keeping it for a hold, and settles points', async () => {
-    m.deleteUnlessHeld.mockResolvedValue({ deleted: removed, retained: [] });
+  it('lets only the author or a moderator delete, and settles points', async () => {
+    m.deleteComments3.mockResolvedValue(removed);
     await expect(
       deleteCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(m.deleteUnlessHeld).not.toHaveBeenCalled();
+    expect(m.deleteComments3).not.toHaveBeenCalled();
 
     const tx = nextTx();
     await deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } });
-    expect(m.deleteUnlessHeld).toHaveBeenCalledWith(tx, [101], false, { byAuthor: true });
-    expect(m.afterDeleted).toHaveBeenCalledWith({ deleted: removed, retained: [] });
-    expect(m.onTopicCommentsRemoved).not.toHaveBeenCalled();
-  });
+    expect(m.deleteComments3).toHaveBeenCalledWith(tx, [101]);
+    expect(m.afterDeleted).toHaveBeenCalledWith(removed);
 
-  // A moderator's removal is not the author's: a ToS restore may still bring it back.
-  it('marks only an author’s own delete as theirs', async () => {
-    m.deleteUnlessHeld.mockResolvedValue({ deleted: removed, retained: [] });
     await deleteCommentV3Handler({ ctx: ctx(STRANGER, true), input: { id: 101 } });
-    expect(m.deleteUnlessHeld).toHaveBeenCalledWith(expect.anything(), [101], false, {
-      byAuthor: false,
-    });
-  });
-
-  it('takes the points of a comment kept for a hold, which its author sees as deleted', async () => {
-    m.deleteUnlessHeld.mockResolvedValue({ deleted: [], retained: [{ id: 101, userId: AUTHOR }] });
-    await deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } });
-    expect(m.onTopicCommentsRemoved).toHaveBeenCalledWith([
-      expect.objectContaining({ userId: AUTHOR, entityType: 'article', entityId: 10 }),
-    ]);
-  });
-
-  it('refuses without naming the hold when one cannot be read', async () => {
-    m.deleteUnlessHeld.mockRejectedValue(new Error('relation "EvidenceHeldUser" does not exist'));
-    await expect(
-      deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(m.afterDeleted).not.toHaveBeenCalled();
+    expect(m.deleteComments3).toHaveBeenCalledTimes(2);
   });
 });
 
