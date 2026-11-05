@@ -5,6 +5,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { count, formatDate } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
+  import PageNav from '$lib/PageNav.svelte';
   import { cosmeticIcon, cosmeticTypeLabel, tierName } from '$lib/shop-view';
   import type { ActionData, PageData } from './$types';
 
@@ -57,14 +58,14 @@
 </script>
 
 <div class="page-wide inventory">
-  <nav class="page-nav" aria-label="Back"><a href="/gold"><Icon name="arrow-left" size={14} />Shop</a></nav>
+  <PageNav />
   <header class="head">
     <div>
       <p class="eyebrow">Your armory</p>
       <h1 class="page-title">Inventory</h1>
       <p class="lede">Equip what you own. Equipped cosmetics show on your Civitai profile, comments and avatar.</p>
     </div>
-    <a class="back" href="/gold"><Icon name="store" size={16} />Back to shop</a>
+    <a class="back" href="/shop"><Icon name="store" size={16} />Shop</a>
   </header>
 
   <div class="filters" role="group" aria-label="Filter">
@@ -97,7 +98,7 @@
     {#if data.shopOpen && shown.length === 0 && data.items.length > 0}
       <p class="empty">Nothing in this filter. Pick All to see everything you own.</p>
     {:else if data.shopOpen && shown.length === 0}
-      <p class="empty">Nothing here yet. <a href="/gold">Visit the shop</a>.</p>
+      <p class="empty">Nothing here yet. <a href="/shop">Visit the shop</a>.</p>
     {:else}
       <ul class="grid">
         {#each shown as item, i (item.cosmeticId)}
@@ -142,7 +143,7 @@
       </ul>
     {/if}
   {:else if !data.membership}
-    <p class="empty">No membership yet. <a href="/gold">Visit the shop</a>.</p>
+    <p class="empty">No membership yet.</p>
   {/if}
 </div>
 
@@ -156,7 +157,6 @@
     justify-content: space-between;
     gap: 1.5rem;
   }
-  .page-nav a,
   .back {
     display: inline-flex;
     align-items: center;
@@ -171,9 +171,6 @@
     border: 1px solid var(--io-gold-muted);
     border-radius: 6px;
     color: var(--io-parchment);
-  }
-  .page-nav {
-    margin-bottom: 1rem;
   }
   .filters {
     display: flex;

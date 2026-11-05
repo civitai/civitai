@@ -7,6 +7,7 @@ import {
   cosmeticIcon,
   cosmeticTypeLabel,
   dealPercentOff,
+  membershipPerksUrl,
   monthsLabel,
   refusalText,
   tierName,
@@ -137,5 +138,11 @@ describe('cosmeticIcon', () => {
     [null, null, 'sparkles'],
   ])('draws %s %s as %s', (kind, type, icon) => {
     expect(cosmeticIcon(kind, type)).toBe(icon);
+  });
+});
+
+describe('membershipPerksUrl', () => {
+  it('points at the main site pricing page, built from the configured main-site URL', () => {
+    expect(membershipPerksUrl('https://main.example')).toBe('https://main.example/pricing');
   });
 });

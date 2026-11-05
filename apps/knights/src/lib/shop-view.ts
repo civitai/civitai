@@ -122,3 +122,6 @@ export const cosmeticIcon = (
 
 export const PENDING_TEXT =
   'Your gold is reserved. Civitai has not confirmed it yet; we retry automatically and never charge twice.';
+
+/** The main site's membership page, where each tier's perks are listed. */
+export const membershipPerksUrl = (civitaiUrl: string) => `${civitaiUrl}/pricing`;

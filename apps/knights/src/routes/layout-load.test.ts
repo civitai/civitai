@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const playerRow = vi.hoisted(() => ({ value: undefined as { userId: number } | undefined }));
 
 const getRecapState = vi.hoisted(() => vi.fn());
+const getDailyStatus = vi.hoisted(() => vi.fn());
+const getPlayerStatus = vi.hoisted(() => vi.fn());
 const BADGES = { small: { Knight: 'k48' }, large: { Knight: 'k450' } };
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({
@@ -13,17 +15,30 @@ vi.mock('$lib/server/db', () => ({
   },
 }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
-vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState }));
+vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState, getDailyStatus }));
+vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES }));
 
 const { load } = await import('./+layout.server');
 
 const event = (user?: { username: string; id?: number }) =>
-  ({ locals: { user }, depends: vi.fn() } as never);
+  ({
+    locals: { user },
+    depends: vi.fn(),
+    url: new URL('http://knights.test/shop/inventory'),
+  } as never);
 const run = (user: unknown = { id: 7, username: 'ana' }) =>
-  load({ locals: { user }, depends: vi.fn() } as never) as Promise<Record<string, any>>;
+  load({
+    locals: { user },
+    depends: vi.fn(),
+    url: new URL('http://knights.test/shop/inventory'),
+  } as never) as Promise<Record<string, any>>;
 
 beforeEach(() => {
+  getPlayerStatus.mockReset();
+  getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+  getDailyStatus.mockReset();
+  getDailyStatus.mockResolvedValue({ streak: 3, shields: 1, maxShields: 2 });
   getRecapState.mockReset();
   getRecapState.mockResolvedValue({ optedOut: false, dismissedToday: false, hasHistory: true });
 });
@@ -36,6 +51,28 @@ afterEach(() => {
 });
 
 describe('layout load', () => {
+  it('carries the header stats for a player, so a page that loads none still shows them', async () => {
+    playerRow.value = { userId: 7 };
+    expect(await run()).toMatchObject({
+      headerStats: {
+        status: { rank: 'Acolyte' },
+        daily: { streak: 3 },
+      },
+    });
+    expect(getDailyStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ playerId: 7, rank: 'Acolyte' })
+    );
+  });
+
+  it('has no header stats for someone who has not joined, and survives a failed read', async () => {
+    expect(await run()).toMatchObject({ headerStats: null });
+    playerRow.value = { userId: 7 };
+    getPlayerStatus.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await run()).toMatchObject({ headerStats: { status: null, daily: null } });
+  });
+
   it('points "Back to Civitai" at the configured main app, without a trailing slash', async () => {
     process.env.CIVITAI_APP_URL = 'https://main.example/';
     expect(await load(event())).toMatchObject({ civitaiUrl: 'https://main.example' });

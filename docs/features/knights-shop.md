@@ -1,6 +1,6 @@
 # Knights of New Order: the gold shop
 
-Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/gold` (shop) and `routes/gold/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembershipMonth` in `src/server/services/subscriptions.service.ts`. Prices are placeholders until the price sheet is signed off; they live in data.
+Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembershipMonth` in `src/server/services/subscriptions.service.ts`. Prices are placeholders until the price sheet is signed off; they live in data.
 
 ## Data and deploy
 
@@ -47,14 +47,14 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 
 ## Switches and entry points
 
-`KNIGHTS_SHOP_DISABLED=true` (also `1`, `yes`, `on`) closes the shop and hides its entry points (header gold popover "Visit the shop", the avatar menu and home tile "Shop"); `/gold` then says it is not open. `KNIGHTS_CONVERSION_DISABLED` keeps its meaning for Buzz packs only. The restart-career dialog now lists "Gold you have not yet spent".
+`KNIGHTS_SHOP_DISABLED=true` (also `1`, `yes`, `on`) closes the shop and hides its entry points (header gold popover "Visit the shop", the avatar menu and home tile "Shop"); `/shop` then says it is not open. `KNIGHTS_CONVERSION_DISABLED` keeps its meaning for Buzz packs only. The restart-career dialog now lists "Gold you have not yet spent".
 
 ## Motion (M9, M10)
 
-`routes/gold/+page.svelte`, `ShopCard.svelte`, `PurchaseDialog.svelte`, `inventory/+page.svelte`. The purse counts down (`tween`, 360ms) only after the server has answered, the dialog fades out, the OWNED seal stamps (`mo-stamp`) and a floater rises; any click or key during the 720ms jumps to the end state. Cards stagger in (first six, 40ms apart), the deal card sheens once on load and every 8s, a Buy pressed without the gold shakes twice and fades in the shortfall line, an equipped item cross-fades to verdigris with the check drawing in. Under `prefers-reduced-motion` the count lands at once, there is no floater, shake or sheen, and the rest are 150ms fades. The coin clink of the design is not built: there is no sound asset for it yet.
+`routes/shop/+page.svelte`, `ShopCard.svelte`, `PurchaseDialog.svelte`, `inventory/+page.svelte`. The purse counts down (`tween`, 360ms) only after the server has answered, the dialog fades out, the OWNED seal stamps (`mo-stamp`) and a floater rises; any click or key during the 720ms jumps to the end state. Cards stagger in (first six, 40ms apart), the deal card sheens once on load and every 8s, a Buy pressed without the gold shakes twice and fades in the shortfall line, an equipped item cross-fades to verdigris with the check drawing in. Under `prefers-reduced-motion` the count lands at once, there is no floater, shake or sheen, and the rest are 150ms fades. The coin clink of the design is not built: there is no sound asset for it yet.
 
 ## Tests
 
-`shop/purchase.pglite.test.ts` (replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership rules, retry, rejection and forfeiture, balance fields), `shop/catalog.pglite.test.ts`, `shop/inventory.pglite.test.ts`, `shop/rotation.test.ts`, `shop/seed-items.pglite.test.ts`, `shop/main-app.test.ts`, `routes/gold/load.test.ts`, `routes/gold/inventory/actions.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` (the real `WebhookEndpoint`), `src/server/services/__tests__/subscriptions.grant-buzz-membership.test.ts` and `buzz-membership-badge.behavior.test.ts`.
+`shop/purchase.pglite.test.ts` (replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership rules, retry, rejection and forfeiture, balance fields), `shop/catalog.pglite.test.ts`, `shop/inventory.pglite.test.ts`, `shop/rotation.test.ts`, `shop/seed-items.pglite.test.ts`, `shop/main-app.test.ts`, `routes/shop/load.test.ts`, `routes/shop/inventory/actions.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` (the real `WebhookEndpoint`), `src/server/services/__tests__/subscriptions.grant-buzz-membership.test.ts` and `buzz-membership-badge.behavior.test.ts`.
 
 The two simultaneous-purchase tests run on one PGlite connection that takes the transactions in turn, so they prove the second purchase reads the first one's spend, not the row lock itself; that needs a real Postgres and is not covered.

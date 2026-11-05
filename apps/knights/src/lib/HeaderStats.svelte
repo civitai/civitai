@@ -98,7 +98,7 @@
         <b class="value"><Icon name="zap" />{gold.buzz}</b>
       </div>
       {#if shopOpen}
-        <a class="convert" href="/gold">Visit the shop<Icon name="arrow-right" size={14} /></a>
+        <a class="convert" href="/shop">Visit the shop<Icon name="arrow-right" size={14} /></a>
       {/if}
     </StatPopover>
   </li>

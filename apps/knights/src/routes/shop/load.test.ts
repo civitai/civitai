@@ -44,7 +44,7 @@ const locals = { user: { id: 7 } };
 const post = (fields: Record<string, string>) =>
   actions.buy({
     locals,
-    request: new Request('http://knights.test/gold?/buy', {
+    request: new Request('http://knights.test/shop?/buy', {
       method: 'POST',
       body: new URLSearchParams(fields),
     }),
@@ -207,7 +207,7 @@ describe('buying', () => {
     const again = () =>
       fresh.actions.buy({
         locals,
-        request: new Request('http://knights.test/gold?/buy', {
+        request: new Request('http://knights.test/shop?/buy', {
           method: 'POST',
           body: new URLSearchParams(FIELDS),
         }),

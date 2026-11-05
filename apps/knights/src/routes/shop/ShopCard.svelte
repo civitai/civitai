@@ -2,7 +2,8 @@
   import type { ComponentProps } from 'svelte';
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import { cardBlurb, cardTitle, cosmeticIcon, dealPercentOff } from '$lib/shop-view';
+  import { page } from '$app/state';
+  import { cardBlurb, cardTitle, cosmeticIcon, dealPercentOff, membershipPerksUrl } from '$lib/shop-view';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
@@ -76,6 +77,15 @@
       <h3 id="card-{card.id}">{title}</h3>
     {/if}
     {#if variant !== 'pack'}<p class="note">{note}</p>{/if}
+    {#if card.kind === 'membership'}
+      <a
+        class="perks"
+        href={membershipPerksUrl(page.data.civitaiUrl)}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="See what {title} includes on Civitai (opens in a new tab)"
+      >See perks</a>
+    {/if}
     <p class="price">
       <Icon name="coins" size={16} /><b>{count(card.price)}</b>
       {#if card.deal}<s>{count(card.listPrice)}</s>{/if}
@@ -186,6 +196,15 @@
     font: 600 0.7rem/1 var(--io-font-ui);
     letter-spacing: 0.2em;
     text-transform: uppercase;
+  }
+  .perks {
+    color: var(--io-gold);
+    font: 500 12px/1.4 var(--io-font-ui);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .perks:hover {
+    color: var(--io-parchment);
   }
   .note {
     margin: 0.25rem 0 0;

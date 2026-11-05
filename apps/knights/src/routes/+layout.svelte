@@ -8,10 +8,13 @@
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
-  // Pages that already load the player's status (play, gold, ranks, judgments) hand it to the header through
-  // page.data, so the stats cost no query of their own; other pages get the plain header.
-  let status = $derived(page.data.status as PlayerStatus | undefined);
-  let streak = $derived(page.data.daily as { streak: number; shields: number; maxShields: number } | undefined);
+  // A page that loads the player's status (play keeps it live) hands it to the header through page.data; every other page
+  // gets the layout's copy, so the header is the same on each of them.
+  type Streak = { streak: number; shields: number; maxShields: number };
+  let status = $derived(
+    (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
+  );
+  let streak = $derived((page.data.daily as Streak | null | undefined) ?? data.headerStats?.daily ?? undefined);
   // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
   // The welcome screen is signed-out and brings its own chrome.
   let bare = $derived(page.route.id === '/welcome');

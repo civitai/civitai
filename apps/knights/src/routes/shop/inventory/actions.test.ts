@@ -19,7 +19,7 @@ const locals = { user: { id: 7 } };
 const post = (action: 'equip' | 'unequip', fields: Record<string, string>) =>
   actions[action]({
     locals,
-    request: new Request(`http://knights.test/gold/inventory?/${action}`, {
+    request: new Request(`http://knights.test/shop/inventory?/${action}`, {
       method: 'POST',
       body: new URLSearchParams(fields),
     }),

@@ -162,7 +162,7 @@ describe('welcome screen', () => {
 describe('banned and muted accounts', () => {
   beforeEach(() => accessFor.mockResolvedValue('allow'));
 
-  it.each(['/play', '/gold', '/judgments', '/ranks', '/rules', '/', '/api/anything'])(
+  it.each(['/play', '/shop', '/judgments', '/ranks', '/rules', '/', '/api/anything'])(
     'shuts a banned user out of %s with the closed page',
     async (path) => {
       getStanding.mockResolvedValue({ banned: true, muted: false });
@@ -192,7 +192,7 @@ describe('banned and muted accounts', () => {
 
   it('lets a user in good standing through', async () => {
     guardCheck.mockResolvedValue(signedIn({ id: 7 }));
-    const { resolve } = await run('/gold');
+    const { resolve } = await run('/shop');
     expect(resolve).toHaveBeenCalled();
   });
 

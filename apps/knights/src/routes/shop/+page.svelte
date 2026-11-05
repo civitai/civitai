@@ -143,7 +143,7 @@
         <p class="label">Pending</p>
         <p class="value small">{count(balance.pending)}</p>
       </div>
-      <a class="inv" href="/gold/inventory" data-sveltekit-preload-data="hover"><Icon name="store" size={16} />Inventory</a>
+      <a class="inv" href="/shop/inventory" data-sveltekit-preload-data="hover"><Icon name="store" size={16} />Inventory</a>
     </div>
   </header>
 
@@ -166,7 +166,7 @@
     {#if notice}
       <p class="notice-line" class:wait={noticePending} role="status">
         <Icon name={noticePending ? 'hourglass' : 'circle-check'} size={18} />{notice}
-        {#if noticeInventory}<a href="/gold/inventory">Open inventory</a>{/if}
+        {#if noticeInventory}<a href="/shop/inventory">Open inventory</a>{/if}
       </p>
     {/if}
 
@@ -273,7 +273,7 @@
     {/if}
 
     <p class="fine">
-      <Icon name="shield-check" size={14} />Gold on payout hold can't be spent until the hold clears. Buzz packs replace converting gold one-for-one.
+      <Icon name="shield-check" size={14} />Gold on payout hold can't be spent until the hold clears.
     </p>
   {/if}
 </div>
