@@ -15,9 +15,16 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { middleware } from '~/server/trpc';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { throwRateLimited } from '~/server/utils/rate-limit-error';
+import {
+  bindingRefusal,
+  evaluateRateLimitWindow,
+  rateLimitMetaForRefusal,
+  selectRateLimitRules,
+  type RateLimit,
+} from '~/server/utils/rate-limit-window';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
-import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -136,12 +143,7 @@ export function cacheIt<TInput extends object>({
   });
 }
 
-export type RateLimit = {
-  limit: number;
-  period: number; // seconds
-  userReq?: (user: SessionUser) => boolean;
-  errorMessage?: string;
-};
+export type { RateLimit } from '~/server/utils/rate-limit-window';
 export type RateLimitOptions = {
   // When true, an attempt is only counted toward the limit after the procedure
   // succeeds. Failed calls (validation errors, server hiccups, etc.) won't burn
@@ -172,20 +174,7 @@ export function rateLimit<TInput = any>(
       return await next();
     }
 
-    // Get valid limits
-    const validLimits: RateLimit[] = [];
-    for (const rateLimit of rateLimits) {
-      const matchedPeriod = validLimits.find((x) => x.period === rateLimit.period);
-      if (matchedPeriod?.limit && matchedPeriod.limit > rateLimit.limit) continue;
-      if (!rateLimit.userReq || (ctx.user && rateLimit.userReq(ctx.user))) {
-        // Replace the existing limit if it exists
-        if (matchedPeriod) {
-          validLimits.splice(validLimits.indexOf(matchedPeriod), 1, rateLimit);
-        } else {
-          validLimits.push(rateLimit);
-        }
-      }
-    }
+    const validLimits = selectRateLimitRules(rateLimits, ctx.user);
 
     // Get user's attempts. options.sharedKey lets multiple procedures share one
     // quota; otherwise key on the tRPC path.
@@ -209,34 +198,14 @@ export function rateLimit<TInput = any>(
     const hashKey = ctx.user?.id != null ? `user:${ctx.user.id}` : `ip:${resolveClientIp(ctx.req)}`;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 
-    // Check if user can proceed and find the failing limit
-    let failedLimit: RateLimit | undefined = undefined;
-    let canProceed = true;
-
-    for (const rateLimitRule of validLimits) {
-      const { limit, period } = rateLimitRule;
-      if (limit === 0) {
-        failedLimit = rateLimitRule;
-        canProceed = false;
-        break;
-      }
-
-      const cutoff = Date.now() - period! * 1000;
-      const relevantAttempts = attempts.filter((x) => x > cutoff).length;
-      if (relevantAttempts > limit!) {
-        failedLimit = rateLimitRule;
-        canProceed = false;
-        break;
-      }
-    }
-
-    // Throw if rate limit exceeded
-    if (!canProceed && failedLimit) {
-      const errorMessage = failedLimit.errorMessage ?? `You're doing that too much...`;
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: errorMessage,
-      });
+    const now = Date.now();
+    const usages = evaluateRateLimitWindow(validLimits, attempts, now);
+    const refusal = bindingRefusal(usages);
+    if (refusal) {
+      const message = refusal.rule.errorMessage ?? `You're doing that too much...`;
+      const meta = rateLimitMetaForRefusal(usages, now);
+      if (meta) throwRateLimited(meta, message);
+      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message });
     }
 
     // Record this attempt against the user's quota

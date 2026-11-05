@@ -440,6 +440,7 @@ describe('the check', () => {
     expect(values).toEqual({
       skipped: 0,
       stale: 0,
+      unsupported: 0,
       images_missing: 1,
       object_missing: 0,
       entries_mismatch: 0,
@@ -512,6 +513,24 @@ describe('the check', () => {
     const { counts } = await run();
 
     expect(counts.skipped).toBe(1);
+    expect(counts.stale).toBe(1);
+  });
+
+  it('counts an unarchived generator-evidence report as unsupported, not stale', async () => {
+    const generatorEvidence = await addReport('GeneratedImage', {
+      archivedAt: null,
+      details: { generatorEvidence: { version: 1 }, generatedImages: [] },
+    });
+    const late = await addReport('Image', { archivedAt: null });
+    for (const id of [generatorEvidence, late])
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '12 hours' WHERE id = $1`,
+        [id]
+      );
+
+    const { counts } = await run();
+
+    expect(counts.unsupported).toBe(1);
     expect(counts.stale).toBe(1);
   });
 

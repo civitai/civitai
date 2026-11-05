@@ -58,7 +58,10 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
-import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import {
+  FlaggedConsumerFetchError,
+  getConsumerStrikes,
+} from '~/server/http/orchestrator/flagged-consumers';
 import type { ShownRendition } from '@civitai/shared/held-media';
 import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
@@ -334,8 +337,42 @@ export async function getCsamsToArchive() {
   });
   // A skipped archive is not retried. One skipped for missing training data keeps `archivedAt` null:
   // the image retention holds release a user's images once all their reports are archived.
-  return (data as unknown as CsamReportProps[]).filter((report) => !report.details?.archiveSkipped);
+  const reports = (data as unknown as CsamReportProps[]).filter(
+    (report) => !report.details?.archiveSkipped
+  );
+  // A stamp over an archive holding none of the report's files would be false, so these are left
+  // unstamped, and held. A generator-evidence report's files are preserved copies keyed in the CSAM
+  // bucket, which this archive cannot read; a generated-image report naming no URL has nothing it
+  // can read, since the strikes list is gone.
+  const unsupported = (report: CsamReportProps) =>
+    isGeneratorEvidenceDetails(report.details)
+      ? 'generator evidence archive not supported'
+      : report.type === 'GeneratedImage' && !namedGeneratedImageUrls(report).size
+      ? 'no generated image URL to archive'
+      : undefined;
+  const skipped = new Map<string, number>();
+  for (const report of reports) {
+    const reason = unsupported(report);
+    if (reason) skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of skipped)
+    logToAxiom({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'archive-skipped-unsupported',
+      message: `${count} report(s) not archived: ${reason}`,
+      reason,
+      count,
+    });
+  return reports.filter((report) => !unsupported(report));
 }
+
+const namedGeneratedImageUrls = (report: Pick<CsamReportProps, 'details'>) =>
+  new Set(
+    (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
+      (blobs ?? []).flatMap(({ url }) => (url ? [url] : []))
+    )
+  );
 
 // Excludes reports whose archive was skipped for missing training data: they never get archivedAt.
 // Decide how to treat them before scheduling content removal.
@@ -2933,23 +2970,45 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   async function archiveGeneratedImages() {
     const { userId } = report;
 
-    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
-    const namedUrls = new Set(
-      (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
-        blobs.flatMap(({ url }) => (url ? [url] : []))
-      )
+    // The orchestrator no longer serves this list (404 for every consumer). That must not block the
+    // report's own blobs; any other failure may be transient, so it fails the pass for the next run.
+    let strikesNotFound = false;
+    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` }).catch(
+      (e: unknown) => {
+        if (!(e instanceof FlaggedConsumerFetchError) || e.status !== 404) throw e;
+        strikesNotFound = true;
+        return [];
+      }
     );
-    const imageUrls = [
-      ...new Set([
-        ...flaggedData
-          .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
-          .filter(isDefined)
-          .map((x) => x.previewUrl),
-        ...namedUrls,
-      ]),
-    ];
+    const namedUrls = namedGeneratedImageUrls(report);
+    const strikeUrls = new Set(
+      flaggedData
+        .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+        .filter(isDefined)
+        .map((x) => x.previewUrl)
+    );
+    const imageUrls = [...new Set([...strikeUrls, ...namedUrls])];
     const appendedUrls = new Set<string>();
     let entries = 0;
+    let unreadable = 0;
+    const hoursSinceSent = report.reportSentAt
+      ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
+      : 0;
+    const givenUp = hoursSinceSent >= CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS;
+
+    // Orchestrator URLs are a host we do not control, and a stamp ends archiving for good: any URL
+    // that gives no media (an error status, a cut-off body, an error page) fails the hourly pass until
+    // CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS, then is recorded unreadable, as `archiveImages` does a full URL.
+    const readBlob = async (url: string) => {
+      // Never log the error: a fetch error can quote the presigned URL.
+      const blob = await fetchBlob(url, undefined, { requireOk: true }).catch((e: unknown) => {
+        if (!givenUp) throw e;
+        return null;
+      });
+      const isMedia = !!blob && isArchivedMedia(blob);
+      if (!isMedia && !givenUp) throw new Error('a generated image gave no media');
+      return blob && { buffer: Buffer.from(await blob.arrayBuffer()), isMedia };
+    };
 
     const stored = await archiveAndUpload({
       userId,
@@ -2963,26 +3022,42 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         // concurrency limiter
         const limit = plimit(10);
         await Promise.all(
-          imageUrls.map((url, index) => {
-            return limit(async () => {
-              const blob = await fetchBlob(url, undefined, { requireOk: true });
-              if (!blob) return;
+          imageUrls.map((url, index) =>
+            limit(async () => {
               try {
-                const arrayBuffer = await blob.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-
-                const imageName = zipEntryNameForUrl(url, index);
-
-                await boundedArchive.append(buffer, { name: imageName });
+                const read = await readBlob(url);
+                if (!read) {
+                  unreadable += 1;
+                  return;
+                }
+                // An append failure is the archive's own, so it fails the pass.
+                await boundedArchive.append(read.buffer, { name: zipEntryNameForUrl(url, index) });
                 entries += 1;
-                if (isArchivedMedia(blob)) appendedUrls.add(url);
+                if (read.isMedia) appendedUrls.add(url);
+                else unreadable += 1;
               } catch (e) {
-                //
+                // Before this slot frees: queued downloads would otherwise still run.
+                limit.clearQueue();
+                throw e;
               }
-            });
-          })
+            })
+          )
         );
       },
+    });
+
+    logToAxiom({
+      name: 'csam-report',
+      type: unreadable ? 'error' : 'info',
+      subType: 'archive-generated-images',
+      message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
+      reportId: report.id,
+      expected: imageUrls.length,
+      strikeUrls: strikeUrls.size,
+      namedUrls: namedUrls.size,
+      entries,
+      unreadable,
+      strikesNotFound,
     });
 
     archived.push({
