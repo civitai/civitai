@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
+  import { glow, parallax } from '$lib/pointer-fx';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -13,13 +14,35 @@
     },
     { icon: 'coins', label: 'Earn gold', long: 'Every right judgment pays.', short: 'for every right judgment' },
   ] as const;
+  // Fixed per-ember offsets, so the server and the browser render the same sparks.
+  const embers = Array.from({ length: 14 }, (_, i) => ({
+    left: (i * 37 + 11) % 100,
+    delay: -((i * 53) % 17),
+    duration: 11 + ((i * 7) % 9),
+    drift: ((i * 29) % 41) - 20,
+    size: 2 + (i % 3),
+  }));
 </script>
 
 <svelte:head>
   <title>Knights of New Order</title>
 </svelte:head>
 
-<div class="welcome">
+<div class="welcome" use:parallax>
+  <div class="bg" data-depth="10" aria-hidden="true"></div>
+  <div class="scrim" data-depth="4" aria-hidden="true"></div>
+  <div class="embers" aria-hidden="true">
+    {#each embers as ember, i (i)}
+      <span
+        style:left="{ember.left}%"
+        style:animation-delay="{ember.delay}s"
+        style:animation-duration="{ember.duration}s"
+        style:--drift="{ember.drift}px"
+        style:width="{ember.size}px"
+        style:height="{ember.size}px"
+      ></span>
+    {/each}
+  </div>
   <div class="frame">
     <header>
       <Icon name="shield" size={22} />
@@ -55,7 +78,7 @@
           <p class="age">Members must be 18 or older. Images may be mature.</p>
         </section>
 
-        <aside class="banner" aria-label="The Order awaits">
+        <aside class="banner glow-card" aria-label="The Order awaits" use:glow>
           <p class="kicker">The Order awaits</p>
           <span class="crest"><Icon name="flame" size={36} /></span>
           <strong class="rank">Acolyte</strong>
@@ -67,7 +90,7 @@
 
       <div class="pillars long">
         {#each pillars as pillar (pillar.label)}
-          <div class="pillar">
+          <div class="pillar glow-card" use:glow>
             <Icon name={pillar.icon} size={24} />
             <div><strong>{pillar.label}</strong><span>{pillar.long}</span></div>
           </div>
@@ -84,14 +107,85 @@
     flex-direction: column;
     min-height: 100vh;
     min-height: 100dvh;
+    isolation: isolate;
     overflow: hidden;
-    /* Background lives here, not on .frame: .frame is max-width-capped, so the photo would stop short of the viewport edges. */
-    background:
-      linear-gradient(to top, #14110df5, #14110de0 50%, #14110d99),
-      url('/images/welcome-cathedral.webp') center / cover no-repeat var(--io-bg);
+    background: var(--io-bg);
     padding: 0 64px 48px;
   }
+  /* The photo and the scrim are their own layers, over-sized so the parallax shift never shows an edge. */
+  .bg,
+  .scrim {
+    position: absolute;
+    inset: -28px;
+    z-index: -2;
+    will-change: transform;
+  }
+  .bg {
+    background: url('/images/welcome-cathedral.webp') center / cover no-repeat;
+  }
+  .scrim {
+    z-index: -1;
+    background: linear-gradient(to top, #14110df5, #14110de0 50%, #14110d99);
+  }
+  .embers {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .embers span {
+    position: absolute;
+    bottom: -8px;
+    border-radius: 50%;
+    background: var(--io-gold);
+    box-shadow: 0 0 6px 1px color-mix(in srgb, var(--io-gold) 70%, transparent);
+    opacity: 0;
+    animation: ember-rise linear infinite;
+  }
+  @keyframes ember-rise {
+    0% {
+      opacity: 0;
+      transform: translate3d(0, 0, 0);
+    }
+    12% {
+      opacity: 0.8;
+    }
+    70% {
+      opacity: 0.35;
+    }
+    100% {
+      opacity: 0;
+      transform: translate3d(var(--drift), -85vh, 0);
+    }
+  }
+  /* A pane of gold light under the pointer; moves by transform only, and only shows while hovered. */
+  .glow-card {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+  .glow-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: -1;
+    width: 360px;
+    height: 360px;
+    margin: -180px 0 0 -180px;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--io-gold) 42%, transparent), transparent 68%);
+    opacity: 0;
+    transform: translate3d(var(--mx, 50%), var(--my, 50%), 0);
+    transition: opacity var(--motion-base) var(--ease-out-quart);
+    pointer-events: none;
+  }
+  .glow-card:hover::before {
+    opacity: 1;
+  }
   .frame {
+    position: relative;
     display: flex;
     flex: 1;
     flex-direction: column;
@@ -246,6 +340,22 @@
     min-width: 0;
     color: var(--io-gold);
   }
+  .pillars.long {
+    gap: 24px;
+  }
+  .pillars.long .pillar {
+    padding: 18px 22px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--io-surface) 72%, transparent);
+    transition: border-color var(--motion-base) var(--ease-out-quart);
+  }
+  .pillars.long .pillar:hover {
+    border-color: var(--io-gold);
+  }
+  .banner {
+    transition: border-color var(--motion-base) var(--ease-out-quart);
+  }
   .pillar strong {
     display: block;
     color: var(--io-parchment);
@@ -260,6 +370,20 @@
   }
   .short {
     display: none;
+  }
+
+  /* Touch has no hover and a reduced-motion player asked for stillness: no sparks, no glow, no shift. */
+  @media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) {
+    .embers {
+      display: none;
+    }
+    .glow-card::before {
+      display: none;
+    }
+    .bg,
+    .scrim {
+      will-change: auto;
+    }
   }
 
   @media (max-width: 62rem) {
