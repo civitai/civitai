@@ -11,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { hasPayoutHold } from '~/server/services/creator-program-prepayout-review/hold';
 import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
@@ -327,6 +328,19 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
+
+      // Alert only: Tipalti has already approved, so a failed hold read must not stop recording it.
+      if (
+        event.type === 'paymentGroupApproved' &&
+        (await hasPayoutHold(cashWithdrawal.userId).catch(() => false))
+      )
+        await logToAxiom({
+          name: 'creator-program-payout-approved-while-held',
+          type: 'error',
+          userId: cashWithdrawal.userId,
+          withdrawalId: cashWithdrawal.id,
+          refCode: payment.refCode,
+        });
 
       // Update the status of the withdrawal request:
       const status =
