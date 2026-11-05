@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
@@ -128,7 +129,12 @@ const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
  */
 const renderDraft = async (
   freeOffer: { instant: boolean } | null,
-  { ownerShare, maxScale, scale }: { ownerShare?: number; maxScale?: number; scale?: number } = {}
+  {
+    ownerShare,
+    maxScale,
+    scale,
+    commit,
+  }: { ownerShare?: number; maxScale?: number; scale?: number; commit?: ReactNode } = {}
 ) => {
   renderWithProviders(
     // Positioned absolutely inside the media box in the app; a plain relative
@@ -147,6 +153,7 @@ const renderDraft = async (
         ownerShare={ownerShare}
         ownerUsername="creator"
         onGesture={() => true}
+        commit={commit}
       />
     </div>
   );
@@ -970,5 +977,22 @@ describe('previewing without the controls', () => {
 
     useStickerPlacementDraftStore.setState({ previewing: false });
     await expect.element(slider).toBeVisible();
+  });
+});
+
+describe('a host-supplied commit replaces every way to pay', () => {
+  test('shows the commit and none of the buy, note or payout controls', async () => {
+    await renderDraft({ instant: true }, { ownerShare: 0.7, commit: <button>Place hat</button> });
+
+    await expect.element(page.getByRole('button', { name: 'Place hat' })).toBeInTheDocument();
+    // The sticker editing bar stays: a hat is moved, flipped and removed like a sticker.
+    await expect
+      .element(page.getByRole('button', { name: 'Flip this sticker' }))
+      .toBeInTheDocument();
+    for (const name of ['Place free', 'Place', 'Add a note']) {
+      expect(page.getByRole('button', { name, exact: true }).elements()).toHaveLength(0);
+    }
+    expect(page.getByRole('radio').elements()).toHaveLength(0);
+    expect(placed).toHaveLength(0);
   });
 });

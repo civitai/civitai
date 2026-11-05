@@ -17,6 +17,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
@@ -154,6 +155,7 @@ export function DraftSticker({
   onGesture,
   onDuplicate,
   purchase,
+  commit,
 }: {
   draft: StickerDraft;
   art: ResolvedSticker;
@@ -188,6 +190,12 @@ export function DraftSticker({
    * the host recomputes it and passes it down.
    */
   purchase?: DraftPurchase;
+  /**
+   * Replaces the note, payout and buy cluster under the toolbar, for a host that
+   * saves the draft through its own mutation (a Hat Turf hat). With it set, the
+   * pricing props are unused and nothing here can charge.
+   */
+  commit?: ReactNode;
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
@@ -834,68 +842,70 @@ export function DraftSticker({
           {removeControl}
         </div>
 
-        {/* Optional, and folded away until asked for: a field on every draft
+        {commit ?? (
+          <>
+            {/* Optional, and folded away until asked for: a field on every draft
             would sit over the artwork through the whole arrangement, which is
             the one thing this overlay is trying not to do. */}
-        {writingNote ? (
-          <Textarea
-            autoFocus
-            size="xs"
-            autosize
-            minRows={2}
-            maxRows={4}
-            w={NOTE_WIDTH}
-            className="whitespace-normal"
-            placeholder="Say something with it (optional)"
-            maxLength={STICKER_COMMENT_MAX_LENGTH}
-            value={note}
-            onChange={(event) => setNote(event.currentTarget.value)}
-          />
-        ) : (
-          <UnstyledButton
-            className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
-            onClick={() => setWritingNote(true)}
-          >
-            <IconMessage size={12} />
-            Add a note
-          </UnstyledButton>
-        )}
+            {writingNote ? (
+              <Textarea
+                autoFocus
+                size="xs"
+                autosize
+                minRows={2}
+                maxRows={4}
+                w={NOTE_WIDTH}
+                className="whitespace-normal"
+                placeholder="Say something with it (optional)"
+                maxLength={STICKER_COMMENT_MAX_LENGTH}
+                value={note}
+                onChange={(event) => setNote(event.currentTarget.value)}
+              />
+            ) : (
+              <UnstyledButton
+                className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
+                onClick={() => setWritingNote(true)}
+              >
+                <IconMessage size={12} />
+                Add a note
+              </UnstyledButton>
+            )}
 
-        {/* Above the button in both states: this is who the press underneath it
+            {/* Above the button in both states: this is who the press underneath it
             pays, so it reads as a label on the button rather than a footnote
             after the decision. Capped and truncated because the cluster is
             `w-max`, and its width feeds the overlap test that decides whether
             the button flips above the sticker. */}
-        {payout && (
-          <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
-            <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
-              {payout.lead}
-              {payout.name ? ' ' : ''}
-              {payout.name && <span className="font-bold">{payout.name}</span>}
-            </Text>
-          </div>
-        )}
+            {payout && (
+              <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
+                <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
+                  {payout.lead}
+                  {payout.name ? ' ' : ''}
+                  {payout.name && <span className="font-bold">{payout.name}</span>}
+                </Text>
+              </div>
+            )}
 
-        {/* Both ways to pay for a spent sticker, where both are open. One use is
+            {/* Both ways to pay for a spent sticker, where both are open. One use is
             what placing this draft actually costs; the pack is the listing's own
             price, offered only while it is genuinely on sale. */}
-        {offersBoth && (
-          <SegmentedControl
-            size="xs"
-            radius="xl"
-            value={buyMode}
-            onChange={(value) => setBuyMode(value as 'use' | 'pack')}
-            data={[
-              { label: '1 use', value: 'use' },
-              {
-                label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
-                value: 'pack',
-              },
-            ]}
-          />
-        )}
+            {offersBoth && (
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={buyMode}
+                onChange={(value) => setBuyMode(value as 'use' | 'pack')}
+                data={[
+                  { label: '1 use', value: 'use' },
+                  {
+                    label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
+                    value: 'pack',
+                  },
+                ]}
+              />
+            )}
 
-        {/* The other two-way choice, and deliberately the same control as the
+            {/* The other two-way choice, and deliberately the same control as the
             one above it: this is the same kind of decision — which of two
             offers you are taking — made a step later, so giving it a different
             shape would make them read as unrelated. They never coexist; the one
@@ -905,104 +915,106 @@ export function DraftSticker({
             deliberately does not. This is the last moment the placer can change
             their mind, and it is what makes auto-accept and review read as two
             different offers rather than a setting nobody can see. */}
-        {!purchase && freeOffer && (
-          <SegmentedControl
-            size="xs"
-            radius="xl"
-            value={payMode}
-            onChange={(value) => setPayChoice(value as 'free' | 'paid')}
-            data={[
-              { label: freeOptionLabel(), value: 'free' },
-              { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
-            ]}
-          />
-        )}
+            {!purchase && freeOffer && (
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={payMode}
+                onChange={(value) => setPayChoice(value as 'free' | 'paid')}
+                data={[
+                  { label: freeOptionLabel(), value: 'free' },
+                  { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
+                ]}
+              />
+            )}
 
-        {purchase && effectiveMode === 'pack' && purchase.pack ? (
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={purchase.pack.unitAmount}
-            accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
-            label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
-            loading={purchasingShopItem}
-            onPerformTransaction={buySticker}
-          />
-        ) : purchase ? (
-          // Owned, and out of uses. One use, because one is what placing this
-          // draft spends.
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={purchase.perUse ?? 0}
-            accountTypes={spendTypes}
-            label="Buy a use"
-            loading={buyUses.isPending}
-            // A sticker sold before per-use pricing existed has no price to
-            // charge, and the listing price is not a stand-in for one. Says so
-            // rather than offering a button that cannot work.
-            error={
-              purchase.perUse == null
-                ? 'This sticker sells no extra uses, and it is not on sale right now'
-                : undefined
-            }
-            onPerformTransaction={buyOneUse}
-          />
-        ) : placingFree ? (
-          // Not a `BuzzTransactionButton`. That control exists to show a price
-          // and check a balance against it, and a free placement has neither —
-          // rendering it at zero would put a currency badge on something nobody
-          // is paying for, and its account picker would ask which Buzz to spend.
-          // The use it does spend is shown by the tray's own count, and refused
-          // by the server independently.
-          <Button
-            size="sm"
-            radius="xl"
-            color="yellow"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            loading={place.isPending}
-            onClick={() => place.mutate(placementInput())}
-          >
-            Place free
-          </Button>
-        ) : (
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={price}
-            accountTypes={spendTypes}
-            label="Place"
-            loading={place.isPending}
-            onPerformTransaction={() => place.mutate(placementInput())}
-          />
-        )}
+            {purchase && effectiveMode === 'pack' && purchase.pack ? (
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={purchase.pack.unitAmount}
+                accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+                label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+                loading={purchasingShopItem}
+                onPerformTransaction={buySticker}
+              />
+            ) : purchase ? (
+              // Owned, and out of uses. One use, because one is what placing this
+              // draft spends.
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={purchase.perUse ?? 0}
+                accountTypes={spendTypes}
+                label="Buy a use"
+                loading={buyUses.isPending}
+                // A sticker sold before per-use pricing existed has no price to
+                // charge, and the listing price is not a stand-in for one. Says so
+                // rather than offering a button that cannot work.
+                error={
+                  purchase.perUse == null
+                    ? 'This sticker sells no extra uses, and it is not on sale right now'
+                    : undefined
+                }
+                onPerformTransaction={buyOneUse}
+              />
+            ) : placingFree ? (
+              // Not a `BuzzTransactionButton`. That control exists to show a price
+              // and check a balance against it, and a free placement has neither —
+              // rendering it at zero would put a currency badge on something nobody
+              // is paying for, and its account picker would ask which Buzz to spend.
+              // The use it does spend is shown by the tray's own count, and refused
+              // by the server independently.
+              <Button
+                size="sm"
+                radius="xl"
+                color="yellow"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                loading={place.isPending}
+                onClick={() => place.mutate(placementInput())}
+              >
+                Place free
+              </Button>
+            ) : (
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={price}
+                accountTypes={spendTypes}
+                label="Place"
+                loading={place.isPending}
+                onPerformTransaction={() => place.mutate(placementInput())}
+              />
+            )}
 
-        {/* Under the button, not above it: it is a consequence of pressing, and
+            {/* Under the button, not above it: it is a consequence of pressing, and
             above the control it read as a description of the option. Same chip
             shape and same triangle as the second-payment warning below, because
             they are the same kind of thing — a cost you meet by pressing.
 
             Only where it is true. On an auto-accept space the placement is live
             the moment it is made, so there is no decline to warn about. */}
-        {placingFree && freeOffer && !freeOffer.instant && (
-          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
-            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
-            <Text size="xs" c="gray.3" className="leading-tight">
-              {FREE_REVIEW_CAVEAT}
-            </Text>
-          </div>
-        )}
+            {placingFree && freeOffer && !freeOffer.instant && (
+              <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+                <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+                <Text size="xs" c="gray.3" className="leading-tight">
+                  {FREE_REVIEW_CAVEAT}
+                </Text>
+              </div>
+            )}
 
-        {/* The second payment, said before the first one is made. Someone who
+            {/* The second payment, said before the first one is made. Someone who
             buys a sticker to put it here and then meets another price has been
             surprised with their own money. */}
-        {purchase && (
-          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
-            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
-            <Text size="xs" c="gray.3" className="leading-tight">
-              Then {numberWithCommas(price)} Buzz to place it
-            </Text>
-          </div>
+            {purchase && (
+              <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+                <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+                <Text size="xs" c="gray.3" className="leading-tight">
+                  Then {numberWithCommas(price)} Buzz to place it
+                </Text>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
