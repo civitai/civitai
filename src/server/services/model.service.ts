@@ -3756,20 +3756,22 @@ function rulesOnNsfw(
 /**
  * A moderator's untick of a text-scan POI flag drops the nsfw/sfwOnly locks that flag added, as the
  * appeal grant does: the form sends back the locks it loaded, which would otherwise outlive the flag.
+ * A lock on a value the save leaves restrictive (SFW-only, or nsfw on) is the moderator's and stays.
  */
 function withoutPoiFlagLocks(
-  stored: { poi: boolean; minor: boolean; lockedProperties: string[] },
-  meta: ModelMeta | null,
-  data: { poi?: boolean; minor?: boolean; lockedProperties: string[] }
+  stored: ContentFlags & { lockedProperties: string[]; meta: ModelMeta | null },
+  after: ContentFlags,
+  locks: string[]
 ) {
-  const prevLocks = meta?.textScanFlags?.poi?.prev?.lockedProperties;
-  if (!stored.poi || data.poi !== false || (data.minor ?? stored.minor) || !prevLocks)
-    return data.lockedProperties;
-  return data.lockedProperties.filter(
+  const prevLocks = stored.meta?.textScanFlags?.poi?.prev?.lockedProperties;
+  if (!stored.poi || after.poi || after.minor || !prevLocks) return locks;
+  const reasserted = (prop: string) => (prop === 'sfwOnly' ? after.sfwOnly : after.nsfw);
+  return locks.filter(
     (prop) =>
       !SFW_ONLY_LOCKED_PROPERTIES.includes(prop) ||
       !stored.lockedProperties.includes(prop) ||
-      prevLocks.includes(prop)
+      prevLocks.includes(prop) ||
+      reasserted(prop)
   );
 }
 
@@ -4278,8 +4280,8 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
-        if (isModerator && replaced && data.lockedProperties)
-          data.lockedProperties = withoutPoiFlagLocks(replaced, prevMeta, data);
+        if (isModerator && locked && flags && data.lockedProperties)
+          data.lockedProperties = withoutPoiFlagLocks(locked, flags, data.lockedProperties);
         if (isModerator && rulesOnNsfw(locked, data)) {
           mergedMeta = withoutSystemNsfwLock(mergedMeta);
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;

@@ -1385,6 +1385,12 @@ describe('who lifted a held lead, on a save', () => {
     expect(mockHoldLeadAfterSfwOnlyLift.mock.calls.map((c) => c.slice(1))).toEqual([[MODEL_ID]]);
   });
 
+  it("an owner's save never records a moderator's lift", async () => {
+    mockStored({ sfwOnly: true, lockedProperties: ['nsfw', 'sfwOnly'] });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, lockedProperties: [] });
+    expect(mockHoldLeadAfterSfwOnlyLift).not.toHaveBeenCalled();
+  });
+
   it('a moderator save that keeps the SFW-only lock records no lift (control)', async () => {
     mockStored({ sfwOnly: true, lockedProperties: ['nsfw', 'sfwOnly'] });
     await upsert({
@@ -1437,6 +1443,24 @@ describe("a moderator's untick of a text-scan POI flag", () => {
 
   it('keeps them while the model is still minor', async () => {
     mockStored({ ...scanFlagged([]), minor: true });
+    await formLift();
+    expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
+  });
+
+  it('keeps the SFW-only lock when the save leaves SFW-only on', async () => {
+    mockStored(scanFlagged([]));
+    await formLift({ sfwOnly: true });
+    expect(updateData().lockedProperties).toEqual(['sfwOnly']);
+  });
+
+  it('keeps the nsfw lock when the save rates the model nsfw', async () => {
+    mockStored(scanFlagged([]));
+    await formLift({ nsfw: true });
+    expect(updateData().lockedProperties).toEqual(['nsfw']);
+  });
+
+  it('strips nothing from a flag that recorded no prior locks', async () => {
+    mockStored({ ...scanFlagged([]), meta: { textScanFlags: { poi: { textHash: 'h' } } } });
     await formLift();
     expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
   });
