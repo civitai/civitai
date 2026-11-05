@@ -345,47 +345,80 @@ describe('the /images card footer fits the height the masonry gives it', () => {
     expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
   });
   // A tester's card: three-digit counts, a 530 tip and a sticker chip beside the hat button.
+  const crowded = {
+    ...image,
+    stats: {
+      likeCountAllTime: 179,
+      heartCountAllTime: 72,
+      laughCountAllTime: 24,
+      cryCountAllTime: 12,
+      tippedAmountCountAllTime: 530,
+    },
+  };
+  async function renderCrowded(width: number) {
+    features.stickerPlacement = true;
+    stickerBadge.renders = true;
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={turf()}>
+        <IntersectionObserverProvider>
+          <div style={{ width }}>
+            <ImagesCard data={crowded} height={400} />
+          </div>
+        </IntersectionObserverProvider>
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[aria-label*="sticker" i]')).not.toBeNull()
+    );
+  }
+  // How many reactions fit depends on the fonts; a reaction that doesn't wraps onto a line the
+  // bar clips, where it can be neither seen, hit nor focused.
+  function reactionState() {
+    const bar = document.body.querySelector('[class*="fitReactions"]')!.getBoundingClientRect();
+    return [...document.body.querySelectorAll<HTMLElement>('[aria-label$="reaction"]')].map(
+      (el) => {
+        const r = el.getBoundingClientRect();
+        const inert = el.inert;
+        // Hit-testing skips an inert element, so it is lifted while the point is sampled: what is
+        // measured is whether the bar's clipping hides it. Its top edge lies inside the footer's
+        // padding, above where the card itself clips.
+        el.inert = false;
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 2);
+        el.inert = inert;
+        return {
+          dropped: r.top >= bar.bottom - 0.5,
+          whole: r.bottom <= bar.bottom + 0.5 && r.right <= bar.right + 0.5,
+          visible: !!hit && el.contains(hit),
+          inert,
+        };
+      }
+    );
+  }
+
   test.each([288, 320, 358])(
     'a %ipx card with three-digit counts, a tip, a sticker chip and the hat button',
     async (width) => {
-      features.stickerPlacement = true;
-      stickerBadge.renders = true;
-      renderWithProviders(
-        <TurfSummaryContext.Provider value={turf()}>
-          <IntersectionObserverProvider>
-            <div style={{ width }}>
-              <ImagesCard
-                data={{
-                  ...image,
-                  stats: {
-                    likeCountAllTime: 179,
-                    heartCountAllTime: 72,
-                    laughCountAllTime: 24,
-                    cryCountAllTime: 12,
-                    tippedAmountCountAllTime: 530,
-                  },
-                }}
-                height={400}
-              />
-            </div>
-          </IntersectionObserverProvider>
-        </TurfSummaryContext.Provider>
-      );
-      await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
-      await vi.waitFor(() =>
-        expect(document.body.querySelector('[aria-label*="sticker" i]')).not.toBeNull()
-      );
+      await renderCrowded(width);
       expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
-      // A reaction that doesn't fit wraps onto a line the bar clips, whole: none is drawn cut off.
-      const bar = document.body.querySelector('[class*="fitReactions"]')!.getBoundingClientRect();
-      const shown = [...document.body.querySelectorAll('[aria-label$="reaction"]')]
-        .map((el) => el.getBoundingClientRect())
-        .filter((r) => r.top < bar.bottom);
-      expect(shown.length).toBeGreaterThan(0);
-      for (const r of shown) {
-        expect(r.bottom).toBeLessThanOrEqual(bar.bottom + 0.5);
-        expect(r.right).toBeLessThanOrEqual(bar.right + 0.5);
-      }
+      const reactions = reactionState();
+      // At 288px some reaction always drops, so the checks below have something to check.
+      if (width === 288) expect(reactions.some((r) => r.dropped)).toBe(true);
+      await vi.waitFor(() => {
+        for (const r of reactionState()) {
+          if (r.dropped) expect(r).toMatchObject({ visible: false, inert: true });
+          else expect(r).toMatchObject({ whole: true, visible: true, inert: false });
+        }
+      });
     }
   );
+
+  test('a card wide enough for everything drops no reaction', async () => {
+    await renderCrowded(600);
+    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
+    const reactions = reactionState();
+    expect(reactions).toHaveLength(4);
+    for (const r of reactions)
+      expect(r).toMatchObject({ dropped: false, whole: true, visible: true, inert: false });
+  });
 });

@@ -1,7 +1,7 @@
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useMemo, memo } from 'react';
+import { useCallback, useEffect, useMemo, useState, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -381,6 +381,48 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 export const ImagesCardMemoized = memo(ImagesCard);
 
 // Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
+/**
+ * Reactions that wrap onto the bar's clipped line can't be seen, so they must not take focus or
+ * be read out either. Re-checked whenever the bar or its buttons change size or number.
+ */
+function useInertClippedReactions() {
+  // State, not a ref: the row can be replaced, and the observers must follow it.
+  const [row, setRow] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!row) return;
+    let bar: Element | null = null;
+    const update = () => {
+      if (!bar) return;
+      const bottom = bar.getBoundingClientRect().bottom;
+      for (const child of Array.from(bar.children) as HTMLElement[]) {
+        child.inert = child.getBoundingClientRect().top >= bottom - 0.5;
+      }
+    };
+    const resize = new ResizeObserver(update);
+    const children = new MutationObserver(() => observe());
+    const observe = () => {
+      resize.disconnect();
+      children.disconnect();
+      bar = row.firstElementChild;
+      if (!bar) return;
+      resize.observe(bar);
+      for (const child of Array.from(bar.children)) resize.observe(child);
+      children.observe(bar, { childList: true });
+      update();
+    };
+    // The bar itself can mount after the row (a card with no reactions yet renders none).
+    const mounts = new MutationObserver(observe);
+    mounts.observe(row, { childList: true });
+    observe();
+    return () => {
+      resize.disconnect();
+      children.disconnect();
+      mounts.disconnect();
+    };
+  }, [row]);
+  return setRow;
+}
+
 function ImageReactions({
   image,
   readonly,
@@ -396,6 +438,7 @@ function ImageReactions({
   // Read here, not in the card: a hat push re-renders every mounted card's row, but not the card.
   const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
+  const reactionsRef = useInertClippedReactions();
   return (
     <Metrics
       entityType="Image"
@@ -435,7 +478,7 @@ function ImageReactions({
             }}
           >
             <div className={clsx(cardClasses.actions, cardClasses.oneLine, classes.fitRow)}>
-              <div className={cardClasses.actionRow}>
+              <div ref={reactionsRef} className={cardClasses.actionRow}>
                 <Reactions
                   className={clsx(cardClasses.reactions, classes.bar, classes.fitReactions)}
                   entityId={image.id}
