@@ -52,6 +52,7 @@ export default AuthedEndpoint(
         lockedProperties: true,
         deletedAt: true,
         sfwName: true,
+        sfwDescription: true,
         sfwCoverImageId: true,
       },
     });
@@ -65,7 +66,7 @@ export default AuthedEndpoint(
         code: 'locked',
       });
     // Bulk only fills a missing face: an existing one may be hand-written, and the editor owns it.
-    if (model.sfwName != null || model.sfwCoverImageId != null)
+    if (model.sfwName != null || model.sfwDescription != null || model.sfwCoverImageId != null)
       return res.status(409).json({
         error: 'Already has a civitai.com version. Edit it in the model editor.',
         code: 'skipped',
