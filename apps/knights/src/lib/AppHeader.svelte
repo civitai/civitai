@@ -116,7 +116,7 @@
         class="trigger"
         aria-expanded={open}
         aria-controls="avatar-menu"
-        aria-label="Account menu"
+        aria-label={`Account menu for ${player.username}`}
         bind:this={trigger}
         onclick={toggle}
       >
@@ -126,7 +126,6 @@
             <span class="rank-badge"><RankBadge rank={status.rank} src={badges.small[status.rank]} size={16} /></span>
           {/if}
         </span>
-        <span class="name">{player.username}</span>
       </button>
 
       {#if open}
@@ -240,12 +239,6 @@
     border: 1.5px solid var(--io-gold);
     border-radius: 50%;
     background: var(--io-surface);
-  }
-  .name {
-    max-width: 12rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .scrim {
     position: fixed;
@@ -362,8 +355,7 @@
       width: 20px;
       height: 20px;
     }
-    .title,
-    .name {
+    .title {
       display: none;
     }
     .wordmark {
