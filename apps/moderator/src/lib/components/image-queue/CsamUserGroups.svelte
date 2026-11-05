@@ -9,6 +9,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { csamReportUrl, csamSupplementalReportUrl } from '$lib/entity-url';
   import { holdLegLabels } from '$lib/csam-hold-legs';
+  import { ARCHIVE_STATE_LABEL } from '$lib/csam-archive';
   import { dateTime, num, LINK_CLASS } from '$lib/format';
   import type { CsamQueueUser } from '$lib/server/image-review.service';
   import { enhance } from '$app/forms';
@@ -94,6 +95,17 @@
         <TableCell class="text-xs">
           {#if user.reportSentAt}
             Sent {dateTime(user.reportSentAt)}
+            {#if user.archiveState}
+              <span
+                class={user.archiveState === 'failed'
+                  ? 'text-red-300'
+                  : user.archiveState === 'archived'
+                    ? 'text-dark-2'
+                    : 'text-amber-300'}
+              >
+                · {ARCHIVE_STATE_LABEL[user.archiveState]}
+              </span>
+            {/if}
           {:else if user.reported}
             <span class="text-amber-300">Filed, not sent</span>
           {:else}

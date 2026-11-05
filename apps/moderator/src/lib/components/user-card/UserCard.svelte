@@ -15,6 +15,7 @@
   import { ReportEntity, reportActionPath } from '$lib/reports';
   import type { UserCard } from '$lib/server/user-lookup.service';
   import type { CsamReportRow } from '$lib/server/user-account.service';
+  import { ARCHIVE_STATE_LABEL, ARCHIVE_STATE_VARIANT, type ArchiveState } from '$lib/csam-archive';
 
   let {
     card,
@@ -50,7 +51,7 @@
   const csamReports = $derived(
     csamOpen
       ? fetch(`/api/user-csam-reports/${identity.id}`).then(
-          (r): Promise<Jsonified<CsamReportRow>[]> =>
+          (r): Promise<Jsonified<CsamReportRow & { archiveState: ArchiveState }>[]> =>
             r.ok ? r.json() : Promise.reject(new Error(String(r.status)))
         )
       : null
@@ -231,7 +232,17 @@
                     {:else}
                       <Badge variant="outline">not sent</Badge>
                     {/if}
-                    {#if r.archivedAt}<Badge variant="secondary">archived</Badge>{/if}
+                    {#if r.archiveState !== 'unsent'}
+                      <!-- The run log is for csam filers, as on /evidence-holds. -->
+                      <svelte:element
+                        this={page.data.grants?.['csam.report.file'] ? 'a' : 'span'}
+                        href={page.data.grants?.['csam.report.file'] ? `/csam/archive?report=${r.id}` : undefined}
+                      >
+                        <Badge variant={ARCHIVE_STATE_VARIANT[r.archiveState]}>
+                          {ARCHIVE_STATE_LABEL[r.archiveState].toLowerCase()}
+                        </Badge>
+                      </svelte:element>
+                    {/if}
                     {#if r.contentRemovedAt}<Badge variant="secondary">content removed</Badge>{/if}
                   </div>
                   <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">

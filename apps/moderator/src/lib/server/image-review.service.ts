@@ -15,6 +15,8 @@ import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import { archiveState, worstArchiveState, type ArchiveState } from '$lib/csam-archive';
+import { getArchiveJobs } from './csam-archive.service';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -229,6 +231,8 @@ export type CsamQueueUser = {
   reported: boolean;
   /** The holds on the user's account; empty when there are none. */
   heldBy: CsamQueueHoldReason[];
+  /** The least-finished archive among the user's sent reports; null when none was sent. */
+  archiveState: ArchiveState | null;
 };
 
 /** The CSAM review queue as one row per owning user, most pending first, at the browsing level of
@@ -262,7 +266,7 @@ export async function getCsamQueueByUser({
   const userIds = page.map((g) => g.userId);
   if (!userIds.length) return { users: [], truncated };
 
-  const [users, reports, removed, holds, marker] = await Promise.all([
+  const [users, reports, removed, holds, marker, sentReports, archiveJobs] = await Promise.all([
     dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
     dbRead
       .selectFrom('CsamReport')
@@ -287,6 +291,13 @@ export async function getCsamQueueByUser({
       .execute(),
     getFlagClearHolds(userIds),
     holdMarkerState(dbRead),
+    dbRead
+      .selectFrom('CsamReport')
+      .select(['id', 'userId', 'reportSentAt', 'archivedAt'])
+      .where('userId', 'in', userIds)
+      .where('reportSentAt', 'is not', null)
+      .execute(),
+    getArchiveJobs(userIds),
   ]);
   const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
     marker === 'view'
@@ -295,6 +306,13 @@ export async function getCsamQueueByUser({
   const removedByUser = new Map(removed.map((r) => [r.userId, r]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r]));
+  const archiveByUser = new Map<number, ArchiveState[]>();
+  for (const r of sentReports) {
+    const uid = r.userId as number;
+    const states = archiveByUser.get(uid) ?? [];
+    states.push(archiveState(r, archiveJobs.get(uid)));
+    archiveByUser.set(uid, states);
+  }
 
   return {
     users: page.map((g) => ({
@@ -309,6 +327,7 @@ export async function getCsamQueueByUser({
       latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
       reported: reportsByUser.has(g.userId),
       heldBy: reasons(holds.get(g.userId)),
+      archiveState: worstArchiveState(archiveByUser.get(g.userId) ?? []),
     })),
     truncated,
   };
