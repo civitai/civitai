@@ -16,10 +16,7 @@ import { useMemo } from 'react';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  SYSTEM_REMIX_APPS,
-  type RemixAppDefinition,
-} from '~/shared/constants/remix-apps.constants';
+import { REMIX_MENU_APPS, type RemixMenuApp } from '~/shared/remix-apps/system-apps';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -27,6 +24,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 
 export const CONFIRMED_KEY = 'remix-apps:confirmed';
+
+/** A failed or rate-limited quote; the menu re-quotes when it opens again. */
+const PRICE_UNAVAILABLE = 'Price unavailable. Reopen the menu to try again.';
 
 const icons: Record<string, typeof IconSparkles> = {
   sparkles: IconSparkles,
@@ -38,15 +38,13 @@ const icons: Record<string, typeof IconSparkles> = {
 };
 
 /** The remix apps this viewer can run on this image: the same rule the server applies. */
-export function useRemixApps(image: RemixSourceImage): RemixAppDefinition[] {
+export function useRemixApps(image: RemixSourceImage): RemixMenuApp[] {
   const features = useOptionalFeatureFlags();
   // The session's showNsfw, which the server reads too; `CurrentUser` leaves it out.
   const session = useOptionalCivitaiSessionContext();
   if (!features?.remixApps || session?.type !== 'authed') return [];
   const viewer = { isGreen: !!features.isGreen, showNsfw: !!session.showNsfw };
-  return SYSTEM_REMIX_APPS.filter(
-    (app) => !('refusal' in resolveRemixAppEngine(app, image, viewer))
-  );
+  return REMIX_MENU_APPS.filter((app) => !('refusal' in resolveRemixAppEngine(app, image, viewer)));
 }
 
 // Plain localStorage rather than a hook: the confirm runs after the menu item has unmounted.
@@ -73,13 +71,16 @@ function openQueue() {
 
 /** Outside React: the menu, and the item that called this, unmount as soon as it is clicked. */
 async function submitRemixApp(
-  app: RemixAppDefinition,
+  app: RunnableRemixApp,
   imageId: number,
+  cost: number,
   nonce: string,
   startedMessage = 'Added to your queue. Click to open it.'
 ) {
   try {
-    await trpcVanilla.remixApp.run.mutate({ slug: app.slug, imageId, nonce });
+    if (app.runtime)
+      await trpcVanilla.remixApp.start.mutate({ slug: app.slug, imageId, nonce, quote: cost });
+    else await trpcVanilla.remixApp.run.mutate({ slug: app.slug, imageId, nonce });
     // The queue's status signals skip a workflow it has never listed, so it must refetch.
     queryClient
       .invalidateQueries({
@@ -101,6 +102,8 @@ async function submitRemixApp(
   }
 }
 
+type RunnableRemixApp = Pick<RemixMenuApp, 'slug' | 'name'> & { runtime?: boolean };
+
 /**
  * `nonce` names this tap: the server derives the workflow's externalId from it, so a repeated
  * submit of the same tap makes one workflow.
@@ -113,7 +116,7 @@ export function runRemixApp({
   startedMessage,
   onSettled,
 }: {
-  app: RemixAppDefinition;
+  app: RunnableRemixApp;
   imageId: number;
   /** The quoted price: nothing runs, confirmed or not, without one on screen. */
   cost: number;
@@ -122,7 +125,7 @@ export function runRemixApp({
   /** After the submit returns or fails, or the confirm is dismissed. */
   onSettled?: () => void;
 }) {
-  const submit = () => submitRemixApp(app, imageId, nonce, startedMessage).finally(onSettled);
+  const submit = () => submitRemixApp(app, imageId, cost, nonce, startedMessage).finally(onSettled);
   if (hasConfirmed()) return submit();
 
   let dontAskAgain = false;
@@ -165,7 +168,7 @@ function RemixAppItem({
   openCount,
   onRun,
 }: {
-  app: RemixAppDefinition;
+  app: RemixMenuApp;
   imageId: number;
   openCount: number;
   price?: { cost: number } | { refusal: string };
@@ -217,7 +220,7 @@ export function RemixAppsSection({
   openCount,
   onRun,
 }: {
-  apps: RemixAppDefinition[];
+  apps: RemixMenuApp[];
   imageId: number;
   /** How many times the menu has opened; 0 means never, and nothing is quoted. */
   openCount: number;
@@ -238,7 +241,7 @@ export function RemixAppsSection({
           key={app.slug}
           app={app}
           imageId={imageId}
-          price={quote.isError ? { refusal: quote.error.message } : prices.get(app.slug)}
+          price={quote.isError ? { refusal: PRICE_UNAVAILABLE } : prices.get(app.slug)}
           loading={quote.isLoading}
           openCount={openCount}
           onRun={onRun}

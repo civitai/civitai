@@ -19,6 +19,10 @@ vi.mock('../db', () => ({
 }));
 // Only the reads run here; the ruling goes through the main app.
 vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
+// Distinct bases, so the .com face link is seen to take the .com one.
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://com.test', CIVITAI_LINK_URL: 'https://red.test' },
+}));
 
 const { getRestrictedVerdictCount, getRestrictedVerdicts } = await import(
   '../restricted-nsfw-verdicts'
@@ -43,7 +47,9 @@ beforeEach(async () => {
       "nsfw" BOOLEAN NOT NULL DEFAULT false, "poi" BOOLEAN NOT NULL DEFAULT false,
       "minor" BOOLEAN NOT NULL DEFAULT false, "sfwOnly" BOOLEAN NOT NULL DEFAULT false,
       "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "meta" JSONB,
-      "availability" TEXT NOT NULL DEFAULT 'Public');
+      "availability" TEXT NOT NULL DEFAULT 'Public', "sfwName" TEXT, "sfwCoverImageId" INTEGER);
+    CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
+      "nsfwLevel" INTEGER NOT NULL);
     CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL,
       "entityId" INTEGER NOT NULL, "nsfwLevel" INTEGER, "triggeredLabels" TEXT[],
       "result" JSONB, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now());
@@ -73,6 +79,39 @@ async function model(id: number, cols: Record<string, unknown>) {
 }
 
 describe('restricted-verdict leads', () => {
+  it("gives each lead its model's civitai.com face, or null when it has none", async () => {
+    await db.query(`INSERT INTO "Image" VALUES (900, 'com-cover', 'image', 2)`);
+    await model(1, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-01T00:00:00Z') });
+    await model(2, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-02T00:00:00Z') });
+    await model(3, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-03T00:00:00Z') });
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com one', "sfwCoverImageId" = 900 WHERE id = 1`
+    );
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com two', "sfwCoverImageId" = 999 WHERE id = 2`
+    );
+    // A cover id with the face off shows no face.
+    await db.query(`UPDATE "Model" SET "sfwCoverImageId" = 900 WHERE id = 3`);
+
+    const rows = await getRestrictedVerdicts();
+    const face = (id: number) => rows.find((r) => r.modelId === id)?.comFace;
+
+    expect(face(1)).toEqual({
+      name: 'com one',
+      url: 'https://com.test/models/1',
+      cover: { id: 900, url: 'com-cover', type: 'image', nsfwLevel: 2 },
+      coverPicked: true,
+    });
+    expect(face(2)).toEqual({
+      name: 'com two',
+      url: 'https://com.test/models/2',
+      cover: null,
+      coverPicked: true,
+    });
+    expect(face(3)).toBeNull();
+    expect(rows[0]).not.toHaveProperty('sfwName');
+  });
+
   it('lists minor first, then real person, then SFW-only, oldest first within each', async () => {
     await model(1, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-01T00:00:00Z') });
     await model(2, { poi: true, meta: lead('poi', '2026-11-03T00:00:00Z') });

@@ -98,6 +98,9 @@ export function getDailyPostLimit(user: SessionUser): number {
   return isPaidMember(user) ? tier.limit * MEMBER_DAILY_POST_MULTIPLIER : tier.limit;
 }
 
+/** The one bucket every post-creating procedure counts against, and the usage-limits read reads. */
+export const POST_CREATE_RATE_LIMIT_KEY = 'post:create';
+
 export const postRateLimits: RateLimit[] = [
   // Newly created accounts: tight hourly clamp for the rest of the calendar day
   // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
