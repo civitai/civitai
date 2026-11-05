@@ -8,6 +8,8 @@ import {
   type PreviewRole,
   storageStatePath,
 } from './preview-fixtures';
+import { trpcMutation } from './preview-trpc';
+import { APP_DEVELOPER_TERMS_VERSION } from '../src/shared/constants/app-developer-terms.constants';
 
 /**
  * Preview-environment auth setup.
@@ -99,7 +101,7 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
   return value;
 }
 
-setup('mint preview sessions', async ({ request }) => {
+setup('mint preview sessions', async ({ request, playwright }) => {
   // This setup runs the cold-pod warm-up below: ~9 SEQUENTIAL heavy-SSR GETs (each
   // capped at 60s) so one route compiles at a time (parallel heavy renders OOM the
   // single-replica pod). On a genuinely cold pod the cumulative warm-up can exceed
@@ -175,4 +177,20 @@ setup('mint preview sessions', async ({ request }) => {
       })
       .catch(() => {});
   }
+
+  // Every App Blocks submit path refuses a developer who has not accepted the CURRENT App
+  // Developer Terms (app-developer-terms.service). The app specs submit as `mod`, so record
+  // its acceptance through the same procedure the web checkbox calls. Idempotent: an existing
+  // acceptance keeps its first accepted-at. Non-fatal like the warm-ups: a failed setup skips
+  // the WHOLE suite, while a missing acceptance fails only the submitting specs, each with the
+  // gate's own "Accept the App Developer Terms" message.
+  const modApi = await playwright.request.newContext({
+    baseURL: PREVIEW_URL,
+    storageState: storageStatePath('mod'),
+    timeout: 60_000,
+  });
+  await trpcMutation(modApi, 'appListings.acceptDeveloperTerms', {
+    version: APP_DEVELOPER_TERMS_VERSION,
+  }).catch((err) => console.warn(`mod could not accept the App Developer Terms: ${err}`));
+  await modApi.dispose();
 });
