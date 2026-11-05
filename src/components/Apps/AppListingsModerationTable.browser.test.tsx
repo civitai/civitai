@@ -964,8 +964,10 @@ describe('the moderator Official toggle', () => {
     mocks.rows = [
       offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: false }),
     ];
-    const ui = <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
-    const { rerender } = await renderWithProviders(ui);
+    // A FRESH element per render: React skips re-rendering an identical element object, so
+    // passing the same one to `rerender` would deliver no refetch at all.
+    const ui = () => <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderWithProviders(ui());
     await page.getByRole('switch', { name: 'Official' }).click();
     await vi.waitUntil(() => officialSwitch('lag-app')?.checked === true, { timeout: 3000 });
     await page.getByRole('switch', { name: 'Official' }).click();
@@ -978,7 +980,7 @@ describe('the moderator Official toggle', () => {
     mocks.rows = [
       offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: true }),
     ];
-    await rerender(ui);
+    await rerender(ui());
     // That this re-render DOES deliver new rows to the switch is the next test's positive
     // control: the same rerender flips an untouched row's switch.
     await expect.element(page.getByText('lag-app')).toBeInTheDocument();
@@ -995,8 +997,10 @@ describe('the moderator Official toggle', () => {
         isOfficial: false,
       }),
     ];
-    const ui = <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
-    const { rerender } = await renderWithProviders(ui);
+    // A FRESH element per render: React skips re-rendering an identical element object, so
+    // passing the same one to `rerender` would deliver no refetch at all.
+    const ui = () => <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderWithProviders(ui());
     await expect.element(page.getByTestId('apps-mod-official-follow-app')).toBeInTheDocument();
     expect(officialSwitch('follow-app')?.checked).toBe(false);
     mocks.rows = [
@@ -1008,7 +1012,7 @@ describe('the moderator Official toggle', () => {
         isOfficial: true,
       }),
     ];
-    await rerender(ui);
+    await rerender(ui());
     await vi.waitUntil(() => officialSwitch('follow-app')?.checked === true, { timeout: 3000 });
   });
 
