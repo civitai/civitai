@@ -16,6 +16,7 @@ describe('formatVideoLength', () => {
   });
 
   it('rounds fractional seconds to the nearest second, carrying into the next unit', () => {
+    expect(formatVideoLength(6.4)).toBe('6s');
     expect(formatVideoLength(6.6)).toBe('7s');
     expect(formatVideoLength(59.6)).toBe('1m');
     expect(formatVideoLength(3599.6)).toBe('1h');
@@ -24,5 +25,7 @@ describe('formatVideoLength', () => {
   it('keeps the existing 0:00 for a zero or missing duration', () => {
     expect(formatVideoLength(0)).toBe('0:00');
     expect(formatVideoLength(undefined as unknown as number)).toBe('0:00');
+    expect(formatVideoLength(0.4)).toBe('0:00');
+    expect(formatVideoLength(-5)).toBe('0:00');
   });
 });
