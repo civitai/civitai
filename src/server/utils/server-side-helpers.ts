@@ -33,6 +33,10 @@ import {
 } from '~/server/shell/shell-response';
 import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import {
+  BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
+  BOT_CACHE_REQ_KEY,
+} from '~/shared/constants/bot-cache.constants';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
 
@@ -261,6 +265,22 @@ export function createServerSideProps<P>({
       typeof result.props === 'object' && 'then' in result.props
         ? await result.props
         : result.props;
+
+    // A fail-soft prefetch renders the page without that data; an edge-cached copy would keep it so.
+    const botCacheReq = context.req as {
+      [BOT_CACHE_REQ_KEY]?: string;
+      [BOT_CACHE_PREFETCH_FAILED_REQ_KEY]?: boolean;
+    };
+    if (
+      ssg &&
+      botCacheReq[BOT_CACHE_REQ_KEY] &&
+      ssg.queryClient
+        .getQueryCache()
+        .getAll()
+        .some((query) => query.state.status === 'error')
+    ) {
+      botCacheReq[BOT_CACHE_PREFETCH_FAILED_REQ_KEY] = true;
+    }
 
     const adsGated = resolveAdsGated(result, features);
 

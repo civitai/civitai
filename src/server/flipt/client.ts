@@ -408,6 +408,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`), so `enabled` IS the switch. The key must exist in flag state
   // (enabled: false is fine) before this code serves traffic.
   IMAGE_DELIVERY_PG_LOOKUP = 'image-delivery-pg-lookup',
+
+  // On: a verified crawler's page render may be marked edge-cacheable
+  // (`~/server/bot-cache/bot-cache`). Off (and unknown, or a client that has not initialised): no
+  // response is, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
