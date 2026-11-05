@@ -103,4 +103,13 @@ describe('/collections', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(listVisible()).toBe(false);
   });
+
+  test('desktop: no drawer; the sidebar list stays beside the landing', async () => {
+    state.isMobile = false;
+    renderWithProviders(<CollectionsHome />);
+    await expect.element(page.getByText('landing')).toBeVisible();
+    await expect.element(page.getByText('sidebar-list')).toBeVisible();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(listVisible()).toBe(false);
+  });
 });
