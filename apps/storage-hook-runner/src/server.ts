@@ -11,7 +11,8 @@ async function main() {
   const pool = await HookPool.start({
     size: config.poolSize,
     maxQueue: config.maxQueue,
-    onBackstop: () => metrics.workerTerminated.inc(),
+    maxPerApp: config.maxPerApp,
+    onBackstop: (appId) => metrics.workerTerminated.inc({ app: appId }),
   });
   metrics.attachPool(pool);
 

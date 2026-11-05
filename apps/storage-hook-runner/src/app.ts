@@ -4,11 +4,13 @@ import { CheckRequest, clampTimeout } from './contract.ts';
 import type { RefusalCode } from './contract.ts';
 import { MAX_BODY_BYTES, MAX_SOURCE_BYTES, SIG_HEADER } from './limits.ts';
 import type { Metrics } from './metrics.ts';
-import { PoolClosedError, PoolOverloadedError } from './pool.ts';
+import { BackstopError, PoolClosedError, PoolOverloadedError } from './pool.ts';
 import type { HookPool } from './pool.ts';
 import { outcomeOf } from './result.ts';
 import type { HookResult } from './result.ts';
+import { QuickJSInstance, compileQuickJS } from './sandbox.ts';
 import { runSelfTest } from './selftest.ts';
+import type { SelfTestReport } from './selftest.ts';
 import { checkTimestamp, sha256Hex, sign, verifySignature } from './signing.ts';
 
 export type AppDeps = {
@@ -34,8 +36,12 @@ const STATUS: Record<RefusalCode, number> = {
   body_too_large: 413,
   overloaded: 503,
   worker_crashed: 500,
+  worker_terminated: 500,
   shutting_down: 503,
 };
+
+/** How long a /readyz self-test result is reused. */
+const SELF_TEST_TTL_MS = 5_000;
 
 /**
  * Routes:
@@ -63,11 +69,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       .header(SIG_HEADER, sign(deps.secret, text))
       .send(text);
   };
-  const refuse = (reply: FastifyReply, req: string, code: RefusalCode, message: string) => {
+  // `app` is '' until the request has been authenticated and validated: an unauthenticated body
+  // must not be able to mint label values. Signature refusals carry no app label for that reason.
+  const refuse = (
+    reply: FastifyReply,
+    req: string,
+    code: RefusalCode,
+    message: string,
+    appId = ''
+  ) => {
     if (code === 'bad_signature' || code === 'stale_timestamp') {
       deps.metrics.sigRejected.inc({ reason: code });
     } else {
-      deps.metrics.refused.inc({ reason: code });
+      deps.metrics.refused.inc({ reason: code, app: appId });
     }
     return send(reply, STATUS[code], { ts: nowSec(), req, error: { code, message } });
   };
@@ -80,15 +94,30 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return reply.code(status).send({ error: { code: err.code ?? 'internal' } });
   });
 
-  app.get('/healthz', async () => ({ ok: true }));
+  // Liveness: the process is up AND the pool has had a ready worker within DEAD_AFTER_MS. A pool
+  // whose replacements keep failing to start fails this, so the pod is restarted.
+  app.get('/healthz', async (_request, reply) => {
+    const l = deps.pool.liveness();
+    return reply.code(l.live ? 200 : 503).send({ ok: l.live, readyWorkers: l.ready });
+  });
 
-  let inflight: ReturnType<typeof runSelfTest> | null = null;
+  // Readiness: at least one worker is ready, AND the sandbox self-test passes. The self-test
+  // runs on a QuickJS instance of its own on this thread, NOT through the pool, so it never
+  // queues behind hook work: an overloaded pool is still a ready pod (overload is answered 503
+  // per request). Its result is reused for SELF_TEST_TTL_MS, so a probe costs a few ms at most
+  // once per TTL on the event loop.
+  const selfTestInstance = QuickJSInstance.fromCompiled(compileQuickJS());
+  let selfTest: { at: number; report: Promise<SelfTestReport> } | null = null;
   app.get('/readyz', async (_request, reply) => {
-    inflight ??= runSelfTest(deps.pool).finally(() => {
-      inflight = null;
-    });
-    const report = await inflight;
-    return reply.code(report.ok ? 200 : 503).send(report);
+    const now = performance.now();
+    if (!selfTest || now - selfTest.at > SELF_TEST_TTL_MS) {
+      selfTest = { at: now, report: runSelfTest((args) => selfTestInstance.evaluate(args)) };
+    }
+    const report = await selfTest.report;
+    const workers = deps.pool.stats().ready > 0;
+    const ok = workers && report.ok;
+    const body: SelfTestReport = workers ? report : { ok, checks: { ...report.checks, workers } };
+    return reply.code(ok ? 200 : 503).send({ ...body, ok });
   });
 
   app.post('/v1/check', async (request, reply) => {
@@ -124,28 +153,44 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
     const sourceBytes = Buffer.from(body.source, 'utf8');
     if (sourceBytes.length > MAX_SOURCE_BYTES) {
-      return refuse(reply, req, 'source_too_large', `source exceeds ${MAX_SOURCE_BYTES} bytes`);
+      return refuse(
+        reply,
+        req,
+        'source_too_large',
+        `source exceeds ${MAX_SOURCE_BYTES} bytes`,
+        body.appId
+      );
     }
     // The runner evaluates only the exact source the approved manifest pinned.
     if (sha256Hex(sourceBytes) !== body.sha256) {
-      return refuse(reply, req, 'sha_mismatch', 'sha256(source) does not match sha256');
+      return refuse(reply, req, 'sha_mismatch', 'sha256(source) does not match sha256', body.appId);
     }
 
     let out;
     try {
       out = await deps.pool.run({
+        appId: body.appId,
         source: body.source,
         inputJson: JSON.stringify(body.input),
         timeoutMs: clampTimeout(body.timeoutMs),
       });
     } catch (err) {
       if (err instanceof PoolOverloadedError) {
-        return refuse(reply, req, 'overloaded', 'hook queue is full');
+        return refuse(reply, req, 'overloaded', err.message, body.appId);
       }
       if (err instanceof PoolClosedError) {
-        return refuse(reply, req, 'shutting_down', 'runner is shutting down');
+        return refuse(reply, req, 'shutting_down', 'runner is shutting down', body.appId);
       }
-      return refuse(reply, req, 'worker_crashed', 'hook worker failed');
+      if (err instanceof BackstopError) {
+        return refuse(
+          reply,
+          req,
+          'worker_terminated',
+          'the call outran the interrupt and its worker was terminated',
+          body.appId
+        );
+      }
+      return refuse(reply, req, 'worker_crashed', 'hook worker failed', body.appId);
     }
 
     const outcome = outcomeOf(out.result);

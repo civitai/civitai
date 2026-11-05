@@ -1,5 +1,8 @@
 # storage-hook-runner (apps/storage-hook-runner) — Fastify + worker_threads + QuickJS (WASM).
-# Mirrors apps/assistant-runner/Dockerfile (multi-stage node:22-alpine, corepack pnpm, filtered
+# Node 24.22.1: the same release as the repo's .nvmrc, which CI's test runs use. The README's
+# measurements were taken on Node 24 (24.21 locally, 24.22.1 in CI); stack and interrupt
+# behaviour is engine-specific, so bump this and .nvmrc together.
+# Mirrors apps/assistant-runner/Dockerfile (multi-stage node-alpine, corepack pnpm, filtered
 # frozen install, tsup build, non-legacy `pnpm deploy --prod` runtime). `--ignore-scripts` skips
 # the root's `db:generate`; safe because this app imports no Prisma client and has no workspace
 # dependencies.
@@ -11,7 +14,7 @@
 # read from node_modules at startup; nothing is fetched at runtime, so the pod needs no egress.
 
 ##### deps — install only this app (lean, frozen) ##############################
-FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
@@ -38,7 +41,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     --config.inject-workspace-packages=true /app/deploy
 
 ##### runtime ###################################################################
-FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001

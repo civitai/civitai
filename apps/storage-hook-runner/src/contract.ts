@@ -85,4 +85,5 @@ export type RefusalCode =
   | 'body_too_large'
   | 'overloaded'
   | 'worker_crashed'
+  | 'worker_terminated'
   | 'shutting_down';

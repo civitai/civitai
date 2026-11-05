@@ -8,7 +8,7 @@ export default defineConfig({
   entry: { server: 'src/server.ts', worker: 'src/worker.ts' },
   format: ['esm'],
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
   outDir: 'dist',
   sourcemap: true,
   clean: true,

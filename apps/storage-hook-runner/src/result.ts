@@ -31,13 +31,25 @@ export function fault(cause: HookFaultCause, detail: string): HookResult {
   return { allow: false, cause, detail: clip(stripControls(detail), DETAIL_MAX_CHARS) };
 }
 
-// C0 and C1 control characters, plus the bidi embedding/override/isolate controls that can make
-// text render differently from its code points. The reason is author text shown to users.
-// eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+// C0 and C1 control characters, the bidi marks and embedding/override/isolate controls
+// (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) that can make text render differently
+// from its code points, the line and paragraph separators (U+2028, U+2029) and the BOM /
+// zero-width no-break space (U+FEFF). Written as escapes so the source holds no invisible
+// characters. The reason is author text shown to users.
+const CONTROL_RE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 export function stripControls(s: string): string {
   return s.replace(CONTROL_RE, '');
+}
+
+/** The first `max` UTF-16 units, without a dangling high surrogate at the cut. */
+function clipUnits(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
 function clip(s: string, max: number): string {
@@ -48,8 +60,11 @@ function clip(s: string, max: number): string {
 /**
  * Validate the JSON text a hook's return value serialised to (inside the VM). Exactly two shapes
  * are valid: `{"allow":true}` and `{"allow":false,"reason":<string>}` with no other keys. The
- * reason has control and bidi characters stripped first, then is TRUNCATED to REASON_MAX_CHARS
- * code points (a cut can split a multi-code-point grapheme such as a ZWJ emoji). If what is left
+ * reason is first clipped to 2 x REASON_MAX_CHARS UTF-16 units (so a huge reason costs a bounded
+ * amount of work; a high surrogate left dangling at that cut is dropped), then has control and
+ * bidi characters stripped, then is TRUNCATED to REASON_MAX_CHARS code points (a cut can split a
+ * multi-code-point grapheme such as a ZWJ emoji). Only the first 400 units count, so controls
+ * filling them leave less text. If what is left
  * is empty or whitespace only, the result is `invalid_result` ("deny reason is empty"): a refusal
  * must carry something to show the user. Anything else is `invalid_result`.
  */
@@ -80,7 +95,10 @@ export function validateHookReturn(json: string | undefined): HookResult {
     if (typeof obj.reason !== 'string') {
       return fault('invalid_result', 'deny reason must be a string');
     }
-    const reason = clip(stripControls(obj.reason), REASON_MAX_CHARS);
+    const reason = clip(
+      stripControls(clipUnits(obj.reason, 2 * REASON_MAX_CHARS)),
+      REASON_MAX_CHARS
+    );
     if (reason.trim().length === 0) return fault('invalid_result', 'deny reason is empty');
     return { allow: false, cause: 'denied', reason };
   }

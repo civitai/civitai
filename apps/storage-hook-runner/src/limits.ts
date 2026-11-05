@@ -28,7 +28,8 @@ export const TIMEOUT_MAX_MS = 500;
  * The worker backstop. The interrupt handler only runs when QuickJS polls it, and a single
  * native operation does not poll: measured, an allocation loop that grows towards the memory cap
  * ran 1.3 s with ONE interrupt poll and a 50 ms deadline. A call still running at
- * `timeoutMs + BACKSTOP_MS` gets its worker terminated and answers `timeout`.
+ * `timeoutMs + BACKSTOP_MS` gets its worker terminated and answers 500 (a runner fault, not the
+ * author's `timeout`: see BackstopError in pool.ts).
  */
 export const BACKSTOP_MS = 100;
 
@@ -54,3 +55,15 @@ export const SIG_HEADER = 'x-storage-hook-sig';
 
 /** Bounded queue per pool; past it the runner answers 503 rather than queue without limit. */
 export const DEFAULT_MAX_QUEUE = 64;
+
+/** Default per-app cap (queued plus in flight): a quarter of the queue, rounded up, at least 1. */
+export function defaultMaxPerApp(maxQueue: number): number {
+  return Math.max(1, Math.ceil(maxQueue / 4));
+}
+
+/** Replacement-worker start retries: first delay, doubling up to the max. */
+export const RESPAWN_BASE_MS = 100;
+export const RESPAWN_MAX_MS = 30_000;
+
+/** /healthz fails once the pool has had no ready worker for this long. */
+export const DEAD_AFTER_MS = 30_000;

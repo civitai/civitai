@@ -30,13 +30,14 @@ export function createMetrics() {
   });
   const refused = new Counter({
     name: 'storage_hook_runner_requests_refused_total',
-    help: 'Signed requests refused without evaluating (bad request, sha mismatch, overload, ...).',
-    labelNames: ['reason'],
+    help: 'Requests refused without an answer (bad request, sha mismatch, overload, worker faults). `app` is empty until the request is authenticated and validated.',
+    labelNames: ['reason', 'app'],
     registers: [registry],
   });
   const workerTerminated = new Counter({
     name: 'storage_hook_runner_worker_terminated_total',
-    help: 'Workers terminated by the backstop (a call outran timeoutMs + backstop).',
+    help: 'Workers terminated by the backstop (a call outran timeoutMs + backstop), by app.',
+    labelNames: ['app'],
     registers: [registry],
   });
 
