@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cosmeticTypeLabel, monthsLabel, refusalText, tierName } from './shop-view';
+import { cosmeticTypeLabel, dealPercentOff, monthsLabel, refusalText, tierName } from './shop-view';
 
 describe('shop wording', () => {
   it('says how short the gold is, and where a rank gate opens', () => {
@@ -15,6 +15,13 @@ describe('shop wording', () => {
     expect(cosmeticTypeLabel('NamePlate')).toBe('Nameplate');
     expect(cosmeticTypeLabel('ProfileDecoration')).toBe('Avatar decoration');
     expect(cosmeticTypeLabel(null)).toBe('Cosmetic');
+  });
+
+  it('rounds a deal to a percent off and never shows NaN or a negative', () => {
+    expect(dealPercentOff(80, 100)).toBe(20);
+    expect(dealPercentOff(0, 0)).toBe(0);
+    expect(dealPercentOff(5, 0)).toBe(0);
+    expect(dealPercentOff(120, 100)).toBe(0);
   });
 
   it('names tiers and months', () => {

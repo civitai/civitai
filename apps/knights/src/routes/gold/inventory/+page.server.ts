@@ -13,7 +13,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   const open = shopEnabled();
   const [items, membership, balance] = await Promise.all([
     open ? listInventory(db, locals.user.id) : [],
-    open ? membershipOf(db, locals.user.id, new Date()) : null,
+    membershipOf(db, locals.user.id, new Date()),
     getGoldBalance(db, locals.user.id),
   ]);
   return {
@@ -36,7 +36,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 async function change(
   locals: App.Locals,
   request: Request,
-  run: (userId: number, cosmeticId: number) => Promise<void>
+  {
+    verb,
+    run,
+  }: { verb: 'equip' | 'unequip'; run: (userId: number, cosmeticId: number) => Promise<void> }
 ) {
   if (!shopEnabled()) return fail(403, { message: CLOSED_TEXT });
   const cosmeticId = Number((await request.formData()).get('cosmeticId'));
@@ -52,9 +55,9 @@ async function change(
     await run(locals.user.id, cosmeticId);
   } catch (error) {
     if (error instanceof MainAppRejectedError) {
-      return fail(409, { message: error.detail || 'Civitai would not equip that.', cosmeticId });
+      return fail(409, { message: error.detail || `Civitai would not ${verb} that.`, cosmeticId });
     }
-    console.error('knights: equip failed', { error });
+    console.error(`knights: ${verb} failed`, { error });
     return fail(502, { message: 'Civitai did not answer. Try again in a moment.', cosmeticId });
   }
   return { ok: true as const, cosmeticId };
@@ -62,11 +65,13 @@ async function change(
 
 export const actions: Actions = {
   equip: ({ locals, request }) =>
-    change(locals, request, (userId, cosmeticId) =>
-      getMainAppPort().equipCosmetic(userId, cosmeticId)
-    ),
+    change(locals, request, {
+      verb: 'equip',
+      run: (userId, cosmeticId) => getMainAppPort().equipCosmetic(userId, cosmeticId),
+    }),
   unequip: ({ locals, request }) =>
-    change(locals, request, (userId, cosmeticId) =>
-      getMainAppPort().unequipCosmetic(userId, cosmeticId)
-    ),
+    change(locals, request, {
+      verb: 'unequip',
+      run: (userId, cosmeticId) => getMainAppPort().unequipCosmetic(userId, cosmeticId),
+    }),
 };

@@ -55,6 +55,6 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 
 ## Tests
 
-`shop/purchase.pglite.test.ts` (replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership rules, retry, rejection and forfeiture, balance fields), `shop/catalog.pglite.test.ts`, `shop/inventory.pglite.test.ts`, `shop/rotation.test.ts`, `shop/seed-items.pglite.test.ts`, `shop/main-app.test.ts`, `routes/gold/load.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` (the real `WebhookEndpoint`), `src/server/services/__tests__/subscriptions.grant-buzz-membership.test.ts` and `buzz-membership-badge.behavior.test.ts`.
+`shop/purchase.pglite.test.ts` (replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership rules, retry, rejection and forfeiture, balance fields), `shop/catalog.pglite.test.ts`, `shop/inventory.pglite.test.ts`, `shop/rotation.test.ts`, `shop/seed-items.pglite.test.ts`, `shop/main-app.test.ts`, `routes/gold/load.test.ts`, `routes/gold/inventory/actions.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` (the real `WebhookEndpoint`), `src/server/services/__tests__/subscriptions.grant-buzz-membership.test.ts` and `buzz-membership-badge.behavior.test.ts`.
 
 The two simultaneous-purchase tests run on one PGlite connection that takes the transactions in turn, so they prove the second purchase reads the first one's spend, not the row lock itself; that needs a real Postgres and is not covered.

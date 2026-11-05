@@ -2,6 +2,7 @@
   import type { ComponentProps } from 'svelte';
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
+  import { SvelteSet } from 'svelte/reactivity';
   import { count, formatDate } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { cosmeticIcon, cosmeticTypeLabel, tierName } from '$lib/shop-view';
@@ -20,7 +21,7 @@
     { key: 'membership', label: 'Membership' },
   ] as const;
   let filter = $state<(typeof FILTERS)[number]['key']>('all');
-  let busy = $state<number | null>(null);
+  const busy = new SvelteSet<number>();
 
   const isDecoration = (type: string) => type === 'ProfileDecoration' || type === 'CardDecoration';
   const matches = (item: Item) =>
@@ -83,7 +84,7 @@
     <section class="member" aria-label="Membership">
       <Icon name="crown" size={22} />
       <div>
-        <h2>{tierName(data.membership.tier)} membership · Active</h2>
+        <h2>{data.membership.tier ? `${tierName(data.membership.tier)} membership` : 'Membership'} · Active</h2>
         <p>
           Ends {formatDate(data.membership.endsAt)}
         </p>
@@ -113,19 +114,19 @@
                 method="POST"
                 action={item.equipped ? '?/unequip' : '?/equip'}
                 use:enhance={() => {
-                  busy = item.cosmeticId;
+                  busy.add(item.cosmeticId);
                   return async ({ update }) => {
                     try {
                       await update({ reset: false });
                     } finally {
-                      busy = null;
+                      busy.delete(item.cosmeticId);
                     }
                   };
                 }}
               >
                 <input type="hidden" name="cosmeticId" value={item.cosmeticId} />
-                <button type="submit" class="act" class:on={item.equipped} disabled={busy === item.cosmeticId} aria-pressed={item.equipped}>
-                  {#if busy === item.cosmeticId}
+                <button type="submit" class="act" class:on={item.equipped} disabled={busy.has(item.cosmeticId)} aria-pressed={item.equipped}>
+                  {#if busy.has(item.cosmeticId)}
                     Working…
                   {:else if item.equipped}
                     <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" pathLength="1" /></svg>

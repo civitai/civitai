@@ -2,7 +2,7 @@
   import type { ComponentProps } from 'svelte';
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
-  import { cardBlurb, cardTitle, cosmeticIcon } from '$lib/shop-view';
+  import { cardBlurb, cardTitle, cosmeticIcon, dealPercentOff } from '$lib/shop-view';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
@@ -82,7 +82,7 @@
     </p>
   </div>
   {#if card.deal}
-    <span class="tag">{card.state === 'rank' ? `${card.minRank} only` : `-${Math.round((1 - card.price / card.listPrice) * 100)}% today`}</span>
+    <span class="tag">{card.state === 'rank' ? `${card.minRank} only` : `-${dealPercentOff(card.price, card.listPrice)}% today`}</span>
     {#if clock && card.state === 'available'}<span class="ends" aria-label="Deal ends in {clock}">Ends in {clock}</span>{/if}
   {:else if card.state === 'rank' && variant !== 'pack'}
     <span class="tag quiet"><Icon name="lock" size={12} />{card.minRank}+</span>

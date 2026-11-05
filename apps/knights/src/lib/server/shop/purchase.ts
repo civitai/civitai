@@ -7,7 +7,11 @@ import { spendableOf } from '../conversion/balance';
 import { markForfeited, releaseReservation, settleConversion } from '../conversion/convert';
 import { heldSql } from '../conversion/held';
 import { rankIndex } from '../ranks';
-import { PENDING_PURCHASE_ALERT_ATTEMPTS, PENDING_PURCHASE_RETRY_AFTER_MS } from './config';
+import {
+  PENDING_PURCHASE_ALERT_ATTEMPTS,
+  PENDING_PURCHASE_RETRY_AFTER_MS,
+  REQUEST_KEY_PATTERN,
+} from './config';
 import { holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { hasActiveMembership } from './inventory';
@@ -76,15 +80,13 @@ const refuse = (
       : { status: 'refused', reason, shortfall },
 });
 
-const KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
-
 /** Reserves the gold under the player's row lock (same spendable rule as conversion), then delivers. An unknown outcome leaves the purchase pending for the tick; a definitive refusal releases the gold. */
 export async function buyItem(
   db: Kysely<DB>,
   deps: BuyDeps,
   { playerId, itemId, requestKey, price, now }: BuyRequest
 ): Promise<BuyResult> {
-  if (!KEY_PATTERN.test(requestKey)) return { status: 'refused', reason: 'bad-key' };
+  if (!REQUEST_KEY_PATTERN.test(requestKey)) return { status: 'refused', reason: 'bad-key' };
 
   const reserved: Reserved = await db.transaction().execute(async (trx): Promise<Reserved> => {
     const player = await trx

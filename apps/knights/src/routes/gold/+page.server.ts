@@ -12,6 +12,7 @@ import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import { loadShop } from '$lib/server/shop/catalog';
 import { recentPurchases } from '$lib/server/shop/inventory';
+import { REQUEST_KEY_PATTERN } from '$lib/server/shop/config';
 import { getMainAppPort } from '$lib/server/shop/main-app';
 import { buyItem } from '$lib/server/shop/purchase';
 import { REFUSAL_STATUS, refusalText } from '$lib/shop-view';
@@ -20,6 +21,8 @@ import type { Actions, PageServerLoad } from './$types';
 const CLOSED_TEXT = "The shop isn't open yet. Your gold keeps accruing.";
 
 const buzzPacksOpen = () => conversionEnabled() && buzzConfigured();
+
+let warnedNoEndpoint = false;
 
 export const load: PageServerLoad = async ({ locals }) => {
   const now = new Date();
@@ -59,13 +62,20 @@ export const actions: Actions = {
     const form = await request.formData();
     const itemId = String(form.get('itemId') ?? '');
     const requestKey = String(form.get('requestKey') ?? '');
-    const price = Number(form.get('price'));
-    if (!itemId || !Number.isInteger(price)) {
+    const rawPrice = String(form.get('price') ?? '').trim();
+    const price = rawPrice === '' ? NaN : Number(rawPrice);
+    if (
+      !itemId ||
+      !REQUEST_KEY_PATTERN.test(requestKey) ||
+      !Number.isInteger(price) ||
+      price <= 0
+    ) {
       return fail(400, { message: refusalText('bad-key'), reason: 'bad-key' as const, itemId });
     }
 
     const open = buzzPacksOpen();
-    if (!open && conversionEnabled()) {
+    if (!open && conversionEnabled() && !warnedNoEndpoint) {
+      warnedNoEndpoint = true;
       await logToAxiom({
         type: 'warning',
         name: 'knights-conversion-unavailable',
@@ -73,6 +83,7 @@ export const actions: Actions = {
       });
     }
     let result;
+    let minRank: string | null = null;
     try {
       result = await buyItem(
         db,
@@ -86,6 +97,8 @@ export const actions: Actions = {
         },
         { playerId: locals.user.id, itemId, requestKey, price, now: new Date() }
       );
+      if (result.status === 'refused' && result.reason === 'rank')
+        minRank = await rankGateOf(itemId);
     } catch (error) {
       console.error('knights: shop purchase failed', { error });
       return fail(500, {
@@ -95,9 +108,8 @@ export const actions: Actions = {
     }
 
     if (result.status === 'refused') {
-      const rank = result.reason === 'rank' ? await rankGateOf(itemId) : null;
       return fail(REFUSAL_STATUS[result.reason], {
-        message: refusalText(result.reason, { shortfall: result.shortfall, minRank: rank }),
+        message: refusalText(result.reason, { shortfall: result.shortfall, minRank }),
         reason: result.reason,
         shortfall: result.shortfall ?? 0,
         itemId,

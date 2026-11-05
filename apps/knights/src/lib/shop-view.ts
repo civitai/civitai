@@ -51,6 +51,10 @@ export const REFUSAL_STATUS: Record<Refusal, number> = {
   'bad-key': 400,
 };
 
+/** Percent off the list price, never negative and never NaN for a list price of 0. */
+export const dealPercentOff = (price: number, listPrice: number) =>
+  listPrice > 0 ? Math.max(0, Math.round((1 - price / listPrice) * 100)) : 0;
+
 const TIER = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' } as const;
 export const tierName = (tier: string | null) =>
   tier && tier in TIER ? TIER[tier as keyof typeof TIER] : tier ?? '';

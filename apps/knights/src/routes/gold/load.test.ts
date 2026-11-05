@@ -5,12 +5,17 @@ const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
 const loadShop = vi.hoisted(() => vi.fn());
 const recentPurchases = vi.hoisted(() => vi.fn());
 const buyItem = vi.hoisted(() => vi.fn());
-const rankGate = vi.hoisted(() => ({ value: null as string | null }));
+const rankGate = vi.hoisted(() => ({ value: null as string | null, fail: false }));
 vi.mock('$lib/server/db', () => ({
   db: {
     selectFrom: () => ({
       select: () => ({
-        where: () => ({ executeTakeFirst: async () => ({ minRank: rankGate.value }) }),
+        where: () => ({
+          executeTakeFirst: async () => {
+            if (rankGate.fail) throw new Error('db down');
+            return { minRank: rankGate.value };
+          },
+        }),
       }),
     }),
   },
@@ -54,6 +59,7 @@ beforeEach(() => {
   recentPurchases.mockResolvedValue([]);
   buyItem.mockReset();
   rankGate.value = null;
+  rankGate.fail = false;
   buzzConfigured.mockReset();
   buzzConfigured.mockReturnValue(true);
   conversionEnabled.mockReset();
@@ -162,12 +168,55 @@ describe('buying', () => {
     expect(buyItem).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['too short', 'abc'],
+    ['of the wrong shape', 'request key with spaces!'],
+  ])('answers 400, without buying, for a request key that is %s', async (_, requestKey) => {
+    const { requestKey: _dropped, ...rest } = FIELDS;
+
+    expect(await post(requestKey === undefined ? rest : { ...rest, requestKey })).toMatchObject({
+      status: 400,
+      data: { reason: 'bad-key' },
+    });
+    expect(buyItem).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['zero', '0'],
+    ['negative', '-5'],
+    ['fractional', '12.5'],
+  ])('answers 400, without buying, for a price that is %s', async (_, price) => {
+    const { price: _dropped, ...rest } = FIELDS;
+
+    expect(await post(price === undefined ? rest : { ...rest, price })).toMatchObject({
+      status: 400,
+    });
+    expect(buyItem).not.toHaveBeenCalled();
+  });
+
   it('keeps Buzz packs closed, without asking Buzz, when it is not configured, and says so once', async () => {
     buzzConfigured.mockReturnValue(false);
     buyItem.mockResolvedValue({ status: 'refused', reason: 'closed' });
 
-    expect(await post(FIELDS)).toMatchObject({ status: 403, data: { reason: 'closed' } });
+    vi.resetModules();
+    const fresh = await import('./+page.server');
+    const again = () =>
+      fresh.actions.buy({
+        locals,
+        request: new Request('http://knights.test/gold?/buy', {
+          method: 'POST',
+          body: new URLSearchParams(FIELDS),
+        }),
+      } as never);
+
+    expect(await again()).toMatchObject({ status: 403, data: { reason: 'closed' } });
+    await again();
     expect(buyItem.mock.calls[0][1]).toMatchObject({ buzzPacksOpen: false });
+    expect(buyItem).toHaveBeenCalledTimes(2);
     expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
 
@@ -224,6 +273,16 @@ describe('buying', () => {
     expect(await post(FIELDS)).toMatchObject({
       status: 502,
       data: { message: expect.stringContaining('forfeited') },
+    });
+  });
+
+  it('answers with the structured failure, carrying the item, when the rank lookup fails', async () => {
+    buyItem.mockResolvedValue({ status: 'refused', reason: 'rank' });
+    rankGate.fail = true;
+
+    expect(await post(FIELDS)).toMatchObject({
+      status: 500,
+      data: { itemId: 'badge-seal', message: expect.any(String) },
     });
   });
 
