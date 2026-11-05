@@ -376,15 +376,19 @@ describe('AppListingCard', () => {
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
   });
 
-  test('kind + category badges are NOT rendered on the card (round-2 truncation fix)', async () => {
-    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
-    // base()'s category. Neither should render now that the badge column is gone
-    // — the kind signal instead lives in the CTA (Open/View details vs Visit ↗)
-    // and, for off-site, the detail-page disclosure Alert.
+  test('no kind badge on the card; the category is a meta-line link, not a badge', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text. It should not render
+    // now that the badge column is gone — the kind signal instead lives in the CTA
+    // (Open/View details vs Visit ↗) and, for off-site, the detail-page disclosure Alert.
+    // The category came back deliberately, as plain text in the one-line meta line (see
+    // the meta-line suite below), not as the truncating badge this test used to exclude.
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
-    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
+    const category = page.getByText('Utility', { exact: true });
+    await expect.element(category).toBeInTheDocument();
+    expect(category.element().closest('[data-testid="apps-listing-card-meta"]')).not.toBeNull();
+    expect(category.element().closest('.mantine-Badge-root')).toBeNull();
   });
 
   test('no reviews → "No reviews yet"', async () => {
