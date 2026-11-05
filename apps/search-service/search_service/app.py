@@ -33,6 +33,7 @@ MAX_OFFSET = 2000
 MAX_LIMIT = 100
 PASSTHROUGH_OPS = frozenset({'query', 'search', 'recommend', 'scroll', 'count'})
 PASSTHROUGH_PARAMS = frozenset({'timeout', 'consistency'})
+MAX_PASSTHROUGH_BODY = 64 * 1024
 
 
 class SearchRequest(BaseModel):
@@ -146,19 +147,44 @@ class RateLimiter:
         return 0.0
 
 
-def _foreign_lookups(body: Any, allowed: set[str]) -> list[str]:
-    """Collections named by `lookup_from` anywhere in a request body that are not allowed."""
-    found = []
+def _passthrough_violation(body: Any, allowed: set[str], numeric_offset: bool) -> str | None:
+    """Why a passthrough body is refused, checked at every depth (prefetch nests whole queries)."""
     if isinstance(body, dict):
         lookup = body.get('lookup_from')
         if isinstance(lookup, dict) and lookup.get('collection') not in allowed:
-            found.append(str(lookup.get('collection')))
-        for value in body.values():
-            found.extend(_foreign_lookups(value, allowed))
+            return 'lookup_from may only name an allowed collection'
+        limit = body.get('limit')
+        if isinstance(limit, int) and not isinstance(limit, bool) and limit > MAX_LIMIT:
+            return f'limit may be at most {MAX_LIMIT}'
+        # A scroll offset is a point id to start from, not a count of points to skip.
+        offset = body.get('offset')
+        if numeric_offset and isinstance(offset, int) and not isinstance(offset, bool) and offset > MAX_OFFSET:
+            return f'offset may be at most {MAX_OFFSET}'
+        if body.get('with_vector') or body.get('with_vectors'):
+            return 'with_vector is not available through this service'
+        values = body.values()
     elif isinstance(body, list):
-        for value in body:
-            found.extend(_foreign_lookups(value, allowed))
-    return found
+        values = body
+    else:
+        return None
+    for value in values:
+        reason = _passthrough_violation(value, allowed, numeric_offset)
+        if reason:
+            return reason
+    return None
+
+
+async def _read_capped(request: Request, cap: int) -> bytes:
+    declared = request.headers.get('content-length')
+    if declared and declared.isdigit() and int(declared) > cap:
+        raise HTTPException(413, f'Request body over {cap} bytes')
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > cap:
+            raise HTTPException(413, f'Request body over {cap} bytes')
+        chunks.append(chunk)
+    return b''.join(chunks)
 
 
 def create_app(
@@ -359,17 +385,19 @@ def create_app(
         ]
         return SearchResponse(query=body.query, corrected=corrected, changes=changes, hits=hits)
 
-    async def forward(request: Request, method: str, path: str) -> Response:
+    async def forward(request: Request, method: str, path: str, op: str | None = None) -> Response:
         params = {k: v for k, v in request.query_params.items() if k in PASSTHROUGH_PARAMS}
-        content = await request.body() if method == 'POST' else None
+        content = await _read_capped(request, MAX_PASSTHROUGH_BODY) if method == 'POST' else None
         if content:
             try:
                 parsed = json.loads(content)
             except ValueError:
-                parsed = None
-            foreign = _foreign_lookups(parsed, set(settings.collections.values()))
-            if foreign:
-                raise HTTPException(403, 'lookup_from may only name an allowed collection')
+                raise HTTPException(400, 'The request body must be JSON') from None
+            reason = _passthrough_violation(
+                parsed, set(settings.collections.values()), numeric_offset=op != 'scroll'
+            )
+            if reason:
+                raise HTTPException(403 if reason.startswith('lookup_from') else 400, reason)
         try:
             res = await state['qdrant'].request(
                 method,
@@ -398,7 +426,9 @@ def create_app(
         """Qdrant's points query, search, recommend, scroll or count, byte for byte."""
         if op not in PASSTHROUGH_OPS:
             raise HTTPException(403, 'Only read operations are allowed')
-        return await forward(request, 'POST', f'/collections/{alias_for(collection)}/points/{op}')
+        return await forward(
+            request, 'POST', f'/collections/{alias_for(collection)}/points/{op}', op
+        )
 
     @app.api_route(
         '/qdrant/{rest:path}',

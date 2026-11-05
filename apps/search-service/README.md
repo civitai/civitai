@@ -27,6 +27,13 @@ How the passthrough treats requests:
 - The request body is forwarded unchanged.
 - The `timeout` and `consistency` query parameters are forwarded; any other query parameter is dropped.
 - A body whose `lookup_from` names a collection outside the allow-list is refused.
+- Bodies are capped at 64 KB (`413`) and must be JSON (`400`).
+- At any depth, including nested `prefetch`, the service answers `400` for:
+  - `limit` over 100;
+  - `offset` over 2000 (except on `scroll`, where `offset` is a point id);
+  - any `with_vector`/`with_vectors`, since raw vectors are not exposed.
+
+  It refuses rather than clamps, so the caller sees why.
 - Every other `/qdrant/...` path or method is `403`. That covers all writes, batch endpoints,
   snapshots, aliases and cluster routes.
 

@@ -344,3 +344,65 @@ def test_fake_embeddings_refuse_a_real_index(spelling_dir, loaded_corrector, ups
         res = c.post('/v1/search', json={'collection': 'images', 'query': 'cat'}, headers=AUTH)
         assert res.status_code == 503
     assert upstream.sent(host='orchestrator.test') == []
+
+
+# --- passthrough bounds ----------------------------------------------------------------------
+
+QUERY = '/qdrant/collections/images/points/query'
+
+
+def test_passthrough_body_over_64kb_is_refused(client, upstream):
+    big = b'{"limit": 1, "pad": "' + b'x' * (64 * 1024) + b'"}'
+    res = client.post(QUERY, content=big, headers={**AUTH, 'content-type': 'application/json'})
+    assert res.status_code == 413
+    # Without a content-length the stream is still cut off at the cap.
+    res = client.post(
+        QUERY, content=iter([big[:40000], big[40000:]]), headers={**AUTH, 'content-type': 'application/json'}
+    )
+    assert res.status_code == 413
+    assert upstream.calls == []
+    ok = b'{"limit": 1, "pad": "' + b'x' * 60000 + b'"}'
+    assert client.post(QUERY, content=ok, headers={**AUTH, 'content-type': 'application/json'}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    'op,body,message',
+    [
+        ('query', {'limit': 101}, 'limit'),
+        ('search', {'vector': [0.1], 'limit': 1000}, 'limit'),
+        ('scroll', {'limit': 5000}, 'limit'),
+        ('recommend', {'positive': [1], 'limit': 101}, 'limit'),
+        ('query', {'limit': 10, 'prefetch': [{'query': [0.1], 'limit': 10000}]}, 'limit'),
+        ('query', {'prefetch': {'prefetch': [{'limit': 101}]}}, 'limit'),
+        ('query', {'limit': 10, 'offset': 2001}, 'offset'),
+        ('search', {'vector': [0.1], 'offset': 100000}, 'offset'),
+        ('query', {'with_vector': True}, 'with_vector'),
+        ('scroll', {'with_vector': ['default']}, 'with_vector'),
+        ('query', {'prefetch': [{'query': 1, 'with_vectors': True}]}, 'with_vector'),
+    ],
+)
+def test_passthrough_bounds_are_refused(client, upstream, op, body, message):
+    res = client.post(f'/qdrant/collections/images/points/{op}', json=body, headers=AUTH)
+    assert res.status_code == 400
+    assert message in res.json()['detail']
+    assert upstream.calls == []
+
+
+@pytest.mark.parametrize(
+    'op,body',
+    [
+        ('query', {'limit': 100, 'offset': 2000, 'with_vector': False}),
+        ('query', {'prefetch': [{'query': [0.1], 'limit': 100}], 'limit': 10}),
+        # A scroll offset is a point id, so a large one is a position, not a cost.
+        ('scroll', {'limit': 100, 'offset': 9_999_999}),
+        ('count', {'exact': True}),
+    ],
+)
+def test_passthrough_bounds_allow_the_ceiling(client, upstream, op, body):
+    assert client.post(f'/qdrant/collections/images/points/{op}', json=body, headers=AUTH).status_code == 200
+
+
+def test_passthrough_refuses_a_body_that_is_not_json(client, upstream):
+    res = client.post(QUERY, content=b'{"limit": 1000', headers={**AUTH, 'content-type': 'application/json'})
+    assert res.status_code == 400
+    assert upstream.calls == []
